@@ -95,7 +95,7 @@ import {
   type WorkspaceTab,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
-import { useSettings } from "@/hooks/use-settings";
+import { useAppSettings, useSettings } from "@/hooks/use-settings";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type {
@@ -1002,6 +1002,13 @@ function useLastMainPane(input: {
   return lastMainPaneRef;
 }
 
+/** Waits for both saved layouts and the defaults used when a workspace has no saved layout. */
+function useWorkspaceLayoutReady(): boolean {
+  const hydrated = useWorkspaceLayoutStoreHydrated();
+  const { isLoading } = useAppSettings();
+  return hydrated && !isLoading;
+}
+
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1309,7 +1316,7 @@ function WorkspaceScreenContent({
     explorerSidebarPaneId,
   });
   const lastMainPaneId = lastMainPaneRef.current.paneId;
-  const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
+  const isWorkspaceLayoutReady = useWorkspaceLayoutReady();
   const workspaceSetupSnapshot = useWorkspaceSetupStore((state) =>
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
   );
@@ -1324,7 +1331,7 @@ function WorkspaceScreenContent({
     client,
     serverId: normalizedServerId,
     tabs: uiTabs,
-    enabled: hasHydratedWorkspaceLayoutStore,
+    enabled: isWorkspaceLayoutReady,
   });
   useSyncWorkspaceActiveBrowser({
     workspaceLayout,
@@ -1520,7 +1527,7 @@ function WorkspaceScreenContent({
     if (!normalizedServerId || !normalizedWorkspaceId || !persistenceKey) {
       return;
     }
-    if (!hasHydratedWorkspaceLayoutStore) {
+    if (!isWorkspaceLayoutReady) {
       return;
     }
 
@@ -1547,7 +1554,7 @@ function WorkspaceScreenContent({
     );
   }, [
     hasHydratedAgents,
-    hasHydratedWorkspaceLayoutStore,
+    isWorkspaceLayoutReady,
     pendingTerminalCreateInput,
     createTerminalMutation.isPending,
     isRouteFocused,
