@@ -13,6 +13,7 @@ interface UseWorkspaceTabLayoutInput {
   metrics: WorkspaceTabLayoutMetrics;
   preserveNaturalWidths?: boolean;
   host?: "main" | "explorer";
+  iconOnlyTabWidth?: number;
 }
 
 interface UseWorkspaceTabLayoutResult {
@@ -40,6 +41,7 @@ export function useWorkspaceTabLayout(
         preserveNaturalWidths: input.preserveNaturalWidths,
         widerTabs,
         iconOnly,
+        iconOnlyTabWidth: input.iconOnlyTabWidth,
       }),
     [
       input.metrics,
@@ -48,6 +50,7 @@ export function useWorkspaceTabLayout(
       resolvedViewportWidth,
       widerTabs,
       iconOnly,
+      input.iconOnlyTabWidth,
     ],
   );
 

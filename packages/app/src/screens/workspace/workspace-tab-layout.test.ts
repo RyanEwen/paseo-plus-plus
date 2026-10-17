@@ -38,25 +38,40 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.items.map((item) => item.width)).toEqual([64, 86]);
     expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
-  it("uses touch-sized icons independent of titles and scrolls when the strip is full", () => {
+  it("uses square desktop icons independent of titles and scrolls when the strip is full", () => {
     const input = {
       viewportWidth: 230,
       tabLabelWidths: [29, 52, 400],
       metrics: { ...metrics, actionsReservedWidth: 36, closeButtonWidth: 20 },
       iconOnly: true,
+      iconOnlyTabWidth: 28,
     };
     const result = computeWorkspaceTabLayout(input);
     expect(result.items).toEqual(
-      Array.from({ length: 3 }, () => ({ width: 50, showLabel: false })),
+      Array.from({ length: 3 }, () => ({ width: 28, showLabel: false })),
     );
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
     expect(
-      computeWorkspaceTabLayout({ ...input, viewportWidth: 150 }).requiresHorizontalScrollFallback,
+      computeWorkspaceTabLayout({ ...input, viewportWidth: 120 }).requiresHorizontalScrollFallback,
     ).toBe(true);
     expect(
       computeWorkspaceTabLayout({ ...input, iconOnly: false }).items.some((item) => item.showLabel),
     ).toBe(true);
+  });
+  it("keeps icon-only tabs touch-sized on compact layouts without label or close-button allowance", () => {
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 240,
+      tabLabelWidths: [400, 800],
+      metrics: { ...metrics, actionsReservedWidth: 44, closeButtonWidth: 44 },
+      iconOnly: true,
+      iconOnlyTabWidth: 44,
+    });
+    expect(result.items).toEqual([
+      { width: 44, showLabel: false },
+      { width: 44, showLabel: false },
+    ]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
   it("keeps short desktop tab names at the fork minimum width", () => {
     const result = computeWorkspaceTabLayout({

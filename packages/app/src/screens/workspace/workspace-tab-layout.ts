@@ -29,6 +29,7 @@ export interface WorkspaceTabLayoutInput {
   /** Raise only the title-width ceiling; short tabs and overflow behavior stay content-driven. */
   widerTabs?: boolean;
   iconOnly?: boolean;
+  iconOnlyTabWidth?: number;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -88,7 +89,7 @@ export function computeWorkspaceTabLayout(
     input.metrics.closeButtonWidth;
   const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
   if (input.iconOnly) {
-    const width = Math.max(44, tabChromeWidth - input.metrics.tabContentGap);
+    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
     return {
       items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
       closeButtonPolicy: "all",
