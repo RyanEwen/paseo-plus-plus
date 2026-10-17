@@ -12,6 +12,7 @@ interface UseWorkspaceTabLayoutInput {
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
   preserveNaturalWidths?: boolean;
+  host?: "main" | "explorer";
 }
 
 interface UseWorkspaceTabLayoutResult {
@@ -24,6 +25,7 @@ export function useWorkspaceTabLayout(
   const { width: viewportWidth } = useWindowDimensions();
   const { settings } = useSettings();
   const widerTabs = settings.paseoPlusPlus.widerWorkspaceTabs;
+  const iconOnly = input.host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
   const resolvedViewportWidth =
     typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
       ? input.viewportWidthOverride
@@ -37,6 +39,7 @@ export function useWorkspaceTabLayout(
         metrics: input.metrics,
         preserveNaturalWidths: input.preserveNaturalWidths,
         widerTabs,
+        iconOnly,
       }),
     [
       input.metrics,
@@ -44,6 +47,7 @@ export function useWorkspaceTabLayout(
       input.preserveNaturalWidths,
       resolvedViewportWidth,
       widerTabs,
+      iconOnly,
     ],
   );
 

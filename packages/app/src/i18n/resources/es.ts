@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Pestañas solo con iconos",
+    iconOnlyHint:
+      "Mostrar solo iconos en las pestañas de la barra lateral del Explorador. Los nombres siguen disponibles en las ayudas emergentes.",
+  },
   settingsSync: {
     title: "Sincronización de ajustes",
     hint: "Sincroniza las preferencias y la visibilidad de la barra lateral con un host elegido. Los filtros de host/proyecto, el orden de espacios y los grupos contraídos siguen siendo locales. Al cambiar se cargan los ajustes antes de editarlos.",

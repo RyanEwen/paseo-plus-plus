@@ -1,5 +1,10 @@
 export const MIN_WORKSPACE_TAB_WIDTH = 96;
 
+export function workspaceTabMinimumWidth(host: "main" | "explorer", compact: boolean): number {
+  if (host === "explorer") return compact ? 44 : 64;
+  return compact ? 120 : MIN_WORKSPACE_TAB_WIDTH;
+}
+
 export type WorkspaceTabCloseButtonPolicy = "all";
 
 export interface WorkspaceTabLayoutMetrics {
@@ -23,6 +28,7 @@ export interface WorkspaceTabLayoutInput {
   preserveNaturalWidths?: boolean;
   /** Raise only the title-width ceiling; short tabs and overflow behavior stay content-driven. */
   widerTabs?: boolean;
+  iconOnly?: boolean;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -81,6 +87,14 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
   const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
+  if (input.iconOnly) {
+    const width = Math.max(44, tabChromeWidth - input.metrics.tabContentGap);
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      closeButtonPolicy: "all",
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );

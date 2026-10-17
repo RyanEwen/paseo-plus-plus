@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "アイコンのみのタブ",
+    iconOnlyHint:
+      "エクスプローラーのサイドバータブにアイコンのみを表示します。タブ名はツールチップで確認できます。",
+  },
   settingsSync: {
     title: "設定の同期",
     hint: "選択したホストでアプリ設定とサイドバー項目の表示を同期します。ホスト・プロジェクトの絞り込み、ワークスペースの順序、折りたたみは端末に保存します。切り替え後は設定を読み込んでから編集できます。",
