@@ -256,15 +256,7 @@ export function ResizeHandle({
   );
 
   return (
-    <SplitResizePresets
-      style={handleStyle}
-      enabled={showPresets && finePointer}
-      dragging={dragging}
-      direction={direction}
-      sizes={sizes}
-      index={index}
-      onSelect={selectPreset}
-    >
+    <View style={handleStyle}>
       <View testID={testID} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
         {highlighted && (
           <View
@@ -274,14 +266,24 @@ export function ResizeHandle({
           />
         )}
         {finePointer ? (
-          <View
-            role="separator"
-            aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
+          <SplitResizePresets
             style={hitAreaStyle}
-            onPointerDown={handlePointerDown}
-            onPointerEnter={handlePointerEnter}
-            onPointerLeave={handlePointerLeave}
-          />
+            enabled={showPresets}
+            dragging={dragging}
+            direction={direction}
+            sizes={sizes}
+            index={index}
+            onSelect={selectPreset}
+          >
+            <View
+              role="separator"
+              aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
+              style={StyleSheet.absoluteFill}
+              onPointerDown={handlePointerDown}
+              onPointerEnter={handlePointerEnter}
+              onPointerLeave={handlePointerLeave}
+            />
+          </SplitResizePresets>
         ) : (
           <GestureDetector gesture={touchGesture}>
             <View
@@ -295,7 +297,7 @@ export function ResizeHandle({
           </GestureDetector>
         )}
       </View>
-    </SplitResizePresets>
+    </View>
   );
 }
 

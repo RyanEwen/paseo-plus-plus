@@ -56,6 +56,7 @@ export function SplitResizePresets({
         {children}
       </HoverCardTrigger>
       <HoverCardContent
+        anchor="pointer"
         placement={direction === "horizontal" ? "right" : "bottom"}
         testID="workspace-split-presets"
         accessibilityLabel={t("workspace.splits.chooseRatio")}
