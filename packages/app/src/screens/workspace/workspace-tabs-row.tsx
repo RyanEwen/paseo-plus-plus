@@ -1,6 +1,8 @@
 import { useWorkspaceTabSplitMenu } from "./workspace-tab-split-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
+  createContext,
+  useContext,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -93,7 +95,88 @@ import {
 } from "@/components/ui/horizontal-scroll-boundary";
 import { MobileHorizontalScrollGesture } from "@/mobile-panels/horizontal-scroll-gesture";
 import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
+import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import { useSessionStore } from "@/stores/session-store";
+
+interface ExplorerTabDisplayControl {
+  enabled: boolean;
+  disabled: boolean;
+  pending: boolean;
+  failed: boolean;
+  toggle(): void;
+}
+const ExplorerTabDisplayContext = createContext<ExplorerTabDisplayControl | null>(null);
+
+function ExplorerIconOnlyMenuItem({ separator = false }: { separator?: boolean }) {
+  const control = useContext(ExplorerTabDisplayContext);
+  const { t } = useTranslation();
+  if (!control) return null;
+  return (
+    <>
+      {separator ? <ContextMenuSeparator /> : null}
+      <ContextMenuItem
+        selected={control.enabled}
+        showSelectedCheck
+        disabled={control.disabled}
+        status={control.pending ? "pending" : "idle"}
+        tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
+        closeOnSelect={false}
+        onSelect={control.toggle}
+        testID="explorer-icon-only-tabs-menu-item"
+      >
+        {t("explorerTabs.iconOnlyLabel")}
+      </ContextMenuItem>
+    </>
+  );
+}
+
+function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl {
+  const { settings, save, pending, failed, isLoading, error } =
+    useSettingsSave<"explorerIconOnlyTabs">();
+  const iconOnly = host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
+  const toggleIconOnly = useCallback(() => {
+    void save("explorerIconOnlyTabs", (current) => ({
+      paseoPlusPlus: {
+        ...current.paseoPlusPlus,
+        explorerIconOnlyTabs: !current.paseoPlusPlus.explorerIconOnlyTabs,
+      },
+    }));
+  }, [save]);
+  return useMemo<ExplorerTabDisplayControl>(
+    () => ({
+      enabled: iconOnly,
+      disabled: isLoading || error !== null || pending !== null,
+      pending: pending !== null,
+      failed: failed !== null,
+      toggle: toggleIconOnly,
+    }),
+    [iconOnly, isLoading, error, pending, failed, toggleIconOnly],
+  );
+}
+
+function ExplorerTabStripContextMenu({
+  host,
+  control,
+  children,
+}: {
+  host: PaneHost;
+  control: ExplorerTabDisplayControl;
+  children: React.ReactNode;
+}) {
+  if (host !== "explorer") return children;
+  return (
+    <ExplorerTabDisplayContext.Provider value={control}>
+      <ContextMenu>
+        <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
+          {children}
+        </ContextMenuTrigger>
+        <ContextMenuContent width={DROPDOWN_WIDTH} testID="explorer-tab-strip-menu">
+          <ExplorerIconOnlyMenuItem />
+        </ContextMenuContent>
+      </ContextMenu>
+    </ExplorerTabDisplayContext.Provider>
+  );
+}
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -708,7 +791,10 @@ function TabHandleContent({
   );
 
   return (
-    <View style={styles.tabHandle} dataSet={tabHandleDataSet}>
+    <View
+      style={showLabel ? styles.tabHandle : styles.iconOnlyTabHandle}
+      dataSet={tabHandleDataSet}
+    >
       <View style={styles.tabIcon}>
         <WorkspaceTabIcon presentation={presentation} active={isHighlighted} backdrop={backdrop} />
       </View>
@@ -808,17 +894,27 @@ function TabChip({
     () => [
       styles.tab,
       isCompact && styles.compactTab,
+      !showLabel && styles.iconOnlyTab,
       isActiveFocused && styles.tabActive,
       isActive && !isFocused && styles.tabActiveUnfocused,
       !isActive && isHovered && styles.tabHovered,
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
-        minWidth: resolvedTabWidth - (isCompact ? CONTROL_HEIGHTS.field : 0),
-        width: resolvedTabWidth - (isCompact ? CONTROL_HEIGHTS.field : 0),
-        maxWidth: resolvedTabWidth - (isCompact ? CONTROL_HEIGHTS.field : 0),
+        minWidth: resolvedTabWidth - (isCompact && showLabel ? CONTROL_HEIGHTS.field : 0),
+        width: resolvedTabWidth - (isCompact && showLabel ? CONTROL_HEIGHTS.field : 0),
+        maxWidth: resolvedTabWidth - (isCompact && showLabel ? CONTROL_HEIGHTS.field : 0),
       },
     ],
-    [isActive, isActiveFocused, isCompact, isDragging, isFocused, isHovered, resolvedTabWidth],
+    [
+      isActive,
+      isActiveFocused,
+      isCompact,
+      isDragging,
+      isFocused,
+      isHovered,
+      resolvedTabWidth,
+      showLabel,
+    ],
   );
 
   const handleTabPointerEnter = useCallback(() => {
@@ -958,7 +1054,7 @@ function TabChip({
           </View>
         ) : null}
 
-        {isCompact ? (
+        {isCompact && showLabel ? (
           <MobileTabTrailingAccessory
             menuTestIDBase={`workspace-tab-menu-${tab.tabId}`}
             presentationLabel={accessibilityLabel}
@@ -976,6 +1072,7 @@ function TabChip({
           minWidth={splitMenu.pages.length > 0 ? 280 : undefined}
           scrollable={splitMenu.pages.length > 0}
         >
+          <ExplorerIconOnlyMenuItem />
           {splitMenu.trigger}
           {menuEntries.map((entry) =>
             entry.kind === "separator" ? (
@@ -1108,6 +1205,8 @@ function ResolvedWorkspaceTabsRow({
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
+  const explorerDisplay = useExplorerTabDisplay(host);
+  const iconOnly = explorerDisplay.enabled;
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const isCompact = useIsCompactFormFactor();
   const tabScroll = useWorkspaceTabScroll({
@@ -1278,8 +1377,13 @@ function ResolvedWorkspaceTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
+  const iconOnlyTabWidth = useMemo(
+    () => (isCompact ? CONTROL_HEIGHTS.field : buttonControlHeight.xs),
+    [isCompact],
+  );
   const { layout } = useWorkspaceTabLayout({
     host,
+    iconOnlyTabWidth,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
@@ -1337,7 +1441,7 @@ function ResolvedWorkspaceTabsRow({
       isActive,
     }: DraggableRenderItemInfo<ResolvedWorkspaceTabRowItem>) => {
       const shouldShowCloseButton =
-        layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
+        !iconOnly && layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
       const layoutItem = layout.items[index] ?? null;
       const resolvedTabWidth = layoutItem?.width ?? 150;
       const showLabel = layoutItem?.showLabel ?? true;
@@ -1381,6 +1485,7 @@ function ResolvedWorkspaceTabsRow({
     [
       activeDragTabId,
       isFocused,
+      iconOnly,
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,
@@ -1539,7 +1644,13 @@ function ResolvedWorkspaceTabsRow({
     </View>
   );
 
-  return <RenderProfile id="WorkspaceTabsRow">{row}</RenderProfile>;
+  return (
+    <RenderProfile id="WorkspaceTabsRow">
+      <ExplorerTabStripContextMenu host={host} control={explorerDisplay}>
+        {row}
+      </ExplorerTabStripContextMenu>
+    </RenderProfile>
+  );
 }
 function ResolvedWorkspaceTabChip({
   serverId,
@@ -1768,6 +1879,15 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     overflow: "visible",
     marginHorizontal: TAB_CHIP_GAP / 2,
+  },
+  stripContextHost: { flex: 1, minWidth: 0 },
+  iconOnlyTab: { paddingHorizontal: 0, justifyContent: "center" },
+  iconOnlyTabHandle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flex: 1,
+    minWidth: 0,
   },
   tabHandle: {
     flexDirection: "row",

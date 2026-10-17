@@ -27,6 +27,7 @@ export interface WorkspaceTabLayoutInput {
   /** Compact strips keep readable content widths and scroll instead of compressing tabs. */
   preserveNaturalWidths?: boolean;
   iconOnly?: boolean;
+  iconOnlyTabWidth?: number;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -85,7 +86,7 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
   if (input.iconOnly) {
-    const width = Math.max(44, tabChromeWidth - input.metrics.tabContentGap);
+    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
     return {
       items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
       closeButtonPolicy: "all",
