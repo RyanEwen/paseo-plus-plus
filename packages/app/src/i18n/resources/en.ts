@@ -2,7 +2,7 @@ export const en = {
   explorerTabs: {
     iconOnlyLabel: "Icon-only tabs",
     iconOnlyHint:
-      "Show only icons in the Explorer sidebar tab strip. Tab names remain available in tooltips.",
+      "Right-click an Explorer tab or the empty tab strip and choose Icon-only tabs. Tab names remain available in tooltips.",
   },
   settingsSync: {
     title: "Settings sync",

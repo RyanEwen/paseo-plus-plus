@@ -4,7 +4,8 @@ import { pluginSettings } from "./plugin-settings";
 export const zhCN: TranslationResources = {
   explorerTabs: {
     iconOnlyLabel: "仅图标标签页",
-    iconOnlyHint: "在资源管理器侧栏的标签栏中仅显示图标。标签名称仍会显示在工具提示中。",
+    iconOnlyHint:
+      "右键点击资源管理器标签页或标签栏的空白区域，选择“仅图标标签页”。标签名称仍会显示在工具提示中。",
   },
   settingsSync: {
     title: "设置同步",

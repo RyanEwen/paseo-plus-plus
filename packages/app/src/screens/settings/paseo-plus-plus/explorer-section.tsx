@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   SettingsCard,
   SettingsSection,
+  SettingsRow,
   SettingsSelect,
   SettingsSwitch,
 } from "@/components/settings";
@@ -14,7 +15,6 @@ import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 
 type ExplorerSetting =
   | "autoOpenExplorerSidebar"
-  | "explorerIconOnlyTabs"
   | "explorerDiffScope"
   | "workingDiffDefaultComparison"
   | "workingDiffAutoSwitch";
@@ -62,10 +62,7 @@ export function ExplorerSection() {
 
   /** Keep each control's attempted value outside durable settings until its save succeeds. */
   const saveSetting = useCallback(
-    async <Key extends Exclude<ExplorerSetting, "explorerIconOnlyTabs">>(
-      key: Key,
-      value: AppSettings[Key],
-    ) => {
+    async <Key extends ExplorerSetting>(key: Key, value: AppSettings[Key]) => {
       const updates: Partial<AppSettings> = {};
       updates[key] = value;
       await save(key, updates);
@@ -82,13 +79,6 @@ export function ExplorerSection() {
     };
   }
 
-  const changeIconOnly = useCallback(
-    (value: boolean) =>
-      void save("explorerIconOnlyTabs", (current) => ({
-        paseoPlusPlus: { ...current.paseoPlusPlus, explorerIconOnlyTabs: value },
-      })),
-    [save],
-  );
   const changeAutoOpen = useCallback(
     (value: boolean) => void saveSetting("autoOpenExplorerSidebar", value),
     [saveSetting],
@@ -127,11 +117,9 @@ export function ExplorerSection() {
   return (
     <SettingsSection title={t("settings.layout.explorer.title")}>
       <SettingsCard>
-        <SettingsSwitch
+        <SettingsRow
           label={t("explorerTabs.iconOnlyLabel")}
-          {...feedback("explorerIconOnlyTabs", t("explorerTabs.iconOnlyHint"))}
-          value={settings.paseoPlusPlus.explorerIconOnlyTabs}
-          onValueChange={changeIconOnly}
+          hint={t("explorerTabs.iconOnlyHint")}
         />
         {isWeb ? (
           <SettingsSwitch

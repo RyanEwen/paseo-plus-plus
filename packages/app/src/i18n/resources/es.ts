@@ -5,7 +5,7 @@ export const es: TranslationResources = {
   explorerTabs: {
     iconOnlyLabel: "Pestañas solo con iconos",
     iconOnlyHint:
-      "Mostrar solo iconos en las pestañas de la barra lateral del Explorador. Los nombres siguen disponibles en las ayudas emergentes.",
+      "Haz clic derecho en una pestaña del Explorador o en el espacio vacío de la barra y elige Pestañas solo con iconos. Los nombres siguen disponibles en las ayudas emergentes.",
   },
   settingsSync: {
     title: "Sincronización de ajustes",

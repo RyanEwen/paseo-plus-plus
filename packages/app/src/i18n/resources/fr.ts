@@ -5,7 +5,7 @@ export const fr: TranslationResources = {
   explorerTabs: {
     iconOnlyLabel: "Onglets avec icônes seules",
     iconOnlyHint:
-      "Afficher uniquement les icônes dans les onglets de la barre latérale Explorateur. Les noms restent disponibles dans les infobulles.",
+      "Faites un clic droit sur un onglet de l’Explorateur ou sur la zone vide de la barre, puis choisissez Onglets avec icônes seules. Les noms restent disponibles dans les infobulles.",
   },
   settingsSync: {
     title: "Synchronisation des paramètres",
