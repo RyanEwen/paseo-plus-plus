@@ -80,7 +80,7 @@ New preferences start in **Summary**. Choose **Full detail** in **Settings → C
 
 ### Workspace tab widths
 
-Main-pane desktop tabs have a 96 px minimum width, so short names such as Dev stay comfortable to select. The strip scrolls when the available space cannot fit that minimum. Compact workspace tabs retain their existing larger touch layout. Explorer sidebar tabs use a smaller minimum; enable icon-only tabs in Settings → Sidebar → Explorer or the strip’s context menu to use compact square tabs.
+Main-pane desktop tabs have a 96 px minimum width, so short names such as Dev stay comfortable to select. The strip scrolls when the available space cannot fit that minimum. Compact workspace tabs retain their existing larger touch layout. Explorer sidebar tabs use a smaller minimum; enable icon-only tabs from an Explorer tab or the strip’s context menu to use compact square tabs.
 
 ### Split layout controls
 

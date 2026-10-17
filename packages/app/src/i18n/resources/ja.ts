@@ -5,7 +5,7 @@ export const ja: TranslationResources = {
   explorerTabs: {
     iconOnlyLabel: "アイコンのみのタブ",
     iconOnlyHint:
-      "エクスプローラーのサイドバータブにアイコンのみを表示します。タブ名はツールチップで確認できます。",
+      "エクスプローラーのタブまたはタブバーの空白を右クリックし、「アイコンのみのタブ」を選択します。タブ名はツールチップで確認できます。",
   },
   settingsSync: {
     title: "設定の同期",

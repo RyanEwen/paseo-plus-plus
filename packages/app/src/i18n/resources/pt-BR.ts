@@ -5,7 +5,7 @@ export const ptBR: TranslationResources = {
   explorerTabs: {
     iconOnlyLabel: "Abas somente com ícones",
     iconOnlyHint:
-      "Mostrar apenas ícones nas abas da barra lateral do Explorador. Os nomes continuam disponíveis nas dicas.",
+      "Clique com o botão direito em uma aba do Explorador ou no espaço vazio da barra e escolha Abas somente com ícones. Os nomes continuam disponíveis nas dicas.",
   },
   settingsSync: {
     title: "Sincronização de configurações",

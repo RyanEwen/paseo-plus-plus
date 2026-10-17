@@ -5,7 +5,7 @@ export const ko: TranslationResources = {
   explorerTabs: {
     iconOnlyLabel: "아이콘 전용 탭",
     iconOnlyHint:
-      "탐색기 사이드바 탭에 아이콘만 표시합니다. 탭 이름은 툴팁에서 확인할 수 있습니다.",
+      "탐색기 탭이나 탭 표시줄의 빈 공간을 마우스 오른쪽 버튼으로 클릭한 다음 아이콘 전용 탭을 선택하세요. 탭 이름은 툴팁에서 확인할 수 있습니다.",
   },
   settingsSync: {
     title: "설정 동기화",
