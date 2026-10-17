@@ -99,7 +99,7 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
     copyMask: undefined,
     previewLines: 1,
     previewExpanded: disclosure.expanded,
-    bodyViewportHeight: rows.availableHeight,
+    bodyViewportHeight: rows.bodyViewportHeight,
     pinned,
     actionRowBackdrop: backdrop,
     onPreviewOverflowChange: disclosure.report,

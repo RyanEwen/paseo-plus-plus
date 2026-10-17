@@ -1183,6 +1183,53 @@ for (const viewport of [
       await expectNearBottom(page);
       const expanded = await longRow.boundingBox();
       expect(expanded!.height).toBeLessThan(viewport.height * 0.6);
+      const expandedBody = longRow.getByTestId("user-message-body-scroll");
+      const innerOverflow = await expandedBody.evaluate(
+        (body) => body.scrollHeight - body.clientHeight,
+      );
+      expect(innerOverflow).toBeGreaterThan(0);
+      await expandedBody.hover();
+      await page.mouse.wheel(0, innerOverflow);
+      await expect
+        .poll(() =>
+          expandedBody.evaluate((body) => {
+            const text = body.querySelector('[data-testid="user-message-text"]')!;
+            const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+            const marker = "END OF STICKY PROMPT";
+            let node;
+            while ((node = walker.nextNode())) {
+              const offset = node.textContent?.indexOf(marker) ?? -1;
+              if (offset < 0) continue;
+              const range = document.createRange();
+              range.setStart(node, offset);
+              range.setEnd(node, offset + marker.length);
+              const end = range.getBoundingClientRect();
+              const bounds = body.getBoundingClientRect();
+              const clip = text
+                .closest('[data-testid="text-preview-clip"]')!
+                .getBoundingClientRect();
+              const pane = body
+                .closest('[data-testid="agent-chat-scroll"]')!
+                .getBoundingClientRect();
+              const top = Math.max(bounds.top, clip.top, pane.top, 0);
+              const bottom = Math.min(bounds.bottom, clip.bottom, pane.bottom, window.innerHeight);
+              const left = Math.max(bounds.left, clip.left, pane.left, 0);
+              const right = Math.min(bounds.right, clip.right, pane.right, window.innerWidth);
+              return (
+                body.scrollTop + body.clientHeight >= body.scrollHeight - 2 &&
+                end.width > 0 &&
+                end.height > 0 &&
+                end.top >= top - 1 &&
+                end.bottom <= bottom + 1 &&
+                end.left >= left - 1 &&
+                end.right <= right + 1
+              );
+            }
+            return false;
+          }),
+        )
+        .toBe(true);
+      await expectNearBottom(page);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/expanded-${viewport.width}.png`,
       });
