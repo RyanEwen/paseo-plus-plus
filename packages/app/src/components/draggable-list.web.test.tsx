@@ -466,6 +466,7 @@ describe("accordion expansion scroll anchoring", () => {
     let nextFrame = 0;
     let layoutTop = 900;
     let offset = 600;
+    let maxOffset = Infinity;
     let cancelled: ProjectExpansionFollowing | undefined;
     const scrolls: number[] = [];
     const toggle = vi.fn();
@@ -475,7 +476,7 @@ describe("accordion expansion scroll anchoring", () => {
         toggle,
         measure: (receive) => receive({ headerTop: 40 + layoutTop - offset, viewportTop: 40 }),
         scrollBy: (delta) => {
-          offset = Math.max(0, offset + delta);
+          offset = Math.min(maxOffset, Math.max(0, offset + delta));
           scrolls.push(offset);
         },
         requestFrame: (callback) => {
@@ -487,8 +488,10 @@ describe("accordion expansion scroll anchoring", () => {
         },
       });
     };
-    const frame = (time: number, top: number) => {
+    const frame = (time: number, top: number, maxScroll = Infinity) => {
       layoutTop = top;
+      maxOffset = maxScroll;
+      offset = Math.min(offset, maxOffset);
       const callbacks = [...frames.values()];
       frames.clear();
       callbacks.forEach((callback) => callback(time));
@@ -504,27 +507,36 @@ describe("accordion expansion scroll anchoring", () => {
     };
   }
 
-  it("keeps the clicked project at its original viewport position throughout an upper collapse", () => {
+  it("brings the clicked project to the viewport top through the collapse without scrolling to list start", () => {
     const run = scenario();
     run.begin();
     expect(run.toggle).toHaveBeenCalledTimes(1);
     run.frame(0, 900);
     run.frame(25, 800);
-    expect(run.top()).toBe(300);
+    expect(run.top()).toBe(225);
     run.frame(50, 600);
-    expect(run.top()).toBe(300);
+    expect(run.top()).toBe(150);
     run.frame(100, 350);
-    expect(run.top()).toBe(300);
-    expect(run.scrolls).toEqual([500, 300, 50]);
+    expect(run.top()).toBe(0);
+    expect(run.scrolls).toEqual([575, 450, 350]);
     expect(run.frames.size).toBe(0);
   });
 
-  it("keeps the header visible at the scroll boundary and handles reduced motion in one frame", () => {
+  it("aligns the selected header immediately when reduced motion disables animation", () => {
     const run = scenario(0);
     run.begin();
     run.frame(0, 100);
-    expect(run.scrolls).toEqual([0]);
-    expect(run.top()).toBe(100);
+    expect(run.scrolls).toEqual([100]);
+    expect(run.top()).toBe(0);
+    expect(run.frames.size).toBe(0);
+  });
+
+  it("retains a visible header when the content end prevents top alignment", () => {
+    const run = scenario(0);
+    run.begin();
+    run.frame(0, 350, 120);
+    expect(run.scrolls).toEqual([120]);
+    expect(run.top()).toBe(230);
     expect(run.frames.size).toBe(0);
   });
 
@@ -535,7 +547,7 @@ describe("accordion expansion scroll anchoring", () => {
     run.frame(25, 800);
     run.cancel();
     run.frame(50, 600);
-    expect(run.scrolls).toEqual([500]);
+    expect(run.scrolls).toEqual([575]);
     expect(run.frames.size).toBe(0);
   });
 
