@@ -24,7 +24,7 @@ flipping every menu in the app to sheets at once is not a change anyone can revi
 when you have actually looked at it on a phone.
 
 `ContextMenu` is the exception: it defaults to `compactMode="sheet"` and enables native long press.
-Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead.
+Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead. Workspace tabs keep their context menu on the tab itself; compact tabs do not need a separate menu button.
 
 ## When the items differ per form factor
 
@@ -38,10 +38,9 @@ callbacks, so the two can't drift.
 ## HTTP link destinations
 
 Use the owning workspace for internal link destinations. When the built-in desktop browser is
-available, workspace HTTP(S) links open a new browser tab and offer an external-browser action
-in their existing context menus. The **Workspace links** toggle controls primary activation across
-terminal, chat, Git, and service links. Keep explicit external actions independent of that
-preference. Workspace service links follow this preference rather than the global service URL prompt.
+available, workspace chat HTTP(S) links open a new browser tab and offer an external-browser action
+in their context menu. Other workspace-associated links keep their primary action and offer
+**Open in Paseo browser** through the same menu engine.
 
 Native apps, plain browser clients, and links outside a workspace open externally without an
 internal destination chooser. Do not depend on optional browser plugins for this behavior. Keep

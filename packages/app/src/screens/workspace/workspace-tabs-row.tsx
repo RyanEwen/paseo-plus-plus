@@ -94,7 +94,6 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 import { MobileHorizontalScrollGesture } from "@/mobile-panels/horizontal-scroll-gesture";
-import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -900,9 +899,9 @@ function TabChip({
       !isActive && isHovered && styles.tabHovered,
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
-        minWidth: resolvedTabWidth - (isCompact && showLabel ? CONTROL_HEIGHTS.field : 0),
-        width: resolvedTabWidth - (isCompact && showLabel ? CONTROL_HEIGHTS.field : 0),
-        maxWidth: resolvedTabWidth - (isCompact && showLabel ? CONTROL_HEIGHTS.field : 0),
+        minWidth: resolvedTabWidth,
+        width: resolvedTabWidth,
+        maxWidth: resolvedTabWidth,
       },
     ],
     [
@@ -1052,16 +1051,6 @@ function TabChip({
               }}
             </Pressable>
           </View>
-        ) : null}
-
-        {isCompact && showLabel ? (
-          <MobileTabTrailingAccessory
-            menuTestIDBase={`workspace-tab-menu-${tab.tabId}`}
-            presentationLabel={accessibilityLabel}
-            menuEntries={menuEntries}
-            splitMenu={splitMenu}
-            touchSized
-          />
         ) : null}
 
         <ContextMenuContent
@@ -1245,7 +1234,7 @@ function ResolvedWorkspaceTabsRow({
       tabIconWidth: TAB_ICON_WIDTH,
       tabContentGap: TAB_CONTENT_GAP,
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
-      closeButtonWidth: isCompact ? CONTROL_HEIGHTS.field : TAB_CLOSE_BUTTON_RESERVED_WIDTH,
+      closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
     [
       exitFocusModeWidth,
