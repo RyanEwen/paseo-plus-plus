@@ -128,12 +128,14 @@ export async function captureStickyExample(page: Page, directory: string) {
     await expectTimelinePromptVisible(page, prompt);
     await expect(page.getByText("Paragraph 30.", { exact: false }).last()).toBeVisible();
     await scrollTimelinePastPrompt(page, prompt);
-    const sticky = page.getByTestId("sticky-user-message");
+    const sticky = page
+      .getByTestId("agent-chat-scroll")
+      .locator('[data-actual-prompt-row][data-prompt-pinned="true"]');
     await expect(sticky).toContainText(prompt);
     await recordSettingsExample(page, {
       id: "sticky-user-prompts",
       directory,
-      regions: [sticky],
+      regions: [sticky.locator("[data-actual-prompt-content]")],
       description:
         "The actual single-copy pinned request above a scrolled response. Physical native paint is not tested.",
     });
