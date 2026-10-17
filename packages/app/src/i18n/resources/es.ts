@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Pestañas solo con iconos",
+    iconOnlyHint:
+      "Haz clic derecho en una pestaña del Explorador o en el espacio vacío de la barra y elige Pestañas solo con iconos. Los nombres siguen disponibles en las ayudas emergentes.",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",

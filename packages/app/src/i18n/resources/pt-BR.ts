@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Abas somente com ícones",
+    iconOnlyHint:
+      "Clique com o botão direito em uma aba do Explorador ou no espaço vazio da barra e escolha Abas somente com ícones. Os nomes continuam disponíveis nas dicas.",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",

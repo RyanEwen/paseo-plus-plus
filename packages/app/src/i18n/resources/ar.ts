@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "علامات تبويب بالأيقونات فقط",
+    iconOnlyHint:
+      "انقر بزر الماوس الأيمن على علامة تبويب للمستكشف أو المساحة الفارغة في شريط علامات التبويب واختر علامات تبويب بالأيقونات فقط. تظل الأسماء متاحة في تلميحات الأدوات.",
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",

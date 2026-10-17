@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "アイコンのみのタブ",
+    iconOnlyHint:
+      "エクスプローラーのタブまたはタブバーの空白を右クリックし、「アイコンのみのタブ」を選択します。タブ名はツールチップで確認できます。",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",

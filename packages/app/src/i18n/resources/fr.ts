@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Onglets avec icônes seules",
+    iconOnlyHint:
+      "Faites un clic droit sur un onglet de l’Explorateur ou sur la zone vide de la barre, puis choisissez Onglets avec icônes seules. Les noms restent disponibles dans les infobulles.",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",

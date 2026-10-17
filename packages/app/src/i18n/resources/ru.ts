@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Вкладки только со значками",
+    iconOnlyHint:
+      "Щёлкните правой кнопкой по вкладке проводника или пустому месту на панели и выберите «Вкладки только со значками». Названия доступны во всплывающих подсказках.",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",

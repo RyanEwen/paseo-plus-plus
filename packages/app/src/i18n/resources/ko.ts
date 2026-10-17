@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "아이콘 전용 탭",
+    iconOnlyHint:
+      "탐색기 탭이나 탭 표시줄의 빈 공간을 마우스 오른쪽 버튼으로 클릭한 다음 아이콘 전용 탭을 선택하세요. 탭 이름은 툴팁에서 확인할 수 있습니다.",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",

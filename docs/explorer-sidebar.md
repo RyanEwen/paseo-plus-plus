@@ -74,7 +74,7 @@ The persisted layout still contains the Explorer pane so tabs survive reloads. T
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
+Explorer uses the shared workspace tab row and ordinary tab context menus. Explorer tabs use a smaller minimum width than main-pane tabs. Right-click an Explorer tab or empty tab-strip space and choose **Icon-only tabs**. Icons use square cells; labels remain available through tooltips and accessible names. Sidebar settings describe the option; the context menus own its control. Files and Changes
 hide their close buttons through the panel manifest; close them from the tab context menu.
 Other tabs reveal the close control on hover. The + menu opens compatible panels in the dock and
 omits Agent and terminal profiles. Agents and terminals can still be dragged into Explorer.

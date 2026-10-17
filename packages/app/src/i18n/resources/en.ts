@@ -1,4 +1,9 @@
 export const en = {
+  explorerTabs: {
+    iconOnlyLabel: "Icon-only tabs",
+    iconOnlyHint:
+      "Right-click an Explorer tab or the empty tab strip and choose Icon-only tabs. Tab names remain available in tooltips.",
+  },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

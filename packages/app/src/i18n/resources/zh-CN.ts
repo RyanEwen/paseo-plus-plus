@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "仅图标标签页",
+    iconOnlyHint:
+      "右键点击资源管理器标签页或标签栏的空白区域，选择“仅图标标签页”。标签名称仍会显示在工具提示中。",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",

@@ -1,4 +1,10 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 export const MIN_WORKSPACE_TAB_WIDTH = 96;
+
+export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
+  if (host === "explorer") return compact ? 44 : 64;
+  return compact ? 120 : MIN_WORKSPACE_TAB_WIDTH;
+}
 
 export type WorkspaceTabCloseButtonPolicy = "all";
 
@@ -19,6 +25,8 @@ export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
   tabLabelWidths: number[];
   metrics: WorkspaceTabLayoutMetrics;
+  iconOnly?: boolean;
+  iconOnlyTabWidth?: number;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -76,6 +84,14 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  if (input.iconOnly) {
+    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      closeButtonPolicy: "all",
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
   );

@@ -17,6 +17,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Switch } from "@/components/ui/switch";
+import { SettingsCard, SettingsRow } from "@/components/settings";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import {
@@ -179,10 +180,25 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
   );
 }
 
+function ExplorerTabsCard(): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <SettingsSection title={t("settings.layout.openInSidePane.destinations.explorer")}>
+      <SettingsCard>
+        <SettingsRow
+          label={t("explorerTabs.iconOnlyLabel")}
+          hint={t("explorerTabs.iconOnlyHint")}
+        />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
 /** Settings > Sidebar: one card per section. The footer's bottom line is fixed and not listed. */
 export function SidebarNavSection(): ReactElement {
   return (
     <>
+      <ExplorerTabsCard />
       <SidebarItemsCard section="header" />
       <SidebarItemsCard section="footer" />
     </>

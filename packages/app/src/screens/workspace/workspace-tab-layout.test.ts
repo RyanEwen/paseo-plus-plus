@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MIN_WORKSPACE_TAB_WIDTH,
+  workspaceTabMinimumWidth,
   computeWorkspaceTabLayout,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
@@ -19,6 +20,65 @@ const metrics = {
 };
 
 describe("computeWorkspaceTabLayout", () => {
+  it("uses square desktop icons independent of titles and scrolls when the strip is full", () => {
+    const input = {
+      viewportWidth: 230,
+      tabLabelWidths: [29, 52, 400],
+      metrics: { ...metrics, actionsReservedWidth: 36, closeButtonWidth: 20 },
+      iconOnly: true,
+      iconOnlyTabWidth: 28,
+    };
+    const result = computeWorkspaceTabLayout(input);
+    expect(result.items).toEqual(
+      Array.from({ length: 3 }, () => ({ width: 28, showLabel: false })),
+    );
+    expect(result.closeButtonPolicy).toBe("all");
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(
+      computeWorkspaceTabLayout({ ...input, viewportWidth: 120 }).requiresHorizontalScrollFallback,
+    ).toBe(true);
+    expect(
+      computeWorkspaceTabLayout({ ...input, iconOnly: false }).items.some((item) => item.showLabel),
+    ).toBe(true);
+  });
+  it("exempts Explorer from workspace minimum widths on wide and compact layouts", () => {
+    expect(workspaceTabMinimumWidth("main", false)).toBe(96);
+    expect(workspaceTabMinimumWidth("main", true)).toBe(120);
+    expect(workspaceTabMinimumWidth("explorer", false)).toBe(64);
+    expect(workspaceTabMinimumWidth("explorer", true)).toBe(44);
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 220,
+      tabLabelWidths: [29, 52],
+      metrics: {
+        ...metrics,
+        actionsReservedWidth: 36,
+        minTabWidth: workspaceTabMinimumWidth("explorer", false),
+      },
+    });
+    expect(result.items.map((item) => item.width)).toEqual([64, 86]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+  it("uses touch-sized icons independent of titles and scrolls when the strip is full", () => {
+    const input = {
+      viewportWidth: 230,
+      tabLabelWidths: [29, 52, 400],
+      metrics: { ...metrics, actionsReservedWidth: 36, closeButtonWidth: 20 },
+      iconOnly: true,
+    };
+    const result = computeWorkspaceTabLayout(input);
+    expect(result.items).toEqual(
+      Array.from({ length: 3 }, () => ({ width: 44, showLabel: false })),
+    );
+    expect(result.closeButtonPolicy).toBe("all");
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(
+      computeWorkspaceTabLayout({ ...input, viewportWidth: 150 }).requiresHorizontalScrollFallback,
+    ).toBe(true);
+    expect(
+      computeWorkspaceTabLayout({ ...input, iconOnly: false }).items.some((item) => item.showLabel),
+    ).toBe(true);
+  });
+
   it("keeps short desktop tab names at the minimum width", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 1200,

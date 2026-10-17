@@ -44,6 +44,21 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("defaults icon-only Explorer tabs off and preserves explicit choices", async () => {
+    expect((await loadAppSettingsFromStorage(makeDeps())).explorerIconOnlyTabs).toBe(false);
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    for (const value of [true, false]) {
+      await saveAppSettings({ queryClient, deps, updates: { explorerIconOnlyTabs: value } });
+      expect((await loadAppSettingsFromStorage(deps)).explorerIconOnlyTabs).toBe(value);
+    }
+    const invalid = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ explorerIconOnlyTabs: "yes" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(invalid)).explorerIconOnlyTabs).toBe(false);
+  });
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
