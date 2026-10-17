@@ -80,7 +80,7 @@ New preferences start in **Summary**. Choose **Full detail** in **Settings → C
 
 ### Workspace tab widths
 
-Desktop tabs have a 96 px minimum width, so short names such as Dev stay comfortable to select. The strip scrolls when the available space cannot fit that minimum. Compact tabs retain their existing larger touch layout.
+Desktop tabs have a 96 px minimum width, so short names such as Dev stay comfortable to select. The strip scrolls when the available space cannot fit that minimum. Compact tabs retain their larger touch targets; long-press a tab for its actions, without a separate three-dot button.
 
 ### Split layout controls
 
