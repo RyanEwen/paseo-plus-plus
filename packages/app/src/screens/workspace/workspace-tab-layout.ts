@@ -1,5 +1,10 @@
 export const MIN_WORKSPACE_TAB_WIDTH = 96;
 
+export function workspaceTabMinimumWidth(host: "main" | "explorer", compact: boolean): number {
+  if (host === "explorer") return compact ? 44 : 64;
+  return compact ? 120 : MIN_WORKSPACE_TAB_WIDTH;
+}
+
 export type WorkspaceTabCloseButtonPolicy = "all";
 
 export interface WorkspaceTabLayoutMetrics {
@@ -21,6 +26,7 @@ export interface WorkspaceTabLayoutInput {
   metrics: WorkspaceTabLayoutMetrics;
   /** Compact strips keep readable content widths and scroll instead of compressing tabs. */
   preserveNaturalWidths?: boolean;
+  iconOnly?: boolean;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -78,6 +84,14 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  if (input.iconOnly) {
+    const width = Math.max(44, tabChromeWidth - input.metrics.tabContentGap);
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      closeButtonPolicy: "all",
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
   );

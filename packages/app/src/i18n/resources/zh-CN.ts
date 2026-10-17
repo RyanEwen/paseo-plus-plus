@@ -2,6 +2,10 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "仅图标标签页",
+    iconOnlyHint: "在资源管理器侧栏的标签栏中仅显示图标。标签名称仍会显示在工具提示中。",
+  },
   settingsSync: {
     title: "设置同步",
     hint: "通过所选主机同步应用偏好和侧边栏项目可见性。主机/项目筛选、工作区顺序和折叠分组保留在本地。切换后先加载设置，再允许编辑。",

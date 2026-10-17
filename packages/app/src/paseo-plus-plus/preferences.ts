@@ -5,6 +5,7 @@ const preferencesObject = z.looseObject({
   workspaceChatLinks: z.boolean().catch(true),
   sidebarHostUpdates: z.boolean().catch(true),
   mobileWorkspaceTabs: z.boolean().catch(true),
+  explorerIconOnlyTabs: z.boolean().catch(false),
   splitLayoutPresets: z.boolean().catch(true),
   descriptiveToolCalls: z.boolean().catch(true),
   stickyUserPrompts: z.boolean().catch(true),

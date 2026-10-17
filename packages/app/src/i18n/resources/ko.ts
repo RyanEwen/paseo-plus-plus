@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "아이콘 전용 탭",
+    iconOnlyHint:
+      "탐색기 사이드바 탭에 아이콘만 표시합니다. 탭 이름은 툴팁에서 확인할 수 있습니다.",
+  },
   settingsSync: {
     title: "설정 동기화",
     hint: "선택한 호스트를 통해 앱 환경설정과 사이드바 항목 표시를 동기화합니다. 호스트/프로젝트 필터, 작업공간 순서와 접힌 그룹은 로컬에 유지됩니다. 전환하면 설정을 읽은 후 편집할 수 있습니다.",

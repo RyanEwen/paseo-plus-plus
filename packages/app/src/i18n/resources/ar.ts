@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "علامات تبويب بالأيقونات فقط",
+    iconOnlyHint:
+      "عرض الأيقونات فقط في علامات تبويب الشريط الجانبي للمستكشف. تظل أسماء علامات التبويب متاحة في تلميحات الأدوات.",
+  },
   settingsSync: {
     title: "مزامنة الإعدادات",
     hint: "زامن تفضيلات التطبيق وظهور عناصر الشريط الجانبي عبر مضيف تختاره. تبقى مرشحات المضيف والمشروع وترتيب مساحات العمل والمجموعات المطوية محلية. تُحمّل الإعدادات قبل تحريرها عند التبديل.",

@@ -104,16 +104,18 @@ describe("loadAppSettingsFromStorage", () => {
   );
 
   it.each(Object.keys(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES))(
-    "normalizes missing or malformed %s to on while retaining an explicit off",
+    "normalizes missing or malformed %s to its default while retaining explicit choices",
     async (feature) => {
-      for (const value of [undefined, null, "false", 0, false]) {
+      for (const value of [undefined, null, "false", 0, false, true]) {
         const deps = makeDeps({
           storage: createInMemoryKeyValueStorage({
             [APP_SETTINGS_KEY]: JSON.stringify({ paseoPlusPlus: { [feature]: value } }),
           }),
         });
         const settings = await loadAppSettingsFromStorage(deps);
-        expect(settings.paseoPlusPlus[feature]).toBe(value !== false);
+        expect(settings.paseoPlusPlus[feature]).toBe(
+          typeof value === "boolean" ? value : DEFAULT_PASEO_PLUS_PLUS_PREFERENCES[feature],
+        );
       }
     },
   );
@@ -144,6 +146,7 @@ describe("loadAppSettingsFromStorage", () => {
       workspaceChatLinks: true,
       sidebarHostUpdates: true,
       mobileWorkspaceTabs: true,
+      explorerIconOnlyTabs: false,
       splitLayoutPresets: true,
       descriptiveToolCalls: true,
       stickyUserPrompts: true,
@@ -230,6 +233,7 @@ describe("loadAppSettingsFromStorage", () => {
   it("defaults Explorer preferences and preserves persisted choices", async () => {
     const defaults = await loadAppSettingsFromStorage(makeDeps());
     expect(defaults.autoOpenExplorerSidebar).toBe(false);
+    expect(defaults.paseoPlusPlus.explorerIconOnlyTabs).toBe(false);
     expect(defaults.explorerDiffScope).toBe("all");
     expect(defaults.workingDiffDefaultComparison).toBe("uncommitted");
     expect(defaults.workingDiffAutoSwitch).toBe(false);
@@ -240,6 +244,7 @@ describe("loadAppSettingsFromStorage", () => {
       queryClient,
       updates: {
         autoOpenExplorerSidebar: true,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, explorerIconOnlyTabs: true },
         explorerDiffScope: "single",
         workingDiffDefaultComparison: "base",
         workingDiffAutoSwitch: true,
@@ -248,6 +253,7 @@ describe("loadAppSettingsFromStorage", () => {
     });
     const restored = await loadAppSettingsFromStorage(deps);
     expect(restored.autoOpenExplorerSidebar).toBe(true);
+    expect(restored.paseoPlusPlus.explorerIconOnlyTabs).toBe(true);
     expect(restored.explorerDiffScope).toBe("single");
     expect(restored.workingDiffDefaultComparison).toBe("base");
     expect(restored.workingDiffAutoSwitch).toBe(true);
@@ -258,12 +264,14 @@ describe("loadAppSettingsFromStorage", () => {
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({
           autoOpenExplorerSidebar: "yes",
+          paseoPlusPlus: { explorerIconOnlyTabs: "yes" },
           explorerDiffScope: "future",
         }),
       }),
     });
     const restored = await loadAppSettingsFromStorage(deps);
     expect(restored.autoOpenExplorerSidebar).toBe(false);
+    expect(restored.paseoPlusPlus.explorerIconOnlyTabs).toBe(false);
     expect(restored.explorerDiffScope).toBe("all");
   });
 

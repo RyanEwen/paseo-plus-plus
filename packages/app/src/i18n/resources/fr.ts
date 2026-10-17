@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Onglets avec icônes seules",
+    iconOnlyHint:
+      "Afficher uniquement les icônes dans les onglets de la barre latérale Explorateur. Les noms restent disponibles dans les infobulles.",
+  },
   settingsSync: {
     title: "Synchronisation des paramètres",
     hint: "Synchronisez les préférences et la visibilité des éléments de la barre latérale avec un hôte choisi. Les filtres d’hôte/projet, l’ordre des espaces et les groupes repliés restent locaux. Changer d’hôte charge ses paramètres avant toute modification.",

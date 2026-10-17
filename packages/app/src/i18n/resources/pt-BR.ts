@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Abas somente com ícones",
+    iconOnlyHint:
+      "Mostrar apenas ícones nas abas da barra lateral do Explorador. Os nomes continuam disponíveis nas dicas.",
+  },
   settingsSync: {
     title: "Sincronização de configurações",
     hint: "Sincronize as preferências e a visibilidade da barra lateral por um host escolhido. Filtros de host/projeto, ordem dos espaços e grupos recolhidos continuam locais. A troca carrega as configurações antes de editá-las.",

@@ -1,4 +1,9 @@
 export const en = {
+  explorerTabs: {
+    iconOnlyLabel: "Icon-only tabs",
+    iconOnlyHint:
+      "Show only icons in the Explorer sidebar tab strip. Tab names remain available in tooltips.",
+  },
   settingsSync: {
     title: "Settings sync",
     hint: "Sync app preferences and sidebar item visibility through one chosen host. Host/project filters, workspace order and collapsed groups stay local. Switching loads saved settings before editing.",

@@ -53,7 +53,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabScroll } from "@/screens/workspace/use-workspace-tab-scroll";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import {
-  MIN_WORKSPACE_TAB_WIDTH,
+  workspaceTabMinimumWidth,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
 import {
@@ -1141,14 +1141,21 @@ function ResolvedWorkspaceTabsRow({
       ),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
-      minTabWidth: isCompact ? 120 : MIN_WORKSPACE_TAB_WIDTH,
+      minTabWidth: workspaceTabMinimumWidth(host, isCompact),
       maxTabWidth: isCompact ? 240 : TAB_MAX_WIDTH,
       tabIconWidth: TAB_ICON_WIDTH,
       tabContentGap: TAB_CONTENT_GAP,
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       closeButtonWidth: isCompact ? CONTROL_HEIGHTS.field : TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
-    [exitFocusModeWidth, focusModeEnabled, isCompact, showPaneMaximizeAction, showPaneSplitActions],
+    [
+      exitFocusModeWidth,
+      focusModeEnabled,
+      host,
+      isCompact,
+      showPaneMaximizeAction,
+      showPaneSplitActions,
+    ],
   );
 
   const panePanelKinds = useMemo(() => tabs.map(({ tab }) => tab.kind), [tabs]);
@@ -1272,6 +1279,7 @@ function ResolvedWorkspaceTabsRow({
   }, [tabLabels, tabs, trackSnapshot]);
 
   const { layout } = useWorkspaceTabLayout({
+    host,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
