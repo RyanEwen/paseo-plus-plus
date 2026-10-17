@@ -1,51 +1,126 @@
 import { isWeb } from "@/constants/platform";
 import { resolveActualPromptPin } from "./actual-prompt-pin-model";
 
-/** Original wrapper coordinates survive translation of the one real content node.
- * Message jumps and reading geometry must use this rather than the pinned ink top.
+/** The wrapper stays at the original position while its existing child sticks.
+ * Local offsets inside that child remain valid for jumps, find and reading state.
  */
 export function getOriginalPromptTop(element: HTMLElement): number {
   if (!isWeb) return 0;
-  const row = element.closest<HTMLElement>("[data-history-row-id]");
-  const translatedBody = element.closest("[data-actual-prompt-content]");
-  const translation = translatedBody ? Number(row?.dataset.promptTranslation ?? 0) : 0;
-  return element.getBoundingClientRect().top - translation;
+  const body = element.closest<HTMLElement>("[data-actual-prompt-content]");
+  const row = body?.closest<HTMLElement>("[data-actual-prompt-row]");
+  if (!body || !row) return element.getBoundingClientRect().top;
+  return (
+    row.getBoundingClientRect().top +
+    element.getBoundingClientRect().top -
+    body.getBoundingClientRect().top
+  );
 }
 
-/** Called by the viewport's existing scroll/layout owner, not another scroll listener.
- * Wrappers retain their original flow/virtual measurement; only their real child moves.
+export function getNaturalPromptRowHeight(row: HTMLElement): number {
+  const body = row.matches("[data-actual-prompt-row]")
+    ? row.querySelector<HTMLElement>("[data-actual-prompt-content]")
+    : null;
+  return (body ?? row).getBoundingClientRect().height;
+}
+
+/** Restore natural flow before any successor or reading-anchor measurement. A row
+ * crossing from virtual to normal flow must not retain its old extended interval.
+ */
+export function reconcilePromptFlow(content: HTMLElement, enabled: boolean): void {
+  if (!isWeb) return;
+  for (const row of content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]")) {
+    const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
+    if (!body) continue;
+    row.style.height = enabled ? `${body.getBoundingClientRect().height}px` : "";
+    row.style.removeProperty("margin-bottom");
+  }
+}
+
+export interface PromptLayoutPosition {
+  id: string;
+  top: number;
+}
+
+/** The lane supplies CSS's collision boundary; its negative margin preserves the
+ * natural transcript flow. Virtual rows use layout top, never a transformed parent.
+ * Scrolling only publishes ownership; the browser moves the real message body.
  */
 export function syncActualPromptPin(
   content: HTMLElement,
   viewport: HTMLElement,
   enabled: boolean,
+  virtualPrompts: readonly PromptLayoutPosition[] = [],
+  virtualEnd = 0,
 ): string | null {
   if (!isWeb) return null;
+  reconcilePromptFlow(content, enabled);
   const viewportTop = viewport.getBoundingClientRect().top;
   const rows = Array.from(content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]"));
-  const geometry = rows.map((row) => {
-    const bounds = row.getBoundingClientRect();
-    return {
-      id: row.dataset.historyRowId!,
-      top: bounds.top - viewportTop + viewport.scrollTop,
-      height: bounds.height,
-    };
-  });
+  const geometry = rows.map((row) => ({
+    id: row.dataset.historyRowId!,
+    top: row.getBoundingClientRect().top - viewportTop + viewport.scrollTop,
+    height: getNaturalPromptRowHeight(row),
+  }));
+  const positions = new Map(virtualPrompts.map((row) => [row.id, row.top]));
+  for (const row of geometry) positions.set(row.id, row.top);
+  const ordered = Array.from(positions, ([id, top]) => ({ id, top })).sort((a, b) => a.top - b.top);
+  const auxiliary = content.querySelector<HTMLElement>("[data-stream-auxiliary]");
+  const auxiliaryEnd = auxiliary
+    ? auxiliary.getBoundingClientRect().bottom - viewportTop + viewport.scrollTop
+    : 0;
+  const naturalEnd = Math.max(
+    virtualEnd,
+    auxiliaryEnd,
+    ...Array.from(
+      content.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+      (row) =>
+        row.getBoundingClientRect().top -
+        viewportTop +
+        viewport.scrollTop +
+        getNaturalPromptRowHeight(row),
+    ),
+  );
   const pin = enabled
     ? resolveActualPromptPin(
-        geometry.filter((row) => row.height > 0),
+        ordered.map((row) => ({
+          ...row,
+          height: geometry.find((item) => item.id === row.id)?.height ?? 0,
+        })),
         viewport.scrollTop,
       )
     : null;
   for (const row of rows) {
     const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
     if (!body) continue;
-    const active = row.dataset.historyRowId === pin?.id;
-    const translation = active ? pin!.translateY : 0;
-    row.dataset.promptTranslation = String(translation);
-    row.dataset.promptPinned = active ? "true" : "false";
-    row.style.zIndex = active ? "2" : "";
-    body.style.transform = translation === 0 ? "" : `translateY(${translation}px)`;
+    const own = geometry.find((item) => item.id === row.dataset.historyRowId)!;
+    const index = ordered.findIndex((item) => item.id === own.id);
+    const end = ordered[index + 1]?.top ?? naturalEnd;
+    const height = Math.max(own.height, end - own.top);
+    applyPromptLane(row, body, enabled, own.height, height, row.dataset.historyRowId === pin?.id);
   }
   return pin?.id ?? null;
+}
+
+function applyPromptLane(
+  row: HTMLElement,
+  body: HTMLElement,
+  enabled: boolean,
+  naturalHeight: number,
+  height: number,
+  pinned: boolean,
+): void {
+  row.style.height = enabled ? `${height}px` : "";
+  if (enabled && !row.hasAttribute("data-index"))
+    row.style.marginBottom = `${naturalHeight - height}px`;
+  else row.style.removeProperty("margin-bottom");
+  row.style.pointerEvents = enabled ? "none" : "";
+  row.style.zIndex = enabled ? "2" : "";
+  if (!row.hasAttribute("data-index")) row.style.position = enabled ? "relative" : "";
+  body.style.position = enabled ? "sticky" : "";
+  body.style.top = enabled ? "0px" : "";
+  body.style.flexShrink = "0";
+  body.style.pointerEvents = enabled ? "auto" : "";
+  body.style.transform = "";
+  delete row.dataset.promptTranslation;
+  row.dataset.promptPinned = pinned ? "true" : "false";
 }

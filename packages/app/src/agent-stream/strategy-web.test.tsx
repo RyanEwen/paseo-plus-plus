@@ -77,7 +77,9 @@ function MeasuredTestRow({ item }: { item: StreamItem }) {
     (node: HTMLDivElement | null) => {
       const row = node?.closest<HTMLElement>("[data-history-row-id]");
       if (!row) return;
-      // Model the measured row, independent of presentation wrappers inside it.
+      // Measure the intrinsic message body, not its extended sticky lane.
+      const body = node?.closest<HTMLElement>("[data-actual-prompt-content]");
+      if (body) body.getBoundingClientRect = () => ({ height }) as DOMRect;
       Object.defineProperty(row, "offsetHeight", {
         configurable: true,
         value: height,
@@ -261,9 +263,103 @@ describe("createWebStreamStrategy", () => {
       ),
     );
     expect(
-      (container.querySelector('[data-history-row-id="message-1"]') as HTMLElement).style.transform,
-    ).toBe("translateY(120px)");
+      (container.querySelector('[data-history-row-id="message-1"]') as HTMLElement).style.top,
+    ).toBe("120px");
     expect(row.querySelector("button")!.textContent).toBe("Loaded");
+  });
+
+  it("observes intrinsic bodies in every lane and retires them across handoff and unmount", () => {
+    const observations = new Map<Element, () => void>();
+    const unobserved = new Set<Element>();
+    const disconnected = vi.fn();
+    class BodyObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observations.set(target, () =>
+          this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver),
+        );
+      }
+      unobserve(target: Element) {
+        observations.delete(target);
+        unobserved.add(target);
+      }
+      disconnect() {
+        disconnected();
+      }
+    }
+    vi.stubGlobal("ResizeObserver", BodyObserver);
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const renderRow = (item: StreamItem) => <MeasuredTestRow item={item} />;
+    const input: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [userMessage(0)],
+        historyMounted: [userMessage(1)],
+        liveHead: [userMessage(2)],
+      },
+      boundary: { hasVirtualizedHistory: true, hasMountedHistory: true, hasLiveHead: true },
+      renderers: {
+        renderHistoryVirtualizedRow: renderRow,
+        renderHistoryMountedRow: renderRow,
+        renderLiveHeadRow: renderRow,
+        renderLiveAuxiliary: () => null,
+      },
+      listEmptyComponent: null,
+      viewportRef: React.createRef<StreamViewportHandle>(),
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: () => {},
+      onNearHistoryStart: () => true,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    };
+    const render = (next: StreamRenderInput) => (
+      <ActualPromptRowsProvider enabled scope="agent:epoch" availableHeight={500}>
+        {strategy.render(next)}
+      </ActualPromptRowsProvider>
+    );
+    act(() => root?.render(render(input)));
+    const bodies = [0, 1, 2].map(
+      (index) =>
+        container!.querySelector<HTMLElement>(
+          `[data-history-row-id="message-${index}"] [data-actual-prompt-content]`,
+        )!,
+    );
+    for (const body of bodies) expect(observations.has(body)).toBe(true);
+    const mounted = bodies[1]!;
+    mounted.getBoundingClientRect = () => ({ height: 120 }) as DOMRect;
+    // No React update, outer-container resize or scroll accompanies intrinsic growth.
+    act(() => observations.get(mounted)!());
+    expect(mounted.parentElement!.style.height).toBe("120px");
+    act(() =>
+      root?.render(
+        render({
+          ...input,
+          segments: {
+            historyVirtualized: [userMessage(0), userMessage(1)],
+            historyMounted: [userMessage(2)],
+            liveHead: [],
+          },
+        }),
+      ),
+    );
+    expect(
+      container.querySelector('[data-history-row-id="message-2"] [data-actual-prompt-content]'),
+    ).toBe(bodies[2]);
+    expect(observations.has(bodies[2]!)).toBe(true);
+    act(() => root?.unmount());
+    root = null;
+    for (const body of bodies) expect(unobserved.has(body)).toBe(true);
+    expect(disconnected).toHaveBeenCalled();
   });
 
   it("keeps the timeline width stable with an overlay scrollbar", () => {
@@ -571,7 +667,7 @@ describe("createWebStreamStrategy", () => {
         const rowId = this.dataset.historyRowId;
         // The history row has left the reading edge; the live head is now visible there.
         const top = rowId === "message-1" ? -24 : 0;
-        const height = rowId ? 24 : 500;
+        const height = rowId || this.closest("[data-history-row-id]") ? 24 : 500;
         return { top, left: 0, width: 500, height, bottom: top + height, right: 500 } as DOMRect;
       },
     );
@@ -1684,7 +1780,67 @@ describe("createWebStreamStrategy", () => {
 });
 
 describe("actual web prompt cells", () => {
-  it("moves the real cell while preserving its original jump coordinates and selection node", () => {
+  it("restores natural flow before collecting successors and spans the full unmounted virtual extent", () => {
+    const content = document.createElement("div");
+    const viewport = document.createElement("div");
+    viewport.append(content);
+    viewport.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    viewport.scrollTop = 200;
+    const first = document.createElement("div");
+    first.dataset.actualPromptRow = "true";
+    first.dataset.historyRowId = "first";
+    const body = document.createElement("div");
+    body.dataset.actualPromptContent = "true";
+    first.append(body);
+    let intrinsic = 80;
+    body.getBoundingClientRect = () => ({ height: intrinsic }) as DOMRect;
+    first.getBoundingClientRect = () => ({ top: 80 - viewport.scrollTop }) as DOMRect;
+    const next = document.createElement("div");
+    next.dataset.actualPromptRow = "true";
+    next.dataset.historyRowId = "next";
+    const nextBody = document.createElement("div");
+    nextBody.dataset.actualPromptContent = "true";
+    next.append(nextBody);
+    nextBody.getBoundingClientRect = () => ({ height: 80 }) as DOMRect;
+    next.getBoundingClientRect = () =>
+      ({
+        top:
+          80 +
+          (Number.parseFloat(first.style.height) || intrinsic) +
+          (Number.parseFloat(first.style.marginBottom) || 0) +
+          200 -
+          viewport.scrollTop,
+      }) as DOMRect;
+    content.append(first, next);
+    syncActualPromptPin(content, viewport, true, [], 1200);
+    expect(first.style.height).toBe("280px");
+    expect(first.style.marginBottom).toBe("-200px");
+    intrinsic = 120;
+    syncActualPromptPin(content, viewport, true, [], 1200);
+    expect(next.getBoundingClientRect().top).toBe(200);
+    expect(first.style.height).toBe("320px");
+    expect(first.style.marginBottom).toBe("-200px");
+    expect(next.style.height).toBe("800px");
+    expect(next.style.marginBottom).toBe("-720px");
+    // A virtual-to-normal handoff can carry its old lane height with no flow margin.
+    first.dataset.index = "0";
+    first.style.removeProperty("margin-bottom");
+    syncActualPromptPin(content, viewport, true, [], 1200);
+    delete first.dataset.index;
+    syncActualPromptPin(content, viewport, true, [], 1200);
+    expect(next.getBoundingClientRect().top).toBe(200);
+    const auxiliary = document.createElement("div");
+    auxiliary.dataset.streamAuxiliary = "true";
+    auxiliary.getBoundingClientRect = () => ({ bottom: 1400 - viewport.scrollTop }) as DOMRect;
+    content.append(auxiliary);
+    syncActualPromptPin(content, viewport, true, [], 1200);
+    expect(next.style.height).toBe("1000px");
+    syncActualPromptPin(content, viewport, false);
+    expect(first.style.height).toBe("");
+    expect(first.style.marginBottom).toBe("");
+  });
+
+  it("gives the same cell a browser-owned sticky lane with original jump coordinates", () => {
     const viewport = document.createElement("div");
     const content = document.createElement("div");
     viewport.appendChild(content);
@@ -1709,19 +1865,31 @@ describe("actual web prompt cells", () => {
     const bounds = (top: number) => ({ top, height: 80, width: 300 });
     source.getBoundingClientRect = () => bounds(180 - viewport.scrollTop) as DOMRect;
     next.getBoundingClientRect = () => bounds(500 - viewport.scrollTop) as DOMRect;
-    text.getBoundingClientRect = () =>
-      bounds(180 - viewport.scrollTop + Number(source.dataset.promptTranslation ?? 0)) as DOMRect;
+    body.getBoundingClientRect = () =>
+      bounds(
+        Math.min(420 - viewport.scrollTop, Math.max(100, 180 - viewport.scrollTop)),
+      ) as DOMRect;
+    nextBody.getBoundingClientRect = () => bounds(500 - viewport.scrollTop) as DOMRect;
+    text.getBoundingClientRect = body.getBoundingClientRect;
     try {
       viewport.scrollTop = 200;
       expect(syncActualPromptPin(content, viewport, true)).toBe("old");
-      expect(body.style.transform).toBe("translateY(120px)");
+      expect(body.style.position).toBe("sticky");
+      expect(body.style.top).toBe("0px");
+      expect(body.style.transform).toBe("");
+      expect(source.style.height).toBe("320px");
+      expect(source.style.marginBottom).toBe("-240px");
+      expect(source.style.pointerEvents).toBe("none");
+      expect(body.style.pointerEvents).toBe("auto");
       expect(getOriginalPromptTop(text)).toBe(-20);
       expect(getOriginalPromptTop(source)).toBe(-20);
       expect(content.querySelectorAll("span")).toHaveLength(1);
       expect(source.firstChild?.firstChild).toBe(text);
       viewport.scrollTop = 350;
       syncActualPromptPin(content, viewport, true);
-      expect(body.style.transform).toBe("translateY(240px)");
+      expect(body.getBoundingClientRect().top).toBe(70);
+      expect(getOriginalPromptTop(text)).toBe(-170);
+      expect(body.style.transform).toBe("");
       viewport.scrollTop = 400;
       expect(syncActualPromptPin(content, viewport, true)).toBe("next");
       expect(body.style.transform).toBe("");
@@ -1730,9 +1898,60 @@ describe("actual web prompt cells", () => {
       expect(nextBody.style.transform).toBe("");
       expect(source.firstChild?.firstChild).toBe(text);
       expect(syncActualPromptPin(content, viewport, false)).toBeNull();
+      expect(body.style.position).toBe("");
+      expect(source.style.height).toBe("");
+      expect(source.style.marginBottom).toBe("");
     } finally {
       viewport.remove();
     }
+  });
+
+  it("ends a retained virtual prompt lane at an unmounted successor without measuring the lane", () => {
+    const viewport = document.createElement("div");
+    const content = document.createElement("div");
+    const row = document.createElement("div");
+    const body = document.createElement("div");
+    row.dataset.historyRowId = "old";
+    row.dataset.actualPromptRow = "";
+    row.dataset.index = "0";
+    row.style.position = "absolute";
+    row.style.top = "80px";
+    body.dataset.actualPromptContent = "";
+    row.append(body);
+    content.append(row);
+    viewport.append(content);
+    viewport.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    row.getBoundingClientRect = () =>
+      ({
+        top: 180 - viewport.scrollTop,
+        height: Number.parseFloat(row.style.height) || 80,
+      }) as DOMRect;
+    body.getBoundingClientRect = () => ({ top: 100, height: 80 }) as DOMRect;
+    viewport.scrollTop = 200;
+    expect(
+      syncActualPromptPin(content, viewport, true, [
+        { id: "old", top: 80 },
+        { id: "unmounted", top: 400 },
+      ]),
+    ).toBe("old");
+    expect(row.style.height).toBe("320px");
+    expect(row.style.top).toBe("80px");
+    expect(row.style.transform).toBe("");
+    expect(row.style.marginBottom).toBe("");
+    syncActualPromptPin(content, viewport, true, [
+      { id: "old", top: 80 },
+      { id: "unmounted", top: 400 },
+    ]);
+    expect(row.style.height).toBe("320px");
+    viewport.scrollTop = 400;
+    expect(
+      syncActualPromptPin(content, viewport, true, [
+        { id: "old", top: 80 },
+        { id: "unmounted", top: 400 },
+      ]),
+    ).toBe("unmounted");
+    expect(row.dataset.promptPinned).toBe("false");
+    expect(row.firstChild).toBe(body);
   });
 
   it("retains only the preceding prompt index across sparse and unmeasured history", () => {

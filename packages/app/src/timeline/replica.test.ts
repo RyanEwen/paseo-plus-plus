@@ -1,3 +1,4 @@
+import { canonicalPromptSourceKey } from "./canonical-prompt-context";
 import { DatabaseSync } from "node:sqlite";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import {
@@ -40,7 +41,10 @@ function cachedTimeline(): CachedTimeline {
   };
 }
 
-function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
+function createOwner(
+  storage: TimelineReplicaStorage,
+  readCursor: () => { epoch: string; endSeq: number } | undefined = () => undefined,
+): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
     storage,
@@ -53,7 +57,7 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
     drainQueuedAgentMessage: () => undefined,
     ports: {
       observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
-      readCursor: () => undefined,
+      readCursor,
       fetchPage: async () => ({ hasNewer: false, endCursor: null }),
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
@@ -663,5 +667,150 @@ describe("SQLite baseline restoration", () => {
       await preparation;
       database.close();
     }
+  });
+});
+
+describe("viewed owner canonical prompt retention", () => {
+  const storage: TimelineReplicaStorage = {
+    readTimeline: async () => undefined,
+    commitTimeline: () => undefined,
+  };
+  it("retains four isolated canonical points without changing the viewed cursor, tail or pagination", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 100);
+    const before = useSessionStore.getState().sessions[SERVER_ID]!;
+    const cursor = before.agentTimelineCursor.get(AGENT_ID)!;
+    const owner = createOwner(storage, () => cursor);
+    const channel = {};
+    for (let index = 0; index < 5; index += 1) {
+      const source = item(`source-${index}`, "answer", 60 + index);
+      const prompt: Extract<StreamItem, { kind: "user_message" }> = {
+        ...source,
+        kind: "user_message",
+        text: "answer",
+        id: `user-${index}`,
+        timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+      };
+      await owner.promptContexts.request({
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => ({
+          sourceKey: canonicalPromptSourceKey(source),
+          sourceStart: 50 + index,
+          sourceEnd: 60 + index,
+          prompt,
+        }),
+      });
+    }
+    expect(owner.promptContexts.snapshot(AGENT_ID)?.ranges).toEqual(
+      [2, 3, 4, 5].map((seq) => ({ startSeq: seq, endSeq: seq })),
+    );
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1")).toHaveLength(4);
+    expect(useSessionStore.getState().sessions[SERVER_ID]).toBe(before);
+    expect(before.agentTimelineCursor.get(AGENT_ID)).toBe(cursor);
+    owner.dispose();
+  });
+
+  it("keeps five mounted readers independent and releases only the retired reader's points", async () => {
+    const owner = createOwner(storage, () => ({ epoch: "epoch-1", endSeq: 100 }));
+    const readers = Array.from({ length: 5 }, () => ({}));
+    for (const [index, channel] of readers.entries()) {
+      const source = item(`source-${index}`, "answer", 60 + index);
+      const prompt: Extract<StreamItem, { kind: "user_message" }> = {
+        ...source,
+        kind: "user_message",
+        text: "answer",
+        id: `user-${index}`,
+        timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+      };
+      await owner.promptContexts.request({
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => ({
+          sourceKey: canonicalPromptSourceKey(source),
+          sourceStart: 50 + index,
+          sourceEnd: 60 + index,
+          prompt,
+        }),
+      });
+    }
+    for (const [index, channel] of readers.entries())
+      expect(
+        owner.promptContexts.read(AGENT_ID, "epoch-1", channel).map(({ prompt }) => prompt.id),
+      ).toEqual([`user-${index}`]);
+    const first = owner.promptContexts.read(AGENT_ID, "epoch-1", readers[0]);
+    owner.promptContexts.cancel(readers[0]!);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", readers[0])).toBe(first);
+    owner.promptContexts.release(readers[4]!);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", readers[4])).toEqual([]);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", readers[0])).toBe(first);
+    expect(owner.promptContexts.snapshot(AGENT_ID)?.ranges).toHaveLength(4);
+    for (const channel of readers) owner.promptContexts.release(channel);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1")).toEqual([]);
+    owner.dispose();
+  });
+
+  it("discards replaced-source, changed-epoch and disposed-owner completions", async () => {
+    let epoch = "epoch-1";
+    const owner = createOwner(storage, () => ({ epoch, endSeq: 100 }));
+    const source = item("source", "answer", 50);
+    const prompt: Extract<StreamItem, { kind: "user_message" }> = {
+      ...source,
+      kind: "user_message",
+      text: "answer",
+      id: "user",
+      timelineCursor: { epoch, seq: 4 },
+    };
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchContext = async () => {
+      await held;
+      return {
+        sourceKey: canonicalPromptSourceKey(source),
+        sourceStart: 40,
+        sourceEnd: 50,
+        prompt,
+      };
+    };
+    const channel = {};
+    const first = owner.promptContexts.request({
+      agentId: AGENT_ID,
+      source,
+      channel,
+      signal: new AbortController().signal,
+      fetchContext,
+    });
+    const rejected = expect(first).rejects.toThrow("no longer current");
+    owner.promptContexts.cancel(channel);
+    release();
+    await rejected;
+    const late = owner.promptContexts.request({
+      agentId: AGENT_ID,
+      source,
+      channel,
+      signal: new AbortController().signal,
+      fetchContext,
+    });
+    const changed = expect(late).rejects.toThrow("no longer current");
+    epoch = "epoch-2";
+    owner.promptContexts.setEpoch(AGENT_ID, epoch);
+    await changed;
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1")).toEqual([]);
+    owner.dispose();
+    await expect(
+      owner.promptContexts.request({
+        agentId: AGENT_ID,
+        source,
+        channel,
+        signal: new AbortController().signal,
+        fetchContext,
+      }),
+    ).rejects.toThrow("unavailable");
   });
 });

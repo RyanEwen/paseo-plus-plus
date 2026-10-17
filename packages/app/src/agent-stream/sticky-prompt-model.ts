@@ -16,6 +16,7 @@ export function buildPromptTargets(
   items: readonly StreamItem[],
   prompts: readonly ChatOutlinePrompt[],
   epoch: string | null,
+  contextOnlyIds?: ReadonlySet<string>,
 ): PromptTarget[] {
   const targets: PromptTarget[] = prompts.map(({ seq }) => ({ key: `${epoch}:${seq}`, seq }));
   const bySeq = new Map(targets.map((target) => [target.seq, target]));
@@ -27,8 +28,14 @@ export function buildPromptTargets(
     const indexed = seq === undefined ? undefined : bySeq.get(seq);
     if (indexed) {
       indexed.item = item;
+      if (contextOnlyIds?.has(item.id)) indexed.cached = true;
     } else {
-      targets.push({ key: seq === undefined ? item.id : `${epoch}:${seq}`, seq, item });
+      targets.push({
+        key: seq === undefined ? item.id : `${epoch}:${seq}`,
+        seq,
+        item,
+        ...(contextOnlyIds?.has(item.id) ? { cached: true } : {}),
+      });
     }
   }
   // Unpositioned local submissions follow authoritative history in submission order.
@@ -303,7 +310,7 @@ export function shouldDiscoverCachedPrompt(
   cancelled: boolean,
   readingMissing: boolean,
 ): boolean {
-  if (pending !== null && pending !== "previous" && pending.cached) return true;
+  if (pending !== null && pending !== "previous" && pending.cached) return !indexed;
   return (
     !readingMissing &&
     shouldDiscoverPrompt(pending === "previous", indexed, message, cancelled, false)
@@ -320,7 +327,9 @@ export function hasDiscoveredCachedPrompt(
   message: UserPrompt | undefined,
 ): boolean {
   if (pending !== null && pending !== "previous" && pending.cached)
-    return loaded.some((target) => target.key === pending.key && target.item !== undefined);
+    return loaded.some(
+      (target) => target.key === pending.key && target.item !== undefined && !target.cached,
+    );
   return hasDiscoveredPrompt(
     pending === "previous",
     previous,

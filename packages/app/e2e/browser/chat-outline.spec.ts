@@ -322,7 +322,10 @@ async function expectPinnedPromptLanding(page: Page, prompt: string) {
         const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
         const bubble = node.querySelector('[data-testid="user-message-bubble"]')!;
         const originalTop =
-          bubble.getBoundingClientRect().top - Number(node.getAttribute("data-prompt-translation"));
+          node.getBoundingClientRect().top +
+          bubble.getBoundingClientRect().top -
+          node.querySelector<HTMLElement>("[data-actual-prompt-content]")!.getBoundingClientRect()
+            .top;
         return Math.abs(originalTop - viewport.getBoundingClientRect().top + 2);
       }),
     )
@@ -1175,13 +1178,14 @@ for (const viewport of [
         });
       const collapsedVisibleBody = await readVisibleBodyHeight();
       expect(collapsedVisibleBody).toBeGreaterThan(0);
-      const collapsed = await longRow.boundingBox();
+      const paintedMessage = longRow.locator("[data-actual-prompt-content]");
+      const collapsed = await paintedMessage.boundingBox();
       expect(collapsed!.height).toBeLessThan(150);
       await longRow.getByRole("button", { name: "Expand user message", exact: true }).click();
       await expect(longRow).toContainText("END OF STICKY PROMPT");
       await expect.poll(readVisibleBodyHeight).toBeGreaterThan(collapsedVisibleBody);
       await expectNearBottom(page);
-      const expanded = await longRow.boundingBox();
+      const expanded = await paintedMessage.boundingBox();
       expect(expanded!.height).toBeLessThan(viewport.height * 0.6);
       const expandedBody = longRow.getByTestId("user-message-body-scroll");
       const innerOverflow = await expandedBody.evaluate(
