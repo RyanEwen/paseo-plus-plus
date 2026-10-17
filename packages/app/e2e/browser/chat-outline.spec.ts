@@ -1,4 +1,12 @@
-import { expectSingleLineStickyGeometry } from "../support/helpers/sticky-preview-geometry";
+import {
+  captureVisibleActualPrompt,
+  expectMatchingPromptInk,
+  expectActualTextIdentity,
+  expectActualSingleLineGeometry,
+  expectActualRowUnpinned,
+  expectActualFindVisible,
+  expectSingleLineStickyGeometry,
+} from "../support/helpers/sticky-preview-geometry";
 import { observePromptPointer } from "../support/helpers/prompt-pointer-observation";
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -303,32 +311,34 @@ async function clickMessageNavigation(message: Locator, testID: string) {
   await message.getByTestId(testID).click();
 }
 
-/** Arrow navigation must own the pinned surface at the measured original bubble edge. */
+/** Arrow landings use the original bubble coordinate even while its real body is pinned. */
 async function expectPinnedPromptLanding(page: Page, prompt: string) {
-  const pinned = page.getByTestId("sticky-user-message");
-  await expect(pinned).toContainText(prompt);
-  const timeline = page.getByTestId("agent-chat-scroll");
-  const bubble = timeline
-    .getByTestId("user-message")
-    .filter({ hasText: prompt })
-    .getByTestId("user-message-bubble");
+  const row = actualUserRow(page, prompt);
+  await expect(row).toHaveCount(1);
+  await expect(row).toHaveAttribute("data-prompt-pinned", "true");
   await expect
-    .poll(async () => {
-      const [viewport, original] = await Promise.all([
-        timeline.boundingBox(),
-        bubble.boundingBox(),
-      ]);
-      return viewport && original
-        ? Math.abs(original.y - viewport.y + 2)
-        : Number.POSITIVE_INFINITY;
-    })
+    .poll(() =>
+      row.evaluate((node) => {
+        const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
+        const bubble = node.querySelector('[data-testid="user-message-bubble"]')!;
+        const originalTop =
+          bubble.getBoundingClientRect().top - Number(node.getAttribute("data-prompt-translation"));
+        return Math.abs(originalTop - viewport.getBoundingClientRect().top + 2);
+      }),
+    )
     .toBeLessThanOrEqual(2);
+}
+
+function pinnedActualRow(page: Page) {
+  return page
+    .getByTestId("agent-chat-scroll")
+    .locator('[data-actual-prompt-row][data-prompt-pinned="true"]');
 }
 
 /** The disclosure reserves its own column inside the bubble, without covering text. */
 async function expectInlinePromptDisclosure(message: Locator) {
   const text = await message.locator("[data-message-text=true]").boundingBox();
-  const disclosure = await message.getByTestId("sticky-user-message-disclosure").boundingBox();
+  const disclosure = await message.getByTestId("user-message-disclosure").boundingBox();
   expect(text).not.toBeNull();
   expect(disclosure).not.toBeNull();
   expect(text!.x + text!.width).toBeLessThanOrEqual(disclosure!.x);
@@ -358,7 +368,7 @@ async function expectStationaryPromptLanding(
     }
     await page.setViewportSize(WIDE_VIEWPORT);
     await openAgentRoute(page, agent);
-    const sticky = page.getByTestId("sticky-user-message");
+    const sticky = pinnedActualRow(page);
     let source: Locator;
     if (origin === "original") {
       // An earlier prompt can remain pinned while this full original is visible below it.
@@ -369,14 +379,12 @@ async function expectStationaryPromptLanding(
         .getByTestId("user-message")
         .filter({ hasText: newest });
     } else {
-      await scrollTimelinePastPrompt(page, newest);
+      await scrollActualRowPastTop(page, actualUserRow(page, newest));
       await expect(sticky).toContainText("Current response context");
       source = sticky;
     }
     await source.getByTestId("user-message-bubble").hover();
-    const previous = source.getByTestId(
-      origin === "original" ? "user-message-previous" : "sticky-user-message-previous",
-    );
+    const previous = source.getByTestId("user-message-previous");
     await expect(previous).toBeEnabled();
     if (origin === "original") {
       await expect(source.getByTestId("user-message-bubble")).toBeInViewport({ ratio: 1 });
@@ -403,7 +411,7 @@ async function expectStationaryPromptLanding(
       await previous.click();
       await expectPinnedPromptLanding(page, prior);
       await waitForTimelineGeometryToSettle(page);
-      const original = sticky;
+      const original = actualUserRow(page, prior);
       await expect(original).toHaveCount(1);
       const controls = original.getByTestId("user-message-trailing-row");
       const pointer = await observation.read(original);
@@ -411,10 +419,10 @@ async function expectStationaryPromptLanding(
         ...pointer,
         origin,
         ownership: {
-          stickyCopies: await sticky.count(),
+          pinnedRows: await sticky.count(),
           originalAriaHidden: await original.getAttribute("aria-hidden"),
           previousDisabled: await controls
-            .getByTestId("sticky-user-message-previous")
+            .getByTestId("user-message-previous")
             .getAttribute("aria-disabled"),
         },
       };
@@ -425,7 +433,8 @@ async function expectStationaryPromptLanding(
       await page.screenshot({ path: testInfo.outputPath("stationary-pointer-landing.png") });
       expect(observed.movesAfterClick).toBe(0);
       await expect(sticky).toHaveCount(1);
-      await expect(controls.getByTestId("sticky-user-message-previous")).toBeEnabled();
+      await expect(controls.getByTestId("user-message-previous")).toBeEnabled();
+      // The actual row retains its rewind, copy and both navigation actions.
       await expect(controls.getByRole("button")).toHaveCount(4);
       await expect(controls.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(
         1,
@@ -532,17 +541,17 @@ test("consecutive pinned previous arrows preserve the second real click without 
     }
     await page.setViewportSize(WIDE_VIEWPORT);
     await openAgentRoute(page, agent);
-    await scrollTimelinePastPrompt(page, newest);
-    const pinned = page.getByTestId("sticky-user-message");
+    await scrollActualRowPastTop(page, actualUserRow(page, newest));
+    const pinned = pinnedActualRow(page);
     await expect(pinned).toContainText("Newest destination");
     await pinned.getByTestId("user-message-bubble").hover();
-    const first = pinned.getByTestId("sticky-user-message-previous");
+    const first = pinned.getByTestId("user-message-previous");
     const observation = await observePromptPointer(first);
     try {
       await first.click();
       await expectPinnedPromptLanding(page, middle);
       await waitForTimelineGeometryToSettle(page);
-      const replacement = pinned;
+      const replacement = actualUserRow(page, middle);
       const beforeSecond = await observation.read(replacement);
       await testInfo.attach("replacement-before-second-click", {
         body: JSON.stringify(beforeSecond, null, 2),
@@ -550,7 +559,7 @@ test("consecutive pinned previous arrows preserve the second real click without 
       });
       await page.screenshot({ path: testInfo.outputPath("replacement-before-second-click.png") });
       expect(beforeSecond.movesAfterClick).toBe(0);
-      const next = replacement.getByTestId("sticky-user-message-previous");
+      const next = replacement.getByTestId("user-message-previous");
       await expect(next).toBeEnabled();
       const point = beforeSecond.point;
       if (!point) throw new Error("The first pinned arrow did not record a real pointer point");
@@ -563,7 +572,8 @@ test("consecutive pinned previous arrows preserve the second real click without 
       await page.mouse.down();
       await page.mouse.up();
       await waitForTimelineGeometryToSettle(page);
-      const afterSecond = await observation.read(pinned);
+      const destination = actualUserRow(page, oldest);
+      const afterSecond = await observation.read(destination);
       await testInfo.attach("after-second-click", {
         body: JSON.stringify(afterSecond, null, 2),
         contentType: "application/json",
@@ -573,10 +583,12 @@ test("consecutive pinned previous arrows preserve the second real click without 
       expect(afterSecond.actions.filter((event) => event.type === "pointerdown")).toHaveLength(2);
       expect(afterSecond.actions.every((event) => event.trusted)).toBe(true);
       await expectPinnedPromptLanding(page, oldest);
-      await expect(pinned.getByTestId("sticky-user-message-next")).toBeEnabled();
+      await expect(pinned.getByTestId("user-message-next")).toBeEnabled();
       await expect(pinned.getByTestId("user-message-trailing-row")).toHaveCSS("opacity", "1");
       // Clicking the content keeps its distinct original-message reveal behavior.
-      await pinned.getByTestId("user-message-bubble").click();
+      await destination
+        .getByTestId("user-message-content-target")
+        .click({ position: { x: 10, y: 4 } });
       await expectTimelinePromptLandedBelowTop(page, oldest);
     } catch (error) {
       await testInfo.attach("consecutive-click-before-failure", {
@@ -598,6 +610,185 @@ test("original previous arrow observes stationary pointer ownership after landin
 }, testInfo) => {
   test.setTimeout(180_000);
   await expectStationaryPromptLanding(page, testInfo, "Short.", "original");
+});
+
+function actualUserRow(page: Page, prompt: string) {
+  return page
+    .getByTestId("agent-chat-scroll")
+    .locator("[data-actual-prompt-row]")
+    .filter({ hasText: prompt });
+}
+
+async function scrollActualRowPastTop(page: Page, row: Locator) {
+  const timeline = page.getByTestId("agent-chat-scroll");
+  await timeline.hover();
+  const geometry = await row.evaluate((node) => ({
+    rowTop: node.getBoundingClientRect().top,
+    viewportTop: node.closest('[data-testid="agent-chat-scroll"]')!.getBoundingClientRect().top,
+  }));
+  await page.mouse.wheel(0, geometry.rowTop - geometry.viewportTop + 1);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const top = node.closest('[data-testid="agent-chat-scroll"]')!.getBoundingClientRect().top;
+        return node.getBoundingClientRect().top - top;
+      }),
+    )
+    .toBeLessThan(0);
+  await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+}
+
+test("actual user row preserves node identity while pinning and restores disclosure after settings", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const prompt = "Actual row identity\nSecond rendered line\nThird rendered line";
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "actual-row-identity",
+    title: "Actual row identity",
+    initialPrompt: prompt,
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await agent.client.sendAgentMessage(
+      agent.agentId,
+      "emit 85 assistant messages before synthetic user message",
+    );
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await page.setViewportSize(WIDE_VIEWPORT);
+    await openAgentRoute(page, agent);
+    const entry = chatOutlineRail(page).getByRole("tab").filter({ hasText: "Actual row identity" });
+    await expect(entry).toHaveCount(1);
+    await entry.click();
+    await expectTimelinePromptLandedBelowTop(page, prompt);
+    const row = actualUserRow(page, prompt);
+    await expect(row).toHaveCount(1);
+    await page.getByTestId("agent-chat-scroll").hover();
+    await expectActualRowUnpinned(page, row, testInfo);
+    const wrapper = await row.elementHandle();
+    const text = await row.getByTestId("user-message-text").elementHandle();
+    expect(wrapper).not.toBeNull();
+    expect(text).not.toBeNull();
+    await expectActualSingleLineGeometry(row);
+    await expectSinglePaintedPromptHandoff(page, prompt, WIDE_VIEWPORT.width);
+    await scrollActualRowPastTop(page, row);
+    await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+    expect(await row.evaluate((node, prior) => node === prior, wrapper!)).toBe(true);
+    await expectActualTextIdentity(row, text!, prompt);
+    const disclosure = row.getByTestId("user-message-disclosure");
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await expectActualTextIdentity(row, text!, prompt);
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await expectActualSingleLineGeometry(row);
+    await expectActualTextIdentity(row, text!, prompt);
+    // Settings is an app-wide route, not a workspace pane. Do not claim that
+    // navigating away and returning preserves the previous route's DOM nodes.
+    await page.getByTestId("sidebar-settings").click();
+    const toggle = page.getByTestId("paseo-plus-plus-stickyUserPrompts").getByRole("switch");
+    await expect(toggle).toBeChecked();
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await openAgentRoute(page, agent);
+    await chatOutlineRail(page).getByRole("tab").filter({ hasText: "Actual row identity" }).click();
+    await expectTimelinePromptLandedBelowTop(page, prompt);
+    const returned = actualUserRow(page, prompt);
+    await expect(returned.getByTestId("user-message-disclosure")).toHaveCount(0);
+    await page.getByTestId("sidebar-settings").click();
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+    await openAgentRoute(page, agent);
+    await chatOutlineRail(page).getByRole("tab").filter({ hasText: "Actual row identity" }).click();
+    await expectTimelinePromptLandedBelowTop(page, prompt);
+    await expectActualSingleLineGeometry(actualUserRow(page, prompt));
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("actual user row find expands each occurrence and preserves its text node", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const prompt = `Actual find ownership\n${"padding content for inner scrolling\n".repeat(65)}deep-actual-needle first\n${"more padding\n".repeat(65)}deep-actual-needle second`;
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "actual-row-find",
+    title: "Actual row find",
+    initialPrompt: prompt,
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await agent.client.sendAgentMessage(
+      agent.agentId,
+      "emit 85 assistant messages before synthetic user message",
+    );
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await page.setViewportSize(WIDE_VIEWPORT);
+    await openAgentRoute(page, agent);
+    const entry = chatOutlineRail(page)
+      .getByRole("tab")
+      .filter({ hasText: "Actual find ownership" });
+    await expect(entry).toHaveCount(1);
+    await entry.click();
+    await expectTimelinePromptLandedBelowTop(page, prompt);
+    const row = actualUserRow(page, prompt);
+    await expectActualSingleLineGeometry(row);
+    const text = await row.getByTestId("user-message-text").elementHandle();
+    expect(text).not.toBeNull();
+    await scrollActualRowPastTop(page, row);
+    await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+    // Use the existing app shortcut; opening find must expand, not a manual More click.
+    await row.getByTestId("user-message-timestamp").click();
+    await page.keyboard.press("ControlOrMeta+f");
+    const panel = page.locator('[data-chat-find-widget="true"]').filter({ visible: true });
+    const query = panel.getByRole("textbox", { name: "Find in pane", exact: true });
+    await expect(query).toBeFocused();
+    await query.fill("deep-actual-needle");
+    await expect(panel.getByRole("status", { name: "Find matches" })).toHaveText("1 of 2");
+    const disclosure = row.getByTestId("user-message-disclosure");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    const firstOccurrence = await expectActualFindVisible(
+      row,
+      prompt.indexOf("deep-actual-needle"),
+    );
+    await expectActualTextIdentity(row, text!, prompt);
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await query.press("Enter");
+    await expect(panel.getByRole("status", { name: "Find matches" })).toHaveText("2 of 2");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    const secondOccurrence = await expectActualFindVisible(
+      row,
+      prompt.lastIndexOf("deep-actual-needle"),
+    );
+    expect(secondOccurrence).not.toBe(firstOccurrence);
+    await expectActualTextIdentity(row, text!, prompt);
+    // Supersede a reveal and close using real UI. No late write may reopen the body.
+    await query.fill("deep-actual-needle first");
+    await query.press("Escape");
+    await expect(query).toHaveCount(0);
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    // One finite observation, never retried: any sampled reopen is retained as failure.
+    const settledStates = await row.evaluate(async (node) => {
+      const states: string[] = [];
+      for (let frame = 0; frame < 24; frame++) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        states.push(
+          node
+            .querySelector('[data-testid="user-message-disclosure"]')!
+            .getAttribute("aria-expanded")!,
+        );
+      }
+      return states;
+    });
+    expect(settledStates).toEqual(Array.from({ length: 24 }, () => "false"));
+    await expectActualTextIdentity(row, text!, prompt);
+    await page.screenshot({ path: testInfo.outputPath("actual-row-find.png") });
+  } finally {
+    await agent.cleanup();
+  }
 });
 
 for (const viewport of [
@@ -637,12 +828,12 @@ for (const viewport of [
       await openAgentRoute(page, agent);
       await expect(chatOutlineRail(page).getByRole("tab")).toHaveCount(5);
       await page.setViewportSize(viewport);
-      const initialCopy = page.getByTestId("sticky-user-message");
+      const initialCopy = pinnedActualRow(page);
       await expect(initialCopy).toContainText(
         "emit 85 assistant messages before synthetic user message",
       );
       for (let index = prompts.length - 1; index >= 0; index -= 1) {
-        await clickMessageNavigation(initialCopy, "sticky-user-message-previous");
+        await clickMessageNavigation(initialCopy, "user-message-previous");
         await expectPinnedPromptLanding(page, prompts[index]!);
       }
       const timeline = page.getByTestId("agent-chat-scroll");
@@ -650,12 +841,13 @@ for (const viewport of [
       const realHeight = (await original.getByTestId("user-message-bubble").boundingBox())!.height;
       await expectSinglePaintedPromptHandoff(page, prompts[0]!, viewport.width);
       await scrollTimelinePastPrompt(page, prompts[0]!);
-      const sticky = page.getByTestId("sticky-user-message");
-      const disclosure = sticky.getByTestId("sticky-user-message-disclosure");
-      await expect(disclosure).toHaveCount(0);
+      const sticky = pinnedActualRow(page);
+      const shortRow = actualUserRow(page, prompts[0]!);
+      const shortDisclosure = shortRow.getByTestId("user-message-disclosure");
+      await expect(shortDisclosure).toHaveCount(0);
       await expect(sticky).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expect(sticky.locator("svg linearGradient")).toHaveCount(0);
-      await expect(sticky.getByTestId("user-message-bubble")).toHaveCSS(
+      await expect(shortRow.getByTestId("user-message-bubble")).toHaveCSS(
         "border-top-left-radius",
         "0px",
       );
@@ -670,53 +862,56 @@ for (const viewport of [
         0,
       );
       expect(latestBounds.y + latestBounds.height).toBeLessThanOrEqual(composerBounds.y);
-      expect((await sticky.getByTestId("user-message-bubble").boundingBox())!.height).toBeCloseTo(
+      expect((await shortRow.getByTestId("user-message-bubble").boundingBox())!.height).toBeCloseTo(
         realHeight,
         0,
       );
-      const shortGeometry = await expectSingleLineStickyGeometry(sticky);
+      const shortGeometry = await expectSingleLineStickyGeometry(shortRow);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/short-preview-${viewport.width}.png`,
       });
       for (let index = 1; index < prompts.length; index += 1) {
-        await clickMessageNavigation(sticky, "sticky-user-message-next");
+        await clickMessageNavigation(sticky, "user-message-next");
         await expectPinnedPromptLanding(page, prompts[index]!);
+        const selected = actualUserRow(page, prompts[index]!);
+        const disclosure = selected.getByTestId("user-message-disclosure");
         await expect(disclosure).toHaveText("more…");
-        await expectInlinePromptDisclosure(sticky);
-        const longGeometry = await expectSingleLineStickyGeometry(sticky);
+        await expectInlinePromptDisclosure(selected);
+        const longGeometry = await expectSingleLineStickyGeometry(selected);
         expect(longGeometry.height).toBeCloseTo(shortGeometry.height, 0);
         expect(longGeometry.controlsOffset).toBeCloseTo(shortGeometry.controlsOffset, 0);
-        const stablePreview = await sticky.evaluate(async (node) => {
-          const measurement = node.querySelector('[data-testid="text-preview-measurement"]')!;
-          const text = measurement.parentElement!.parentElement!.firstElementChild!;
-          const button = node.querySelector('[data-testid="sticky-user-message-disclosure"]')!;
+        const stablePreview = await selected.evaluate(async (node) => {
+          const text = node.querySelector('[data-testid="user-message-text"]')!;
+          const clip = text.closest('[data-testid="text-preview-clip"]')!;
+          const button = node.querySelector('[data-testid="user-message-disclosure"]')!;
           const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight);
-          const height = text.getBoundingClientRect().height;
-          // A disclosure must not remount its measured text or alternate its layout each frame.
+          const height = clip.getBoundingClientRect().height;
           for (let frame = 0; frame < 24; frame += 1) {
             await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
             if (
-              !measurement.isConnected ||
+              !text.isConnected ||
+              !clip.isConnected ||
               !button.isConnected ||
-              text.getBoundingClientRect().height !== height
-            ) {
+              clip.getBoundingClientRect().height !== height
+            )
               return { stable: false, height, lineHeight };
-            }
           }
           return { stable: true, height, lineHeight };
         });
         expect(stablePreview.stable).toBe(true);
         expect(stablePreview.height).toBeLessThanOrEqual(stablePreview.lineHeight + 0.5);
-        const collapsed = (await sticky.getByTestId("user-message-bubble").boundingBox())!.height;
+        const collapsed = (await selected.getByTestId("user-message-bubble").boundingBox())!.height;
         await disclosure.focus();
         await disclosure.press("Enter");
         await expect(disclosure).toHaveText("less…");
-        await expect(sticky.getByTestId("text-preview-measurement")).toHaveCount(0);
-        await expect(sticky.getByTestId("user-message")).toContainText(prompts[index]!);
+        await expect(selected.getByTestId("text-preview-measurement")).toHaveCount(0);
+        await expect(selected.getByTestId("user-message")).toContainText(prompts[index]!);
         await disclosure.click();
         await expect(disclosure).toHaveText("more…");
         await expect
-          .poll(async () => (await sticky.getByTestId("user-message-bubble").boundingBox())!.height)
+          .poll(
+            async () => (await selected.getByTestId("user-message-bubble").boundingBox())!.height,
+          )
           .toBe(collapsed);
       }
       // Put real conversation text behind the pinned copy for the appearance capture.
@@ -730,12 +925,14 @@ for (const viewport of [
       // Capture the still-owned conversation before agent cleanup can remove its route.
       try {
         const geometry = await page.evaluate(() => {
-          const sticky = document.querySelector('[data-testid="sticky-user-message"]');
+          const sticky = document.querySelector(
+            '[data-actual-prompt-row][data-prompt-pinned="true"]',
+          );
           const selectors = [
             '[data-testid="user-message-bubble"]',
             '[data-testid="user-message-text"]',
-            '[data-testid="sticky-user-message-controls"]',
-            '[data-testid="sticky-user-message-disclosure"]',
+            '[data-testid="user-message-trailing-row"]',
+            '[data-testid="user-message-disclosure"]',
             "[data-message-text=true]",
           ];
           return {
@@ -786,11 +983,10 @@ for (const viewport of [
     try {
       await page.setViewportSize(viewport);
       await openAgentTimeline(page, agent);
-      const sticky = page.getByTestId("sticky-user-message");
-      const previous = sticky.getByTestId("sticky-user-message-previous");
-      const next = sticky.getByTestId("sticky-user-message-next");
+      const sticky = pinnedActualRow(page);
+      const previous = sticky.getByTestId("user-message-previous");
       await expectTimelinePromptVisible(page, agent.newestPrompt);
-      await expect(sticky).toHaveCount(0);
+      await expect(page.getByTestId("sticky-user-message")).toHaveCount(0);
       const newestBubble = page
         .getByTestId("agent-chat-scroll")
         .getByTestId("user-message")
@@ -821,7 +1017,7 @@ for (const viewport of [
           .getByTestId("user-message")
           .filter({ hasText: agent.prompts[index + 1]! });
         if (await sticky.count()) {
-          await clickMessageNavigation(sticky, "sticky-user-message-previous");
+          await clickMessageNavigation(sticky, "user-message-previous");
         } else {
           await clickMessageNavigation(original, "user-message-previous");
         }
@@ -851,13 +1047,16 @@ for (const viewport of [
               .poll(() => sticky.evaluate((element) => Number(getComputedStyle(element).opacity)))
               .toBe(1);
             const bubble = await sticky.getByTestId("user-message-bubble").boundingBox();
-            const controls = await sticky.getByTestId("sticky-user-message-controls").boundingBox();
+            const controls = await sticky.getByTestId("user-message-trailing-row").boundingBox();
             expect(controls!.y).toBeGreaterThanOrEqual(bubble!.y + bubble!.height - 1);
             await page.screenshot({
               path: `../../docs/qa-evidence/sticky-user-message/handoff-${viewport.width}.png`,
             });
             await page.mouse.wheel(0, -40);
-            await expect(sticky).toHaveCount(0);
+            await expect(actualUserRow(page, agent.prompts[index]!)).toHaveAttribute(
+              "data-prompt-pinned",
+              "false",
+            );
           }
           await scrollTimelinePastPrompt(page, agent.prompts[index]!);
           if (index === 10) {
@@ -871,12 +1070,34 @@ for (const viewport of [
             await page.mouse.wheel(0, newerBox!.y - viewportBox!.y - 24);
             await expect(sticky).toContainText(agent.prompts[index]!);
             await expect(newer).toBeInViewport();
-            await expect
-              .poll(() =>
-                sticky.evaluate((element) => element.parentElement!.getBoundingClientRect().height),
-              )
-              .toBeLessThan(40);
-            await expect(sticky.getByTestId("sticky-user-message-disclosure")).toHaveCount(
+            const nextRowId = await actualUserRow(page, agent.prompts[index + 1]!).getAttribute(
+              "data-history-row-id",
+            );
+            expect(nextRowId).not.toBeNull();
+            const readCollision = () =>
+              actualUserRow(page, agent.prompts[index]!).evaluate((row, expectedNextId) => {
+                const collisionViewport = row.closest('[data-testid="agent-chat-scroll"]')!;
+                const content = row.querySelector("[data-actual-prompt-content]")!;
+                const next = Array.from(
+                  collisionViewport.querySelectorAll("[data-actual-prompt-row]"),
+                ).find((item) => item.getAttribute("data-history-row-id") === expectedNextId);
+                if (!next) throw new Error("Expected the adjacent newer actual prompt row");
+                const bounds = content.getBoundingClientRect();
+                const viewportBounds = collisionViewport.getBoundingClientRect();
+                return {
+                  bottom: bounds.bottom,
+                  nextTop: next.getBoundingClientRect().top,
+                  visibleHeight:
+                    Math.min(bounds.bottom, viewportBounds.bottom) -
+                    Math.max(bounds.top, viewportBounds.top),
+                };
+              }, nextRowId);
+            await expect.poll(async () => (await readCollision()).visibleHeight).toBeLessThan(40);
+            const collision = await readCollision();
+            expect(collision.visibleHeight).toBeGreaterThan(0);
+            expect(collision.visibleHeight).toBeLessThan(40);
+            expect(collision.bottom).toBeLessThanOrEqual(collision.nextTop + 1);
+            await expect(sticky.getByTestId("user-message-disclosure")).toHaveCount(
               viewport.width === 1440 ? 0 : 1,
             );
             const visibleNewer = await newer.boundingBox();
@@ -898,12 +1119,15 @@ for (const viewport of [
         }
       }
       await expect(previous).toBeDisabled();
-      await clickMessageNavigation(sticky, "sticky-user-message-next");
+      await clickMessageNavigation(sticky, "user-message-next");
       await expectPinnedPromptLanding(page, agent.prompts[1]!);
       // The bubble returns to itself; the arrows still navigate to adjacent prompts.
       await sticky.getByTestId("user-message-content-target").click({ position: { x: 10, y: 4 } });
       await expectTimelinePromptLandedBelowTop(page, agent.prompts[1]!);
-      await expect(sticky).toHaveCount(0);
+      await expect(actualUserRow(page, agent.prompts[1]!)).toHaveAttribute(
+        "data-prompt-pinned",
+        "false",
+      );
       await scrollTimelinePastPrompt(page, agent.prompts[1]!);
       const messageLink = sticky.getByTestId("user-message-text");
       const textBounds = (await messageLink.boundingBox())!;
@@ -924,7 +1148,10 @@ for (const viewport of [
       await messageLink.focus();
       await messageLink.press("Enter");
       await expectTimelinePromptLandedBelowTop(page, agent.prompts[1]!);
-      await expect(sticky).toHaveCount(0);
+      await expect(actualUserRow(page, agent.prompts[1]!)).toHaveAttribute(
+        "data-prompt-pinned",
+        "false",
+      );
       await scrollTimelinePastPrompt(page, agent.prompts[1]!);
       const longPrompt = `Long sticky prompt\n${"  Preserve this line and whitespace.\n".repeat(60)}END OF STICKY PROMPT: emit 85 assistant messages before synthetic user message`;
       await agent.client.sendAgentMessage(agent.agentId, longPrompt);
@@ -933,31 +1160,94 @@ for (const viewport of [
       await page.getByTestId("scroll-to-bottom-button").click();
       await expect(sticky).toContainText("Long sticky prompt");
       await expectNearBottom(page);
-      const collapsed = await sticky.boundingBox();
+      const longRow = actualUserRow(page, longPrompt);
+      const readVisibleBodyHeight = () =>
+        longRow.getByTestId("user-message-body-scroll").evaluate((body) => {
+          const visibleViewport = body
+            .closest('[data-testid="agent-chat-scroll"]')!
+            .getBoundingClientRect();
+          const bounds = body.getBoundingClientRect();
+          return Math.max(
+            0,
+            Math.min(bounds.bottom, visibleViewport.bottom) -
+              Math.max(bounds.top, visibleViewport.top),
+          );
+        });
+      const collapsedVisibleBody = await readVisibleBodyHeight();
+      expect(collapsedVisibleBody).toBeGreaterThan(0);
+      const collapsed = await longRow.boundingBox();
       expect(collapsed!.height).toBeLessThan(150);
-      await sticky.getByRole("button", { name: "Expand user message", exact: true }).click();
-      await expect(sticky).toContainText("END OF STICKY PROMPT");
+      await longRow.getByRole("button", { name: "Expand user message", exact: true }).click();
+      await expect(longRow).toContainText("END OF STICKY PROMPT");
+      await expect.poll(readVisibleBodyHeight).toBeGreaterThan(collapsedVisibleBody);
       await expectNearBottom(page);
-      const expanded = await sticky.boundingBox();
+      const expanded = await longRow.boundingBox();
       expect(expanded!.height).toBeLessThan(viewport.height * 0.6);
+      const expandedBody = longRow.getByTestId("user-message-body-scroll");
+      const innerOverflow = await expandedBody.evaluate(
+        (body) => body.scrollHeight - body.clientHeight,
+      );
+      expect(innerOverflow).toBeGreaterThan(0);
+      await expandedBody.hover();
+      await page.mouse.wheel(0, innerOverflow);
+      await expect
+        .poll(() =>
+          expandedBody.evaluate((body) => {
+            const text = body.querySelector('[data-testid="user-message-text"]')!;
+            const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+            const marker = "END OF STICKY PROMPT";
+            let node;
+            while ((node = walker.nextNode())) {
+              const offset = node.textContent?.indexOf(marker) ?? -1;
+              if (offset < 0) continue;
+              const range = document.createRange();
+              range.setStart(node, offset);
+              range.setEnd(node, offset + marker.length);
+              const end = range.getBoundingClientRect();
+              const bounds = body.getBoundingClientRect();
+              const clip = text
+                .closest('[data-testid="text-preview-clip"]')!
+                .getBoundingClientRect();
+              const pane = body
+                .closest('[data-testid="agent-chat-scroll"]')!
+                .getBoundingClientRect();
+              const top = Math.max(bounds.top, clip.top, pane.top, 0);
+              const bottom = Math.min(bounds.bottom, clip.bottom, pane.bottom, window.innerHeight);
+              const left = Math.max(bounds.left, clip.left, pane.left, 0);
+              const right = Math.min(bounds.right, clip.right, pane.right, window.innerWidth);
+              return (
+                body.scrollTop + body.clientHeight >= body.scrollHeight - 2 &&
+                end.width > 0 &&
+                end.height > 0 &&
+                end.top >= top - 1 &&
+                end.bottom <= bottom + 1 &&
+                end.left >= left - 1 &&
+                end.right <= right + 1
+              );
+            }
+            return false;
+          }),
+        )
+        .toBe(true);
+      await expectNearBottom(page);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/expanded-${viewport.width}.png`,
       });
-      await sticky.getByRole("button", { name: "Collapse user message", exact: true }).click();
-      await expect(next).toBeDisabled();
+      await longRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
+      await expect(longRow.getByTestId("user-message-next")).toBeDisabled();
       await expectNearBottom(page);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/compact-${viewport.width}.png`,
       });
       await fillComposerDraft(page, "Unsent draft survives prompt disclosure");
-      await sticky.getByRole("button", { name: "Expand user message", exact: true }).click();
-      await sticky.getByRole("button", { name: "Collapse user message", exact: true }).click();
+      await longRow.getByRole("button", { name: "Expand user message", exact: true }).click();
+      await longRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
       await expectComposerDraft(page, "Unsent draft survives prompt disclosure");
       await page.setViewportSize({ width: viewport.width, height: 500 });
-      await sticky.getByRole("button", { name: "Expand user message", exact: true }).click();
+      await longRow.getByRole("button", { name: "Expand user message", exact: true }).click();
       await expect
         .poll(() =>
-          sticky.evaluate((element) => {
+          longRow.evaluate((element) => {
             const paneHeight = element
               .closest('[data-testid="sticky-prompt-timeline"]')!
               .getBoundingClientRect().height;
@@ -966,10 +1256,10 @@ for (const viewport of [
         )
         .toBeLessThan(0.8);
       await expectNearBottom(page);
-      await sticky.getByRole("button", { name: "Collapse user message", exact: true }).click();
+      await longRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
       await page.setViewportSize(viewport);
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByTestId("sticky-user-message")).toContainText("Long sticky prompt");
+      await expect(actualUserRow(page, longPrompt)).toContainText("Long sticky prompt");
     } finally {
       await agent.cleanup();
     }
@@ -1069,6 +1359,7 @@ test("sticky cancelled older window stays at latest after bottom", async ({ page
     const before = await delivered.count();
     gate.releaseHeldServerMessage("fetch_agent_timeline_response");
     await delivered.waitFor(before + 1);
+    await expect(pinnedActualRow(page).filter({ hasText: agent.oldestPrompt })).toHaveCount(0);
     await expectNearBottom(page);
     await expectTimelinePromptVisible(page, agent.newestPrompt);
     await expect(page.getByTestId("sticky-user-message")).toHaveCount(0);
@@ -1097,6 +1388,7 @@ test("sticky composer submission cancels a held older window", async ({ page }) 
     const before = await delivered.count();
     gate.releaseHeldServerMessage("fetch_agent_timeline_response");
     await delivered.waitFor(before + 1);
+    await expect(pinnedActualRow(page).filter({ hasText: agent.oldestPrompt })).toHaveCount(0);
     await agent.client.waitForFinish(agent.agentId, 15_000);
     await expectNearBottom(page);
     await expectTimelinePromptVisible(page, sent);
@@ -1145,9 +1437,13 @@ for (const indexed of [true, false]) {
       gate.allowPromptIndexResponses();
       gate.allowTimelineResponses();
       await sticky.getByRole("button", { name: "Retry", exact: true }).click();
-      await expect(sticky).toContainText(prompt);
-      await expect(sticky.getByRole("alert")).toHaveCount(0);
+      await expect(sticky).toHaveCount(0);
+      const reveal = page.getByRole("button", { name: "Go to this message", exact: true });
+      await expect(reveal).toBeVisible();
       await expectNearBottom(page);
+      await reveal.click();
+      await expectTimelinePromptLandedBelowTop(page, prompt);
+      await expect(actualUserRow(page, prompt)).toHaveCount(1);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/discovery-${indexed ? "indexed" : "pagination"}.png`,
       });
@@ -1160,150 +1456,46 @@ for (const indexed of [true, false]) {
 /** Preserve glyph placement across LCD and grayscale antialiasing used by opaque
  * and translucent browser layers. Only the one-pixel antialiased edge can differ.
  */
-async function expectMatchingPromptInk(
-  page: Page,
-  originalScreenshot: Buffer,
-  pinnedText: Locator,
-) {
-  const pinnedScreenshot = await pinnedText.screenshot({ animations: "disabled" });
-  const textColor = await pinnedText.evaluate((node) => {
-    for (let parent: Element | null = node; parent; parent = parent.parentElement) {
-      if (getComputedStyle(parent).opacity !== "1") throw new Error("Pinned foreground is dimmed");
-    }
-    return getComputedStyle(node).color;
-  });
-  const ink = await page.evaluate(
-    async ({ source, pinned, color }) => {
-      const foreground = color.match(/\d+/g)!.slice(0, 3).map(Number);
-      async function decodeInk(base64: string) {
-        const image = new Image();
-        image.src = `data:image/png;base64,${base64}`;
-        await image.decode();
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const context = canvas.getContext("2d")!;
-        context.drawImage(image, 0, 0);
-        const pixels = context.getImageData(0, 0, image.width, image.height).data;
-        const background = Array.from(pixels.slice(0, 3));
-        const foregroundBrightness = foreground.reduce((sum, channel) => sum + channel, 0) / 3;
-        const backgroundBrightness = background.reduce((sum, channel) => sum + channel, 0) / 3;
-        const threshold =
-          foregroundBrightness + (backgroundBrightness - foregroundBrightness) * 0.35;
-        const darkText = foregroundBrightness < backgroundBrightness;
-        const mask: boolean[] = [];
-        for (let index = 0; index < pixels.length; index += 4) {
-          const brightness = (pixels[index]! + pixels[index + 1]! + pixels[index + 2]!) / 3;
-          mask.push(darkText ? brightness < threshold : brightness > threshold);
-        }
-        return {
-          width: image.width,
-          height: image.height,
-          mask,
-          count: mask.filter(Boolean).length,
-        };
-      }
-      const original = await decodeInk(source);
-      const copy = await decodeInk(pinned);
-      /** LCD color fringing and grayscale smoothing can choose neighboring edge pixels. */
-      function unmatchedPixels(from: typeof original, to: typeof original) {
-        return from.mask.filter((painted, index) => {
-          if (!painted) return false;
-          const x = index % from.width;
-          const y = Math.floor(index / from.width);
-          for (let dy = -1; dy <= 1; dy += 1) {
-            for (let dx = -1; dx <= 1; dx += 1) {
-              if (
-                x + dx >= 0 &&
-                x + dx < to.width &&
-                y + dy >= 0 &&
-                y + dy < to.height &&
-                to.mask[(y + dy) * to.width + x + dx]
-              )
-                return false;
-            }
-          }
-          return true;
-        }).length;
-      }
-      return {
-        original: { width: original.width, height: original.height, count: original.count },
-        copy: { width: copy.width, height: copy.height, count: copy.count },
-        missing: unmatchedPixels(original, copy),
-        added: unmatchedPixels(copy, original),
-      };
-    },
-    {
-      source: originalScreenshot.toString("base64"),
-      pinned: pinnedScreenshot.toString("base64"),
-      color: textColor,
-    },
-  );
-  expect(ink.original.count).toBeGreaterThan(0);
-  expect(ink.copy.width).toBe(ink.original.width);
-  expect(ink.copy.height).toBe(ink.original.height);
-  expect(ink.missing).toBe(0);
-  expect(ink.added).toBe(0);
-  expect(ink.copy.count / ink.original.count).toBeGreaterThan(0.9);
-  expect(ink.copy.count / ink.original.count).toBeLessThan(1.1);
-}
-
+/** Capture only currently painted text pixels without element screenshot auto-scrolling. */
 /** Compare painted bubble pixels at fine forward/reverse offsets around the pin threshold. */
 async function expectSinglePaintedPromptHandoff(page: Page, prompt: string, width: number) {
   const timeline = page.getByTestId("agent-chat-scroll");
-  const original = timeline.getByTestId("user-message").filter({ hasText: prompt });
-  const source = original.getByTestId("user-message-bubble");
-  const sticky = page.getByTestId("sticky-user-message");
-  const targetPinned = sticky.filter({ hasText: prompt });
-  // Arrows land pinned. Reveal this original before taking its painted baseline,
-  // so the screenshot cannot capture the copy through the original's masked bounds.
-  if (await targetPinned.count()) {
-    await targetPinned
-      .getByTestId("user-message-content-target")
-      .click({ position: { x: 10, y: 4 } });
+  const row = actualUserRow(page, prompt);
+  await expect(row).toHaveCount(1);
+  if ((await row.getAttribute("data-prompt-pinned")) === "true") {
+    await row.getByTestId("user-message-content-target").click({ position: { x: 10, y: 4 } });
     await expectTimelinePromptLandedBelowTop(page, prompt);
   }
-  await expect(targetPinned).toHaveCount(0);
-  await expect(original.getByTestId("user-message-prefix-mask")).toHaveCount(0);
+  await expect(row).toHaveAttribute("data-prompt-pinned", "false");
+  await expect(row.getByTestId("user-message-prefix-mask")).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
-  const viewport = (await timeline.boundingBox())!;
-  const sourceBox = (await source.boundingBox())!;
-  const originalText = original.getByTestId("user-message-text");
-  const originalTextBox = (await originalText.boundingBox())!;
   await timeline.hover();
-  const originalPixels = await originalText.screenshot({
-    animations: "disabled",
-    path: `../../docs/qa-evidence/sticky-user-message/original-body-${width}.png`,
-  });
+  const viewport = (await timeline.boundingBox())!;
+  const originalWrapper = (await row.boundingBox())!;
+  const body = row.getByTestId("user-message-bubble");
+  const sourceBox = (await body.boundingBox())!;
+  const originalText = row.getByTestId("user-message-text");
+  const textHandle = await originalText.elementHandle();
+  const originalTextBox = (await originalText.boundingBox())!;
+  const originalPixels = await captureVisibleActualPrompt(page, originalText);
   for (const offset of [6, 3, 1, -1, -3, -6, -12, -24, -12, -3, -1, 1, 3, 6]) {
-    const current = (await source.boundingBox())!;
+    const current = (await row.boundingBox())!;
     await page.mouse.wheel(0, current.y - viewport.y - offset);
-    await expect
-      .poll(async () => (await source.boundingBox())!.y - viewport.y)
-      .toBeCloseTo(offset, 0);
-    if (offset > 0) {
-      await expect(sticky).toHaveCount(0);
-      await expect(original.getByTestId("user-message-prefix-mask")).toHaveCount(0);
-      continue;
-    }
-    await expect(sticky).toBeVisible();
-    const body = sticky.getByTestId("user-message-bubble");
-    const pinned = (await body.boundingBox())!;
-    expect(pinned.x).toBeCloseTo(sourceBox.x, 0);
-    expect(pinned.width).toBeCloseTo(sourceBox.width, 0);
-    expect(pinned.height).toBeCloseTo(sourceBox.height, 0);
-    expect(pinned.y).toBeCloseTo(viewport.y, 0);
-    await expect(original.getByTestId("user-message-prefix-mask")).toBeVisible();
-    await body.screenshot({
-      animations: "disabled",
-      path: `../../docs/qa-evidence/sticky-user-message/pinned-body-${width}-${offset}.png`,
-    });
-    const pinnedText = sticky.getByTestId("user-message-text");
-    const pinnedTextBox = (await pinnedText.boundingBox())!;
-    expect(pinnedTextBox.x).toBeCloseTo(originalTextBox.x, 3);
-    expect(pinnedTextBox.y - pinned.y).toBeCloseTo(originalTextBox.y - sourceBox.y, 3);
-    expect(pinnedTextBox.width).toBeCloseTo(originalTextBox.width, 3);
-    await expectMatchingPromptInk(page, originalPixels, pinnedText);
+    await expect.poll(async () => (await row.boundingBox())!.y - viewport.y).toBeCloseTo(offset, 0);
+    await expect(row).toHaveAttribute("data-prompt-pinned", offset > 0 ? "false" : "true");
+    await expectActualTextIdentity(row, textHandle!, prompt);
+    const bounds = (await body.boundingBox())!;
+    expect(bounds.x).toBeCloseTo(sourceBox.x, 0);
+    expect(bounds.width).toBeCloseTo(sourceBox.width, 0);
+    expect(bounds.height).toBeCloseTo(sourceBox.height, 0);
+    if (offset > 0) continue;
+    // Pin the original row edge; bubble padding remains inside that actual row.
+    expect(bounds.y).toBeCloseTo(viewport.y + sourceBox.y - originalWrapper.y, 0);
+    const textBounds = (await originalText.boundingBox())!;
+    expect(textBounds.x).toBeCloseTo(originalTextBox.x, 3);
+    expect(textBounds.y - bounds.y).toBeCloseTo(originalTextBox.y - sourceBox.y, 3);
+    expect(textBounds.width).toBeCloseTo(originalTextBox.width, 3);
+    await expectMatchingPromptInk(page, originalPixels, originalText);
     await page.screenshot({
       path: `../../docs/qa-evidence/sticky-user-message/single-copy-${width}-${offset}.png`,
     });
@@ -1337,10 +1529,10 @@ test("keeps colored pinned disclosure readable before and during hover", async (
     await openAgentRoute(page, agent);
     await chatOutlineRail(page).getByRole("tab").first().click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
-    await scrollTimelinePastPrompt(page, prompt);
-    const sticky = page.getByTestId("sticky-user-message");
+    await scrollActualRowPastTop(page, actualUserRow(page, prompt));
+    const sticky = actualUserRow(page, prompt);
     const bubble = sticky.getByTestId("user-message-bubble");
-    const disclosure = sticky.getByTestId("sticky-user-message-disclosure");
+    const disclosure = sticky.getByTestId("user-message-disclosure");
     const label = disclosure.getByText("more…", { exact: true });
     await expect(bubble).toHaveCSS("background-color", "rgb(147, 197, 253)");
     await expect(sticky.getByTestId("user-message-text")).toHaveCSS("color", "rgb(24, 24, 27)");

@@ -369,8 +369,10 @@ export async function holdOlderHistoryPages(
       await expect.poll(() => gate.flushContentReads()).toBeGreaterThan(0);
       assertReadAccounting();
     }
-    // The content becomes visible in its own overlay, while the authoritative page remains held.
-    await expect(page.getByTestId("sticky-user-message").filter({ visible: true })).toBeVisible();
+    // Cached content exposes a reveal action without applying an authoritative transcript window.
+    await expect(
+      page.getByRole("button", { name: "Go to this message", exact: true }),
+    ).toBeVisible();
     await waitForTimelineGeometryToSettle(page);
     expect(await captureContentReadViewport(page)).toEqual(before);
     assertReadAccounting();
@@ -691,16 +693,29 @@ export async function captureSpokenTimeline(
 /** Move the reading edge below a prompt using the isolated timeline's actual bubble bounds. */
 export async function scrollTimelinePastPrompt(page: Page, prompt: string): Promise<void> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-  const delta = await timeline
-    .getByTestId("user-message")
-    .filter({ hasText: prompt })
-    .evaluate((bubble) => {
-      const scroll = bubble.closest<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
-      return bubble.getBoundingClientRect().bottom - scroll.getBoundingClientRect().top + 2;
-    });
+  const row = timeline.locator("[data-actual-prompt-row]").filter({ hasText: prompt });
+  await expect(row).toHaveCount(1);
+  await waitForTimelineGeometryToSettle(page);
+  const rowId = await row.getAttribute("data-history-row-id");
+  expect(rowId).not.toBeNull();
+  const delta = await row.evaluate((node) => {
+    const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
+    return node.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 1;
+  });
   await timeline.hover();
   await page.mouse.wheel(0, delta);
-  await expect(page.getByTestId("sticky-user-message")).toContainText(prompt);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
+        return node.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+      }),
+    )
+    .toBeLessThan(0);
+  await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+  await expect(
+    timeline.locator('[data-actual-prompt-row][data-prompt-pinned="true"]'),
+  ).toHaveAttribute("data-history-row-id", rowId!);
 }
 
 /** Observe the original viewport and canonical rows, excluding the content-only sticky copy. */

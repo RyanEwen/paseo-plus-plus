@@ -436,6 +436,46 @@ describe("createWebStreamStrategy", () => {
     expect(renderCountById.get(other.id)).toBe(1);
   });
 
+  it("bounds prompt disclosure by the window and measured pane through resize", () => {
+    const height = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(1000);
+    act(() => window.dispatchEvent(new Event("resize")));
+    let observed: React.ContextType<typeof ActualPromptRowsContext> = null;
+    function Probe() {
+      observed = React.useContext(ActualPromptRowsContext);
+      return null;
+    }
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const render = (availableHeight: number) =>
+      act(() =>
+        root?.render(
+          <ActualPromptRowsProvider enabled scope="agent:epoch" availableHeight={availableHeight}>
+            <Probe />
+          </ActualPromptRowsProvider>,
+        ),
+      );
+    render(900);
+    const read = () => {
+      expect(observed).not.toBeNull();
+      return observed!;
+    };
+    expect(read().bodyViewportHeight).toBeGreaterThan(0);
+    expect(read().bodyViewportHeight).toBeLessThan(1000 * 0.6);
+    expect(read().bodyViewportHeight).toBeLessThan(900 * 0.8);
+    act(() => read().expand("message-1"));
+    const beforeResize = read().bodyViewportHeight;
+    height.mockReturnValue(600);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(read().bodyViewportHeight).toBeLessThan(beforeResize);
+    expect(read().bodyViewportHeight).toBeLessThan(600 * 0.6);
+    act(() => read().reportViewportHeight(200));
+    expect(read().bodyViewportHeight).toBeLessThan(200 * 0.8);
+    render(120);
+    expect(read().bodyViewportHeight).toBeLessThan(120 * 0.8);
+    expect(read().expandedIds.has("message-1")).toBe(true);
+  });
+
   it("keeps a row mounted when it moves from the live head into mounted history", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
     const viewportRef = React.createRef<StreamViewportHandle>();
