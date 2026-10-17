@@ -65,13 +65,16 @@ export function anchorProjectExpansion({
     if (disposed) return;
     commitToggle();
     if (cancelled || !initial) return;
-    const anchorTop = Math.max(0, initial.headerTop - initial.viewportTop);
+    const initialTop = Math.max(0, initial.headerTop - initial.viewportTop);
     const follow = (time: number) => {
       if (cancelled) return;
       start ??= time;
       measure((geometry) => {
         if (cancelled || !geometry) return;
-        const delta = geometry.headerTop - geometry.viewportTop - anchorTop;
+        const progress = duration > 0 ? Math.min(1, (time - start!) / duration) : 1;
+        // Arrive at this project, rather than retaining an offset that can clamp to list start.
+        const targetTop = initialTop * (1 - progress);
+        const delta = geometry.headerTop - geometry.viewportTop - targetTop;
         if (Math.abs(delta) > 0.5) scrollBy(delta);
         if (time - start! < duration) frame = requestFrame(follow);
       });

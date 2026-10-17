@@ -1072,6 +1072,9 @@ test("single-project expansion keeps a smaller clicked project visible throughou
       expect(sample.bottom).toBeLessThanOrEqual(sample.viewportBottom + 2);
     }
     expect(samples.at(-1)!.scrollTop).toBeLessThan(samples[0].scrollTop);
+    // The selected project becomes topmost; preceding collapsed projects remain above the viewport.
+    expect(samples.at(-1)!.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(samples.at(-1)!.top - samples.at(-1)!.viewportTop)).toBeLessThanOrEqual(2);
     await expect(
       page.getByTestId(`sidebar-workspace-row-${getServerId()}:${large.workspaceId}`),
     ).toHaveCount(0);
