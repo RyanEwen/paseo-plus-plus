@@ -1,3 +1,9 @@
+import {
+  canonicalPromptSourceKey,
+  CanonicalPromptContextBudgetError,
+  type CanonicalPromptContextProgress,
+  type CanonicalPromptContext,
+} from "@/timeline/canonical-prompt-context";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { FetchAgentTimelineResponseMessage } from "@getpaseo/protocol/messages";
 import type { StreamItem } from "@/types/stream";
@@ -20,7 +26,7 @@ export type ContextEntry = ContextPage["entries"][number];
 
 /** A source occurrence is its canonical position and kind, never messageId alone. */
 export function contextSourceKey(source: StreamItem): string {
-  return `${source.timelineCursor?.epoch}:${source.timelineCursor?.seq}:${source.kind}:${source.id}`;
+  return canonicalPromptSourceKey(source);
 }
 
 /** Read backward without applying a window. The source probe shares the eight-read budget.
@@ -33,6 +39,17 @@ export async function fetchReadingPromptContext(
   signal: AbortSignal,
   backwardProjection: "projected" | "canonical" = "canonical",
 ): Promise<UserPrompt | undefined> {
+  return (await fetchCanonicalPromptContext(reader, source, signal, backwardProjection))?.prompt;
+}
+
+export async function fetchCanonicalPromptContext(
+  reader: ContextPageReader,
+  source: StreamItem,
+  signal: AbortSignal,
+  backwardProjection: "projected" | "canonical" = "canonical",
+  progress?: CanonicalPromptContextProgress,
+  resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined,
+): Promise<CanonicalPromptContext | undefined> {
   const position = source.timelineCursor;
   if (!position) throw new Error("Reading source has no canonical position");
   const read = async (cursor: number, limit: number, projection: "projected" | "canonical") => {
@@ -44,12 +61,21 @@ export async function fetchReadingPromptContext(
     for (const entry of page.entries) validateContextRange(entry);
     return page;
   };
-  const probe = await read(position.seq + 1, 1, "projected");
-  const matches = probe.entries.filter((entry) => matchesContextSource(entry, source));
-  if (probe.entries.length !== 1 || matches.length !== 1)
-    throw new Error("Reading source occurrence is ambiguous");
-  let cursor = matches[0]!.seqStart;
-  for (let used = 1; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
+  const sourceKey = contextSourceKey(source);
+  validateContextContinuation(progress, sourceKey, position.seq);
+  let sourceStart: number;
+  if (progress) sourceStart = progress.sourceStart;
+  else {
+    const probe = await read(position.seq + 1, 1, "projected");
+    const matches = probe.entries.filter((entry) => matchesContextSource(entry, source));
+    if (probe.entries.length !== 1 || matches.length !== 1)
+      throw new Error("Reading source occurrence is ambiguous");
+    sourceStart = matches[0]!.seqStart;
+  }
+  const ordinary = resolveOrdinary?.(sourceStart);
+  if (ordinary) return { sourceKey, sourceStart, sourceEnd: position.seq, prompt: ordinary };
+  let cursor = progress?.cursor ?? sourceStart;
+  for (let used = progress ? 0 : 1; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
     const page = await read(cursor, TIMELINE_FETCH_PAGE_SIZE, backwardProjection);
     const entries = page.entries;
     if (entries.some((entry) => entry.seqEnd >= cursor))
@@ -57,13 +83,43 @@ export async function fetchReadingPromptContext(
     const prompt = entries
       .filter((entry) => entry.item.type === "user_message")
       .sort((a, b) => b.seqEnd - a.seqEnd)[0];
-    if (prompt) return hydratePromptEntry(prompt, position.epoch);
+    if (prompt)
+      return {
+        sourceKey: contextSourceKey(source),
+        sourceStart,
+        sourceEnd: position.seq,
+        prompt: hydratePromptEntry(prompt, position.epoch),
+      };
     if (!page.hasOlder) return undefined;
     const next = entries.length ? Math.min(...entries.map((entry) => entry.seqStart)) : cursor;
     if (next >= cursor) throw new Error("Reading context made no progress");
     cursor = next;
   }
-  throw new Error("Reading context reached its request budget");
+  throw new CanonicalPromptContextBudgetError({
+    sourceKey,
+    sourceStart,
+    sourceEnd: position.seq,
+    cursor,
+  });
+}
+
+function validateContextContinuation(
+  progress: CanonicalPromptContextProgress | undefined,
+  sourceKey: string,
+  sourceEnd: number,
+): void {
+  if (
+    progress &&
+    (progress.sourceKey !== sourceKey ||
+      progress.sourceEnd !== sourceEnd ||
+      !Number.isInteger(progress.sourceStart) ||
+      !Number.isInteger(progress.cursor) ||
+      progress.sourceStart < 0 ||
+      progress.sourceStart > sourceEnd ||
+      progress.cursor < 0 ||
+      progress.cursor > progress.sourceStart)
+  )
+    throw new Error("Reading context continuation is invalid");
 }
 
 /** Validate real ranges instead of treating a legacy seqEnd as the source start. */
@@ -91,7 +147,11 @@ export function validateContextRange(entry: ContextEntry): void {
 /** Match the exact visible canonical occurrence, including turn and provider identity. */
 export function matchesContextSource(entry: ContextEntry, source: StreamItem): boolean {
   const seq = source.timelineCursor?.seq;
-  if (seq === undefined || entry.seqEnd !== seq) return false;
+  if (
+    seq === undefined ||
+    !entry.sourceSeqRanges.some((range) => range.startSeq <= seq && range.endSeq >= seq)
+  )
+    return false;
   let type: string = source.kind;
   if (source.kind === "thought") type = "reasoning";
   if (source.kind === "notification") type = source.sourceType;

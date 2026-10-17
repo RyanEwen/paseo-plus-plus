@@ -39,6 +39,8 @@ export interface BuildAgentStreamRenderModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   historyStart?: number;
+  /** Presented rows selected by retained canonical position survive the local slice. */
+  retainedPositions?: ReadonlySet<string>;
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -163,7 +165,16 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const orderingCacheKey = `${input.platform}:${input.isMobileBreakpoint}`;
-  const renderedTail = input.historyStart ? input.tail.slice(input.historyStart) : input.tail;
+  const start = input.historyStart ?? 0;
+  const renderedTail =
+    start > 0
+      ? input.tail.filter((item, index) => {
+          if (index >= start) return true;
+          const cursor = item.timelineCursor;
+          if (!cursor) return false;
+          return input.retainedPositions?.has(`${cursor.epoch}:${cursor.seq}`) === true;
+        })
+      : input.tail;
   const orderedTail = getOrderedItems({
     cache: orderedTailCache,
     source: renderedTail,

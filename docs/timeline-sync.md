@@ -87,11 +87,16 @@ Bottom-following intent starts at the latest prompt and resumes when you send or
 bottom. Incoming messages do not move an older reading selection. Retained panes keep their own
 selection; session and epoch changes isolate it.
 
-A content-only read can recover the indexed prompt for an already-visible response without
-applying a transcript window. Index-free history may begin with several pages containing no user
-prompt. Discovery must use the pagination owner, check cursor progress, and stop with usable
-feedback on exhaustion, failure, cancellation, or its work budget. An explicit retry can continue
-past the budget.
+An assistant-only tail may need a separate canonical context read to recover its preceding
+user row. Keep that isolated coverage separate from the viewed window, and pass the row through
+the same presentation as ordinary history. A retained context row does not prove that the gap
+before it is loaded. Original reveal and arrow navigation must materialize the target through
+the ordinary history owner before claiming a landing.
+
+Index-free discovery checks canonical cursor progress and stops with usable feedback on
+exhaustion, failure, cancellation, or its work budget. An explicit retry can continue past the
+budget; streamed cursor advances cannot restart that budget. Split panes retain their own
+reading context, including while hidden or with pinning disabled.
 
 Cancel obsolete navigation at the window-acceptance boundary as well as the scroll boundary.
 Returning to bottom, sending, or starting manual reading must invalidate delayed page application,

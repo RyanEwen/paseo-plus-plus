@@ -1,3 +1,9 @@
+import { createStreamPresentation, getStreamItemMessageId } from "./presentation";
+import {
+  mergeRetainedPrompts,
+  retainedCanonicalPositions,
+  type CanonicalPromptContext,
+} from "@/timeline/canonical-prompt-context";
 import { nativeChronologicalRows } from "./native-actual-row-model";
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
@@ -9,7 +15,7 @@ function createTimestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
 }
 
-function userMessage(id: string, seed: number): StreamItem {
+function userMessage(id: string, seed: number): Extract<StreamItem, { kind: "user_message" }> {
   return {
     kind: "user_message",
     id,
@@ -283,5 +289,100 @@ describe("actual native canonical row collection", () => {
     });
     expect(after.map((row) => row.id)).toEqual(["old", "retained"]);
     expect(after[1]).toBe(before[0]);
+  });
+});
+
+describe("canonical predecessor presentation membership", () => {
+  const present = (
+    tail: StreamItem[],
+    transform?: import("@/plugins/timeline/model").TimelineItemTransform,
+  ) =>
+    createStreamPresentation()({
+      tail,
+      head: [],
+      transform,
+      level: "overview",
+      isTurnActive: false,
+    });
+  const projectedModel = (
+    tail: StreamItem[],
+    contexts: readonly CanonicalPromptContext[],
+    historyStart: number,
+    transform?: import("@/plugins/timeline/model").TimelineItemTransform,
+  ) => {
+    const canonical = mergeRetainedPrompts(tail, contexts);
+    const presentation = present(canonical, transform);
+    return buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: presentation.tail,
+      head: [],
+      platform: "web",
+      isMobileBreakpoint: false,
+      historyStart,
+      retainedPositions: retainedCanonicalPositions(canonical, contexts),
+    });
+  };
+  const prompt = { ...userMessage("u", 1), timelineCursor: { epoch: "epoch", seq: 1 } };
+  const context: CanonicalPromptContext = {
+    sourceKey: "source",
+    sourceStart: 40,
+    sourceEnd: 50,
+    prompt,
+  };
+  const assistant = { ...assistantMessage("a", 2), timelineCursor: { epoch: "epoch", seq: 50 } };
+
+  it("retains a presented canonical point through the local slice without changing the ordinary tail", () => {
+    const tail = [assistantMessage("hidden", 0), assistant];
+    const model = projectedModel(tail, [context], 2);
+    expect(model.history.map(getStreamItemMessageId)).toEqual([prompt.id, assistant.id]);
+    expect(model.history[0]).toBe(prompt);
+    expect(tail).toEqual([assistantMessage("hidden", 0), assistant]);
+  });
+
+  it("uses the complete ordinary revision even when it precedes historyStart", () => {
+    const current = { ...prompt, text: "authoritative revision" };
+    const tail = [current, assistantMessage("hidden", 0), assistant];
+    const model = projectedModel(tail, [context], 2);
+    expect(model.history.map(getStreamItemMessageId)).toEqual([current.id, assistant.id]);
+    expect(model.history[0]).toBe(current);
+    expect(mergeRetainedPrompts(tail, [context])).toBe(tail);
+  });
+
+  it("normalizes retained spoken input through the same presentation pipeline", () => {
+    const spoken = {
+      ...prompt,
+      text: "<spoken-input>Actual spoken words</spoken-input><instruction>This message was spoken by the user.</instruction>",
+    };
+    const model = projectedModel([assistant], [{ ...context, prompt: spoken }], 1);
+    expect(model.history[0]).toEqual({ ...spoken, text: "Actual spoken words" });
+    expect(model.history).toHaveLength(2);
+    expect(spoken.text).toContain("<spoken-input>");
+  });
+
+  it("respects a plugin-hidden retained prompt instead of reintroducing raw content after projection", () => {
+    const model = projectedModel([assistant], [context], 0, ({ item }) =>
+      item.type === "user_message" ? [] : undefined,
+    );
+    expect(model.history.map((item) => item.id)).not.toContain(prompt.id);
+    expect(model.history.every((item) => item.kind !== "user_message")).toBe(true);
+  });
+
+  it("uses the newest retained revision and never duplicates an ordinary live-head prompt", () => {
+    const updated = { ...prompt, text: "new complete content" };
+    const next = { ...context, sourceKey: "second", prompt: updated };
+    const canonical = mergeRetainedPrompts([], [context, next]);
+    expect(canonical).toEqual([updated]);
+    const tail = mergeRetainedPrompts([], [context], [updated]);
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: true,
+      activeTurnStartedAt: null,
+      tail,
+      head: [updated],
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+    expect(model.history).toEqual([]);
+    expect(model.segments.liveHead).toEqual([updated]);
   });
 });

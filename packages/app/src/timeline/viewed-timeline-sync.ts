@@ -1,4 +1,8 @@
 import {
+  createCanonicalPromptContexts,
+  type CanonicalPromptContexts,
+} from "./canonical-prompt-context";
+import {
   planTimelineCatchUpAfter,
   planTimelineResumeFetch,
   type ProjectedTimelineForwardFetchPlan,
@@ -352,6 +356,7 @@ export type ViewedTimelineOwnerPorts = Omit<
 >;
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
+  promptContexts: CanonicalPromptContexts;
   applyTimelineResponse(payload: TimelineResponsePayload): void;
   enqueueStreamEvent(agentId: string, event: AgentStreamReducerEvent): void;
   flushStreamAgent(agentId: string): void;
@@ -364,6 +369,9 @@ export function createViewedTimelineOwner(input: {
   drainQueuedAgentMessage: (agentId: string) => void;
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
+  const promptContexts = createCanonicalPromptContexts(
+    (agentId, epoch) => input.ports.readCursor(agentId)?.epoch === epoch,
+  );
   const forcedTailReplacements = new Set<string>();
   const sync = createViewedTimelineSync({
     ...input.ports,
@@ -377,7 +385,10 @@ export function createViewedTimelineOwner(input: {
     },
     prepare: (agentId) => input.replica.prepare(agentId),
     readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
-    replaceDemandedAgentIds: input.replaceDemandedAgentIds,
+    replaceDemandedAgentIds: (ids) => {
+      promptContexts.retainAgents(ids);
+      input.replaceDemandedAgentIds(ids);
+    },
     onCatchUpEnded: (agentId) =>
       useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
   });
@@ -390,6 +401,7 @@ export function createViewedTimelineOwner(input: {
   });
   return {
     ...sync,
+    promptContexts,
     applyTimelineResponse(receivedPayload) {
       const payload = consumeForcedTimelineTailReplacement(receivedPayload, forcedTailReplacements);
       const accepted = applyAuthoritativeTimelineResponse({
@@ -399,7 +411,10 @@ export function createViewedTimelineOwner(input: {
         recoverGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
         drainQueuedAgentMessage: input.drainQueuedAgentMessage,
       });
-      if (accepted) input.replica.timelineUpdated(payload.agentId);
+      if (accepted) {
+        promptContexts.setEpoch(payload.agentId, payload.epoch);
+        input.replica.timelineUpdated(payload.agentId);
+      }
     },
     enqueueStreamEvent(agentId, event) {
       streamQueue.enqueue(agentId, event);
@@ -408,6 +423,7 @@ export function createViewedTimelineOwner(input: {
       streamQueue.flushAgent(agentId);
     },
     dispose() {
+      promptContexts.dispose();
       streamQueue.dispose({ flush: true });
       sync.dispose();
     },
