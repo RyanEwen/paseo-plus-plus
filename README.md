@@ -92,7 +92,7 @@ Hover a workspace divider to choose 50/50, 60/40, 40/60, 70/30, or 30/70 proport
 
 ### Mobile workspace tabs
 
-Switch between workspace tabs directly on your phone with the tab strip enabled by default. Scroll it horizontally, use each tab's actions for renaming or closing, and open another tab from **+**. Turn **Mobile workspace tabs** off in Paseo++ settings to restore the earlier chooser while preserving your selected tab and drafts.
+Switch between workspace tabs directly on your phone with the bottom tab strip enabled by default. Scroll it horizontally, use each tab's actions for renaming or closing, and open another tab from **+**. Turn **Mobile workspace tabs** off in Paseo++ settings to restore the earlier chooser while preserving your selected tab and drafts.
 
 ### Accent colors
 

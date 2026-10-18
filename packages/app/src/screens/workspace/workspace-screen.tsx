@@ -1,3 +1,4 @@
+import { ComposerBottomBarHeightContext } from "@/composer/dock/internal/bottom-bar-height";
 import { resolveWorkspaceTabLaunchDestination } from "@/workspace-tabs/launcher/internal/destination";
 import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
 import { WorkspaceBrowserScope } from "@/workspace/browser/context";
@@ -17,7 +18,7 @@ import {
 } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
-import { BackHandler, Text, View } from "react-native";
+import { BackHandler, Text, View, type LayoutChangeEvent } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
@@ -1094,6 +1095,44 @@ function useWorkspaceLayoutReady(): boolean {
   return hydrated && !isLoading;
 }
 
+function WorkspaceCenterColumn({
+  isMobile,
+  hasNavigation,
+  header,
+  navigation,
+  content,
+}: {
+  isMobile: boolean;
+  hasNavigation: boolean;
+  header: ReactNode;
+  navigation: ReactNode;
+  content: ReactNode;
+}) {
+  const insets = useSafeAreaInsets();
+  const [bottomBarHeight, setBottomBarHeight] = useState(0);
+  const handleBottomBarLayout = useCallback((event: LayoutChangeEvent) => {
+    setBottomBarHeight(event.nativeEvent.layout.height);
+  }, []);
+  const bottomBarStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
+  const hasBottomNavigation = isMobile && hasNavigation;
+  return (
+    <View style={styles.centerColumn}>
+      {header}
+      {!isMobile ? navigation : null}
+      <View style={styles.centerContent}>
+        <ComposerBottomBarHeightContext.Provider value={hasBottomNavigation ? bottomBarHeight : 0}>
+          {content}
+        </ComposerBottomBarHeightContext.Provider>
+      </View>
+      {hasBottomNavigation ? (
+        <View style={bottomBarStyle} onLayout={handleBottomBarLayout}>
+          {navigation}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1101,7 +1140,6 @@ function WorkspaceScreenContent({
   recoveryRequested,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
-  const _insets = useSafeAreaInsets();
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const hasMacTrafficLights = useHasWindowChromeObstruction("top-left");
@@ -3574,11 +3612,14 @@ function WorkspaceScreenContent({
   const desktopContent = desktopSplitContent ?? content;
   const rendersDesktopSplitContent = !isMobile && desktopSplitContent !== null;
 
-  const workspacePanelContent = (
-    <WorkspacePanelContent
-      launcher={newTabLauncher}
-      content={isMobile ? content : desktopContent}
-    />
+  const workspacePanelContent = useMemo(
+    () => (
+      <WorkspacePanelContent
+        launcher={newTabLauncher}
+        content={isMobile ? content : desktopContent}
+      />
+    ),
+    [newTabLauncher, isMobile, content, desktopContent],
   );
 
   const { showStandaloneTabs, showLegacyMobileSwitcher, activeTabKey } = useMemo(
@@ -3592,66 +3633,109 @@ function WorkspaceScreenContent({
     [isMobile, mobileWorkspaceTabsEnabled, shouldRenderDesktopPaneFallback, activeTabId],
   );
 
-  const workspaceCenterColumn = (
-    <View style={styles.centerColumn}>
-      {rendersDesktopSplitContent ? null : (
-        <NewTabLauncherProvider value={newTabLauncher}>
-          {renderWorkspaceScreenHeader()}
-        </NewTabLauncherProvider>
-      )}
-
-      {showLegacyMobileSwitcher ? (
-        <MobileWorkspaceTabSwitcher
-          key={`${normalizedServerId}:${normalizedWorkspaceId}`}
-          tabs={tabs}
-          activeTabKey={activeTabKey}
-          activeTab={activeTabDescriptor}
-          normalizedServerId={normalizedServerId}
-          normalizedWorkspaceId={normalizedWorkspaceId}
-          onSelectSwitcherTab={navigateToTabId}
-          onCopyResumeCommand={handleCopyResumeCommand}
-          onCopyAgentId={handleCopyAgentId}
-          onCopyTerminalId={handleCopyTerminalId}
-          onCopyFilePath={handleCopyFilePath}
-          onReloadAgent={handleReloadAgent}
-          onRenameTab={handleRenameTab}
-          onCloseTab={handleCloseTabById}
-          onCloseTabsAbove={handleCloseTabsToLeft}
-          onCloseTabsBelow={handleCloseTabsToRight}
-          onCloseOtherTabs={handleCloseOtherTabs}
-        />
-      ) : null}
-
-      {showStandaloneTabs ? (
-        <NewTabLauncherProvider value={newTabLauncher}>
-          <WorkspaceTabsRow
-            paneId={focusedPaneIdOrUndefined}
-            isFocused={isRouteFocused}
-            tabs={desktopTabRowItems}
+  const workspaceTabNavigation = useMemo(
+    () => (
+      <>
+        {showLegacyMobileSwitcher ? (
+          <MobileWorkspaceTabSwitcher
+            key={`${normalizedServerId}:${normalizedWorkspaceId}`}
+            tabs={tabs}
+            activeTabKey={activeTabKey}
+            activeTab={activeTabDescriptor}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
-            setHoveredCloseTabKey={setHoveredCloseTabKey}
-            onNavigateTab={navigateToTabId}
-            onCloseTab={handleCloseTabById}
+            onSelectSwitcherTab={navigateToTabId}
             onCopyResumeCommand={handleCopyResumeCommand}
             onCopyAgentId={handleCopyAgentId}
             onCopyTerminalId={handleCopyTerminalId}
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
             onRenameTab={handleRenameTab}
-            onCloseTabsToLeft={handleCloseTabsToLeft}
-            onCloseTabsToRight={handleCloseTabsToRight}
+            onCloseTab={handleCloseTabById}
+            onCloseTabsAbove={handleCloseTabsToLeft}
+            onCloseTabsBelow={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
-            onCreateNewTab={handleCreateNewTab}
-            onReorderTabs={handleReorderTabsInFocusedPane}
-            focusModeEnabled={desktopFocusModeEnabled}
-            onExitFocusMode={toggleFocusMode}
           />
-        </NewTabLauncherProvider>
-      ) : null}
+        ) : null}
 
-      <View style={styles.centerContent}>{workspacePanelContent}</View>
-    </View>
+        {showStandaloneTabs ? (
+          <NewTabLauncherProvider value={newTabLauncher}>
+            <WorkspaceTabsRow
+              paneId={focusedPaneIdOrUndefined}
+              isFocused={isRouteFocused}
+              tabs={desktopTabRowItems}
+              normalizedServerId={normalizedServerId}
+              normalizedWorkspaceId={normalizedWorkspaceId}
+              setHoveredCloseTabKey={setHoveredCloseTabKey}
+              onNavigateTab={navigateToTabId}
+              onCloseTab={handleCloseTabById}
+              onCopyResumeCommand={handleCopyResumeCommand}
+              onCopyAgentId={handleCopyAgentId}
+              onCopyTerminalId={handleCopyTerminalId}
+              onCopyFilePath={handleCopyFilePath}
+              onReloadAgent={handleReloadAgent}
+              onRenameTab={handleRenameTab}
+              onCloseTabsToLeft={handleCloseTabsToLeft}
+              onCloseTabsToRight={handleCloseTabsToRight}
+              onCloseOtherTabs={handleCloseOtherTabs}
+              onCreateNewTab={handleCreateNewTab}
+              onReorderTabs={handleReorderTabsInFocusedPane}
+              focusModeEnabled={desktopFocusModeEnabled}
+              onExitFocusMode={toggleFocusMode}
+            />
+          </NewTabLauncherProvider>
+        ) : null}
+      </>
+    ),
+    [
+      showLegacyMobileSwitcher,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      tabs,
+      activeTabKey,
+      activeTabDescriptor,
+      navigateToTabId,
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabById,
+      handleCloseTabsToLeft,
+      handleCloseTabsToRight,
+      handleCloseOtherTabs,
+      showStandaloneTabs,
+      newTabLauncher,
+      focusedPaneIdOrUndefined,
+      isRouteFocused,
+      desktopTabRowItems,
+      setHoveredCloseTabKey,
+      handleCreateNewTab,
+      handleReorderTabsInFocusedPane,
+      desktopFocusModeEnabled,
+      toggleFocusMode,
+    ],
+  );
+
+  const workspaceHeader = useMemo(
+    () =>
+      rendersDesktopSplitContent ? null : (
+        <NewTabLauncherProvider value={newTabLauncher}>
+          {renderWorkspaceScreenHeader()}
+        </NewTabLauncherProvider>
+      ),
+    [rendersDesktopSplitContent, newTabLauncher, renderWorkspaceScreenHeader],
+  );
+
+  const workspaceCenterColumn = (
+    <WorkspaceCenterColumn
+      isMobile={isMobile}
+      hasNavigation={showStandaloneTabs || showLegacyMobileSwitcher}
+      header={workspaceHeader}
+      navigation={workspaceTabNavigation}
+      content={workspacePanelContent}
+    />
   );
 
   const renderedWorkspaceScreen = (

@@ -1662,6 +1662,9 @@ function ResolvedWorkspaceTabChip({
 const styles = StyleSheet.create((theme) => ({
   compactTabsContainer: {
     height: CONTROL_HEIGHTS.field + 8,
+    borderBottomWidth: 0,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
   },
   compactTab: {
     height: CONTROL_HEIGHTS.field,
