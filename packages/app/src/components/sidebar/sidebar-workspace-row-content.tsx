@@ -365,8 +365,7 @@ export type SidebarWorkspaceTrailingPresentation = "visible" | "hidden" | "absen
 
 /**
  * Shared metadata and menu policy for every workspace row renderer.
- * Desktop metadata stays beside the status and revealed actions; touch keeps the menu visible
- * and replaces the metadata. Shortcut hints temporarily conceal metadata without changing width.
+ * Metadata stays beside the status and actions; touch keeps the menu visible alongside it. Shortcut hints temporarily conceal metadata without changing width.
  */
 export function resolveTrailingActionVisibility({
   workspace,
@@ -390,9 +389,8 @@ export function resolveTrailingActionVisibility({
 } {
   const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
   const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
-  // Touch permanently replaces the stats with the menu. Only temporary shortcut hints
-  // conceal content while retaining its width, so desktop rows do not shift.
-  const hasContent = hasTrailing && !(hasArchiveAction && isTouchPlatform);
+  // Only temporary shortcut hints conceal metadata; persistent touch menus share the row.
+  const hasContent = hasTrailing;
   let trailingPresentation: SidebarWorkspaceTrailingPresentation = "absent";
   if (hasContent) trailingPresentation = showShortcut ? "hidden" : "visible";
   return {
