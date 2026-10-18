@@ -82,6 +82,9 @@ definition, no longer eligible to begin.
   `useBlockMobilePanelOpenGestures`. Register only while the conflicting interaction is active and
   unregister when the surface is hidden or unfocused. The blocker never disables gestures that close
   an already-open panel.
+- Compact workspace navigation sits below the content. Its measured height includes the bottom safe
+  area and supplies the composer’s keyboard clearance; keep that reservation with the navigation
+  owner so chat and terminal content do not each reserve another bottom bar.
 - Horizontal workspace tab strips own swipes inside their scroll hitbox. Use
   `MobileHorizontalScrollGesture` to give the scroll surface priority over panel-opening gestures;
   panel swipes outside the strip and gestures that close an open panel keep their existing ownership.

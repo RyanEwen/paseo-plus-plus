@@ -1,3 +1,4 @@
+import { ComposerBottomBarHeightContext } from "./internal/bottom-bar-height";
 import { ComposerViewportRef } from "./internal/viewport-ref";
 import { ComposerDockBackground } from "./internal/background";
 export { ComposerDockBackground } from "./internal/background";
@@ -123,6 +124,7 @@ export function ComposerDock({
   centered = false,
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
+  const bottomBarHeight = useContext(ComposerBottomBarHeightContext);
   const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
   const centeredClearance = useCenteredClearance(insets.bottom);
   // Preserve the existing centered form's visual balance on tablets.
@@ -155,7 +157,10 @@ export function ComposerDock({
   }
   return (
     <ComposerViewport style={dockStyles.viewport}>
-      <KeyboardTranslateView style={dockStyles.surface}>
+      <KeyboardTranslateView
+        style={dockStyles.surface}
+        bottomClearance={Math.max(0, bottomBarHeight - insets.bottom)}
+      >
         <View
           testID="composer-dock-content"
           collapsable={false}
@@ -170,7 +175,14 @@ export function ComposerDock({
           </View>
         </View>
         <ComposerViewportContent style={dockStyles.composer}>
-          <View style={[dockStyles.composer, { paddingBottom: insets.bottom }]}>{composer}</View>
+          <View
+            style={[
+              dockStyles.composer,
+              { paddingBottom: bottomBarHeight > 0 ? 0 : insets.bottom },
+            ]}
+          >
+            {composer}
+          </View>
         </ComposerViewportContent>
         {overlay}
       </KeyboardTranslateView>
