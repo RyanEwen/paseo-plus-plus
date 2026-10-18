@@ -1,3 +1,5 @@
+import { canonicalCoverageForCursor } from "./canonical-reading-source";
+import type { AcceptedCanonicalSources } from "./canonical-source-metadata";
 import {
   createCanonicalPromptContexts,
   type CanonicalPromptContexts,
@@ -264,7 +266,8 @@ function applyAuthoritativeTimelineResponse(input: {
   cachedCursor?: AgentTimelineCursorState;
   recoverGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
   drainQueuedAgentMessage: (agentId: string) => void;
-}): boolean {
+  onAcceptedSources: (sources: AcceptedCanonicalSources) => void;
+}): "apply" | "discard" | "error" {
   const { serverId, payload } = input;
   const agentId = payload.agentId;
   const initKey = getInitKey(serverId, agentId);
@@ -275,6 +278,7 @@ function applyAuthoritativeTimelineResponse(input: {
     timeline.status === "synced" ? (timeline.range ?? undefined) : input.cachedCursor;
   const result = processTimelineResponse({
     payload,
+    onAcceptedSources: input.onAcceptedSources,
     currentTail: timeline.status === "cold" ? [] : timeline.items,
     currentHead: session?.agentStreamHead.get(agentId) ?? [],
     currentCursor,
@@ -287,7 +291,7 @@ function applyAuthoritativeTimelineResponse(input: {
   if (result.error) {
     if (result.clearInitializing) clearAgentInitializingFlag(serverId, agentId);
     if (result.initResolution === "reject") rejectInitDeferred(initKey, new Error(result.error));
-    return false;
+    return "error";
   }
 
   const synchronized = isTimelineResumeSnapshotAuthoritative({
@@ -305,7 +309,7 @@ function applyAuthoritativeTimelineResponse(input: {
     recoverGap: input.recoverGap,
     drainQueuedAgentMessage: input.drainQueuedAgentMessage,
   });
-  return true;
+  return result.commit;
 }
 
 export interface ViewedTimelineSyncPorts {
@@ -371,6 +375,17 @@ export function createViewedTimelineOwner(input: {
 }): ViewedTimelineOwner {
   const promptContexts = createCanonicalPromptContexts(
     (agentId, epoch) => input.ports.readCursor(agentId)?.epoch === epoch,
+    (agentId) => {
+      const session = useSessionStore.getState().sessions[input.serverId];
+      const timeline = selectAgentTimelineState(session, agentId);
+      return {
+        items: [
+          ...(timeline.status === "cold" ? [] : timeline.items),
+          ...(session?.agentStreamHead.get(agentId) ?? []),
+        ],
+        coverage: canonicalCoverageForCursor(session?.agentTimelineCursor.get(agentId)),
+      };
+    },
   );
   const forcedTailReplacements = new Set<string>();
   const sync = createViewedTimelineSync({
@@ -397,7 +412,24 @@ export function createViewedTimelineOwner(input: {
     setAgentStreamState: (...args) => useSessionStore.getState().setAgentStreamState(...args),
     setAgentTimelineCursor: (...args) => useSessionStore.getState().setAgentTimelineCursor(...args),
     recoverTimelineGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
-    onCommitted: (agentId) => input.replica.timelineUpdated(agentId),
+    beforeCommit: (agentId, result) => {
+      const cursor =
+        result.cursor ??
+        useSessionStore.getState().sessions[input.serverId]?.agentTimelineCursor.get(agentId);
+      if (cursor)
+        promptContexts.prepareSources(agentId, {
+          projection: "canonical",
+          epoch: cursor.epoch,
+          entries: [],
+          tail: result.tail,
+          head: result.head,
+          cursor,
+        });
+    },
+    onCommitted: (agentId) => {
+      promptContexts.publishSources();
+      input.replica.timelineUpdated(agentId);
+    },
   });
   return {
     ...sync,
@@ -408,13 +440,12 @@ export function createViewedTimelineOwner(input: {
         serverId: input.serverId,
         payload,
         cachedCursor: input.replica.readRange(payload.agentId),
+        onAcceptedSources: (sources) => promptContexts.prepareSources(payload.agentId, sources),
         recoverGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
         drainQueuedAgentMessage: input.drainQueuedAgentMessage,
       });
-      if (accepted) {
-        promptContexts.setEpoch(payload.agentId, payload.epoch);
-        input.replica.timelineUpdated(payload.agentId);
-      }
+      if (accepted === "apply") promptContexts.publishSources();
+      if (accepted !== "error") input.replica.timelineUpdated(payload.agentId);
     },
     enqueueStreamEvent(agentId, event) {
       streamQueue.enqueue(agentId, event);

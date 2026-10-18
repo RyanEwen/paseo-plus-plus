@@ -306,32 +306,21 @@ const StreamRowContent = React.memo(function StreamRowContent({
   return render(item, index, items);
 });
 
-const actualRowBackground = (theme: Theme) => ({ backgroundColor: theme.colors.surface0 });
 function ActualRowContent({
   pinned,
-  prompt,
-  backgroundColor,
   bodyRef,
   children,
 }: {
   pinned: boolean;
-  prompt: boolean;
-  backgroundColor?: string;
   bodyRef?: React.RefCallback<HTMLDivElement>;
   children: React.ReactNode;
 }) {
-  const style = useMemo(
-    () => ({ ...streamRowStyle, backgroundColor: prompt ? backgroundColor : undefined }),
-    [backgroundColor, prompt],
-  );
   return (
-    <div ref={bodyRef} data-actual-prompt-content style={style}>
+    <div ref={bodyRef} data-actual-prompt-content style={streamRowStyle}>
       <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
     </div>
   );
 }
-
-const ThemedActualRowContent = withUnistyles(ActualRowContent);
 
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
@@ -1467,19 +1456,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
         style={streamRowStyle}
       >
-        <ThemedActualRowContent
-          bodyRef={observeActualRowBody}
-          prompt={item.kind === "user_message"}
-          uniProps={actualRowBackground}
-          pinned={pinnedRowId === item.id}
-        >
+        <ActualRowContent bodyRef={observeActualRowBody} pinned={pinnedRowId === item.id}>
           <StreamRowContent
             item={item}
             index={index}
             items={segments.historyMounted}
             render={renderHistoryMountedRow}
           />
-        </ThemedActualRowContent>
+        </ActualRowContent>
       </div>
     ));
   }, [observeActualRowBody, pinnedRowId, renderHistoryMountedRow, segments.historyMounted]);
@@ -1492,12 +1476,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
         style={streamRowStyle}
       >
-        <ThemedActualRowContent
-          bodyRef={observeActualRowBody}
-          prompt={item.kind === "user_message"}
-          uniProps={actualRowBackground}
-          pinned={pinnedRowId === item.id}
-        >
+        <ActualRowContent bodyRef={observeActualRowBody} pinned={pinnedRowId === item.id}>
           <StreamRowContent
             item={item}
             index={index}
@@ -1505,7 +1484,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
             revision={liveHeadRowRevision}
             render={renderLiveHeadRow}
           />
-        </ThemedActualRowContent>
+        </ActualRowContent>
       </div>
     ));
   }, [
@@ -1566,10 +1545,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                     data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >
-                    <ThemedActualRowContent
+                    <ActualRowContent
                       bodyRef={observeActualRowBody}
-                      prompt={item.kind === "user_message"}
-                      uniProps={actualRowBackground}
                       pinned={pinnedRowId === item.id}
                     >
                       <StreamRowContent
@@ -1578,7 +1555,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                         items={segments.historyVirtualized}
                         render={renderHistoryVirtualizedRow}
                       />
-                    </ThemedActualRowContent>
+                    </ActualRowContent>
                   </div>
                 );
               }),

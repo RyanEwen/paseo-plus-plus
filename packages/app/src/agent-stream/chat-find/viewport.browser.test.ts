@@ -323,3 +323,61 @@ it("reveals a deep actual user match inside its body then its original row, and 
   expect(body.scrollTop).toBe(innerBefore);
   expect(outer.scrollTop).toBe(outerBefore);
 });
+
+it("keeps surrounding chat painted and interactive outside the opaque actual prompt allocation", async () => {
+  const fixture = actualPrompt("Short");
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  const body = fixture.host.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const bubble = body.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')!;
+  const trailing = body.querySelector<HTMLElement>('[data-testid="user-message-trailing-row"]')!;
+  const target = fixture.host.querySelector<HTMLButtonElement>(
+    '[data-testid="assistant-surrounding-target"]',
+  )!;
+  const originalBody = body;
+  const originalText = bubble.querySelector('[data-testid="user-message-text"]');
+  const viewportTop = scroll.getBoundingClientRect().top;
+  const targetTop = target.getBoundingClientRect().top - viewportTop + scroll.scrollTop;
+  act(() => {
+    scroll.scrollTop = targetTop - 8;
+    scroll.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => row.dataset.promptPinned).toBe("true");
+  const bodyBox = body.getBoundingClientRect();
+  const bubbleBox = bubble.getBoundingClientRect();
+  const targetBox = target.getBoundingClientRect();
+  const point = { x: targetBox.left + 8, y: targetBox.top + 8 };
+  expect(point.x).toBeLessThan(bubbleBox.left);
+  expect(point.y).toBeGreaterThanOrEqual(bodyBox.top);
+  expect(point.y).toBeLessThan(bodyBox.bottom);
+  expect(document.elementFromPoint(point.x, point.y)).toBe(target);
+  expect(getComputedStyle(body).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(getComputedStyle(body).pointerEvents).toBe("none");
+  expect(getComputedStyle(bubble).backgroundColor).toMatch(/^rgb\(/);
+  expect(getComputedStyle(bubble).pointerEvents).toBe("auto");
+  const backdrop = trailing.firstElementChild;
+  expect(backdrop).toBeInstanceOf(HTMLElement);
+  expect(getComputedStyle(backdrop!).backgroundColor).toMatch(/^rgb\(/);
+  expect(getComputedStyle(trailing).paddingTop).toBe("8px");
+  expect(getComputedStyle(trailing).paddingRight).toBe("8px");
+  expect(getComputedStyle(trailing).paddingBottom).toBe("8px");
+  expect(getComputedStyle(trailing).paddingLeft).toBe("8px");
+  const beforeClick = scroll.scrollTop;
+  await userEvent.click(target);
+  expect(target.textContent).toBe("Response 1");
+  expect(scroll.scrollTop).toBe(beforeClick);
+  expect(fixture.host.querySelector("[data-actual-prompt-content]")).toBe(originalBody);
+  expect(bubble.querySelector('[data-testid="user-message-text"]')).toBe(originalText);
+  const answerText = fixture.host.querySelector<HTMLElement>(
+    '[data-testid="assistant-surrounding-text"]',
+  )!;
+  const selection = window.getSelection()!;
+  const range = document.createRange();
+  range.selectNodeContents(answerText);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  expect(selection.toString()).toBe("Selectable surrounding answer");
+  selection.removeAllRanges();
+});

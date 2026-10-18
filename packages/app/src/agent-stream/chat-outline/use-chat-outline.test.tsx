@@ -1,12 +1,23 @@
 import {
+  rawPromptLookup,
+  requestPromptFixture,
+} from "@/timeline/canonical-prompt-context.test-fixture";
+import {
+  reconcileCanonicalSourceMetadata,
+  resolveCanonicalSourceMetadata,
+  hasCanonicalSourceEvidence,
+  EMPTY_SOURCE_METADATA,
+  type AcceptedCanonicalSources,
+} from "@/timeline/canonical-source-metadata";
+import {
   resolveOrdinaryPromptContext,
+  resolveKnownPromptContext,
   canCoalesceCanonicalSource,
   planCanonicalReadingAttempt,
 } from "@/timeline/canonical-reading-source";
 import {
   createCanonicalPromptContexts,
   canonicalPromptSourceKey,
-  type CanonicalTimelineCoverage,
 } from "@/timeline/canonical-prompt-context";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import { useNativeReadingRefresh } from "../native-sticky-viewport";
@@ -28,7 +39,6 @@ import { createTimelineRequestLedger } from "../../../e2e/support/helpers/timeli
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   fetchReadingPromptContext,
-  fetchCanonicalPromptContext,
   childContextPageReader,
   type ContextPage,
   type ContextEntry,
@@ -1760,13 +1770,6 @@ describe("index-free cache-only context", () => {
       .fn()
       .mockImplementationOnce(() => held.promise)
       .mockResolvedValueOnce(page([entry(64, 64, "user_message")], false));
-    const fetchContext = vi.fn(
-      (
-        current: StreamItem,
-        signal: AbortSignal,
-        progress?: import("@/timeline/canonical-prompt-context").CanonicalPromptContextProgress,
-      ) => fetchCanonicalPromptContext(reader, current, signal, "canonical", progress),
-    );
     const input = {
       owner,
       agentId: "agent",
@@ -1775,7 +1778,7 @@ describe("index-free cache-only context", () => {
       ordinaryItems: [source],
       coverage: [{ epoch: "epoch", startSeq: 246, endSeq: 256 }],
       enabled: true,
-      fetchContext,
+      lookup: { agentId: "agent", readPage: reader, projection: "canonical" as const },
     };
     const { result, rerender, unmount } = renderHook(useCanonicalPromptContext, {
       initialProps: input,
@@ -1796,8 +1799,7 @@ describe("index-free cache-only context", () => {
         coverage: [{ epoch: "epoch", startSeq: 246, endSeq: seq }],
       });
     }
-    expect(fetchContext).toHaveBeenCalledTimes(1);
-    expect(fetchContext.mock.calls[0]![1].aborted).toBe(false);
+    expect(reader.mock.calls[0]![1]?.aborted).toBe(false);
     await act(async () => held.resolve(page([entry(246, 270)])));
     await waitFor(() => expect(result.current.contexts[0]?.prompt.timelineCursor?.seq).toBe(64));
     for (let seq = 271; seq <= 280; seq += 1) {
@@ -1814,7 +1816,6 @@ describe("index-free cache-only context", () => {
         coverage: [{ epoch: "epoch", startSeq: 246, endSeq: seq }],
       });
     }
-    expect(fetchContext).toHaveBeenCalledTimes(1);
     expect(reader).toHaveBeenCalledTimes(2);
     expect(result.current.error).toBe(false);
     unmount();
@@ -1836,18 +1837,15 @@ describe("index-free cache-only context", () => {
     );
     const owner = createCanonicalPromptContexts();
     const channel = {};
-    const fetchContext = (
-      current: StreamItem,
-      signal: AbortSignal,
-      progress?: import("@/timeline/canonical-prompt-context").CanonicalPromptContextProgress,
-    ) => fetchCanonicalPromptContext(reader, current, signal, "canonical", progress);
     await expect(
       owner.request({
         agentId: "agent",
         source,
         channel,
         signal: new AbortController().signal,
-        fetchContext,
+        lookup: { agentId: "agent", readPage: reader, projection: "canonical" },
+        lookupAllowed: true,
+        retryToken: 0,
       }),
     ).rejects.toThrow("request budget");
     expect(reader).toHaveBeenCalledTimes(8);
@@ -1857,7 +1855,9 @@ describe("index-free cache-only context", () => {
       source,
       channel,
       signal: new AbortController().signal,
-      fetchContext,
+      lookup: { agentId: "agent", readPage: reader, projection: "canonical" },
+      lookupAllowed: true,
+      retryToken: 1,
     });
     expect(prompt?.timelineCursor).toEqual({ epoch: "epoch", seq: 64 });
     expect(reader).toHaveBeenCalledTimes(9);
@@ -2497,15 +2497,6 @@ describe("native keyboard settlement reading refresh", () => {
   });
 });
 
-function ordinaryPromptResolver(
-  items: readonly StreamItem[],
-  source: StreamItem,
-  coverage: readonly CanonicalTimelineCoverage[],
-) {
-  return (sourceStart: number) =>
-    resolveOrdinaryPromptContext(items, source, coverage, sourceStart)?.prompt;
-}
-
 describe("retained canonical reading context", () => {
   it("does not conflate repeated provider identities, interleaved USERs or coverage gaps", () => {
     const initial: StreamItem = {
@@ -2570,7 +2561,14 @@ describe("retained canonical reading context", () => {
         sourceEnd: current.timelineCursor!.seq,
       };
     });
-    const input = { owner, agentId: "agent", epoch: "epoch", source, enabled: true, fetchContext };
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source,
+      enabled: true,
+      lookup: rawPromptLookup(source, fetchContext),
+    };
     const { result, rerender, unmount } = renderHook(useCanonicalPromptContext, {
       initialProps: input,
     });
@@ -2620,21 +2618,11 @@ describe("retained canonical reading context", () => {
       gap: false,
     };
     const reader = vi.fn().mockResolvedValue(probe);
-    const fetchContext = vi.fn(
-      (
-        current: StreamItem,
-        signal: AbortSignal,
-        progress?: import("@/timeline/canonical-prompt-context").CanonicalPromptContextProgress,
-      ) =>
-        fetchCanonicalPromptContext(
-          reader,
-          current,
-          signal,
-          "canonical",
-          progress,
-          ordinaryPromptResolver(items, current, coverage),
-        ),
-    );
+    owner.prepareSources("agent", {
+      ...certifiedReadingRows(items, new Map([[source.id, 40]])),
+      entries: [],
+    });
+    const lookup = { agentId: "agent", readPage: reader, projection: "canonical" as const };
     const { result, unmount } = renderHook(() =>
       useCanonicalPromptContext({
         owner,
@@ -2644,17 +2632,20 @@ describe("retained canonical reading context", () => {
         ordinaryItems: items,
         coverage,
         enabled: true,
-        fetchContext,
+        lookup,
       }),
     );
-    await waitFor(() => expect(result.current.contexts[0]?.prompt).toBe(prompt));
+    await waitFor(() => expect(result.current.contexts[0]?.prompt).toMatchObject(prompt));
     expect(result.current.contexts[0]?.sourceStart).toBe(40);
-    expect(reader).toHaveBeenCalledExactlyOnceWith({
-      epoch: "epoch",
-      cursor: 51,
-      limit: 1,
-      projection: "projected",
-    });
+    expect(reader).toHaveBeenCalledExactlyOnceWith(
+      {
+        epoch: "epoch",
+        cursor: 51,
+        limit: 1,
+        projection: "projected",
+      },
+      expect.any(AbortSignal),
+    );
     expect(
       resolveOrdinaryPromptContext(
         items,
@@ -2856,7 +2847,7 @@ describe("retained canonical reading context", () => {
         epoch: "epoch",
         source,
         enabled: true,
-        fetchContext,
+        lookup: rawPromptLookup(source, fetchContext),
       },
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
@@ -2866,11 +2857,11 @@ describe("retained canonical reading context", () => {
       epoch: "epoch",
       source: { ...source, text: "answer extended" },
       enabled: true,
-      fetchContext,
+      lookup: rawPromptLookup(source, fetchContext),
     });
     expect(fetchContext).toHaveBeenCalledTimes(1);
     await act(async () => held.resolve(proof));
-    expect(result.current.contexts).toEqual([proof]);
+    expect(result.current.contexts).toMatchObject([proof]);
     expect(result.current.loading).toBe(false);
     unmount();
     owner.dispose();
@@ -2879,11 +2870,18 @@ describe("retained canonical reading context", () => {
   it("retains the admitted row through opt-out or hidden-pane suspension and resets scoped cancellation", async () => {
     const owner = createCanonicalPromptContexts();
     const fetchContext = vi.fn().mockResolvedValue(proof);
-    const input = { owner, agentId: "agent", epoch: "epoch", source, enabled: true, fetchContext };
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source,
+      enabled: true,
+      lookup: rawPromptLookup(source, fetchContext),
+    };
     const { result, rerender, unmount } = renderHook(useCanonicalPromptContext, {
       initialProps: input,
     });
-    await waitFor(() => expect(result.current.contexts).toEqual([proof]));
+    await waitFor(() => expect(result.current.contexts).toMatchObject([proof]));
     const admitted = result.current.contexts;
     act(() => result.current.cancel());
     expect(result.current.cancelled).toBe(true);
@@ -2906,7 +2904,14 @@ describe("retained canonical reading context", () => {
       .fn()
       .mockImplementationOnce(() => held.promise)
       .mockResolvedValueOnce(proof);
-    const input = { owner, agentId: "agent", epoch: "epoch", source, enabled: true, fetchContext };
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source,
+      enabled: true,
+      lookup: rawPromptLookup(source, fetchContext),
+    };
     const { result, rerender, unmount } = renderHook(useCanonicalPromptContext, {
       initialProps: input,
     });
@@ -2916,7 +2921,7 @@ describe("retained canonical reading context", () => {
     expect(owner.read("agent", "epoch")).toEqual([]);
     expect(result.current.loading).toBe(false);
     rerender(input);
-    await waitFor(() => expect(result.current.contexts).toEqual([proof]));
+    await waitFor(() => expect(result.current.contexts).toMatchObject([proof]));
     expect(fetchContext).toHaveBeenCalledTimes(2);
     unmount();
     owner.dispose();
@@ -2930,18 +2935,25 @@ describe("retained canonical reading context", () => {
       .fn()
       .mockImplementationOnce(() => held.promise)
       .mockResolvedValueOnce(proof);
-    const input = { owner, agentId: "agent", epoch: "epoch", source, enabled: true, fetchContext };
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source,
+      enabled: true,
+      lookup: rawPromptLookup(source, fetchContext),
+    };
     const { result, rerender, unmount } = renderHook(useCanonicalPromptContext, {
       initialProps: input,
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
     act(() => result.current.cancel());
     rerender({ ...input, owner: replacement });
-    await waitFor(() => expect(result.current.contexts).toEqual([proof]));
+    await waitFor(() => expect(result.current.contexts).toMatchObject([proof]));
     await act(async () => held.resolve(proof));
     expect(owner.read("agent", "epoch")).toEqual([]);
     expect(result.current.cancelled).toBe(false);
-    expect(result.current.contexts[0]?.prompt).toBe(prompt);
+    expect(result.current.contexts[0]?.prompt).toMatchObject(prompt);
     expect(fetchContext).toHaveBeenCalledTimes(2);
     unmount();
     owner.dispose();
@@ -2964,13 +2976,13 @@ describe("retained canonical reading context", () => {
         epoch: "epoch",
         source,
         enabled: true,
-        fetchContext,
+        lookup: rawPromptLookup(source, fetchContext),
       }),
     );
     await waitFor(() => expect(result.current.error).toBe(true));
     expect(result.current.contexts).toEqual([]);
     act(() => result.current.retry());
-    await waitFor(() => expect(result.current.contexts).toEqual([proof]));
+    await waitFor(() => expect(result.current.contexts).toMatchObject([proof]));
     expect(result.current.error).toBe(false);
     expect(fetchContext).toHaveBeenCalledTimes(2);
     unmount();
@@ -2988,7 +3000,7 @@ describe("retained canonical reading context", () => {
         epoch: "epoch",
         source,
         enabled: true,
-        fetchContext,
+        lookup: rawPromptLookup(source, fetchContext),
       },
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
@@ -3009,12 +3021,1422 @@ describe("retained canonical reading context", () => {
       epoch: "new",
       source: changed,
       enabled: true,
-      fetchContext: readNext,
+      lookup: rawPromptLookup(changed, readNext),
     });
-    await waitFor(() => expect(result.current.contexts).toEqual([next]));
+    await waitFor(() => expect(result.current.contexts).toMatchObject([next]));
     expect(result.current.cancelled).toBe(false);
     expect(owner.read("agent", "epoch")).toEqual([]);
     unmount();
+    owner.dispose();
+  });
+});
+
+function certifiedReadingRows(
+  items: readonly StreamItem[],
+  starts: ReadonlyMap<string, number> = new Map(),
+): AcceptedCanonicalSources {
+  return {
+    projection: "projected",
+    epoch: "epoch",
+    tail: items,
+    head: [],
+    cursor: { epoch: "epoch", startSeq: 4, endSeq: 100 },
+    entries: items.flatMap((item) => {
+      if (item.kind !== "assistant_message" || !item.timelineCursor) return [];
+      const start = starts.get(item.id) ?? item.timelineCursor.seq;
+      return [
+        {
+          seqStart: start,
+          seqEnd: item.timelineCursor.seq,
+          sourceSeqRanges: [{ startSeq: start, endSeq: item.timelineCursor.seq }],
+          provider: "mock",
+          turnId: item.turnId,
+          item: { type: "assistant_message" as const, messageId: item.messageId, text: item.text },
+        },
+      ];
+    }),
+  };
+}
+
+describe("certified ordinary reading context", () => {
+  const user: UserPrompt = {
+    kind: "user_message",
+    id: "user",
+    text: "original",
+    timestamp: new Date(0),
+    timelineCursor: { epoch: "epoch", seq: 4 },
+  };
+  function answer(
+    seq: number,
+    id = `answer-${seq}`,
+  ): Extract<StreamItem, { kind: "assistant_message" }> {
+    return {
+      kind: "assistant_message",
+      id,
+      messageId: "repeated-provider-id",
+      text: `Answer ${seq}`,
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "epoch", seq },
+    };
+  }
+
+  it("traverses covered assistant rows forward and backward without an RPC or Loading pulse", async () => {
+    const owner = createCanonicalPromptContexts();
+    const first = answer(50);
+    const second = answer(60);
+    const third = answer(70);
+    const steer = { ...user, id: "steer", timelineCursor: { epoch: "epoch", seq: 45 } };
+    const items = [user, steer, first, second, third];
+    const accepted = certifiedReadingRows(items, new Map([[first.id, 40]]));
+    owner.prepareSources("agent", {
+      ...accepted,
+      entries: accepted.entries.map((entry) =>
+        entry.seqEnd === 50
+          ? Object.assign({}, entry, {
+              sourceSeqRanges: [
+                { startSeq: 40, endSeq: 44 },
+                { startSeq: 46, endSeq: 50 },
+              ],
+            })
+          : entry,
+      ),
+    });
+    const fetchContext = vi.fn().mockRejectedValue(new Error("Unexpected context RPC"));
+    const coverage = [{ epoch: "epoch", startSeq: 4, endSeq: 100 }];
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source: first,
+      ordinaryItems: items,
+      coverage,
+      enabled: true,
+      lookup: rawPromptLookup(first, fetchContext),
+    };
+    const observations: boolean[] = [];
+    const fixture = renderHook(
+      (props: typeof input) => {
+        const context = useCanonicalPromptContext(props);
+        observations.push(context.loading);
+        return context;
+      },
+      { initialProps: input },
+    );
+    expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(user);
+    for (const source of [second, third, second, first]) {
+      fixture.rerender({ ...input, source });
+      const expected = source === first ? user : steer;
+      expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(expected);
+      expect(fixture.result.current.loading).toBe(false);
+      await act(async () => {});
+    }
+    expect(observations.every((loading) => !loading)).toBe(true);
+    expect(fetchContext).not.toHaveBeenCalled();
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it("reuses an off-window predecessor backward and forward across an assistant-only window without another read or Loading", async () => {
+    const owner = createCanonicalPromptContexts();
+    const initial = { ...answer(500), turnId: "turn-500" };
+    const earlier = { ...answer(450), turnId: "turn-450" };
+    const earliest = { ...answer(440), turnId: "turn-440" };
+    const later = { ...answer(550), turnId: "turn-550" };
+    const items: StreamItem[] = [earliest, earlier, initial, later];
+    const accepted = {
+      ...certifiedReadingRows(items),
+      cursor: { epoch: "epoch", startSeq: 400, endSeq: 600 },
+    };
+    owner.prepareSources("agent", accepted);
+    const offWindow: UserPrompt = {
+      ...user,
+      id: "off-window-user",
+      timelineCursor: { epoch: "epoch", seq: 20 },
+    };
+    const contextPage: ContextPage = {
+      epoch: "epoch",
+      entries: [],
+      hasOlder: true,
+      error: null,
+      reset: false,
+      staleCursor: false,
+      gap: false,
+    };
+    const earlierEntries = accepted.entries
+      .filter((entry) => entry.seqEnd < 500)
+      .map((entry) =>
+        Object.assign({}, entry, {
+          sourceSeqRanges: entry.sourceSeqRanges ?? [],
+          collapsed: [],
+          timestamp: new Date(0).toISOString(),
+        }),
+      );
+    const reader = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...contextPage,
+        entries: [
+          {
+            provider: "mock",
+            turnId: initial.turnId,
+            seqStart: 500,
+            seqEnd: 500,
+            sourceSeqRanges: [{ startSeq: 500, endSeq: 500 }],
+            collapsed: [],
+            timestamp: new Date(0).toISOString(),
+            item: { type: "assistant_message", messageId: initial.messageId, text: initial.text },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ...contextPage,
+        hasOlder: false,
+        entries: [
+          {
+            provider: "mock",
+            seqStart: 20,
+            seqEnd: 20,
+            sourceSeqRanges: [{ startSeq: 20, endSeq: 20 }],
+            collapsed: [],
+            timestamp: new Date(0).toISOString(),
+            item: { type: "user_message", text: offWindow.text },
+          },
+          ...earlierEntries,
+        ],
+      });
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source: initial,
+      ordinaryItems: items,
+      coverage: [{ epoch: "epoch", startSeq: 400, endSeq: 600 }],
+      enabled: true,
+      lookup: { agentId: "agent", readPage: reader, projection: "canonical" as const },
+    };
+    const loading: boolean[] = [];
+    const fixture = renderHook(
+      (props: typeof input) => {
+        const result = useCanonicalPromptContext(props);
+        loading.push(result.loading);
+        return result;
+      },
+      { initialProps: input },
+    );
+    await waitFor(() =>
+      expect(fixture.result.current.contexts.at(-1)?.prompt.timelineCursor?.seq).toBe(20),
+    );
+    expect(reader).toHaveBeenCalledTimes(2);
+    loading.length = 0;
+    for (const source of [earlier, earliest, later, earlier, initial]) {
+      fixture.rerender({ ...input, source });
+      expect(fixture.result.current.contexts.at(-1)?.prompt.timelineCursor?.seq).toBe(20);
+      expect(fixture.result.current.loading).toBe(false);
+      await act(async () => {});
+    }
+    expect(loading.length).toBeGreaterThan(0);
+    expect(loading.every((value) => !value)).toBe(true);
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(items.some((item) => item.kind === "user_message")).toBe(false);
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it("uses an exact cached source without a transient Loading render", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(50);
+    const proof = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 40,
+      sourceEnd: 50,
+      prompt: user,
+    };
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: "agent",
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => proof,
+    });
+    const fetchContext = vi.fn().mockRejectedValue(new Error("Unexpected cache miss"));
+    const observations: boolean[] = [];
+    const fixture = renderHook(() => {
+      const context = useCanonicalPromptContext({
+        owner,
+        agentId: "agent",
+        epoch: "epoch",
+        source,
+        enabled: true,
+        lookup: rawPromptLookup(source, fetchContext),
+      });
+      observations.push(context.loading);
+      return context;
+    });
+    await act(async () => {});
+    expect(fixture.result.current.contexts).toMatchObject([proof]);
+    expect(observations.every((loading) => !loading)).toBe(true);
+    expect(fetchContext).not.toHaveBeenCalled();
+    fixture.unmount();
+    owner.release(seed);
+    owner.dispose();
+  });
+
+  it("retires a held miss when accepted ordinary proof arrives and fences its late completion", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(100);
+    const prior = answer(50);
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: "agent",
+      channel: seed,
+      source: prior,
+      signal: new AbortController().signal,
+      fetchContext: async () => ({
+        sourceKey: canonicalPromptSourceKey(prior),
+        sourceStart: 40,
+        sourceEnd: 50,
+        prompt: user,
+      }),
+    });
+    const held = deferred<{
+      sourceKey: string;
+      sourceStart: number;
+      sourceEnd: number;
+      prompt: UserPrompt;
+    }>();
+    const fetchContext = vi.fn((_source: StreamItem, _signal: AbortSignal) => held.promise);
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source,
+      ordinaryItems: [source] as StreamItem[],
+      coverage: [{ epoch: "epoch", startSeq: 90, endSeq: 100 }],
+      enabled: true,
+      lookup: rawPromptLookup(source, fetchContext),
+    };
+    const fixture = renderHook(useCanonicalPromptContext, { initialProps: input });
+    await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+    expect(fixture.result.current.loading).toBe(true);
+    expect(owner.read("agent", "epoch")[0]?.prompt).toMatchObject(user);
+    const items = [user, source];
+    act(() =>
+      owner.prepareSources("agent", certifiedReadingRows(items, new Map([[source.id, 90]]))),
+    );
+    fixture.rerender({
+      ...input,
+      ordinaryItems: items,
+      coverage: [{ epoch: "epoch", startSeq: 4, endSeq: 100 }],
+    });
+    expect(fetchContext.mock.calls[0]![1].aborted).toBe(true);
+    expect(fixture.result.current.loading).toBe(false);
+    expect(fixture.result.current.contexts.at(-1)?.sourceStart).toBe(90);
+    await act(async () =>
+      held.resolve({
+        sourceKey: canonicalPromptSourceKey(source),
+        sourceStart: 95,
+        sourceEnd: 100,
+        prompt: { ...user, id: "stale" },
+      }),
+    );
+    expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(user);
+    expect(owner.read("agent", "epoch").some((entry) => entry.prompt.id === "stale")).toBe(false);
+    expect(fetchContext).toHaveBeenCalledTimes(1);
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it("settles an unproved advancing occurrence only from current local metadata without buying another network budget", async () => {
+    const owner = createCanonicalPromptContexts();
+    const original = answer(50, "advancing");
+    const next = {
+      ...original,
+      text: "changed answer",
+      timelineCursor: { epoch: "epoch", seq: 55 },
+    };
+    const held = deferred<{
+      sourceKey: string;
+      sourceStart: number;
+      sourceEnd: number;
+      prompt: UserPrompt;
+    }>();
+    const fetchContext = vi.fn((_source: StreamItem, _signal: AbortSignal) => held.promise);
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch: "epoch",
+      source: original,
+      ordinaryItems: [original] as StreamItem[],
+      coverage: [{ epoch: "epoch", startSeq: 50, endSeq: 50 }],
+      enabled: true,
+      lookup: rawPromptLookup(original, fetchContext),
+    };
+    const fixture = renderHook(useCanonicalPromptContext, { initialProps: input });
+    await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+    fixture.rerender({
+      ...input,
+      source: next,
+      ordinaryItems: [next],
+      coverage: [{ epoch: "epoch", startSeq: 55, endSeq: 55 }],
+    });
+    expect(fixture.result.current.error).toBe(true);
+    expect(fetchContext.mock.calls[0]![1].aborted).toBe(true);
+    const items = [user, next];
+    owner.prepareSources("agent", certifiedReadingRows(items, new Map([[next.id, 40]])));
+    fixture.rerender({
+      ...input,
+      source: next,
+      ordinaryItems: items,
+      coverage: [{ epoch: "epoch", startSeq: 4, endSeq: 55 }],
+    });
+    expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(user);
+    expect(fixture.result.current.loading).toBe(false);
+    expect(fixture.result.current.error).toBe(false);
+    await act(async () =>
+      held.resolve({
+        sourceKey: canonicalPromptSourceKey(original),
+        sourceStart: 40,
+        sourceEnd: 50,
+        prompt: { ...user, id: "stale" },
+      }),
+    );
+    expect(owner.read("agent", "epoch").some((entry) => entry.prompt.id === "stale")).toBe(false);
+    const unresolved = { ...next, timelineCursor: { epoch: "epoch", seq: 56 } };
+    fixture.rerender({
+      ...input,
+      source: unresolved,
+      ordinaryItems: [unresolved],
+      coverage: [{ epoch: "epoch", startSeq: 56, endSeq: 56 }],
+    });
+    expect(fixture.result.current.error).toBe(true);
+    expect(fetchContext).toHaveBeenCalledTimes(1);
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it("reuses retained proof only across certified coverage without an intervening earlier USER", () => {
+    const source = answer(80);
+    const items = [source];
+    const metadata = reconcileCanonicalSourceMetadata(
+      EMPTY_SOURCE_METADATA,
+      certifiedReadingRows(items, new Map([[source.id, 70]])),
+    );
+    const anchor = {
+      sourceKey: "different occurrence",
+      sourceStart: 40,
+      sourceEnd: 50,
+      prompt: user,
+    };
+    const input = {
+      source,
+      items,
+      metadata,
+      contexts: [anchor],
+      exactContext: undefined,
+      coverage: [{ epoch: "epoch", startSeq: 40, endSeq: 80 }],
+    };
+    expect(resolveKnownPromptContext(input)?.prompt).toBe(user);
+    const laterProof = { ...anchor, sourceStart: 90, sourceEnd: 95 };
+    const reverse = {
+      ...input,
+      contexts: [laterProof],
+      coverage: [{ epoch: "epoch", startSeq: 70, endSeq: 80 }],
+    };
+    expect(resolveKnownPromptContext(reverse)?.prompt).toBe(user);
+    expect(
+      resolveKnownPromptContext({
+        ...reverse,
+        coverage: [
+          { epoch: "epoch", startSeq: 70, endSeq: 74 },
+          { epoch: "epoch", startSeq: 76, endSeq: 80 },
+        ],
+      }),
+    ).toBeUndefined();
+    const contradiction = {
+      ...user,
+      id: "contradiction",
+      timelineCursor: { epoch: "epoch", seq: 85 },
+    };
+    expect(
+      resolveKnownPromptContext({ ...reverse, items: [source, contradiction] }),
+    ).toBeUndefined();
+    const afterCertificate = { ...contradiction, timelineCursor: { epoch: "epoch", seq: 95 } };
+    expect(
+      resolveKnownPromptContext({ ...reverse, items: [source, afterCertificate] })?.prompt,
+    ).toBe(user);
+    const tooLate = {
+      ...laterProof,
+      prompt: { ...user, timelineCursor: { epoch: "epoch", seq: 70 } },
+    };
+    expect(resolveKnownPromptContext({ ...reverse, contexts: [tooLate] })).toBeUndefined();
+    expect(
+      resolveKnownPromptContext({
+        ...input,
+        coverage: [
+          { epoch: "epoch", startSeq: 40, endSeq: 55 },
+          { epoch: "epoch", startSeq: 57, endSeq: 80 },
+        ],
+      }),
+    ).toBeUndefined();
+    const intervening = { ...user, id: "intervening", timelineCursor: { epoch: "epoch", seq: 60 } };
+    expect(resolveKnownPromptContext({ ...input, items: [intervening, source] })?.prompt).toBe(
+      intervening,
+    );
+    expect(
+      resolveKnownPromptContext({
+        ...input,
+        source: { ...source, timelineCursor: { epoch: "other", seq: 80 } },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects holes, overlapping occurrences and unknown expanded ranges without conflating repeated IDs", () => {
+    const first = answer(50, "first");
+    const later = answer(80, "later");
+    const page = certifiedReadingRows(
+      [first, later],
+      new Map([
+        [first.id, 40],
+        [later.id, 70],
+      ]),
+    );
+    const metadata = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, page);
+    expect(resolveCanonicalSourceMetadata(metadata, first)?.startSeq).toBe(40);
+    expect(resolveCanonicalSourceMetadata(metadata, later)?.startSeq).toBe(70);
+    const hole = { ...first, timelineCursor: { epoch: "epoch", seq: 45 } };
+    const disjoint = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
+      ...page,
+      tail: [first],
+      entries: [
+        {
+          ...page.entries[0]!,
+          sourceSeqRanges: [
+            { startSeq: 40, endSeq: 44 },
+            { startSeq: 46, endSeq: 50 },
+          ],
+        },
+      ],
+    });
+    expect(disjoint).toHaveLength(1);
+    // Synthetic reading-cursor binding isolates actual-range membership from the
+    // ordinary row's end cursor; the enclosing 40..50 range is insufficient.
+    expect(
+      resolveCanonicalSourceMetadata(
+        disjoint.map((entry) => Object.assign({}, entry, { revision: hole })),
+        hole,
+      ),
+    ).toBeUndefined();
+    const ambiguous = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
+      ...page,
+      tail: [first],
+      entries: [
+        page.entries[0]!,
+        { ...page.entries[0]!, seqStart: 49, sourceSeqRanges: [{ startSeq: 49, endSeq: 50 }] },
+      ],
+    });
+    expect(resolveCanonicalSourceMetadata(ambiguous, first)).toBeUndefined();
+    const unknown = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
+      ...page,
+      entries: [{ ...page.entries[0]!, sourceSeqRanges: undefined }],
+    });
+    expect(resolveCanonicalSourceMetadata(unknown, first)).toBeUndefined();
+    const delta = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
+      ...page,
+      projection: "canonical",
+    });
+    expect(delta).toEqual([]);
+  });
+
+  it("rejects an exact cached certificate contradicted by an ordinary USER across a coverage gap at resolution and admission", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    const prior: UserPrompt = { ...user, timelineCursor: { epoch: "epoch", seq: 20 } };
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: "agent",
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => payload,
+    });
+    const proof = owner.read("agent", "epoch", seed)[0]!;
+    const intervening: UserPrompt = {
+      ...user,
+      id: "new-user",
+      timelineCursor: { epoch: "epoch", seq: 450 },
+    };
+    const page = {
+      ...certifiedReadingRows([intervening, source]),
+      cursor: {
+        epoch: "epoch",
+        startSeq: 490,
+        endSeq: 600,
+        retainedRanges: [{ startSeq: 400, endSeq: 460 }],
+      },
+    };
+    owner.prepareSources("agent", page);
+    expect(owner.preview("agent", source)).toBeUndefined();
+    expect(owner.readExactContext("agent", source)).toBeUndefined();
+    owner.prepareSources("agent", { ...page, tail: [source] });
+    expect(owner.read("agent", "epoch", seed)).toEqual([proof]);
+    expect(owner.isSupportedContext("agent", proof)).toBe(false);
+    expect(owner.isSupportedContext("agent", { ...proof })).toBe(false);
+    expect(owner.preview("agent", source)).toBeUndefined();
+    const fetchContext = vi.fn(async () => payload);
+    await expect(
+      requestPromptFixture(owner, {
+        agentId: "agent",
+        channel: {},
+        source,
+        signal: new AbortController().signal,
+        knownContext: { ...proof },
+        lookupAllowed: false,
+        fetchContext,
+      }),
+    ).rejects.toThrow("Reading context changed");
+    expect(fetchContext).not.toHaveBeenCalled();
+    const channel = {};
+    await expect(
+      requestPromptFixture(owner, {
+        agentId: "agent",
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => ({ ...payload, prompt: intervening }),
+      }),
+    ).resolves.toMatchObject(intervening);
+    expect(owner.readExactContext("agent", source)?.prompt.timelineCursor?.seq).toBe(450);
+    expect(owner.isSupportedContext("agent", proof)).toBe(false);
+    expect(owner.read("agent", "epoch", seed)).toEqual([proof]);
+    owner.dispose();
+  });
+
+  it("keeps derived retained relations invalid after their contradicting USER leaves without evicting the prompt", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    const target = answer(440);
+    const prior: UserPrompt = { ...user, timelineCursor: { epoch: "epoch", seq: 20 } };
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: "agent",
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => ({
+        sourceKey: canonicalPromptSourceKey(source),
+        sourceStart: 500,
+        sourceEnd: 500,
+        prompt: prior,
+      }),
+    });
+    const proof = owner.read("agent", "epoch", seed)[0]!;
+    const page = {
+      ...certifiedReadingRows([target, source]),
+      cursor: { epoch: "epoch", startSeq: 400, endSeq: 600 },
+    };
+    owner.prepareSources("agent", page);
+    const preview = owner.preview("agent", target);
+    expect(preview?.prompt.timelineCursor?.seq).toBe(20);
+    if (!preview) throw new Error("Expected certified reverse preview");
+    expect(owner.isSupportedContext("agent", preview)).toBe(false);
+    const channel = {};
+    await owner.request({
+      agentId: "agent",
+      channel,
+      source: target,
+      signal: new AbortController().signal,
+      lookup: undefined,
+      lookupAllowed: false,
+      retryToken: 0,
+    });
+    const admitted = owner.read("agent", "epoch", channel)[0]!;
+    const contradiction: UserPrompt = {
+      ...user,
+      id: "intervening",
+      timelineCursor: { epoch: "epoch", seq: 450 },
+    };
+    owner.prepareSources("agent", { ...page, tail: [target, contradiction, source] });
+    owner.prepareSources("agent", page);
+    expect(owner.isSupportedContext("agent", admitted)).toBe(false);
+    expect(owner.isSupportedContext("agent", proof)).toBe(false);
+    expect(owner.preview("agent", target)).toBeUndefined();
+    expect(owner.read("agent", "epoch", seed)).toEqual([proof]);
+    expect(owner.read("agent", "epoch", channel)).toEqual([admitted]);
+    owner.dispose();
+  });
+
+  it("preserves competing-source ambiguity before and after the descriptor bound including exact-cache admission", async () => {
+    const source = answer(500, "ambiguous-source");
+    const prior: UserPrompt = { ...user, timelineCursor: { epoch: "epoch", seq: 20 } };
+    const proof = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 490,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    for (const following of [255, 300]) {
+      const extras = Array.from({ length: following }, (_, index) => answer(600 + index));
+      const rows = [source, ...extras];
+      const page = {
+        ...certifiedReadingRows(rows, new Map([[source.id, 400]])),
+        cursor: { epoch: "epoch", startSeq: 400, endSeq: 1000 },
+      };
+      const rival = {
+        ...page.entries[0]!,
+        seqStart: 490,
+        sourceSeqRanges: [{ startSeq: 490, endSeq: 500 }],
+      };
+      const competing = { ...page, entries: [page.entries[0]!, rival, ...page.entries.slice(1)] };
+      const initial = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
+        ...page,
+        entries: [page.entries[0]!],
+      });
+      const repeated = reconcileCanonicalSourceMetadata(initial, {
+        ...page,
+        entries: [page.entries[0]!],
+      });
+      expect(resolveCanonicalSourceMetadata(repeated, source)?.startSeq).toBe(400);
+      const acrossPages = reconcileCanonicalSourceMetadata(initial, {
+        ...page,
+        entries: [rival, ...page.entries.slice(1)],
+      });
+      expect(hasCanonicalSourceEvidence(acrossPages, source)).toBe(true);
+      expect(resolveCanonicalSourceMetadata(acrossPages, source)).toBeUndefined();
+      const metadata = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, competing);
+      expect(metadata).toHaveLength(Math.min(following, 256));
+      expect(metadata.some((entry) => entry.revision === source)).toBe(false);
+      expect(hasCanonicalSourceEvidence(metadata, source)).toBe(true);
+      expect(resolveCanonicalSourceMetadata(metadata, source)).toBeUndefined();
+      const unchanged = reconcileCanonicalSourceMetadata(metadata, { ...page, entries: [] });
+      expect(hasCanonicalSourceEvidence(unchanged, source)).toBe(true);
+      expect(resolveCanonicalSourceMetadata(unchanged, source)).toBeUndefined();
+      const clean = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
+        ...page,
+        entries: [page.entries[0]!],
+      });
+      expect(resolveCanonicalSourceMetadata(clean, source)?.startSeq).toBe(400);
+      const removed = reconcileCanonicalSourceMetadata(metadata, {
+        ...page,
+        entries: [],
+        tail: extras,
+      });
+      expect(hasCanonicalSourceEvidence(removed, source)).toBe(false);
+      const owner = createCanonicalPromptContexts();
+      await requestPromptFixture(owner, {
+        agentId: "agent",
+        channel: {},
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => proof,
+      });
+      owner.prepareSources("agent", competing);
+      expect(owner.readExactContext("agent", source)).toBeUndefined();
+      expect(
+        resolveKnownPromptContext({
+          source,
+          items: rows,
+          metadata,
+          coverage: [{ epoch: "epoch", startSeq: 400, endSeq: 1000 }],
+          contexts: owner.read("agent", "epoch"),
+          exactContext: proof,
+        }),
+      ).toBeUndefined();
+      const fetchContext = vi.fn(async () => undefined);
+      const channel = {};
+      const request = {
+        agentId: "agent",
+        channel,
+        source,
+        signal: new AbortController().signal,
+        knownContext: proof,
+        fetchContext,
+        retryToken: 0,
+      };
+      await expect(requestPromptFixture(owner, request)).rejects.toThrow("Reading context changed");
+      expect(fetchContext).toHaveBeenCalledTimes(1);
+      expect(owner.read("agent", "epoch", channel)).toEqual([]);
+      await expect(requestPromptFixture(owner, request)).rejects.toThrow("Reading context changed");
+      expect(fetchContext).toHaveBeenCalledTimes(1);
+      expect(owner.read("agent", "epoch", channel)).toEqual([]);
+      owner.dispose();
+    }
+  });
+
+  it("keeps descriptor retention bounded to the resulting ordinary window", () => {
+    const rows = Array.from({ length: 300 }, (_, index) => answer(index + 100));
+    const page = {
+      ...certifiedReadingRows(rows),
+      cursor: { epoch: "epoch", startSeq: 100, endSeq: 399 },
+    };
+    const metadata = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, page);
+    expect(metadata).toHaveLength(256);
+    expect(metadata[0]?.startSeq).toBe(144);
+    expect(rows).toHaveLength(300);
+    const tail = rows.slice(-2);
+    const pruned = reconcileCanonicalSourceMetadata(metadata, {
+      ...page,
+      entries: [],
+      tail,
+      cursor: { epoch: "epoch", startSeq: 398, endSeq: 399 },
+    });
+    expect(pruned.map((entry) => entry.revision)).toEqual(tail);
+    expect(pruned[0]).toBe(metadata.at(-2));
+  });
+
+  it("uses the full ordinary USER revision before local slicing instead of an older retained copy", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(50);
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: "agent",
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => ({
+        sourceKey: canonicalPromptSourceKey(source),
+        sourceStart: 40,
+        sourceEnd: 50,
+        prompt: user,
+      }),
+    });
+    const updated = { ...user, text: "updated canonical prompt" };
+    const items = [updated, source];
+    owner.prepareSources("agent", certifiedReadingRows(items, new Map([[source.id, 40]])));
+    const fetchContext = vi.fn().mockRejectedValue(new Error("Unexpected revision read"));
+    const fixture = renderHook(() =>
+      useCanonicalPromptContext({
+        owner,
+        agentId: "agent",
+        epoch: "epoch",
+        source,
+        ordinaryItems: items,
+        coverage: [{ epoch: "epoch", startSeq: 4, endSeq: 100 }],
+        enabled: true,
+        lookup: rawPromptLookup(source, fetchContext),
+      }),
+    );
+    expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(updated);
+    expect(fixture.result.current.loading).toBe(false);
+    await act(async () => {});
+    expect(fetchContext).not.toHaveBeenCalled();
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it("invalidates changed live revisions and scopes descriptors to owner, epoch and demand", () => {
+    const source = answer(50);
+    const owner = createCanonicalPromptContexts();
+    const independent = createCanonicalPromptContexts();
+    const page = certifiedReadingRows([user, source], new Map([[source.id, 40]]));
+    owner.prepareSources("agent", page);
+    expect(owner.readSourceMetadata("agent", "epoch")).toHaveLength(1);
+    expect(independent.readSourceMetadata("agent", "epoch")).toEqual([]);
+    const live = { ...source, text: "changed live content" };
+    owner.prepareSources("agent", { ...page, entries: [], tail: [user, live] });
+    expect(owner.readSourceMetadata("agent", "epoch")).toEqual([]);
+    owner.prepareSources("agent", page);
+    owner.setEpoch("agent", "next-epoch");
+    expect(owner.readSourceMetadata("agent", "epoch")).toEqual([]);
+    owner.prepareSources("agent", page);
+    owner.retainAgents([]);
+    owner.prepareSources("agent", page);
+    expect(owner.readSourceMetadata("agent", "epoch")).toEqual([]);
+    owner.dispose();
+    independent.dispose();
+  });
+});
+
+describe("canonical prompt admission ownership", () => {
+  const epoch = "epoch";
+  const agentId = "agent";
+  const prior: UserPrompt = {
+    kind: "user_message",
+    id: "P20",
+    text: "Prior prompt",
+    timestamp: new Date(0),
+    timelineCursor: { epoch, seq: 20 },
+  };
+  const newer: UserPrompt = {
+    ...prior,
+    id: "P450",
+    text: "Newer prompt",
+    timelineCursor: { epoch, seq: 450 },
+  };
+  function answer(seq: number): Extract<StreamItem, { kind: "assistant_message" }> {
+    return {
+      kind: "assistant_message",
+      id: `answer-${seq}`,
+      messageId: `message-${seq}`,
+      text: `Answer ${seq}`,
+      timestamp: new Date(0),
+      timelineCursor: { epoch, seq },
+    };
+  }
+  function accepted(
+    owner: ReturnType<typeof createCanonicalPromptContexts>,
+    items: readonly StreamItem[],
+    start = 400,
+    end = 1000,
+  ) {
+    owner.prepareSources(agentId, {
+      ...certifiedReadingRows(items),
+      cursor: { epoch, startSeq: start, endSeq: end },
+    });
+    owner.publishSources();
+  }
+  function request(
+    owner: ReturnType<typeof createCanonicalPromptContexts>,
+    source: StreamItem,
+    channel: object,
+    rawLookup?: ReturnType<typeof rawPromptLookup>,
+    retryToken = 0,
+    lookupAllowed = true,
+  ) {
+    return owner.request({
+      agentId,
+      source,
+      channel,
+      lookup: rawLookup,
+      lookupAllowed,
+      retryToken,
+      signal: new AbortController().signal,
+    });
+  }
+  function lookup(source: StreamItem, prompt = prior) {
+    const fixture = rawPromptLookup(source, async () => ({
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: source.timelineCursor!.seq,
+      sourceEnd: source.timelineCursor!.seq,
+      prompt,
+    }));
+    return { ...fixture, readPage: vi.fn(fixture.readPage) };
+  }
+
+  function occurrencePage(entries: ContextEntry[], hasOlder = false): ContextPage {
+    return { epoch, entries, hasOlder, error: null, reset: false, staleCursor: false, gap: false };
+  }
+  function occurrenceEntry(
+    source: Extract<StreamItem, { kind: "assistant_message" }>,
+    start: number,
+  ): ContextEntry {
+    const end = source.timelineCursor!.seq;
+    return {
+      provider: "mock",
+      timestamp: new Date(0).toISOString(),
+      seqStart: start,
+      seqEnd: end,
+      sourceSeqRanges:
+        start === 400
+          ? [
+              { startSeq: 400, endSeq: 449 },
+              { startSeq: 451, endSeq: end },
+            ]
+          : [{ startSeq: start, endSeq: end }],
+      collapsed: [],
+      item: { type: "assistant_message", messageId: source.messageId, text: source.text },
+    };
+  }
+  function occurrencePrompt(prompt: UserPrompt): ContextEntry {
+    const seq = prompt.timelineCursor!.seq;
+    return {
+      provider: "mock",
+      timestamp: new Date(0).toISOString(),
+      seqStart: seq,
+      seqEnd: seq,
+      sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+      collapsed: [],
+      item: { type: "user_message", text: prompt.text },
+    };
+  }
+  function acceptOccurrence(
+    owner: ReturnType<typeof createCanonicalPromptContexts>,
+    source: Extract<StreamItem, { kind: "assistant_message" }>,
+    start: number,
+    options: { users?: readonly UserPrompt[]; complete?: boolean } = {},
+  ) {
+    const rows = [...(options.users ?? []), source];
+    const cursor = {
+      epoch,
+      startSeq: options.complete ? 20 : 490,
+      endSeq: 600,
+      retainedRanges:
+        !options.complete && options.users?.length
+          ? [
+              { startSeq: 20, endSeq: 20 },
+              { startSeq: 450, endSeq: 460 },
+            ]
+          : [],
+    };
+    const entry = occurrenceEntry(source, start);
+    owner.prepareSources(agentId, { ...certifiedReadingRows(rows), entries: [entry], cursor });
+    owner.publishSources();
+    // A new ordinary revision must establish a UNIQUE changed start. Reusing the
+    // same revision with rival descriptors would only exercise ambiguity rejection.
+    expect(
+      resolveCanonicalSourceMetadata(owner.readSourceMetadata(agentId, epoch), source)?.startSeq,
+    ).toBe(start);
+  }
+  async function verifyHeldOccurrence(outcome: "prompt" | "exhausted") {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    const replacement = { ...source };
+    acceptOccurrence(owner, source, 500);
+    const held = deferred<ContextPage>();
+    const started = deferred<void>();
+    let start = 500;
+    const readPage = vi.fn(
+      async (
+        input: Parameters<ReturnType<typeof rawPromptLookup>["readPage"]>[0],
+      ): Promise<ContextPage> => {
+        if (input.limit === 1) return occurrencePage([occurrenceEntry(source, start)], true);
+        if (start === 400) return occurrencePage([occurrencePrompt(prior)]);
+        started.resolve();
+        return held.promise;
+      },
+    );
+    const raw = { agentId, readPage, projection: "canonical" as const };
+    const channel = {};
+    const pending = request(owner, source, channel, raw);
+    const rejected = expect(pending).rejects.toThrow("Reading context changed");
+    await started.promise;
+    acceptOccurrence(owner, replacement, 400);
+    expect(canonicalPromptSourceKey(replacement)).toBe(canonicalPromptSourceKey(source));
+    held.resolve(occurrencePage(outcome === "prompt" ? [occurrencePrompt(newer)] : []));
+    await rejected;
+    expect(owner.read(agentId, epoch, channel)).toEqual([]);
+    expect(readPage).toHaveBeenCalledTimes(2);
+    await expect(request(owner, replacement, channel, raw)).rejects.toThrow(
+      "Reading context changed",
+    );
+    expect(readPage).toHaveBeenCalledTimes(2);
+    start = 400;
+    await request(owner, replacement, channel, raw, 1);
+    expect(readPage).toHaveBeenCalledTimes(4);
+    expect(readPage.mock.calls[2]![0]).toEqual({
+      epoch,
+      cursor: 501,
+      limit: 1,
+      projection: "projected",
+    });
+    expect(owner.read(agentId, epoch, channel).at(-1)).toMatchObject({
+      sourceStart: 400,
+      sourceEnd: 500,
+      prompt: { timelineCursor: { epoch, seq: 20 } },
+    });
+    owner.dispose();
+  }
+  async function verifyOccurrenceContinuation(mode: "stored" | "held-budget") {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    const replacement = { ...source };
+    acceptOccurrence(owner, source, 500);
+    const held = deferred<ContextPage>();
+    const started = deferred<void>();
+    let start = 500;
+    let cursor = 500;
+    const readPage = vi.fn(
+      async (
+        input: Parameters<ReturnType<typeof rawPromptLookup>["readPage"]>[0],
+      ): Promise<ContextPage> => {
+        if (input.limit === 1) return occurrencePage([occurrenceEntry(source, start)], true);
+        if (start === 400) return occurrencePage([occurrencePrompt(prior)]);
+        cursor -= 1;
+        if (mode === "held-budget" && cursor === 493) {
+          started.resolve();
+          return held.promise;
+        }
+        return occurrencePage([occurrenceEntry(answer(cursor), cursor)], true);
+      },
+    );
+    const raw = { agentId, readPage, projection: "canonical" as const };
+    const channel = {};
+    const pending = request(owner, source, channel, raw);
+    const rejected = expect(pending).rejects.toThrow(
+      mode === "stored" ? "request budget" : "Reading context changed",
+    );
+    if (mode === "stored") await rejected;
+    else await started.promise;
+    expect(readPage).toHaveBeenCalledTimes(8);
+    acceptOccurrence(owner, replacement, 400);
+    if (mode === "held-budget") {
+      held.resolve(occurrencePage([occurrenceEntry(answer(493), 493)], true));
+      await rejected;
+    }
+    expect(owner.read(agentId, epoch, channel)).toEqual([]);
+    await expect(request(owner, replacement, channel, raw)).rejects.toThrow(
+      "Reading context changed",
+    );
+    expect(readPage).toHaveBeenCalledTimes(8);
+    start = 400;
+    await request(owner, replacement, channel, raw, 1);
+    expect(readPage).toHaveBeenCalledTimes(10);
+    expect(readPage.mock.calls[8]![0]).toEqual({
+      epoch,
+      cursor: 501,
+      limit: 1,
+      projection: "projected",
+    });
+    expect(owner.read(agentId, epoch, channel).at(-1)).toMatchObject({
+      sourceStart: 400,
+      prompt: { timelineCursor: { epoch, seq: 20 } },
+    });
+    owner.dispose();
+  }
+
+  it("rejects a held predecessor from a uniquely replaced source start with unchanged USER positions and requires a fresh explicit retry", async () => {
+    await verifyHeldOccurrence("prompt");
+  });
+
+  it("reconciles the validated source start of held exhaustion before accepting an empty result", async () => {
+    await verifyHeldOccurrence("exhausted");
+  });
+
+  it("discards a stored continuation whose source start conflicts with current unique metadata before resuming", async () => {
+    await verifyOccurrenceContinuation("stored");
+  });
+
+  it("does not store budget progress after a held read crosses a unique source-start replacement", async () => {
+    await verifyOccurrenceContinuation("held-budget");
+  });
+
+  it("settles a held source-start conflict from current local proof without changing USER positions or issuing another RPC", async () => {
+    for (const outcome of ["prompt", "exhausted"]) {
+      const owner = createCanonicalPromptContexts();
+      const source = answer(500);
+      const replacement = { ...source };
+      const users = [prior, newer];
+      acceptOccurrence(owner, source, 500, { users });
+      expect(owner.preview(agentId, source)).toBeUndefined();
+      const held = deferred<ContextPage>();
+      const started = deferred<void>();
+      const readPage = vi.fn(
+        async (
+          input: Parameters<ReturnType<typeof rawPromptLookup>["readPage"]>[0],
+        ): Promise<ContextPage> => {
+          if (input.limit === 1) return occurrencePage([occurrenceEntry(source, 500)], true);
+          started.resolve();
+          return held.promise;
+        },
+      );
+      const channel = {};
+      const pending = request(owner, source, channel, {
+        agentId,
+        readPage,
+        projection: "canonical",
+      });
+      await started.promise;
+      acceptOccurrence(owner, replacement, 400, { users, complete: true });
+      expect(owner.preview(agentId, replacement)?.prompt).toBe(prior);
+      held.resolve(occurrencePage(outcome === "prompt" ? [occurrencePrompt(newer)] : []));
+      await expect(pending).resolves.toBe(prior);
+      const admitted = owner.read(agentId, epoch, channel).at(-1)!;
+      expect(admitted).toMatchObject({ sourceStart: 400, sourceEnd: 500 });
+      expect(admitted.prompt).toBe(prior);
+      expect(owner.isSupportedContext(agentId, admitted)).toBe(true);
+      expect(readPage).toHaveBeenCalledTimes(2);
+      owner.dispose();
+    }
+  });
+
+  it("treats render previews as read-only and rejects invalid originals, clones, forged derivatives and foreign certificates at admission", async () => {
+    const source = answer(500);
+    const target = answer(440);
+    const owner = createCanonicalPromptContexts();
+    const other = createCanonicalPromptContexts();
+    accepted(owner, [target, source]);
+    accepted(other, [target, source]);
+    const seed = {};
+    const raw = lookup(source);
+    await request(owner, source, seed, raw);
+    await request(other, source, {}, lookup(source));
+    expect(raw.readPage).toHaveBeenCalledTimes(2);
+    const original = owner.read(agentId, epoch, seed)[0]!;
+    const foreign = other.read(agentId, epoch)[0]!;
+    const before = owner.readRevision(agentId, epoch);
+    const preview = owner.preview(agentId, target);
+    expect(preview?.prompt.timelineCursor?.seq).toBe(20);
+    expect(owner.isSupportedContext(agentId, preview!)).toBe(false);
+    expect(owner.readRevision(agentId, epoch)).toBe(before);
+    expect(owner.read(agentId, epoch, seed)).toEqual([original]);
+    accepted(owner, [target, newer, source]);
+    accepted(owner, [target, source]);
+    const forged = {
+      ...original,
+      sourceKey: canonicalPromptSourceKey(target),
+      sourceStart: 440,
+      sourceEnd: 440,
+    };
+    const rogue = vi.fn(async () => original);
+    for (const context of [original, { ...original }, preview!, forged, foreign]) {
+      expect(owner.isSupportedContext(agentId, context)).toBe(false);
+      const input = {
+        agentId,
+        source,
+        channel: {},
+        signal: new AbortController().signal,
+        lookup: raw,
+        lookupAllowed: false,
+        retryToken: 0,
+      };
+      await expect(
+        owner.request(Object.assign(input, { knownContext: context, fetchContext: rogue })),
+      ).rejects.toThrow("Reading context changed");
+    }
+    expect(rogue).not.toHaveBeenCalled();
+    expect(raw.readPage).toHaveBeenCalledTimes(2);
+    expect(owner.preview(agentId, source)).toBeUndefined();
+    await expect(
+      owner.request({
+        agentId,
+        source,
+        channel: {},
+        signal: new AbortController().signal,
+        lookup: { ...raw, agentId: "different-agent" },
+        lookupAllowed: true,
+        retryToken: 0,
+      }),
+    ).rejects.toThrow("different owner");
+    expect(raw.readPage).toHaveBeenCalledTimes(2);
+    const fresh = lookup(source, newer);
+    await request(owner, source, {}, fresh, 1);
+    expect(fresh.readPage).toHaveBeenCalledTimes(2);
+    expect(owner.preview(agentId, source)?.prompt.timelineCursor?.seq).toBe(450);
+    expect(owner.isSupportedContext(agentId, original)).toBe(false);
+    expect(owner.read(agentId, epoch, seed)).toEqual([original]);
+    owner.dispose();
+    other.dispose();
+  });
+
+  it("retires held derivations after last-support release or four-slot eviction and blocks transport when preview support disappears", async () => {
+    for (const mode of ["release", "eviction"]) {
+      const owner = createCanonicalPromptContexts();
+      const source = answer(500);
+      const target = answer(440);
+      const ordinary = Array.from({ length: 4 }, (_, index) => {
+        const seq = 600 + index * 100;
+        return {
+          prompt: { ...prior, id: `P${seq}`, timelineCursor: { epoch, seq } },
+          response: answer(seq + 10),
+        };
+      });
+      const rows = [target, source, ...ordinary.flatMap((turn) => [turn.prompt, turn.response])];
+      accepted(owner, rows);
+      const seed = {};
+      const raw = lookup(source);
+      await request(owner, source, seed, raw);
+      const original = owner.read(agentId, epoch, seed)[0]!;
+      const heldPreview = owner.preview(agentId, target);
+      expect(heldPreview?.prompt.timelineCursor?.seq).toBe(20);
+      if (mode === "release") owner.release(seed);
+      else {
+        for (const turn of ordinary) await request(owner, turn.response, seed, undefined, 0, false);
+        expect(owner.read(agentId, epoch, seed)).toHaveLength(4);
+        expect(owner.read(agentId, epoch, seed).some((context) => context === original)).toBe(
+          false,
+        );
+      }
+      accepted(owner, [target, newer, ...rows.slice(1)]);
+      accepted(owner, rows);
+      expect(owner.isSupportedContext(agentId, original)).toBe(false);
+      expect(owner.isSupportedContext(agentId, heldPreview!)).toBe(false);
+      expect(owner.preview(agentId, target)).toBeUndefined();
+      const input = {
+        agentId,
+        source: target,
+        channel: {},
+        lookup: raw,
+        lookupAllowed: false,
+        retryToken: 0,
+        signal: new AbortController().signal,
+      };
+      await expect(
+        owner.request(Object.assign(input, { knownContext: heldPreview })),
+      ).rejects.toThrow("Reading context changed");
+      expect(raw.readPage).toHaveBeenCalledTimes(2);
+      owner.dispose();
+    }
+  });
+
+  it("preserves another reader's support and commits same-lineage handoffs before reconciling the last support", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    const targets = [answer(450), answer(440), answer(550), answer(460), answer(470)];
+    accepted(owner, [source, ...targets]);
+    const first = {};
+    const second = {};
+    const raw = lookup(source);
+    await request(owner, source, first, raw);
+    const original = owner.read(agentId, epoch, first)[0]!;
+    await request(owner, source, second, raw, 0, false);
+    owner.release(first);
+    expect(owner.isSupportedContext(agentId, original)).toBe(true);
+    owner.prepareSources(agentId, {
+      ...certifiedReadingRows([source, ...targets]),
+      cursor: {
+        epoch,
+        startSeq: 400,
+        endSeq: 500,
+        retainedRanges: [{ startSeq: 550, endSeq: 600 }],
+      },
+    });
+    expect(owner.preview(agentId, targets[2]!)).toBeUndefined();
+    expect(raw.readPage).toHaveBeenCalledTimes(2);
+    accepted(owner, [source, ...targets]);
+    for (const target of [...targets, targets[0]!, source]) {
+      const preview = owner.preview(agentId, target);
+      expect(preview?.prompt.timelineCursor?.seq).toBe(20);
+      await request(owner, target, second, raw, 0, false);
+      expect(owner.isSupportedContext(agentId, original)).toBe(true);
+      expect(owner.read(agentId, epoch, second).length).toBeLessThanOrEqual(4);
+    }
+    expect(raw.readPage).toHaveBeenCalledTimes(2);
+    owner.release(second);
+    expect(owner.isSupportedContext(agentId, original)).toBe(false);
+    expect(owner.preview(agentId, source)).toBeUndefined();
+    owner.dispose();
+  });
+
+  it("fences a genuinely fresh held lookup across USER appearance and eviction without automatic retry or late enrollment", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    accepted(owner, [source]);
+    const held = deferred<ContextPage>();
+    const raw = lookup(source);
+    const readPage = vi.fn(raw.readPage).mockImplementationOnce(() => held.promise);
+    const channel = {};
+    const pending = request(owner, source, channel, { ...raw, readPage });
+    const rejected = expect(pending).rejects.toThrow("Reading context changed");
+    accepted(owner, [newer, source]);
+    accepted(owner, [source]);
+    const probe = await raw.readPage(
+      { epoch, cursor: 501, limit: 1, projection: "projected" },
+      new AbortController().signal,
+    );
+    held.resolve(probe);
+    await rejected;
+    expect(owner.read(agentId, epoch, channel)).toEqual([]);
+    const calls = readPage.mock.calls.length;
+    await expect(request(owner, source, channel, { ...raw, readPage })).rejects.toThrow(
+      "Reading context changed",
+    );
+    expect(readPage).toHaveBeenCalledTimes(calls);
+    await request(owner, source, channel, lookup(source, newer), 1);
+    expect(owner.read(agentId, epoch, channel).at(-1)?.prompt.timelineCursor?.seq).toBe(450);
+    owner.dispose();
+  });
+
+  it("binds continuations to the observed USER generation and requires explicit retry for a new lookup budget", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    accepted(owner, [source]);
+    const fixture = lookup(source);
+    let cursor = 500;
+    let completed = false;
+    const readPage = vi.fn(
+      async (
+        input: Parameters<typeof fixture.readPage>[0],
+        signal?: AbortSignal,
+      ): Promise<ContextPage> => {
+        if (input.limit === 1 || completed) return fixture.readPage(input, signal);
+        cursor -= 1;
+        return {
+          epoch,
+          hasOlder: true,
+          error: null,
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          entries: [
+            {
+              provider: "mock",
+              timestamp: new Date(0).toISOString(),
+              seqStart: cursor,
+              seqEnd: cursor,
+              sourceSeqRanges: [{ startSeq: cursor, endSeq: cursor }],
+              collapsed: [],
+              item: { type: "assistant_message", text: "Older answer" },
+            },
+          ],
+        };
+      },
+    );
+    const raw = { ...fixture, readPage };
+    const channel = {};
+    await expect(request(owner, source, channel, raw)).rejects.toThrow("request budget");
+    expect(readPage).toHaveBeenCalledTimes(8);
+    accepted(owner, [newer, source]);
+    accepted(owner, [source]);
+    await expect(request(owner, source, channel, raw)).rejects.toThrow("Reading context changed");
+    expect(readPage).toHaveBeenCalledTimes(8);
+    completed = true;
+    await request(owner, source, channel, raw, 1);
+    expect(readPage).toHaveBeenCalledTimes(10);
+    expect(readPage.mock.calls[8]![0]).toEqual({
+      epoch,
+      cursor: 501,
+      limit: 1,
+      projection: "projected",
+    });
+    expect(owner.read(agentId, epoch, channel).at(-1)?.prompt.timelineCursor?.seq).toBe(20);
+    owner.dispose();
+  });
+
+  it("does not invalidate a fresh held lookup for assistant streaming, array recreation or unchanged USER positions", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    accepted(owner, [prior, source]);
+    const held = deferred<ContextPage>();
+    const raw = lookup(source);
+    const readPage = vi
+      .fn((...args: Parameters<typeof raw.readPage>) => raw.readPage(...args))
+      .mockImplementationOnce(() => held.promise);
+    const channel = {};
+    const pending = request(owner, source, channel, { ...raw, readPage });
+    for (let seq = 501; seq <= 505; seq += 1)
+      accepted(owner, [
+        { ...prior },
+        { ...source, text: `stream ${seq}`, timelineCursor: { epoch, seq } },
+      ]);
+    const probe = await raw.readPage(
+      { epoch, cursor: 501, limit: 1, projection: "projected" },
+      new AbortController().signal,
+    );
+    held.resolve(probe);
+    await expect(pending).resolves.toMatchObject(prior);
+    expect(owner.read(agentId, epoch, channel).at(-1)?.sourceEnd).toBe(500);
+    expect(readPage).toHaveBeenCalledTimes(2);
+    owner.dispose();
+  });
+
+  it("settles a changed-generation lookup from valid current ordinary proof without another RPC", async () => {
+    const owner = createCanonicalPromptContexts();
+    const source = answer(500);
+    accepted(owner, [source]);
+    const held = deferred<ContextPage>();
+    const raw = lookup(source);
+    const readPage = vi
+      .fn((...args: Parameters<typeof raw.readPage>) => raw.readPage(...args))
+      .mockImplementationOnce(() => held.promise);
+    const channel = {};
+    const pending = request(owner, source, channel, { ...raw, readPage });
+    accepted(owner, [newer, source], 450);
+    const probe = await raw.readPage(
+      { epoch, cursor: 501, limit: 1, projection: "projected" },
+      new AbortController().signal,
+    );
+    held.resolve(probe);
+    await expect(pending).resolves.toBe(newer);
+    expect(readPage).toHaveBeenCalledTimes(1);
+    const admitted = owner.read(agentId, epoch, channel).at(-1)!;
+    expect(admitted.prompt).toBe(newer);
+    expect(owner.isSupportedContext(agentId, admitted)).toBe(true);
     owner.dispose();
   });
 });

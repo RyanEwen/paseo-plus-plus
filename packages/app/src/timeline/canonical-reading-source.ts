@@ -1,11 +1,15 @@
-import type { AgentTimelineCursorState } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
+import {
+  resolveCanonicalSourceMetadata,
+  hasCanonicalSourceEvidence,
+  type CanonicalSourceMetadata,
+} from "./canonical-source-metadata";
 import {
   canonicalPromptSourceKey,
   canonicalPromptOccurrenceKey,
   type CanonicalPromptContext,
   type CanonicalTimelineCoverage,
-} from "./canonical-prompt-context";
+} from "./canonical-prompt-model";
 
 /** A source's true start comes from its validated canonical probe, never its
  * display row or seqEnd. Full ordinary coverage can then prove the nearest USER
@@ -32,12 +36,7 @@ export function resolveOrdinaryPromptContext(
   }
   if (!prompt) return undefined;
   const cursor = prompt.timelineCursor!;
-  const covered = coverage.some(
-    (range) =>
-      range.epoch === position.epoch &&
-      range.startSeq <= cursor.seq &&
-      range.endSeq >= position.seq,
-  );
+  const covered = coversCanonicalInterval(coverage, position.epoch, cursor.seq, position.seq);
   if (!covered) return undefined;
   return {
     sourceKey: canonicalPromptSourceKey(source),
@@ -45,6 +44,151 @@ export function resolveOrdinaryPromptContext(
     sourceEnd: position.seq,
     prompt,
   };
+}
+
+export function coversCanonicalInterval(
+  coverage: readonly CanonicalTimelineCoverage[],
+  epoch: string,
+  start: number,
+  end: number,
+): boolean {
+  const ranges = coverage
+    .filter((range) => range.epoch === epoch)
+    .slice()
+    .sort((a, b) => a.startSeq - b.startSeq);
+  let next = start;
+  for (const range of ranges) {
+    if (range.endSeq < next) continue;
+    if (range.startSeq > next) return false;
+    if (range.endSeq >= end) return true;
+    next = range.endSeq + 1;
+  }
+  return false;
+}
+
+interface KnownPromptContextInput {
+  source: StreamItem;
+  metadata: readonly CanonicalSourceMetadata[];
+  items: readonly StreamItem[];
+  coverage: readonly CanonicalTimelineCoverage[];
+  contexts: readonly CanonicalPromptContext[];
+  exactContext: CanonicalPromptContext | undefined;
+}
+
+/** Relationship reuse is distinct from exact occurrence caching. A proven
+ * predecessor can cross loaded assistant rows only over certified coverage.
+ * Contexts are current-owner admissions from validated lookup/local derivation,
+ * never arbitrary prompt-shaped rows from a projection. */
+export interface CanonicalPromptResolution {
+  context: CanonicalPromptContext;
+  parent: CanonicalPromptContext | undefined;
+}
+
+export function resolveKnownPromptContext(
+  input: KnownPromptContextInput,
+): CanonicalPromptContext | undefined {
+  return resolveKnownPromptResolution(input)?.context;
+}
+
+export function resolveKnownPromptResolution(
+  input: KnownPromptContextInput,
+): CanonicalPromptResolution | undefined {
+  const { source, metadata, items, coverage } = input;
+  const cursor = source.timelineCursor;
+  if (!cursor) return undefined;
+  const descriptor = resolveCanonicalSourceMetadata(metadata, source);
+  const exact = input.exactContext;
+  // An ambiguous or changed ordinary revision cannot inherit older metadata.
+  const conflicting = !descriptor && hasCanonicalSourceEvidence(metadata, source);
+  if (conflicting) return undefined;
+  const start = descriptor?.startSeq ?? exact?.sourceStart;
+  if (start === undefined) return undefined;
+  const ordinary = resolveOrdinaryPromptContext(items, source, coverage, start);
+  if (ordinary) return { context: ordinary, parent: descriptor ? undefined : exact };
+  if (exact && exact.sourceStart === start && !hasInterveningUser(exact, items)) {
+    const current = withOrdinaryPromptRevision(exact, items);
+    return { context: current, parent: exact };
+  }
+  return reuseRetainedPredecessor(input, start);
+}
+
+function reuseRetainedPredecessor(
+  input: KnownPromptContextInput,
+  start: number,
+): CanonicalPromptResolution | undefined {
+  const { source, contexts, items, coverage } = input;
+  const cursor = source.timelineCursor!;
+  for (const proof of contexts) {
+    const promptCursor = proof.prompt.timelineCursor;
+    if (
+      !promptCursor ||
+      promptCursor.epoch !== cursor.epoch ||
+      promptCursor.seq >= start ||
+      hasInterveningUser(proof, items)
+    )
+      continue;
+    // The validated nearest-USER lookup certifies (prompt, sourceStart), so
+    // moving backward uses a prefix of that certificate. Moving forward extends
+    // it only over ordinary certified coverage; neither direction bridges a gap.
+    if (!coversCanonicalInterval(coverage, cursor.epoch, start, cursor.seq)) continue;
+    if (
+      start > proof.sourceStart &&
+      !coversCanonicalInterval(coverage, cursor.epoch, proof.sourceStart, start)
+    )
+      continue;
+    const beforeSource = Math.max(proof.sourceStart, start);
+    const intervening = items.some(
+      (item) =>
+        item.kind === "user_message" &&
+        item.timelineCursor?.epoch === cursor.epoch &&
+        item.timelineCursor.seq > promptCursor.seq &&
+        item.timelineCursor.seq < beforeSource,
+    );
+    if (intervening) continue;
+    const current = withOrdinaryPromptRevision(proof, items);
+    const derived = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: start,
+      sourceEnd: cursor.seq,
+      prompt: current.prompt,
+    };
+    return { context: derived, parent: proof };
+  }
+  return undefined;
+}
+
+export function hasInterveningUser(
+  proof: Pick<CanonicalPromptContext, "prompt" | "sourceStart">,
+  items: readonly StreamItem[],
+): boolean {
+  const prompt = proof.prompt.timelineCursor;
+  return (
+    !!prompt &&
+    items.some(
+      (item) =>
+        item.kind === "user_message" &&
+        item.timelineCursor?.epoch === prompt.epoch &&
+        item.timelineCursor.seq > prompt.seq &&
+        item.timelineCursor.seq < proof.sourceStart,
+    )
+  );
+}
+
+function withOrdinaryPromptRevision(
+  proof: CanonicalPromptContext,
+  items: readonly StreamItem[],
+): CanonicalPromptContext {
+  const position = proof.prompt.timelineCursor;
+  const ordinary = items.find(
+    (item) =>
+      item.kind === "user_message" &&
+      position &&
+      item.timelineCursor?.epoch === position.epoch &&
+      item.timelineCursor.seq === position.seq,
+  );
+  return ordinary?.kind === "user_message" && ordinary !== proof.prompt
+    ? { ...proof, prompt: ordinary }
+    : proof;
 }
 
 /** An append is reusable only inside authoritative contiguous coverage with no
@@ -121,8 +265,12 @@ export function planCanonicalReadingAttempt(
   return { ...previous, latest: source, blocked: true };
 }
 
+interface CoverageCursor extends CanonicalTimelineCoverage {
+  retainedRanges?: readonly Pick<CanonicalTimelineCoverage, "startSeq" | "endSeq">[];
+}
+
 export function canonicalCoverageForCursor(
-  cursor: AgentTimelineCursorState | null | undefined,
+  cursor: CoverageCursor | null | undefined,
 ): readonly CanonicalTimelineCoverage[] {
   if (!cursor) return [];
   return [

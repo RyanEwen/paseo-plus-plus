@@ -1,5 +1,11 @@
 import {
+  EMPTY_SOURCE_METADATA,
+  resolveCanonicalSourceMetadata,
+  type CanonicalSourceMetadata,
+} from "./canonical-source-metadata";
+import {
   planCanonicalReadingAttempt,
+  coversCanonicalInterval,
   type CanonicalReadingAttempt,
 } from "./canonical-reading-source";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -7,9 +13,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import type { StreamItem } from "@/types/stream";
 import {
   canonicalPromptSourceKey,
+  retainCanonicalPromptContext,
   CanonicalPromptContextBudgetError,
-  type CanonicalPromptContextProgress,
   type CanonicalPromptContexts,
+  type CanonicalPromptLookup,
   type CanonicalPromptContext,
   type CanonicalTimelineCoverage,
 } from "./canonical-prompt-context";
@@ -32,11 +39,36 @@ interface CanonicalPromptContextInput {
   enabled: boolean;
   ordinaryItems?: readonly StreamItem[];
   coverage?: readonly CanonicalTimelineCoverage[];
-  fetchContext(
-    source: StreamItem,
-    signal: AbortSignal,
-    progress?: CanonicalPromptContextProgress,
-  ): Promise<CanonicalPromptContext | undefined>;
+  sourceMetadata?: readonly CanonicalSourceMetadata[];
+  lookup: CanonicalPromptLookup | undefined;
+}
+
+interface CanonicalPromptPreviewInput {
+  input: CanonicalPromptContextInput;
+  plan: CanonicalReadingAttempt;
+  source: StreamItem | undefined;
+  metadata: readonly CanonicalSourceMetadata[];
+  suppressed: boolean;
+}
+
+function resolveCanonicalPromptPreview({
+  input,
+  plan,
+  source,
+  metadata,
+  suppressed,
+}: CanonicalPromptPreviewInput): CanonicalPromptContext | undefined {
+  if (
+    !input.owner ||
+    !input.enabled ||
+    !source ||
+    source.timelineCursor?.epoch !== input.epoch ||
+    suppressed
+  )
+    return undefined;
+  if (plan.blocked && !hasCoveredCurrentOccurrence(source, metadata, input.coverage ?? []))
+    return undefined;
+  return input.owner.preview(input.agentId, source);
 }
 
 /** One transcript requests its current canonical source. Admission belongs to the
@@ -56,6 +88,17 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     () => input.owner?.read(input.agentId, input.epoch, channel) ?? EMPTY,
     () => EMPTY,
   );
+  useSyncExternalStore(
+    input.owner?.subscribe ?? noopSubscribe,
+    () => input.owner?.readRevision(input.agentId, input.epoch) ?? EMPTY,
+    () => EMPTY,
+  );
+  const ownerMetadata = useSyncExternalStore(
+    input.owner?.subscribe ?? noopSubscribe,
+    () => input.owner?.readSourceMetadata(input.agentId, input.epoch) ?? EMPTY_SOURCE_METADATA,
+    () => EMPTY_SOURCE_METADATA,
+  );
+  const metadata = input.sourceMetadata ?? ownerMetadata;
   const [attempt, setAttempt] = useState(0);
   const previousAttempt = useRef<{ scope: object; plan: CanonicalReadingAttempt } | null>(null);
   const previous =
@@ -67,11 +110,31 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     input.coverage ?? [],
     attempt,
   );
-  const sourceKey = plan.anchor ? canonicalPromptSourceKey(plan.anchor) : null;
+  const source = plan.blocked ? plan.latest : currentCanonicalReadingSource(plan);
+  const sourceKey = source ? canonicalPromptSourceKey(source) : null;
   useLayoutEffect(() => {
     previousAttempt.current = { scope: requestScope, plan };
   });
   const suppressed = useRef<{ scope: object; key: string | null } | null>(null);
+  const isSuppressed =
+    suppressed.current?.scope === requestScope && suppressed.current.key === sourceKey;
+  const known = resolveCanonicalPromptPreview({
+    input,
+    plan,
+    source,
+    metadata,
+    suppressed: isSuppressed,
+  });
+  // A newly certified local result retires a held miss before passive effects.
+  // Semantic identity avoids restarting work on every owner publication.
+  const knownKey = known
+    ? JSON.stringify([
+        known.sourceKey,
+        known.sourceStart,
+        known.prompt.id,
+        known.prompt.timelineCursor,
+      ])
+    : null;
   const active = useRef<AbortController | null>(null);
   const [state, setState] = useState<CanonicalPromptContextState>({
     scope: requestScope,
@@ -81,11 +144,8 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     limited: false,
     exhausted: false,
   });
-  const readCurrent = useStableEvent(
-    (source: StreamItem, signal: AbortSignal, progress?: CanonicalPromptContextProgress) =>
-      input.fetchContext(source, signal, progress),
-  );
-  const currentSource = useStableEvent(() => plan.anchor);
+  const currentSource = useStableEvent(() => source);
+  const currentKnown = useStableEvent(() => known);
   // Retire acceptance at commit, before passive cleanup or a held completion can
   // publish into an owner/source that this pane has already left.
   useLayoutEffect(
@@ -93,17 +153,18 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
       active.current?.abort();
       input.owner?.cancel(channel);
     },
-    [input.owner, channel, requestScope, sourceKey, plan.blocked, input.fetchContext],
+    [input.owner, channel, requestScope, sourceKey, knownKey, plan.blocked, input.lookup],
   );
   useLayoutEffect(() => () => input.owner?.release(channel), [input.owner, channel]);
   useEffect(() => {
     const owner = input.owner;
-    const source = currentSource();
+    const requestedSource = currentSource();
+    const local = currentKnown();
     if (
       !input.enabled ||
-      plan.blocked ||
-      !source ||
-      source.kind === "user_message" ||
+      (plan.blocked && !local) ||
+      !requestedSource ||
+      requestedSource.kind === "user_message" ||
       !sourceKey ||
       (suppressed.current?.scope === requestScope && suppressed.current.key === sourceKey)
     )
@@ -124,7 +185,7 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     setState({
       scope: requestScope,
       key: sourceKey,
-      loading: true,
+      loading: !local,
       error: false,
       limited: false,
       exhausted: false,
@@ -132,10 +193,12 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     void owner
       .request({
         agentId: input.agentId,
-        source,
+        source: requestedSource,
         channel,
         signal: controller.signal,
-        fetchContext: readCurrent,
+        lookup: input.lookup,
+        lookupAllowed: !plan.blocked,
+        retryToken: attempt,
       })
       .then(
         (prompt) => {
@@ -174,13 +237,14 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     input.agentId,
     input.epoch,
     sourceKey,
+    knownKey,
     plan.blocked,
-    input.fetchContext,
+    input.lookup,
     channel,
     requestScope,
     attempt,
     currentSource,
-    readCurrent,
+    currentKnown,
   ]);
   const cancel = useStableEvent(() => {
     active.current?.abort();
@@ -199,16 +263,22 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     suppressed.current = null;
     setAttempt((value) => value + 1);
   });
+  const visibleContexts = useMemo(
+    () => (known ? retainCanonicalPromptContext(contexts, known) : contexts),
+    [contexts, known],
+  );
+  const status = resolveCanonicalContextStatus(
+    input,
+    requestScope,
+    sourceKey,
+    plan,
+    state,
+    suppressed.current,
+  );
   return {
-    contexts,
-    ...resolveCanonicalContextStatus(
-      input,
-      requestScope,
-      sourceKey,
-      plan,
-      state,
-      suppressed.current,
-    ),
+    contexts: visibleContexts,
+    ...status,
+    ...(known ? { loading: false, error: false, limited: false, exhausted: false } : {}),
     cancel,
     retry,
   };
@@ -234,4 +304,28 @@ function resolveCanonicalContextStatus(
       suppressed?.scope === requestScope &&
       suppressed.key === sourceKey,
   };
+}
+
+function currentCanonicalReadingSource(plan: CanonicalReadingAttempt): StreamItem | undefined {
+  if (
+    plan.latest &&
+    plan.anchor &&
+    canonicalPromptSourceKey(plan.latest) === canonicalPromptSourceKey(plan.anchor)
+  )
+    return plan.latest;
+  return plan.anchor;
+}
+
+function hasCoveredCurrentOccurrence(
+  source: StreamItem,
+  metadata: readonly CanonicalSourceMetadata[],
+  coverage: readonly CanonicalTimelineCoverage[],
+): boolean {
+  const descriptor = resolveCanonicalSourceMetadata(metadata, source);
+  const cursor = source.timelineCursor;
+  return (
+    !!descriptor &&
+    !!cursor &&
+    coversCanonicalInterval(coverage, cursor.epoch, descriptor.startSeq, cursor.seq)
+  );
 }

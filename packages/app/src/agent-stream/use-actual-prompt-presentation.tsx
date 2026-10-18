@@ -1,5 +1,5 @@
 import { useCallback, useContext, useMemo, useState, type ComponentProps } from "react";
-import { View, type GestureResponderEvent } from "react-native";
+import type { GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { isWeb } from "@/constants/platform";
@@ -84,10 +84,7 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
   const navigation = useContext(PromptNavigationContext);
   const disclosure = usePromptDisclosure(id, props);
   const { t } = useTranslation();
-  const backdrop = useMemo(
-    () => (pinned ? <PinnedMessageActionBackdrop /> : <View pointerEvents="none" />),
-    [pinned],
-  );
+  const backdrop = useMemo(() => <PinnedMessageActionBackdrop />, []);
   const reveal = useCallback(
     (event: GestureResponderEvent) => {
       if (!selectedPromptText(event)) navigation?.reveal(id);

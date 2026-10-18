@@ -1,5 +1,4 @@
 import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
-import { createCanonicalPromptContexts } from "@/timeline/canonical-prompt-context";
 import { childContextPageReader } from "@/agent-stream/fetch-reading-prompt-context";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
@@ -22,6 +21,7 @@ import { useSubagentsForParent } from "@/subagents/select";
 import { SubagentsTrack } from "@/subagents/track";
 import {
   providerSubagentKey,
+  createProviderSubagentPromptContexts,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
   observeProviderSubagentTimeline,
@@ -245,16 +245,16 @@ function ProviderSubagentPanel() {
         : undefined,
     [client, supported, target.parentAgentId, target.subagentId],
   );
-  const contextScope = useMemo(
-    () => ({
+  const contextScope = useMemo(() => {
+    const scope = {
       serverId,
       parentAgentId: target.parentAgentId,
       subagentId: target.subagentId,
       epoch,
-      contexts: createCanonicalPromptContexts(),
-    }),
-    [serverId, target.parentAgentId, target.subagentId, epoch],
-  );
+      agentId: streamId,
+    };
+    return { ...scope, contexts: createProviderSubagentPromptContexts(scope) };
+  }, [serverId, target.parentAgentId, target.subagentId, epoch, streamId]);
   const promptContexts = contextScope.contexts;
   useEffect(() => () => promptContexts.dispose(), [promptContexts]);
   const coverage = useMemo(() => canonicalCoverageForCursor(timeline?.cursor), [timeline?.cursor]);
@@ -267,6 +267,7 @@ function ProviderSubagentPanel() {
       onLoadOlder: loadOlder,
       readPromptContext,
       promptContexts,
+      sourceMetadata: timeline?.sourceMetadata,
       coverage,
     }),
     [
@@ -277,6 +278,7 @@ function ProviderSubagentPanel() {
       timeline?.hasOlder,
       readPromptContext,
       promptContexts,
+      timeline?.sourceMetadata,
       coverage,
     ],
   );
