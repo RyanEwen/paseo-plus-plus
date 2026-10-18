@@ -1,4 +1,4 @@
-import { useMemo, useState, type RefObject } from "react";
+import { useCallback, useMemo, useState, type RefObject } from "react";
 import { vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
@@ -18,6 +18,7 @@ const STREAM_STYLE = {
   minHeight: 0,
 };
 const ANSWER_STYLE = { height: 700 };
+const SURROUNDING_TARGET_STYLE = { width: 80, height: 44 };
 const toast = { show: vi.fn(), copied: vi.fn(), error: vi.fn() };
 const controls = {
   targetIds: [ACTUAL_PROMPT_ID],
@@ -33,8 +34,25 @@ const answer: StreamItem = {
   text: "Response",
   timestamp: new Date(1),
 };
+function SurroundingAnswer() {
+  const [clicks, setClicks] = useState(0);
+  const incrementClicks = useCallback(() => setClicks((count) => count + 1), []);
+  return (
+    <div style={ANSWER_STYLE}>
+      <button
+        type="button"
+        style={SURROUNDING_TARGET_STYLE}
+        data-testid="assistant-surrounding-target"
+        onClick={incrementClicks}
+      >
+        Response {clicks}
+      </button>
+      <span data-testid="assistant-surrounding-text">Selectable surrounding answer</span>
+    </div>
+  );
+}
 function renderRow(item: StreamItem) {
-  if (item.kind !== "user_message") return <div style={ANSWER_STYLE}>Response</div>;
+  if (item.kind !== "user_message") return <SurroundingAnswer />;
   return (
     <PromptUserMessage
       timelineMessageId={item.id}

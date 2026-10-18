@@ -1880,7 +1880,7 @@ describe("actual web prompt cells", () => {
       expect(source.style.height).toBe("320px");
       expect(source.style.marginBottom).toBe("-240px");
       expect(source.style.pointerEvents).toBe("none");
-      expect(body.style.pointerEvents).toBe("auto");
+      expect(body.style.pointerEvents).toBe("none");
       expect(getOriginalPromptTop(text)).toBe(-20);
       expect(getOriginalPromptTop(source)).toBe(-20);
       expect(content.querySelectorAll("span")).toHaveLength(1);

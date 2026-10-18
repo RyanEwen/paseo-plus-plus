@@ -550,6 +550,12 @@ function areMessageActionsVisible(compact: boolean, hovered: boolean, navigation
   return compact || isNative || hovered || navigationHeld === true;
 }
 
+function userMessageHitAllocation(suppressed: boolean, actualWebPrompt: boolean) {
+  if (suppressed) return "none";
+  if (actualWebPrompt) return "box-none";
+  return "auto";
+}
+
 export const UserMessage = memo(function UserMessage({
   onContentPress,
   contentAccessibilityLabel,
@@ -585,6 +591,7 @@ export const UserMessage = memo(function UserMessage({
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const expandedCopy = isExpandedPromptCopy(copyMask);
+  const actualWebPrompt = isWeb && bodyViewportHeight !== undefined;
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
@@ -679,18 +686,20 @@ export const UserMessage = memo(function UserMessage({
       style={containerStyle}
       testID="user-message"
       aria-busy={isPending}
-      pointerEvents={expandedCopy ? "none" : "auto"}
+      pointerEvents={userMessageHitAllocation(expandedCopy, actualWebPrompt)}
       aria-hidden={expandedCopy}
       accessibilityElementsHidden={expandedCopy}
       importantForAccessibility={expandedCopy ? "no-hide-descendants" : "auto"}
     >
       <View
         style={contentStyle}
+        pointerEvents={actualWebPrompt ? "box-none" : undefined}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
         <View
           style={bubbleStyle}
+          pointerEvents={actualWebPrompt ? "auto" : undefined}
           ref={bubbleRef}
           onLayout={onBubbleLayout}
           testID="user-message-bubble"

@@ -119,7 +119,7 @@ function applyPromptLane(
   body.style.position = enabled ? "sticky" : "";
   body.style.top = enabled ? "0px" : "";
   body.style.flexShrink = "0";
-  body.style.pointerEvents = enabled ? "auto" : "";
+  body.style.pointerEvents = enabled ? "none" : "";
   body.style.transform = "";
   delete row.dataset.promptTranslation;
   row.dataset.promptPinned = pinned ? "true" : "false";

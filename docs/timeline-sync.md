@@ -95,8 +95,10 @@ the ordinary history owner before claiming a landing.
 
 Index-free discovery checks canonical cursor progress and stops with usable feedback on
 exhaustion, failure, cancellation, or its work budget. An explicit retry can continue past the
-budget; streamed cursor advances cannot restart that budget. Split panes retain their own
-reading context, including while hidden or with pinning disabled.
+budget; streamed cursor advances cannot restart that budget. A transcript change during an
+isolated read can also require an explicit retry. Scrolling through already proven context
+reuses its user row. Split panes retain their own reading context, including while hidden or
+with pinning disabled.
 
 Cancel obsolete navigation at the window-acceptance boundary as well as the scroll boundary.
 Returning to bottom, sending, or starting manual reading must invalidate delayed page application,

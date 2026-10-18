@@ -1,18 +1,11 @@
-import {
-  canonicalCoverageForCursor,
-  resolveOrdinaryPromptContext,
-} from "@/timeline/canonical-reading-source";
+import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
 import { useSyncExternalStore } from "react";
 import { resolveContextSource } from "./sticky-prompt-model";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
-import {
-  fetchCanonicalPromptContext,
-  normalContextPageReader,
-} from "./fetch-reading-prompt-context";
+import { normalContextPageReader } from "./fetch-reading-prompt-context";
 import {
   mergeRetainedPrompts,
   retainedCanonicalPositions,
-  type CanonicalPromptContextProgress,
 } from "@/timeline/canonical-prompt-context";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { shouldIndexUserPrompts } from "./chat-outline/model";
@@ -332,6 +325,7 @@ export interface AgentStreamViewProps {
     readPromptContext?: import("./fetch-reading-prompt-context").ContextPageReader;
     promptContexts?: import("@/timeline/canonical-prompt-context").CanonicalPromptContexts;
     coverage?: readonly import("@/timeline/canonical-prompt-context").CanonicalTimelineCoverage[];
+    sourceMetadata?: readonly import("@/timeline/canonical-source-metadata").CanonicalSourceMetadata[];
     onLoadOlder: (acceptance?: TimelinePageAcceptance) => boolean | Promise<boolean>;
   };
 }
@@ -440,23 +434,16 @@ function useRetainedCanonicalTranscript({
     if (childTranscript) return suppliedCoverage ?? [];
     return canonicalCoverageForCursor(rootTimelineCursor);
   }, [childTranscript, suppliedCoverage, rootTimelineCursor]);
-  const readKnownContext = useStableEvent(
-    (source: StreamItem, sourceStart: number) =>
-      resolveOrdinaryPromptContext(sourceItems, source, contextCoverage, sourceStart)?.prompt,
-  );
-  const readCanonicalContext = useCallback(
-    (source: StreamItem, signal: AbortSignal, progress?: CanonicalPromptContextProgress) => {
-      if (!contextReader) return Promise.reject(new Error("Canonical prompt context unavailable"));
-      return fetchCanonicalPromptContext(
-        contextReader,
-        source,
-        signal,
-        childTranscript ? "projected" : "canonical",
-        progress,
-        (sourceStart) => readKnownContext(source, sourceStart),
-      );
-    },
-    [contextReader, childTranscript, readKnownContext],
+  const contextLookup = useMemo(
+    () =>
+      contextReader
+        ? {
+            agentId,
+            readPage: contextReader,
+            projection: childTranscript ? ("projected" as const) : ("canonical" as const),
+          }
+        : undefined,
+    [contextReader, childTranscript, agentId],
   );
   const retainedContext = useCanonicalPromptContext({
     owner: contextOwner,
@@ -465,8 +452,9 @@ function useRetainedCanonicalTranscript({
     source: contextSource,
     ordinaryItems: sourceItems,
     coverage: contextCoverage,
+    sourceMetadata: historyPagination?.sourceMetadata,
     enabled: stickyEnabled && isActive,
-    fetchContext: readCanonicalContext,
+    lookup: contextLookup,
   });
   const canonicalTail = useMemo(
     () =>
@@ -1537,7 +1525,8 @@ function historyContextPropsEqual(
   return (
     left?.readPromptContext === right?.readPromptContext &&
     left?.promptContexts === right?.promptContexts &&
-    left?.coverage === right?.coverage
+    left?.coverage === right?.coverage &&
+    left?.sourceMetadata === right?.sourceMetadata
   );
 }
 
