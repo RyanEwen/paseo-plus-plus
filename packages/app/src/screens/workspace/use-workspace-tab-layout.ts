@@ -1,3 +1,4 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 import { useMemo } from "react";
 import { useWindowDimensions } from "react-native";
 import { useSettings } from "@/hooks/use-settings";
@@ -12,7 +13,7 @@ interface UseWorkspaceTabLayoutInput {
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
   preserveNaturalWidths?: boolean;
-  host?: "main" | "explorer";
+  host?: PaneHost;
   iconOnlyTabWidth?: number;
 }
 

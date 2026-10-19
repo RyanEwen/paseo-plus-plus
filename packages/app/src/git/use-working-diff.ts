@@ -7,6 +7,7 @@ import {
   buildReviewDraftKey,
   useInlineReviewController,
   useReviewAttachmentSnapshot,
+  useReviewFeedback,
 } from "@/review";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -21,6 +22,7 @@ interface UseWorkingDiffOptions {
   queryScope?: string;
   filePath?: string;
   includeFileOverview?: boolean;
+  presentation?: string;
 }
 
 function useWorkingDiffQueries({
@@ -55,6 +57,7 @@ export function useWorkingDiff({
   queryScope,
   filePath,
   includeFileOverview = false,
+  presentation,
 }: UseWorkingDiffOptions) {
   const {
     status,
@@ -120,13 +123,20 @@ export function useWorkingDiff({
       }),
     [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
   );
-  const reviewActions = useInlineReviewController({ reviewDraftKey });
+  const reviewActions = useInlineReviewController({ reviewDraftKey, presentation });
   const reviewAttachment = useReviewAttachmentSnapshot({
     key: reviewDraftKey,
     diffFiles: files,
     cwd,
     mode: diffMode,
     baseRef,
+  });
+
+  const reviewFeedback = useReviewFeedback({
+    serverId,
+    workspaceId,
+    reviewDraftKey,
+    attachment: reviewAttachment,
   });
 
   return {
@@ -147,6 +157,7 @@ export function useWorkingDiff({
     isDiffLoading: isDiffLoading || comparisonLoading,
     reviewActions,
     reviewAttachment,
+    reviewFeedback,
   };
 }
 

@@ -252,6 +252,7 @@ export const ptBR: TranslationResources = {
     back: "Voltar",
     loading: "Carregando...",
     actions: {
+      save: "Salvar",
       back: "Voltar",
       cancel: "Cancelar",
       close: "Fechar",
@@ -345,6 +346,8 @@ export const ptBR: TranslationResources = {
     input: {
       accessibilityLabel: "Enviar mensagem ao agente...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "Tela cheia",
+      exitFullscreen: "Sair da tela cheia",
       focusHint: "{{shortcut}} para focar",
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
@@ -604,6 +607,7 @@ export const ptBR: TranslationResources = {
       details: "Detalhes",
     },
     dictation: {
+      paused: "Microfone interrompido. Aguardando para retomar…",
       start: "Iniciar ditado por voz",
       cancel: "Cancelar ditado",
       retry: "Tentar ditado novamente",
@@ -613,6 +617,7 @@ export const ptBR: TranslationResources = {
       failedRetry: "Falha no ditado. Toque para tentar novamente.",
     },
     question: {
+      responseFailed: "Não foi possível enviar sua resposta. Tente novamente.",
       submit: "Enviar",
       next: "Próximo",
       answerPlaceholder: "Digite sua resposta...",
@@ -885,6 +890,9 @@ export const ptBR: TranslationResources = {
       updateHost: "Atualize o host para usar o renderizador de terminal nativo.",
       unableToSubscribe: "Não foi possível assinar o terminal",
     },
+    sheet: {
+      openAsTab: "Abrir como aba",
+    },
     tabs: {
       loading: "Carregando...",
       modified: "Alterações não salvas",
@@ -900,7 +908,7 @@ export const ptBR: TranslationResources = {
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
-        title: "Alternar aba",
+        title: "Abas do workspace",
         searchPlaceholder: "Buscar abas",
       },
       menu: {
@@ -997,6 +1005,7 @@ export const ptBR: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "Ações do workspace",
+        workspaceActionsUnhealthy: "Ações do workspace, há um serviço com problema",
         newAgent: "Novo agente",
         newTerminal: "Novo terminal",
         newBrowser: "Nova aba de navegador",
@@ -1044,6 +1053,8 @@ export const ptBR: TranslationResources = {
         exitCode: "saída {{code}}",
         startFailed: "Falha ao iniciar {{scriptName}}",
         stopFailed: "Falha ao parar {{scriptName}}",
+        running: "Em execução",
+        runningCount: "{{count}} em execução",
       },
     },
     tree: {
@@ -1685,8 +1696,9 @@ export const ptBR: TranslationResources = {
     },
     fields: {
       project: "Projeto",
-      base: "Base",
+      branch: "Branch",
       baseNotApplicable: "Não aplicável",
+      host: "Host",
     },
     titlePlaceholder: "Título (opcional)",
     errors: {
@@ -2020,13 +2032,18 @@ export const ptBR: TranslationResources = {
     title: "Adicionar provedor",
     search: "Buscar provedores",
     noProviders: "Nenhum provedor encontrado",
+    clearSearch: "Limpar pesquisa",
     actions: {
       add: "Adicionar",
+      addProvider: "Adicionar {{provider}}",
       adding: "Adicionando",
       installed: "Instalado",
       cancel: "Cancelar",
       installInstructions: "Instruções de instalação",
       installInstructionsFor: "Instruções de instalação de {{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "Não foi possível instalar provedor",
@@ -2455,6 +2472,17 @@ export const ptBR: TranslationResources = {
     accessibility: "Janela de contexto {{percentage}}% usada",
   },
   review: {
+    feedback: {
+      send: "Enviar comentários ({{count}})",
+      sending: "Enviando comentários ({{count}})",
+      chooseAgent: "Escolher um agente",
+      sent: "Comentários enviados para {{recipient}}",
+      "no-agents": "Abra uma aba de agente neste espaço de trabalho para enviar comentários.",
+      disconnected: "Conecte-se ao host para enviar comentários.",
+      "no-context": "Os comentários salvos não correspondem mais a este diff.",
+      failed: "Falha ao enviar comentários. Tente novamente.",
+      prompt: "Por favor, atenda a esta revisão de código.",
+    },
     comment: {
       add: "Adicionar comentário de revisão",
       edit: "Editar comentário de revisão",

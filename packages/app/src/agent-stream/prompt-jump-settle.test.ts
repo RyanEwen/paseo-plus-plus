@@ -925,6 +925,10 @@ describe("actual native row coordinates", () => {
     const translation = nativeStickyTranslation(750 + 300, 900, 53, null);
     expect(translation).toBe(150);
     expect(nativeOriginalTop(900, 750, -200, 100) + translation).toBe(0);
+    const headerInset = 64;
+    const belowHeader = nativeStickyTranslation(750 + 300 + headerInset, 900, 53, null);
+    expect(belowHeader).toBe(214);
+    expect(nativeOriginalTop(900, 750, -200, 100 + headerInset) + belowHeader).toBe(0);
   });
   it("matches RN uncapped unknown or overlapping next-header interpolation", () => {
     expect(nativeStickyTranslation(700, 100, 53, null)).toBe(600);

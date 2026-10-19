@@ -1,6 +1,8 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 export const MIN_WORKSPACE_TAB_WIDTH = 96;
 
-export function workspaceTabMinimumWidth(host: "main" | "explorer", compact: boolean): number {
+/** Keeps sheet and main tabs readable while allowing denser Explorer tabs. */
+export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
   if (host === "explorer") return compact ? 44 : 64;
   return compact ? 120 : MIN_WORKSPACE_TAB_WIDTH;
 }

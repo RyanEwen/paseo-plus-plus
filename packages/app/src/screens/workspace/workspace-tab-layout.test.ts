@@ -24,6 +24,8 @@ describe("computeWorkspaceTabLayout", () => {
   it("exempts Explorer from workspace minimum widths on wide and compact layouts", () => {
     expect(workspaceTabMinimumWidth("main", false)).toBe(96);
     expect(workspaceTabMinimumWidth("main", true)).toBe(120);
+    expect(workspaceTabMinimumWidth("sheet", false)).toBe(96);
+    expect(workspaceTabMinimumWidth("sheet", true)).toBe(120);
     expect(workspaceTabMinimumWidth("explorer", false)).toBe(64);
     expect(workspaceTabMinimumWidth("explorer", true)).toBe(44);
     const result = computeWorkspaceTabLayout({

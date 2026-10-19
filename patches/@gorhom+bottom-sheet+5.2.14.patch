@@ -1,4 +1,5 @@
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
+index ee51e76..e06cd7f 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
 +++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModal/BottomSheetModal.js
 @@ -20,6 +20,10 @@
@@ -272,7 +273,18 @@ diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomShe
    const handleBottomSheetOnChange = (0, _react.useCallback)(function handleBottomSheetOnChange(_index, _position, _type) {
      if (__DEV__) {
        (0, _utilities.print)({
-@@ -390,31 +422,34 @@
+@@ -315,7 +347,9 @@
+     }
+     currentIndexRef.current = _index;
+     nextIndexRef.current = null;
+-    statusRef.current = _index === -1 ? _constants.MODAL_STATUS.MINIMIZED : _constants.MODAL_STATUS.PRESENTED;
++    if (!(_index === -1 && statusRef.current === _constants.MODAL_STATUS.DISMISSING)) {
++      statusRef.current = _index === -1 ? _constants.MODAL_STATUS.MINIMIZED : _constants.MODAL_STATUS.PRESENTED;
++    }
+     if (_providedOnChange) {
+       _providedOnChange(_index, _position, _type);
+     }
+@@ -390,31 +424,34 @@
    //#endregion
  
    // render
@@ -317,6 +329,7 @@ diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomShe
  const BottomSheetModal = /*#__PURE__*/(0, _react.memo)(/*#__PURE__*/(0, _react.forwardRef)(BottomSheetModalComponent));
  BottomSheetModal.displayName = 'BottomSheetModal';
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModalProvider/BottomSheetModalProvider.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModalProvider/BottomSheetModalProvider.js
+index 272311d..d8cfc20 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModalProvider/BottomSheetModalProvider.js
 +++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheetModalProvider/BottomSheetModalProvider.js
 @@ -63,18 +63,16 @@
@@ -346,7 +359,34 @@ diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomShe
    }, []);
    const handleUnmountSheet = (0, _react.useCallback)(key => {
      const _sheetsQueue = sheetsQueueRef.current.slice();
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
+index e44ad86..96555ef 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
+@@ -15,6 +15,7 @@
+   useBottomSheetTimingConfigs: true,
+   useBottomSheetInternal: true,
+   useBottomSheetModalInternal: true,
++  BottomSheetModalInternalProvider: true,
+   useScrollEventsHandlersDefault: true,
+   useGestureEventsHandlersDefault: true,
+   useBottomSheetGestureHandlers: true,
+@@ -220,6 +221,13 @@
+ var _useBottomSheetTimingConfigs = require("./hooks/useBottomSheetTimingConfigs");
+ var _useBottomSheetInternal = require("./hooks/useBottomSheetInternal");
+ var _useBottomSheetModalInternal = require("./hooks/useBottomSheetModalInternal");
++var _modalInternal = require("./contexts/modal/internal");
++Object.defineProperty(exports, "BottomSheetModalInternalProvider", {
++  enumerable: true,
++  get: function () {
++    return _modalInternal.BottomSheetModalInternalProvider;
++  }
++});
+ var _useScrollEventsHandlersDefault = require("./hooks/useScrollEventsHandlersDefault");
+ var _useGestureEventsHandlersDefault = require("./hooks/useGestureEventsHandlersDefault");
+ var _useBottomSheetGestureHandlers = require("./hooks/useBottomSheetGestureHandlers");
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
+index 94fabdb..e5992fe 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
 +++ b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModal/BottomSheetModal.js
 @@ -2,7 +2,7 @@
@@ -629,7 +669,18 @@ diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet
    const handleBottomSheetOnChange = useCallback(function handleBottomSheetOnChange(_index, _position, _type) {
      if (__DEV__) {
        print({
-@@ -383,31 +415,34 @@
+@@ -308,7 +340,9 @@
+     }
+     currentIndexRef.current = _index;
+     nextIndexRef.current = null;
+-    statusRef.current = _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++    if (!(_index === -1 && statusRef.current === MODAL_STATUS.DISMISSING)) {
++      statusRef.current = _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++    }
+     if (_providedOnChange) {
+       _providedOnChange(_index, _position, _type);
+     }
+@@ -383,31 +417,34 @@
    //#endregion
  
    // render
@@ -674,6 +725,7 @@ diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet
  const BottomSheetModal = /*#__PURE__*/memo(/*#__PURE__*/forwardRef(BottomSheetModalComponent));
  BottomSheetModal.displayName = 'BottomSheetModal';
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModalProvider/BottomSheetModalProvider.js b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModalProvider/BottomSheetModalProvider.js
+index 11d3da9..f1d05a9 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModalProvider/BottomSheetModalProvider.js
 +++ b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheetModalProvider/BottomSheetModalProvider.js
 @@ -58,18 +58,16 @@
@@ -703,7 +755,33 @@ diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet
    }, []);
    const handleUnmountSheet = useCallback(key => {
      const _sheetsQueue = sheetsQueueRef.current.slice();
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/index.js b/node_modules/@gorhom/bottom-sheet/lib/module/index.js
+index 8259637..eb057fe 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/module/index.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/module/index.js
+@@ -14,6 +14,7 @@
+ export { useBottomSheetTimingConfigs } from './hooks/useBottomSheetTimingConfigs';
+ export { useBottomSheetInternal } from './hooks/useBottomSheetInternal';
+ export { useBottomSheetModalInternal } from './hooks/useBottomSheetModalInternal';
++export { BottomSheetModalInternalProvider } from './contexts/modal/internal';
+ export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
+ export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
+ export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts b/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
+index ffc6caa..550f1b3 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
++++ b/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
+@@ -7,6 +7,8 @@
+ export { useBottomSheetTimingConfigs } from './hooks/useBottomSheetTimingConfigs';
+ export { useBottomSheetInternal } from './hooks/useBottomSheetInternal';
+ export { useBottomSheetModalInternal } from './hooks/useBottomSheetModalInternal';
++export { BottomSheetModalInternalProvider } from './contexts/modal/internal';
++export type { BottomSheetModalInternalContextType } from './contexts/modal/internal';
+ export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
+ export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
+ export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
 diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
+index 2954b3f..44e65cf 100644
 --- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
 +++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/BottomSheetModal.tsx
 @@ -6,6 +6,7 @@
@@ -1019,7 +1097,25 @@ diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/B
    const handleBottomSheetOnChange = useCallback(
      function handleBottomSheetOnChange(
        _index: number,
-@@ -533,33 +558,35 @@
+@@ -432,8 +457,15 @@
+       currentIndexRef.current = _index;
+       nextIndexRef.current = null;
+ 
+-      statusRef.current =
+-        _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++      // A sheet that is dismissing (dismiss(), or unmounting while presented) keeps that status,
++      // so `onClose` lands on DISMISSED and unmounts it; MINIMIZED would read as a user close,
++      // which with `enableDismissOnClose=false` leaves the portal mounted forever.
++      if (_index === -1 && statusRef.current === MODAL_STATUS.DISMISSING) {
++        // keep dismissing
++      } else {
++        statusRef.current =
++          _index === -1 ? MODAL_STATUS.MINIMIZED : MODAL_STATUS.PRESENTED;
++      }
+ 
+       if (_providedOnChange) {
+         _providedOnChange(_index, _position, _type);
+@@ -533,33 +565,35 @@
    //#endregion
  
    // render
@@ -1064,6 +1160,7 @@ diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModal/B
    ) : null;
  }
 diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModalProvider/BottomSheetModalProvider.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModalProvider/BottomSheetModalProvider.tsx
+index 8782dee..1473399 100644
 --- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModalProvider/BottomSheetModalProvider.tsx
 +++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModalProvider/BottomSheetModalProvider.tsx
 @@ -82,19 +82,16 @@
@@ -1094,3 +1191,16 @@ diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetModalPr
      },
      []
    );
+diff --git a/node_modules/@gorhom/bottom-sheet/src/index.ts b/node_modules/@gorhom/bottom-sheet/src/index.ts
+index 7aaea57..6a5f5a4 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/index.ts
++++ b/node_modules/@gorhom/bottom-sheet/src/index.ts
+@@ -12,6 +12,8 @@
+ export { useBottomSheetTimingConfigs } from './hooks/useBottomSheetTimingConfigs';
+ export { useBottomSheetInternal } from './hooks/useBottomSheetInternal';
+ export { useBottomSheetModalInternal } from './hooks/useBottomSheetModalInternal';
++export { BottomSheetModalInternalProvider } from './contexts/modal/internal';
++export type { BottomSheetModalInternalContextType } from './contexts/modal/internal';
+ export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
+ export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
+ export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
