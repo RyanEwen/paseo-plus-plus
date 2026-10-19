@@ -1,5 +1,6 @@
+import type { Page, TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { test, expect, type Page } from "../support/fixtures";
+import { test, expect } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { renameModalInput, renameModalSubmit } from "../support/helpers/rename";
 import type { SeedDaemonClient } from "../support/helpers/seed-client";
@@ -11,6 +12,31 @@ import { composerLocator } from "../support/helpers/composer";
 import { clickSessionRow, expectSessionRowVisible } from "../support/helpers/archive-tab";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
+
+test.use({ viewport: MOBILE_VIEWPORT, deviceScaleFactor: 2 });
+
+async function openTabSwitcher(page: Page) {
+  await page.getByRole("button", { name: /Switch tabs/ }).click();
+  const footer = page.getByRole("button", { name: "New terminal", exact: true });
+  await expect(footer).toBeVisible();
+  // Visibility alone passes while the sheet is still travelling up from below the viewport.
+  await expect
+    .poll(async () => {
+      const bounds = await footer.boundingBox();
+      return bounds ? bounds.y + bounds.height : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
+}
+
+async function captureScreen(page: Page, testInfo: TestInfo, name: string) {
+  await page.screenshot({ path: testInfo.outputPath(name + ".png") });
+}
+
+async function createTabFromSwitcher(page: Page, kind: "New agent" | "New terminal") {
+  await openTabSwitcher(page);
+  await page.getByRole("button", { name: kind, exact: true }).click();
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+}
 
 async function fetchAgentTitle(client: SeedDaemonClient, agentId: string): Promise<string | null> {
   const result = await client.fetchAgents({ scope: "active" });
@@ -110,6 +136,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(tab).toContainText(renamed, {
         timeout: 15_000,
       });
+      await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
       await expect.poll(() => fetchAgentTitle(session.client, session.agentId)).toBe(renamed);
       await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
       await expect(
@@ -270,4 +297,46 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await session.cleanup();
     }
   });
+});
+
+test("switcher footer creates tabs and returns to the existing chat", async ({
+  page,
+}, testInfo) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "compact-header-actions-",
+    title: "Existing chat",
+  });
+  try {
+    await openAgentRoute(page, session);
+    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
+
+    await createTabFromSwitcher(page, "New terminal");
+    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("2");
+    await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toHaveCount(1);
+    await captureScreen(page, testInfo, "compact-terminal-header");
+
+    await createTabFromSwitcher(page, "New agent");
+    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("3");
+    await expect(
+      page.getByRole("textbox", { name: "Message agent..." }).filter({ visible: true }),
+    ).toHaveCount(1);
+    await captureScreen(page, testInfo, "compact-draft-header");
+
+    await openTabSwitcher(page);
+    await expect(page.getByText("Existing chat", { exact: true })).toBeVisible();
+    await captureScreen(page, testInfo, "switcher-three-tabs");
+    await page.getByText("Existing chat", { exact: true }).click();
+    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("3");
+
+    await openTabSwitcher(page);
+    await expect(page.getByText("Existing chat", { exact: true })).toBeVisible();
+    await page
+      .getByRole("button", { name: "Bottom sheet backdrop" })
+      .click({ position: { x: 10, y: 10 } });
+    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+    await captureScreen(page, testInfo, "returned-chat-header");
+  } finally {
+    await session.cleanup();
+  }
 });
