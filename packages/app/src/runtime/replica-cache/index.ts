@@ -307,6 +307,7 @@ const StoredWorkspaceSchema = z.strictObject({
   worktreeSlug: z.string().optional(),
   projectKind: z.enum(["git", "non_git", "directory"]),
   workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
+  // Legacy/provisional rows may omit this; a current workspace cursor requires it.
   background: z.boolean().optional(),
   name: z.string(),
   title: z.string().nullable(),
@@ -917,6 +918,45 @@ function validateWorkspaceSnapshot(
   return { workspace, checkpoint, invalidRows };
 }
 
+interface ReplicaRead {
+  serverId: string;
+  kinds: readonly ReplicaRowKind[];
+  ids?: readonly string[];
+  invalidated: boolean;
+  keys?: Array<Pick<ReplicaRowKey, "kind" | "id">>;
+  workspaceAuthority?: { observed?: string; changes: Set<string> };
+}
+
+const RETRY_REPLICA_READ = Symbol("retry replica read");
+
+function workspaceAuthorityProjection(payload: string | undefined): string {
+  if (typeof payload !== "string") return "provisional";
+  try {
+    return JSON.stringify(["current", deserializeDirectoryCheckpoint(payload).workspaces ?? null]);
+  } catch {
+    return "provisional";
+  }
+}
+
+function matchesReplicaRead(read: ReplicaRead, row: ReplicaRowKey): boolean {
+  return (
+    read.serverId === row.serverId &&
+    (read.keys
+      ? read.keys.some((key) => key.kind === row.kind && key.id === row.id)
+      : read.kinds.includes(row.kind) && (!read.ids || read.ids.includes(row.id)))
+  );
+}
+
+function bindWorkspaceAuthority(read: ReplicaRead, rows: ReplicaRow[]): void {
+  const authority = read.workspaceAuthority;
+  if (!authority) return;
+  const checkpoint = rows.find(
+    (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+  );
+  authority.observed = workspaceAuthorityProjection(checkpoint?.payload);
+  if ([...authority.changes].some((value) => value !== authority.observed)) read.invalidated = true;
+}
+
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
   private readonly hostIncarnations = new Map<string, symbol>();
@@ -926,7 +966,7 @@ export class ReplicaCache {
     cancelled: boolean;
   }>();
   private readonly invalidDirectoryCursors = new Map<string, Set<keyof DirectoryCheckpoint>>();
-  private readonly hostRevisions = new Map<string, number>();
+  private readonly activeReads = new Set<ReplicaRead>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
@@ -952,194 +992,273 @@ export class ReplicaCache {
   private readonly clearLegacyCache: () => Promise<void>;
 
   async readAgent(serverId: string, agentId: string): Promise<Agent | undefined> {
-    while (this.activeServerIds.has(serverId)) {
-      const revision = this.hostRevisions.get(serverId) ?? 0;
-      const rows = await this.readRows(serverId, ["agent"], [agentId]);
-      if (!rows) return undefined;
-      const row = rows[0];
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      if (!row) return undefined;
-      try {
-        const stored = parseStoredPayload(StoredAgentSchema, row.payload);
-        if (stored.snapshot.id !== row.id) throw new Error("Replica agent row id mismatch");
-        return deserializeAgent(serverId, stored);
-      } catch {
+    return this.withReadScope<Agent>(
+      serverId,
+      ["agent"],
+      [agentId],
+      async (revision) => {
+        const rows = await this.readRows(serverId, ["agent"], [agentId], revision);
+        if (!rows) return undefined;
+        const row = rows[0];
+        if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
+        if (!row) return undefined;
         try {
-          if (!(await this.deleteInvalidRow(row, revision))) continue;
+          const stored = parseStoredPayload(StoredAgentSchema, row.payload);
+          if (stored.snapshot.id !== row.id) throw new Error("Replica agent row id mismatch");
+          return deserializeAgent(serverId, stored);
         } catch {
-          // A failed repair is a cache miss, never a retry of the same failed write.
+          try {
+            if (!(await this.deleteInvalidRow(row, revision))) return RETRY_REPLICA_READ;
+          } catch {
+            // A failed repair is a cache miss, never a retry of the same failed write.
+          }
+          return undefined;
         }
-        return undefined;
-      }
-    }
-    return undefined;
+      },
+      false,
+    );
   }
 
   async readWorkspace(serverId: string, workspaceId: string): Promise<CachedWorkspace | undefined> {
-    while (this.activeServerIds.has(serverId)) {
-      const revision = this.hostRevisions.get(serverId) ?? 0;
-      const rows = await this.readRows(
-        serverId,
-        ["workspace", "checkpoint"],
-        [workspaceId, REPLICA_SINGLETON_ROW_ID],
-      );
-      if (!rows) return undefined;
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      const workspaceRow = rows.find((row) => row.kind === "workspace" && row.id === workspaceId);
-      if (!workspaceRow) return undefined;
-      const checkpointRow = rows.find(
-        (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
-      );
-      const { workspace, checkpoint, invalidRows } = validateWorkspaceSnapshot(
-        workspaceRow,
-        checkpointRow,
-      );
-      if (invalidRows.length) {
+    return this.withReadScope<CachedWorkspace>(
+      serverId,
+      ["workspace", "checkpoint", "project"],
+      [workspaceId, REPLICA_SINGLETON_ROW_ID],
+      async (revision) => {
+        const rows = await this.readRows(
+          serverId,
+          ["workspace", "checkpoint"],
+          [workspaceId, REPLICA_SINGLETON_ROW_ID],
+          revision,
+        );
+        if (!rows) return undefined;
+        if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
+        const workspaceRow = rows.find((row) => row.kind === "workspace" && row.id === workspaceId);
+        if (!workspaceRow) return undefined;
+        const checkpointRow = rows.find(
+          (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+        );
+        const { workspace, checkpoint, invalidRows } = validateWorkspaceSnapshot(
+          workspaceRow,
+          checkpointRow,
+        );
+        if (invalidRows.length) {
+          try {
+            if (
+              !(await this.repairInvalidDirectoryRows({
+                serverId,
+                invalidRows,
+                checkpoint,
+                checkpointRow,
+                revision,
+                observedRows: [workspaceRow, ...invalidRows],
+              }))
+            )
+              return RETRY_REPLICA_READ;
+          } catch {
+            return undefined;
+          }
+        }
+        if (!workspace) return undefined;
+        let project: ProjectDescriptor | undefined;
+        revision.keys?.push({ kind: "project", id: workspace.projectId });
+        const projectRows = await this.readRows(
+          serverId,
+          ["project"],
+          [workspace.projectId],
+          revision,
+        );
+        if (!projectRows) return undefined;
+        const projectRow = projectRows[0];
+        if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
         try {
-          if (
-            !(await this.repairInvalidDirectoryRows({
-              serverId,
-              invalidRows,
-              checkpoint,
-              checkpointRow,
-              revision,
-              observedRows: [workspaceRow, ...invalidRows],
-            }))
-          )
-            continue;
+          if (projectRow) {
+            const stored = parseStoredPayload(StoredProjectSchema, projectRow.payload);
+            if (stored.projectId !== projectRow.id)
+              throw new Error("Replica project row id mismatch");
+            project = normalizeProjectDescriptor(stored);
+          }
         } catch {
-          return undefined;
+          if (!projectRow) throw new Error("Missing project row during validation");
+          try {
+            const repaired = await this.deleteInvalidRow(projectRow, revision);
+            if (!repaired) return RETRY_REPLICA_READ;
+          } catch {
+            return undefined;
+          }
         }
-      }
-      if (!workspace) return undefined;
-      let project: ProjectDescriptor | undefined;
-      const projectRows = await this.readRows(serverId, ["project"], [workspace.projectId]);
-      if (!projectRows) return undefined;
-      const projectRow = projectRows[0];
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      try {
-        if (projectRow) {
-          const stored = parseStoredPayload(StoredProjectSchema, projectRow.payload);
-          if (stored.projectId !== projectRow.id)
-            throw new Error("Replica project row id mismatch");
-          project = normalizeProjectDescriptor(stored);
-        }
-      } catch {
-        if (!projectRow) throw new Error("Missing project row during validation");
-        try {
-          const repaired = await this.deleteInvalidRow(projectRow, revision);
-          if (!repaired) continue;
-        } catch {
-          return undefined;
-        }
-      }
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      return { workspace, ...(project ? { project } : {}) };
-    }
-    return undefined;
+        if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
+        return { workspace, ...(project ? { project } : {}) };
+      },
+      true,
+    );
   }
 
   async readDirectory(serverId: string): Promise<CachedDirectory> {
-    while (this.activeServerIds.has(serverId)) {
-      const revision = this.hostRevisions.get(serverId) ?? 0;
-      const rows = await this.readRows(serverId, ["agent", "workspace", "project", "checkpoint"]);
-      if (!rows) break;
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      const result: DirectoryReadAccumulator = {
-        agents: new Map(),
-        workspaces: new Map(),
-        projects: new Map(),
-      };
-      const invalidEntities = new Set<keyof DirectoryCheckpoint>();
-      const invalidRows: ReplicaRow[] = [];
-      // Authority comes from this snapshot, not storage enumeration order or a previous read.
-      for (const row of rows.filter((candidate) => candidate.kind === "checkpoint")) {
-        try {
-          applyDirectoryRow(serverId, row, result);
-        } catch {
-          invalidRows.push(row);
-        }
-      }
-      for (const row of rows) {
-        if (row.kind === "checkpoint") continue;
-        try {
-          applyDirectoryRow(serverId, row, result);
-        } catch {
-          const entity = directoryEntityForRow(row);
-          if (entity) invalidEntities.add(entity);
-          invalidRows.push(row);
-        }
-      }
-      if (result.checkpoint && invalidEntities.size) {
-        result.checkpoint = { ...result.checkpoint };
-        for (const entity of invalidEntities) delete result.checkpoint[entity];
-      }
-      if (invalidRows.length) {
-        try {
-          const checkpointRow = rows.find(
-            (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+    return (
+      (await this.withReadScope<CachedDirectory>(
+        serverId,
+        ["agent", "workspace", "project", "checkpoint"],
+        undefined,
+        async (revision) => {
+          const rows = await this.readRows(
+            serverId,
+            ["agent", "workspace", "project", "checkpoint"],
+            undefined,
+            revision,
           );
-          if (
-            !(await this.repairInvalidDirectoryRows({
-              serverId,
-              invalidRows,
-              checkpoint: result.checkpoint,
-              checkpointRow,
-              revision,
-            }))
-          )
-            continue;
-        } catch {
-          break;
-        }
-      }
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      return result;
-    }
-    return { agents: new Map(), workspaces: new Map(), projects: new Map() };
+          if (!rows) return undefined;
+          if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
+          const result: DirectoryReadAccumulator = {
+            agents: new Map(),
+            workspaces: new Map(),
+            projects: new Map(),
+          };
+          const invalidEntities = new Set<keyof DirectoryCheckpoint>();
+          const invalidRows: ReplicaRow[] = [];
+          // Authority comes from this snapshot, not storage enumeration order or a previous read.
+          for (const row of rows.filter((candidate) => candidate.kind === "checkpoint")) {
+            try {
+              applyDirectoryRow(serverId, row, result);
+            } catch {
+              invalidRows.push(row);
+            }
+          }
+          for (const row of rows) {
+            if (row.kind === "checkpoint") continue;
+            try {
+              applyDirectoryRow(serverId, row, result);
+            } catch {
+              const entity = directoryEntityForRow(row);
+              if (entity) invalidEntities.add(entity);
+              invalidRows.push(row);
+            }
+          }
+          if (result.checkpoint && invalidEntities.size) {
+            result.checkpoint = { ...result.checkpoint };
+            for (const entity of invalidEntities) delete result.checkpoint[entity];
+          }
+          if (invalidRows.length) {
+            try {
+              const checkpointRow = rows.find(
+                (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+              );
+              if (
+                !(await this.repairInvalidDirectoryRows({
+                  serverId,
+                  invalidRows,
+                  checkpoint: result.checkpoint,
+                  checkpointRow,
+                  revision,
+                }))
+              )
+                return RETRY_REPLICA_READ;
+            } catch {
+              return undefined;
+            }
+          }
+          if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
+          return result;
+        },
+        false,
+      )) ?? { agents: new Map(), workspaces: new Map(), projects: new Map() }
+    );
   }
 
   async readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined> {
-    while (this.activeServerIds.has(serverId)) {
-      const revision = this.hostRevisions.get(serverId) ?? 0;
-      const rows = await this.readRows(serverId, ["timeline"], [agentId]);
-      if (!rows) return undefined;
-      const row = rows[0];
-      if (!this.canReadHostRevision(serverId, revision)) continue;
-      if (!row) return undefined;
-      try {
-        const stored = parseStoredPayload(StoredTimelineSchema, row.payload);
-        if (stored.agentId !== agentId) return undefined;
-        return deserializeTimeline(stored) ?? undefined;
-      } catch {
+    return this.withReadScope<CachedTimeline>(
+      serverId,
+      ["timeline"],
+      [agentId],
+      async (revision) => {
+        const rows = await this.readRows(serverId, ["timeline"], [agentId], revision);
+        if (!rows) return undefined;
+        const row = rows[0];
+        if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
+        if (!row) return undefined;
         try {
-          if (!(await this.deleteInvalidRow(row, revision))) continue;
+          const stored = parseStoredPayload(StoredTimelineSchema, row.payload);
+          if (stored.agentId !== agentId) return undefined;
+          return deserializeTimeline(stored) ?? undefined;
         } catch {
-          /* A failed repair remains a cache miss. */
+          try {
+            if (!(await this.deleteInvalidRow(row, revision))) return RETRY_REPLICA_READ;
+          } catch {
+            /* A failed repair remains a cache miss. */
+          }
+          return undefined;
         }
-        return undefined;
+      },
+      false,
+    );
+  }
+  private async withReadScope<Result>(
+    serverId: string,
+    kinds: readonly ReplicaRowKind[],
+    ids: readonly string[] | undefined,
+    operation: (read: ReplicaRead) => Promise<Result | undefined | typeof RETRY_REPLICA_READ>,
+    workspaceAuthority: boolean,
+  ): Promise<Result | undefined> {
+    for (let attempt = 0; attempt < 8 && this.activeServerIds.has(serverId); attempt += 1) {
+      const read: ReplicaRead = {
+        serverId,
+        kinds,
+        ids,
+        invalidated: false,
+        ...(workspaceAuthority
+          ? {
+              keys: [
+                { kind: "workspace", id: ids![0]! },
+                { kind: "checkpoint", id: REPLICA_SINGLETON_ROW_ID },
+              ],
+              workspaceAuthority: { changes: new Set<string>() },
+            }
+          : {}),
+      };
+      this.activeReads.add(read);
+      try {
+        const result = await operation(read);
+        if (result === RETRY_REPLICA_READ) continue;
+        return result;
+      } finally {
+        this.activeReads.delete(read);
       }
     }
     return undefined;
+  }
+
+  private canPublishRead(read: ReplicaRead): boolean {
+    return (
+      this.activeServerIds.has(read.serverId) &&
+      !read.invalidated &&
+      !this.hasPendingReadChanges(read)
+    );
   }
 
   private async readRows(
     serverId: string,
     kinds: readonly ReplicaRowKind[],
     ids?: readonly string[],
+    observation?: ReplicaRead,
   ): Promise<ReplicaRow[] | undefined> {
     if (!this.activeServerIds.has(serverId)) return [];
     try {
       await this.prepareStore();
       while (this.activeServerIds.has(serverId)) {
-        // A read may only answer from rows the store already holds, so it waits for this host's
-        // accepted commits to land. A store that rejects them will keep rejecting them: fail closed
-        // rather than re-attempt the write on every pass. A write rejected for another host leaves
-        // this host's stored rows readable.
-        if (!(await this.syncPending()) && this.hasPendingHostChanges(serverId)) return undefined;
-        const revision = this.hostRevisions.get(serverId) ?? 0;
-        const rows = await this.rowStore.read(serverId, kinds, ids);
-        if (this.canReadHostRevision(serverId, revision)) return rows;
+        const read: ReplicaRead = observation ?? { serverId, kinds, ids, invalidated: false };
+        if (!observation) this.activeReads.add(read);
+        try {
+          if (!(await this.syncPending()) && this.hasPendingHostChanges(serverId)) return undefined;
+          const invalidated = read.invalidated || this.hasPendingReadChanges(read);
+          if (invalidated && observation) return [];
+          if (invalidated) continue;
+          const rows = await this.rowStore.read(serverId, kinds, ids);
+          if (kinds.includes("checkpoint")) bindWorkspaceAuthority(read, rows);
+          if (this.canPublishRead(read)) return rows;
+          if (observation) return [];
+        } finally {
+          if (!observation) this.activeReads.delete(read);
+        }
       }
       return [];
     } catch {
@@ -1147,8 +1266,8 @@ export class ReplicaCache {
     }
   }
 
-  private async deleteInvalidRow(row: ReplicaRow, revision: number): Promise<boolean> {
-    if (!this.canReadHostRevision(row.serverId, revision)) return false;
+  private async deleteInvalidRow(row: ReplicaRow, revision: ReplicaRead): Promise<boolean> {
+    if (!this.canPublishRead(revision)) return false;
     const entity = directoryEntityForRow(row);
     if (!entity) {
       return this.repairInvalidDirectoryRows({
@@ -1158,13 +1277,17 @@ export class ReplicaCache {
         guardCheckpoint: false,
       });
     }
+    revision.workspaceAuthority = undefined;
+    revision.kinds = [...new Set([...revision.kinds, "checkpoint" as const])];
+    revision.keys?.push({ kind: "checkpoint", id: REPLICA_SINGLETON_ROW_ID });
+    revision.ids = undefined;
     // The second read is only on invalid data. CAS retains both raw observations.
     const rows = await this.rowStore.read(
       row.serverId,
       [row.kind, "checkpoint"],
       [row.id, REPLICA_SINGLETON_ROW_ID],
     );
-    if (!this.canReadHostRevision(row.serverId, revision)) return false;
+    if (!this.canPublishRead(revision)) return false;
     const current = rows.find(
       (candidate) => candidate.kind === row.kind && candidate.id === row.id,
     );
@@ -1196,7 +1319,7 @@ export class ReplicaCache {
     invalidRows: ReplicaRow[];
     checkpoint?: DirectoryCheckpoint;
     checkpointRow?: ReplicaRow;
-    revision: number;
+    revision: ReplicaRead;
     observedRows?: readonly ReplicaRow[];
     guardCheckpoint?: boolean;
   }): Promise<boolean> {
@@ -1206,6 +1329,8 @@ export class ReplicaCache {
       incarnation: this.hostIncarnations.get(serverId),
       cancelled: false,
     };
+    // Mutation planning depends on the complete raw checkpoint, including unrelated cursors.
+    revision.workspaceAuthority = undefined;
     const checkpointWasInvalid = invalidRows.some(
       (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
     );
@@ -1242,7 +1367,7 @@ export class ReplicaCache {
       .catch(() => undefined)
       .then(async () => {
         await this.prepareStore();
-        if (!this.canReadHostRevision(serverId, revision)) return false;
+        if (!this.canPublishRead(revision)) return false;
         const committed = await this.rowStore.applyIfUnchanged(changes, [...expected.values()]);
         if (!committed) return false;
         // A committed repair changes durable byte accounting even when publication is stale.
@@ -1262,7 +1387,7 @@ export class ReplicaCache {
           }
           if (invalid.size) this.invalidDirectoryCursors.set(namespace.serverId, invalid);
         }
-        return this.canReadHostRevision(serverId, revision);
+        return this.canPublishRead(revision);
       })
       .finally(() => {
         this.repairNamespaces.delete(namespace);
@@ -1281,7 +1406,6 @@ export class ReplicaCache {
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (this.invalidatedHosts.has(serverId)) return;
-    this.advanceHostRevision(serverId);
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
         this.queueEntityDelete(serverId, mutation.kind, mutation.id);
@@ -1307,7 +1431,7 @@ export class ReplicaCache {
 
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
-    this.advanceHostRevision(serverId);
+    this.invalidateHostReads(serverId, ["agent", "workspace", "project", "checkpoint"]);
     // Replacing the directory must not discard independently accepted timeline changes.
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
@@ -1339,7 +1463,6 @@ export class ReplicaCache {
   commitTimeline(serverId: string, agentId: string, timeline: CachedTimeline): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (timeline.agentId !== agentId) throw new Error("Timeline cache key does not match payload");
-    this.advanceHostRevision(serverId);
     this.queueUpsert({ serverId, kind: "timeline", id: agentId, value: timeline });
     this.schedulePersist();
   }
@@ -1348,7 +1471,7 @@ export class ReplicaCache {
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
     const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
-    for (const serverId of [...removed, ...added]) this.advanceHostRevision(serverId);
+    for (const serverId of [...removed, ...added]) this.invalidateHostReads(serverId);
     for (const serverId of [...removed, ...added])
       this.hostIncarnations.set(serverId, Symbol(serverId));
     this.activeServerIds.clear();
@@ -1381,8 +1504,8 @@ export class ReplicaCache {
       this.invalidDirectoryCursors.set(newServerId, combined);
       this.invalidDirectoryCursors.delete(oldServerId);
     }
-    this.advanceHostRevision(oldServerId);
-    this.advanceHostRevision(newServerId);
+    this.invalidateHostReads(oldServerId);
+    this.invalidateHostReads(newServerId);
     const rows = this.storedRows.get(oldServerId);
     if (rows) {
       const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
@@ -1467,12 +1590,14 @@ export class ReplicaCache {
   }
 
   private queueUpsert(row: StructuredReplicaUpsert): void {
+    this.invalidateRowReads(row);
     const key = pendingRowKey(row);
     this.pendingDeletes.delete(key);
     this.pendingUpserts.set(key, row);
   }
 
   private queueDelete(key: ReplicaRowKey): void {
+    this.invalidateRowReads(key);
     const pendingKey = pendingRowKey(key);
     this.pendingUpserts.delete(pendingKey);
     this.pendingDeletes.set(pendingKey, key);
@@ -1484,12 +1609,85 @@ export class ReplicaCache {
     );
   }
 
-  private canReadHostRevision(serverId: string, revision: number): boolean {
-    return (
-      this.activeServerIds.has(serverId) &&
-      (this.hostRevisions.get(serverId) ?? 0) === revision &&
-      !this.hasPendingHostChanges(serverId)
+  private checkpointForWrite(
+    serverId: string,
+    value: DirectoryCheckpoint,
+    completeBaseline: boolean,
+  ): DirectoryCheckpoint {
+    const checkpoint = { ...value };
+    if (!completeBaseline) {
+      for (const entity of this.invalidDirectoryCursors.get(serverId) ?? [])
+        delete checkpoint[entity];
+    }
+    return checkpoint;
+  }
+
+  private pendingReadChange(
+    read: ReplicaRead,
+    row: ReplicaRowKey | StructuredReplicaUpsert,
+  ): boolean {
+    if (!matchesReplicaRead(read, row)) return false;
+    if (!read.workspaceAuthority || row.kind !== "checkpoint" || !("value" in row)) return true;
+    const value = this.checkpointForWrite(
+      row.serverId,
+      row.value,
+      this.pendingBaselines.has(row.serverId),
     );
+    return (
+      read.workspaceAuthority.observed !==
+      workspaceAuthorityProjection(JSON.stringify(serializeDirectoryCheckpoint(value)))
+    );
+  }
+
+  private hasPendingReadChanges(read: ReplicaRead): boolean {
+    if (
+      this.pendingBaselines.has(read.serverId) &&
+      read.kinds.some((kind) => kind !== "timeline")
+    ) {
+      return true;
+    }
+    return (
+      [...this.pendingUpserts.values()].some((row) => this.pendingReadChange(read, row)) ||
+      [...this.pendingDeletes.values()].some((row) => matchesReplicaRead(read, row))
+    );
+  }
+
+  private invalidateRowReads(row: ReplicaRowKey | StructuredReplicaUpsert): void {
+    for (const read of this.activeReads) {
+      if (!matchesReplicaRead(read, row)) continue;
+      if (read.workspaceAuthority && row.kind === "checkpoint" && "value" in row) {
+        const projection = workspaceAuthorityProjection(
+          JSON.stringify(
+            serializeDirectoryCheckpoint(
+              this.checkpointForWrite(
+                row.serverId,
+                row.value,
+                this.pendingBaselines.has(row.serverId),
+              ),
+            ),
+          ),
+        );
+        read.workspaceAuthority.changes.add(projection);
+        if (
+          read.workspaceAuthority.observed !== undefined &&
+          read.workspaceAuthority.observed !== projection
+        )
+          read.invalidated = true;
+      } else {
+        read.invalidated = true;
+      }
+    }
+  }
+
+  private invalidateHostReads(serverId: string, kinds?: readonly ReplicaRowKind[]): void {
+    for (const read of this.activeReads) {
+      if (
+        read.serverId === serverId &&
+        (!kinds || kinds.some((kind) => read.kinds.includes(kind)))
+      ) {
+        read.invalidated = true;
+      }
+    }
   }
 
   private hasPendingHostChanges(serverId: string): boolean {
@@ -1501,10 +1699,6 @@ export class ReplicaCache {
       if (row.serverId === serverId) return true;
     }
     return false;
-  }
-
-  private advanceHostRevision(serverId: string): void {
-    this.hostRevisions.set(serverId, (this.hostRevisions.get(serverId) ?? 0) + 1);
   }
 
   private drainPendingChanges(): PendingReplicaChanges {
@@ -1560,12 +1754,9 @@ export class ReplicaCache {
         if (!value) return null;
         break;
       case "checkpoint": {
-        const checkpoint = { ...upsert.value };
-        if (!completeBaseline) {
-          for (const entity of this.invalidDirectoryCursors.get(upsert.serverId) ?? [])
-            delete checkpoint[entity];
-        }
-        value = serializeDirectoryCheckpoint(checkpoint);
+        value = serializeDirectoryCheckpoint(
+          this.checkpointForWrite(upsert.serverId, upsert.value, completeBaseline),
+        );
         break;
       }
     }
