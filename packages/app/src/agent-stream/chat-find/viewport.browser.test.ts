@@ -323,3 +323,23 @@ it("reveals a deep actual user match inside its body then its original row, and 
   expect(body.scrollTop).toBe(innerBefore);
   expect(outer.scrollTop).toBe(outerBefore);
 });
+
+it("waits for an asynchronous renderer before counting its matches", async () => {
+  const root = transcript("message-1", ["needle"]);
+  const content = root.querySelector('[data-message-text="true"]')!;
+  content.setAttribute("aria-busy", "true");
+  let settled = false;
+  const reveal = viewport(root, {})
+    .reveal("message-1", "needle", 0, new AbortController().signal)
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+  expect(settled).toBe(false);
+  content.textContent = "needle and another needle";
+  content.removeAttribute("aria-busy");
+  expect(await reveal).toEqual({ occurrence: 0, count: 2 });
+});

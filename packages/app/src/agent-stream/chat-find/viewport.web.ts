@@ -24,8 +24,7 @@ export function createFindViewport({
       generation += 1;
       CSS.highlights.delete(highlightName);
     },
-    // A message renders as one row per Markdown block, so an occurrence can sit in
-    // any of them and the chosen one decides where the viewport lands.
+    // The source message owns navigation; the rendered occurrence owns its position.
     reveal(messageId, query, occurrence, signal) {
       const owner = ++generation;
       return new Promise((resolve, reject) => {
@@ -74,6 +73,10 @@ export function createFindViewport({
             '[data-testid="user-message-body-scroll"]',
           );
           if (body?.dataset.bodyExpanded === "false") {
+            frame = requestAnimationFrame(poll);
+            return;
+          }
+          if (rows.some((row) => row.querySelector('[aria-busy="true"]'))) {
             frame = requestAnimationFrame(poll);
             return;
           }

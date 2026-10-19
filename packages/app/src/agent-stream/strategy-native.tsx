@@ -35,6 +35,7 @@ import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { createNativePromptJumpController } from "./native-prompt-jump";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
@@ -59,6 +60,7 @@ import {
   type HistoryStartPaginationInput,
   type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import { useStreamTopOverlayInset } from "./top-overlay";
 import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
@@ -83,6 +85,7 @@ const historyStartSlotStyle: ViewStyle = {
 const leadingSlotStyle: ViewStyle = { flexGrow: 1 };
 const HELD_READING_POSITION = Object.freeze({ minIndexForVisible: 1 });
 const HISTORY_START_SETTLE_FRAMES = 2;
+const NATIVE_STREAM_WINDOW_SIZE = 10;
 
 /** Cell type is stable across current-turn completion and history prepends. RN's
  * sticky wrapper forwards this onLayout once; children never own absolute L. */
@@ -172,6 +175,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
   const nativeStickyViewport = useMemo(() => ({ y: nativeY }), [nativeY]);
   const reservationSnapshot = useDockReservation();
   const reservation = reservationSnapshot.extent;
+  const topOverlayInset = useStreamTopOverlayInset();
   const measurementContext = useNativeMeasurementContext();
   const getMeasurementOwner = useStableEvent(() => {
     const viewport = flatListRef.current?.getNativeScrollRef();
@@ -335,7 +339,13 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
     );
     flatListRef.current?.scrollToOffset({
       offset,
-      animated,
+      animated:
+        animated &&
+        shouldAnimateNativeScrollToBottom({
+          offsetY: Math.abs(offset - scrollOffsetYRef.current),
+          viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+          windowSize: NATIVE_STREAM_WINDOW_SIZE,
+        }),
     });
     scrollOffsetYRef.current = offset;
     streamViewportMetricsRef.current = {
@@ -368,16 +378,18 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
   // controller owns follow corrections; disable competing RN auto-follow.
   const maintainVisibleContentPosition =
     bottomAnchorController.mode === "sticky-bottom" ? undefined : HELD_READING_POSITION;
-  const lastReservation = useRef(reservation);
+  const leadingReservation = reservation + topOverlayInset;
+  const lastReservation = useRef(leadingReservation);
   useLayoutEffect(() => {
-    if (lastReservation.current === reservation) return;
-    lastReservation.current = reservation;
+    if (lastReservation.current === leadingReservation) return;
+    lastReservation.current = leadingReservation;
     bottomAnchorController.prepareForStickyViewportChange();
-  }, [reservation, bottomAnchorController]);
+  }, [leadingReservation, bottomAnchorController]);
 
   const listContentContainerStyle = useMemo(
-    () => [baseListContentContainerStyle, { paddingTop: reservation }],
-    [baseListContentContainerStyle, reservation],
+    // This branch is chronological: visual-top clearance belongs to paddingTop.
+    () => [baseListContentContainerStyle, { paddingTop: leadingReservation }],
+    [baseListContentContainerStyle, leadingReservation],
   );
   const listInsetProps = {
     automaticallyAdjustContentInsets: false,
@@ -475,7 +487,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
                   return;
                 }
                 callback({
-                  top: nativeOriginalTop(row.y, metrics.offsetY, listY, clipY),
+                  top: nativeOriginalTop(row.y, metrics.offsetY, listY, clipY + topOverlayInset),
                   offset: metrics.offsetY,
                   maxOffset: Math.max(0, metrics.contentHeight - metrics.viewportHeight),
                 });
@@ -505,6 +517,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
       getLeadingExtent,
       getMeasurementOwner,
       flatListRef,
+      topOverlayInset,
     ],
   );
   useEffect(() => () => promptJumpController.cancel(), [promptJumpController]);
@@ -525,7 +538,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
         )
           return;
         const m = streamViewportMetricsRef.current;
-        const clippedLeading = Math.max(0, clipY - listY);
+        const clippedLeading = Math.max(0, clipY + topOverlayInset - listY);
         reportActualHeight?.(
           Math.max(0, Math.min(m.viewportHeight - reservation, m.viewportHeight - clippedLeading)),
         );
@@ -559,6 +572,10 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
     invalidateReading,
     measurementContext,
   );
+  useEffect(() => {
+    reportReadingPosition();
+    return invalidateReading;
+  }, [topOverlayInset, reportReadingPosition, invalidateReading]);
   const finishPromptAnimation = useStableEvent(() => {
     if (promptSettleTimerRef.current !== null) clearTimeout(promptSettleTimerRef.current);
     promptSettleTimerRef.current = null;
@@ -894,8 +911,10 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
         onScrollToIndexFailed={handleScrollToIndexFailed}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
-        initialNumToRender={12}
-        windowSize={10}
+        // Tall Markdown rows need larger refill batches during native flings.
+        initialNumToRender={2}
+        maxToRenderPerBatch={10}
+        windowSize={NATIVE_STREAM_WINDOW_SIZE}
         removeClippedSubviews={false}
         scrollEnabled={scrollEnabled}
         showsVerticalScrollIndicator

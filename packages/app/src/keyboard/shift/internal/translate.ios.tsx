@@ -1,8 +1,8 @@
 import { DockReservationContext } from "./dock-reservation";
 import { usePublishDockReservation } from "./use-dock-reservation";
 import { KeyboardDockDisplacementContext } from "./dock-displacement.ios";
-import { useMemo, type ReactNode } from "react";
-import { Animated, type ViewProps } from "react-native";
+import { useMemo, useEffect, type ReactNode } from "react";
+import { Animated, useAnimatedValue, type ViewProps } from "react-native";
 import { useKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -36,15 +36,32 @@ export function KeyboardTranslateView({
       }),
     [bottomClearance, height, insets.bottom, progress],
   );
-  // Derive the child's visible edge from this exact native graph, including
-  // safe-area/progress and bottom clearance. Do not substitute provider.shift.
+  // Fullscreen resizes this view while disabling translation. iOS Fabric can
+  // reapply its previous transform during that layout commit. Keep the graph
+  // attached and apply the mode on the native animation frame; a static zero or
+  // setValue during the React commit gets overwritten by the resize.
+  const enabledValue = useAnimatedValue(enabled ? 1 : 0);
+  useEffect(() => {
+    const animation = Animated.timing(enabledValue, {
+      toValue: enabled ? 1 : 0,
+      duration: 0,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [enabled, enabledValue]);
+  // Measurement and sticky compensation must read the same gated native transform.
+  const effectiveTranslateY = useMemo(
+    () => Animated.multiply(translateY, enabledValue),
+    [enabledValue, translateY],
+  );
   const displacement = useMemo(
-    () => Animated.multiply(translateY, enabled ? -1 : 0),
-    [enabled, translateY],
+    () => Animated.multiply(effectiveTranslateY, -1),
+    [effectiveTranslateY],
   );
   const keyboardStyle = useMemo(
-    () => ({ transform: [{ translateY: enabled ? translateY : 0 }] }),
-    [enabled, translateY],
+    () => ({ transform: [{ translateY: effectiveTranslateY }] }),
+    [effectiveTranslateY],
   );
 
   return (

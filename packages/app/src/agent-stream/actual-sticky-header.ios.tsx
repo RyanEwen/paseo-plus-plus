@@ -1,3 +1,4 @@
+import { useStreamTopOverlayInset } from "./top-overlay";
 import type { ReactNode } from "react";
 import { useComposerViewportRef } from "@/composer/dock/internal/viewport-ref";
 import { NativeMeasurementContext } from "./native-sticky-viewport";
@@ -14,7 +15,7 @@ import {
 } from "@/keyboard/shift/internal/dock-displacement.ios";
 import type { NativeStickyProps } from "./native-sticky-contract";
 
-/** No content top inset is installed: the single leading reservation is in H. */
+/** Keep the sticky edge below the floating header and at the stationary keyboard clip. */
 export function ActualStickyHeader(props: NativeStickyProps) {
   const reportLayout = props.onLayout;
   const enabled = useContext(ActualPromptRowsContext) !== null;
@@ -36,9 +37,13 @@ export function ActualStickyHeader(props: NativeStickyProps) {
     [reportLayout, channel],
   );
   const displacement = useKeyboardDockDisplacement();
+  const topOverlayInset = useStreamTopOverlayInset();
   const scrollAnimatedValue = useMemo(
-    () => (enabled ? Animated.add(props.scrollAnimatedValue, displacement) : zero),
-    [enabled, props.scrollAnimatedValue, displacement, zero],
+    () =>
+      enabled
+        ? Animated.add(Animated.add(props.scrollAnimatedValue, displacement), topOverlayInset)
+        : zero,
+    [enabled, props.scrollAnimatedValue, displacement, topOverlayInset, zero],
   );
   return (
     <RNStickyHeader {...props} onLayout={onLayout} scrollAnimatedValue={scrollAnimatedValue}>

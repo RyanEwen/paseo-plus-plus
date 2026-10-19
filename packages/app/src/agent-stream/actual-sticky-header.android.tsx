@@ -1,3 +1,4 @@
+import { useStreamTopOverlayInset } from "./top-overlay";
 import type { ReactNode } from "react";
 import { useComposerViewportRef } from "@/composer/dock/internal/viewport-ref";
 import { NativeMeasurementContext } from "./native-sticky-viewport";
@@ -43,6 +44,7 @@ export function ActualStickyHeader({ ref, children, ...props }: NativeStickyProp
   const inner = useRef<NativeStickyHandle>(null);
   const { y } = useNativeStickyViewport();
   const k = useKeyboardDockDisplacement();
+  const topOverlayInset = useStreamTopOverlayInset();
   const [layout, setLayout] = useState<{ y: number; height: number } | null>(null);
   const next = useRef<number | null>(props.nextHeaderLayoutY ?? null);
   const lastPropNext = useRef(props.nextHeaderLayoutY);
@@ -89,7 +91,7 @@ export function ActualStickyHeader({ ref, children, ...props }: NativeStickyProp
     const delta =
       !enabled || !g.ready
         ? 0
-        : nativeStickyTranslation(y.value + k.value, g.y, g.height, g.next) -
+        : nativeStickyTranslation(y.value + k.value + topOverlayInset, g.y, g.height, g.next) -
           nativeStickyTranslation(y.value, g.y, g.height, g.next);
     return { transform: [{ translateY: delta }], overflow: "visible" };
   });
