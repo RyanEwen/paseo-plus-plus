@@ -403,14 +403,6 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             {preferences.preferencesDisabledReason ? (
               <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
             ) : null}
-            <MenuItem
-              disabled={preferences.preferencesDisabled}
-              selected={preferences.showBackground}
-              closeOnSelect={false}
-              onSelect={preferences.toggleBackground}
-            >
-              {t("sidebar.display.showBackground")}
-            </MenuItem>
             {preferences.grouping === "project" ? (
               <MenuItem
                 disabled={preferences.preferencesDisabled}
@@ -493,6 +485,15 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
                 </MenuSubTrigger>
               </>
             ) : null}
+            <MenuSeparator />
+            <MenuItem
+              disabled={preferences.preferencesDisabled}
+              selected={preferences.showBackground}
+              closeOnSelect={false}
+              onSelect={preferences.toggleBackground}
+            >
+              {t("sidebar.display.showBackground")}
+            </MenuItem>
           </MenuSurface>
         </MenuRoot>
       </PreferencesDisabledContext.Provider>
