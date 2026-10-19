@@ -307,6 +307,7 @@ const StoredWorkspaceSchema = z.strictObject({
   worktreeSlug: z.string().optional(),
   projectKind: z.enum(["git", "non_git", "directory"]),
   workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
+  // Legacy/provisional rows may omit this; a current workspace cursor requires it.
   background: z.boolean().optional(),
   name: z.string(),
   title: z.string().nullable(),

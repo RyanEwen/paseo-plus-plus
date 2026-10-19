@@ -1,5 +1,5 @@
 import { Text } from "react-native";
-import { forwardRef, useMemo, type ComponentProps } from "react";
+import { forwardRef, useCallback, useMemo, useState, type ComponentProps } from "react";
 import type {
   CodeBlockRendererProps,
   LinkRendererProps,
@@ -7,10 +7,6 @@ import type {
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
-import { useAssistantFileLinkResolverContext } from "@/assistant-file-links/provider";
-import { classifyForResolution } from "@/assistant-file-links/resolver";
-import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
-import { isHttpUrl } from "@/utils/http-url";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
@@ -31,47 +27,45 @@ function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
   return <ThemedCodeBlock code={code} language={language} uniProps={codeStyle} />;
 }
 
+// The library styles links inline, so a stylesheet :hover rule cannot underline them.
+const LINK_HOVER_STYLE = { textDecoration: "underline" } as const;
+
 function WebLink({ link, anchorProps, children }: LinkRendererProps) {
-  const source = markdownLinkSource(link.url, link.sourceType);
-  const { tooltipPath, onHoverIn } = useFileLink(source);
-  const { configRef, httpLinkDestination } = useAssistantFileLinkResolverContext();
-  const resolution = classifyForResolution(source, {
-    workspaceRoot: configRef.current.workspaceRoot,
-  });
-  const menuUrl =
-    resolution.kind === "resolved" &&
-    resolution.value.kind === "external" &&
-    isHttpUrl(resolution.value.url)
-      ? resolution.value.url
-      : undefined;
+  const { tooltipPath, onHoverIn } = useFileLink(markdownLinkSource(link.url, link.sourceType));
+  const [hovered, setHovered] = useState(false);
+  const handleMouseEnter = useCallback(() => setHovered(true), []);
+  const handleMouseLeave = useCallback(() => setHovered(false), []);
   const anchorStyle = useMemo(
-    () => ({ ...anchorProps.style, overflowWrap: "anywhere" as const }),
-    [anchorProps.style],
+    () => ({
+      ...anchorProps.style,
+      overflowWrap: "anywhere" as const,
+      ...(hovered ? LINK_HOVER_STYLE : null),
+    }),
+    [anchorProps.style, hovered],
   );
   const anchor = (
-    <a {...anchorProps} style={anchorStyle}>
+    <a
+      {...anchorProps}
+      style={anchorStyle}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {children}
     </a>
   );
   return (
-    <WorkspaceHttpLinkMenu
-      inline
-      url={menuUrl}
-      defaultDestination={configRef.current.onOpenHttpUrl ? httpLinkDestination : "external"}
-    >
-      <Tooltip delayDuration={400}>
-        <TooltipTrigger asChild onHoverIn={onHoverIn}>
-          <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
-        </TooltipTrigger>
-        {tooltipPath ? (
-          <TooltipContent side="top" align="start" maxWidth={520}>
-            <Text selectable={false} style={styles.tooltipPath}>
-              {tooltipPath}
-            </Text>
-          </TooltipContent>
-        ) : null}
-      </Tooltip>
-    </WorkspaceHttpLinkMenu>
+    <Tooltip delayDuration={400}>
+      <TooltipTrigger asChild onHoverIn={onHoverIn}>
+        <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
+      </TooltipTrigger>
+      {tooltipPath ? (
+        <TooltipContent side="top" align="start" maxWidth={520}>
+          <Text selectable={false} style={styles.tooltipPath}>
+            {tooltipPath}
+          </Text>
+        </TooltipContent>
+      ) : null}
+    </Tooltip>
   );
 }
 // TooltipTrigger also supplies native Pressable handlers; forward only DOM events.

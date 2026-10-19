@@ -53,6 +53,8 @@ export interface ScrollToMessageOccurrence {
 }
 
 export interface StreamViewportHandle {
+  /** Give keyboard navigation back to the scrolling surface on web. */
+  focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
   /** Cancel only message navigation, leaving bottom anchoring and delivery intact. */

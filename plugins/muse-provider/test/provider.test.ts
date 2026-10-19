@@ -3,6 +3,7 @@ import { UsageSourceRegistry } from "../../../packages/server/src/server/plugins
 import { Usage as MuseUsage } from "../server/usage.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { performance } from "node:perf_hooks";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,14 +70,14 @@ async function harness(
   connection.onEvent((event) => {
     events.push(ProviderEventSchema.parse(event));
   });
-  /** Keep ordinary event polling unchanged; startup can use the provider's longer deadline. */
+  /** Bound ordinary event polling with a monotonic clock; startup can request a longer wait. */
   async function wait(
     predicate: (event: ProviderEvent) => boolean,
     from = 0,
-    timeoutMs?: number,
+    timeoutMs = 5000,
   ): Promise<ProviderEvent> {
-    const deadline = Date.now() + (timeoutMs ?? 5000);
-    while (Date.now() < deadline) {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
       const event = events.slice(from).find(predicate);
       if (event) return event;
       await delay(10);
@@ -112,8 +113,8 @@ async function harness(
       persistence,
       history: "replay",
     });
-    // MSP initialization allows 30 seconds. The test's own deadline still caps
-    // the operation; a cold Windows child should not fail the shorter event poll.
+    // Cold process startup can outlast ordinary event polling. The enclosing
+    // test still caps the operation while initialization uses the longer wait.
     return wait(
       (event) => event.type === "session.ready" || event.type === "request.failed",
       0,
