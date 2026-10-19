@@ -53,6 +53,13 @@ type IsolatedBottomSheetModalProps = Omit<
   "enableDismissOnClose" | "stackBehavior" | "children" | "backdropComponent"
 > & {
   /**
+   * Whether closing (drag, backdrop, Back) also dismisses, which unmounts the content. Default
+   * true: the owner hears `onDismiss` and drops its state. Pass `false` for a sheet whose close the
+   * owner may veto: it parks at index -1 with its content mounted, the owner hears `onChange(-1)`,
+   * and either snaps it back or unmounts it, which dismisses it from the stack.
+   */
+  enableDismissOnClose?: boolean;
+  /**
    * Nodes only. Gorhom also accepts a render function, but nothing here uses it and a bridge
    * would have to reach around it.
    */
@@ -241,13 +248,18 @@ export const IsolatedBottomSheetModal = forwardRef<
     backdropOpacity,
     nativeBrowserOverlap = false,
     containerComponent,
+    enableDismissOnClose = true,
     ...bottomSheetProps
   } = props;
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
-      <SheetBackdrop {...backdropProps} opacity={backdropOpacity} />
+      <SheetBackdrop
+        {...backdropProps}
+        opacity={backdropOpacity}
+        pressBehavior={enableDismissOnClose ? "dismiss" : "close"}
+      />
     ),
-    [backdropOpacity],
+    [backdropOpacity, enableDismissOnClose],
   );
   const modal = (
     <GorhomBottomSheetModal
@@ -255,7 +267,7 @@ export const IsolatedBottomSheetModal = forwardRef<
       containerComponent={nativeBrowserOverlap && isWeb ? AdmissionContainer : containerComponent}
       ref={modalRef}
       onDismiss={onDismiss}
-      enableDismissOnClose
+      enableDismissOnClose={enableDismissOnClose}
       stackBehavior={presentation}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
     >
@@ -311,3 +323,7 @@ export function useIsolatedBottomSheetVisibility({
     handleSheetDismiss,
   };
 }
+
+export { SheetVisibleFrame } from "./visible-frame";
+export { systemBackPress } from "./back-press";
+export { SheetHostScope } from "./host-scope";
