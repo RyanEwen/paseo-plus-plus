@@ -69,6 +69,8 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/terminal-activity.md](docs/terminal-activity.md)                   | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                               | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [public-docs/hub/security.md](public-docs/hub/security.md)               | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
+| [docs/markdown-renderer.md](docs/markdown-renderer.md)                   | Shared Markdown engine, native selection, links, images and library constraints                                                |
+| [docs/native-text-selection.md](docs/native-text-selection.md)           | Native diagram grouping, selection boundaries and leading inline image limitations                                             |
 
 ### Writing docs
 
