@@ -51,7 +51,6 @@ const ThemedSettings = withUnistyles(Settings);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -219,16 +218,15 @@ function HeaderMenuProfileItem({
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
   normalizedServerId: string;
   scripts: UseWorkspaceScriptsMenuPagesInput;
+  onCreateDraftTab: () => void;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
-  onCreateDraftTab: () => void;
-  onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
   onCreateBrowser: () => void;
 }
 
 /**
- * Keep workspace launch and history actions available with either compact navigation preference.
+ * Compact layouts retain creation and history actions independently of the tab-strip preference.
  *
  * The header has no room for a scripts button either, so scripts are a page of this menu, and the
  * ⋯ carries a dot while a running service is unhealthy.
@@ -236,10 +234,9 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
   scripts,
+  onCreateDraftTab,
   showCreateBrowserTab,
   createTerminalDisabled,
-  onCreateDraftTab,
-  onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
   ...workspaceActions
@@ -294,7 +291,6 @@ export function WorkspaceHeaderMenuMobile({
         pages={scriptsMenu.pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
-        {scriptsMenu.trigger}
         <DropdownMenuItem
           testID="workspace-header-new-agent"
           leading={MENU_NEW_AGENT_ICON}
@@ -303,6 +299,7 @@ export function WorkspaceHeaderMenuMobile({
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
         {previousAgents ? <WorkspaceNewTabMenuItem item={previousAgents} /> : null}
+        {scriptsMenu.trigger}
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"
@@ -318,14 +315,6 @@ export function WorkspaceHeaderMenuMobile({
         <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
-        <DropdownMenuItem
-          testID="workspace-header-new-terminal"
-          leading={MENU_NEW_TERMINAL_ICON}
-          disabled={createTerminalDisabled}
-          onSelect={onCreateTerminal}
-        >
-          {t("workspace.header.actions.newTerminal")}
-        </DropdownMenuItem>
         {profiles.map((profile) => (
           <HeaderMenuProfileItem
             key={profile.id}

@@ -26,6 +26,7 @@ import { type PromptHandoff } from "./prompt-handoff";
 import { createNativePromptJumpController } from "./native-prompt-jump";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useKeyboardStreamInset } from "@/keyboard/shift";
+import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
@@ -72,6 +73,7 @@ const historyStartSlotStyle: ViewStyle = {
   flexShrink: 0,
 };
 const HISTORY_START_SETTLE_FRAMES = 2;
+const NATIVE_STREAM_WINDOW_SIZE = 10;
 
 /** Record live-header row offsets without creating handlers during the parent's render. */
 function MeasuredLiveRow({
@@ -273,7 +275,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       programmaticScrollEventBudgetRef.current = 3;
       flatListRef.current?.scrollToOffset({
         offset: 0,
-        animated,
+        animated:
+          animated &&
+          shouldAnimateNativeScrollToBottom({
+            offsetY: scrollOffsetYRef.current,
+            viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+            windowSize: NATIVE_STREAM_WINDOW_SIZE,
+          }),
       });
       scrollOffsetYRef.current = 0;
       streamViewportMetricsRef.current = {
@@ -887,10 +895,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         onScrollToIndexFailed={handleScrollToIndexFailed}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
-        // A history row can contain an entire long reply. Bound native Markdown measurement.
+        // Tall Markdown rows need larger refill batches during native flings.
         initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        windowSize={5}
+        maxToRenderPerBatch={10}
+        windowSize={NATIVE_STREAM_WINDOW_SIZE}
         removeClippedSubviews={false}
         scrollEnabled={scrollEnabled}
         showsVerticalScrollIndicator

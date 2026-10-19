@@ -1,6 +1,6 @@
-import type { TestInfo } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { test, expect, type Page } from "../support/fixtures";
+import { test, expect } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { renameModalInput, renameModalSubmit } from "../support/helpers/rename";
 import type { SeedDaemonClient } from "../support/helpers/seed-client";
@@ -136,6 +136,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(tab).toContainText(renamed, {
         timeout: 15_000,
       });
+      await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
       await expect.poll(() => fetchAgentTitle(session.client, session.agentId)).toBe(renamed);
       await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
       await expect(
@@ -202,7 +203,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
     }
   });
 
-  test("upstream switcher opt-out preserves tab IDs and draft content, rename, close, and independent history", async ({
+  test("legacy opt-out preserves tab IDs and draft content, rename, close, and independent history", async ({
     page,
   }, testInfo) => {
     test.setTimeout(150_000);
@@ -227,13 +228,13 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(page.getByTestId("workspace-tabs-scroll")).toHaveCount(0);
       await expect(composerLocator(page)).toHaveValue(draftText);
       expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
-      await expect(switcher).toHaveText("2");
+      await expect(switcher).toContainText("New Agent");
       await page.screenshot({ path: testInfo.outputPath("mobileWorkspaceTabs-off.png") });
       await switcher.click();
       await expect(page.getByText("Release checklist", { exact: true })).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("mobileWorkspaceTabs-off-chooser.png") });
       await page.getByText("Release checklist", { exact: true }).click();
-      await expect(switcher).toHaveText("2");
+      await expect(switcher).toContainText("Release checklist");
 
       await page.setViewportSize({ width: 1440, height: 900 });
       await expect(switcher).toHaveCount(0);
@@ -241,7 +242,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
         page.getByTestId("workspace-tabs-scroll").filter({ visible: true }),
       ).toBeVisible();
       await page.setViewportSize(MOBILE_VIEWPORT);
-      await expect(switcher).toHaveText("2");
+      await expect(switcher).toContainText("Release checklist");
 
       // Restore the original draft selection before comparing presentation-only changes.
       await switcher.click();
@@ -284,7 +285,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
       await expectSessionRowVisible(page, "Renamed through legacy chooser");
       await clickSessionRow(page, "Renamed through legacy chooser");
-      await expect(switcher).toHaveText("2");
+      await expect(switcher).toContainText("Renamed through legacy chooser");
 
       await toggleWorkspaceFeature(page, "previousAgents");
       await expect(switcher).toBeVisible();
@@ -292,77 +293,6 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);
       await expect(page.getByTestId("workspace-header-new-agent")).toBeVisible();
       await expect(page.getByTestId("workspace-header-new-terminal")).toBeVisible();
-    } finally {
-      await session.cleanup();
-    }
-  });
-});
-
-/**
- * Compact "sessions dropdown" rename path. The desktop rename specs drive the right-click
- * `workspace-tab-context-*` menu, which portals into overlay-root and was never broken. This
- * exercises the tab switcher's per-session actions on a phone-sized viewport — the path that
- * regressed when the actions menu presented as a popover instead of a bottom sheet.
- */
-test.describe("Workspace session rename (compact tab switcher)", () => {
-  test("renames an agent session from the switcher's per-session actions sheet", async ({
-    page,
-  }, testInfo) => {
-    test.setTimeout(120_000);
-
-    await page.setViewportSize(MOBILE_VIEWPORT);
-    const initialTitle = `switcher-rename-${randomUUID().slice(0, 8)}`;
-    const session = await seedMockAgentWorkspace({
-      repoPrefix: "workspace-switcher-rename-",
-      title: initialTitle,
-    });
-
-    try {
-      await openAgentRoute(page, session);
-      await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
-      await expect(page.getByTestId("workspace-tab-switcher-trigger")).toBeVisible({
-        timeout: 30_000,
-      });
-
-      await captureScreen(page, testInfo, "compact-chat-header");
-
-      // Open the sessions dropdown (a bottom sheet on compact).
-      await openTabSwitcher(page);
-      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" }).first()).toBeVisible(
-        {
-          timeout: 10_000,
-        },
-      );
-
-      // Open this session's "…" actions. Before the fix this tried to open a popover-Modal
-      // that never surfaced over the sheet on native; it now opens as a stacked sheet.
-      const menuBase = `workspace-tab-menu-agent_${session.agentId}`;
-      const actionsTrigger = page.getByTestId(`${menuBase}-trigger`);
-      await expect(actionsTrigger).toBeVisible({ timeout: 15_000 });
-      await actionsTrigger.click();
-
-      const renameItem = page.getByTestId(`${menuBase}-rename`);
-      await expect(renameItem).toBeVisible({ timeout: 10_000 });
-      await renameItem.click();
-
-      const modalPrefix = `workspace-tab-rename-modal-agent-${session.agentId}`;
-      const input = renameModalInput(page, modalPrefix);
-      await expect(input).toBeVisible({ timeout: 10_000 });
-      await expect(input).toHaveValue(initialTitle);
-
-      const renamed = "Renamed from the dropdown";
-      await input.fill(renamed);
-      await renameModalSubmit(page, modalPrefix).click();
-
-      await expect(input).toHaveCount(0, { timeout: 15_000 });
-      await expect(page.getByText(renamed, { exact: true })).toBeVisible({
-        timeout: 15_000,
-      });
-      await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
-      await expect.poll(() => fetchAgentTitle(session.client, session.agentId)).toBe(renamed);
-      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(1);
-      await expect(page.getByText("Rename agent", { exact: true })).toBeHidden();
-      await captureScreen(page, testInfo, "renamed-tab-in-switcher");
     } finally {
       await session.cleanup();
     }
@@ -378,7 +308,6 @@ test("switcher footer creates tabs and returns to the existing chat", async ({
   });
   try {
     await openAgentRoute(page, session);
-    await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
     await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
 
     await createTabFromSwitcher(page, "New terminal");
