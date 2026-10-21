@@ -215,7 +215,7 @@ async function submitImageOnlyMessage(page: Page): Promise<Locator> {
   await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
   const userMessage = originalUserMessages(page).last();
   await expect(userMessage).toBeVisible();
-  await expectUserMessageImageVisible(userMessage);
+  await expectUserMessageImageVisible(userMessage, "pending");
   return userMessage;
 }
 
@@ -227,7 +227,7 @@ async function expectPendingSubmission(page: Page, userMessage: Locator): Promis
   await expect(userMessage.getByTestId("user-message-timestamp")).toBeAttached();
   await expect(userMessage.getByTestId("user-message-trailing-row")).toHaveCSS("opacity", "0");
   await expect(userMessage).toHaveAttribute("aria-busy", "true");
-  await expectUserMessageImageVisible(userMessage);
+  await expectUserMessageImageVisible(userMessage, "pending");
 }
 
 async function beginTimelineRowStabilityCheck(

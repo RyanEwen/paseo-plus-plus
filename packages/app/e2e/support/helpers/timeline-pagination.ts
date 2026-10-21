@@ -42,20 +42,26 @@ export async function readOriginalUserMessageBounds(message: Locator) {
   });
 }
 
-/** Disclose the real prompt body before inspecting content hidden by its one-line preview. */
-export async function revealUserMessageBody(message: Locator): Promise<void> {
-  // Pending submission placeholders can settle into a compact attachment preview.
-  // Wait for the acknowledged row before deciding whether disclosure is needed.
+/** Disclose the real prompt body without changing the expected submission lifecycle. */
+export async function revealUserMessageBody(
+  message: Locator,
+  state: "pending" | "acknowledged" = "acknowledged",
+): Promise<void> {
+  // Held submissions must remain pending; both states can render compact previews.
   await expect(message).toBeVisible();
-  await expect(message).toHaveAttribute("aria-busy", "false");
+  await expect(message).toHaveAttribute("aria-busy", String(state === "pending"));
   const expand = message.getByRole("button", { name: "Expand user message", exact: true });
   if (await expand.count()) await expand.click();
 }
 
-/** An attached image remains available through the collapsed prompt's disclosure control. */
-export async function expectUserMessageImageVisible(message: Locator): Promise<void> {
-  await revealUserMessageBody(message);
+/** Inspect the real image and prove disclosure preserved the expected submission state. */
+export async function expectUserMessageImageVisible(
+  message: Locator,
+  state: "pending" | "acknowledged" = "acknowledged",
+): Promise<void> {
+  await revealUserMessageBody(message, state);
   await expect(message.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expect(message).toHaveAttribute("aria-busy", String(state === "pending"));
 }
 
 /** Match exact original timeline text, never the sticky renderer or its measurement probe. */
