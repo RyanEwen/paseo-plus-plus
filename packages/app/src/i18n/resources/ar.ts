@@ -833,6 +833,8 @@ export const ar: TranslationResources = {
       },
       session: "جلسة المتصفح{{browserId}}",
       controls: {
+        pageZoom: "تكبير الصفحة",
+        zoomFailed: "تعذر تغيير تكبير الصفحة",
         back: "خلف",
         forward: "إلى الأمام",
         stopLoading: "توقف عن التحميل",
@@ -862,6 +864,9 @@ export const ar: TranslationResources = {
         loading: "جارٍ تحميل الإضافات...",
         manage: "إدارة الإضافات",
         openFailed: "تعذر فتح الإضافة",
+        pin: "تثبيت {{name}} في شريط الأدوات",
+        unpin: "إلغاء تثبيت {{name}} من شريط الأدوات",
+        pinFailed: "تعذر حفظ تثبيت الإضافة",
       },
       devices: {
         label: "حجم الجهاز",
@@ -1569,6 +1574,13 @@ export const ar: TranslationResources = {
       openProjectSettings: "افتح إعدادات المشروع",
     },
     project: {
+      restore: {
+        title: "استعادة مساحة عمل مؤرشفة",
+        search: "البحث في مساحات العمل المؤرشفة",
+        empty: "لا توجد مساحات عمل مؤرشفة في هذا المشروع",
+        updateRequired: "حدّث المضيف لاستعراض مساحات العمل المؤرشفة",
+        loadFailed: "تعذّر تحميل مساحات العمل المؤرشفة",
+      },
       actions: {
         menu: "إجراءات المشروع",
         openSettings: "افتح إعدادات المشروع",

@@ -104,6 +104,7 @@ function HostWorkspaceRouteContent() {
     serverId?: string | string[];
     workspaceId?: string | string[];
     open?: string | string[];
+    recover?: string | string[];
   }>();
   const serverId = getParamValue(params.serverId);
   const workspaceValue = getParamValue(params.workspaceId);
@@ -199,7 +200,9 @@ function HostWorkspaceRouteContent() {
     return null;
   }
 
-  return <WorkspaceDeck recoveryRequested={isAgentOpenIntent} />;
+  return (
+    <WorkspaceDeck recoveryRequested={isAgentOpenIntent || getParamValue(params.recover) === "1"} />
+  );
 }
 
 function WorkspaceDeck({ recoveryRequested }: { recoveryRequested: boolean }) {

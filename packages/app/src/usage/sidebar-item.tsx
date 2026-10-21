@@ -17,7 +17,8 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
-import { useUsagePreferences } from "./display";
+import { useUsageDisplay } from "./display";
+import { useUsageInSidebar } from "./in-sidebar";
 import { useUsageHostId } from "./hosts";
 import { useUsageHostReports } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
@@ -34,8 +35,10 @@ import { UsageModal } from "./usage-modal";
 
 /** Each summary window with data on the usage host, under its source; empty while none has. */
 function useUsageSummary(): readonly PinnedUsageSource[] {
-  const { preferences } = useUsagePreferences();
-  const reports = useUsageHostReports(useUsageHostId());
+  const serverId = useUsageHostId();
+  const { inSidebar } = useUsageInSidebar();
+  const reports = useUsageHostReports(inSidebar ? serverId : null);
+  const { preferences } = useUsageDisplay(reports);
   return useMemo(() => resolvePinnedUsage(reports, preferences), [preferences, reports]);
 }
 

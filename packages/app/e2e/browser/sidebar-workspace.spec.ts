@@ -371,9 +371,18 @@ test.describe("Sidebar workspace list", () => {
       await selectSidebarStatusGrouping(page);
       await setWorkspaceCountLimit(page, 7);
       await expect(page.locator(rowSelector)).toHaveCount(14); // Two independent initial limits.
+      const doneCount = page.getByTestId("sidebar-status-group-count-done");
+      await expect(doneCount).toHaveText("16");
+      const doneHeader = page.getByTestId("sidebar-status-group-done");
+      await expect(doneHeader).toHaveAccessibleName("Done (16) group");
+      await doneHeader.click();
+      await expect(page.locator(rowSelector)).toHaveCount(7);
+      await expect(doneCount).toHaveText("16");
+      await doneHeader.click();
       await page.getByTestId("sidebar-pinned-show-more").click();
       await page.getByTestId("sidebar-status-group-show-more-done").click();
       await expect(page.locator(rowSelector)).toHaveCount(25);
+      await expect(doneCount).toHaveText("16");
       const statusScroll = page.getByTestId("sidebar-status-list-scroll");
       await expect.poll(() => hasScrollOverflow(statusScroll)).toBe(true);
       expect(await statusScroll.evaluate((node) => getComputedStyle(node).scrollbarWidth)).not.toBe(

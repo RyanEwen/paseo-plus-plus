@@ -10,6 +10,7 @@ const EntrySchema = z.object({
   path: z.string(),
   source: z.enum(["store", "unpacked"]),
   enabled: z.boolean(),
+  pinned: z.boolean().optional(),
 });
 
 export type BrowserExtensionEntry = z.infer<typeof EntrySchema>;
@@ -40,13 +41,14 @@ export function getBrowserExtensionSource(
 /** Owns saved extension choices; disabled extensions never execute during startup. */
 export class BrowserExtensionCatalog {
   private entries: BrowserExtensionEntry[] = [];
-  private readonly errors = new Map<string, string>();
+  private readonly errors = new Map<string, Error>();
   private queue: Promise<unknown> = Promise.resolve();
 
   public constructor(
     private readonly filePath: string,
     private readonly storePath: string,
     private readonly runtime: BrowserExtensionRuntime,
+    private readonly onChanged: () => void = () => {},
   ) {}
 
   /** Restore each enabled extension independently so one broken folder cannot block the browser. */
@@ -73,7 +75,7 @@ export class BrowserExtensionCatalog {
         }
         Object.assign(entry, loaded);
       } catch (error) {
-        this.errors.set(entry.id, error instanceof Error ? error.message : String(error));
+        this.errors.set(entry.id, error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
@@ -81,7 +83,7 @@ export class BrowserExtensionCatalog {
   /** Wait for pending installs and return snapshots including recoverable load errors. */
   public async list(): Promise<Array<BrowserExtensionEntry & { error?: string }>> {
     await this.serialize(() => this.pruneStoreRemovals());
-    return this.entries.map((entry) => ({ ...entry, error: this.errors.get(entry.id) }));
+    return this.entries.map((entry) => ({ ...entry, error: this.errors.get(entry.id)?.message }));
   }
 
   /** Store-page removals bypass settings. Forget only files removed from a previously working install. */
@@ -114,11 +116,18 @@ export class BrowserExtensionCatalog {
   /** Track Web Store installs and unpacked loads in the same persistent catalog. */
   public remember(extension: LoadedBrowserExtension): Promise<void> {
     return this.serialize(async () => {
+      const priorError = this.errors.get(extension.id);
       const source = getBrowserExtensionSource(this.storePath, extension.path);
+      const previous = this.entries.find((entry) => entry.id === extension.id);
       const next = this.entries.filter((entry) => entry.id !== extension.id);
-      next.push({ ...extension, source, enabled: true });
+      next.push({
+        ...extension,
+        source,
+        enabled: true,
+        ...(previous?.pinned === undefined ? {} : { pinned: previous.pinned }),
+      });
       await this.save(next);
-      this.errors.delete(extension.id);
+      this.clearUnchangedError(extension.id, priorError);
     });
   }
 
@@ -126,6 +135,7 @@ export class BrowserExtensionCatalog {
   public setEnabled(id: string, enabled: boolean): Promise<void> {
     return this.serialize(async () => {
       const entry = this.requireEntry(id);
+      const priorError = this.errors.get(id);
       if (entry.enabled === enabled && this.runtime.isLoaded(id) === enabled) {
         this.errors.delete(id);
         return;
@@ -151,7 +161,28 @@ export class BrowserExtensionCatalog {
         await this.save(this.entries.map((item) => (item.id === id ? { ...item, enabled } : item)));
         this.runtime.unload(id);
       }
-      this.errors.delete(id);
+      this.clearUnchangedError(id, priorError);
+    });
+  }
+
+  /** A completed save can clear an earlier error, never a newer asynchronous runtime failure. */
+  private clearUnchangedError(id: string, priorError: Error | undefined): void {
+    if (this.errors.get(id) === priorError) this.errors.delete(id);
+  }
+
+  /** Publish a runtime failure without changing the user's durable enabled choice. */
+  public recordRuntimeFailure(id: string, error: Error): void {
+    this.errors.set(id, error);
+    this.onChanged();
+  }
+
+  /** Pins belong to this local browser profile; disabling retains the preference, removal forgets it. */
+  public setPinned(id: string, pinned: boolean): Promise<void> {
+    return this.serialize(async () => {
+      this.requireEntry(id);
+      await this.save(
+        this.entries.map((entry) => (entry.id === id ? { ...entry, pinned } : entry)),
+      );
     });
   }
 
@@ -187,5 +218,6 @@ export class BrowserExtensionCatalog {
   private async save(entries: BrowserExtensionEntry[]): Promise<void> {
     await writeAtomicJson(this.filePath, entries);
     this.entries = entries;
+    this.onChanged();
   }
 }

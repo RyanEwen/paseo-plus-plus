@@ -55,10 +55,9 @@ the sheet's tab into a pane, and edits the autosave has not started writing are 
 
 ## Explorer sidebar
 
-`packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection.
-On desktop, the shell is rendered outside the workspace split canvas so it divides the full
-workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
-never read or modify that width.
+`packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection. On desktop, the shell is rendered outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits never read or modify that width.
+
+The dock divider shares the workspace split preset controls. A preset must fit both the dock’s 240 px minimum and the main area’s 400 px minimum. Disable choices that cannot produce their labeled ratio; do not offer a ratio and then clamp it to a different width.
 
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching Explorer tab. Desktop Changes opens

@@ -2,28 +2,42 @@
 
 ## Selected feature and qualification boundary
 
-The browser feature uses main-owned Electron WebContentsViews and Electron's bundled
-Chromium. It preserves the shared profile, workspace tab identity and independent
-page/UI zoom. Fixed device presets retain their requested page-CSS dimensions.
-A separate Chromium engine, CEF, WebView2 and the old X11 embedding experiment are
-not shipping dependencies of this feature.
+The desktop browser uses resident DOM Electron `<webview>` guests and Electron's
+bundled Chromium. Each tab keeps its guest while hidden or moving between panes.
+Pages and extensions keep the shared persistent profile. Device presets retain their
+requested page-CSS size across independent page and app zoom; responsive pages fill
+their pane. A separate Chromium engine,
+CEF, WebView2 and the old X11 embedding experiment are not shipping dependencies.
 
-DOM overlays cannot cover a native view by z-index alone. Canonical blocking overlays
-retain native suppression through actual dismissal/removal, including compact sheet
-portals and nested scopes. The temporary menu still is optional; failed capture opens
-the menu over blank browser content. Failed native-hide acknowledgement does not
-admit interactive DOM over the page. Normal browsing remains a live native view.
+Menus and modals use the normal DOM overlay plane above the browser. The active
+path does not capture a still frame or suppress a native view when an overlay opens.
+The former WebContentsView presentation modules are disconnected from startup and
+pane creation; their historical evidence does not qualify the restored DOM path.
 
-The Gorhom 5.2.14 tracked patch cancels pending public-present generations and
-reconciles reentrant provider registration. Its removal condition is documented in
-`scripts/postinstall-patches.mjs`; actual modal/provider scheduling regressions must
-pass before removing it. The Microsoft native capture adaptation retains its MIT notice.
+The Gorhom 5.2.14 tracked patch still owns ordinary modal/provider scheduling. Its
+removal condition is documented in `scripts/postinstall-patches.mjs`.
+
+Keeping a guest resident preserves tab identity; it does not establish reliable
+background keyboard input on Windows. Live video beneath menus, clipping, focus,
+fixed viewports and hidden automation need acceptance on the restored Windows build.
+The stock Electron path does not inherit OWL's custom guest or input behavior.
 
 Practical extension support remains subject to Electron's API behavior. Changing view
-type does not expand that contract. Store installation, popup/worker behavior and
-individual extensions need separate qualification; see [Browser](../public-docs/browser.md).
-Automatic extension updates are disabled. Bitwarden password-login failure remains
-under investigation; no API shim or account-level diagnosis is part of this feature.
+type does not expand that contract. Installation, popup/worker behavior and individual
+extensions need separate qualification; see [Browser](../public-docs/browser.md).
+Automatic extension updates are disabled. The reported Windows build signs in and
+autofills from the Bitwarden popup, but inline UI and page context-menu state remain
+unresolved in that build.
+
+Electron 44.5.1 and 44.9 both reproduced the upstream worker storage notification loss
+([#52451](https://github.com/electron/electron/issues/52451)). The source repair retains
+stock Electron and native storage, using a private windowless extension-origin listener
+and authenticated worker delivery. Its worker-preload readiness gate addresses initial
+writes as well as normal worker restart. Linux public-sentinel evidence qualifies that
+ordering and window exclusion, not Windows or third-party extension acceptance. A
+native engine build is not part of this fix. Observer failure/cancellation is covered
+by focused source tests; real native crash recovery and natural-idle behavior remain
+separate acceptance work.
 
 ## Historical research
 
@@ -31,8 +45,8 @@ The sections below preserve the original research and owner-local fixture record
 Their old source paths, plans, successes and failures do not qualify this reconstructed
 accepted-main source or a Windows build. Linux primitive, profile and partial pane
 results are separate from current Windows input/compositor and extension acceptance.
-The later prepare/decode/commit menu correction is a separate source layer; decoded
-DOM staging alone cannot prove a cross-process compositor presentation fence.
+The earlier prepare/decode/commit menu correction belongs to the disconnected
+WebContentsView path. Its still-frame tests do not prove live DOM guest composition.
 
 ## Architectural findings from the research review
 

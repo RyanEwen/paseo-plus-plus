@@ -6,6 +6,35 @@ import {
 } from "./messages.js";
 
 describe("workspace recovery protocol", () => {
+  test("parses project-scoped archived listing without requiring the capability on older hosts", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.recovery.list_archived.request",
+        requestId: "archives-1",
+        projectId: "project-1",
+      }),
+    ).toMatchObject({ projectId: "project-1" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.recovery.list_archived.response",
+        payload: { requestId: "archives-1", projectId: "project-1", entries: [], error: null },
+      }),
+    ).toMatchObject({ payload: { entries: [] } });
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "old-host",
+        features: {},
+      }).features?.projectArchivedWorkspaces,
+    ).toBeUndefined();
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "new-host",
+        features: { projectArchivedWorkspaces: true },
+      }).features?.projectArchivedWorkspaces,
+    ).toBe(true);
+  });
   test("parses the read-only recovery inspection exchange", () => {
     expect(
       SessionInboundMessageSchema.parse({

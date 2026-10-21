@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import type { NativeBrowserOverlayTarget } from "./features/browser-views/contracts.js";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     openNew: (options?: { pendingOpenProjectPath?: string | null }) =>
       ipcRenderer.invoke("paseo:window:openNew", options),
     getCurrentWindow: () => ({
+      getZoomFactor: () => webFrame.getZoomFactor(),
       minimize: () => ipcRenderer.invoke("paseo:window:minimize"),
       close: () => ipcRenderer.invoke("paseo:window:close"),
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
@@ -91,8 +92,12 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     setViewedAgent: (input: unknown) =>
       ipcRenderer.invoke("paseo:notification:setViewedAgent", input),
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),
-    sendNotification: (payload: { title: string; body?: string; data?: Record<string, unknown> }) =>
-      ipcRenderer.invoke("paseo:notification:send", payload),
+    sendNotification: (payload: {
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      icon?: string;
+    }) => ipcRenderer.invoke("paseo:notification:send", payload),
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
@@ -158,7 +163,15 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     },
     extensions: {
       list: () => ipcRenderer.invoke("paseo:browser:extensions:list"),
-      actions: () => ipcRenderer.invoke("paseo:browser:extensions:actions"),
+      actions: (browserId: string) =>
+        ipcRenderer.invoke("paseo:browser:extensions:actions", { browserId }),
+      setPinned: (id: string, pinned: boolean) =>
+        ipcRenderer.invoke("paseo:browser:extensions:set-pinned", { id, pinned }),
+      onChanged: (handler: () => void): (() => void) => {
+        const listener = () => handler();
+        ipcRenderer.on("paseo:browser:extensions:changed", listener);
+        return () => ipcRenderer.removeListener("paseo:browser:extensions:changed", listener);
+      },
       openPopup: (id: string, browserId: string) =>
         ipcRenderer.invoke("paseo:browser:extensions:open-popup", { id, browserId }),
       setEnabled: (id: string, enabled: boolean) =>

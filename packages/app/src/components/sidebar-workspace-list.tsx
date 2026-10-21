@@ -1,3 +1,4 @@
+import { RestoreProjectWorkspaceDialog } from "@/components/restore-project-workspace-dialog";
 import {
   ProjectExpansionAnchorContext,
   useProjectExpansionAnchor,
@@ -450,6 +451,7 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint,
   isProjectActive,
   onBeginWorkspaceSetup,
+  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
 }: {
@@ -462,6 +464,7 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
   onBeginWorkspaceSetup: () => void;
+  onRestoreProject: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -496,6 +499,7 @@ function ProjectRowTrailingActions({
               projectViewKey={projectViewKey}
               settingsTarget={settingsTarget}
               projectPath={projectPath}
+              onRestoreProject={onRestoreProject}
               onRemoveProject={onRemoveProject}
               removeProjectStatus={removeProjectStatus}
             />
@@ -525,12 +529,14 @@ function ProjectKebabMenu({
   projectViewKey,
   settingsTarget,
   projectPath,
+  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -552,6 +558,7 @@ function ProjectKebabMenu({
           projectViewKey={projectViewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          onRestoreProject={onRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
         />
@@ -580,6 +587,7 @@ function ProjectMenuItems({
   projectViewKey,
   settingsTarget,
   projectPath,
+  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
 }: {
@@ -587,6 +595,7 @@ function ProjectMenuItems({
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -618,6 +627,15 @@ function ProjectMenuItems({
           onSelect={handleOpenProjectSettings}
         >
           {t("sidebar.project.actions.openSettings")}
+        </ProjectMenuItem>
+      ) : null}
+      {settingsTarget ? (
+        <ProjectMenuItem
+          surface={surface}
+          testID={`sidebar-project-menu-restore-${projectViewKey}`}
+          onSelect={onRestoreProject}
+        >
+          {t("sidebar.project.restore.title")}
         </ProjectMenuItem>
       ) : null}
       {canOpenInNewWindow ? (
@@ -926,6 +944,9 @@ function ProjectHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [restoreProjectOpen, setRestoreProjectOpen] = useState(false);
+  const openRestoreProject = useCallback(() => setRestoreProjectOpen(true), []);
+  const closeRestoreProject = useCallback(() => setRestoreProjectOpen(false), []);
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
@@ -1044,6 +1065,7 @@ function ProjectHeaderRow({
         isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
+        onRestoreProject={openRestoreProject}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
       />
@@ -1113,10 +1135,17 @@ function ProjectHeaderRow({
           projectViewKey={project.viewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          onRestoreProject={openRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
         />
       </ContextMenuContent>
+      <RestoreProjectWorkspaceDialog
+        visible={restoreProjectOpen}
+        target={settingsTarget}
+        onClose={closeRestoreProject}
+        onWorkspacePress={onWorkspacePress}
+      />
     </ContextMenu>
   );
 }

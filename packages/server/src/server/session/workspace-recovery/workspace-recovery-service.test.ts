@@ -29,6 +29,7 @@ import {
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
+import { listArchivedProjectWorkspaces } from "./list-archived-workspaces.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
 const tempDirectories: string[] = [];
@@ -98,6 +99,48 @@ function createHarness(input?: {
 }
 
 describe("workspace recovery", () => {
+  test("lists zero-agent archived records only from the requested project without changing registry state", async () => {
+    const records = [
+      createWorkspace({ workspaceId: "archived" }),
+      createWorkspace({ workspaceId: "active", archivedAt: null }),
+      createWorkspace({ workspaceId: "other-project", projectId: "/other" }),
+      createWorkspace({ workspaceId: "background", background: true }),
+      createWorkspace({ workspaceId: "older", archivedAt: "2026-07-10T10:12:30.752Z" }),
+    ];
+    const before = structuredClone(records);
+    const input = {
+      projectId: "/project",
+      projects: { get: async () => createProject() },
+      workspaces: { list: async () => records },
+    };
+    expect((await listArchivedProjectWorkspaces(input)).map((row) => row.workspaceId)).toEqual([
+      "archived",
+      "older",
+    ]);
+    expect(
+      (await listArchivedProjectWorkspaces({ ...input, includeBackground: true })).map(
+        (row) => row.workspaceId,
+      ),
+    ).toEqual(["archived", "background", "older"]);
+    expect(records).toEqual(before);
+
+    records[0] = { ...records[0]!, archivedAt: null };
+    expect((await listArchivedProjectWorkspaces(input)).map((row) => row.workspaceId)).toEqual([
+      "older",
+    ]);
+    await expect(
+      listArchivedProjectWorkspaces({
+        ...input,
+        projects: { get: async () => null },
+      }),
+    ).rejects.toThrow("project no longer exists");
+    await expect(
+      listArchivedProjectWorkspaces({
+        ...input,
+        projects: { get: async () => createProject({ archivedAt: NOW }) },
+      }),
+    ).rejects.toThrow("project no longer exists");
+  });
   test("describes a missing archived worktree from persisted placement", async () => {
     const { service, unarchived } = createHarness();
 

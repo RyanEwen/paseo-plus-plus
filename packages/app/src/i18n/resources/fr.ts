@@ -844,6 +844,8 @@ export const fr: TranslationResources = {
       },
       session: "Session de navigateur {{browserId}}",
       controls: {
+        pageZoom: "Zoom de la page",
+        zoomFailed: "Impossible de modifier le zoom de la page",
         back: "Retour",
         forward: "Suivant",
         stopLoading: "Arrêter le chargement",
@@ -873,6 +875,9 @@ export const fr: TranslationResources = {
         loading: "Chargement des extensions...",
         manage: "Gérer les extensions",
         openFailed: "Impossible d’ouvrir l’extension",
+        pin: "Épingler {{name}}",
+        unpin: "Désépingler {{name}}",
+        pinFailed: "Impossible d’enregistrer l’épingle de l’extension",
       },
       devices: {
         label: "Taille de l’appareil",
@@ -1604,6 +1609,13 @@ export const fr: TranslationResources = {
       openProjectSettings: "Ouvrir les paramètres du projet",
     },
     project: {
+      restore: {
+        title: "Restaurer un espace de travail archivé",
+        search: "Rechercher des espaces de travail archivés",
+        empty: "Aucun espace de travail archivé dans ce projet",
+        updateRequired: "Mettez à jour votre hôte pour parcourir les espaces de travail archivés",
+        loadFailed: "Impossible de charger les espaces de travail archivés",
+      },
       actions: {
         menu: "Actions du projet",
         openSettings: "Ouvrir les paramètres du projet",

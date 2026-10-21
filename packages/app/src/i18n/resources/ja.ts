@@ -843,6 +843,8 @@ export const ja: TranslationResources = {
       },
       session: "ブラウザセッション{{browserId}}",
       controls: {
+        pageZoom: "ページのズーム",
+        zoomFailed: "ページのズームを変更できませんでした",
         back: "戻る",
         forward: "進む",
         stopLoading: "読み込みを停止",
@@ -872,6 +874,9 @@ export const ja: TranslationResources = {
         loading: "拡張機能を読み込み中...",
         manage: "拡張機能を管理",
         openFailed: "拡張機能を開けませんでした",
+        pin: "{{name}} を固定",
+        unpin: "{{name}} の固定を解除",
+        pinFailed: "拡張機能の固定を保存できませんでした",
       },
       devices: {
         label: "デバイスサイズ",
@@ -1587,6 +1592,13 @@ export const ja: TranslationResources = {
       openProjectSettings: "プロジェクト設定を開く",
     },
     project: {
+      restore: {
+        title: "アーカイブ済みワークスペースを復元",
+        search: "アーカイブ済みワークスペースを検索",
+        empty: "このプロジェクトにアーカイブ済みワークスペースはありません",
+        updateRequired: "アーカイブ済みワークスペースを表示するにはホストを更新してください",
+        loadFailed: "アーカイブ済みワークスペースを読み込めませんでした",
+      },
       actions: {
         menu: "プロジェクトアクション",
         openSettings: "プロジェクト設定を開く",

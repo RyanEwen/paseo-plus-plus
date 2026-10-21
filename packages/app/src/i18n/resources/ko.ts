@@ -836,6 +836,8 @@ export const ko: TranslationResources = {
       },
       session: "브라우저 세션 {{browserId}}",
       controls: {
+        pageZoom: "페이지 확대/축소",
+        zoomFailed: "페이지 확대/축소를 변경하지 못했습니다",
         back: "뒤로",
         forward: "앞으로",
         stopLoading: "로딩 중지",
@@ -865,6 +867,9 @@ export const ko: TranslationResources = {
         loading: "확장 프로그램 불러오는 중...",
         manage: "확장 프로그램 관리",
         openFailed: "확장 프로그램을 열 수 없습니다",
+        pin: "{{name}} 고정",
+        unpin: "{{name}} 고정 해제",
+        pinFailed: "확장 프로그램 고정을 저장하지 못했습니다",
       },
       devices: {
         label: "장치 크기",
@@ -1578,6 +1583,13 @@ export const ko: TranslationResources = {
       openProjectSettings: "프로젝트 설정 열기",
     },
     project: {
+      restore: {
+        title: "보관된 작업 공간 복원",
+        search: "보관된 작업 공간 검색",
+        empty: "이 프로젝트에 보관된 작업 공간이 없습니다",
+        updateRequired: "보관된 작업 공간을 보려면 호스트를 업데이트하세요",
+        loadFailed: "보관된 작업 공간을 불러오지 못했습니다",
+      },
       actions: {
         menu: "프로젝트 작업",
         openSettings: "프로젝트 설정 열기",

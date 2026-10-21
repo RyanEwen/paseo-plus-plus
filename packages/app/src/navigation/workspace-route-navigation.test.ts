@@ -86,6 +86,7 @@ describe("navigateToHostWorkspaceRoute", () => {
             serverId: "server-1",
             workspaceId: "workspace-a",
             open: undefined,
+            recover: undefined,
           },
           pop: true,
         },
@@ -139,11 +140,40 @@ describe("navigateToHostWorkspaceRoute", () => {
             serverId: "server-1",
             workspaceId: "workspace-a",
             open: "agent:agent-1",
+            recover: undefined,
           },
           pop: true,
         },
       },
     });
+  });
+
+  it("preserves an explicit archive recovery intent without choosing an agent", () => {
+    const { navigationRef, dispatch } = createNavigationRef({
+      key: "root-stack",
+      index: 1,
+      routes: [
+        { key: "host", name: "h/[serverId]" },
+        { key: "new", name: "new" },
+      ],
+    });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    navigateToHostWorkspaceRoute("/h/archive-host/workspace/archived?recover=1");
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          params: expect.objectContaining({
+            serverId: "archive-host",
+            params: {
+              serverId: "archive-host",
+              workspaceId: "archived",
+              open: undefined,
+              recover: "1",
+            },
+          }),
+        }),
+      }),
+    );
   });
 
   it("waits for the root navigator before applying a route intent", () => {

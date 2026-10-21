@@ -50,3 +50,21 @@ export function resolveExplorerSidebarDockSizes(input: {
   const ratio = width / input.containerWidth;
   return [1 - ratio, ratio];
 }
+
+/** Reject dock presets that would be clamped instead of producing the advertised ratio. */
+export function canApplyExplorerSidebarDockSizes(input: {
+  sizes: number[];
+  containerWidth: number;
+}): boolean {
+  const [main, dock] = input.sizes;
+  return (
+    Number.isFinite(input.containerWidth) &&
+    input.containerWidth > 0 &&
+    main !== undefined &&
+    dock !== undefined &&
+    Number.isFinite(main) &&
+    Number.isFinite(dock) &&
+    main * input.containerWidth >= MIN_WORKSPACE_BODY_WIDTH &&
+    dock * input.containerWidth >= MIN_EXPLORER_SIDEBAR_WIDTH
+  );
+}

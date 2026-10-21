@@ -37,7 +37,7 @@ import {
   type SessionState,
 } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
-import { sendOsNotification } from "@/utils/os-notifications";
+import { sendWorkspaceOsNotification } from "@/notifications/workspace-notification";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
@@ -310,7 +310,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      void sendOsNotification({
+      void sendWorkspaceOsNotification({
         title: notification.title,
         body: notification.body,
         data: notification.data,
@@ -689,7 +689,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (!message.payload.shouldNotify) {
         return;
       }
-      void sendOsNotification({
+      void sendWorkspaceOsNotification({
         title: message.payload.title,
         body: message.payload.body,
         // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is

@@ -5171,6 +5171,57 @@ test("open_project_request keeps archived records and allocates a fresh workspac
   expect(response?.payload.workspace?.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
 });
 
+test("project-scoped archived workspace listing returns zero-agent records without active directory updates", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.projectRegistry.get = async (projectId) =>
+    projectId === "requested-project"
+      ? createPersistedProjectRecord({
+          projectId,
+          rootPath: "/repo",
+          kind: "git",
+          displayName: "Project",
+          createdAt: "2026-10-20T12:00:00Z",
+          updatedAt: "2026-10-20T12:00:00Z",
+        })
+      : null;
+  const record = createPersistedWorkspaceRecord({
+    workspaceId: "zero-agent-archive",
+    projectId: "requested-project",
+    cwd: "/repo/feature",
+    kind: "worktree",
+    displayName: "Feature",
+    createdAt: "2026-10-20T12:00:00Z",
+    updatedAt: "2026-10-20T12:00:00Z",
+    archivedAt: "2026-10-20T12:00:00Z",
+  });
+  session.workspaceRegistry.list = async () => [
+    record,
+    { ...record, workspaceId: "other", projectId: "other-project" },
+  ];
+  await session.handleMessage({
+    type: "workspace.recovery.list_archived.request",
+    requestId: "list-archives",
+    projectId: "requested-project",
+  });
+  expect(emitted).toHaveLength(1);
+  expect(findByType(emitted, "workspace.recovery.list_archived.response")?.payload).toMatchObject({
+    requestId: "list-archives",
+    projectId: "requested-project",
+    error: null,
+    entries: [{ workspaceId: "zero-agent-archive", workspaceName: "Feature" }],
+  });
+  expect(record.archivedAt).toBe("2026-10-20T12:00:00Z");
+  await session.handleMessage({
+    type: "workspace.recovery.list_archived.request",
+    requestId: "removed-project",
+    projectId: "missing",
+  });
+  expect(
+    findByType(emitted.slice(1), "workspace.recovery.list_archived.response")?.payload,
+  ).toMatchObject({ requestId: "removed-project", entries: [], error: expect.any(String) });
+});
+
 test("open_project_request does not repurpose an orphaned archived workspace", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();

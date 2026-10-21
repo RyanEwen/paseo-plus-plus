@@ -832,6 +832,8 @@ export const en = {
       },
       session: "Browser session {{browserId}}",
       controls: {
+        pageZoom: "Page zoom",
+        zoomFailed: "Couldn't change page zoom",
         back: "Back",
         forward: "Forward",
         stopLoading: "Stop loading",
@@ -861,6 +863,9 @@ export const en = {
         loading: "Loading extensions...",
         manage: "Manage extensions",
         openFailed: "Couldn't open extension",
+        pin: "Pin {{name}}",
+        unpin: "Unpin {{name}}",
+        pinFailed: "Couldn't save extension pin",
       },
       devices: {
         label: "Device size",
@@ -1579,6 +1584,13 @@ export const en = {
       openProjectSettings: "Open project settings",
     },
     project: {
+      restore: {
+        title: "Restore archived workspace",
+        search: "Search archived workspaces",
+        empty: "No archived workspaces in this project",
+        updateRequired: "Update your host to browse archived workspaces",
+        loadFailed: "Couldn't load archived workspaces",
+      },
       actions: {
         menu: "Project actions",
         openSettings: "Open project settings",

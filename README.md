@@ -38,7 +38,7 @@ The workspace heading, project selector, and display controls stay visible while
 
 ### Project activity chips
 
-See whether a project's workspaces are working, need input, or have finished. When several workspaces are working, the chip shows their count. Project choices in the dropdown show the same badges, including when another project is selected.
+See whether a project's workspaces are working, need input, or have finished. Ready-to-review work takes priority over working workspaces, so a collapsed project keeps actionable work visible. When several workspaces are working, the chip shows their count. Project choices in the dropdown show the same badges, including when another project is selected.
 
 [View example](packages/app/assets/settings-examples/annotated/sidebarActivityChips-project-header.svg)
 
@@ -64,6 +64,10 @@ Keep selected workspaces at the top of their project, alongside the existing opt
 
 Follow workspaces as status changes or expanding and collapsing projects move them to new positions with quick transitions. Animations respect reduced-motion preferences and preserve collapsed groups and display limits. When expanding one project at a time, the sidebar brings the selected project header to the top of the visible list as groups above it collapse.
 
+### Status group counts
+
+See how many workspaces are in each Status group beside its heading. Counts follow sidebar filters and remain visible when groups are collapsed or rows are hidden by the display limit. Workspaces pinned at the top of the sidebar stay in their separate section.
+
 ### Automatic Android update checks
 
 Check for published Paseo++ releases on startup and resume. Available updates appear in the sidebar. Follow download progress and verification in the sidebar or Settings, then approve installation in Android. Turning automatic checks off keeps manual checking and installation available.
@@ -88,7 +92,7 @@ Use the split icon beside a creation item in the workspace **+** menu, then clic
 
 Right-click a tab and choose **Move tab** to move that same tab to an existing pane or a region in a split diagram. Compact diagrams use larger touch regions and wrap within the scrolling menu. Keyboard users can move through the region choices with Up/Down, Home/End, then Enter or Space.
 
-Hover a workspace divider to choose 70/30, 60/40, 50/50, 40/60, or 30/70 proportions for its existing adjacent panes. The picker opens beside the pointer and stays open while moving between the divider and its choices. Divider choices resize panes; they do not create or move a tab. Turn **Split layout controls** off in Paseo++ settings to hide these controls without changing your layout.
+Hover a workspace divider, including the divider beside the Explorer dock, to choose 70/30, 60/40, 50/50, 40/60, or 30/70 proportions for its existing adjacent panes. The picker opens beside the pointer and stays open while moving between the divider and its choices. Choices that cannot fit the panes’ minimum widths are unavailable. Divider choices resize panes; they do not create or move a tab. Turn **Split layout controls** off in Paseo++ settings to hide these controls without changing your layout.
 
 ### Mobile workspace tabs
 
@@ -120,21 +124,29 @@ In **Display → Workspace limits**, open **Count limit** or **Updated within** 
 
 ### Explorer and Changes
 
-Choose whether Explorer starts open in new desktop workspaces and whether opening a changed file shows its own diff or all changed files. Single-file diffs use the selected file's budget independently of unrelated changes; update the workspace host to enable scoped acquisition. Set a default comparison, or automatically switch between Uncommitted when dirty and Committed when clean. Changes remembers each workspace's comparison across reloads. Find these preferences in **Settings → Paseo++**.
+Choose whether Explorer starts open in new desktop workspaces and whether opening a changed file shows its own diff or all changed files. Single-file diffs use the selected file's budget independently of unrelated changes; update the workspace host to enable scoped acquisition. Set a default comparison, or automatically switch between Uncommitted when dirty and Committed when clean. Changes remembers each workspace's comparison across reloads. Hover over a truncated filename in Changes to see its full path. Find these preferences in **Settings → Paseo++**.
 
 ## Other additions
 
-### Native desktop browser and extensions
+### Desktop browser and extensions
 
-Desktop browser tabs use Electron's native WebContentsView with the existing shared
-browser profile. Pages stay resident across workspace changes; device presets keep
-page zoom independent of the Paseo UI. Overlapping app menus temporarily freeze the
-browser area, or leave it blank if capture fails, then restore the same page.
+Desktop browser tabs use resident DOM Electron webviews with the shared persistent
+browser profile. Pages stay attached across workspace changes. Menus use the normal
+DOM overlay plane; opening one no longer takes a still frame or hides the page.
+Device presets preserve page-CSS dimensions across independent page and app zoom.
+Use the page zoom menu to resize web content separately from the Paseo interface.
+Pages on the same origin share zoom according to Chromium’s policy.
 
-Manage Chrome extensions in **Settings → Browser → Extensions**, and open their
-popups from the browser toolbar. Compatibility depends on Electron's APIs; installation
-does not guarantee every extension works. Extensions are not updated automatically.
+Manage Chrome extensions in **Settings → Browser → Extensions**, and open their popups from the browser toolbar. Pinned icons and the Extensions menu show the extension's own badge text and colors for the current page. Compatibility depends on Electron's APIs; installation does not guarantee every extension works. Background storage notifications use a private listener so extension state can follow popup and page changes. Windows password-manager inline UI remains unverified. Extensions are not updated automatically.
+Pin extensions from the Extensions menu to keep their icons in the browser toolbar.
+Pins are local to the desktop browser profile and shared across panes and windows.
+Disabling an extension hides its icon without forgetting the pin; uninstalling removes it.
+Toolbar buttons use the existing supported popup actions.
 See [Browser](public-docs/browser.md) for supported actions and limitations.
+
+### Automatic usage refresh
+
+Displayed connection usage refreshes every 15 minutes while the app is visible and the host is connected. Hidden usage panels pause automatic refresh; manual refresh remains available.
 
 ### Sync app settings
 
@@ -143,6 +155,10 @@ Choose a settings host in Paseo++ on Android or desktop to share preferences acr
 ### Android SSH hosts
 
 Connect directly to a remote daemon using an imported private key and optional passphrase, without requiring the Paseo relay. Verify the server fingerprint before connecting; saved credentials are encrypted on your phone. Setup can be dismissed safely during imports and checks.
+
+### Restore archived workspaces
+
+Choose **Restore archived workspace** from a project's menu to browse that project's archive on its host. Select a workspace to review and confirm recovery. Restoring the workspace leaves archived agents archived. Removed worktrees recover from Git; uncommitted changes and untracked files are not recovered.
 
 ### Branch and worktree choices
 
@@ -168,7 +184,7 @@ On desktop, HTTP and HTTPS links in a workspace open in a new Paseo browser tab 
 
 ### Background browser automation
 
-Desktop agents can interact with browser tabs while the pane is hidden, the app is unfocused, or its window is minimized.
+Resident browser tabs keep their page identity while hidden. Reliable keyboard input without focusing the app, including minimized Windows operation, remains unverified on the restored webview path.
 
 ### Screenshot originals and capture guards
 
@@ -178,7 +194,9 @@ Paseo-owned browser screenshots save admitted originals on the execution host an
 
 Unanswered questions stay available when a Codex turn is stopped or interrupted. You can answer or dismiss them later, including after reopening the conversation.
 
-### Notification targets
+### Workspace notifications
+
+Agent and terminal notifications name their workspace, with the project name included when it fits. Desktop and browser alerts use the project's icon. Mobile alerts keep the Paseo icon alongside the workspace text. Status and message previews remain visible below the workspace name.
 
 Chat notifications open their owning workspace, including older notifications without a workspace link. Windows banners and Notification Center entries retain their chat targets across app restarts.
 

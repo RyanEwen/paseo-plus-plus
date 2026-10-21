@@ -2,6 +2,7 @@ import { registerNativeBrowserSurface } from "../browser-views/surfaces.js";
 import { describe, expect, test, vi } from "vitest";
 import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
 import { adaptWebContents as adaptContents, HostSnapshotEngineRegistry } from "./ipc.js";
+import { getGuestCdpTransport } from "./cdp-transport.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
@@ -27,7 +28,7 @@ class FakeDebugger {
   private messageListener:
     | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
     | null = null;
-  private detachListener: (() => void) | null = null;
+  private readonly detachListeners = new Set<() => void>();
   private readonly blockedCommands: Array<() => void> = [];
 
   public isAttached(): boolean {
@@ -75,10 +76,15 @@ class FakeDebugger {
       | (() => void),
   ): void {
     if (event === "detach") {
-      this.detachListener = listener;
+      this.detachListeners.add(listener as () => void);
       return;
     }
     this.messageListener = listener;
+  }
+
+  public removeListener(event: "detach", listener: () => void): void {
+    expect(event).toBe("detach");
+    this.detachListeners.delete(listener);
   }
 
   public emitMessage(method: string, params?: Record<string, unknown>): void {
@@ -90,7 +96,7 @@ class FakeDebugger {
 
   public emitDetach(): void {
     this.attachedProtocolVersions.length = 0;
-    this.detachListener?.();
+    for (const listener of this.detachListeners) listener();
   }
 
   public finishNextCommand(): void {
@@ -311,6 +317,7 @@ describe("browser automation IPC adapter", () => {
         ["closing", adaptWebContents(closing)],
         ["next", adaptWebContents(next)],
       ]);
+      const idleDestroyListeners = next.destroyedListeners.size;
       const registry: BrowserRegistry = {
         listRegisteredBrowserIds: () => [...tabs.keys()],
         listRegisteredBrowserIdsForWorkspace: () => [...tabs.keys()],
@@ -351,7 +358,7 @@ describe("browser automation IPC adapter", () => {
       next.frameListener?.(new FakeImage());
       await expect(nextCapture).resolves.toMatchObject({ ok: true });
       await closedCapture;
-      expect(next.destroyedListeners.size).toBe(1);
+      expect(next.destroyedListeners.size).toBe(idleDestroyListeners);
     } finally {
       await vi.runAllTimersAsync();
       vi.useRealTimers();
@@ -1133,5 +1140,114 @@ describe("native browser surface adaptation", () => {
     } finally {
       retire();
     }
+  });
+});
+
+describe("shared exact-guest CDP transport", () => {
+  test("shares the existing guest owner without enabling domains or observing its console", async () => {
+    const guest = new FakeWebContents(2001);
+    const observe = vi.spyOn(guest, "on");
+    const owner = getGuestCdpTransport(guest);
+    expect(getGuestCdpTransport(guest)).toBe(owner);
+    expect(observe).not.toHaveBeenCalled();
+    await expect(
+      owner.sendIfIdle("Page.getNavigationHistory", undefined, new AbortController().signal),
+    ).resolves.toEqual({ ok: true });
+    expect(guest.debugger.commands).toEqual([{ command: "Page.getNavigationHistory", params: {} }]);
+    expect(guest.debugger.attachedProtocolVersions).toEqual(["1.3"]);
+    guest.destroy();
+  });
+
+  test("background readers refuse a busy automation queue without adding debt or bypassing it", async () => {
+    const guest = new FakeWebContents(2002);
+    guest.debugger.blockCommands = true;
+    const page = adaptWebContents(guest);
+    const owner = getGuestCdpTransport(guest);
+    const active = page.sendDebugCommand?.("Runtime.evaluate", { expression: "true" });
+    await flushMicrotasks();
+    for (let index = 0; index < 4; index += 1) {
+      await expect(
+        owner.sendIfIdle("Page.getFrameTree", undefined, new AbortController().signal),
+      ).rejects.toThrow("busy");
+    }
+    expect(guest.debugger.commands).toEqual([
+      { command: "Runtime.evaluate", params: { expression: "true" } },
+    ]);
+    guest.debugger.blockCommands = false;
+    guest.debugger.finishNextCommand();
+    await active;
+    await expect(
+      owner.sendIfIdle("Page.getFrameTree", undefined, new AbortController().signal),
+    ).resolves.toEqual({ ok: true });
+    guest.destroy();
+  });
+
+  test("an aborted in-flight native read keeps its barrier until actual settlement", async () => {
+    const guest = new FakeWebContents(2003);
+    guest.debugger.blockCommands = true;
+    const owner = getGuestCdpTransport(guest);
+    const controller = new AbortController();
+    const active = owner.sendIfIdle("Page.getFrameTree", undefined, controller.signal);
+    await flushMicrotasks();
+    controller.abort();
+    await expect(
+      owner.sendIfIdle("Page.getNavigationHistory", undefined, new AbortController().signal),
+    ).rejects.toThrow("busy");
+    expect(guest.debugger.commands).toHaveLength(1);
+    guest.debugger.blockCommands = false;
+    guest.debugger.finishNextCommand();
+    await active;
+    await owner.sendIfIdle("Page.getNavigationHistory", undefined, new AbortController().signal);
+    expect(guest.debugger.commands).toHaveLength(2);
+    guest.destroy();
+  });
+
+  test("native destruction cancels undispatched requests and never aliases a new guest with the same numeric ID", async () => {
+    const guest = new FakeWebContents(2004);
+    guest.debugger.blockCommands = true;
+    const owner = getGuestCdpTransport(guest);
+    const active = owner.send("Page.getFrameTree");
+    await flushMicrotasks();
+    const queued = owner.send("Page.getNavigationHistory");
+    guest.destroy();
+    await expect(queued).rejects.toThrow("destroyed");
+    const replacement = new FakeWebContents(2004);
+    const next = getGuestCdpTransport(replacement);
+    expect(next).not.toBe(owner);
+    await next.send("Page.getFrameTree");
+    expect(guest.debugger.commands).toHaveLength(1);
+    expect(replacement.debugger.commands).toHaveLength(1);
+    guest.debugger.finishNextCommand();
+    await active;
+    replacement.destroy();
+  });
+
+  test("does not attach over DevTools and preserves a real detached-query failure without retrying", async () => {
+    const guest = Object.assign(new FakeWebContents(2005), { isDevToolsOpened: () => true });
+    const owner = getGuestCdpTransport(guest);
+    await expect(
+      owner.sendIfIdle("Page.getFrameTree", undefined, new AbortController().signal),
+    ).rejects.toThrow("DevTools");
+    expect(guest.debugger.attachedProtocolVersions).toEqual([]);
+    expect(guest.debugger.commands).toEqual([]);
+    guest.isDevToolsOpened = () => false;
+    guest.debugger.failedCommandNames.add("Page.getFrameTree");
+    await expect(
+      owner.sendIfIdle("Page.getFrameTree", undefined, new AbortController().signal),
+    ).rejects.toThrow("Page.getFrameTree failed");
+    expect(guest.debugger.attachedProtocolVersions).toEqual(["1.3"]);
+    expect(guest.debugger.commands).toHaveLength(1);
+    guest.destroy();
+  });
+  test("a multi-read metadata session fails on detach without a competing reattach", async () => {
+    const guest = new FakeWebContents(2006);
+    const owner = getGuestCdpTransport(guest);
+    const send = owner.metadataSender(new AbortController().signal);
+    await send("Page.getFrameTree");
+    guest.debugger.emitDetach();
+    await expect(send("Page.getNavigationHistory")).rejects.toThrow("session detached");
+    expect(guest.debugger.commands).toHaveLength(1);
+    expect(guest.debugger.attachedProtocolVersions).toEqual([]);
+    guest.destroy();
   });
 });

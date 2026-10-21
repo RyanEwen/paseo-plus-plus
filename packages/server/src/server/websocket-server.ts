@@ -15,7 +15,12 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
-import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import {
+  resolveProjectDisplayName,
+  resolveWorkspaceDisplayName,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
@@ -78,6 +83,7 @@ import {
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
+  withNotificationWorkspaceContext,
 } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -1908,6 +1914,7 @@ export class VoiceAssistantWebSocketServer {
         worktreeRestore: true,
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: true,
+        projectArchivedWorkspaces: true,
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: true,
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
@@ -2639,7 +2646,9 @@ export class VoiceAssistantWebSocketServer {
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
     const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
+    const context = await this.resolveNotificationWorkspaceContext(agent.workspaceId);
     const notification = buildAgentAttentionNotificationPayload({
+      ...context,
       reason: params.reason,
       serverId: this.serverId,
       workspaceId: agent.workspaceId,
@@ -2704,6 +2713,19 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  /** Read identity from the registry relation, never from an agent's working directory. */
+  private async resolveNotificationWorkspaceContext(workspaceId: string | undefined) {
+    const workspace = workspaceId ? await this.workspaceRegistry.get(workspaceId) : null;
+    if (!workspace) {
+      return { workspaceName: null, projectName: null };
+    }
+    const project = await this.projectRegistry.get(workspace.projectId);
+    return {
+      workspaceName: resolveWorkspaceDisplayName(workspace),
+      projectName: project ? resolveProjectDisplayName(project) : null,
+    };
+  }
+
   private async broadcastTerminalAttention(params: {
     terminalId: string;
     cwd: string;
@@ -2750,8 +2772,14 @@ export class VoiceAssistantWebSocketServer {
       nowMs,
     });
 
-    const title = terminalAttentionTitle(params.reason);
-    const body = params.terminalName;
+    const context = await this.resolveNotificationWorkspaceContext(workspaceId);
+    const { title, body } = withNotificationWorkspaceContext(
+      {
+        title: terminalAttentionTitle(params.reason),
+        body: params.terminalName,
+      },
+      context,
+    );
 
     if (plan.shouldPush) {
       void this.pushNotificationSender

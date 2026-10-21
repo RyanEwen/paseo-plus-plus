@@ -214,6 +214,7 @@ import {
   createWorkspaceRecoveryService,
   type WorkspaceRecoveryService,
 } from "./session/workspace-recovery/workspace-recovery-service.js";
+import { listArchivedProjectWorkspaces } from "./session/workspace-recovery/list-archived-workspaces.js";
 import {
   createAgentUpdatesService,
   matchesAgentUpdatesFilter,
@@ -3077,6 +3078,8 @@ export class Session {
 
   private dispatchWorkspaceStateMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "workspace.recovery.list_archived.request":
+        return this.handleWorkspaceRecoveryListArchivedRequest(msg);
       case "workspace.recovery.inspect.request":
         return this.handleWorkspaceRecoveryInspectRequest(msg);
       case "workspace.recovery.restore.request":
@@ -3888,6 +3891,39 @@ export class Session {
         },
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
+    }
+  }
+
+  /** Reply only to an explicit archive-list request; active directory subscriptions stay untouched. */
+  private async handleWorkspaceRecoveryListArchivedRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.recovery.list_archived.request" }>,
+  ): Promise<void> {
+    try {
+      const entries = await listArchivedProjectWorkspaces({
+        projectId: request.projectId,
+        includeBackground: request.includeBackground,
+        projects: this.projectRegistry,
+        workspaces: this.workspaceRegistry,
+      });
+      this.emit({
+        type: "workspace.recovery.list_archived.response",
+        payload: {
+          requestId: request.requestId,
+          projectId: request.projectId,
+          entries,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.recovery.list_archived.response",
+        payload: {
+          requestId: request.requestId,
+          projectId: request.projectId,
+          entries: [],
+          error: getErrorMessageOr(error, "Failed to list archived workspaces"),
+        },
+      });
     }
   }
 

@@ -9,6 +9,7 @@ import type { TabContents, BrowserRegistry, TabImage, DialogCaptureOperation } f
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { waitForInput } from "./input-lifetime.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
+import { getGuestCdpTransport, type GuestCdpTransport } from "./cdp-transport.js";
 import {
   dialogAcceptValue,
   handledDialogEvent,
@@ -29,7 +30,6 @@ import {
 
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
-const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const inputQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const dialogMonitorsByContentsId = new Map<number, DialogMonitor>();
 const observedContentsIds = new Set<number>();
@@ -137,8 +137,8 @@ export function adaptWebContents(
 ): TabContents {
   const contentsId = contents.id;
   observeConsoleMessages(contents, contentsId);
-  const cdpQueue = getCdpQueue(contentsId);
-  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpQueue);
+  const cdpTransport = getGuestCdpTransport(contents);
+  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpTransport);
   return {
     id: contentsId,
     getURL: () => contents.getURL(),
@@ -167,12 +167,6 @@ export function adaptWebContents(
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (operation) => dialogMonitor.capture(operation),
     sendDebugCommand: (command: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
-      const send = async () => {
-        if (!contents.debugger.isAttached()) {
-          contents.debugger.attach("1.3");
-        }
-        return contents.debugger.sendCommand(command, params ?? {});
-      };
       // Like dialog responses, cancellation cleanup must unblock a possibly
       // delivered press even when its acknowledgment still owns the queue.
       if (
@@ -180,9 +174,9 @@ export function adaptWebContents(
         command === "Input.dispatchMouseEvent" &&
         params?.type === "mouseReleased"
       ) {
-        return send();
+        return cdpTransport.sendImmediate(command, params);
       }
-      return cdpQueue.run(send, signal);
+      return cdpTransport.send(command, params, signal);
     },
   };
 }
@@ -222,10 +216,6 @@ function captureViewportFrame(
   });
 }
 
-function getCdpQueue(contentsId: number): CdpSessionQueue {
-  return getCommandQueue(contentsId, cdpQueuesByContentsId);
-}
-
 /** Keep input gestures atomic while still allowing screenshot activity to overlap. */
 function getCommandQueue(
   contentsId: number,
@@ -254,7 +244,6 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
   contents.once("destroyed", () => {
     observedContentsIds.delete(contentsId);
     consoleMessagesByContentsId.delete(contentsId);
-    cdpQueuesByContentsId.delete(contentsId);
     inputQueuesByContentsId.delete(contentsId);
     dialogMonitorsByContentsId.delete(contentsId);
   });
@@ -263,13 +252,13 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
 function getDialogMonitor(
   contents: BrowserAutomationWebContents,
   contentsId: number,
-  cdpQueue: CdpSessionQueue,
+  cdpTransport: GuestCdpTransport,
 ): DialogMonitor {
   const existing = dialogMonitorsByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
-  const monitor = new DialogMonitor(contents, contentsId, cdpQueue);
+  const monitor = new DialogMonitor(contents, contentsId, cdpTransport);
   dialogMonitorsByContentsId.set(contentsId, monitor);
   return monitor;
 }
@@ -283,7 +272,7 @@ class DialogMonitor {
   public constructor(
     private readonly contents: BrowserAutomationWebContents,
     private readonly contentsId: number,
-    private readonly cdpQueue: CdpSessionQueue,
+    private readonly cdpTransport: GuestCdpTransport,
   ) {}
 
   /** Release dialog ownership on cancellation even if an input acknowledgment
@@ -438,13 +427,7 @@ class DialogMonitor {
     signal,
     onDispatch,
   }: DialogDebugCommand): Promise<unknown> {
-    return this.cdpQueue.run(async () => {
-      if (!this.contents.debugger.isAttached()) {
-        this.contents.debugger.attach("1.3");
-      }
-      onDispatch?.();
-      return this.contents.debugger.sendCommand(command, params ?? {});
-    }, signal);
+    return this.cdpTransport.send(command, params, signal, onDispatch);
   }
 
   private async sendDialogCleanupCommand(
@@ -453,10 +436,7 @@ class DialogMonitor {
   ): Promise<unknown> {
     // A dialog or timed-out input can retain a protocol queue barrier. Responses
     // and prompt restoration must bypass it to release page interception.
-    if (!this.contents.debugger.isAttached()) {
-      this.contents.debugger.attach("1.3");
-    }
-    return this.contents.debugger.sendCommand(command, params ?? {});
+    return this.cdpTransport.sendImmediate(command, params);
   }
 }
 

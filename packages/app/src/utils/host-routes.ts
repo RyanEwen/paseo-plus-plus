@@ -187,6 +187,11 @@ export function getHostWorkspaceOpenParamFromPathname(pathname: string): string 
   return parseWorkspaceOpenIntent(open) ? open : null;
 }
 
+/** Read the explicit workspace-only recovery intent without selecting a conversation. */
+export function getHostWorkspaceRecoveryParamFromPathname(pathname: string): "1" | undefined {
+  return new URLSearchParams(extractSearch(pathname)).get("recover") === "1" ? "1" : undefined;
+}
+
 export function encodeWorkspaceIdForPathSegment(workspaceId: string): string {
   const normalized = trimNonEmpty(workspaceId);
   if (!normalized) {

@@ -146,6 +146,8 @@ branch, and target path must still be usable. Dependency setup is not run automa
 restoration. Preserve unfinished work before archiving; an archived conversation is not a source
 backup.
 
+The project menu's **Restore archived workspace** opens that project's archived records on the same host, including workspaces with no retained agents. Selection opens the existing recovery confirmation without changing archive state. The list requires an updated host and follows **Show background workspaces**. Recovery inspection and restoration recheck current state, so a stale archive row cannot trigger a different recovery path silently.
+
 The workspace + menu opens the **Reopen closed agent** dialog, scoped to that host and workspace identity.
 It includes archived agents and unarchived agents without open tabs. Runtime `closed` status
 does not mean a tab was closed. Selection uses the same navigation as History.

@@ -845,6 +845,8 @@ export const ru: TranslationResources = {
       },
       session: "Сеанс браузера {{browserId}}",
       controls: {
+        pageZoom: "Масштаб страницы",
+        zoomFailed: "Не удалось изменить масштаб страницы",
         back: "Назад",
         forward: "Вперед",
         stopLoading: "Остановить загрузку",
@@ -874,6 +876,9 @@ export const ru: TranslationResources = {
         loading: "Загрузка расширений...",
         manage: "Управление расширениями",
         openFailed: "Не удалось открыть расширение",
+        pin: "Закрепить {{name}}",
+        unpin: "Открепить {{name}}",
+        pinFailed: "Не удалось сохранить закрепление расширения",
       },
       devices: {
         label: "Размер экрана устройства",
@@ -1593,6 +1598,13 @@ export const ru: TranslationResources = {
       openProjectSettings: "Открыть настройки проекта",
     },
     project: {
+      restore: {
+        title: "Восстановить архивную рабочую область",
+        search: "Поиск архивных рабочих областей",
+        empty: "В этом проекте нет архивных рабочих областей",
+        updateRequired: "Обновите хост для просмотра архивных рабочих областей",
+        loadFailed: "Не удалось загрузить архивные рабочие области",
+      },
       actions: {
         menu: "Действия проекта",
         openSettings: "Открыть настройки проекта",

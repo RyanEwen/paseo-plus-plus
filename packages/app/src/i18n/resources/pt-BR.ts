@@ -845,6 +845,8 @@ export const ptBR: TranslationResources = {
       },
       session: "Sessão do navegador {{browserId}}",
       controls: {
+        pageZoom: "Zoom da página",
+        zoomFailed: "Não foi possível alterar o zoom da página",
         back: "Voltar",
         forward: "Avançar",
         stopLoading: "Parar carregamento",
@@ -874,6 +876,9 @@ export const ptBR: TranslationResources = {
         loading: "Carregando extensões...",
         manage: "Gerenciar extensões",
         openFailed: "Não foi possível abrir a extensão",
+        pin: "Fixar {{name}}",
+        unpin: "Desafixar {{name}}",
+        pinFailed: "Não foi possível salvar a extensão fixada",
       },
       devices: {
         label: "Tamanho do dispositivo",
@@ -1602,6 +1607,13 @@ export const ptBR: TranslationResources = {
       openProjectSettings: "Abrir configurações do projeto",
     },
     project: {
+      restore: {
+        title: "Restaurar espaço de trabalho arquivado",
+        search: "Buscar espaços de trabalho arquivados",
+        empty: "Nenhum espaço de trabalho arquivado neste projeto",
+        updateRequired: "Atualize o host para ver os espaços de trabalho arquivados",
+        loadFailed: "Não foi possível carregar os espaços de trabalho arquivados",
+      },
       actions: {
         menu: "Ações do projeto",
         openSettings: "Abrir configurações do projeto",

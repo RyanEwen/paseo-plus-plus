@@ -36,7 +36,7 @@ Your code never leaves your machine. Paseo is local-first.
 - **Daemon:** Local server that spawns and manages agent processes and exposes the WebSocket API.
 - **App:** Cross-platform Expo client for iOS, Android, web, and the shared UI used by desktop.
 - **CLI:** Terminal interface for agent workflows that can also start and manage the daemon.
-- **Desktop app:** Electron wrapper around the web app that bundles and auto-manages its own daemon. Native browser design and historical qualification boundaries are recorded in [native browser feasibility](native-browser-feasibility.md).
+- **Desktop app:** Electron wrapper around the web app that bundles and auto-manages its own daemon. Desktop browser design and historical qualification boundaries are recorded in [native browser feasibility](native-browser-feasibility.md).
 - **Relay:** Optional encrypted bridge for remote access without opening ports directly.
 
 ## Packages
@@ -205,7 +205,7 @@ file after the daemon confirms persistence.
 
 > **Window-state v1 limitation:** only the _first_ window of a session restores and persists saved geometry (size/position/maximized). Windows opened via ⌘⇧N / second-instance / "Open in new window" open at the default size, OS-cascaded, and do not persist — this avoids every window stacking on the same restored bounds and fighting over the single window-state store. Lifting this needs per-window state keys.
 >
-> **In-app browser profile.** Browser pages and extension documents share one persistent Electron session across tabs, workspaces, windows and desktop restarts. Main creates native WebContentsViews and registers their browser/workspace/host identities before page load; renderer IPC cannot claim arbitrary native contents IDs. Inactive workspace retention keeps page identity separate from presentation, and explicit tab closure owns disposal. Settings > Browser > Clear browser data remains the profile-deletion path and reloads live guests without deleting saved tabs or URLs. The accepted legacy webview path retains its attachment registration contract. Extension installation and API limits are described in [Browser](../public-docs/browser.md).
+> **In-app browser profile.** Browser pages and extension documents share one persistent Electron session across tabs, workspaces, windows and desktop restarts. Resident DOM `<webview>` elements keep guests attached while panes are hidden. Main validates their shared session and embedder before registering browser/workspace/host identities; renderer IPC cannot claim arbitrary contents IDs. Inactive workspace retention keeps page identity separate from presentation, and explicit tab closure owns disposal. Settings > Browser > Clear browser data remains the profile-deletion path and reloads live guests without deleting saved tabs or URLs. Menus use the DOM overlay plane without taking a browser still or hiding the guest. MV3 storage notifications use a passive extension-origin context because stock Electron loses worker storage events. The context has no native window or browser-tab registration. A synchronous worker-preload gate waits for its native listener, while main stays asynchronous; later event delivery retains the ordinary worker-ready gate. Failure unloads that runtime generation and publishes the existing catalog error without changing the saved enabled choice. Native storage methods, access levels and frame events remain unchanged. Extension installation and API limits are described in [Browser](../public-docs/browser.md).
 >
 > **In-app browser window opens.** Ordinary link opens, including Shift-clicked links, become Paseo workspace tabs. Script-created opens with popup features or a named window target and POST-backed opens remain secured Electron child windows in the shared browser profile, preserving `window.opener`, `postMessage`, named-window reuse, request bodies, and `window.close()` for OAuth, payment, and similar popup protocols. Unsupported URL schemes are denied before either path.
 >
@@ -262,6 +262,25 @@ provider-context quota, compaction savings or an OOM incident fix. The enforced 
 ### `packages/website` — Marketing site
 
 TanStack Router + Cloudflare Workers. Serves paseo.sh.
+
+## Workspace notifications
+
+Resolve notification labels through the agent or terminal's workspace registry record and its
+project relation. Working directories do not establish project ownership. The daemon creates the
+same text for push and connected clients, so renamed labels do not depend on a client's directory
+cache being loaded.
+
+Desktop and browser clients acquire icons through the existing project-icon cache. Rasterize
+images in a browser image element before passing PNG bytes to the OS adapter; this handles SVG
+without allowing repository markup to execute or load external resources. Client icon lookup has a
+500 ms budget and cannot prevent alert delivery. Windows requires a local image file: retain small,
+content-addressed PNGs under desktop user data so Notification Center can still reference them
+after a restart. This cache has per-image limits; it does not have a total-size bound or expire
+files that notification history may still reference.
+
+Native push keeps the Paseo icon and receives the same workspace text. Project images on mobile
+are deferred: Expo requires a retrievable image URL, and iOS additionally requires a notification
+service extension. Keep project image bytes out of the size-limited push payload.
 
 ## WebSocket protocol
 

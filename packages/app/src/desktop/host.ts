@@ -61,7 +61,9 @@ export interface DesktopNotificationBridge {
   }) => Promise<void>;
   isSupported?: () => Promise<boolean>;
   sendNotification?: (
-    payload: string | { title: string; body?: string; data?: Record<string, unknown> },
+    payload:
+      | string
+      | { title: string; body?: string; data?: Record<string, unknown>; icon?: string },
   ) => Promise<boolean>;
 }
 
@@ -116,6 +118,8 @@ export interface DesktopWindowChromeUpdate {
 }
 
 export interface DesktopWindowBridge {
+  /** Native host zoom, independent of monitor scale and guest page zoom. */
+  getZoomFactor?: () => number;
   label?: string;
   minimize?: () => Promise<void>;
   close?: () => Promise<void>;
@@ -225,7 +229,9 @@ export interface DesktopBrowserBridge {
   views?: DesktopNativeBrowserBridge;
   extensions?: {
     list(): Promise<DesktopBrowserExtension[]>;
-    actions(): Promise<DesktopBrowserExtensionAction[]>;
+    actions(browserId: string): Promise<DesktopBrowserExtensionAction[]>;
+    setPinned(id: string, pinned: boolean): Promise<void>;
+    onChanged(handler: () => void): () => void;
     openPopup(id: string, browserId: string): Promise<void>;
     setEnabled(id: string, enabled: boolean): Promise<void>;
     remove(id: string): Promise<void>;
@@ -265,6 +271,14 @@ export interface DesktopBrowserExtension {
 }
 
 export interface DesktopBrowserExtensionAction {
+  badge?: {
+    text: string;
+    backgroundColor: [number, number, number, number] | null;
+    textColor: [number, number, number, number] | null;
+  };
+  pinned: boolean;
+  title: string;
+  iconDataUrl: string | null;
   id: string;
   name: string;
   hasPopup: boolean;

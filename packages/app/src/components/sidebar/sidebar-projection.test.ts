@@ -15,6 +15,7 @@ import {
   sortSidebarProjectsByName,
 } from "./sidebar-arrangement";
 import { buildSidebarProjection, resolveSidebarCollapseTargets } from "./sidebar-projection";
+import { buildStatusListItems } from "./status-list-items";
 
 function makeWorkspace(
   id: string,
@@ -126,6 +127,65 @@ function twoProjectInput(groupMode: "project" | "status") {
 }
 
 describe("buildSidebarProjection", () => {
+  it("keeps full status membership in collapsed and limited headers as workspaces move or are filtered", () => {
+    const input = twoProjectInput("status");
+    const third = makeWorkspace("third", "running", ["Backend"]);
+    third.entry.projectPinnedAt = "2026-10-20T12:00:00.000Z";
+    input.projects[0].workspaces.push(third.placement);
+    input.workspaceEntriesByKey.set(third.entry.workspaceKey, third.entry);
+
+    const listItems = () =>
+      buildStatusListItems({
+        groups: buildSidebarProjection(input).workspaceGroups,
+        collapsedGroupKeys: new Set(["needs_input"]),
+        expandedGroupKeys: new Set(),
+        initialCount: 1,
+      });
+    const memberships = () => {
+      const headers = [];
+      for (const item of listItems()) {
+        if (item.kind !== "header") continue;
+        headers.push({
+          key: item.group.key,
+          workspaceIds: item.group.rows.map((row) => row.workspaceId),
+        });
+      }
+      return headers;
+    };
+
+    expect(memberships()).toEqual([
+      { key: "needs_input", workspaceIds: ["second"] },
+      { key: "running", workspaceIds: ["first", "third"] },
+    ]);
+    expect(listItems().filter((item) => item.kind === "workspace")).toHaveLength(1);
+
+    // One workspace changes group, even when the destination's rows are collapsed.
+    third.entry.statusBucket = "needs_input";
+    expect(memberships()).toEqual([
+      { key: "needs_input", workspaceIds: ["second", "third"] },
+      { key: "running", workspaceIds: ["first"] },
+    ]);
+
+    // Global pins leave status membership; project pins above remained in their bucket.
+    input.pinnedKeys.pinnedWorkspaceKeys = [third.entry.workspaceKey];
+    expect(memberships()).toEqual([
+      { key: "needs_input", workspaceIds: ["second"] },
+      { key: "running", workspaceIds: ["first"] },
+    ]);
+
+    const filtered = filterSidebarByText({
+      projects: input.projects,
+      entries: input.workspaceEntriesByKey,
+      projectNames: input.projectNamesByViewKey,
+      text: "first",
+      workspaceTitleSource: "title",
+      showBranch: true,
+    });
+    input.projects = filtered.projects;
+    input.workspaceEntriesByKey = new Map(filtered.entries);
+    expect(memberships()).toEqual([{ key: "running", workspaceIds: ["first"] }]);
+  });
+
   it("sorts equal statuses newest first without changing priority, pins, ties, or saved order", () => {
     const input = projectionInput();
     const old = makeWorkspace("old");
@@ -616,6 +676,27 @@ describe("optional project pinning", () => {
 });
 
 describe("project activity summaries", () => {
+  it("surfaces ready work ahead of working siblings while retaining pins and the working count", () => {
+    const working = makeWorkspace("working", "running");
+    const ready = makeWorkspace("ready", "attention");
+    ready.entry.pinnedAt = "2026-10-20T12:00:00.000Z";
+    const project = makeProject([working.placement, ready.placement]);
+    const entries = new Map([working, ready].map(({ entry }) => [entry.workspaceKey, entry]));
+    const online = new Map([["srv", "online"]] as const);
+
+    expect(summarizeSidebarProjectActivity([project], entries, online).get("project")).toEqual({
+      bucket: "attention",
+      workingCount: 1,
+    });
+
+    ready.entry.statusBucket = "done";
+    expect(summarizeSidebarProjectActivity([project], entries, online).get("project")).toEqual({
+      bucket: "running",
+      workingCount: 1,
+    });
+    expect(ready.entry.pinnedAt).toBe("2026-10-20T12:00:00.000Z");
+  });
+
   it("includes the complete selectable project catalog and all working children", () => {
     const selected = makeWorkspace("selected", "done", [], "selected-project");
     const first = makeWorkspace("first", "running", [], "other-project");

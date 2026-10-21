@@ -177,6 +177,64 @@ function respondToScheduleRequest(
 
 const clients: DaemonClient[] = [];
 
+test("lists archived project workspace records with correlated errors and no restore request", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "archive-list",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { ownedSubscriptions: true, projectArchivedWorkspaces: true } });
+  await connectPromise;
+
+  const pending = client.listArchivedProjectWorkspaces("project-one");
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "workspace.recovery.list_archived.request",
+    projectId: "project-one",
+    includeBackground: false,
+  });
+  const entry = {
+    workspaceId: "zero-agent",
+    workspaceName: "Feature",
+    branch: "feature",
+    workspaceDirectory: "/repo/feature",
+    archivedAt: "2026-10-20T12:00:00Z",
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.recovery.list_archived.response",
+      payload: {
+        requestId: request.requestId,
+        projectId: "project-one",
+        entries: [entry],
+        error: null,
+      },
+    }),
+  );
+  await expect(pending).resolves.toEqual([entry]);
+
+  const rejected = client.listArchivedProjectWorkspaces("deleted-project");
+  const rejectedAssertion = expect(rejected).rejects.toThrow("Project removed");
+  const second = parseSentFrame(mock.sent[1]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.recovery.list_archived.response",
+      payload: {
+        requestId: second.requestId,
+        projectId: "deleted-project",
+        entries: [],
+        error: "Project removed",
+      },
+    }),
+  );
+  await rejectedAssertion;
+  expect(mock.sent).toHaveLength(2);
+});
+
 afterEach(async () => {
   await Promise.all(clients.map((client) => client.close()));
   clients.length = 0;

@@ -845,6 +845,8 @@ export const es: TranslationResources = {
       },
       session: "Sesión de navegador{{browserId}}",
       controls: {
+        pageZoom: "Zoom de la página",
+        zoomFailed: "No se pudo cambiar el zoom de la página",
         back: "Atrás",
         forward: "Adelante",
         stopLoading: "dejar de cargar",
@@ -874,6 +876,9 @@ export const es: TranslationResources = {
         loading: "Cargando extensiones...",
         manage: "Administrar extensiones",
         openFailed: "No se pudo abrir la extensión",
+        pin: "Fijar {{name}}",
+        unpin: "Desfijar {{name}}",
+        pinFailed: "No se pudo guardar la extensión fijada",
       },
       devices: {
         label: "Tamaño del dispositivo",
@@ -1611,6 +1616,13 @@ export const es: TranslationResources = {
       openProjectSettings: "Abrir la configuración del proyecto",
     },
     project: {
+      restore: {
+        title: "Restaurar espacio de trabajo archivado",
+        search: "Buscar espacios de trabajo archivados",
+        empty: "No hay espacios de trabajo archivados en este proyecto",
+        updateRequired: "Actualiza el host para ver los espacios de trabajo archivados",
+        loadFailed: "No se pudieron cargar los espacios de trabajo archivados",
+      },
       actions: {
         menu: "Acciones del proyecto",
         openSettings: "Abrir la configuración del proyecto",

@@ -829,6 +829,8 @@ export const zhCN: TranslationResources = {
       },
       session: "浏览器会话 {{browserId}}",
       controls: {
+        pageZoom: "页面缩放",
+        zoomFailed: "无法更改页面缩放",
         back: "后退",
         forward: "前进",
         stopLoading: "停止加载",
@@ -858,6 +860,9 @@ export const zhCN: TranslationResources = {
         loading: "正在加载扩展程序...",
         manage: "管理扩展程序",
         openFailed: "无法打开扩展程序",
+        pin: "固定 {{name}}",
+        unpin: "取消固定 {{name}}",
+        pinFailed: "无法保存扩展程序固定状态",
       },
       devices: {
         label: "设备尺寸",
@@ -1556,6 +1561,13 @@ export const zhCN: TranslationResources = {
       openProjectSettings: "打开 project 设置",
     },
     project: {
+      restore: {
+        title: "恢复已归档工作区",
+        search: "搜索已归档工作区",
+        empty: "此项目中没有已归档的工作区",
+        updateRequired: "更新主机以浏览已归档工作区",
+        loadFailed: "无法加载已归档工作区",
+      },
       actions: {
         menu: "Project 操作",
         openSettings: "打开 project 设置",

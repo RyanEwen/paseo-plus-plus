@@ -15,23 +15,9 @@ export function isSidebarActiveAgent(input: AgentStateBucketInput): boolean {
   return deriveSidebarStateBucket(input) !== "done";
 }
 
-// Most urgent first, for collapsing a project's workspaces into one badge. This is
-// deliberately NOT STATUS_BUCKET_ORDER below, which ranks "attention" above "running": on a
-// collapsed project row we want an actively-working project to keep showing the loader,
-// so "running" outranks "attention" here. needs_input and failed still win over both;
-// done stays last.
-const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
-  "needs_input",
-  "failed",
-  "running",
-  "attention",
-  "done",
-];
-
 /**
- * The order states are listed in when all of them are shown side by side rather than collapsed
- * into one — the sidebar's status groups, and the subagent pill's segments. Anything the user has
- * to act on comes before anything that is still moving on its own.
+ * Shared urgency order for status groups and project summaries. Actionable work stays visible
+ * ahead of running work even when a collapsed project hides its workspace rows.
  */
 export const STATUS_BUCKET_ORDER: readonly SidebarStateBucket[] = [
   "needs_input",
@@ -48,14 +34,14 @@ export const STATUS_BUCKET_ORDER: readonly SidebarStateBucket[] = [
 export function aggregateSidebarStateBuckets(
   buckets: Iterable<SidebarStateBucket>,
 ): SidebarStateBucket {
-  let bestRank = STATUS_BUCKET_PRIORITY.length - 1;
+  let bestRank = STATUS_BUCKET_ORDER.length - 1;
   for (const bucket of buckets) {
-    const rank = STATUS_BUCKET_PRIORITY.indexOf(bucket);
+    const rank = STATUS_BUCKET_ORDER.indexOf(bucket);
     if (rank !== -1 && rank < bestRank) {
       bestRank = rank;
     }
   }
-  return STATUS_BUCKET_PRIORITY[bestRank] ?? "done";
+  return STATUS_BUCKET_ORDER[bestRank] ?? "done";
 }
 
 /** Compare status timestamps newest first, placing unknown times last and preserving ties. */

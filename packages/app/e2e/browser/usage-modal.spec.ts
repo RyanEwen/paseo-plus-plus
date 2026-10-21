@@ -8,6 +8,8 @@ import { gotoAppShell } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { getServerId } from "../support/helpers/server-id";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { loadProtocolSchemas } from "../support/helpers/daemon-client-loader";
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import {
   installUsageReportsFixture,
@@ -34,6 +36,7 @@ import {
   expectUsageOptionsFitContent,
   showUsageAs,
   refreshAllUsage,
+  closeUsage,
   togglePin,
   usageItem,
 } from "../support/helpers/usage-sidebar-item";
@@ -362,6 +365,87 @@ const loginWindows: UsageReportEntry["report"] = {
     { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 54 },
   ],
 };
+
+test("displayed usage refreshes every fifteen minutes and stops when hidden", async ({ page }) => {
+  // Match the daemon client's ESM schema instance, as the session readers do.
+  const { WSSessionInboundSchema, WSSessionOutboundSchema } = await loadProtocolSchemas();
+  const fixture = await installLoginUsage(loginWindows);
+  const requests: UsageListRequest[] = [];
+  let completed = 0;
+  page.on("websocket", (socket) => {
+    if (!daemonWsRoutePattern().test(socket.url())) return;
+    socket.on("framesent", ({ payload }) => {
+      const frame = WSSessionInboundSchema.safeParse(JSON.parse(payload.toString()));
+      if (frame.success && frame.data.message.type === "usage.list_reports.request") {
+        requests.push({
+          ...frame.data.message,
+          forceRefresh: frame.data.message.forceRefresh === true,
+        });
+      }
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const frame = WSSessionOutboundSchema.safeParse(JSON.parse(payload.toString()));
+      if (frame.success && frame.data.message.type === "usage.list_reports.response") {
+        completed++;
+      }
+    });
+  });
+
+  try {
+    // With the summary hidden, only the open modal owns automatic refresh demand.
+    await page.addInitScript(() => {
+      const key = "@paseo:app-settings";
+      const settings: unknown = JSON.parse(localStorage.getItem(key) ?? "{}");
+      if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+        throw new Error("Expected stored app settings to be an object");
+      }
+      localStorage.setItem(
+        key,
+        JSON.stringify({ ...settings, sidebarFooterItems: [{ key: "usage", visible: false }] }),
+      );
+    });
+    await page.clock.install();
+    await gotoAppShell(page);
+    await openUsageFromIcon(page);
+    const card = page.getByTestId("usage-report-login-journey:account");
+    await expect(card.getByText("31%", { exact: true })).toBeVisible();
+    await expect.poll(() => completed).toBe(requests.length);
+    const initialRequests = requests.length;
+
+    await page.clock.fastForward(14 * 60_000);
+    expect(requests).toHaveLength(initialRequests);
+    await page.clock.fastForward(60_000);
+    await expect.poll(() => requests.length).toBe(initialRequests + 1);
+    await expect.poll(() => completed).toBe(requests.length);
+    expect(requests.at(-1)?.forceRefresh).toBe(false);
+
+    await page.clock.fastForward(15 * 60_000);
+    await expect.poll(() => requests.length).toBe(initialRequests + 2);
+    await expect.poll(() => completed).toBe(requests.length);
+
+    // Browser time does not age the daemon cache. Manual refresh proves the
+    // force path still bypasses it and publishes the new store-backed report.
+    await fixture.setReport({
+      status: "available",
+      windows: [{ id: "five_hour", label: "Session", usedPct: 64 }],
+    });
+    await refreshLoginUsage(page);
+    await expect(card.getByText("64%", { exact: true })).toBeVisible();
+    expect(requests.at(-1)?.forceRefresh).toBe(true);
+    await expect.poll(() => completed).toBe(requests.length);
+
+    await closeUsage(page);
+    const closedRequests = requests.length;
+    await page.clock.fastForward(30 * 60_000);
+    expect(requests).toHaveLength(closedRequests);
+
+    await openUsageFromIcon(page);
+    await expect(card.getByText("64%", { exact: true })).toBeVisible();
+    await expect.poll(() => requests.length).toBeGreaterThan(closedRequests);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 test("expired login refreshes to windows with visible pin toggles", async ({ page }) => {
   const fixture = await installLoginUsage({

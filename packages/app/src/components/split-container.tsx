@@ -38,6 +38,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import {
+  canApplyExplorerSidebarDockSizes,
   resolveExplorerSidebarDockSizes,
   resolveExplorerSidebarWidth,
 } from "@/components/explorer-sidebar-layout";
@@ -458,6 +459,11 @@ export function SplitContainer({
     },
     [workspaceShellWidth],
   );
+  const canApplyExplorerSidebarPreset = useCallback(
+    (sizes: number[]) =>
+      canApplyExplorerSidebarDockSizes({ sizes, containerWidth: workspaceShellWidth }),
+    [workspaceShellWidth],
+  );
   const commitExplorerSidebarResize = useCallback(
     (_groupId: string, sizes: number[]) => {
       setPreviewExplorerSidebarWidth(null);
@@ -702,6 +708,8 @@ export function SplitContainer({
               <>
                 <ResizeHandle
                   testID="workspace-explorer-sidebar-resize-handle"
+                  showPresets
+                  canApplyPreset={canApplyExplorerSidebarPreset}
                   direction="horizontal"
                   hitAreaAlignment="end"
                   groupId={EXPLORER_SIDEBAR_RESIZE_GROUP_ID}
