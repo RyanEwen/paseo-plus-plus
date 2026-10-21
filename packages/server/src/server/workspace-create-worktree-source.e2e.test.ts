@@ -708,10 +708,44 @@ test("exact workspace worktree choices preserve names, reject conflicts and adop
         }),
       ),
     );
-    expect(concurrent.filter((result) => result.error === null)).toHaveLength(1);
+    const creationEvidence = JSON.stringify({
+      responses: concurrent.map(({ error, workspace }) => ({
+        error,
+        workspaceId: workspace?.id,
+        workspaceDirectory: workspace?.workspaceDirectory,
+      })),
+      worktrees: runGit(repoDir, "worktree", "list", "--porcelain"),
+    });
+    expect(
+      concurrent.filter((result) => result.error === null),
+      creationEvidence,
+    ).toHaveLength(1);
     expect(concurrent.filter((result) => result.error !== null)).toHaveLength(1);
     const successful = concurrent.find((result) => result.workspace !== null)!;
     expect(path.basename(successful.workspace!.workspaceDirectory)).toBe("same-path");
+    const winnerDirectory = successful.workspace!.workspaceDirectory;
+    const winnerBranch = runGit(winnerDirectory, "branch", "--show-current");
+    expect(["concurrent-a", "concurrent-b"]).toContain(winnerBranch);
+    expect(
+      runGit(
+        repoDir,
+        "branch",
+        "--format=%(refname:short)",
+        "--list",
+        "concurrent-a",
+        "concurrent-b",
+      ),
+    ).toBe(winnerBranch);
+    const matchesWinner = createRealpathAwarePathMatcher(winnerDirectory);
+    const actualWorktrees = await client.getPaseoWorktreeList({ cwd: repoDir, includeAll: true });
+    expect(actualWorktrees.error).toBeNull();
+    expect(
+      actualWorktrees.worktrees.filter((entry) => matchesWinner(entry.worktreePath)),
+    ).toHaveLength(1);
+    const workspaceSnapshot = await client.fetchWorkspaces({ page: { limit: 200 } });
+    expect(
+      workspaceSnapshot.entries.filter((entry) => matchesWinner(entry.workspaceDirectory)),
+    ).toHaveLength(1);
     const invalidBranch = await client.createWorkspace({
       source: {
         ...source,

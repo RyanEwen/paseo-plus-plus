@@ -46,10 +46,12 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
+import { WorktreeCreationQueue } from "./worktree-creation-queue.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
 const execFileAsync = promisify(execFile);
+const worktreeCreationQueue = new WorktreeCreationQueue();
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -1249,39 +1251,43 @@ export const createWorktree = async ({
   paseoHome,
   worktreesRoot,
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
-  mkdirSync(dirname(worktreePath), { recursive: true });
+  const projectDirectory = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
+  mkdirSync(projectDirectory, { recursive: true });
 
-  // Also handle worktree path collision
-  let finalWorktreePath = worktreePath;
-  let pathSuffix = 1;
-  if (exactNames && existsSync(finalWorktreePath)) {
-    throw new Error(
-      `Worktree directory already exists: ${finalWorktreePath}. Choose another worktree name or select the existing worktree.`,
-    );
-  }
-  // Exact requests let Git reject a concurrent collision rather than changing the name.
-  if (!exactNames) {
-    while (existsSync(finalWorktreePath)) {
-      finalWorktreePath = `${worktreePath}-${pathSuffix}`;
-      pathSuffix++;
-    }
-  }
+  const { worktreePath, sourcePlan } = await worktreeCreationQueue.run(
+    projectDirectory,
+    async () => {
+      const requestedPath = join(projectDirectory, worktreeSlug);
+      let finalWorktreePath = requestedPath;
+      let pathSuffix = 1;
+      if (exactNames && existsSync(finalWorktreePath)) {
+        throw new Error(
+          `Worktree directory already exists: ${finalWorktreePath}. Choose another worktree name or select the existing worktree.`,
+        );
+      }
+      if (!exactNames) {
+        while (existsSync(finalWorktreePath)) {
+          finalWorktreePath = `${requestedPath}-${pathSuffix}`;
+          pathSuffix++;
+        }
+      }
 
-  // Reject directory conflicts before source planning can fetch or create a tracking branch.
-  const sourcePlan = await resolveWorktreeSourcePlan({
-    cwd,
-    source,
-    desiredSlug: worktreeSlug,
-    exactNames,
-  });
+      // Planning can fetch or create a tracking branch, so it shares destination exclusion.
+      const plan = await resolveWorktreeSourcePlan({
+        cwd,
+        source,
+        desiredSlug: worktreeSlug,
+        exactNames,
+      });
+      await runGitCommand(["worktree", "add", finalWorktreePath, ...plan.addArguments], {
+        cwd,
+        timeout: 120_000,
+      });
+      return { worktreePath: normalizePathForOwnership(finalWorktreePath), sourcePlan: plan };
+    },
+  );
 
-  // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-  await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
-    cwd,
-    timeout: 120_000,
-  });
-  worktreePath = normalizePathForOwnership(finalWorktreePath);
+  // The destination now exists. Slow configuration and setup need not block another creation.
 
   if (sourcePlan.pushRemote) {
     await configureWorktreePushRemote({
