@@ -62,6 +62,7 @@ export async function registerBrowserExtensions(): Promise<void> {
     },
     notifyChanged,
   );
+  app.once("before-quit", () => catalog.dispose());
   profile.extensions.on("extension-loaded", notifyChanged);
   profile.extensions.on("extension-unloaded", notifyChanged);
   let startupError: unknown;

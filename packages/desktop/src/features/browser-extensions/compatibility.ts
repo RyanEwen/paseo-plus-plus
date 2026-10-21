@@ -129,7 +129,8 @@ export function registerBrowserExtensionCompatibility(
     changed: (id, changes, area) => deliverEvent(id, "storage.onChanged", changes, area),
     failed(id, error) {
       options.onStorageFailure?.(id, error);
-      log.error("Extension storage observation failed", error);
+      // Observer messages are fixed host-owned failure labels. Do not serialize Error stacks or native/preload payloads.
+      log.error("Extension storage observation failed", error.message);
     },
     ready: options.onStorageReady,
   });

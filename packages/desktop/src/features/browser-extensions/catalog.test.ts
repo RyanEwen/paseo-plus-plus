@@ -13,6 +13,7 @@ import {
 } from "./storage-observers.js";
 import { BrowserExtensionCatalog, type LoadedBrowserExtension } from "./catalog.js";
 import * as atomicJson from "./atomic-json.js";
+import { ExtensionHostCrashError } from "./runtime-failure.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -68,6 +69,7 @@ async function fixture() {
     unloaded,
     uninstalled,
     create,
+    runtime,
     unloadExternally: () => loadedIds.delete(extension.id),
     loadExternally: () => loadedIds.add(extension.id),
     isLoaded: () => loadedIds.has(extension.id),
@@ -305,6 +307,315 @@ describe("storage observer runtime failures", () => {
   });
 });
 
+describe("extension crash recovery", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(log.info).mockClear();
+    vi.mocked(log.error).mockClear();
+  });
+
+  function crash() {
+    return new ExtensionHostCrashError({
+      extensionVersion: "1.0",
+      appVersion: "0.12.0-beta.3",
+      exitCode: -2147483645,
+      webContentsId: 104,
+      nativeIdentity: { osProcessId: 20004, creationTimeMs: 1_790_000_000_104 },
+    });
+  }
+
+  test("reloads only the crashed runtime, waits for readiness and keeps saved preferences intact", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    const before = await readFile(f.filePath, "utf8");
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(f.loaded).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(f.loaded).toEqual([f.extension.path]);
+    expect((await catalog.list())[0]).toMatchObject({ enabled: true, error: undefined });
+    expect(await readFile(f.filePath, "utf8")).toBe(before);
+    expect(f.uninstalled).toEqual([]);
+    catalog.dispose();
+  });
+
+  test("successful reloads do not reset the three-attempt crash-loop budget", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    for (const delay of [1000, 5000, 15000]) {
+      f.unloadExternally();
+      catalog.recordRuntimeFailure(f.extension.id, crash());
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      const before = f.loaded.length;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.loaded).toHaveLength(before + 1);
+      // Native reload/install notifications can remember a ready generation too; they cannot reset the budget.
+      await catalog.remember(f.extension);
+    }
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(f.loaded).toHaveLength(3);
+    expect((await catalog.list())[0]).toMatchObject({
+      enabled: true,
+      error: expect.stringContaining("Retry"),
+    });
+    expect(log.info).toHaveBeenCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "exhausted", attempt: 3 }),
+    );
+    await catalog.setEnabled(f.extension.id, true);
+    expect(f.loaded).toHaveLength(4);
+    expect((await catalog.list())[0].error).toBeUndefined();
+    catalog.dispose();
+  });
+
+  test("a later crash after the ten-minute window gets a fresh bounded budget", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(600_000);
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.loaded).toHaveLength(2);
+    expect(log.info).toHaveBeenLastCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "ready", attempt: 1 }),
+    );
+    catalog.dispose();
+  });
+
+  test("failed reloads stop after backoff, preserve the terminal load error and redact diagnostics", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    const privateError = new Error("private-url-and-vault-payload");
+    privateError.name = "private-exception-name";
+    const load = vi.spyOn(f.runtime, "load").mockRejectedValue(privateError);
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(load).toHaveBeenCalledTimes(3);
+    expect((await catalog.list())[0]).toMatchObject({ enabled: true, error: privateError.message });
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(load).toHaveBeenCalledTimes(3);
+    const diagnostics = JSON.stringify([
+      vi.mocked(log.info).mock.calls,
+      vi.mocked(log.error).mock.calls,
+    ]);
+    expect(diagnostics).not.toContain(privateError.message);
+    expect(diagnostics).not.toContain(privateError.name);
+    expect(diagnostics).not.toContain(f.extension.path);
+    expect(log.info).toHaveBeenCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "failed", errorClass: "Error" }),
+    );
+    catalog.dispose();
+  });
+
+  test("a new-generation crash during recovery never logs ready or creates overlapping retries", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    const nextCrash = crash();
+    const load = vi.spyOn(f.runtime, "load").mockImplementationOnce(async () => {
+      catalog.recordRuntimeFailure(f.extension.id, nextCrash);
+      throw nextCrash;
+    });
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(log.info).not.toHaveBeenCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "ready" }),
+    );
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(load).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect((await catalog.list())[0].error).toBeUndefined();
+    catalog.dispose();
+  });
+
+  test("a crash after readiness resolves but before load returns cannot be reported as recovered", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    vi.spyOn(f.runtime, "load").mockImplementationOnce(async () => {
+      f.loadExternally();
+      catalog.recordRuntimeFailure(f.extension.id, crash());
+      f.unloadExternally();
+      return f.extension;
+    });
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(log.info).not.toHaveBeenCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "ready" }),
+    );
+    expect((await catalog.list())[0].error).toContain("Retry");
+    catalog.dispose();
+  });
+
+  test.each(["disable", "remove", "shutdown"])("%s cancels scheduled recovery", async (action) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    if (action === "disable") await catalog.setEnabled(f.extension.id, false);
+    if (action === "remove") await catalog.remove(f.extension.id);
+    if (action === "shutdown") catalog.dispose();
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(f.loaded).toEqual([]);
+    expect(f.isLoaded()).toBe(false);
+    catalog.dispose();
+  });
+
+  test.each(["disable", "remove", "shutdown"])(
+    "%s invalidates an in-flight native recovery",
+    async (action) => {
+      vi.useFakeTimers();
+      const f = await fixture();
+      const catalog = f.create();
+      await catalog.remember(f.extension);
+      let complete!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const load = vi.spyOn(f.runtime, "load").mockImplementation(async () => {
+        await gate;
+        f.loadExternally();
+        return f.extension;
+      });
+      f.unloadExternally();
+      catalog.recordRuntimeFailure(f.extension.id, crash());
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(log.info).not.toHaveBeenCalledWith(
+        "[browser-extensions] crash recovery",
+        expect.objectContaining({ event: "ready" }),
+      );
+      let mutation = Promise.resolve();
+      if (action === "disable") mutation = catalog.setEnabled(f.extension.id, false);
+      if (action === "remove") mutation = catalog.remove(f.extension.id);
+      if (action === "shutdown") catalog.dispose();
+      complete();
+      await mutation;
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(f.isLoaded()).toBe(false);
+      expect(log.info).not.toHaveBeenCalledWith(
+        "[browser-extensions] crash recovery",
+        expect.objectContaining({ event: "ready" }),
+      );
+      catalog.dispose();
+    },
+  );
+
+  test("disable cancels recovery already queued behind a catalog save", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = atomicJson.writeAtomicJson;
+    const save = vi.spyOn(atomicJson, "writeAtomicJson").mockImplementationOnce(async (...args) => {
+      await gate;
+      await original(...args);
+    });
+    const pin = catalog.setPinned(f.extension.id, true);
+    await Promise.resolve();
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(1000);
+    const disable = catalog.setEnabled(f.extension.id, false);
+    release();
+    await pin;
+    await disable;
+    save.mockRestore();
+    expect(f.loaded).toEqual([]);
+    expect((await catalog.list())[0]).toMatchObject({ enabled: false, pinned: true });
+    catalog.dispose();
+  });
+
+  test("plain errors, user-disabled and absent entries cannot authorize an automatic restart", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, new Error("render-process-gone; reason=crashed"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.loaded).toEqual([]);
+    await catalog.setEnabled(f.extension.id, false);
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    catalog.recordRuntimeFailure("b".repeat(32), crash());
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(f.loaded).toEqual([]);
+    expect(f.isLoaded()).toBe(false);
+    catalog.dispose();
+  });
+
+  test("disposal failure prevents loading over a still-present host", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    const unload = vi.spyOn(f.runtime, "unload").mockImplementationOnce(() => {
+      throw new Error("Native unload failed");
+    });
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.loaded).toEqual([]);
+    expect(unload).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.loaded).toEqual([f.extension.path]);
+    catalog.dispose();
+  });
+
+  test("a changed extension identity is unloaded and stays terminal without repeated execution", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const catalog = f.create();
+    await catalog.remember(f.extension);
+    const otherId = "b".repeat(32);
+    const load = vi.spyOn(f.runtime, "load").mockResolvedValue({ ...f.extension, id: otherId });
+    f.unloadExternally();
+    catalog.recordRuntimeFailure(f.extension.id, crash());
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(f.unloaded).toContain(otherId);
+    expect((await catalog.list())[0]).toMatchObject({
+      id: f.extension.id,
+      enabled: true,
+      error: expect.stringContaining("identity changed"),
+    });
+    catalog.dispose();
+  });
+});
+
 interface ObserverMetric {
   pid: number;
   creationTime: number;
@@ -326,7 +637,10 @@ const observerNative = vi.hoisted(() => ({
 vi.mock("electron", async () => {
   const { EventEmitter: NativeEmitter } = await import("node:events");
   return {
-    app: Object.assign(new NativeEmitter(), { getAppMetrics: observerNative.metrics }),
+    app: Object.assign(new NativeEmitter(), {
+      getAppMetrics: observerNative.metrics,
+      getVersion: () => "0.12.0-beta.3",
+    }),
     ipcMain: new NativeEmitter(),
     WebContentsView: class {
       webContents: ObserverContents;
@@ -456,6 +770,106 @@ describe("passive storage observer lifecycle", () => {
     observerNative.metrics.mockReset();
     vi.mocked(log.info).mockReset();
   });
+
+  test("actual observer replacement must authenticate ready before recovery is published", async () => {
+    vi.useFakeTimers();
+    const f = setup();
+    const files = await fixture();
+    const runtime = {
+      isLoaded: f.owner.isReady,
+      async load() {
+        f.load();
+        await f.owner.waitUntilReady(f.extension);
+        return f.extension;
+      },
+      unload: (id: string) => f.extensions.removeExtension(id),
+      uninstall: async () => {},
+    };
+    const catalog = new BrowserExtensionCatalog(files.filePath, files.directory, runtime);
+    await catalog.remember(f.extension);
+    f.failed.mockImplementation((id: string, error: Error) =>
+      catalog.recordRuntimeFailure(id, error),
+    );
+    const original = f.load();
+    f.ready(original);
+    await f.owner.waitUntilReady(f.extension);
+    original.emit("render-process-gone", {}, { reason: "crashed", exitCode: -2147483645 });
+    await vi.advanceTimersByTimeAsync(1000);
+    const replacement = observerNative.contents.at(-1)!;
+    expect(replacement).not.toBe(original);
+    expect(f.owner.isReady(f.extension.id)).toBe(false);
+    expect(log.info).not.toHaveBeenCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "ready" }),
+    );
+    f.request();
+    expect(f.replies).toEqual([]);
+    f.ready(replacement);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.replies).toEqual([true]);
+    expect((await catalog.list())[0]).toMatchObject({ enabled: true, error: undefined });
+    expect(log.info).toHaveBeenCalledWith(
+      "[browser-extensions] crash recovery",
+      expect.objectContaining({ event: "ready", attempt: 1, osProcessId: original.nativePid }),
+    );
+    catalog.dispose();
+  });
+
+  test("a crash before observer readiness rejects startup with recovery authority and no invented native identity", async () => {
+    const f = setup();
+    const contents = f.load();
+    const startup = f.owner.waitUntilReady(f.extension);
+    const rejected = expect(startup).rejects.toBeInstanceOf(ExtensionHostCrashError);
+    contents.emit("render-process-gone", {}, { reason: "crashed", exitCode: -2147483645 });
+    await rejected;
+    expect(f.failed.mock.calls[0][1].diagnostic).toMatchObject({
+      osProcessId: null,
+      creationTimeMs: null,
+      webContentsId: contents.id,
+    });
+    expect(f.owner.isReady(f.extension.id)).toBe(false);
+  });
+
+  test("only a native crashed event carries restart authority and safe cached process identity", async () => {
+    const f = setup();
+    const contents = f.load();
+    f.ready(contents);
+    await f.owner.waitUntilReady(f.extension);
+    contents.emit(
+      "render-process-gone",
+      {},
+      { reason: "crashed", exitCode: -2147483645, private: "never-log-this" },
+    );
+    const error = f.failed.mock.calls[0][1];
+    expect(error).toBeInstanceOf(ExtensionHostCrashError);
+    expect(error.diagnostic).toMatchObject({
+      reason: "crashed",
+      exitCode: -2147483645,
+      webContentsId: contents.id,
+      osProcessId: contents.nativePid,
+      appVersion: "0.12.0-beta.3",
+    });
+    expect(JSON.stringify(error)).not.toContain("never-log-this");
+    expect(f.owner.isReady(f.extension.id)).toBe(false);
+    const replacement = f.load();
+    f.ready(replacement);
+    await f.owner.waitUntilReady(f.extension);
+    // The retired generation can neither fail nor restart its replacement.
+    contents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 2 });
+    expect(f.failed).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(["clean-exit", "killed", "oom", "launch-failed", "abnormal-exit"])(
+    "%s does not grant automatic crash recovery",
+    async (reason) => {
+      const f = setup();
+      const contents = f.load();
+      f.ready(contents);
+      await f.owner.waitUntilReady(f.extension);
+      contents.emit("render-process-gone", {}, { reason, exitCode: 1 });
+      expect(f.failed.mock.calls[0][1]).not.toBeInstanceOf(ExtensionHostCrashError);
+    },
+  );
 
   test("only authenticated readiness publishes native PID identity and retires its exact generation", async () => {
     const f = setup();

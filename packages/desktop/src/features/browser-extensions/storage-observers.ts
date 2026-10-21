@@ -10,6 +10,7 @@ import {
 } from "electron";
 import log from "electron-log";
 import { z } from "zod";
+import { ExtensionHostCrashError } from "./runtime-failure.js";
 
 export const STORAGE_OBSERVER_CHANNEL = "paseo:extension-storage-observer";
 export const STORAGE_STARTUP_CHANNEL = "paseo:extension-storage-startup";
@@ -217,7 +218,20 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
       ];
       const reason = reasons.includes(details.reason) ? details.reason : "unknown";
       const code = Number.isSafeInteger(details.exitCode) ? `; exit=${details.exitCode}` : "";
-      lost("render-process-gone", `; reason=${reason}${code}`);
+      if (reason === "crashed") {
+        fail(
+          observer,
+          new ExtensionHostCrashError({
+            extensionVersion: extension.version,
+            appVersion: app.getVersion(),
+            exitCode: details.exitCode,
+            webContentsId: contents.id,
+            nativeIdentity: observer.nativeIdentity,
+          }),
+        );
+      } else {
+        lost("render-process-gone", `; reason=${reason}${code}`);
+      }
     });
     contents.on("preload-error", (_event, _path, error) => {
       const classes = [

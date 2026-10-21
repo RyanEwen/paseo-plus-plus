@@ -78,11 +78,11 @@ restarts. Disabling an extension hides its icon until you enable it again;
 removing the extension forgets its pin. Pins do not sync to other hosts or mobile.
 Toolbar icons and titles come from the installed manifest. Pinned icons and the Extensions menu show the current page's extension-provided badge text and colors. Paseo displays the extension's counts and labels without calculating them. A pinned extension without a popup remains unavailable as a toolbar action.
 
-Extensions that use background workers keep a private, windowless listener for storage
-changes. It lets background state follow popup and page changes without opening a popup.
-If that listener fails, the extension stops and shows a load error in Settings. Its saved
-enabled choice stays intact; choose **Retry**. Native storage and access permissions
-remain in effect. Windows password-manager inline UI still needs verification.
+Extensions that use background workers keep a private, windowless listener for storage changes. It lets background state follow popup and page changes without opening a popup. Native storage and access permissions remain in effect.
+
+When that extension host reports a renderer crash, Paseo automatically reloads the affected extension in the same browser profile. It allows up to three automatic attempts in ten minutes, with increasing delays. Successful reloads keep that crash-loop budget. Once attempts are exhausted, the load error remains in **Settings → Browser → Extensions**; choose **Retry** to try again. Disabling or removing the extension, or quitting Paseo, cancels recovery. Ordinary background-worker sleep and other listener failures do not trigger it.
+
+Reloading can lock a password manager or require reloading the page and retrying autofill. Password-manager inline UI can still crash on Windows; automatic recovery does not fix the native cause. Paseo retains crash reason, exit code, runtime versions, process identity and recovery outcomes in its existing rotating desktop log. These records contain no vault data, page content, URLs, native stack or memory dump. They provide diagnostic metadata, not a native root-cause capture.
 
 Paseo supports Electron's Chrome extension APIs. Some extensions require APIs
 Electron does not provide, so installation does not guarantee every feature works.
