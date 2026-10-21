@@ -777,6 +777,6 @@ test("exact workspace worktree choices preserve names, reject conflicts and adop
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);

@@ -3772,7 +3772,7 @@ describe("certified ordinary reading context", () => {
     expect(resolveCanonicalSourceMetadata(unknown, first)).toBeUndefined();
     const delta = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
       ...page,
-      projection: "projected",
+      projection: "canonical",
     });
     expect(delta).toEqual([]);
   });
