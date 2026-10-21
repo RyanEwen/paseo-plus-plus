@@ -28,6 +28,32 @@ export function originalUserMessages(scope: Page | Locator): Locator {
   return originalTimelineRows(scope).getByTestId("user-message");
 }
 
+/** Measure transcript position independently of a bubble's current sticky translation. */
+export async function readOriginalUserMessageBounds(message: Locator) {
+  return message.evaluate((bubble) => {
+    const rect = bubble.getBoundingClientRect();
+    const row = bubble.closest("[data-actual-prompt-row]");
+    const body = bubble.closest("[data-actual-prompt-content]");
+    const y =
+      row && body
+        ? row.getBoundingClientRect().top + rect.top - body.getBoundingClientRect().top
+        : rect.top;
+    return { x: rect.x, y, width: rect.width, height: rect.height };
+  });
+}
+
+/** Disclose the real prompt body before inspecting content hidden by its one-line preview. */
+export async function revealUserMessageBody(message: Locator): Promise<void> {
+  const expand = message.getByRole("button", { name: "Expand user message", exact: true });
+  if (await expand.count()) await expand.click();
+}
+
+/** An attached image remains available through the collapsed prompt's disclosure control. */
+export async function expectUserMessageImageVisible(message: Locator): Promise<void> {
+  await revealUserMessageBody(message);
+  await expect(message.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+}
+
 /** Match exact original timeline text, never the sticky renderer or its measurement probe. */
 export function originalTimelineText(
   scope: Page | Locator,
@@ -39,6 +65,8 @@ export function originalTimelineText(
 
 interface LongTimelineAgentOptions {
   turns: number;
+  /** Supply real response content when navigation needs substantial later scroll range. */
+  mockAssistantResponse?: string;
   /** Live turns stream for ten seconds unless a test needs one that outlasts it. */
   liveTurns?: "ten-second-stream" | "thirty-minute-stream";
 }
@@ -100,6 +128,9 @@ export async function seedLongMockAgentTimeline(
     repoPrefix: "timeline-pagination-",
     title: "Timeline pagination regression",
     model: options.liveTurns ?? "ten-second-stream",
+    featureValues: options.mockAssistantResponse
+      ? { mockAssistantResponse: options.mockAssistantResponse }
+      : undefined,
   });
 
   for (let index = 0; index < options.turns; index += 1) {
@@ -556,6 +587,7 @@ async function returnTimelineToSettledHistoryStart(
     viewport = await readTimelineViewport(page);
     expect(
       viewport.scrollTop < previous.scrollTop || viewport.scrollHeight > previous.scrollHeight,
+      "History traversal must make progress after upward input",
     ).toBe(true);
     previous = viewport;
   }

@@ -6,17 +6,16 @@ import { uploadWithRetry } from "../upload-release-assets.mjs";
 import { isMainModule } from "../is-main-module.mjs";
 import { validatePreviewAssets } from "./assets.mjs";
 import { requirePreviewRepository } from "./source.mjs";
-import { requirePublicationPolicy, updaterBridgeMarker } from "./publication-policy.mjs";
+import {
+  requirePublicationPolicy,
+  requirePreviewNotes,
+  updaterBridgeMarker,
+} from "./publication-policy.mjs";
 
 /** Publish only a complete validated draft; never replace the bytes of a published preview. */
 export async function publishPreviewRelease({ directory, repo, notes, publish, kind = "preview" }) {
   requirePreviewRepository(repo);
-  if (!notes?.trim()) {
-    throw new Error("Provide user-facing release notes before creating a preview");
-  }
-  if (kind !== "bridge" && notes.includes(updaterBridgeMarker)) {
-    throw new Error("The updater bridge marker is reserved for the once-only bridge release");
-  }
+  requirePreviewNotes(notes, kind);
   const release = JSON.parse(readFileSync(path.join(directory, "preview-release.json"), "utf8"));
   requirePublicationPolicy({ kind, repo, release });
   await validatePreviewAssets({ directory, release });

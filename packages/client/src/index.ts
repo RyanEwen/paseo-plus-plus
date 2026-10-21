@@ -701,10 +701,10 @@ export function createPaseoApi(
 
   return {
     attachments: {
-      list: daemonClient.listAttachments.bind(daemonClient),
-      get: daemonClient.getAttachment.bind(daemonClient),
-      read: daemonClient.readAttachment.bind(daemonClient),
-      cancelRead: daemonClient.cancelAttachmentRead.bind(daemonClient),
+      list: (...args) => daemonClient.listAttachments(...args),
+      get: (...args) => daemonClient.getAttachment(...args),
+      read: (...args) => daemonClient.readAttachment(...args),
+      cancelRead: (...args) => daemonClient.cancelAttachmentRead(...args),
     },
     dispose,
     observeEvents,

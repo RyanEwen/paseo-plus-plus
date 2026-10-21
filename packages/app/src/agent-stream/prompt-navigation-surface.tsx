@@ -105,6 +105,7 @@ export function PromptMessageSurface({
           style={expanded ? undefined : styles.inlineDisclosure}
           accessibilityLabel={expanded ? t("stickyPrompt.collapse") : t("stickyPrompt.expand")}
           accessibilityState={disclosureState}
+          aria-expanded={expanded}
           textStyle={styles.disclosureText}
           onPress={toggleExpanded}
           testID="sticky-user-message-disclosure"

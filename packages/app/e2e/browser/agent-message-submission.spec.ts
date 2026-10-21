@@ -53,6 +53,7 @@ import {
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   originalUserMessages,
+  expectUserMessageImageVisible,
   originalTimelineRows,
   scrollTimelineToNewestLoadedEdge,
   scrollTimelineUntilOlderHistoryIsReachable,
@@ -214,7 +215,7 @@ async function submitImageOnlyMessage(page: Page): Promise<Locator> {
   await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
   const userMessage = originalUserMessages(page).last();
   await expect(userMessage).toBeVisible();
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage);
   return userMessage;
 }
 
@@ -226,7 +227,7 @@ async function expectPendingSubmission(page: Page, userMessage: Locator): Promis
   await expect(userMessage.getByTestId("user-message-timestamp")).toBeAttached();
   await expect(userMessage.getByTestId("user-message-trailing-row")).toHaveCSS("opacity", "0");
   await expect(userMessage).toHaveAttribute("aria-busy", "true");
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage);
 }
 
 async function beginTimelineRowStabilityCheck(
@@ -306,7 +307,7 @@ async function retryRestoredSubmission(page: Page, prompt: string): Promise<void
   await expect(attempts).toHaveCount(2);
   const userMessage = attempts.last();
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage);
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
 }
 
@@ -743,7 +744,7 @@ async function expectCanonicalOrderWinsAcrossOverlappingClients(
     gate.releaseHeldClientRequest();
     await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
     await expect(localRow).toHaveAttribute("aria-busy", "false");
-    await expect(localRow.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+    await expectUserMessageImageVisible(localRow);
     await expect
       .poll(async () => {
         const localElement = await localRow.elementHandle();
@@ -879,7 +880,7 @@ async function expectCreatedAgentHandoff(
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
   await expect(originalUserMessages(page).filter({ hasText: prompt })).toHaveCount(1);
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage);
 }
 
 interface DraftCreatePendingSubmission {
@@ -996,7 +997,7 @@ test.describe("Agent message submission", () => {
       const submittedPrompt = originalUserMessages(page).filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
 
-      await submittedPrompt.hover();
+      await submittedPrompt.getByTestId("user-message-bubble").hover();
       await expect(submittedPrompt.getByTestId("rewind-menu-trigger")).toBeVisible({
         timeout: 5_000,
       });

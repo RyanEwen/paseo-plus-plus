@@ -465,6 +465,7 @@ describe("accordion expansion scroll anchoring", () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
     let layoutTop = 900;
+    let transitionProgress: number | undefined;
     let offset = 600;
     let maxOffset = Infinity;
     let cancelled: ProjectExpansionFollowing | undefined;
@@ -474,7 +475,8 @@ describe("accordion expansion scroll anchoring", () => {
       cancelled = anchorProjectExpansion({
         duration,
         toggle,
-        measure: (receive) => receive({ headerTop: 40 + layoutTop - offset, viewportTop: 40 }),
+        measure: (receive) =>
+          receive({ headerTop: 40 + layoutTop - offset, viewportTop: 40, transitionProgress }),
         scrollBy: (delta) => {
           offset = Math.min(maxOffset, Math.max(0, offset + delta));
           scrolls.push(offset);
@@ -488,8 +490,9 @@ describe("accordion expansion scroll anchoring", () => {
         },
       });
     };
-    const frame = (time: number, top: number, maxScroll = Infinity) => {
+    const frame = (time: number, top: number, maxScroll = Infinity, paintedProgress?: number) => {
       layoutTop = top;
+      transitionProgress = paintedProgress;
       maxOffset = maxScroll;
       offset = Math.min(offset, maxOffset);
       const callbacks = [...frames.values()];
@@ -519,6 +522,18 @@ describe("accordion expansion scroll anchoring", () => {
     run.frame(100, 350);
     expect(run.top()).toBe(0);
     expect(run.scrolls).toEqual([575, 450, 350]);
+    expect(run.frames.size).toBe(0);
+  });
+
+  it("follows a painted transition that starts after the first animation frame", () => {
+    const run = scenario();
+    run.begin();
+    run.frame(0, 900, Infinity, 0);
+    run.frame(100, 600, Infinity, 0.5);
+    expect(run.top()).toBe(150);
+    expect(run.frames.size).toBe(1);
+    run.frame(150, 350, Infinity, 1);
+    expect(run.top()).toBe(0);
     expect(run.frames.size).toBe(0);
   });
 

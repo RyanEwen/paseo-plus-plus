@@ -15,6 +15,7 @@ import {
 } from "./preview-release/source.mjs";
 import {
   fingerprintBridgeAssets,
+  requirePreviewNotes,
   resolvePublicationPolicy,
   updaterBridgeMarker,
 } from "./preview-release/publication-policy.mjs";
@@ -264,20 +265,15 @@ test("continuing preview prereleases require retention but never invent Latest q
   );
 });
 
-test("non-bridge release notes cannot create a second bridge marker", async () => {
-  const { publishPreviewRelease } = await import("./preview-release/publish.mjs");
+test("non-bridge release notes cannot create a second bridge marker", () => {
   for (const kind of ["preview", "latest"]) {
-    await assert.rejects(
-      publishPreviewRelease({
-        directory: "not-read",
-        repo: "RyanEwen/paseo-plus-plus",
-        notes: updaterBridgeMarker,
-        publish: false,
-        kind,
-      }),
-      /marker is reserved/,
-    );
+    assert.throws(() => requirePreviewNotes(updaterBridgeMarker, kind), /marker is reserved/);
+    assert.doesNotThrow(() => requirePreviewNotes("Reviewed changes", kind));
   }
+  for (const notes of [undefined, null, "", "  ", {}]) {
+    assert.throws(() => requirePreviewNotes(notes, "preview"), /user-facing release notes/);
+  }
+  assert.doesNotThrow(() => requirePreviewNotes(updaterBridgeMarker, "bridge"));
 });
 
 test("normal release gate requires the exact retained prerelease, asset inventory and source ancestry", () => {

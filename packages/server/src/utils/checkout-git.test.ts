@@ -1764,7 +1764,8 @@ const x = 1;
     expect(untracked.structured).toEqual([]);
   });
 
-  it.each(["tab\tname.css", 'quote"name.css'])(
+  // Windows filesystems reject control characters and quotes in file names.
+  it.skipIf(process.platform === "win32").each(["tab\tname.css", 'quote"name.css'])(
     "keeps structured changed lines for C-quoted tracked path %s",
     async (filePath) => {
       writeFileSync(join(repoDir, filePath), ".account { color: red; }\n");
@@ -1818,7 +1819,8 @@ const x = 1;
   });
 
   it("matches scoped untracked paths literally, including whitespace and pathspec characters", async () => {
-    const path = " :(glob)*.css ";
+    // Brackets retain literal-pathspec coverage on Windows without forbidden names.
+    const path = process.platform === "win32" ? " [glob].css" : " :(glob)*.css ";
     writeFileSync(join(repoDir, path), "a { color: red; }\n");
     writeFileSync(join(repoDir, "neighbor.css"), "b { color: blue; }\n");
     const scoped = await getCheckoutDiff(repoDir, {

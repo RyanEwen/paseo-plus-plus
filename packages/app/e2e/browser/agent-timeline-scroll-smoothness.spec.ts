@@ -1,7 +1,7 @@
 import { test } from "../support/fixtures";
 import { expect } from "@playwright/test";
 import { expectVirtualizationHandoffContinuity } from "../support/helpers/timeline-virtualization-handoff";
-import { expectShrinkingImageContinuity } from "../support/helpers/timeline-image-continuity";
+import { expectImageCompletionContinuity } from "../support/helpers/timeline-image-continuity";
 import {
   findScrollJumps,
   expectImageSpaceReserved,
@@ -358,7 +358,7 @@ test("scroll detector accounts for delayed wheel input and growth below the new 
   ).toHaveLength(1);
 });
 
-test("scroll detector follows the entered image through resize and virtual offset correction", () => {
+test("scroll detector distinguishes offscreen image contraction from entered image growth", () => {
   for (const height of [225, 1632]) {
     const before: ScrollFrame = {
       at: 1000,
@@ -368,7 +368,7 @@ test("scroll detector follows the entered image through resize and virtual offse
       virtualized: true,
       loading: false,
       rows: [
-        { id: "image", top: -704, height: 560 },
+        { id: "image", top: -704, height: 560, isImage: true },
         { id: "caption", top: -144, height: 100 },
         { id: "old-reader", top: -44, height: 127 },
       ],
@@ -391,12 +391,14 @@ test("scroll detector follows the entered image through resize and virtual offse
       lastWheelAt: 1020,
       imageLoads: 1,
       rows: [
-        { id: "image", top: -544, height },
+        { id: "image", top: -544, height, isImage: true },
         { id: "caption", top: 16 + resize, height: 100 },
         { id: "old-reader", top: 116 + resize, height: 127 },
       ],
     };
-    expect(findScrollJumps([before, after])).toEqual([]);
+    // The shrinking image remains above the reading line even after this input.
+    // Its contraction must not excuse reversing already-visible text upward.
+    expect(findScrollJumps([before, after])).toHaveLength(height < 560 ? 1 : 0);
     // Resizing must not excuse additional viewport movement.
     expect(
       findScrollJumps([
@@ -429,9 +431,11 @@ test("reserves image space before its response arrives", async ({ page }, testIn
 });
 
 for (const order of ["wheel-first", "resize-first"] as const) {
-  test(`shrinking image preserves visible text with ${order} input`, async ({ page }, testInfo) => {
+  test(`image completion preserves visible text with ${order} input`, async ({
+    page,
+  }, testInfo) => {
     test.setTimeout(120_000);
-    await expectShrinkingImageContinuity(page, testInfo, order);
+    await expectImageCompletionContinuity(page, testInfo, order);
   });
 }
 

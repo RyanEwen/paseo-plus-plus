@@ -61,8 +61,8 @@ export async function expectInlineStickyAttachmentCount(
     Math.abs(
       geometry.count!.bounds.y +
         geometry.count!.bounds.height / 2 -
-        geometry.text!.bounds.y -
-        geometry.text!.bounds.height / 2,
+        geometry.textClip!.bounds.y -
+        geometry.textClip!.bounds.height / 2,
     ),
   ).toBeLessThanOrEqual(1);
   expect(geometry.prefixBounds!.right).toBeLessThanOrEqual(geometry.text!.bounds.right);
@@ -119,6 +119,9 @@ async function measureInlineAttachmentAllocation(
         count: describe(countNode),
         cell: describe(countNode.parentElement),
         text: describe(text),
+        // TextPreview preserves the full natural text node and clips its first line.
+        // Compare the visible cell, rather than the offscreen continuation's height.
+        textClip: describe(text?.closest('[data-testid="text-preview-clip"]') ?? null),
         disclosure: describe(disclosure),
         touchParent: describe(disclosure?.parentElement ?? null),
         prefix,

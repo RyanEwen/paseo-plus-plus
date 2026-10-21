@@ -6,6 +6,16 @@ import { requirePreviewRepository } from "./source.mjs";
 
 export const updaterBridgeMarker = "<!-- paseo-plus-plus-updater-bridge:v1 -->";
 
+/** Reject empty notes or a forged bridge marker before any release files or API state are touched. */
+export function requirePreviewNotes(notes, kind) {
+  if (typeof notes !== "string" || !notes.trim()) {
+    throw new Error("Provide user-facing release notes before creating a preview");
+  }
+  if (kind !== "bridge" && notes.includes(updaterBridgeMarker)) {
+    throw new Error("The updater bridge marker is reserved for the once-only bridge release");
+  }
+}
+
 /** Parse the retained tag namespace without allowing an unsafe or reset native build counter. */
 function releaseIdentity(tag) {
   const match = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.([1-9]\d*)$/.exec(tag);

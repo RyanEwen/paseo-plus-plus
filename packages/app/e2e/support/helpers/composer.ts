@@ -454,13 +454,20 @@ export async function switchComposerTabWithKeyboard(
   );
 }
 export async function expectWorkspaceHeaderHidden(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveCount(0);
+  await expect(page.getByTestId("workspace-header-title")).toHaveCount(0);
 }
 export async function expectWorkspaceHeaderVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+  await expect(page.getByTestId("workspace-header-title")).toBeVisible();
 }
 
 export async function activateRetainedComposerTab(page: Page, title: string): Promise<void> {
+  const tabs = page.getByTestId("workspace-tabs-scroll").filter({ visible: true });
+  if (await tabs.count()) {
+    await tabs
+      .getByRole("tab", { name: title, exact: true })
+      .evaluate((element) => (element as HTMLElement).click());
+    return;
+  }
   await page
     .getByTestId("workspace-tab-switcher-trigger")
     .evaluate((element) => (element as HTMLElement).click());

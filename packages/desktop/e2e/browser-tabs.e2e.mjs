@@ -837,6 +837,9 @@ async function runRegression({
     { width: firstGuest.width, height: firstGuest.height },
   );
 
+  // Background access must not focus the window. Resume the user-input phase explicitly.
+  const userInputWindow = await inspectWindowPresentation(inspectorPort, "win.focus();");
+  assert(userInputWindow.focused, "Fixture window did not regain user-input focus");
   await clickGuestElement(page, client, browserId, "#typing-target");
   assert(
     await waitForGuestActiveElement(client, browserId, "typing-target"),

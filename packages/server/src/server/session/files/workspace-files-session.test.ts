@@ -815,9 +815,11 @@ describe("owned original attachment retrieval", () => {
     async (reason) => {
       const fixture = await attachmentSubsystem({
         blockFirst: true,
-        idleMs: reason === "timeout" ? 1 : 30_000,
+        idleMs: 30_000,
         limits: { globalReads: 1 },
       });
+      // Start the deadline only under the controlled clock, after fixture disk setup.
+      vi.useFakeTimers();
       const read = fixture.session.handle(
         {
           type: "attachments.read.request",
@@ -830,7 +832,9 @@ describe("owned original attachment retrieval", () => {
       try {
         await fixture.started;
         if (reason === "disconnect") fixture.cancellation.abort();
+        else await vi.advanceTimersByTimeAsync(30_000);
         await read;
+        vi.useRealTimers();
         expect(fixture.frames).toHaveLength(1);
         expect(fixture.emitted.at(-1)).toMatchObject({
           type: "attachments.read.response",
@@ -848,6 +852,7 @@ describe("owned original attachment retrieval", () => {
         fixture.unblock();
         await read;
         await fixture.store.close();
+        vi.useRealTimers();
       }
     },
   );

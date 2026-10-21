@@ -129,6 +129,7 @@ const DOCK_HOVER_TRIGGER_STYLE = {
   width: 20,
   height: 160,
 };
+const DOCK_HOVER_TRIGGER_FILL_STYLE = { width: "100%", height: "100%" } as const;
 const DOCK_PRESET_BUTTON_STYLE = { width: 120, height: 40 };
 
 describe("HoverCard above the resident browser plane", () => {
@@ -185,12 +186,14 @@ describe("HoverCard above the resident browser plane", () => {
           <PortalProvider>
             <OverlayLayerProvider layer={parentLayer}>
               <HoverCard>
-                <HoverCardTrigger
-                  style={DOCK_HOVER_TRIGGER_STYLE}
-                  accessibilityLabel="Dock ratio trigger"
-                >
-                  <span>Divider</span>
-                </HoverCardTrigger>
+                <div style={DOCK_HOVER_TRIGGER_STYLE}>
+                  <HoverCardTrigger
+                    style={DOCK_HOVER_TRIGGER_FILL_STYLE}
+                    accessibilityLabel="Dock ratio trigger"
+                  >
+                    <span>Divider</span>
+                  </HoverCardTrigger>
+                </div>
                 <HoverCardContent placement="right" anchor="pointer" testID="dock-hover-presets">
                   <button type="button" onClick={select} style={DOCK_PRESET_BUTTON_STYLE}>
                     60/40

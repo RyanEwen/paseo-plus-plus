@@ -279,6 +279,18 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("skills" in paseo.agents).toBe(false);
 });
 
+test("createPaseoApi resolves attachment methods only when invoked", () => {
+  const driver = {} as DaemonClient;
+  const api = createPaseoApi(driver);
+  const list = vi.fn(() => {
+    throw new Error("forwarded attachment request");
+  });
+  Object.assign(driver, { listAttachments: list });
+  expect(() => api.attachments.list("agent", { limit: 2 })).toThrow("forwarded attachment request");
+  expect(list).toHaveBeenCalledWith("agent", { limit: 2 });
+  expect(list.mock.contexts[0]).toBe(driver);
+});
+
 test("agent handles send permission responses for their agent", async () => {
   const { client, ws } = await connectClient();
 

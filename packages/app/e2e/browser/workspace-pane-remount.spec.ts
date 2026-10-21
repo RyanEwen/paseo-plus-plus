@@ -245,7 +245,6 @@ test("tab move menus and divider presets preserve workspace tabs", async ({ page
     await tab.click({ button: "right" });
     const menu = `workspace-tab-move-${tabId}`;
     await page.getByTestId(menu).click();
-    await page.getByTestId(`${menu}-right`).click();
     await page.getByTestId(`${menu}-right-60-40`).click();
     const left = page.getByTestId("workspace-pane-main");
     const right = page

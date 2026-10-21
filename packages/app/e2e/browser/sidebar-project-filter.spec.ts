@@ -149,11 +149,14 @@ test.describe("Sidebar project filter", () => {
 
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await expect(page.getByRole("menuitem")).toHaveText([
-        /^Grouping/,
+        "Expand one project at a time",
+        "Workspace limits",
+        /^Sort projects/,
+        /^Sort workspaces/,
+        /^Empty projects/,
         /^Title/,
         "Show",
-        "Project",
-        "Show background",
+        "Show background workspaces",
       ]);
       await closeSidebarDisplayPreferences(page);
 

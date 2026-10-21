@@ -1,3 +1,7 @@
+import {
+  originalUserMessages,
+  revealUserMessageBody,
+} from "../support/helpers/timeline-pagination";
 import { expect, test as base } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
 import {
@@ -147,7 +151,9 @@ test.describe("Assistant fork menu", () => {
 
     await submitMessage(page, "");
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
+    const userMessage = originalUserMessages(page).last();
+    await revealUserMessageBody(userMessage);
+    await expect(userMessage).toContainText("Chat history");
     await expect(userMessage).toBeVisible({ timeout: 30_000 });
     await expect(userMessage).not.toContainText("Source agent:");
   });
@@ -216,7 +222,9 @@ test.describe("Assistant fork menu", () => {
 
     await submitNewWorkspaceEmpty(page);
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
+    const userMessage = originalUserMessages(page).last();
+    await revealUserMessageBody(userMessage);
+    await expect(userMessage).toContainText("Chat history");
     await expect(userMessage).toBeVisible({ timeout: 30_000 });
     await expect(userMessage).not.toContainText("Source agent:");
   });

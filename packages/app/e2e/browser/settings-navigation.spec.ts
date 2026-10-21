@@ -347,7 +347,8 @@ for (const width of [1440, 390]) {
       });
       const switches = section.getByTestId("paseo-plus-plus-features").getByRole("switch");
       const features = Object.entries(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES).filter(
-        ([feature]) => feature !== "androidAutomaticUpdateChecks",
+        ([feature]) =>
+          feature !== "androidAutomaticUpdateChecks" && feature !== "explorerIconOnlyTabs",
       );
       const featureSwitch = (feature: string) =>
         section.getByTestId(`paseo-plus-plus-${feature}`).getByRole("switch");

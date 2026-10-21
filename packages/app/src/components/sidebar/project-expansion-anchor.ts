@@ -33,6 +33,8 @@ export interface ProjectExpansionFollowing {
 interface ExpansionGeometry {
   headerTop: number;
   viewportTop: number;
+  /** Actual painted transition progress when the platform exposes it. */
+  transitionProgress?: number;
 }
 
 /** Follow painted coordinates: the list owns easing and may be interrupted mid-transition. */
@@ -71,12 +73,14 @@ export function anchorProjectExpansion({
       start ??= time;
       measure((geometry) => {
         if (cancelled || !geometry) return;
-        const progress = duration > 0 ? Math.min(1, (time - start!) / duration) : 1;
+        const progress =
+          geometry.transitionProgress ??
+          (duration > 0 ? Math.min(1, (time - start!) / duration) : 1);
         // Arrive at this project, rather than retaining an offset that can clamp to list start.
         const targetTop = initialTop * (1 - progress);
         const delta = geometry.headerTop - geometry.viewportTop - targetTop;
         if (Math.abs(delta) > 0.5) scrollBy(delta);
-        if (time - start! < duration) frame = requestFrame(follow);
+        if (progress < 1) frame = requestFrame(follow);
       });
     };
     frame = requestFrame(follow);

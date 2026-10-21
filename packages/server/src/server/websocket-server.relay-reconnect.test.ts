@@ -77,6 +77,10 @@ const sessionMock = vi.hoisted(() => {
       const onMessage = this.args.onMessage as ((message: unknown) => void) | undefined;
       onMessage?.(message);
     });
+    publishToSource = vi.fn((source: object, message: unknown) => {
+      const send = this.args.onMessageToSource as (source: object, message: unknown) => void;
+      send(source, message);
+    });
     resetPeakInflight = vi.fn(() => {});
     getRuntimeMetrics = vi.fn(() => ({
       checkoutDiffTargetCount: 0,

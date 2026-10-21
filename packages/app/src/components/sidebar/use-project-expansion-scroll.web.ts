@@ -18,6 +18,8 @@ export function useProjectExpansionScroll(duration: number) {
         toggle();
         return;
       }
+      const boundary = header.closest<HTMLElement>("[data-position-transition]");
+      let transition: Animation | undefined;
       stop.current = anchorProjectExpansion({
         duration,
         toggle,
@@ -26,9 +28,24 @@ export function useProjectExpansionScroll(duration: number) {
             receive(null);
             return;
           }
+          // Web Animations can start after React's commit and the first RAF.
+          // Follow this header's actual transition, rather than a parallel clock.
+          transition ??= boundary
+            ?.getAnimations()
+            .find((animation) => animation.pending || animation.playState === "running");
+          const timing = transition?.effect?.getComputedTiming();
+          let transitionProgress: number | undefined;
+          if (transition) {
+            if (transition.playState === "finished" || transition.playState === "idle") {
+              transitionProgress = 1;
+            } else {
+              transitionProgress = Math.max(0, Math.min(1, timing?.progress ?? 0));
+            }
+          }
           receive({
             headerTop: header.getBoundingClientRect().top,
             viewportTop: viewport.getBoundingClientRect().top + viewport.clientTop,
+            transitionProgress,
           });
         },
         scrollBy: (delta) => {

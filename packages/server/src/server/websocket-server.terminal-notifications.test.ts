@@ -111,6 +111,10 @@ function workspaceRecord(overrides?: Partial<PersistedWorkspaceRecord>): Persist
 function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): WorkspaceRegistry {
   return createStub<WorkspaceRegistry>({
     list: vi.fn(async () => records),
+    get: vi.fn(
+      async (workspaceId: string) =>
+        records.find((record) => record.workspaceId === workspaceId) ?? null,
+    ),
   });
 }
 
@@ -493,7 +497,8 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
     await flushAsync();
 
     expect(pushNotifications.sent).toHaveLength(1);
-    expect(pushNotifications.sent[0]?.title).toBe("Terminal finished");
+    expect(pushNotifications.sent[0]?.title).toBe("Project");
+    expect(pushNotifications.sent[0]?.body).toContain("Terminal finished");
     expect(pushNotifications.sent[0]?.data).toMatchObject({
       serverId: "srv-test",
       terminalId: "term-1",

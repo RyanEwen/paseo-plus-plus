@@ -970,6 +970,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     manualReadingRef.current = true;
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
+      // Input can arrive before its scroll event. Resize and pin reconciliation
+      // must relinquish bottom ownership before either can run in this frame.
+      followOutputRef.current = false;
       setFollowOutput(false);
     }
     rearmHistoryStartFromUserIntent();
@@ -1216,6 +1219,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const markUpwardViewportInput = () => {
       markUpwardInputEvidence();
+      stopFollowingOutputFromUserIntent();
       if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
         rearmHistoryStartFromUserIntent();
       }
@@ -1231,8 +1235,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         canNestedScrollerConsumeInput(event.target, scrollContainer, event.deltaY)
       )
         return;
-      markManualReading();
       if (event.deltaY < 0) markUpwardViewportInput();
+      markManualReading();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableEventTarget(event.target)) return;
@@ -1240,8 +1244,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const downward = ["ArrowDown", "PageDown", "End", " "].includes(event.key);
       if (!upward && !downward) return;
       if (canNestedScrollerConsumeInput(event.target, scrollContainer, upward ? -1 : 1)) return;
-      markManualReading();
       if (upward) markUpwardViewportInput();
+      markManualReading();
     };
     const handlePointerDown = (event: PointerEvent) => {
       clearMouseScrollGesture();
@@ -1317,8 +1321,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         Math.abs(delta) > 1 &&
         !canNestedScrollerConsumeInput(event.target, scrollContainer, delta)
       ) {
-        markManualReading();
         if (delta < 0) markUpwardViewportInput();
+        markManualReading();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -1364,6 +1368,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     markUpwardInputEvidence,
     rearmHistoryStartFromUserIntent,
     reportReadingPosition,
+    stopFollowingOutputFromUserIntent,
   ]);
 
   useEffect(() => {

@@ -404,7 +404,7 @@ const SourceSchema = z.object({
 
 it("generated validation accepts bounded durable reference replies", () => {
   expect(
-    GeneratedWSOutboundMessageSchema.safeParse({
+    validateWSOutboundMessage({
       type: "session",
       message: {
         type: "attachments.list.response",
@@ -413,7 +413,7 @@ it("generated validation accepts bounded durable reference replies", () => {
     }).success,
   ).toBe(true);
   expect(
-    GeneratedWSOutboundMessageSchema.safeParse({
+    validateWSOutboundMessage({
       type: "session",
       message: {
         type: "attachments.read.response",
@@ -422,7 +422,7 @@ it("generated validation accepts bounded durable reference replies", () => {
     }).success,
   ).toBe(true);
   expect(
-    GeneratedWSOutboundMessageSchema.safeParse({
+    validateWSOutboundMessage({
       type: "session",
       message: {
         type: "attachments.read.response",
