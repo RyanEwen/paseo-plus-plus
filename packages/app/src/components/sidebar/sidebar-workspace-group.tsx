@@ -109,28 +109,27 @@ export function SidebarWorkspaceGroupHeader({
 
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => (
-      <View style={styles.statusGroupRowLeft}>
-        <View style={styles.statusGroupLeadingVisualSlot}>
-          <StatusGroupLeadingVisual
-            leading={group.leading}
-            collapsed={collapsed}
-            showChevron={hovered || platformIsNative || isCompact}
-          />
-        </View>
-        <View style={styles.statusGroupTitleGroup}>
-          <Text style={styles.statusGroupTitle} numberOfLines={1}>
-            {group.label}
-          </Text>
-          {workspaceCount !== undefined ? (
-            <Text
-              style={styles.statusGroupCount}
-              testID={`sidebar-status-group-count-${group.key}`}
-            >
-              {workspaceCount}
+      <>
+        <View style={styles.statusGroupRowLeft}>
+          <View style={styles.statusGroupLeadingVisualSlot}>
+            <StatusGroupLeadingVisual
+              leading={group.leading}
+              collapsed={collapsed}
+              showChevron={hovered || platformIsNative || isCompact}
+            />
+          </View>
+          <View style={styles.statusGroupTitleGroup}>
+            <Text style={styles.statusGroupTitle} numberOfLines={1}>
+              {group.label}
             </Text>
-          ) : null}
+          </View>
         </View>
-      </View>
+        {workspaceCount !== undefined ? (
+          <Text style={styles.statusGroupCount} testID={`sidebar-status-group-count-${group.key}`}>
+            {workspaceCount}
+          </Text>
+        ) : null}
+      </>
     ),
     [collapsed, group.leading, group.label, group.key, isCompact, workspaceCount],
   );

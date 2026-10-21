@@ -7,6 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFindViewport } from "./viewport.web";
 import type { ChatFindProps } from "./types";
 import type { StreamViewportHandle } from "../strategy";
+import { Text as NativeText, View, type ViewStyle } from "react-native";
+import { QuestionFormCard } from "@/components/question-form-card";
 
 interface Capture {
   occurrence?: { signal: AbortSignal; targetTop(): number | null };
@@ -148,6 +150,87 @@ function actualPromptGeometry(host: HTMLElement) {
     translation: row.dataset.promptTranslation,
   };
 }
+
+// Reproduce the caller's rail contract without mounting the daemon-backed AgentStream.
+// Both permission and footer callers use this contract. The shared test theme
+// omits contentMaxWidth, so use the fixture's explicit 820px rail here.
+const auxiliaryRailStyle: ViewStyle = {
+  width: "100%",
+  maxWidth: 820,
+  alignSelf: "center",
+  paddingHorizontal: 8,
+};
+
+it.each([1200, 360])(
+  "centers live auxiliary content on the message rail at %i px",
+  async (width) => {
+    const host = document.createElement("div");
+    Object.assign(host.style, { width: `${width}px`, height: "900px" });
+    document.body.append(host);
+    actualRoot = createRoot(host);
+    const wrapRow = (content: React.ReactNode) =>
+      React.createElement(View, { style: auxiliaryRailStyle, testID: "message-rail" }, content);
+    const question = React.createElement(
+      View,
+      { style: auxiliaryRailStyle, testID: "question-rail" },
+      React.createElement(QuestionFormCard, {
+        permission: {
+          key: "alignment-question",
+          agentId: "agent",
+          request: {
+            id: "alignment-question",
+            provider: "claude",
+            name: "AskUserQuestion",
+            kind: "question",
+            input: {
+              questions: [{ question: "Which provider?", options: [{ label: "Codex" }] }],
+            },
+          },
+        },
+        onRespond: vi.fn(),
+        isResponding: false,
+        responseError: null,
+      }),
+    );
+    const liveAuxiliary = React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        View,
+        { style: auxiliaryRailStyle, testID: "summary-rail" },
+        React.createElement(NativeText, null, "Worked for 1 second"),
+      ),
+      question,
+    );
+    await act(async () => {
+      actualRoot!.render(
+        React.createElement(ActualPromptTestFixture, {
+          text: "Keep the question and summary aligned with this message.",
+          enabled: false,
+          viewportRef: createRef<StreamViewportHandle>(),
+          wrapRow,
+          liveAuxiliary,
+        }),
+      );
+    });
+
+    const messageRail = host.querySelector<HTMLElement>('[data-testid="message-rail"]')!;
+    const questionRail = host.querySelector<HTMLElement>('[data-testid="question-rail"]')!;
+    const footerRail = host.querySelector<HTMLElement>('[data-testid="summary-rail"]')!;
+    const message = messageRail.getBoundingClientRect();
+    const feed = host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const feedRect = feed.getBoundingClientRect();
+
+    expect(message.width).toBeCloseTo(Math.min(820, feed.clientWidth - 32), 0);
+    expect(message.left + message.width / 2).toBeCloseTo(feedRect.left + feed.clientWidth / 2, 0);
+    for (const rail of [footerRail, questionRail]) {
+      const bounds = rail.getBoundingClientRect();
+      expect(bounds.left).toBeCloseTo(message.left, 0);
+      expect(bounds.right).toBeCloseTo(message.right, 0);
+    }
+    expect(feed.scrollWidth).toBe(feed.clientWidth);
+  },
+);
 
 function exactTextNodes(root: HTMLElement, text: string): Text[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);

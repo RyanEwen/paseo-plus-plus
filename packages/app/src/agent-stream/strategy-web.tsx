@@ -1583,7 +1583,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
               ...mountedRows,
             ]}
           </div>
-          <div data-stream-auxiliary>{liveAuxiliary}</div>
+          <div data-stream-auxiliary style={streamRowStyle}>
+            {liveAuxiliary}
+          </div>
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>

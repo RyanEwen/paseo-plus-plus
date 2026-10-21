@@ -44,7 +44,7 @@ import {
   type ContextPage,
   type ContextEntry,
 } from "../fetch-reading-prompt-context";
-import type { UserPrompt } from "../sticky-prompt-model";
+import { resolveRetainedContextSource, type UserPrompt } from "../sticky-prompt-model";
 import { useReadingPrompt } from "../use-reading-prompt";
 import { useStickyPrompt } from "../use-sticky-prompt";
 import type { StreamItem } from "@/types/stream";
@@ -4667,5 +4667,174 @@ describe("canonical prompt admission ownership", () => {
     expect(admitted.prompt).toBe(newer);
     expect(owner.isSupportedContext(agentId, admitted)).toBe(true);
     owner.dispose();
+  });
+});
+
+describe("latest sticky context source", () => {
+  const epoch = "epoch";
+  const prompt = stickyUser("latest-prompt", 4, epoch);
+  const answer: Extract<StreamItem, { kind: "assistant_message" }> = {
+    kind: "assistant_message",
+    id: "latest-answer",
+    messageId: "latest-answer",
+    text: "answer",
+    timestamp: new Date(0),
+    timelineCursor: { epoch, seq: 50 },
+  };
+  const following = { following: true, navigating: false, rowId: answer.id, seq: 50 };
+  const coverage = [{ epoch, startSeq: 4, endSeq: 100 }];
+
+  it("does not request or promote Loading for covered latest output, but still reads on a manual transition", async () => {
+    const owner = createCanonicalPromptContexts();
+    const held = deferred<
+      import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
+    >();
+    const fetchContext = vi.fn(() => held.promise);
+    const loading: boolean[] = [];
+    const initialItems: StreamItem[] = [prompt, answer];
+    const fixture = renderHook(
+      ({ items, manual }: { items: StreamItem[]; manual: boolean }) => {
+        const latest = items.at(-1)!;
+        const reading = manual
+          ? { ...following, following: false, rowId: latest.id, seq: latest.timelineCursor!.seq }
+          : following;
+        const result = useCanonicalPromptContext({
+          owner,
+          agentId: "agent",
+          epoch,
+          source: resolveRetainedContextSource(items, epoch, reading, coverage),
+          ordinaryItems: items,
+          coverage,
+          enabled: true,
+          lookup: rawPromptLookup(latest, fetchContext),
+        });
+        loading.push(result.loading);
+        return result;
+      },
+      { initialProps: { items: initialItems, manual: false } },
+    );
+    const arrivals = [51, 52, 53].map((seq) =>
+      Object.assign({}, answer, {
+        id: `answer-${seq}`,
+        timelineCursor: { epoch, seq },
+      }),
+    );
+    const updates = arrivals.map((_, index) => initialItems.concat(arrivals.slice(0, index + 1)));
+    for (const items of updates) {
+      fixture.rerender({ items, manual: false });
+      expect(fixture.result.current.loading).toBe(false);
+    }
+    expect(fetchContext).toHaveBeenCalledTimes(0);
+    expect(loading.length).toBeGreaterThan(0);
+    expect(loading.every((value) => value === false)).toBe(true);
+    fixture.rerender({ items: updates.at(-1)!, manual: true });
+    await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+    expect(fixture.result.current.loading).toBe(true);
+    act(() => fixture.result.current.cancel());
+    expect(fixture.result.current.loading).toBe(false);
+    expect(fixture.result.current.cancelled).toBe(true);
+    await act(async () => held.resolve(undefined));
+    expect(fixture.result.current.contexts.length).toBe(0);
+    expect(fetchContext).toHaveBeenCalledTimes(1);
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it.each(["prompt-free", "sparse"])(
+    "keeps %s latest discovery pending and fences a cancelled completion",
+    async (mode) => {
+      const owner = createCanonicalPromptContexts();
+      const held = deferred<
+        import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
+      >();
+      const fetchContext = vi.fn(() => held.promise);
+      const sparseCoverage = [
+        { epoch, startSeq: 4, endSeq: 10 },
+        { epoch, startSeq: 40, endSeq: 100 },
+      ];
+      const items = mode === "sparse" ? [prompt, answer] : [answer];
+      const selectedSource = resolveRetainedContextSource(items, epoch, following, sparseCoverage);
+      expect(selectedSource?.id).toBe(answer.id);
+      const fixture = renderHook(() =>
+        useCanonicalPromptContext({
+          owner,
+          agentId: "agent",
+          epoch,
+          source: selectedSource,
+          ordinaryItems: items,
+          coverage: sparseCoverage,
+          enabled: true,
+          lookup: rawPromptLookup(answer, fetchContext),
+        }),
+      );
+      await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+      expect(fixture.result.current.loading).toBe(true);
+      act(() => fixture.result.current.cancel());
+      expect(fixture.result.current.loading).toBe(false);
+      expect(fixture.result.current.cancelled).toBe(true);
+      await act(async () =>
+        held.resolve({
+          sourceKey: canonicalPromptSourceKey(answer),
+          sourceStart: 50,
+          sourceEnd: 50,
+          prompt,
+        }),
+      );
+      expect(fixture.result.current.contexts.length).toBe(0);
+      expect(fetchContext).toHaveBeenCalledTimes(1);
+      fixture.unmount();
+      owner.dispose();
+    },
+  );
+
+  it("preserves exact manual source, navigation suppression, canonical acknowledgement and epoch filtering", () => {
+    const foreign = { ...prompt, id: "foreign", timelineCursor: { epoch: "other", seq: 90 } };
+    const optimistic: UserPrompt = {
+      kind: "user_message",
+      id: "optimistic",
+      clientMessageId: "pending",
+      text: "sending",
+      timestamp: new Date(0),
+    };
+    const items = [prompt, answer, foreign, optimistic];
+    const lateTool: StreamItem = {
+      kind: "tool_call",
+      id: "late-tool",
+      timestamp: new Date(0),
+      timelineCursor: { epoch, seq: 90 },
+      payload: {
+        source: "agent",
+        data: {
+          provider: "codex",
+          callId: "late-tool",
+          name: "Read",
+          status: "completed",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+        },
+      },
+    };
+    expect(resolveRetainedContextSource([...items, lateTool], epoch, following, coverage)?.id).toBe(
+      prompt.id,
+    );
+    expect(resolveRetainedContextSource(items, epoch, following, coverage)?.id).toBe(prompt.id);
+    expect(resolveRetainedContextSource([answer, optimistic], epoch, following, coverage)?.id).toBe(
+      answer.id,
+    );
+    expect(
+      resolveRetainedContextSource(items, epoch, { ...following, following: false }, coverage)?.id,
+    ).toBe(answer.id);
+    expect(
+      resolveRetainedContextSource(
+        items,
+        epoch,
+        { ...following, following: false, rowId: null },
+        coverage,
+      )?.id,
+    ).toBe(prompt.id);
+    expect(
+      resolveRetainedContextSource(items, epoch, { ...following, navigating: true }, coverage),
+    ).toBeUndefined();
+    expect(resolveRetainedContextSource(items, "missing", following, coverage)).toBeUndefined();
   });
 });

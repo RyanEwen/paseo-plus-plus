@@ -171,6 +171,17 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
   }, []);
   const reducedMotion = useReducedMotion();
   const flatListRef = useAnimatedRef<FlatList<StreamItem>>();
+  const attachFlatListRef = useCallback(
+    (instance: FlatList<StreamItem> | null) => {
+      // Unistyles 3.2.4 treats callback returns as cleanup functions, but an
+      // animated ref returns a shadow node. Keep that value out of React cleanup.
+      flatListRef(instance);
+      return () => {
+        flatListRef(null);
+      };
+    },
+    [flatListRef],
+  );
   const nativeY = useScrollOffset(flatListRef);
   const nativeStickyViewport = useMemo(() => ({ y: nativeY }), [nativeY]);
   const reservationSnapshot = useDockReservation();
@@ -882,7 +893,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
     <NativeStickyViewportProvider value={nativeStickyViewport}>
       <FlatList
         {...listInsetProps}
-        ref={flatListRef}
+        ref={attachFlatListRef}
         data={historyRows}
         renderItem={renderItem}
         keyExtractor={keyExtractor}

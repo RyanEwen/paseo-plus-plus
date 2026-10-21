@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type RefObject } from "react";
+import { useCallback, useMemo, useState, type ReactNode, type RefObject } from "react";
 import { vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
@@ -76,11 +76,31 @@ interface Props {
   enabled?: boolean;
   scope?: string;
   viewportRef: RefObject<StreamViewportHandle | null>;
+  liveAuxiliary?: ReactNode;
+  wrapRow?: (content: ReactNode) => ReactNode;
 }
 
 /** Real user renderer and real outer scroll owner; only daemon-independent fixture data. */
-function ActualPromptStream({ text, enabled = true, scope = "agent:epoch", viewportRef }: Props) {
+function ActualPromptStream({
+  text,
+  enabled = true,
+  scope = "agent:epoch",
+  viewportRef,
+  liveAuxiliary,
+  wrapRow,
+}: Props) {
   const strategy = useMemo(() => createWebStreamStrategy({ isMobileBreakpoint: false }), []);
+  const streamRenderers = useMemo<StreamSegmentRenderers>(() => {
+    const renderContent: StreamSegmentRenderers["renderLiveHeadRow"] = (item) => {
+      const content = renderRow(item);
+      return wrapRow ? wrapRow(content) : content;
+    };
+    return {
+      ...renderers,
+      renderLiveHeadRow: renderContent,
+      renderLiveAuxiliary: () => liveAuxiliary ?? null,
+    };
+  }, [liveAuxiliary, wrapRow]);
   const prompt = useMemo<StreamItem>(
     () => ({ kind: "user_message", id: ACTUAL_PROMPT_ID, text, timestamp: new Date(0) }),
     [text],
@@ -93,7 +113,7 @@ function ActualPromptStream({ text, enabled = true, scope = "agent:epoch", viewp
             agentId: "agent",
             segments: { historyVirtualized: [], historyMounted: [], liveHead: [prompt, answer] },
             boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: true },
-            renderers,
+            renderers: streamRenderers,
             listEmptyComponent: null,
             viewportRef,
             routeBottomAnchorRequest: null,

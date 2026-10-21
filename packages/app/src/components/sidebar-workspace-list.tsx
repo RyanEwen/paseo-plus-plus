@@ -57,7 +57,15 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import {
+  Archive,
+  ArchiveRestore,
+  ExternalLink,
+  Settings,
+  MoreVertical,
+  Plus,
+  Trash2,
+} from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -194,6 +202,8 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedArchive = withUnistyles(Archive);
+const ThemedArchiveRestore = withUnistyles(ArchiveRestore);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -518,6 +528,10 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
+const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
+const restoreLeadingIcon = (
+  <ThemedArchiveRestore size={14} uniProps={foregroundMutedColorMapping} />
+);
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -644,6 +658,7 @@ function ProjectMenuItems({
         <ProjectMenuItem
           surface={surface}
           testID={`sidebar-project-menu-restore-${projectViewKey}`}
+          leading={restoreLeadingIcon}
           onSelect={onRestoreProject}
         >
           {t("sidebar.project.restore.title")}
@@ -667,6 +682,7 @@ function ProjectMenuItems({
       <ProjectMenuItem
         surface={surface}
         testID={`sidebar-project-menu-archive-all-${projectViewKey}`}
+        leading={archiveLeadingIcon}
         status={archiveAction.pending ? "pending" : "idle"}
         pendingLabel={archiveAction.pendingLabel}
         disabled={removeProjectStatus !== "idle"}
