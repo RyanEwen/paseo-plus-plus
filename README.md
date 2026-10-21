@@ -34,6 +34,8 @@ The **Selected project in heading** switch shows the selected project name in th
 
 The workspace heading, project selector, and display controls stay visible while you scroll the workspace list. Desktop expand and collapse controls stay with the heading.
 
+Use **Archive all** in a project's actions menu to archive its active workspaces and agents across hosts while keeping the project. Confirmation shows the affected counts and offers a separate, initially off choice for background workspaces. Existing worktree warnings still apply.
+
 [View example](packages/app/assets/settings-examples/annotated/sidebarProjectSelector-project-selector.svg)
 
 ### Project activity chips

@@ -161,6 +161,7 @@ import {
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
+import { useProjectArchive } from "@/workspace/use-project-archive";
 import {
   getCurrentProjectRemoveReadiness,
   removeProjectFromHosts,
@@ -441,6 +442,8 @@ const PROJECT_ACTION_SIZE = 24;
 const PROJECT_ACTION_GAP = 2;
 const PROJECT_ACTION_OPTICAL_OFFSET = 6;
 
+type ProjectArchiveMenuAction = Omit<ReturnType<typeof useProjectArchive>, "confirmation">;
+
 function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
@@ -454,6 +457,7 @@ function ProjectRowTrailingActions({
   onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
+  archiveAction,
 }: {
   projectViewKey: string;
   displayName: string;
@@ -467,6 +471,7 @@ function ProjectRowTrailingActions({
   onRestoreProject: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  archiveAction: ProjectArchiveMenuAction;
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
   const controlCount = Number(Boolean(worktreeTarget)) + Number(Boolean(onRemoveProject));
@@ -502,6 +507,7 @@ function ProjectRowTrailingActions({
               onRestoreProject={onRestoreProject}
               onRemoveProject={onRemoveProject}
               removeProjectStatus={removeProjectStatus}
+              archiveAction={archiveAction}
             />
           </View>
         ) : null}
@@ -532,6 +538,7 @@ function ProjectKebabMenu({
   onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
+  archiveAction,
 }: {
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
@@ -539,6 +546,7 @@ function ProjectKebabMenu({
   onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  archiveAction: ProjectArchiveMenuAction;
 }) {
   const { t } = useTranslation();
   return (
@@ -561,6 +569,7 @@ function ProjectKebabMenu({
           onRestoreProject={onRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
+          archiveAction={archiveAction}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -590,6 +599,7 @@ function ProjectMenuItems({
   onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
+  archiveAction,
 }: {
   surface: ProjectMenuSurface;
   projectViewKey: string;
@@ -598,6 +608,7 @@ function ProjectMenuItems({
   onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  archiveAction: ProjectArchiveMenuAction;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -655,11 +666,22 @@ function ProjectMenuItems({
       />
       <ProjectMenuItem
         surface={surface}
+        testID={`sidebar-project-menu-archive-all-${projectViewKey}`}
+        status={archiveAction.pending ? "pending" : "idle"}
+        pendingLabel={archiveAction.pendingLabel}
+        disabled={removeProjectStatus !== "idle"}
+        onSelect={archiveAction.archive}
+      >
+        {t("sidebar.project.archive.action")}
+      </ProjectMenuItem>
+      <ProjectMenuItem
+        surface={surface}
         testID={`sidebar-project-menu-remove-${projectViewKey}`}
         leading={trash2LeadingIcon}
         status={removeProjectStatus}
         pendingLabel={t("sidebar.project.actions.removing")}
         onSelect={onRemoveProject}
+        disabled={archiveAction.pending}
       >
         {t("sidebar.project.actions.remove")}
       </ProjectMenuItem>
@@ -951,6 +973,7 @@ function ProjectHeaderRow({
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
+  const archiveAction = useProjectArchive({ projectName: displayName, hosts: project.hosts });
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
@@ -1068,6 +1091,7 @@ function ProjectHeaderRow({
         onRestoreProject={openRestoreProject}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
+        archiveAction={archiveAction}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1138,6 +1162,7 @@ function ProjectHeaderRow({
           onRestoreProject={openRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
+          archiveAction={archiveAction}
         />
       </ContextMenuContent>
       <RestoreProjectWorkspaceDialog
@@ -1146,6 +1171,7 @@ function ProjectHeaderRow({
         onClose={closeRestoreProject}
         onWorkspacePress={onWorkspacePress}
       />
+      {archiveAction.confirmation}
     </ContextMenu>
   );
 }

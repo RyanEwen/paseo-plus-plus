@@ -1561,6 +1561,29 @@ export const zhCN: TranslationResources = {
       openProjectSettings: "打开 project 设置",
     },
     project: {
+      archive: {
+        action: "全部归档",
+        title: "归档项目工作区？",
+        message:
+          "项目：“{{projectName}}”\n工作区：{{workspaceCount}}\n代理：{{agentCount}}（运行中：{{runningAgentCount}}）\n主机：{{hostCount}}\n\n正在运行的代理和工作区任务将停止。Paseo 管理的工作树可能会被移除。项目将保留。",
+        includeBackground: "同时归档后台工作区（{{count}}）",
+        backgroundWarning: "包含后台工作区也会停止其中的代理和任务。",
+        discovering: "正在统计工作区和代理...",
+        progress: "正在归档工作区：{{completed}} / {{total}}",
+        completed: "已归档工作区：{{count}}",
+        failed:
+          "已归档 {{completed}} 个工作区。操作在主机 {{host}} 的“{{workspace}}”处停止：{{error}}。尚未尝试：{{unprocessed}}。解决问题后，请重试“全部归档”。",
+        empty: "此项目中没有活动工作区",
+        projectChanged: "项目在确认期间发生了变化。请核对数量，然后重试“全部归档”。",
+        hostDisconnected: "主机 {{host}} 已断开连接。请连接项目的所有主机后重试。",
+        updateRequired: "请更新主机 {{host}}，以安全归档项目工作区。",
+        alreadyArchiving: "工作区“{{workspace}}”已在归档中。请等待完成后重试。",
+        incompleteDiscovery: "无法统计项目的所有工作区和代理。请重试“全部归档”。",
+        verificationFailed:
+          "无法确认工作区“{{workspace}}”是否已归档。重试前，请打开“历史”检查其状态。",
+        agentsRemaining: "工作区“{{workspace}}”中仍有活动代理。请打开“历史”检查未完成的归档。",
+        agentNotArchived: "无法确认代理 {{agent}}是否已归档并停止。请打开“历史”检查其状态。",
+      },
       restore: {
         title: "恢复已归档工作区",
         search: "搜索已归档工作区",

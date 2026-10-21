@@ -6,6 +6,23 @@ import {
 } from "./messages.js";
 
 describe("workspace recovery protocol", () => {
+  test("keeps the workspace archive completion capability optional", () => {
+    for (const supported of [undefined, false, true]) {
+      const features = supported === undefined ? {} : { workspaceArchiveComplete: supported };
+      expect(
+        ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "host", features })
+          .features?.workspaceArchiveComplete,
+      ).toBe(supported);
+    }
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "archive_workspace_request",
+        requestId: "archive-1",
+        workspaceId: "workspace-1",
+      }),
+    ).toMatchObject({ type: "archive_workspace_request", workspaceId: "workspace-1" });
+  });
+
   test("parses project-scoped archived listing without requiring the capability on older hosts", () => {
     expect(
       SessionInboundMessageSchema.parse({

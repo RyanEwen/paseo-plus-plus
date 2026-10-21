@@ -1609,6 +1609,37 @@ export const fr: TranslationResources = {
       openProjectSettings: "Ouvrir les paramètres du projet",
     },
     project: {
+      archive: {
+        action: "Tout archiver",
+        title: "Archiver les espaces de travail du projet ?",
+        message:
+          "Projet : « {{projectName}} »\nEspaces de travail : {{workspaceCount}}\nAgents : {{agentCount}} (en cours : {{runningAgentCount}})\nHôtes : {{hostCount}}\n\nLes agents en cours et les tâches des espaces de travail seront arrêtés. Les arbres de travail gérés par Paseo pourront être supprimés. Le projet sera conservé.",
+        includeBackground: "Archiver aussi les espaces de travail en arrière-plan ({{count}})",
+        backgroundWarning:
+          "Inclure les espaces de travail en arrière-plan arrête aussi leurs agents et leurs tâches.",
+        discovering: "Comptage des espaces de travail et des agents...",
+        progress: "Archivage des espaces de travail : {{completed}} sur {{total}}",
+        completed: "Espaces de travail archivés : {{count}}",
+        failed:
+          "{{completed}} espaces de travail archivés. Opération arrêtée sur « {{workspace}} » sur {{host}} : {{error}}. Non tentés : {{unprocessed}}. Résolvez le problème, puis réessayez Tout archiver.",
+        empty: "Aucun espace de travail actif dans ce projet",
+        projectChanged:
+          "Le projet a changé pendant la confirmation. Vérifiez les nombres, puis réessayez Tout archiver.",
+        hostDisconnected:
+          "L’hôte {{host}} est déconnecté. Connectez tous les hôtes du projet, puis réessayez.",
+        updateRequired:
+          "Mettez l’hôte {{host}} à jour pour archiver les espaces de travail du projet en toute sécurité.",
+        alreadyArchiving:
+          "L’espace de travail « {{workspace}} » est déjà en cours d’archivage. Attendez la fin, puis réessayez.",
+        incompleteDiscovery:
+          "Impossible de compter tous les espaces de travail et agents du projet. Réessayez Tout archiver.",
+        verificationFailed:
+          "Impossible de vérifier que l’espace de travail « {{workspace}} » est archivé. Ouvrez Historique pour vérifier son état avant de réessayer.",
+        agentsRemaining:
+          "L’espace de travail « {{workspace}} » contient encore des agents actifs. Ouvrez Historique pour examiner l’archivage incomplet.",
+        agentNotArchived:
+          "Impossible de vérifier que l’agent {{agent}} est archivé et arrêté. Ouvrez Historique pour vérifier son état.",
+      },
       restore: {
         title: "Restaurer un espace de travail archivé",
         search: "Rechercher des espaces de travail archivés",

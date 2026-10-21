@@ -1592,6 +1592,37 @@ export const ja: TranslationResources = {
       openProjectSettings: "プロジェクト設定を開く",
     },
     project: {
+      archive: {
+        action: "すべてアーカイブ",
+        title: "プロジェクトのワークスペースをアーカイブしますか？",
+        message:
+          "プロジェクト:「{{projectName}}」\nワークスペース: {{workspaceCount}}\nエージェント: {{agentCount}}（実行中: {{runningAgentCount}}）\nホスト: {{hostCount}}\n\n実行中のエージェントとワークスペースのジョブは停止します。Paseo が管理するワークツリーは削除される場合があります。プロジェクトは保持されます。",
+        includeBackground: "バックグラウンドのワークスペースもアーカイブ ({{count}})",
+        backgroundWarning:
+          "バックグラウンドのワークスペースを含めると、そのエージェントとジョブも停止します。",
+        discovering: "ワークスペースとエージェントを集計中...",
+        progress: "ワークスペースをアーカイブ中: {{completed}} / {{total}}",
+        completed: "アーカイブしたワークスペース: {{count}}",
+        failed:
+          "{{completed}} 個のワークスペースをアーカイブしました。{{host}} の「{{workspace}}」で処理を停止しました: {{error}}。未処理: {{unprocessed}}。問題を解決してから「すべてアーカイブ」を再試行してください。",
+        empty: "このプロジェクトに有効なワークスペースはありません",
+        projectChanged:
+          "確認中にプロジェクトが変更されました。件数を確認して「すべてアーカイブ」を再試行してください。",
+        hostDisconnected:
+          "ホスト {{host}} が切断されています。プロジェクトのすべてのホストに接続してから再試行してください。",
+        updateRequired:
+          "プロジェクトのワークスペースを安全にアーカイブするには、ホスト {{host}} を更新してください。",
+        alreadyArchiving:
+          "ワークスペース「{{workspace}}」はすでにアーカイブ中です。完了してから再試行してください。",
+        incompleteDiscovery:
+          "プロジェクトのすべてのワークスペースとエージェントを集計できませんでした。「すべてアーカイブ」を再試行してください。",
+        verificationFailed:
+          "ワークスペース「{{workspace}}」がアーカイブ済みか確認できませんでした。再試行する前に履歴を開いて状態を確認してください。",
+        agentsRemaining:
+          "ワークスペース「{{workspace}}」にはまだ有効なエージェントがあります。履歴を開いて未完了のアーカイブを確認してください。",
+        agentNotArchived:
+          "エージェント {{agent}} がアーカイブされ、停止していることを確認できませんでした。履歴を開いて状態を確認してください。",
+      },
       restore: {
         title: "アーカイブ済みワークスペースを復元",
         search: "アーカイブ済みワークスペースを検索",

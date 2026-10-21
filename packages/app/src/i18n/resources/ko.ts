@@ -1583,6 +1583,36 @@ export const ko: TranslationResources = {
       openProjectSettings: "프로젝트 설정 열기",
     },
     project: {
+      archive: {
+        action: "모두 보관",
+        title: "프로젝트의 작업 공간을 보관할까요?",
+        message:
+          '프로젝트: "{{projectName}}"\n작업 공간: {{workspaceCount}}\n에이전트: {{agentCount}} (실행 중: {{runningAgentCount}})\n호스트: {{hostCount}}\n\n실행 중인 에이전트와 작업 공간의 작업이 중지됩니다. Paseo가 관리하는 워크트리가 제거될 수 있습니다. 프로젝트는 유지됩니다.',
+        includeBackground: "백그라운드 작업 공간도 보관 ({{count}})",
+        backgroundWarning: "백그라운드 작업 공간을 포함하면 해당 에이전트와 작업도 중지됩니다.",
+        discovering: "작업 공간과 에이전트 수를 확인하는 중...",
+        progress: "작업 공간 보관 중: {{total}}개 중 {{completed}}개",
+        completed: "보관된 작업 공간: {{count}}",
+        failed:
+          '작업 공간 {{completed}}개를 보관했습니다. {{host}}의 "{{workspace}}"에서 작업이 중지되었습니다: {{error}}. 시도하지 않은 항목: {{unprocessed}}개. 문제를 해결한 후 모두 보관을 다시 시도하세요.',
+        empty: "이 프로젝트에 활성 작업 공간이 없습니다",
+        projectChanged:
+          "확인 중 프로젝트가 변경되었습니다. 개수를 확인하고 모두 보관을 다시 시도하세요.",
+        hostDisconnected:
+          "호스트 {{host}}의 연결이 끊어졌습니다. 프로젝트의 모든 호스트에 연결한 후 다시 시도하세요.",
+        updateRequired:
+          "프로젝트의 작업 공간을 안전하게 보관하려면 호스트 {{host}}를 업데이트하세요.",
+        alreadyArchiving:
+          '작업 공간 "{{workspace}}"을(를) 이미 보관하고 있습니다. 완료된 후 다시 시도하세요.',
+        incompleteDiscovery:
+          "프로젝트의 모든 작업 공간과 에이전트 수를 확인할 수 없습니다. 모두 보관을 다시 시도하세요.",
+        verificationFailed:
+          '작업 공간 "{{workspace}}"이(가) 보관되었는지 확인할 수 없습니다. 다시 시도하기 전에 기록을 열어 상태를 확인하세요.',
+        agentsRemaining:
+          '작업 공간 "{{workspace}}"에 아직 활성 에이전트가 있습니다. 기록을 열어 완료되지 않은 보관 상태를 확인하세요.',
+        agentNotArchived:
+          "에이전트 {{agent}}이(가) 보관되고 중지되었는지 확인할 수 없습니다. 기록을 열어 상태를 확인하세요.",
+      },
       restore: {
         title: "보관된 작업 공간 복원",
         search: "보관된 작업 공간 검색",

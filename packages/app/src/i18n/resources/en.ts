@@ -1584,6 +1584,35 @@ export const en = {
       openProjectSettings: "Open project settings",
     },
     project: {
+      archive: {
+        action: "Archive all",
+        title: "Archive project workspaces?",
+        message:
+          'Project: "{{projectName}}"\nWorkspaces: {{workspaceCount}}\nAgents: {{agentCount}} (running: {{runningAgentCount}})\nHosts: {{hostCount}}\n\nRunning agents and workspace jobs will stop. Paseo-owned worktrees may be removed. The project will remain.',
+        includeBackground: "Also archive background workspaces ({{count}})",
+        backgroundWarning: "Including background workspaces stops their agents and jobs too.",
+        discovering: "Counting workspaces and agents...",
+        progress: "Archiving workspaces: {{completed}} of {{total}}",
+        completed: "Archived workspaces: {{count}}",
+        failed:
+          'Archived {{completed}} workspaces. Stopped at "{{workspace}}" on {{host}}: {{error}}. Not attempted: {{unprocessed}}. Resolve the problem and retry Archive all.',
+        empty: "No active workspaces in this project",
+        projectChanged:
+          "The project changed during confirmation. Review the counts and try Archive all again.",
+        hostDisconnected:
+          "Host {{host}} is disconnected. Connect every project host and try again.",
+        updateRequired: "Update host {{host}} to archive project workspaces safely.",
+        alreadyArchiving:
+          'Workspace "{{workspace}}" is already archiving. Wait for it to finish and try again.',
+        incompleteDiscovery:
+          "Could not count all project workspaces and agents. Try Archive all again.",
+        verificationFailed:
+          'Could not verify that workspace "{{workspace}}" is archived. Open History to inspect its state before retrying.',
+        agentsRemaining:
+          'Workspace "{{workspace}}" still has active agents. Open History to inspect the incomplete archive.',
+        agentNotArchived:
+          "Could not verify that agent {{agent}} is archived and stopped. Open History to inspect its state.",
+      },
       restore: {
         title: "Restore archived workspace",
         search: "Search archived workspaces",

@@ -1607,6 +1607,37 @@ export const ptBR: TranslationResources = {
       openProjectSettings: "Abrir configurações do projeto",
     },
     project: {
+      archive: {
+        action: "Arquivar tudo",
+        title: "Arquivar os espaços de trabalho do projeto?",
+        message:
+          'Projeto: "{{projectName}}"\nEspaços de trabalho: {{workspaceCount}}\nAgentes: {{agentCount}} (em execução: {{runningAgentCount}})\nHosts: {{hostCount}}\n\nOs agentes em execução e as tarefas dos espaços de trabalho serão interrompidos. As árvores de trabalho gerenciadas pelo Paseo poderão ser removidas. O projeto será mantido.',
+        includeBackground: "Arquivar também os espaços de trabalho em segundo plano ({{count}})",
+        backgroundWarning:
+          "Incluir os espaços de trabalho em segundo plano também interrompe seus agentes e tarefas.",
+        discovering: "Contando espaços de trabalho e agentes...",
+        progress: "Arquivando espaços de trabalho: {{completed}} de {{total}}",
+        completed: "Espaços de trabalho arquivados: {{count}}",
+        failed:
+          '{{completed}} espaços de trabalho foram arquivados. A operação parou em "{{workspace}}" no host {{host}}: {{error}}. Não tentados: {{unprocessed}}. Resolva o problema e tente Arquivar tudo novamente.',
+        empty: "Não há espaços de trabalho ativos neste projeto",
+        projectChanged:
+          "O projeto mudou durante a confirmação. Confira as contagens e tente Arquivar tudo novamente.",
+        hostDisconnected:
+          "O host {{host}} está desconectado. Conecte todos os hosts do projeto e tente novamente.",
+        updateRequired:
+          "Atualize o host {{host}} para arquivar os espaços de trabalho do projeto com segurança.",
+        alreadyArchiving:
+          'O espaço de trabalho "{{workspace}}" já está sendo arquivado. Aguarde a conclusão e tente novamente.',
+        incompleteDiscovery:
+          "Não foi possível contar todos os espaços de trabalho e agentes do projeto. Tente Arquivar tudo novamente.",
+        verificationFailed:
+          'Não foi possível verificar se o espaço de trabalho "{{workspace}}" está arquivado. Abra o Histórico de agentes para conferir seu estado antes de tentar novamente.',
+        agentsRemaining:
+          'O espaço de trabalho "{{workspace}}" ainda tem agentes ativos. Abra o Histórico de agentes para conferir o arquivamento incompleto.',
+        agentNotArchived:
+          "Não foi possível verificar se o agente {{agent}} está arquivado e parado. Abra o Histórico de agentes para conferir seu estado.",
+      },
       restore: {
         title: "Restaurar espaço de trabalho arquivado",
         search: "Buscar espaços de trabalho arquivados",
