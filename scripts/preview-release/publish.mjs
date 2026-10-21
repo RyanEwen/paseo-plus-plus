@@ -9,10 +9,13 @@ import { requirePreviewRepository } from "./source.mjs";
 import { requirePublicationPolicy, updaterBridgeMarker } from "./publication-policy.mjs";
 
 /** Publish only a complete validated draft; never replace the bytes of a published preview. */
-export async function publishPreviewRelease({ directory, repo, notes, publish, kind = "bridge" }) {
+export async function publishPreviewRelease({ directory, repo, notes, publish, kind = "preview" }) {
   requirePreviewRepository(repo);
   if (!notes?.trim()) {
     throw new Error("Provide user-facing release notes before creating a preview");
+  }
+  if (kind !== "bridge" && notes.includes(updaterBridgeMarker)) {
+    throw new Error("The updater bridge marker is reserved for the once-only bridge release");
   }
   const release = JSON.parse(readFileSync(path.join(directory, "preview-release.json"), "utf8"));
   requirePublicationPolicy({ kind, repo, release });
@@ -129,6 +132,6 @@ if (isMainModule(import.meta.url)) {
     repo: process.env.GITHUB_REPOSITORY,
     notes: process.env.PASEO_PREVIEW_NOTES,
     publish: process.env.PASEO_PREVIEW_PUBLISH === "true",
-    kind: process.env.PASEO_PREVIEW_RELEASE_KIND ?? "bridge",
+    kind: process.env.PASEO_PREVIEW_RELEASE_KIND ?? "preview",
   });
 }
