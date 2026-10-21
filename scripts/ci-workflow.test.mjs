@@ -148,7 +148,10 @@ test("preview releases build one checked commit and require every approved platf
     assert.ok(source.includes(`runner: ${runner}`), `missing ${runner}`);
   }
   assert.doesNotMatch(source, /macos|eas build|npm publish|contents: write[\s\S]*contents: write/);
-  assert.match(source, /release_kind:[\s\S]*default: bridge[\s\S]*- bridge[ \t]*\n[ \t]+- latest/);
+  assert.match(
+    source,
+    /release_kind:[\s\S]*default: preview[\s\S]*- preview[ \t]*\n[ \t]+- bridge[ \t]*\n[ \t]+- latest/,
+  );
   assert.match(
     jobs.get("source").join("\n"),
     /run: node scripts\/preview-release\/publication-policy\.mjs/,
@@ -202,6 +205,12 @@ function publicationFixture() {
       assetFingerprint: fingerprintBridgeAssets(assets),
       qualificationEvidence: "docs/qa-evidence/updater-bridge/acceptance.md",
     },
+    retainedBridge: {
+      releaseId: bridge.id,
+      tag: bridge.tag_name,
+      commit: bridge.target_commitish,
+      assetFingerprint: fingerprintBridgeAssets(assets),
+    },
     releases: [bridge],
     comparison: {
       status: "ahead",
@@ -224,7 +233,7 @@ test("normal Latest publication stays closed until a published bridge is qualifi
   );
   assert.throws(
     () => resolvePublicationPolicy({ ...fixture, kind: "stable" }),
-    /kind must be bridge or latest/,
+    /kind must be bridge, preview or latest/,
   );
   assert.throws(
     () => resolvePublicationPolicy({ ...fixture, kind: "bridge" }),
@@ -234,6 +243,41 @@ test("normal Latest publication stays closed until a published bridge is qualifi
     () => resolvePublicationPolicy({ ...fixture, kind: "bridge", qualifiedBridge: null }),
     /final updater bridge already exists/,
   );
+});
+
+test("continuing preview prereleases require retention but never invent Latest qualification", () => {
+  const fixture = { ...publicationFixture(), kind: "preview", qualifiedBridge: null };
+  assert.deepEqual(resolvePublicationPolicy(fixture), { prerelease: true, makeLatest: false });
+  assert.throws(
+    () => resolvePublicationPolicy({ ...fixture, kind: "latest" }),
+    /reviewed qualified-bridge receipt/,
+  );
+  for (const retainedBridge of [null, {}, { tag: fixture.releases[0].tag_name }]) {
+    assert.throws(
+      () => resolvePublicationPolicy({ ...fixture, retainedBridge }),
+      /bridge retention evidence/,
+    );
+  }
+  assert.throws(
+    () => resolvePublicationPolicy({ ...fixture, kind: "bridge" }),
+    /final updater bridge already exists/,
+  );
+});
+
+test("non-bridge release notes cannot create a second bridge marker", async () => {
+  const { publishPreviewRelease } = await import("./preview-release/publish.mjs");
+  for (const kind of ["preview", "latest"]) {
+    await assert.rejects(
+      publishPreviewRelease({
+        directory: "not-read",
+        repo: "RyanEwen/paseo-plus-plus",
+        notes: updaterBridgeMarker,
+        publish: false,
+        kind,
+      }),
+      /marker is reserved/,
+    );
+  }
 });
 
 test("normal release gate requires the exact retained prerelease, asset inventory and source ancestry", () => {
@@ -248,15 +292,19 @@ test("normal release gate requires the exact retained prerelease, asset inventor
     { ...bridge, assets: bridge.assets.slice(1) },
     { ...bridge, assets: [...bridge.assets, { ...bridge.assets[0], id: 103, name: "extra.apk" }] },
   ]) {
+    for (const kind of ["latest", "preview"]) {
+      assert.throws(
+        () => resolvePublicationPolicy({ ...fixture, kind, releases: [replacement] }),
+        /immutable assets must remain published/,
+      );
+    }
+  }
+  for (const kind of ["latest", "preview"]) {
     assert.throws(
-      () => resolvePublicationPolicy({ ...fixture, releases: [replacement] }),
+      () => resolvePublicationPolicy({ ...fixture, kind, releases: [] }),
       /immutable assets must remain published/,
     );
   }
-  assert.throws(
-    () => resolvePublicationPolicy({ ...fixture, releases: [] }),
-    /immutable assets must remain published/,
-  );
   for (const comparison of [
     null,
     { ...fixture.comparison, status: "identical" },
@@ -264,10 +312,12 @@ test("normal release gate requires the exact retained prerelease, asset inventor
     { ...fixture.comparison, base_commit: { sha: "c".repeat(40) } },
     { ...fixture.comparison, merge_base_commit: { sha: "c".repeat(40) } },
   ]) {
-    assert.throws(
-      () => resolvePublicationPolicy({ ...fixture, comparison }),
-      /descend from the qualified bridge/,
-    );
+    for (const kind of ["latest", "preview"]) {
+      assert.throws(
+        () => resolvePublicationPolicy({ ...fixture, kind, comparison }),
+        /descend from the retained bridge/,
+      );
+    }
   }
   for (const qualificationEvidence of [
     "../receipt.md",
@@ -292,14 +342,17 @@ test("normal publication preserves the native counter and desktop ordering witho
     ["0.11.2-preview.76", 76],
     ["0.11.1-preview.81", 81],
   ]) {
-    assert.throws(
-      () =>
-        resolvePublicationPolicy({
-          ...fixture,
-          release: { ...fixture.release, tag: `v${version}`, version, buildNumber },
-        }),
-      /advance the published/,
-    );
+    for (const kind of ["latest", "preview"]) {
+      assert.throws(
+        () =>
+          resolvePublicationPolicy({
+            ...fixture,
+            kind,
+            release: { ...fixture.release, tag: `v${version}`, version, buildNumber },
+          }),
+        /advance the published/,
+      );
+    }
   }
   assert.throws(
     () =>
