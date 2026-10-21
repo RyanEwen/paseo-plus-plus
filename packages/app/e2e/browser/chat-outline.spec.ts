@@ -48,6 +48,7 @@ import {
   withPromptTimelinePlugin,
 } from "../support/helpers/plugin-timeline";
 import {
+  revealUserMessageBody,
   expectTimelineAtMaximumScrollWithPromptVisible,
   expectTimelinePromptNotMounted,
   expectTimelinePromptLandedBelowTop,
@@ -117,7 +118,7 @@ test.describe("desktop chat outline", () => {
       await expect.poll(() => jumps.requests()).toHaveLength(1);
       expect(jumps.requests()[0]).toMatchObject({ limit: 40, mergeWindow: true });
 
-      await page.getByTestId("scroll-to-bottom-button").click();
+      await page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).click();
       await expectTimelinePromptVisible(page, agent.newestPrompt);
 
       const requestsBeforeLoadedJump = jumps.requests().length;
@@ -448,6 +449,8 @@ async function expectStationaryPromptLanding(
         .getByTestId("agent-chat-scroll")
         .getByTestId("user-message")
         .filter({ hasText: newest });
+      // The current one-line default must be expanded to preserve the long-to-short geometry.
+      await revealUserMessageBody(source);
     } else {
       await scrollActualRowPastTop(page, actualUserRow(page, newest));
       await expect(sticky).toContainText("Current response context");
@@ -814,7 +817,8 @@ test("actual user row find expands each occurrence and preserves its text node",
     await scrollActualRowPastTop(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
     // Use the existing app shortcut; opening find must expand, not a manual More click.
-    await row.getByTestId("user-message-timestamp").click();
+    // Pinned metadata is deliberately pointer-disabled; focus the owning transcript itself.
+    await page.getByTestId("agent-chat-scroll").focus();
     await page.keyboard.press("ControlOrMeta+f");
     const panel = page.locator('[data-chat-find-widget="true"]').filter({ visible: true });
     const query = panel.getByRole("textbox", { name: "Find in pane", exact: true });
@@ -1231,7 +1235,7 @@ for (const viewport of [
       await agent.client.sendAgentMessage(agent.agentId, longPrompt);
       await agent.client.waitForFinish(agent.agentId, 15_000);
       await expect(sticky).toContainText(agent.prompts[1]);
-      await page.getByTestId("scroll-to-bottom-button").click();
+      await page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).click();
       await expect(sticky).toContainText("Long sticky prompt");
       await expectNearBottom(page);
       const longRow = actualUserRow(page, longPrompt);
@@ -1337,11 +1341,14 @@ for (const viewport of [
       await longRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
       await page.setViewportSize(viewport);
       await page.reload({ waitUntil: "domcontentloaded" });
-      // Reload starts at the latest response. Reveal this earlier prompt through its index.
-      await chatOutlineRail(page)
-        .getByRole("tab", { name: /Long sticky prompt/ })
-        .click();
-      await expect(actualUserRow(page, longPrompt)).toContainText("Long sticky prompt");
+      // Reload starts at the latest response; the real pinned prompt reveals itself on compact layouts too.
+      const reloadedPrompt = actualUserRow(page, longPrompt);
+      await expect(reloadedPrompt).toHaveAttribute("data-prompt-pinned", "true");
+      await reloadedPrompt
+        .getByTestId("user-message-content-target")
+        .click({ position: { x: 10, y: 4 } });
+      await expectTimelinePromptLandedBelowTop(page, longPrompt);
+      await expect(reloadedPrompt).toHaveCount(1);
     } finally {
       await agent.cleanup();
     }
@@ -1436,7 +1443,7 @@ test("sticky cancelled older window stays at latest after bottom", async ({ page
     gate.holdNextServerMessage("fetch_agent_timeline_response");
     await chatOutlineRail(page).getByRole("tab").first().click();
     await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
-    await page.getByTestId("scroll-to-bottom-button").click();
+    await page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).click();
     await expectNearBottom(page);
     const before = await delivered.count();
     gate.releaseHeldServerMessage("fetch_agent_timeline_response");
@@ -1520,12 +1527,13 @@ for (const indexed of [true, false]) {
       gate.allowTimelineResponses();
       await sticky.getByRole("button", { name: "Retry", exact: true }).click();
       await expect(sticky).toHaveCount(0);
-      const reveal = page.getByRole("button", { name: "Go to this message", exact: true });
-      await expect(reveal).toBeVisible();
+      const recovered = actualUserRow(page, prompt);
+      await expect(recovered).toHaveCount(1);
+      await expect(recovered).toHaveAttribute("data-prompt-pinned", "true");
       await expectNearBottom(page);
-      await reveal.click();
+      // The pinned prompt itself is the reveal link, including when its outline index failed.
+      await recovered.getByRole("link", { name: prompt, exact: true }).click();
       await expectTimelinePromptLandedBelowTop(page, prompt);
-      await expect(actualUserRow(page, prompt)).toHaveCount(1);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/discovery-${indexed ? "indexed" : "pagination"}.png`,
       });

@@ -6,6 +6,7 @@ import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { DaemonClient } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
@@ -729,7 +730,9 @@ test("exact workspace worktree choices preserve names, reject conflicts and adop
     });
     const listed = await client.getPaseoWorktreeList({ cwd: repoDir, includeAll: true });
     expect(listed.error).toBeNull();
-    expect(listed.worktrees.map((entry) => entry.worktreePath)).toContain(externalPath);
+    // Git can return forward slashes and expanded Windows short paths.
+    const matchesExternalPath = createRealpathAwarePathMatcher(externalPath);
+    expect(listed.worktrees.some((entry) => matchesExternalPath(entry.worktreePath))).toBe(true);
     const before = execFileSync("git", ["worktree", "list", "--porcelain"], {
       cwd: repoDir,
     }).toString();
@@ -738,7 +741,9 @@ test("exact workspace worktree choices preserve names, reject conflicts and adop
         source: { kind: "directory", projectId, path: existingPath },
       });
       expect(adopted.error).toBeNull();
-      expect(adopted.workspace!.workspaceDirectory).toBe(existingPath);
+      expect(
+        createRealpathAwarePathMatcher(existingPath)(adopted.workspace!.workspaceDirectory),
+      ).toBe(true);
       expect(adopted.workspace!.projectId).toBe(projectId);
     }
     expect(
@@ -747,7 +752,9 @@ test("exact workspace worktree choices preserve names, reject conflicts and adop
     rmSync(externalPath, { recursive: true, force: true });
     const withoutMissing = await client.getPaseoWorktreeList({ cwd: repoDir, includeAll: true });
     expect(withoutMissing.error).toBeNull();
-    expect(withoutMissing.worktrees.map((entry) => entry.worktreePath)).not.toContain(externalPath);
+    expect(withoutMissing.worktrees.some((entry) => matchesExternalPath(entry.worktreePath))).toBe(
+      false,
+    );
     const staleCheckout = await client.createWorkspace({
       source: {
         ...source,

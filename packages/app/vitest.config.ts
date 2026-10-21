@@ -15,6 +15,23 @@ const resolvePackageEntry = (packageName: string) => {
     : path.resolve(rootNodeModules, packageName);
 };
 
+// Keep browser dependency prebundling on the same platform files as served modules.
+const webResolveExtensions = [
+  ".web.mjs",
+  ".web.js",
+  ".web.mts",
+  ".web.ts",
+  ".web.jsx",
+  ".web.tsx",
+  ".mjs",
+  ".js",
+  ".mts",
+  ".ts",
+  ".jsx",
+  ".tsx",
+  ".json",
+];
+
 export default defineConfig({
   test: {
     environment: "node",
@@ -24,6 +41,15 @@ export default defineConfig({
         extends: true,
         test: {
           name: "unit",
+          // The generated validator is already executable JS. Transforming its 10 MB body
+          // exhausts Vite's heap; execute the real compiled module directly in Node.
+          server: {
+            deps: {
+              external: [
+                /[/\\]packages[/\\]protocol[/\\]dist[/\\]generated[/\\]validation[/\\]ws-outbound\.aot\.js$/,
+              ],
+            },
+          },
           environment: "node",
           include: [
             "src/**/*.{test,spec}.{ts,tsx}",
@@ -37,6 +63,9 @@ export default defineConfig({
       },
       {
         extends: true,
+        // Vitest adds every browser test to the optimizer scan before mock transforms.
+        // Leave runtime discovery enabled, but keep raw test imports out of that scan.
+        optimizeDeps: { entries: ["!**/*.browser.{test,spec}.{ts,tsx}"] },
         test: {
           name: "browser",
           fileParallelism: false,
@@ -66,6 +95,7 @@ export default defineConfig({
         fallbackCJS: true,
         inline: [
           "zustand",
+          "@floating-ui/react-native",
           "@tanstack/react-query",
           "react-native-web",
           "react-native-gesture-handler",
@@ -78,14 +108,47 @@ export default defineConfig({
       },
     },
   },
-  // Reanimated and gesture-handler pick platform files by extension
-  // (e.g. `GestureHandlerRootView.web.js`). Vite's optimizer does not apply `resolve.extensions`,
-  // so it scans the native files and dies on imports react-native-web has no answer for.
-  // Unbundled, the same imports go through the resolver below and land on the web files.
+  // Browser dependencies and served app modules must select the same Metro web files.
   optimizeDeps: {
+    esbuildOptions: { resolveExtensions: webResolveExtensions },
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
+      "react-native",
       "react/jsx-runtime",
+      // These are real browser imports; prebundle them before the first test executes.
+      "react",
+      "react-dom/client",
+      "react-dom",
+      "@floating-ui/react-native",
+      "@tanstack/react-query",
+      "@tanstack/react-virtual",
+      "react-i18next",
+      "@testing-library/dom",
+      "@xterm/xterm",
+      "@xterm/addon-webgl",
+      "@xterm/addon-clipboard",
+      "@xterm/addon-fit",
+      "@xterm/addon-image",
+      "@xterm/addon-search",
+      "@xterm/addon-unicode11",
+      "@xterm/addon-web-links",
+      "fast-deep-equal",
+      "fast-deep-equal/es6",
+      "zustand/middleware",
+      "zustand/vanilla",
+      "zustand/shallow",
+      "expo-constants",
+      "expo-modules-core",
+      "mnemonic-id",
+      "@gorhom/portal",
+      "tweetnacl",
+      "base64-js",
+      "buffer",
+      "tiny-invariant",
+      "semver/functions/parse.js",
+      "semver/ranges/valid.js",
+      "semver/functions/satisfies.js",
+      "use-sync-external-store/shim/with-selector",
       // Prebundle late-loaded editor and settings imports before browser mocks run.
       "i18next",
       "zustand",
@@ -128,22 +191,9 @@ export default defineConfig({
     global: "globalThis",
   },
   resolve: {
-    extensions: [
-      ".web.mjs",
-      ".web.js",
-      ".web.mts",
-      ".web.ts",
-      ".web.jsx",
-      ".web.tsx",
-      ".mjs",
-      ".js",
-      ".mts",
-      ".ts",
-      ".jsx",
-      ".tsx",
-      ".json",
-    ],
+    extensions: webResolveExtensions,
     alias: [
+      { find: /^expo-router$/, replacement: path.resolve(__dirname, "test-stubs/expo-router.tsx") },
       {
         find: /^@getpaseo\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),

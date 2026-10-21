@@ -1185,7 +1185,14 @@ test.describe("Agent message submission", () => {
         hasText: "I'll take a look at the scroll anchor behavior you described.",
       }),
     ).toBeVisible();
-    await awaitToolCall(page, "Read");
+    // Completed Read and search calls share the activity group in the default readable view.
+    await expect(
+      page
+        .getByTestId("tool-call-group")
+        .filter({ visible: true })
+        .filter({ hasText: "1 file read and 1 search" })
+        .last(),
+    ).toBeVisible({ timeout: 30_000 });
     await finishTimelineRowStabilityCheck();
   });
 

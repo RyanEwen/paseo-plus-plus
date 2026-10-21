@@ -562,7 +562,11 @@ for (const width of [1440, 390]) {
       });
       await page.evaluate(() => sessionStorage.setItem("fork-settings-fail-read", "yes"));
       await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-      await expect(section.getByRole("alert")).toContainText("Unable to load saved preferences", {
+      await expect(
+        section
+          .getByRole("alert")
+          .filter({ has: page.getByRole("button", { name: "Retry", exact: true }) }),
+      ).toContainText("Unable to load saved preferences", {
         timeout: 30_000,
       });
       await expect(switches).toHaveCount(features.length);
@@ -585,7 +589,11 @@ for (const width of [1440, 390]) {
         return Number(sessionStorage.getItem("fork-settings-read-attempts"));
       });
       expect(settledAttempts).toBe(failedReadAttempts);
-      await expect(section.getByRole("alert")).toContainText("Unable to load saved preferences");
+      await expect(
+        section
+          .getByRole("alert")
+          .filter({ has: page.getByRole("button", { name: "Retry", exact: true }) }),
+      ).toContainText("Unable to load saved preferences");
       await expect(autoOpen).toBeDisabled();
       await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-read-failed.png`) });
       await page.evaluate(() => window.dispatchEvent(new Event("fork-restore-read")));

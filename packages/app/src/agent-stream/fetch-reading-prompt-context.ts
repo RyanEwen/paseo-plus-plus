@@ -22,11 +22,12 @@ export function normalContextPageReader(client: DaemonClient, agentId: string): 
       limit: request.limit,
       projection: request.projection,
     });
-    if (
-      page.agentId !== agentId ||
-      page.direction !== "before" ||
-      page.projection !== request.projection
-    )
+    // COMPAT(canonicalContextProjection): added in v0.12.0-beta.3, remove after 2027-02-02
+    // once supported daemons all return projected context pages. Published v0.2.5 honors canonical.
+    const matchesProjection =
+      page.projection === request.projection ||
+      (request.projection === "canonical" && page.projection === "projected");
+    if (page.agentId !== agentId || page.direction !== "before" || !matchesProjection)
       throw new Error("Reading context has a different journal identity");
     return page;
   };

@@ -40,6 +40,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   fetchReadingPromptContext,
   childContextPageReader,
+  normalContextPageReader,
   type ContextPage,
   type ContextEntry,
 } from "../fetch-reading-prompt-context";
@@ -1499,7 +1500,7 @@ function contentReadResponse(type = "user_message") {
         seqEnd: 1,
         sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
         collapsed: [],
-        item: { type, text: "Prompt 1" },
+        item: { type, text: "Prompt 1", messageId: "prompt-1" },
       },
     ],
     error: null,
@@ -2057,7 +2058,50 @@ describe("index-free cache-only context", () => {
   });
 });
 
-describe("strict old-host context accounting", () => {
+describe("normal context reader response projection contract", () => {
+  const request = { epoch: "epoch", cursor: 2, limit: 40, projection: "canonical" as const };
+
+  it.each(["projected", "canonical"])(
+    "accepts the supported %s response to a canonical request",
+    async (projection) => {
+      const page = { ...contentReadResponse(), projection };
+      const fetchAgentTimeline = vi.fn().mockResolvedValue(page);
+      const client = { fetchAgentTimeline } as unknown as DaemonClient;
+      await expect(normalContextPageReader(client, "agent")(request)).resolves.toBe(page);
+      expect(fetchAgentTimeline).toHaveBeenCalledWith("agent", {
+        direction: "before",
+        cursor: { epoch: "epoch", seq: 2 },
+        limit: 40,
+        projection: "canonical",
+      });
+    },
+  );
+
+  it("requires projected responses for projected source probes", async () => {
+    const fetchAgentTimeline = vi
+      .fn()
+      .mockResolvedValue({ ...contentReadResponse(), projection: "canonical" });
+    const client = { fetchAgentTimeline } as unknown as DaemonClient;
+    await expect(
+      normalContextPageReader(client, "agent")({ ...request, projection: "projected" }),
+    ).rejects.toThrow("different journal identity");
+  });
+
+  it.each([
+    { agentId: "other" },
+    { direction: "tail" },
+    { projection: "unknown" },
+    { projection: undefined },
+  ])("rejects a different response journal %j", async (change) => {
+    const fetchAgentTimeline = vi.fn().mockResolvedValue({ ...contentReadResponse(), ...change });
+    const client = { fetchAgentTimeline } as unknown as DaemonClient;
+    await expect(normalContextPageReader(client, "agent")(request)).rejects.toThrow(
+      "different journal identity",
+    );
+  });
+});
+
+describe("strict source context accounting", () => {
   const sourceResponse = () => ({
     ...contentReadResponse("assistant_message"),
     direction: "tail",
@@ -2093,27 +2137,212 @@ describe("strict old-host context accounting", () => {
     ledger.observeWindow(sourceResponse());
     return ledger;
   };
-  it("accounts for source probe and canonical content separately from the unchanged window budget", () => {
+  /** Register a second source while preserving the first chain's outstanding wire reads. */
+  const addOverlappingSource = (ledger: ReturnType<typeof oldLedger>, start = 146, end = 156) => {
+    const source = sourceResponse();
+    source.entries[0]!.seqStart = start;
+    source.entries[0]!.seqEnd = end;
+    source.entries[0]!.sourceSeqRanges = [{ startSeq: start, endSeq: end }];
+    ledger.observeWindow(source);
+    expect(
+      ledger.classify({
+        ...probeRequest(),
+        requestId: "next-probe",
+        cursor: { epoch: "epoch", seq: end + 1 },
+      }),
+    ).toBe("context");
+    return {
+      ...source,
+      direction: "before",
+      requestId: "next-probe",
+      startCursor: { epoch: "epoch", seq: end },
+      endCursor: { epoch: "epoch", seq: end },
+    };
+  };
+
+  it.each([true, false])(
+    "isolates overlapping chains and mounting ownership (older response first: %s)",
+    (olderFirst) => {
+      const ledger = oldLedger();
+      ledger.classify(probeRequest());
+      const nextProbe = addOverlappingSource(ledger);
+      for (const response of olderFirst
+        ? [probeResponse(), nextProbe]
+        : [nextProbe, probeResponse()]) {
+        ledger.completeContext(response);
+      }
+      expect(ledger.classify(contextRequest())).toBe("context");
+      expect(
+        ledger.classify({
+          ...contextRequest(),
+          requestId: "next-context",
+          cursor: { epoch: "epoch", seq: 146 },
+        }),
+      ).toBe("context");
+      const older = { ...contentReadResponse(), requestId: "context-page" };
+      const newer = { ...contentReadResponse(), requestId: "next-context" };
+      newer.entries[0]!.item = {
+        type: "user_message",
+        text: "Prompt 2",
+        messageId: "prompt-2",
+      };
+      for (const response of olderFirst ? [older, newer] : [newer, older]) {
+        ledger.completeContext(response);
+        expect(ledger.mountingPrompt()).toEqual(
+          response === older && olderFirst ? null : { id: "prompt-2", text: "Prompt 2" },
+        );
+      }
+      expect(ledger.certifiedPrompts()).toHaveLength(2);
+      expect(ledger.summary()).toMatchObject({
+        contextBefore: 4,
+        pendingContext: 0,
+        contextChainActive: false,
+        windowBefore: 0,
+        errors: [],
+      });
+    },
+  );
+
+  it("rejects a canonical child shared by two eligible source chains", () => {
     const ledger = oldLedger();
-    expect(ledger.classify({ ...contentReadRequest("window"), limit: 40 })).toBe("window");
-    expect(ledger.classify(probeRequest())).toBe("context");
+    ledger.classify(probeRequest());
+    const nextProbe = addOverlappingSource(ledger, 246, 356);
     ledger.completeContext(probeResponse());
-    expect(ledger.classify(contextRequest())).toBe("context");
-    ledger.completeContext({
-      ...contentReadResponse(),
-      requestId: "context-page",
-      projection: "canonical",
-    });
-    expect(ledger.summary()).toMatchObject({
-      allBefore: 3,
-      windowBefore: 1,
-      contentBefore: 0,
-      contextBefore: 2,
-      pendingContext: 0,
-      contextChainActive: false,
-      errors: [],
-    });
+    ledger.completeContext(nextProbe);
+    expect(ledger.classify(contextRequest())).toBeUndefined();
+    expect(ledger.summary().errors).toHaveLength(1);
   });
+
+  it("keeps the eight-read limit independent for overlapping chains", () => {
+    const ledger = oldLedger();
+    ledger.classify(probeRequest());
+    const nextProbe = addOverlappingSource(ledger);
+    ledger.completeContext(probeResponse());
+    ledger.completeContext(nextProbe);
+    for (const [prefix, start] of [
+      ["older", 246],
+      ["newer", 146],
+    ] as const) {
+      for (let n = 0; n < 7; n += 1) {
+        const cursor = start - n;
+        const requestId = `${prefix}-${n}`;
+        expect(
+          ledger.classify({
+            ...contextRequest(),
+            requestId,
+            cursor: { epoch: "epoch", seq: cursor },
+          }),
+        ).toBe("context");
+        const seq = cursor - 1;
+        ledger.completeContext({
+          ...sourceResponse(),
+          direction: "before",
+          requestId,
+          startCursor: { epoch: "epoch", seq },
+          endCursor: { epoch: "epoch", seq },
+          entries: [
+            {
+              ...sourceResponse().entries[0]!,
+              seqStart: seq,
+              seqEnd: seq,
+              sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+            },
+          ],
+        });
+      }
+      expect(
+        ledger.classify({
+          ...contextRequest(),
+          requestId: `${prefix}-ninth`,
+          cursor: { epoch: "epoch", seq: start - 7 },
+        }),
+      ).toBeUndefined();
+    }
+    expect(ledger.summary()).toMatchObject({
+      contextBefore: 16,
+      pendingContext: 0,
+      windowBefore: 0,
+    });
+    expect(ledger.summary().errors).toHaveLength(2);
+  });
+
+  it.each([
+    { indexed: false, projection: "projected" },
+    { indexed: true, projection: "projected" },
+    { indexed: false, projection: "canonical" },
+    { indexed: true, projection: "canonical" },
+  ])(
+    "accounts for source context without changing the window budget (indexed: $indexed, projection: $projection)",
+    ({ indexed, projection }) => {
+      const ledger = indexed ? indexedReadLedger() : oldLedger();
+      if (indexed) ledger.observeWindow(sourceResponse());
+      expect(ledger.classify({ ...contentReadRequest("window"), limit: 40 })).toBe("window");
+      expect(ledger.classify(probeRequest())).toBe("context");
+      ledger.completeContext(probeResponse());
+      expect(ledger.classify(contextRequest())).toBe("context");
+      ledger.completeContext({
+        ...contentReadResponse(),
+        requestId: "context-page",
+        projection,
+      });
+      expect(ledger.certifiedPrompts()).toEqual([{ id: "prompt-1", text: "Prompt 1" }]);
+      expect(ledger.summary()).toMatchObject({
+        allBefore: 3,
+        windowBefore: 1,
+        contentBefore: 0,
+        contextBefore: 2,
+        pendingContext: 0,
+        contextChainActive: false,
+        errors: [],
+      });
+    },
+  );
+  it("replaces mounting demand per source while adopted prompts return to ordinary accounting", () => {
+    const ledger = oldLedger();
+    ledger.classify(probeRequest());
+    ledger.completeContext(probeResponse());
+    ledger.classify(contextRequest());
+    const first = { ...contentReadResponse(), requestId: "context-page" };
+    ledger.completeContext(first);
+    expect(ledger.mountingPrompt()).toEqual({ id: "prompt-1", text: "Prompt 1" });
+    expect(ledger.certifiedPrompts()).toHaveLength(1);
+    ledger.observeWindow(first);
+    expect(ledger.certifiedPrompts()).toEqual([]);
+
+    const nextSource = sourceResponse();
+    nextSource.entries[0]!.seqStart = 146;
+    nextSource.entries[0]!.seqEnd = 156;
+    nextSource.entries[0]!.sourceSeqRanges = [{ startSeq: 146, endSeq: 156 }];
+    ledger.observeWindow(nextSource);
+    ledger.classify({
+      ...probeRequest(),
+      requestId: "next-probe",
+      cursor: { epoch: "epoch", seq: 157 },
+    });
+    ledger.completeContext({
+      ...nextSource,
+      direction: "before",
+      requestId: "next-probe",
+      startCursor: { epoch: "epoch", seq: 156 },
+      endCursor: { epoch: "epoch", seq: 156 },
+    });
+    expect(ledger.mountingPrompt()).toBeNull();
+    // A late completion of the previous source cannot restore its mounting obligation.
+    ledger.completeContext(first);
+    expect(ledger.mountingPrompt()).toBeNull();
+    expect(ledger.summary().errors).toEqual(["Malformed or repeated context response"]);
+    ledger.classify({
+      ...contextRequest(),
+      requestId: "next-context",
+      cursor: { epoch: "epoch", seq: 146 },
+    });
+    const next = contentReadResponse();
+    next.entries[0]!.item = { type: "user_message", text: "Prompt 2", messageId: "prompt-2" };
+    ledger.completeContext({ ...next, requestId: "next-context" });
+    expect(ledger.mountingPrompt()).toEqual({ id: "prompt-2", text: "Prompt 2" });
+    expect(ledger.certifiedPrompts()).toEqual([{ id: "prompt-2", text: "Prompt 2" }]);
+  });
+
   it.each([
     { agentId: "other" },
     { limit: 2 },
@@ -2168,7 +2397,7 @@ describe("strict old-host context accounting", () => {
       ledger.completeContext({
         ...sourceResponse(),
         direction: "before",
-        projection: "canonical",
+        projection: "projected",
         requestId: id,
         startCursor: { epoch: "epoch", seq },
         endCursor: { epoch: "epoch", seq },
@@ -3543,7 +3772,7 @@ describe("certified ordinary reading context", () => {
     expect(resolveCanonicalSourceMetadata(unknown, first)).toBeUndefined();
     const delta = reconcileCanonicalSourceMetadata(EMPTY_SOURCE_METADATA, {
       ...page,
-      projection: "canonical",
+      projection: "projected",
     });
     expect(delta).toEqual([]);
   });
@@ -4129,7 +4358,7 @@ describe("canonical prompt admission ownership", () => {
       const pending = request(owner, source, channel, {
         agentId,
         readPage,
-        projection: "canonical",
+        projection: "projected",
       });
       await started.promise;
       acceptOccurrence(owner, replacement, 400, { users, complete: true });

@@ -402,7 +402,7 @@ export async function expectComposerFullscreenControls(page: Page): Promise<void
   await expect(page.getByTestId("composer-fullscreen").getByRole("button")).toHaveCount(2);
   await expect(composerInput(page)).toHaveCount(1);
 }
-/** The fullscreen frame and its submit button sit inside the browser's visible viewport. */
+/** Fullscreen fills the visible part of its owning dock; submit stays inside that visible region. */
 export async function expectComposerFullscreenFitsVisibleViewport(
   page: Page,
   submitLabel = "Send message",
@@ -411,14 +411,20 @@ export async function expectComposerFullscreenFitsVisibleViewport(
     .poll(() =>
       page.getByTestId("composer-fullscreen").evaluate((element, label) => {
         const viewport = window.visualViewport!;
+        const surface = element.closest('[data-testid="composer-dock-surface"]')!;
+        const bounds = surface.getBoundingClientRect();
+        const top = Math.max(bounds.top, viewport.offsetTop);
+        const left = Math.max(bounds.left, viewport.offsetLeft);
+        const bottom = Math.min(bounds.bottom, viewport.offsetTop + viewport.height);
+        const right = Math.min(bounds.right, viewport.offsetLeft + viewport.width);
         const frame = element.getBoundingClientRect();
         const send = element.querySelector(`[aria-label="${label}"]`)!.getBoundingClientRect();
         return {
           frameFits:
-            Math.abs(frame.top - viewport.offsetTop) < 1 &&
-            Math.abs(frame.left - viewport.offsetLeft) < 1 &&
-            Math.abs(frame.height - viewport.height) < 1 &&
-            Math.abs(frame.width - viewport.width) < 1,
+            Math.abs(frame.top - top) < 1 &&
+            Math.abs(frame.left - left) < 1 &&
+            Math.abs(frame.bottom - bottom) < 1 &&
+            Math.abs(frame.right - right) < 1,
           sendFits:
             send.top >= viewport.offsetTop &&
             send.bottom <= viewport.offsetTop + viewport.height &&

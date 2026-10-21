@@ -177,7 +177,7 @@ Codex MultiAgentV2 real tests use local Codex authentication rather than the Ope
 ### Test setup
 
 - Server: `packages/server/src/test-utils/vitest-setup.ts` loads `.env.test`, sets `PASEO_SUPERVISED=0`, and disables Git/SSH prompts. Add new global env shims here, not in individual tests.
-- App: `packages/app/vitest.setup.ts` provides `expo`/`__DEV__` shims and stubs a few native-only modules (`react-native-unistyles`, `react-native-svg`, `expo-linking`, `@xterm/addon-ligatures`). Stubbing here is for modules that have no meaningful Node behavior — not a license to mock app code.
+- App: `packages/app/vitest.setup.ts` owns Node-only setup. Cross-project platform and navigation adapters live in `packages/app/test-stubs/` and are selected by `vitest.config.ts`. Keep actual app renderers in browser tests; importing a leaf renderer must not initialize unrelated rendering engines or navigation. Browser prebundling uses the same web extensions as served modules. The unit project executes the generated outbound validator directly in Node; transforming its 10 MB compiled body exhausts Vite’s heap before collection. Add actual CommonJS imports to the existing include list before they can reload a running test. Keep the Vitest family aligned; browser mode requires the tester-ready handshake introduced in 4.1.12.
 
 ## Running tests locally
 
