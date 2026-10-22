@@ -2,7 +2,8 @@ import { ICON_SIZE } from "@/styles/theme";
 import { Check, Copy } from "lucide-react-native";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, StyleProp, ViewStyle } from "react-native";
+import type { StyleProp, ViewStyle } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { StyleSheet } from "react-native-unistyles";
 const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
   container: {
@@ -11,6 +12,7 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
     paddingTop: 0,
     marginTop: theme.spacing[2],
   },
+  pressed: { backgroundColor: theme.colors.interactionHighlight },
   iconColor: {
     color: theme.colors.foregroundMuted,
   },
@@ -75,9 +77,10 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   );
 
   return (
-    <Pressable
+    <PressHighlight
       onPress={handleCopy}
       style={pressableStyle}
+      highlightStyle={turnCopyButtonStylesheet.pressed}
       accessibilityRole="button"
       accessibilityLabel={
         copied
@@ -95,6 +98,6 @@ export const TurnCopyButton = memo(function TurnCopyButton({
           <Copy size={ICON_SIZE.sm} color={iconColor} />
         );
       }}
-    </Pressable>
+    </PressHighlight>
   );
 });
