@@ -1,3 +1,4 @@
+import { AccentSection } from "./paseo-plus-plus/accent-section";
 import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
 import { SettingsSyncSection } from "./settings-sync-section";
@@ -17,6 +18,7 @@ const OPTIONAL_FEATURES: readonly PaseoPlusPlusFeature[] = [
   "workspaceChatLinks",
   "sidebarHostUpdates",
   "mobileWorkspaceTabs",
+  "widerWorkspaceTabs",
   "splitLayoutPresets",
   "descriptiveToolCalls",
   "stickyUserPrompts",
@@ -95,6 +97,7 @@ export function PaseoPlusPlusSection() {
           ))}
         </SettingsCard>
       </SettingsSection>
+      <AccentSection />
       <ExplorerSection />
       <SettingsSection title={t("paseoPlusPlus.preferences")}>
         <SettingsCard>

@@ -1,4 +1,9 @@
 export const en = {
+  explorerTabs: {
+    iconOnlyLabel: "Icon-only tabs",
+    iconOnlyHint:
+      "Right-click an Explorer tab or the empty tab strip and choose Icon-only tabs. Tab names remain available in tooltips.",
+  },
   settingsSync: {
     title: "Settings sync",
     hint: "Sync app preferences and sidebar item visibility through one chosen host. Host/project filters, workspace order and collapsed groups stay local. Switching loads saved settings before editing.",
@@ -32,6 +37,21 @@ export const en = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "Accent color",
+      hint: "Used for primary controls and your messages",
+      updateHost: "Update your selected settings host to change the accent color",
+      preview: "This is how your messages will look",
+      options: {
+        default: "Default",
+        blue: "Blue",
+        green: "Green",
+        purple: "Purple",
+        rose: "Rose",
+        orange: "Orange",
+        teal: "Teal",
+      },
+    },
     workspaceLimit: {
       save: "Save",
       title: "Workspace limits",
@@ -66,8 +86,8 @@ export const en = {
     saveFailed: "Unable to save. Try again.",
     features: {
       workspaceChatLinks: {
-        label: "Open chat links in Paseo",
-        hint: "Open web links from workspace chats in that workspace’s browser on desktop. Turn off to use your external browser. Open in Paseo remains in the link menu.",
+        label: "Workspace links",
+        hint: "Open workspace web links in new tabs in that workspace’s browser on desktop, including terminal, chat, and Git links. Turn off to open them externally. Explicit browser actions remain available in menus.",
       },
       sidebarHostUpdates: {
         label: "Host updates in the sidebar",
@@ -80,6 +100,10 @@ export const en = {
       mobileWorkspaceTabs: {
         label: "Mobile workspace tabs",
         hint: "Show a scrolling tab strip in compact workspaces. Turn off to use the earlier tab chooser without changing the selected tab.",
+      },
+      widerWorkspaceTabs: {
+        label: "Wider workspace tabs",
+        hint: "Allow long tab titles up to 50% more width. Short tabs keep their natural width. Turn off to restore the earlier maximum.",
       },
 
       descriptiveToolCalls: {
@@ -149,7 +173,7 @@ export const en = {
       },
       mobile: {
         label: "Mobile navigation",
-        hint: "Larger tab-switcher touch targets, safer Android Back behavior and separate development notifications",
+        hint: "Safer Android Back behavior and separate development notifications",
       },
       pickers: {
         label: "Workspace pickers and status",
@@ -765,6 +789,7 @@ export const en = {
       },
     },
     setup: {
+      updateHost: "Update the host to view workspace setup details",
       descriptor: {
         label: "Setup",
         completed: "Setup completed",
@@ -801,12 +826,15 @@ export const en = {
     browser: {
       openInPaseo: "Open in Paseo browser",
       openExternally: "Open in external browser",
+      copyLink: "Copy link",
       unavailable: {
         title: "Browser is desktop-only",
         subtitle: "Open this workspace in Electron to use the built-in browser.",
       },
       session: "Browser session {{browserId}}",
       controls: {
+        pageZoom: "Page zoom",
+        zoomFailed: "Couldn't change page zoom",
         back: "Back",
         forward: "Forward",
         stopLoading: "Stop loading",
@@ -828,6 +856,17 @@ export const en = {
         placeholder: "Message to the agent about this element…",
         submit: "Attach",
         cancel: "Cancel",
+      },
+      extensions: {
+        label: "Extensions",
+        empty: "No enabled extensions.",
+        noPopup: "No popup provided",
+        loading: "Loading extensions...",
+        manage: "Manage extensions",
+        openFailed: "Couldn't open extension",
+        pin: "Pin {{name}}",
+        unpin: "Unpin {{name}}",
+        pinFailed: "Couldn't save extension pin",
       },
       devices: {
         label: "Device size",
@@ -1162,6 +1201,7 @@ export const en = {
         },
       },
       diff: {
+        updateHostFileDiff: "Update this host to open a single-file diff.",
         openChangesTab: "Open Changes tab",
         openDiffTab: "Open Diff tab",
         closeChangesTab: "Close Changes tab",
@@ -1195,6 +1235,7 @@ export const en = {
         checkingRepository: "Checking repository...",
         notRepository: "Not a git repository",
         diffMode: "Diff mode",
+        all: "All changes",
         uncommitted: "Uncommitted",
         committed: "Committed",
         branchUnknown: "Unknown",
@@ -1431,9 +1472,9 @@ export const en = {
         fiveDays: "5 days",
         week: "1 week",
         twoWeeks: "2 weeks",
-        month: "1 month",
-        twoMonths: "2 months",
-        threeMonths: "3 months",
+        month: "1 month (30 days)",
+        twoMonths: "2 months (60 days)",
+        threeMonths: "3 months (90 days)",
       },
       expandAll: "Expand all",
       collapseAll: "Collapse all",
@@ -1545,6 +1586,42 @@ export const en = {
       openProjectSettings: "Open project settings",
     },
     project: {
+      archive: {
+        action: "Archive all",
+        title: "Archive project workspaces?",
+        message:
+          'Project: "{{projectName}}"\nWorkspaces: {{workspaceCount}}\nAgents: {{agentCount}} (running: {{runningAgentCount}})\nHosts: {{hostCount}}\n\nRunning agents and workspace jobs will stop. Paseo-owned worktrees may be removed. The project will remain.',
+        includeBackground: "Also archive background workspaces ({{count}})",
+        backgroundWarning: "Including background workspaces stops their agents and jobs too.",
+        discovering: "Counting workspaces and agents...",
+        progress: "Archiving workspaces: {{completed}} of {{total}}",
+        completed: "Archived workspaces: {{count}}",
+        failed:
+          'Archived {{completed}} workspaces. Stopped at "{{workspace}}" on {{host}}: {{error}}. Not attempted: {{unprocessed}}. Resolve the problem and retry Archive all.',
+        empty: "No active workspaces in this project",
+        projectChanged:
+          "The project changed during confirmation. Review the counts and try Archive all again.",
+        hostDisconnected:
+          "Host {{host}} is disconnected. Connect every project host and try again.",
+        updateRequired: "Update host {{host}} to archive project workspaces safely.",
+        alreadyArchiving:
+          'Workspace "{{workspace}}" is already archiving. Wait for it to finish and try again.',
+        incompleteDiscovery:
+          "Could not count all project workspaces and agents. Try Archive all again.",
+        verificationFailed:
+          'Could not verify that workspace "{{workspace}}" is archived. Open History to inspect its state before retrying.',
+        agentsRemaining:
+          'Workspace "{{workspace}}" still has active agents. Open History to inspect the incomplete archive.',
+        agentNotArchived:
+          "Could not verify that agent {{agent}} is archived and stopped. Open History to inspect its state.",
+      },
+      restore: {
+        title: "Restore archived workspace",
+        search: "Search archived workspaces",
+        empty: "No archived workspaces in this project",
+        updateRequired: "Update your host to browse archived workspaces",
+        loadFailed: "Couldn't load archived workspaces",
+      },
       actions: {
         menu: "Project actions",
         openSettings: "Open project settings",
@@ -2249,12 +2326,32 @@ export const en = {
       creatingAgent: "Creating agent",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: "Open .{{extension}} files with",
+        pickerTitleFilename: "Open {{filename}} with",
+        dontAskAgain: "Don't ask me again",
+        use: "Use",
+        openWith: "Open with…",
+        alwaysUseExtension: "Always use for .{{extension}}",
+        alwaysUseFilename: "Always use for {{filename}}",
+        option: "{{title}} — {{owner}}",
+        actions: "File actions",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "Image",
+          source: "Source",
+        },
+      },
       directoryMissing: "Workspace directory not found.",
       loading: "Loading file...",
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
       tooLargeToDisplay: "This file is too large to display",
+      documentUnsupported: "{{type}} files can't be shown on this device",
       failedToLoad: "Failed to load file",
+      notFound: "File not found",
       failedToLoadPreview: "Failed to load file preview",
       editor: {
         fileSize: "File size {{size}}",
@@ -2266,10 +2363,7 @@ export const en = {
         changedOnDisk: "Changed on disk",
         vimMode: "Vim mode {{mode}}",
         cursor: "Line {{line}}, column {{column}}",
-        preview: "Preview",
-        source: "Source",
         deletedTitle: "File deleted on disk",
-        checkFailedTitle: "Couldn't check file on disk",
         preservedDescription: "The open copy is preserved.",
         conflictDescription: "The local buffer was preserved. Choose which version to keep.",
         overwrite: "Overwrite",
@@ -2440,6 +2534,70 @@ export const en = {
       saveAccessibility: "Save review comment",
     },
   },
+  providerUsage: {
+    options: "Settings",
+    refreshFailed: "Unable to refresh usage",
+    noHosts: "No connected hosts",
+    agentError: "Unable to load usage: {{reason}}",
+    pin: "Pin",
+    unpin: "Unpin",
+    displayAs: "Percentages",
+    displayUsed: "Used",
+    displayRemaining: "Remaining",
+    showInSidebar: "Summary in sidebar",
+    showInSidebarHint: "Pinned windows show in the sidebar footer",
+    runToRefresh: "Run {{command}} to refresh it.",
+    signInAgain: "Sign in again.",
+    loginRejected: "Login rejected (HTTP {{status}}). {{remedy}}",
+    loginExpired: "Login expired {{relativeTime}}. {{remedy}}",
+    title: "Plan usage",
+    refresh: "Refresh",
+    refreshAll: "Refresh all",
+    refreshing: "Refreshing...",
+    loading: "Loading usage...",
+    empty: "No usage data",
+    errorTitle: "Unable to load usage",
+    hostUnavailable: "Connect to {{host}} to see usage",
+    hostUpgradeRequired: "Update {{host}} to see usage",
+    clientUnavailable: "Host connection is not ready",
+    retry: "Try again",
+    tooltipLoading: "Loading plan usage...",
+    status: {
+      error: "Error",
+      unavailable: "Unavailable",
+    },
+    values: {
+      used: "{{percentage}} used",
+      remaining: "{{amount}} left",
+    },
+    labels: {
+      session: "Session",
+      weekly: "Weekly",
+      monthly: "Monthly",
+      codeReview: "Code review",
+      credits: "Credits",
+      monthlyCredits: "Monthly credits",
+    },
+    duration: {
+      days: "{{value}}d",
+      hours: "{{value}}h",
+      minutes: "{{value}}m",
+    },
+    timing: {
+      lastUpdated: "Last updated {{relativeTime}}",
+      noSuccessfulUpdate: "No successful update",
+      resetTimePassed: "Reset time passed",
+      resettingNow: "resetting now",
+      resetsIn: "resets {{duration}}",
+      runsOutNow: "runs out now",
+      runsOutIn: "runs out {{duration}}",
+      justNow: "just now",
+      daysAgo: "{{value}}d ago",
+      hoursAgo: "{{value}}h ago",
+      minutesAgo: "{{value}}m ago",
+      updated: "Updated {{relativeTime}}",
+    },
+  },
   settings: {
     title: "Settings",
     loading: "Loading settings...",
@@ -2466,6 +2624,7 @@ export const en = {
       appearance: "Appearance",
       sidebar: "Sidebar",
       editor: "Editor",
+      files: "Files",
       terminal: "Terminal",
       browser: "Browser",
       shortcuts: "Shortcuts",
@@ -2540,6 +2699,14 @@ export const en = {
       title: "Editor",
       vimKeybindings: "Vim keybindings",
       vimHint: "Applies to source files on web and desktop.",
+    },
+    files: {
+      title: "Files",
+      askEveryTime: "Ask every time",
+      askAgain: "Ask again",
+      askAgainFor: "Ask again for {{label}}",
+      unavailable: "Not on a connected host",
+      empty: "File panels appear here when a plugin adds one",
     },
     notifications: {
       title: "Notifications",
@@ -2648,6 +2815,25 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      browserExtensions: {
+        title: "Extensions",
+        compatibility:
+          "Some Chrome extension features are unsupported. Extensions are not updated automatically.",
+        store: "Chrome Web Store",
+        openStore: "Open Web Store",
+        refresh: "Refresh",
+        enable: "Enable",
+        disable: "Disable",
+        retry: "Retry",
+        remove: "Remove",
+        removeTitle: "Remove {{name}}?",
+        removeMessage: "This removes the extension from Paseo. Unpacked source folders are kept.",
+        loading: "Loading extensions...",
+        empty: "No extensions installed.",
+        unpackedHint: "Load an extension from a folder containing manifest.json.",
+        loadUnpacked: "Load unpacked",
+        unavailable: "Extension support is unavailable. Update the desktop app.",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",
@@ -2863,6 +3049,7 @@ export const en = {
       searchPlaceholder: "Search shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
       capturePrompt: "Press shortcut...",
+      captureIndexPrompt: "End with a number from 1 to 9.",
       unassigned: "Not set",
       actions: {
         menu: "Actions for {{name}}",
@@ -3378,4 +3565,18 @@ type WidenStringLeaves<T> = {
   [K in keyof T]: T[K] extends string ? string : WidenStringLeaves<T[K]>;
 };
 
-export type TranslationResources = WidenStringLeaves<typeof en>;
+type TranslationResourcesBase = WidenStringLeaves<typeof en>;
+type PluralCategory = "zero" | "one" | "two" | "few" | "many" | "other";
+type DurationPluralKey = `${"days" | "hours" | "minutes"}_${PluralCategory}`;
+type AgoPluralKey = `${"daysAgo" | "hoursAgo" | "minutesAgo"}_${PluralCategory}`;
+
+// i18next plural categories differ by locale, so locale catalogs may add the
+// explicit v4 suffixes they need while retaining the canonical fallback keys.
+export type TranslationResources = TranslationResourcesBase & {
+  providerUsage: TranslationResourcesBase["providerUsage"] & {
+    duration: TranslationResourcesBase["providerUsage"]["duration"] &
+      Partial<Record<DurationPluralKey, string>>;
+    timing: TranslationResourcesBase["providerUsage"]["timing"] &
+      Partial<Record<AgoPluralKey, string>>;
+  };
+};

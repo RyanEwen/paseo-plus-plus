@@ -8,6 +8,7 @@ import { createWindowsToastHistory } from "./windows-toast-history.js";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { cacheNotificationIcon, readNotificationIconBytes } from "./notification-icon.js";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import {
@@ -21,6 +22,7 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
+  icon?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -67,6 +69,31 @@ function getNotificationIcon(): { image: Electron.NativeImage; path: string } | 
   }
 
   return null;
+}
+
+/** Accept only small renderer-rasterized PNG bytes, never paths or remote URLs.
+ * Windows ToastGeneric requires a file URI; retain content-addressed files in the
+ * app-owned cache so Notification Center can render them after app restart.
+ */
+async function getProjectNotificationIcon(value: unknown) {
+  const inputBytes = readNotificationIconBytes(value);
+  if (!inputBytes) return null;
+  const image = nativeImage.createFromBuffer(inputBytes);
+  if (image.isEmpty()) return null;
+  const size = image.getSize();
+  if (size.width === 0 || size.width > 128 || size.width !== size.height) return null;
+  const bytes = image.toPNG();
+  const directory = path.join(app.getPath("userData"), "notification-icons");
+  let iconPath = "";
+  if (process.platform === "win32") {
+    try {
+      iconPath = await cacheNotificationIcon({ directory, bytes });
+    } catch (error) {
+      console.warn("[notifications] Could not prepare project icon", error);
+      return null;
+    }
+  }
+  return { image, path: iconPath };
 }
 
 function focusSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
@@ -163,7 +190,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     const parsedTarget = targetSchema.safeParse(data);
     const target = parsedTarget.success ? parsedTarget.data : null;
     const notificationId = randomUUID();
-    const icon = getNotificationIcon();
+    const icon = (await getProjectNotificationIcon(rawInput?.icon)) ?? getNotificationIcon();
     const settings = await getDesktopSettingsStore().get();
     if (target && viewed.isViewed(target)) return true;
     const silent = !settings.notifications.playSound;

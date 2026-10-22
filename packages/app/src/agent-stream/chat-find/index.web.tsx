@@ -1,13 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -23,7 +14,8 @@ import { ChatFindModel, type ChatFindFailure } from "./model";
 import { createFindViewport } from "./viewport.web";
 import type { ChatFindProps, ChatFindExpansionProps } from "./types";
 
-const SelectedMessage = createContext<string | null>(null);
+import { SelectedMessage, useChatFindSelectedMessageId } from "./selection";
+export { useChatFindSelectedMessageId } from "./selection";
 const FAILURE_TEXT: Record<ChatFindFailure, string> = {
   connection: "paneFind.connectionFailure",
   historyChanged: "paneFind.historyChangedFailure",
@@ -38,15 +30,6 @@ const ROOT_STYLE = {
   outline: "none",
 } as const;
 let nextHighlightId = 0;
-
-/**
- * The message chat find has landed on, for surfaces that must keep it addressable:
- * the row that lifts its render cap, and the web virtualizer that has to mount every
- * block row of it so the whole message can be counted and highlighted.
- */
-export function useChatFindSelectedMessageId(): string | null {
-  return useContext(SelectedMessage);
-}
 
 export function ChatFindExpansion({ messageId, children }: ChatFindExpansionProps) {
   return children(useChatFindSelectedMessageId() === messageId);

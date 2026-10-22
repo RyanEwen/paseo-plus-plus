@@ -7,6 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFindViewport } from "./viewport.web";
 import type { ChatFindProps } from "./types";
 import type { StreamViewportHandle } from "../strategy";
+import { Text as NativeText, View, type ViewStyle } from "react-native";
+import { QuestionFormCard } from "@/components/question-form-card";
 
 interface Capture {
   occurrence?: { signal: AbortSignal; targetTop(): number | null };
@@ -149,6 +151,87 @@ function actualPromptGeometry(host: HTMLElement) {
   };
 }
 
+// Reproduce the caller's rail contract without mounting the daemon-backed AgentStream.
+// Both permission and footer callers use this contract. The shared test theme
+// omits contentMaxWidth, so use the fixture's explicit 820px rail here.
+const auxiliaryRailStyle: ViewStyle = {
+  width: "100%",
+  maxWidth: 820,
+  alignSelf: "center",
+  paddingHorizontal: 8,
+};
+
+it.each([1200, 360])(
+  "centers live auxiliary content on the message rail at %i px",
+  async (width) => {
+    const host = document.createElement("div");
+    Object.assign(host.style, { width: `${width}px`, height: "900px" });
+    document.body.append(host);
+    actualRoot = createRoot(host);
+    const wrapRow = (content: React.ReactNode) =>
+      React.createElement(View, { style: auxiliaryRailStyle, testID: "message-rail" }, content);
+    const question = React.createElement(
+      View,
+      { style: auxiliaryRailStyle, testID: "question-rail" },
+      React.createElement(QuestionFormCard, {
+        permission: {
+          key: "alignment-question",
+          agentId: "agent",
+          request: {
+            id: "alignment-question",
+            provider: "claude",
+            name: "AskUserQuestion",
+            kind: "question",
+            input: {
+              questions: [{ question: "Which provider?", options: [{ label: "Codex" }] }],
+            },
+          },
+        },
+        onRespond: vi.fn(),
+        isResponding: false,
+        responseError: null,
+      }),
+    );
+    const liveAuxiliary = React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        View,
+        { style: auxiliaryRailStyle, testID: "summary-rail" },
+        React.createElement(NativeText, null, "Worked for 1 second"),
+      ),
+      question,
+    );
+    await act(async () => {
+      actualRoot!.render(
+        React.createElement(ActualPromptTestFixture, {
+          text: "Keep the question and summary aligned with this message.",
+          enabled: false,
+          viewportRef: createRef<StreamViewportHandle>(),
+          wrapRow,
+          liveAuxiliary,
+        }),
+      );
+    });
+
+    const messageRail = host.querySelector<HTMLElement>('[data-testid="message-rail"]')!;
+    const questionRail = host.querySelector<HTMLElement>('[data-testid="question-rail"]')!;
+    const footerRail = host.querySelector<HTMLElement>('[data-testid="summary-rail"]')!;
+    const message = messageRail.getBoundingClientRect();
+    const feed = host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const feedRect = feed.getBoundingClientRect();
+
+    expect(message.width).toBeCloseTo(Math.min(820, feed.clientWidth - 32), 0);
+    expect(message.left + message.width / 2).toBeCloseTo(feedRect.left + feed.clientWidth / 2, 0);
+    for (const rail of [footerRail, questionRail]) {
+      const bounds = rail.getBoundingClientRect();
+      expect(bounds.left).toBeCloseTo(message.left, 0);
+      expect(bounds.right).toBeCloseTo(message.right, 0);
+    }
+    expect(feed.scrollWidth).toBe(feed.clientWidth);
+  },
+);
+
 function exactTextNodes(root: HTMLElement, text: string): Text[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
@@ -190,8 +273,11 @@ it("keeps one actual prompt text node through pin, More/Less and settings off/on
     console.info("actual-prompt-jump-failure", JSON.stringify(actualPromptGeometry(fixture.host)));
     throw error;
   }
-  expect(fixture.host.querySelector('[data-testid="user-message-text"]')).toBe(text);
-  expect(exactTextNodes(fixture.host, prompt)).toEqual([node]);
+  expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+  expect(
+    exactTextNodes(fixture.host, prompt).length === 1 &&
+      exactTextNodes(fixture.host, prompt)[0] === node,
+  ).toBe(true);
   await userEvent.click(
     fixture.host.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!,
   );
@@ -200,11 +286,17 @@ it("keeps one actual prompt text node through pin, More/Less and settings off/on
   await expect
     .poll(() => clip.getBoundingClientRect().height)
     .toBe(text.getBoundingClientRect().height);
-  expect(exactTextNodes(fixture.host, prompt)).toEqual([node]);
+  expect(
+    exactTextNodes(fixture.host, prompt).length === 1 &&
+      exactTextNodes(fixture.host, prompt)[0] === node,
+  ).toBe(true);
   fixture.render(true);
   await expect.poll(() => clip.getBoundingClientRect().height).toBe(lineHeight);
-  expect(exactTextNodes(fixture.host, prompt)).toEqual([node]);
-  expect(fixture.host.querySelector('[data-testid="user-message-text"]')).toBe(text);
+  expect(
+    exactTextNodes(fixture.host, prompt).length === 1 &&
+      exactTextNodes(fixture.host, prompt)[0] === node,
+  ).toBe(true);
+  expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
 });
 
 it("updates actual prompt More availability from wrapping at the real width", async () => {
@@ -219,13 +311,13 @@ it("updates actual prompt More availability from wrapping at the real width", as
   await expect
     .poll(() => fixture.host.querySelector('[data-testid="user-message-disclosure"]'))
     .not.toBeNull();
-  expect(fixture.host.querySelector('[data-testid="user-message-text"]')).toBe(text);
+  expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
   expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
   fixture.render(true, "Short");
   await expect
     .poll(() => fixture.host.querySelector('[data-testid="user-message-disclosure"]'))
     .toBeNull();
-  expect(fixture.host.querySelector('[data-testid="user-message-text"]')).toBe(text);
+  expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
   expect(exactTextNodes(fixture.host, "Short")).toHaveLength(1);
 });
 
@@ -277,12 +369,13 @@ it("reveals a deep actual user match inside its body then its original row, and 
         .getBoundingClientRect();
       return (
         !!range &&
-        range.top >= Math.max(inner.top, outer.top) &&
-        range.bottom <= Math.min(inner.bottom, outer.bottom)
+        // Chromium quantizes scrollTop while DOMRect keeps fractional CSS pixels.
+        range.top >= Math.max(inner.top, outer.top) - 1 &&
+        range.bottom <= Math.min(inner.bottom, outer.bottom) + 1
       );
     })
     .toBe(true);
-  expect(fixture.host.querySelector('[data-testid="user-message-text"]')).toBe(text);
+  expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
   expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
   const stale = operations[0]!;
   const deepOffset = body.scrollTop;
@@ -341,6 +434,8 @@ it("keeps surrounding chat painted and interactive outside the opaque actual pro
   const viewportTop = scroll.getBoundingClientRect().top;
   const targetTop = target.getBoundingClientRect().top - viewportTop + scroll.scrollTop;
   act(() => {
+    // Match the strategy fixture's user intent before positioning a detached reading viewport.
+    scroll.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
     scroll.scrollTop = targetTop - 8;
     scroll.dispatchEvent(new Event("scroll"));
   });
@@ -352,7 +447,7 @@ it("keeps surrounding chat painted and interactive outside the opaque actual pro
   expect(point.x).toBeLessThan(bubbleBox.left);
   expect(point.y).toBeGreaterThanOrEqual(bodyBox.top);
   expect(point.y).toBeLessThan(bodyBox.bottom);
-  expect(document.elementFromPoint(point.x, point.y)).toBe(target);
+  expect(document.elementFromPoint(point.x, point.y) === target).toBe(true);
   expect(getComputedStyle(body).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   expect(getComputedStyle(body).pointerEvents).toBe("none");
   expect(getComputedStyle(bubble).backgroundColor).toMatch(/^rgb\(/);
@@ -368,8 +463,8 @@ it("keeps surrounding chat painted and interactive outside the opaque actual pro
   await userEvent.click(target);
   expect(target.textContent).toBe("Response 1");
   expect(scroll.scrollTop).toBe(beforeClick);
-  expect(fixture.host.querySelector("[data-actual-prompt-content]")).toBe(originalBody);
-  expect(bubble.querySelector('[data-testid="user-message-text"]')).toBe(originalText);
+  expect(fixture.host.querySelector("[data-actual-prompt-content]") === originalBody).toBe(true);
+  expect(bubble.querySelector('[data-testid="user-message-text"]') === originalText).toBe(true);
   const answerText = fixture.host.querySelector<HTMLElement>(
     '[data-testid="assistant-surrounding-text"]',
   )!;

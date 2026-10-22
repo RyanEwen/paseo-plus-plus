@@ -1,0 +1,167 @@
+{
+  "id": 415674498,
+  "tag_name": "v0.11.2-preview.32",
+  "target_commitish": "750bc7480b09fa4f46915dc78a464ccdfd002d39",
+  "draft": false,
+  "prerelease": true,
+  "body": "Paseo++ \r\n\r\n- Customize the workspace sidebar separately in Project and Status modes. Filter names quickly, choose how Empty projects appear, and combine independent workspace count and age limits, including two days.\r\n- Expand one project at a time, keep filtered project moves anchored correctly, and reorder only when Custom sorting is selected. Workspace action menus remain available with sorted lists. Project pins use the existing gutter, and Done projects sort before No status. Background workspace visibility survives reloads and reconnects.\r\n- Workspace hover details wait 250 ms. Short workspace tabs keep a readable minimum width.\r\n- New Tool call display preferences start in Summary; saved choices are preserved.\r\n- Shared settings refresh write permissions without restarting the app, and read-only connections can Retry.\r\n- Choose a split by clicking the half where the new view belongs. Use the same diagrams to move an existing tab; divider controls adjust the proportions of existing panes. Split layout controls can be turned off in Paseo++ settings.\r\n\r\nAndroid signing changed because the previous key could not be recovered. Existing installations signed with the old key require a reinstall and reconnection to their hosts. Save local settings you need before uninstalling. The app identifier remains unchanged.\r\n\r\n<!-- paseo-plus-plus-updater-bridge:v1 -->",
+  "created_at": "2026-10-17T06:56:41Z",
+  "published_at": "2026-10-17T08:26:07Z",
+  "updated_at": "2026-10-21T05:13:21Z",
+  "assets": [
+    {
+      "id": 649957846,
+      "name": "paseo-daemon-0.11.2-preview.32-linux-arm64.tgz",
+      "size": 59777895,
+      "digest": "sha256:ea8e8de35d5b883841ea6649fab5da6d3e147442001bcf21b64e0982e3ea026d",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957925,
+      "name": "paseo-daemon-0.11.2-preview.32-linux-x64.tgz",
+      "size": 58011498,
+      "digest": "sha256:83acbf09bba741e655fa0c33bbf5cde272c6b9c721e43eda9e685f51a1d9f6eb",
+      "state": "uploaded"
+    },
+    {
+      "id": 649955481,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-aarch64.rpm",
+      "size": 110969593,
+      "digest": "sha256:e6a23321f005189c9939cf3af615998f4ebd5d25abf6e7dd2e13553c236add2a",
+      "state": "uploaded"
+    },
+    {
+      "id": 649955727,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-amd64.deb",
+      "size": 135636440,
+      "digest": "sha256:06a0dc2823d42ab46862ab4643af070801fd2d7cc2e22594f3b2c4691196ba34",
+      "state": "uploaded"
+    },
+    {
+      "id": 649955836,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-android.apk",
+      "size": 271940246,
+      "digest": "sha256:53f5cc951274f4add509686d6b2f2906ed778f9b10edbf360dff7342c3c32d7c",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956032,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-arm64.deb",
+      "size": 131290592,
+      "digest": "sha256:c66c4a5c618761558e3b6516153b75e83ebff1d4225eef1d75eb86dfa1e8bc50",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956143,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-arm64.tar.gz",
+      "size": 166130127,
+      "digest": "sha256:92810856c5da9ac48d2f18105819a0265da61c6d09891f59c1472e64af3439eb",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956265,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-x64.tar.gz",
+      "size": 163557648,
+      "digest": "sha256:185283d79967417314daec855eb07ee3e0a5a82702383e2aef6af417074fa02b",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956482,
+      "name": "Paseo-Plus-Plus-0.11.2-preview.32-x86_64.rpm",
+      "size": 114399625,
+      "digest": "sha256:3fce1b2c52e7a2bcd88c23519f8c7f0754702d08d625eb63833304cbc244c78f",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957427,
+      "name": "Paseo-Plus-Plus-arm64.AppImage",
+      "size": 171674842,
+      "digest": "sha256:3ded38d51ccb20e3b76bd2dd3eb715abcf771b595e3e770b111ee13cc78912da",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956600,
+      "name": "Paseo-Plus-Plus-Setup-0.11.2-preview.32-arm64.exe",
+      "size": 139573040,
+      "digest": "sha256:d7182b85c4dd9d005093c2bbf535740f7c34e7567d30f7a9b1f6b92d009019d7",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956751,
+      "name": "Paseo-Plus-Plus-Setup-0.11.2-preview.32-arm64.exe.blockmap",
+      "size": 146495,
+      "digest": "sha256:b9474ae2f56353264c8ada6c9db1e0b31c295feececc5088783882ab22723dbe",
+      "state": "uploaded"
+    },
+    {
+      "id": 649956765,
+      "name": "Paseo-Plus-Plus-Setup-0.11.2-preview.32-arm64.zip",
+      "size": 184388742,
+      "digest": "sha256:3f7822cd8807c715cc73584ae56c484deefb25ff5981d7b7088b232ce5e7e7a6",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957137,
+      "name": "Paseo-Plus-Plus-Setup-0.11.2-preview.32-x64.exe",
+      "size": 144893328,
+      "digest": "sha256:ac9aa8e7c29755079df0827c778ba7192143f611114607d89845f92cb0de78e8",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957259,
+      "name": "Paseo-Plus-Plus-Setup-0.11.2-preview.32-x64.exe.blockmap",
+      "size": 152086,
+      "digest": "sha256:337ca0f32dc03826ccc27aab66781b2087ecd28a875854b601455e25cc173f49",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957280,
+      "name": "Paseo-Plus-Plus-Setup-0.11.2-preview.32-x64.zip",
+      "size": 194118662,
+      "digest": "sha256:2d3222847a68cd14d678f7863784f5cf3718b062e7cc2aa68e7b1f92a1c49d7d",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957603,
+      "name": "Paseo-Plus-Plus-x86_64.AppImage",
+      "size": 168228037,
+      "digest": "sha256:0298a813df8fe390ea73918c8c6f0a3fa8517d61e751f5b3036a558bc912f72e",
+      "state": "uploaded"
+    },
+    {
+      "id": 649958041,
+      "name": "preview-linux-arm64.yml",
+      "size": 792,
+      "digest": "sha256:54bfd4d391bb7acf412d47c77f4d9267ae4a3d7ddf364b0e520b7485af7b3fbd",
+      "state": "uploaded"
+    },
+    {
+      "id": 649958058,
+      "name": "preview-linux.yml",
+      "size": 793,
+      "digest": "sha256:442b474be1a2e08b14085e12ed8b12c2ac3393011c415ff85ce84b11f572c862",
+      "state": "uploaded"
+    },
+    {
+      "id": 649958011,
+      "name": "preview-release.json",
+      "size": 238,
+      "digest": "sha256:c14fb955bc57bcef67a9572685266273198b1b17561c4c2a257cbb64e1be2f5f",
+      "state": "uploaded"
+    },
+    {
+      "id": 649958077,
+      "name": "preview.yml",
+      "size": 622,
+      "digest": "sha256:5dfd380fa0d9e98a24d8b8bbdc2ca50d352d5bcb03046332049ca17fe96f0c1f",
+      "state": "uploaded"
+    },
+    {
+      "id": 649957822,
+      "name": "SHA256SUMS",
+      "size": 2245,
+      "digest": "sha256:d4f4f77011bb8a7a7403c644aec528a6d4e4e814930d7529a89d76fe5ab7f53f",
+      "state": "uploaded"
+    }
+  ]
+}

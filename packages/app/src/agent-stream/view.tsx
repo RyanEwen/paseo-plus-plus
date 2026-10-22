@@ -1,6 +1,6 @@
 import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
 import { useSyncExternalStore } from "react";
-import { resolveContextSource } from "./sticky-prompt-model";
+import { resolveRetainedContextSource } from "./sticky-prompt-model";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import { normalContextPageReader } from "./fetch-reading-prompt-context";
 import {
@@ -384,34 +384,31 @@ function useRetainedCanonicalTranscript({
   const contextOwner = historyPagination
     ? (historyPagination.promptContexts ?? null)
     : rootContextOwner;
+  const childTranscript = historyPagination !== undefined;
+  const suppliedCoverage = historyPagination?.coverage;
+  const contextCoverage = useMemo(() => {
+    if (childTranscript) return suppliedCoverage ?? [];
+    return canonicalCoverageForCursor(rootTimelineCursor);
+  }, [childTranscript, suppliedCoverage, rootTimelineCursor]);
   const sourceItems = useMemo(
     () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
     [effectiveStreamItems, effectiveStreamHead],
   );
   const readSource = useCallback(() => {
-    const reading = promptReading.getSnapshot();
-    if (reading.navigating) return undefined;
-    if (reading.following || reading.rowId === null) {
-      for (let index = sourceItems.length - 1; index >= 0; index -= 1) {
-        if (sourceItems[index]?.timelineCursor?.epoch === timelineEpoch) return sourceItems[index];
-      }
-      return undefined;
-    }
-    return resolveContextSource(sourceItems, timelineEpoch, reading.rowId, reading.seq);
-  }, [promptReading, sourceItems, timelineEpoch]);
+    return resolveRetainedContextSource(
+      sourceItems,
+      timelineEpoch,
+      promptReading.getSnapshot(),
+      contextCoverage,
+    );
+  }, [promptReading, sourceItems, timelineEpoch, contextCoverage]);
   const contextSource = useSyncExternalStore(promptReading.subscribe, readSource, readSource);
-  const childTranscript = historyPagination !== undefined;
   const suppliedContextReader = historyPagination?.readPromptContext;
   const contextReader = useMemo(() => {
     if (childTranscript) return suppliedContextReader;
     if (client) return normalContextPageReader(client, agentId);
     return undefined;
   }, [childTranscript, suppliedContextReader, client, agentId]);
-  const suppliedCoverage = historyPagination?.coverage;
-  const contextCoverage = useMemo(() => {
-    if (childTranscript) return suppliedCoverage ?? [];
-    return canonicalCoverageForCursor(rootTimelineCursor);
-  }, [childTranscript, suppliedCoverage, rootTimelineCursor]);
   const contextLookup = useMemo(
     () =>
       contextReader
@@ -598,11 +595,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           serverId: resolvedServerId,
           workspaceId: context.workspaceId ?? "",
         }),
-        checkout: {
-          serverId: resolvedServerId,
-          cwd: context.cwd,
-          isGit: context.projectPlacement?.checkout?.isGit ?? true,
-        },
         view: "files",
       });
     });

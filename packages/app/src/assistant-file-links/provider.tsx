@@ -1,4 +1,4 @@
-import { useAppSettings } from "@/hooks/use-settings";
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
 import {
   createContext,
   useCallback,
@@ -23,6 +23,7 @@ export interface AssistantFileLinkResolverConfig {
   client?: AssistantFileLinkDaemonClient | null;
   serverId?: string;
   workspaceRoot?: string;
+  relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
   onOpenHttpUrl?: (url: string) => void | Promise<void>;
@@ -48,20 +49,20 @@ export function AssistantFileLinkResolverProvider({
   client,
   serverId,
   workspaceRoot,
+  relativePathBase,
   onOpenWorkspaceFile,
   onOpenHttpUrl,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
-  const { settings } = useAppSettings();
-  const openHttpLinksInPaseo = settings.paseoPlusPlus.workspaceChatLinks;
-  const openHttpLinksInPaseoRef = useRef(openHttpLinksInPaseo);
-  openHttpLinksInPaseoRef.current = openHttpLinksInPaseo;
+  const { enabledRef: openHttpLinksInPaseoRef, defaultDestination: httpLinkDestination } =
+    useWorkspaceLinkOpeningContext();
 
   const configRef = useRef<AssistantFileLinkResolverConfig>({
     client,
     serverId,
     workspaceRoot,
+    relativePathBase,
     onOpenWorkspaceFile,
     onOpenHttpUrl,
     toast,
@@ -70,6 +71,7 @@ export function AssistantFileLinkResolverProvider({
     client,
     serverId,
     workspaceRoot,
+    relativePathBase,
     onOpenWorkspaceFile,
     onOpenHttpUrl,
     toast,
@@ -90,9 +92,9 @@ export function AssistantFileLinkResolverProvider({
       configRef,
       getDirectorySuggestions,
       openHttpLinksInPaseoRef,
-      httpLinkDestination: openHttpLinksInPaseo ? "paseo" : "external",
+      httpLinkDestination,
     }),
-    [getDirectorySuggestions, openHttpLinksInPaseo],
+    [getDirectorySuggestions, openHttpLinksInPaseoRef, httpLinkDestination],
   );
 
   return (

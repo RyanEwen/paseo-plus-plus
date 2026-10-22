@@ -81,9 +81,10 @@ Select the integration ref for the release lane from [release source and CI](#re
   the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
   `next`. Create it fresh when needed again.
 
-**Setup still needed:** CI, Docker, and Nix PR checks do not target `next`,
-and GitHub permits only squash merges. Enable checks and required-check protection
-for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+**Setup still needed:** PR checks run for every base branch, but CI, Docker, and Nix
+push runs target only `main`, and GitHub permits only squash merges. Enable
+required-check protection for `next`, CI on its pushes, and merge commits for the
+integration PR. Handle PR
 base changes (`edited` events) so retargeting runs checks against the new base;
 GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
 
@@ -100,8 +101,9 @@ short-lived hotfix branch, not another maintained release track.
 
 In RyanEwen/paseo-plus-plus, the opening README section owns the list of user-visible differences from
 upstream. Review it when you add or change a feature and when you merge upstream changes. Remove
-an addition from the list once upstream includes it. Describe available behavior; label planned
-distribution separately until builds are published.
+an addition from the list once upstream includes it. Keep each entry to the feature or change name and a link to its guide. Put usage, examples, limits and settings details in the owning guide, not inline in the README. Link to the integrated guide on `main`; the guide can also link to its maintained feature branch. Branch deletion must not break the README.
+
+Review **Settings → Paseo++** in the same pass. Remove inventory rows and redundant controls when upstream provides the same behavior, while preserving saved preferences unless their removal is explicitly part of the change. Update localized help and examples when behavior changes. Describe available behavior; label planned distribution separately until builds are published.
 
 The `fork-overview` check runs on pull requests to `main`, `ryan/dev`, and `ryan/preview`. A code or
 build change must update the marked README section, or check the fork overview review box in the
@@ -149,10 +151,9 @@ exclude preview tags. The preview workflow does not publish npm packages to a re
 
 ### Final prerelease bridge and normal Latest releases
 
-The bridge `v0.11.2-preview.32` is published. Normal publication remains closed pending actual updater qualification and a reviewed receipt.
+The bridge `v0.11.2-preview.32` remains published as a prerelease. Continue shipping preview prereleases with `release_kind=preview` while installed-updater qualification is unfinished. Normal Latest publication remains closed pending that qualification and a reviewed receipt.
 
-Publish one final prerelease containing the Android and standalone-host updater bridge, then use
-normal GitHub releases marked **Latest**. This changes GitHub's release classification. Keep
+The once-only `bridge` release contains the Android and standalone-host updater transition. The `preview` choice continues prereleases without marking another bridge; `latest` switches to normal GitHub releases marked **Latest** only after qualification. Keep
 `v<upstream-version>-preview.<workflow-run-number>`, the `preview` desktop channel and its three
 manifest filenames, package identities, profiles, signing keys, and workflow sequence unchanged.
 Do not assume the next run number: draft, failed and verification runs also consume the sequence.
@@ -180,7 +181,7 @@ switching to `latest.yml`, or clearing that flag would change this update contra
 `releaseType: prerelease` is retained for compatibility; packaging runs with `--publish never`,
 and the reviewed publisher controls GitHub classification.
 
-Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`.
+Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`. Preview publication instead checks the source-controlled public release API inventory and canonical provenance under `docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint and source ancestry. This retention evidence proves availability, not installed updater behavior; it cannot open the Latest gate.
 After the bridge is published and its real updater paths pass qualification, review a source change
 that replaces `null` with its `schemaVersion: 1`, exact `releaseId`, `tag`, full source `commit`,
 `assetFingerprint`, and repository-relative `qualificationEvidence` Markdown path under
@@ -202,7 +203,7 @@ publication. It requires the pinned prerelease and assets to remain public and u
 descended from the bridge, and a higher workflow counter without a lower desktop core version
 than any published fork build.
 It refuses another bridge after one is published. If bridge qualification fails, hold normal
-publication and review the repair plan; do not delete, reclassify or replace published bridge bytes.
+publication and review the repair plan. Keep the bridge classified as a prerelease, and never delete or replace its assets. Restore an accidentally changed classification only with explicit authorization and before/after verification of the unchanged release identity, source, notes and complete asset inventory. Continuing previews retain the original bridge and cannot put its reserved marker in their notes.
 
 ### Standalone fork daemon
 
@@ -213,7 +214,9 @@ Windows uses the daemon bundled with the desktop app. See the
 These packages include the daemon, CLI, web UI, and native runtime dependencies. Linux packages
 require glibc; Alpine/musl hosts are excluded. The `paseo-plus-plus` command uses its own settings
 and host identity in `~/.paseo-plus-plus`, with the default listen address `127.0.0.1:6791`.
-The desktop app keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790. Upstream Paseo,
+The desktop app keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790. Resolve these
+defaults from the enclosing packaged manifest after managed environment scrubbing. Saved listen
+addresses remain authoritative, including profiles initialized at 6767 by older previews. Upstream Paseo,
 the desktop daemon, and the standalone daemon can run side by side with their defaults.
 
 The app's host update action installs the newest published fork build for the host's platform
@@ -276,16 +279,16 @@ Select fork `main` when running it. Wait for push CI on the exact source commit 
 
 ```bash
 gh workflow run preview-release.yml --repo RyanEwen/paseo-plus-plus --ref main \
-  -f release_kind=bridge -f notes="Describe what users can do in this release." -F publish=false
+  -f release_kind=preview -f notes="Describe what users can do in this release." -F publish=false
 ```
 
 The default creates a draft only after every build passes. It validates the complete platform set,
 checks updater hashes against the binaries, merges Windows architecture manifests, and generates
 `SHA256SUMS` plus source provenance. Review the draft's notes and downloads before publishing it.
-Use `release_kind=bridge` for the final prerelease. After the
+Use `release_kind=preview` for continuing prereleases. The once-only `release_kind=bridge` is already published. After the
 [bridge qualification gate](#final-prerelease-bridge-and-normal-latest-releases) opens, use
 `release_kind=latest` for normal releases. Drafts stay prereleases until publication: the final
-publish call sets `prerelease=true, make_latest=false` for the bridge or
+publish call sets `prerelease=true, make_latest=false` for previews and the bridge, or
 `prerelease=false, make_latest=true` for normal releases.
 Use `publish=true` only with authorization to publish that release; publication remains gated on
 every build and asset check. A failed build or upload never makes an update discoverable.
@@ -803,6 +806,14 @@ This policy governs the upstream `CHANGELOG.md` and stable/beta entries. Fork pr
 - Stable promotion renames the entry to `## 0.1.60 - YYYY-MM-DD` after a final review.
 
 Older prerelease bodies on GitHub keep the notes they were synced with; `Release Notes Sync` only writes the release whose tag matches the top entry.
+
+## Changelog translations
+
+`CHANGELOG.zh-CN.md` holds the Chinese notes for `paseo.sh/zh-CN/changelog`. Only the website reads it; the app's **What's new** sheet, GitHub release bodies and F-Droid read `CHANGELOG.md`.
+
+- Translations never gate a release. Translate a new entry in a follow-up PR, or in the changelog commit when you can.
+- A translated entry uses the English heading unchanged: `## X.Y.Z - YYYY-MM-DD`. The website uses it only while the version and date both match the English entry. Otherwise it shows that release whole in English under a notice, so a beta rewritten in place drops its old translation until the new notes are translated. Delete Chinese entries whose English entry was renamed.
+- Keep the English sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
 
 ## Changelog ownership
 

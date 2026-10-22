@@ -1,3 +1,5 @@
+import { coversCanonicalInterval } from "@/timeline/canonical-reading-source";
+import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
 import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
@@ -242,6 +244,34 @@ export function resolvePromptGeometry(
     prefixHeightOne: frame.prefixHeightOne,
     prefixHeightTwo: frame.prefixHeightTwo,
   };
+}
+
+/** Follow/latest presentation owns the newest loaded canonical USER only when
+ * ordinary coverage reaches the followed tail without holes. An optimistic row
+ * has no canonical cursor; sparse windows still need the bounded context reader.
+ * Manual reading always resolves its actual source, including interleaved turns. */
+export function resolveRetainedContextSource(
+  items: readonly StreamItem[],
+  epoch: string | null,
+  reading: Pick<PromptReadingPosition, "navigating" | "following" | "rowId" | "seq">,
+  coverage: readonly CanonicalTimelineCoverage[],
+): StreamItem | undefined {
+  if (reading.navigating) return undefined;
+  if (!reading.following && reading.rowId !== null)
+    return resolveContextSource(items, epoch, reading.rowId, reading.seq);
+
+  let latest: StreamItem | undefined;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    const cursor = item.timelineCursor;
+    if (!cursor || cursor.epoch !== epoch) continue;
+    latest ??= item;
+    if (item.kind === "user_message") {
+      const tailSeq = latest.timelineCursor!.seq;
+      return coversCanonicalInterval(coverage, cursor.epoch, cursor.seq, tailSeq) ? item : latest;
+    }
+  }
+  return latest;
 }
 
 /** Resolve a visible canonical source without conflating repeated provider message IDs. */

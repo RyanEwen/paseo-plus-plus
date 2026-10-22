@@ -1,13 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import {
-  constants as fsConstants,
-  existsSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-  statSync,
-} from "fs";
+import { constants as fsConstants, existsSync, mkdirSync, realpathSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
@@ -46,10 +39,12 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
+import { WorktreeCreationQueue } from "./worktree-creation-queue.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
 const execFileAsync = promisify(execFile);
+const worktreeCreationQueue = new WorktreeCreationQueue();
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -225,7 +220,6 @@ export interface CreateWorktreeOptions {
   worktreeSlug: string;
   exactNames?: boolean;
   source: WorktreeSource;
-  runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
 }
@@ -651,7 +645,6 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
 export async function runWorktreeSetupCommands(options: {
   worktreePath: string;
   branchName: string;
-  cleanupOnFailure: boolean;
   repoRootPath?: string;
   runtimeEnv?: WorktreeRuntimeEnv;
   signal?: AbortSignal;
@@ -691,16 +684,6 @@ export async function runWorktreeSetupCommands(options: {
     results.push(result);
 
     if (result.exitCode !== 0) {
-      if (options.cleanupOnFailure) {
-        try {
-          await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
-            cwd: options.worktreePath,
-            timeout: 120_000,
-          });
-        } catch {
-          rmSync(options.worktreePath, { recursive: true, force: true });
-        }
-      }
       throw new WorktreeSetupError(
         `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
         results,
@@ -1245,43 +1228,46 @@ export const createWorktree = async ({
   source,
   worktreeSlug,
   exactNames,
-  runSetup,
   paseoHome,
   worktreesRoot,
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
-  mkdirSync(dirname(worktreePath), { recursive: true });
+  const projectDirectory = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
+  mkdirSync(projectDirectory, { recursive: true });
 
-  // Also handle worktree path collision
-  let finalWorktreePath = worktreePath;
-  let pathSuffix = 1;
-  if (exactNames && existsSync(finalWorktreePath)) {
-    throw new Error(
-      `Worktree directory already exists: ${finalWorktreePath}. Choose another worktree name or select the existing worktree.`,
-    );
-  }
-  // Exact requests let Git reject a concurrent collision rather than changing the name.
-  if (!exactNames) {
-    while (existsSync(finalWorktreePath)) {
-      finalWorktreePath = `${worktreePath}-${pathSuffix}`;
-      pathSuffix++;
-    }
-  }
+  const { worktreePath, sourcePlan } = await worktreeCreationQueue.run(
+    projectDirectory,
+    async () => {
+      const requestedPath = join(projectDirectory, worktreeSlug);
+      let finalWorktreePath = requestedPath;
+      let pathSuffix = 1;
+      if (exactNames && existsSync(finalWorktreePath)) {
+        throw new Error(
+          `Worktree directory already exists: ${finalWorktreePath}. Choose another worktree name or select the existing worktree.`,
+        );
+      }
+      if (!exactNames) {
+        while (existsSync(finalWorktreePath)) {
+          finalWorktreePath = `${requestedPath}-${pathSuffix}`;
+          pathSuffix++;
+        }
+      }
 
-  // Reject directory conflicts before source planning can fetch or create a tracking branch.
-  const sourcePlan = await resolveWorktreeSourcePlan({
-    cwd,
-    source,
-    desiredSlug: worktreeSlug,
-    exactNames,
-  });
+      // Planning can fetch or create a tracking branch, so it shares destination exclusion.
+      const plan = await resolveWorktreeSourcePlan({
+        cwd,
+        source,
+        desiredSlug: worktreeSlug,
+        exactNames,
+      });
+      await runGitCommand(["worktree", "add", finalWorktreePath, ...plan.addArguments], {
+        cwd,
+        timeout: 120_000,
+      });
+      return { worktreePath: normalizePathForOwnership(finalWorktreePath), sourcePlan: plan };
+    },
+  );
 
-  // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-  await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
-    cwd,
-    timeout: 120_000,
-  });
-  worktreePath = normalizePathForOwnership(finalWorktreePath);
+  // The destination now exists. Slow configuration and setup need not block another creation.
 
   if (sourcePlan.pushRemote) {
     await configureWorktreePushRemote({
@@ -1307,27 +1293,6 @@ export const createWorktree = async ({
   });
 
   await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
-
-  if (runSetup) {
-    try {
-      await runWorktreeSetupCommands({
-        worktreePath,
-        branchName: sourcePlan.branchName,
-        // Exact-name failures recover by retrying setup in the retained checkout.
-        // A branch ref lock cannot exclude external Git operations that adopt HEAD.
-        cleanupOnFailure: !exactNames,
-      });
-    } catch (error) {
-      if (exactNames && error instanceof WorktreeSetupError) {
-        throw new WorktreeSetupError(
-          `${error.message}\nRetained worktree: ${worktreePath} (branch: ${sourcePlan.branchName}). Choose this existing worktree and retry setup there.`,
-          error.results,
-          { worktreePath, branchName: sourcePlan.branchName },
-        );
-      }
-      throw error;
-    }
-  }
 
   return {
     branchName: sourcePlan.branchName,

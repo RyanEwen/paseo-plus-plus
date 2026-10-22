@@ -1,3 +1,4 @@
+import { openSettingsSection } from "../support/helpers/settings";
 import {
   captureVisibleActualPrompt,
   expectMatchingPromptInk,
@@ -47,6 +48,7 @@ import {
   withPromptTimelinePlugin,
 } from "../support/helpers/plugin-timeline";
 import {
+  revealUserMessageBody,
   expectTimelineAtMaximumScrollWithPromptVisible,
   expectTimelinePromptNotMounted,
   expectTimelinePromptLandedBelowTop,
@@ -65,6 +67,11 @@ import {
 // Wide enough that the timeline panel clears the rail's MIN_PANEL_WIDTH with room
 // to spare. At 1280 the panel measures 960, which sits too close to the threshold
 // for chrome-width changes elsewhere to stay out of these tests.
+// Keep real response content below the canonical user row; pre-echo fixture output precedes it.
+const STICKY_RESPONSE = Array.from(
+  { length: 40 },
+  (_, index) => `Response paragraph ${index}.`,
+).join("\n\n");
 const WIDE_VIEWPORT = { width: 1440, height: 900 };
 const LOADED_TURNS = 16;
 
@@ -111,7 +118,7 @@ test.describe("desktop chat outline", () => {
       await expect.poll(() => jumps.requests()).toHaveLength(1);
       expect(jumps.requests()[0]).toMatchObject({ limit: 40, mergeWindow: true });
 
-      await page.getByTestId("scroll-to-bottom-button").click();
+      await page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).click();
       await expectTimelinePromptVisible(page, agent.newestPrompt);
 
       const requestsBeforeLoadedJump = jumps.requests().length;
@@ -417,10 +424,11 @@ async function expectStationaryPromptLanding(
   prior: string,
   origin: "pinned" | "original" = "pinned",
 ) {
-  const newest = `Current response context\nemit 8 assistant messages before synthetic user message\n${"A shared-width line keeps the real bubble under the pointer.\n".repeat(8)}`;
+  const newest = `Current response context\n${"A shared-width line keeps the real bubble under the pointer.\n".repeat(8)}`;
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "sticky-stationary-pointer",
     title: "Sticky stationary pointer",
+    featureValues: { mockAssistantResponse: STICKY_RESPONSE },
     initialPrompt: "Earlier context",
   });
   try {
@@ -441,6 +449,8 @@ async function expectStationaryPromptLanding(
         .getByTestId("agent-chat-scroll")
         .getByTestId("user-message")
         .filter({ hasText: newest });
+      // The current one-line default must be expanded to preserve the long-to-short geometry.
+      await revealUserMessageBody(source);
     } else {
       await scrollActualRowPastTop(page, actualUserRow(page, newest));
       await expect(sticky).toContainText("Current response context");
@@ -590,10 +600,11 @@ test("consecutive pinned previous arrows preserve the second real click without 
   test.setTimeout(180_000);
   const oldest = "Oldest destination.";
   const middle = "Middle destination.";
-  const newest = `Newest destination\nemit 8 assistant messages before synthetic user message\n${"Loaded context for the pinned arrow sequence.\n".repeat(8)}`;
+  const newest = `Newest destination\n${"Loaded context for the pinned arrow sequence.\n".repeat(8)}`;
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "sticky-consecutive-arrows",
     title: "Consecutive pinned arrows",
+    featureValues: { mockAssistantResponse: STICKY_RESPONSE },
     initialPrompt: oldest,
   });
   try {
@@ -720,7 +731,7 @@ test("actual user row preserves node identity while pinning and restores disclos
     await agent.client.waitForFinish(agent.agentId, 15_000);
     await page.setViewportSize(WIDE_VIEWPORT);
     await openAgentRoute(page, agent);
-    const entry = chatOutlineRail(page).getByRole("tab").filter({ hasText: "Actual row identity" });
+    const entry = chatOutlineRail(page).getByRole("tab", { name: /Actual row identity/ });
     await expect(entry).toHaveCount(1);
     await entry.click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
@@ -749,20 +760,26 @@ test("actual user row preserves node identity while pinning and restores disclos
     // Settings is an app-wide route, not a workspace pane. Do not claim that
     // navigating away and returning preserves the previous route's DOM nodes.
     await page.getByTestId("sidebar-settings").click();
+    await openSettingsSection(page, "paseo-plus-plus");
     const toggle = page.getByTestId("paseo-plus-plus-stickyUserPrompts").getByRole("switch");
     await expect(toggle).toBeChecked();
     await toggle.click();
     await expect(toggle).not.toBeChecked();
     await openAgentRoute(page, agent);
-    await chatOutlineRail(page).getByRole("tab").filter({ hasText: "Actual row identity" }).click();
+    await chatOutlineRail(page)
+      .getByRole("tab", { name: /Actual row identity/ })
+      .click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
     const returned = actualUserRow(page, prompt);
     await expect(returned.getByTestId("user-message-disclosure")).toHaveCount(0);
     await page.getByTestId("sidebar-settings").click();
+    await openSettingsSection(page, "paseo-plus-plus");
     await toggle.click();
     await expect(toggle).toBeChecked();
     await openAgentRoute(page, agent);
-    await chatOutlineRail(page).getByRole("tab").filter({ hasText: "Actual row identity" }).click();
+    await chatOutlineRail(page)
+      .getByRole("tab", { name: /Actual row identity/ })
+      .click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
     await expectActualSingleLineGeometry(actualUserRow(page, prompt));
   } finally {
@@ -789,9 +806,7 @@ test("actual user row find expands each occurrence and preserves its text node",
     await agent.client.waitForFinish(agent.agentId, 15_000);
     await page.setViewportSize(WIDE_VIEWPORT);
     await openAgentRoute(page, agent);
-    const entry = chatOutlineRail(page)
-      .getByRole("tab")
-      .filter({ hasText: "Actual find ownership" });
+    const entry = chatOutlineRail(page).getByRole("tab", { name: /Actual find ownership/ });
     await expect(entry).toHaveCount(1);
     await entry.click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
@@ -802,7 +817,8 @@ test("actual user row find expands each occurrence and preserves its text node",
     await scrollActualRowPastTop(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
     // Use the existing app shortcut; opening find must expand, not a manual More click.
-    await row.getByTestId("user-message-timestamp").click();
+    // Pinned metadata is deliberately pointer-disabled; focus the owning transcript itself.
+    await page.getByTestId("agent-chat-scroll").focus();
     await page.keyboard.press("ControlOrMeta+f");
     const panel = page.locator('[data-chat-find-widget="true"]').filter({ visible: true });
     const query = panel.getByRole("textbox", { name: "Find in pane", exact: true });
@@ -871,6 +887,7 @@ for (const viewport of [
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "sticky-preview",
       title: "Sticky overflow",
+      featureValues: { mockAssistantResponse: STICKY_RESPONSE },
       initialPrompt: prompts[0],
     });
     try {
@@ -879,10 +896,7 @@ for (const viewport of [
         await agent.client.sendAgentMessage(agent.agentId, prompt);
         await agent.client.waitForFinish(agent.agentId, 15_000);
       }
-      await agent.client.sendAgentMessage(
-        agent.agentId,
-        "emit 85 assistant messages before synthetic user message",
-      );
+      await agent.client.sendAgentMessage(agent.agentId, "Final response context");
       await agent.client.waitForFinish(agent.agentId, 15_000);
       // The outline rail is deliberately hidden on compact panes. Bootstrap the
       // route at desktop width, then navigate through the shared arrows after resizing.
@@ -892,9 +906,7 @@ for (const viewport of [
       await expect(chatOutlineRail(page).getByRole("tab")).toHaveCount(5);
       await page.setViewportSize(viewport);
       const initialCopy = pinnedActualRow(page);
-      await expect(initialCopy).toContainText(
-        "emit 85 assistant messages before synthetic user message",
-      );
+      await expect(initialCopy).toContainText("Final response context");
       for (let index = prompts.length - 1; index >= 0; index -= 1) {
         await clickMessageNavigation(initialCopy, "user-message-previous");
         await expectPinnedPromptLanding(page, prompts[index]!);
@@ -1042,7 +1054,10 @@ for (const viewport of [
 
   test(`sticky user message navigation at ${viewport.width}px`, async ({ page }) => {
     test.setTimeout(180_000);
-    const agent = await seedLongMockAgentTimeline({ turns: 20 });
+    const agent = await seedLongMockAgentTimeline({
+      turns: 20,
+      mockAssistantResponse: STICKY_RESPONSE,
+    });
     try {
       await page.setViewportSize(viewport);
       await openAgentTimeline(page, agent);
@@ -1220,7 +1235,7 @@ for (const viewport of [
       await agent.client.sendAgentMessage(agent.agentId, longPrompt);
       await agent.client.waitForFinish(agent.agentId, 15_000);
       await expect(sticky).toContainText(agent.prompts[1]);
-      await page.getByTestId("scroll-to-bottom-button").click();
+      await page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).click();
       await expect(sticky).toContainText("Long sticky prompt");
       await expectNearBottom(page);
       const longRow = actualUserRow(page, longPrompt);
@@ -1315,7 +1330,10 @@ for (const viewport of [
             const paneHeight = element
               .closest('[data-testid="sticky-prompt-timeline"]')!
               .getBoundingClientRect().height;
-            return element.getBoundingClientRect().height / paneHeight;
+            // The transcript row reserves its natural height while the real body is pinned.
+            // The visible presentation, including its controls, must fit the smaller viewport.
+            const content = element.querySelector("[data-actual-prompt-content]")!;
+            return content.getBoundingClientRect().height / paneHeight;
           }),
         )
         .toBeLessThan(0.8);
@@ -1323,7 +1341,14 @@ for (const viewport of [
       await longRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
       await page.setViewportSize(viewport);
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(actualUserRow(page, longPrompt)).toContainText("Long sticky prompt");
+      // Reload starts at the latest response; the real pinned prompt reveals itself on compact layouts too.
+      const reloadedPrompt = actualUserRow(page, longPrompt);
+      await expect(reloadedPrompt).toHaveAttribute("data-prompt-pinned", "true");
+      await reloadedPrompt
+        .getByTestId("user-message-content-target")
+        .click({ position: { x: 10, y: 4 } });
+      await expectTimelinePromptLandedBelowTop(page, longPrompt);
+      await expect(reloadedPrompt).toHaveCount(1);
     } finally {
       await agent.cleanup();
     }
@@ -1418,7 +1443,7 @@ test("sticky cancelled older window stays at latest after bottom", async ({ page
     gate.holdNextServerMessage("fetch_agent_timeline_response");
     await chatOutlineRail(page).getByRole("tab").first().click();
     await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
-    await page.getByTestId("scroll-to-bottom-button").click();
+    await page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).click();
     await expectNearBottom(page);
     const before = await delivered.count();
     gate.releaseHeldServerMessage("fetch_agent_timeline_response");
@@ -1502,12 +1527,13 @@ for (const indexed of [true, false]) {
       gate.allowTimelineResponses();
       await sticky.getByRole("button", { name: "Retry", exact: true }).click();
       await expect(sticky).toHaveCount(0);
-      const reveal = page.getByRole("button", { name: "Go to this message", exact: true });
-      await expect(reveal).toBeVisible();
+      const recovered = actualUserRow(page, prompt);
+      await expect(recovered).toHaveCount(1);
+      await expect(recovered).toHaveAttribute("data-prompt-pinned", "true");
       await expectNearBottom(page);
-      await reveal.click();
+      // The pinned prompt itself is the reveal link, including when its outline index failed.
+      await recovered.getByRole("link", { name: prompt, exact: true }).click();
       await expectTimelinePromptLandedBelowTop(page, prompt);
-      await expect(actualUserRow(page, prompt)).toHaveCount(1);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/discovery-${indexed ? "indexed" : "pagination"}.png`,
       });
@@ -1598,7 +1624,7 @@ test("keeps colored pinned disclosure readable before and during hover", async (
     const bubble = sticky.getByTestId("user-message-bubble");
     const disclosure = sticky.getByTestId("user-message-disclosure");
     const label = disclosure.getByText("more…", { exact: true });
-    await expect(bubble).toHaveCSS("background-color", "rgb(147, 197, 253)");
+    await expect(bubble).toHaveCSS("background-color", "rgb(155, 175, 197)");
     await expect(sticky.getByTestId("user-message-text")).toHaveCSS("color", "rgb(24, 24, 27)");
     await page.mouse.move(2, 2);
     await expect(label).toHaveCSS("color", "rgb(24, 24, 27)");

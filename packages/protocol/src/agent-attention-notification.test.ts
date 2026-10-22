@@ -3,9 +3,49 @@ import {
   buildAgentAttentionNotificationPayload,
   findLatestAssistantMessageFromTimeline,
   findLatestPermissionRequest,
+  withNotificationWorkspaceContext,
 } from "./agent-attention-notification.js";
 
 describe("buildAgentAttentionNotificationPayload", () => {
+  it("puts workspace identity first and retains permission details and routing", () => {
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "host",
+      workspaceId: "ws",
+      agentId: "agent",
+      workspaceName: "Review checkout",
+      projectName: "Paseo++",
+      permissionRequest: {
+        id: "p",
+        provider: "codex",
+        name: "exec",
+        kind: "tool",
+        title: "Run tests",
+      },
+    });
+    expect(payload.title).toBe("Review checkout · Paseo++");
+    expect(payload.body).toBe("Agent needs permission\nRun tests");
+    expect(payload.data.workspaceId).toBe("ws");
+  });
+
+  it("omits duplicate or crowded project labels without truncating workspace identity", () => {
+    const notification = { title: "Terminal needs attention", body: "Build" };
+    expect(
+      withNotificationWorkspaceContext(notification, {
+        workspaceName: "Paseo",
+        projectName: "Paseo",
+      }).title,
+    ).toBe("Paseo");
+    const workspaceName = "A long but meaningful workspace title ".repeat(3).trim();
+    expect(
+      withNotificationWorkspaceContext(notification, { workspaceName, projectName: "Project" })
+        .title,
+    ).toBe(workspaceName);
+    expect(withNotificationWorkspaceContext(notification, { workspaceName: " \n " })).toBe(
+      notification,
+    );
+  });
+
   it("carries the workspace needed to open a cold agent destination", () => {
     const payload = buildAgentAttentionNotificationPayload({
       reason: "finished",

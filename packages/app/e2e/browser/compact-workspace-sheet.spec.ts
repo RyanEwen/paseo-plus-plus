@@ -114,19 +114,9 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
     });
 
     await test.step("once its tab closes, the subagent reopens in a sheet that keeps the list", async () => {
-      await page
-        .getByRole("button", { name: /Switch tabs/ })
-        .filter({ visible: true })
-        .click();
-      await expect(page.getByText("Workspace tabs", { exact: true })).toBeVisible();
-      const menuBase = `workspace-tab-menu-agent_${child.id}`;
-      await page.getByTestId(`${menuBase}-trigger`).click();
-      await page.getByTestId(`${menuBase}-close`).click();
+      await page.getByTestId(`workspace-tab-agent_${child.id}`).click({ button: "right" });
+      await page.getByTestId(`workspace-tab-menu-agent_${child.id}-close`).click();
       await expectOpenTabCount(page, 1);
-      // Closing a tab keeps the switcher open, with the parent as the tab left. Its backdrop is
-      // tapped once the row menu's own sheet has gone.
-      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(1);
-      await tapSheetBackdrop(page);
       await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
 
       await openSubagentFromCompactTrack(page, child.id);

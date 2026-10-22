@@ -404,13 +404,13 @@ test.describe("New workspace flow", () => {
         await page.setViewportSize(viewport);
         await page.goto(`/new?${query.toString()}`);
         const trigger = page.getByTestId("workspace-create-isolation-trigger");
-        await expect(trigger).toHaveText("Local · main");
+        await expect(trigger.getByText("Local · main", { exact: true })).toBeVisible();
         await trigger.click();
         const localOption = page.getByTestId("workspace-create-isolation-local");
         await expect(localOption).toContainText("Local · main");
         await page.screenshot({ path: testInfo.outputPath(`local-${viewport.width}.png`) });
         await localOption.click();
-        await expect(trigger).toHaveText("Local · main");
+        await expect(trigger.getByText("Local · main", { exact: true })).toBeVisible();
       }
     } finally {
       await repo.cleanup();
@@ -435,9 +435,11 @@ test.describe("New workspace flow", () => {
         name: opened.projectDisplayName,
       });
       await page.goto(`/new?${query.toString()}`);
-      await expect(page.getByTestId("workspace-create-isolation-trigger")).toHaveText(
-        "Local · main",
-      );
+      await expect(
+        page
+          .getByTestId("workspace-create-isolation-trigger")
+          .getByText("Local · main", { exact: true }),
+      ).toBeVisible();
       expect(listDelay.requestCount()).toBe(0);
       await page.getByTestId("workspace-create-isolation-trigger").click();
       await listDelay.waitForResponse;
@@ -534,7 +536,7 @@ test.describe("New workspace flow", () => {
         const modeControl = page.getByTestId("new-workspace-branch-picker-trigger");
         const refControl = page.getByTestId("new-workspace-ref-picker-trigger");
         const isolationControl = page.getByTestId("workspace-create-isolation-trigger");
-        await expect(modeControl).toHaveText("New branch");
+        await expect(modeControl.getByText("New branch", { exact: true })).toBeVisible();
         await expect(refControl).toContainText("from main");
         if (viewport.width === 1440) {
           await modeControl.hover();
@@ -545,7 +547,7 @@ test.describe("New workspace flow", () => {
           ).toBeVisible();
           await refControl.hover();
           await expect(
-            page.getByText("Choose the branch to base the new branch on: from main", {
+            page.getByText("Choose the branch to base the new branch on", {
               exact: true,
             }),
           ).toBeVisible();
@@ -636,7 +638,7 @@ test.describe("New workspace flow", () => {
         await selectWorkspaceBranchChoice(page, "Release/1.2");
         await expect(branchName).toHaveCount(0);
         await expect(refControl).toHaveCount(0);
-        await expect(modeControl).toHaveText("Release/1.2");
+        await expect(modeControl.getByText("Release/1.2", { exact: true })).toBeVisible();
         await expect(worktreeName).toHaveValue("release-1-2");
         await page.screenshot({
           path: testInfo.outputPath(`existing-branch-${viewport.width}.png`),
@@ -757,9 +759,11 @@ test.describe("New workspace flow", () => {
         .getByTestId("combobox-desktop-container")
         .getByText(secondProject.projectDisplayName, { exact: true })
         .click();
-      await expect(page.getByTestId("new-workspace-branch-picker-trigger")).toHaveText(
-        "New branch",
-      );
+      await expect(
+        page
+          .getByTestId("new-workspace-branch-picker-trigger")
+          .getByText("New branch", { exact: true }),
+      ).toBeVisible();
       await expect(page.getByTestId("new-workspace-ref-picker-trigger")).toContainText("from main");
       await expect(page.getByTestId("new-workspace-worktree-name")).toHaveValue("retained-name");
       await page.getByTestId("new-workspace-branch-picker-trigger").click();

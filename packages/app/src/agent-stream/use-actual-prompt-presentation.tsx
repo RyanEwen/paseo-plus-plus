@@ -66,6 +66,7 @@ function usePromptDisclosure(id: string, props: MessageProps) {
           textStyle={styles.disclosureText}
           accessibilityLabel={t(expanded ? "stickyPrompt.collapse" : "stickyPrompt.expand")}
           accessibilityState={disclosureState}
+          aria-expanded={expanded}
           onPress={toggle}
           testID="user-message-disclosure"
         >

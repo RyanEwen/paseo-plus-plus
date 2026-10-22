@@ -1163,6 +1163,11 @@ describe("createWebStreamStrategy", () => {
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -900 }));
     });
+    // Layout can reconcile before the browser publishes the wheel's scroll event.
+    act(() => {
+      root?.render(strategy.render({ ...renderInput, isAuthoritativeHistoryReady: false }));
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
     scrollContainer.scrollTop = 91;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
@@ -1618,6 +1623,10 @@ describe("createWebStreamStrategy", () => {
 
         constructor(private readonly callback: ResizeObserverCallback) {}
 
+        unobserve(target: Element) {
+          observed.delete(target);
+        }
+
         observe(target: Element) {
           observed.set(target, {
             callback: this.callback,
@@ -1712,6 +1721,11 @@ describe("createWebStreamStrategy", () => {
         height: rowsShifted ? 116 : 40,
         bottom: rowsShifted ? 120 : 160,
       }) as DOMRect;
+    // Sticky rows measure the intrinsic body, independently of their extended lane.
+    firstRow.querySelector<HTMLElement>("[data-actual-prompt-content]")!.getBoundingClientRect =
+      firstRow.getBoundingClientRect;
+    secondRow.querySelector<HTMLElement>("[data-actual-prompt-content]")!.getBoundingClientRect =
+      secondRow.getBoundingClientRect;
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
     scrollContainer.scrollTop = 1000;
