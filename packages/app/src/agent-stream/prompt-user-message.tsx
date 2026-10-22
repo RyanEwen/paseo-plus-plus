@@ -6,7 +6,7 @@ import {
   type PromptBubbleNode,
 } from "./prompt-bubble-geometry";
 import { memo, useMemo, useCallback, useContext, type ComponentProps } from "react";
-import { UserMessage } from "@/components/message";
+import { UserMessage } from "@/components/user-message";
 import { PromptNavigationActions, PromptNavigationContext } from "./prompt-navigation-actions";
 
 /** Attach viewport-owned navigation without changing the shared message renderer's identity. */

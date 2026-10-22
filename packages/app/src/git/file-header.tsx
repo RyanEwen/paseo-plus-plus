@@ -29,6 +29,7 @@ import {
   formatDiffCount,
 } from "@/git/file-header-presentation";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
+import { useTextOverflow } from "@/hooks/use-text-overflow";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FileHeaderProps {
@@ -182,6 +183,39 @@ function FileHeaderMenu({
   );
 }
 
+function FileHeaderTooltip({
+  path,
+  interactive,
+  showsBodyState,
+  showDir,
+  canvasRendered,
+  overflowing,
+  children,
+}: {
+  path: string;
+  interactive: boolean;
+  showsBodyState: boolean;
+  showDir: boolean;
+  canvasRendered: boolean;
+  overflowing: boolean;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip
+      delayDuration={300}
+      enabledOnDesktop={showsBodyState || showDir || canvasRendered || overflowing}
+      enabledOnMobile={false}
+    >
+      <TooltipTrigger asChild triggerRefProp={interactive ? "triggerRef" : "ref"}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+        <Text style={styles.tooltip}>{path}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export const FileHeader = memo(function FileHeader({
   file,
   workspaceFileDragScope,
@@ -248,6 +282,7 @@ export const FileHeader = memo(function FileHeader({
     [bodyVisible, isSelected, showsBodyState],
   );
   const fileName = fileNameForPath(file.path);
+  const nameOverflow = useTextOverflow(fileName);
   const nameStyle = fileHeaderNameStyle(showsBodyState, hover.isHovered);
   const changeIcon = <FileChangeIcon change={fileChange(file)} />;
   const content = (
@@ -261,7 +296,14 @@ export const FileHeader = memo(function FileHeader({
             <MaterialFileIcon fileName={fileName} size={WORKSPACE_TREE_ICON_SIZE} />
           </View>
         )}
-        <Text style={nameStyle} numberOfLines={1} testID={testID ? `${testID}-name` : undefined}>
+        <Text
+          ref={nameOverflow.ref}
+          onLayout={nameOverflow.onLayout}
+          onTextLayout={nameOverflow.onTextLayout}
+          style={nameStyle}
+          numberOfLines={1}
+          testID={testID ? `${testID}-name` : undefined}
+        >
           {fileName}
         </Text>
         {showDir ? (
@@ -345,12 +387,16 @@ export const FileHeader = memo(function FileHeader({
       accessibilityLabel={accessibilityLabel}
     >
       <ContextMenu>
-        <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-          <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-            <Text style={styles.tooltip}>{file.path}</Text>
-          </TooltipContent>
-        </Tooltip>
+        <FileHeaderTooltip
+          path={file.path}
+          interactive={interactive}
+          showsBodyState={showsBodyState}
+          showDir={showDir}
+          canvasRendered={canvasRendered}
+          overflowing={nameOverflow.overflowing}
+        >
+          {trigger}
+        </FileHeaderTooltip>
         {interactive ? (
           <FileHeaderMenu file={file} testID={testID} {...actions} bodyVisible={bodyVisible} />
         ) : null}

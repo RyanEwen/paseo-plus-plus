@@ -1,10 +1,9 @@
-import { Button } from "@/components/ui/button";
-import { useTranslation } from "react-i18next";
 import { forwardRef, useImperativeHandle, useMemo } from "react";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { ActualPromptRowsProvider } from "./actual-prompt-rows";
 import { PromptDiscoverySurface } from "./prompt-navigation-surface";
@@ -21,6 +20,10 @@ import { useStickyPrompt } from "./use-sticky-prompt";
 
 type Props = Parameters<typeof useStickyPrompt>[0] & {
   contextPageReader?: ContextPageReader | null;
+  retainedContext?: Pick<
+    ReturnType<typeof useCanonicalPromptContext>,
+    "loading" | "error" | "exhausted" | "limited" | "cancelled" | "cancel" | "retry"
+  >;
   serverId: string;
   agentId: string;
   client: DaemonClient | null;
@@ -41,6 +44,7 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
     agentId,
     client,
     contextPageReader,
+    retainedContext,
     availableHeight,
     contentMaxWidth,
     children,
@@ -63,15 +67,43 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
   });
   const navigation = useStickyPrompt({
     ...input,
-    fetchPrompt: readPrompt,
-    fetchContext: readContext,
+    contextManaged: retainedContext !== undefined,
+    fetchPrompt: retainedContext ? undefined : readPrompt,
+    fetchContext: retainedContext ? undefined : readContext,
   });
   const controls = usePromptNavigationControls(navigation);
-  const revealCurrent = useStableEvent(() => navigation.reveal());
-  const { t } = useTranslation();
-  const promptOutsideWindow =
-    navigation.message &&
-    !input.items.some((item) => item.kind === "user_message" && item.id === navigation.message?.id);
+  const retryContext = useStableEvent(() => {
+    if (retainedContext?.error || retainedContext?.cancelled || retainedContext?.limited)
+      retainedContext.retry();
+    else navigation.retry();
+  });
+  const cancelContext = useStableEvent(() => {
+    retainedContext?.cancel();
+    navigation.cancel();
+  });
+  let contextStatus = navigation.discoveryStatus;
+  if (retainedContext?.limited) contextStatus = "limited";
+  else if (retainedContext?.exhausted && !navigation.message) contextStatus = "exhausted";
+  const feedbackNavigation = useMemo(
+    () => ({
+      ...navigation,
+      busy: navigation.busy || retainedContext?.loading === true,
+      error: navigation.error || retainedContext?.error === true,
+      cancelled: navigation.cancelled || retainedContext?.cancelled === true,
+      discoveryStatus: contextStatus,
+      retry: retryContext,
+      cancel: cancelContext,
+    }),
+    [
+      navigation,
+      retainedContext?.loading,
+      retainedContext?.error,
+      retainedContext?.cancelled,
+      contextStatus,
+      retryContext,
+      cancelContext,
+    ],
+  );
 
   useImperativeHandle(
     ref,
@@ -97,12 +129,7 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
           {input.enabled !== false && (
             <View style={styles.feedback} pointerEvents="box-none">
               <View style={rail} pointerEvents="box-none">
-                <PromptDiscoverySurface navigation={navigation} />
-                {promptOutsideWindow && !navigation.busy && !navigation.error && (
-                  <Button variant="ghost" size="md" onPress={revealCurrent}>
-                    {t("stickyPrompt.goToMessage")}
-                  </Button>
-                )}
+                <PromptDiscoverySurface navigation={feedbackNavigation} />
               </View>
             </View>
           )}

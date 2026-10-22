@@ -21,10 +21,10 @@ export function revealFindOccurrence(input: {
   const parent = input.range.startContainer.parentElement;
   const body = parent?.closest<HTMLElement>('[data-testid="user-message-body-scroll"]');
   if (!body) {
-    // Only content, not its original wrapper, has the pin translation. Derive it
-    // directly from that content's recorded offset for ordinary assistant ranges.
-    const offset = parent?.closest<HTMLElement>("[data-history-row-id]")?.dataset.promptTranslation;
-    return input.range.getBoundingClientRect().top - Number(offset ?? 0) - input.clearance;
+    const localOffset = parent
+      ? getOriginalPromptTop(parent) - parent.getBoundingClientRect().top
+      : 0;
+    return input.range.getBoundingClientRect().top + localOffset - input.clearance;
   }
   if (body.dataset.bodyExpanded === "false" || body.clientHeight <= 0) return null;
   const bounds = body.getBoundingClientRect();

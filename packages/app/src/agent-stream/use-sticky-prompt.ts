@@ -39,6 +39,9 @@ import {
 
 interface Input {
   enabled?: boolean;
+  /** The timeline owner admits passive context as actual rows. */
+  contextManaged?: boolean;
+  contextOnlyIds?: ReadonlySet<string>;
   reading?: PromptReadingSource;
   fetchPrompt?: (seq: number) => Promise<UserPrompt>;
   fetchContext?: (source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>;
@@ -73,17 +76,10 @@ export function useStickyPrompt(input: Input) {
     retarget: retargetNavigationActions,
     clear: clearNavigationActions,
   } = useNavigationActionVisibility(enabled, epoch);
-  const readingSource = enabled
-    ? (input.reading ?? EMPTY_PROMPT_READING_SOURCE)
-    : EMPTY_PROMPT_READING_SOURCE;
-  const reading = useSyncExternalStore(
-    readingSource.subscribe,
-    readingSource.getSnapshot,
-    readingSource.getSnapshot,
-  );
+  const reading = usePromptReading(enabled, input.reading);
   const loadedTargets = useMemo(
-    () => buildPromptTargets(items, outline.prompts, epoch),
-    [items, outline.prompts, epoch],
+    () => buildPromptTargets(items, outline.prompts, epoch, input.contextOnlyIds),
+    [items, outline.prompts, epoch, input.contextOnlyIds],
   );
   const ownerEpoch = useRef(epoch);
   const scopeChanged = ownerEpoch.current !== epoch;
@@ -105,8 +101,7 @@ export function useStickyPrompt(input: Input) {
     placement?: PromptJumpPlacement;
   } | null>(null);
   const retryDirection = useRef<-1 | 1>(-1);
-  const latest = loadedTargets.at(-1)?.item;
-  const selectedMessage = selected ?? latest;
+  const selectedMessage = resolveSelectedMessage(loadedTargets, selected);
 
   // The reading row is authoritative for manual scrolling. Keep full selected content
   // across page replacements, and never replace an explicit pending navigation.
@@ -118,7 +113,7 @@ export function useStickyPrompt(input: Input) {
     [items, reading.rowId, reading.seq, reading.following, loadedTargets],
   );
   const discoverReading = needsReadingPromptDiscovery(
-    indexed,
+    indexed || input.contextManaged === true,
     reading.manual,
     reading.rowId,
     readingTarget,
@@ -154,7 +149,7 @@ export function useStickyPrompt(input: Input) {
   const readingContent = useReadingPrompt({
     knownPrompts,
     epoch,
-    seq: enabled ? missingReadingSeq : undefined,
+    seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
     fetchPrompt: input.fetchPrompt,
     source: contextSource,
     fetchContext: input.fetchContext,
@@ -200,7 +195,9 @@ export function useStickyPrompt(input: Input) {
   const discoveringPrevious = pending === "previous";
   const discovery = usePromptDiscovery({
     enabled:
-      enabled && shouldDiscoverCachedPrompt(pending, indexed, message, cancelled, discoverReading),
+      enabled &&
+      (!input.contextManaged || pending !== null) &&
+      shouldDiscoverCachedPrompt(pending, indexed, message, cancelled, discoverReading),
     reached: hasDiscoveredCachedPrompt(
       pending,
       loadedTargets,
@@ -237,16 +234,28 @@ export function useStickyPrompt(input: Input) {
         setPending(null);
         if (scroll) jumpToLoaded(target.item.id, placement);
       } else if (target.seq !== undefined) {
+        if (target.cached && !indexed && !canPageToContextTarget(target.seq, input)) {
+          setError(true);
+          setPending(null);
+          return;
+        }
         setPending(target);
-        if (indexed) outline.jumpToPrompt(target.seq, { scroll, source: "sticky", placement });
+        if (indexed)
+          outline.jumpToPrompt(target.seq, {
+            scroll: target.cached ? false : scroll,
+            source: "sticky",
+            placement,
+          });
       }
     },
   );
 
+  const cancelDiscovery = discovery.cancel;
+
   useEffect(() => {
     if (!enabled || !pending || pending === "previous") return;
     const loaded = loadedTargets.find((target) => target.key === pending.key);
-    if (loaded?.item) {
+    if (loaded?.item && !loaded.cached) {
       const preserveSelection =
         retryTarget.current?.target.key === loaded.key && retryTarget.current.preserveSelection;
       setSelected(!preserveSelection && loaded.key === targets.at(-1)?.key ? null : loaded.item);
@@ -254,13 +263,32 @@ export function useStickyPrompt(input: Input) {
       if (pending.cached && retryTarget.current?.scroll)
         jumpToLoaded(loaded.item.id, retryTarget.current?.placement);
     } else if (
-      outline.jumpError ||
-      (pending.cached && ["error", "limited", "exhausted"].includes(discovery.status))
+      isFailedPromptMaterialization({
+        jumpError: outline.jumpError,
+        cached: pending.cached,
+        indexed,
+        hasOlder,
+        loadingOlder,
+        status: discovery.status,
+      })
     ) {
+      cancelDiscovery();
       setError(true);
       setPending(null);
     }
-  }, [enabled, outline.jumpError, pending, loadedTargets, discovery.status, jumpToLoaded, targets]);
+  }, [
+    enabled,
+    outline.jumpError,
+    pending,
+    loadedTargets,
+    discovery.status,
+    cancelDiscovery,
+    jumpToLoaded,
+    targets,
+    indexed,
+    hasOlder,
+    loadingOlder,
+  ]);
 
   useEffect(() => {
     if (
@@ -379,7 +407,6 @@ export function useStickyPrompt(input: Input) {
   });
   const cancelStickyJump = outline.cancelStickyJump;
   const cancelReading = readingContent.cancel;
-  const cancelDiscovery = discovery.cancel;
   const restartDiscovery = discovery.restart;
 
   // Opt-out preserves the mounted timeline and draft. Invalidate only this feature's
@@ -491,6 +518,39 @@ export function useStickyPrompt(input: Input) {
   };
 }
 
+function usePromptReading(enabled: boolean, source: PromptReadingSource | undefined) {
+  const readingSource = enabled
+    ? (source ?? EMPTY_PROMPT_READING_SOURCE)
+    : EMPTY_PROMPT_READING_SOURCE;
+  return useSyncExternalStore(
+    readingSource.subscribe,
+    readingSource.getSnapshot,
+    readingSource.getSnapshot,
+  );
+}
+
+function resolveSelectedMessage(targets: PromptTarget[], selected: UserPrompt | null) {
+  return selected ?? targets.at(-1)?.item;
+}
+
+interface PromptMaterializationStatus {
+  jumpError: boolean;
+  cached: boolean | undefined;
+  indexed: boolean;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  status: ReturnType<typeof usePromptDiscovery>["status"];
+}
+
+function isFailedPromptMaterialization(input: PromptMaterializationStatus): boolean {
+  if (input.jumpError) return true;
+  if (!input.cached) return false;
+  return (
+    (!input.indexed && !input.hasOlder && !input.loadingOlder) ||
+    ["error", "limited", "exhausted"].includes(input.status)
+  );
+}
+
 /** Retain measured bubble geometry through virtualization, but discard it after a pane resize. */
 function usePromptGeometry(
   messageId: string | undefined,
@@ -535,4 +595,17 @@ function resolveEpochPromptState(
 /** Cached prompt content does not grant action ownership to an unrelated mounted row. */
 function resolveActionVisibleMessageId(targets: PromptTarget[], key: string | null) {
   return targets.find((target) => target.key === key)?.item?.id;
+}
+
+/** Backward pagination can materialize only targets preceding the ordinary window. */
+function canPageToContextTarget(seq: number, input: Input): boolean {
+  if (!input.hasOlder && !input.loadingOlder) return false;
+  let firstOrdinarySeq = Infinity;
+  for (const item of input.items) {
+    if (input.contextOnlyIds?.has(item.id)) continue;
+    const cursor = item.timelineCursor;
+    if (cursor && cursor.epoch === input.epoch)
+      firstOrdinarySeq = Math.min(firstOrdinarySeq, cursor.seq);
+  }
+  return Number.isFinite(firstOrdinarySeq) && seq < firstOrdinarySeq;
 }

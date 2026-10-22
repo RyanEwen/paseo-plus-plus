@@ -1,5 +1,5 @@
 import { useCallback, useContext, useMemo, useState, type ComponentProps } from "react";
-import { View, type GestureResponderEvent } from "react-native";
+import type { GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { isWeb } from "@/constants/platform";
@@ -66,6 +66,7 @@ function usePromptDisclosure(id: string, props: MessageProps) {
           textStyle={styles.disclosureText}
           accessibilityLabel={t(expanded ? "stickyPrompt.collapse" : "stickyPrompt.expand")}
           accessibilityState={disclosureState}
+          aria-expanded={expanded}
           onPress={toggle}
           testID="user-message-disclosure"
         >
@@ -84,10 +85,7 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
   const navigation = useContext(PromptNavigationContext);
   const disclosure = usePromptDisclosure(id, props);
   const { t } = useTranslation();
-  const backdrop = useMemo(
-    () => (pinned ? <PinnedMessageActionBackdrop /> : <View pointerEvents="none" />),
-    [pinned],
-  );
+  const backdrop = useMemo(() => <PinnedMessageActionBackdrop />, []);
   const reveal = useCallback(
     (event: GestureResponderEvent) => {
       if (!selectedPromptText(event)) navigation?.reveal(id);
@@ -99,7 +97,7 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
     copyMask: undefined,
     previewLines: 1,
     previewExpanded: disclosure.expanded,
-    bodyViewportHeight: rows.availableHeight,
+    bodyViewportHeight: rows.bodyViewportHeight,
     pinned,
     actionRowBackdrop: backdrop,
     onPreviewOverflowChange: disclosure.report,

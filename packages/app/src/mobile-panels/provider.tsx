@@ -51,7 +51,6 @@ interface MobilePanelsRuntime {
   motionState: SharedValue<MobilePanelMotionState>;
   openGesturesBlocked: SharedValue<boolean>;
   position: SharedValue<number>;
-  rightCloseGestureRef: RefObject<GestureType | undefined>;
   rightOpenGestureRef: RefObject<GestureType | undefined>;
   updateGesture: (startedRevision: number, nextPosition: number) => boolean;
   setOpenGestureBlocked: (owner: symbol, blocked: boolean) => void;
@@ -81,7 +80,6 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const leftOpenGestureRef = useRef<GestureType | undefined>(undefined);
   const leftCloseGestureRef = useRef<GestureType | undefined>(undefined);
   const rightOpenGestureRef = useRef<GestureType | undefined>(undefined);
-  const rightCloseGestureRef = useRef<GestureType | undefined>(undefined);
   const motionActivityListeners = useRef(new Set<() => void>()).current;
   const subscribeMotionActivity = useCallback(
     (listener: () => void) => {
@@ -249,7 +247,6 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       motionState,
       openGesturesBlocked,
       position,
-      rightCloseGestureRef,
       rightOpenGestureRef,
       updateGesture,
       setOpenGestureBlocked,

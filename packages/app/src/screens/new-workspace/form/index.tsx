@@ -203,7 +203,8 @@ function useBaseField(
 /**
  * The New workspace setup fields, one trigger per field, each opening its picker. Compact: a stack
  * of full-width fields with the label inside. Desktop: one meta row of badges. Either way, a field
- * that does not apply to the selected project is left out, and Host only shows with a second host.
+ * that does not apply to the selected project is left out. Host always shows, even with one host, so
+ * its Add host action keeps multi-host discoverable.
  */
 export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement {
   const { t } = useTranslation();
@@ -213,7 +214,6 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
   const isolationPicker = useIsolationPicker(isolation, isPending);
   const renderRefOption = useRefRenderOption(base.itemById, isPending);
 
-  const showHost = host.allHosts.length > 1;
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const selectedProject = project.selectedProject;
@@ -253,7 +253,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       testID="new-workspace-project-picker-trigger"
     />
   );
-  const hostField = showHost ? (
+  const hostField = (
     <HostPicker
       hosts={host.allHosts}
       value={host.selectedServerId}
@@ -261,8 +261,9 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       open={host.openState}
       onOpenChange={host.onOpenChange}
       anchorRef={host.anchorRef}
-      includeAddHost={isCompact}
+      includeAddHost
       onAddHost={host.onAddHost}
+      addHostTestID="new-workspace-host-picker-add-host"
       searchable={false}
       title={t("newWorkspace.fields.host")}
       desktopPlacement="bottom-start"
@@ -281,7 +282,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
         testID="host-picker-trigger"
       />
     </HostPicker>
-  ) : null;
+  );
   const isolationField = isolation.canCreateWorktree ? (
     <FieldTrigger
       ref={isolation.anchorRef}
@@ -382,7 +383,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
 
   return (
     <View testID="new-workspace-ref-picker-row" style={styles.desktopRow} pointerEvents="box-none">
-      {hostField ? <View style={styles.desktopControl}>{hostField}</View> : null}
+      <View style={styles.desktopControl}>{hostField}</View>
       <View style={styles.desktopControl}>{projectField}</View>
       {isolationField ? <View style={styles.desktopControl}>{isolationField}</View> : null}
       {branchField ? <View style={styles.desktopControl}>{branchField}</View> : null}

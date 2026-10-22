@@ -1,3 +1,5 @@
+import { useWindowDimensions } from "react-native";
+import { SPACING } from "@/styles/theme";
 import {
   createContext,
   useCallback,
@@ -13,7 +15,7 @@ interface ActualPromptRows {
   expandedIds: ReadonlySet<string>;
   toggleExpanded(id: string): void;
   expand(id: string): void;
-  availableHeight: number;
+  bodyViewportHeight: number;
   reportViewportHeight(height: number): void;
   registerViewport(prepare: (id: string) => void): () => void;
 }
@@ -49,6 +51,13 @@ export function ActualPromptRowsProvider({
     availableHeight > 0 && measuredHeight > 0
       ? Math.min(availableHeight, measuredHeight)
       : Math.max(availableHeight, measuredHeight);
+  const { height: windowHeight } = useWindowDimensions();
+  // Keep expanded prompts below both bounds, including a landing-edge clearance.
+  // The same capped column holds the body and controls; only the body scrolls.
+  const bodyViewportHeight = Math.max(
+    0,
+    Math.min(windowHeight * 0.6, viewportHeight * 0.8) - SPACING[2],
+  );
   const viewportOwner = useRef<((id: string) => void) | null>(null);
   const registerViewport = useCallback((prepare: (id: string) => void) => {
     viewportOwner.current = prepare;
@@ -98,7 +107,7 @@ export function ActualPromptRowsProvider({
             expandedIds,
             toggleExpanded,
             expand,
-            availableHeight: viewportHeight,
+            bodyViewportHeight,
             reportViewportHeight,
             registerViewport,
           }
@@ -109,7 +118,7 @@ export function ActualPromptRowsProvider({
       expandedIds,
       toggleExpanded,
       expand,
-      viewportHeight,
+      bodyViewportHeight,
       reportViewportHeight,
       registerViewport,
     ],

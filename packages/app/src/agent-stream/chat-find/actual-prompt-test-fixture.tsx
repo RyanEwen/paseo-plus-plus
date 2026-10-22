@@ -1,4 +1,4 @@
-import { useMemo, useState, type RefObject } from "react";
+import { useCallback, useMemo, useState, type ReactNode, type RefObject } from "react";
 import { vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
@@ -18,6 +18,7 @@ const STREAM_STYLE = {
   minHeight: 0,
 };
 const ANSWER_STYLE = { height: 700 };
+const SURROUNDING_TARGET_STYLE = { width: 80, height: 44 };
 const toast = { show: vi.fn(), copied: vi.fn(), error: vi.fn() };
 const controls = {
   targetIds: [ACTUAL_PROMPT_ID],
@@ -33,8 +34,25 @@ const answer: StreamItem = {
   text: "Response",
   timestamp: new Date(1),
 };
+function SurroundingAnswer() {
+  const [clicks, setClicks] = useState(0);
+  const incrementClicks = useCallback(() => setClicks((count) => count + 1), []);
+  return (
+    <div style={ANSWER_STYLE}>
+      <button
+        type="button"
+        style={SURROUNDING_TARGET_STYLE}
+        data-testid="assistant-surrounding-target"
+        onClick={incrementClicks}
+      >
+        Response {clicks}
+      </button>
+      <span data-testid="assistant-surrounding-text">Selectable surrounding answer</span>
+    </div>
+  );
+}
 function renderRow(item: StreamItem) {
-  if (item.kind !== "user_message") return <div style={ANSWER_STYLE}>Response</div>;
+  if (item.kind !== "user_message") return <SurroundingAnswer />;
   return (
     <PromptUserMessage
       timelineMessageId={item.id}
@@ -58,11 +76,31 @@ interface Props {
   enabled?: boolean;
   scope?: string;
   viewportRef: RefObject<StreamViewportHandle | null>;
+  liveAuxiliary?: ReactNode;
+  wrapRow?: (content: ReactNode) => ReactNode;
 }
 
 /** Real user renderer and real outer scroll owner; only daemon-independent fixture data. */
-function ActualPromptStream({ text, enabled = true, scope = "agent:epoch", viewportRef }: Props) {
+function ActualPromptStream({
+  text,
+  enabled = true,
+  scope = "agent:epoch",
+  viewportRef,
+  liveAuxiliary,
+  wrapRow,
+}: Props) {
   const strategy = useMemo(() => createWebStreamStrategy({ isMobileBreakpoint: false }), []);
+  const streamRenderers = useMemo<StreamSegmentRenderers>(() => {
+    const renderContent: StreamSegmentRenderers["renderLiveHeadRow"] = (item) => {
+      const content = renderRow(item);
+      return wrapRow ? wrapRow(content) : content;
+    };
+    return {
+      ...renderers,
+      renderLiveHeadRow: renderContent,
+      renderLiveAuxiliary: () => liveAuxiliary ?? null,
+    };
+  }, [liveAuxiliary, wrapRow]);
   const prompt = useMemo<StreamItem>(
     () => ({ kind: "user_message", id: ACTUAL_PROMPT_ID, text, timestamp: new Date(0) }),
     [text],
@@ -75,7 +113,7 @@ function ActualPromptStream({ text, enabled = true, scope = "agent:epoch", viewp
             agentId: "agent",
             segments: { historyVirtualized: [], historyMounted: [], liveHead: [prompt, answer] },
             boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: true },
-            renderers,
+            renderers: streamRenderers,
             listEmptyComponent: null,
             viewportRef,
             routeBottomAnchorRequest: null,
