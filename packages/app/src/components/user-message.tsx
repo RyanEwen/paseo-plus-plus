@@ -17,7 +17,14 @@ import type { ReactNode } from "react";
 import * as React from "react";
 import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
+import {
+  Text,
+  View,
+  type GestureResponderEvent,
+  type PressableStateCallbackType,
+} from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
+import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
 import { StyleSheet } from "react-native-unistyles";
 import {
   useDisableOuterSpacing,
@@ -76,6 +83,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     bottom: 0,
     cursor: "pointer",
   },
+  contentPressFeedback: { backgroundColor: theme.colors.interactionHighlight },
   textRegion: { minWidth: 0, flexShrink: 1 },
   textMask: {
     position: "absolute",
@@ -365,6 +373,21 @@ export const UserMessage = memo(function UserMessage({
       ),
     [bubbleWidth, pinned, compactPreview, bodyViewportHeight],
   );
+  // The hit target stays absolute and independent of body layout. Reuse the bubble's
+  // actual corners, including its pinned variant, for feedback without clipping children.
+  const contentPressCorners = useMemo(() => resolveHighlightCorners(bubbleStyle), [bubbleStyle]);
+  const contentPressHighlight = useMemo(
+    () => [contentPressCorners, userMessageStylesheet.contentPressFeedback],
+    [contentPressCorners],
+  );
+  const contentPressTargetStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      userMessageStylesheet.contentPressTarget,
+      contentPressCorners,
+      isWeb && pressed && userMessageStylesheet.contentPressFeedback,
+    ],
+    [contentPressCorners],
+  );
   const trailingRowStyle = useMemo(
     () => [
       userMessageStylesheet.trailingRow,
@@ -415,8 +438,9 @@ export const UserMessage = memo(function UserMessage({
           testID="user-message-bubble"
         >
           {onContentPress && (
-            <Pressable
-              style={userMessageStylesheet.contentPressTarget}
+            <PressHighlight
+              style={contentPressTargetStyle}
+              highlightStyle={contentPressHighlight}
               onPress={onContentPress}
               accessible={false}
               focusable={false}
