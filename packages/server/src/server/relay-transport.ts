@@ -424,7 +424,7 @@ async function attachEncryptedSocket(
   daemonKeyPair: KeyPair,
   logger: pino.Logger,
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
-  metadata?: ExternalSocketMetadata,
+  metadata: ExternalSocketMetadata,
 ): Promise<void> {
   const handshakeTimeout = setTimeout(() => {
     logger.warn("relay_e2ee_handshake_timeout_terminating");
@@ -457,7 +457,7 @@ async function attachEncryptedSocket(
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
     });
-    await attachSocket(encryptedSocket, metadata);
+    await attachSocket(encryptedSocket, { ...metadata, acknowledgedBinary: true });
     attached = true;
     for (const message of pendingMessages) {
       emitter.emit("message", message);

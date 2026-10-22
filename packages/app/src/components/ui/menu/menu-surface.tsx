@@ -402,6 +402,7 @@ function MenuSheetSurface({
   return (
     <ThemedBottomSheetModal
       ref={sheetRef}
+      nativeBrowserOverlap
       contextBridge={contextBridge}
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.

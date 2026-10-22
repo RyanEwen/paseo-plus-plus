@@ -6,6 +6,8 @@ import {
 import type { BrowserViewport } from "@/desktop/browser/store";
 import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
+export const BROWSER_PRESENTATION_CHANGED_EVENT = "paseo-browser-presentation-changed";
+
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
 const BROWSER_ID_ATTRIBUTE = "data-paseo-browser-id";
 const BROWSER_SURFACE_ATTRIBUTE = "data-paseo-browser-surface";
@@ -14,7 +16,90 @@ const RESIDENT_VIEWPORT_HEIGHT = 800;
 
 const residentWebviewsByBrowserId = new Map<string, HTMLElement>();
 const residentSurfacesByBrowserId = new Map<string, HTMLElement>();
-const residentWebviewSizesByBrowserId = new Map<string, { width: number; height: number }>();
+interface BrowserDimensions {
+  width: number;
+  height: number;
+  mode: "fixed" | "responsive";
+}
+const residentWebviewSizesByBrowserId = new Map<string, BrowserDimensions>();
+const residentZoomCleanups = new Map<string, () => void>();
+
+/** Read the guest's actual page zoom; attachment and navigation can make it unavailable. */
+export function getBrowserWebviewZoom(webview: HTMLElement | null): number | null {
+  try {
+    const zoom = (
+      webview as (HTMLElement & { getZoomFactor?: () => number }) | null
+    )?.getZoomFactor?.();
+    return typeof zoom === "number" && Number.isFinite(zoom) && zoom > 0 ? zoom : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Set native page zoom through the retained guest and refresh its fixed page-CSS extent.
+ * Chromium can share this zoom with other guests from the same origin.
+ */
+export function setBrowserWebviewZoom(browserId: string, factor: number): boolean {
+  const webview = residentWebviewsByBrowserId.get(browserId);
+  if (!webview || !Number.isFinite(factor) || factor < 0.25 || factor > 5) return false;
+  const guest = webview as HTMLElement & { setZoomFactor?: (factor: number) => void };
+  if (!guest.setZoomFactor || getBrowserWebviewZoom(webview) === null) return false;
+  try {
+    guest.setZoomFactor(factor);
+    applyBrowserWebviewDimensions(webview, dimensionsForBrowser(browserId));
+    webview.dispatchEvent(new Event(BROWSER_PRESENTATION_CHANGED_EVENT));
+    return true;
+  } catch {
+    // Navigation or disposal can detach a guest between the readiness read and setter.
+    return false;
+  }
+}
+
+/** Read native factors only; an unattached guest cannot yet supply its zoom. */
+export function getBrowserWebviewPresentationScale(webview: HTMLElement): number | null {
+  try {
+    const pageZoom = (webview as HTMLElement & { getZoomFactor?: () => number }).getZoomFactor?.();
+    const hostZoom = getDesktopHost()?.window?.getCurrentWindow?.().getZoomFactor?.();
+    if (
+      !Number.isFinite(pageZoom) ||
+      !Number.isFinite(hostZoom) ||
+      !pageZoom ||
+      !hostZoom ||
+      pageZoom <= 0 ||
+      hostZoom <= 0
+    )
+      return null;
+    const ratio = pageZoom / hostZoom;
+    return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
+  } catch {
+    return null;
+  }
+}
+
+function observeBrowserZoom(webview: HTMLElement, browserId: string): void {
+  let previousScale: number | null = null;
+  const refresh = () => {
+    applyBrowserWebviewDimensions(webview, dimensionsForBrowser(browserId));
+    const scale = getBrowserWebviewPresentationScale(webview);
+    if (scale !== null && scale !== previousScale) {
+      previousScale = scale;
+      webview.dispatchEvent(new Event(BROWSER_PRESENTATION_CHANGED_EVENT));
+    }
+  };
+  const handleMessage = (event: Event) => {
+    if ((event as Event & { channel?: string }).channel === "paseo:browser-viewport-resized")
+      refresh();
+  };
+  residentZoomCleanups.get(browserId)?.();
+  webview.addEventListener("dom-ready", refresh);
+  webview.addEventListener("ipc-message", handleMessage);
+  window.addEventListener("resize", refresh);
+  residentZoomCleanups.set(browserId, () => {
+    webview.removeEventListener("dom-ready", refresh);
+    webview.removeEventListener("ipc-message", handleMessage);
+    window.removeEventListener("resize", refresh);
+  });
+}
 
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
@@ -53,14 +138,14 @@ function getBrowserBridge(override?: BrowserWebviewProfileHost): BrowserWebviewP
   return browser;
 }
 
-function registerBrowserWhenAttached(
+function registerBrowserWhenReady(
   webview: BrowserWebviewElement,
   identity: BrowserWebviewIdentity,
   browser: BrowserWebviewProfileHost,
 ): void {
-  // Reparenting a webview can replace its guest WebContents without replacing
-  // this DOM element, so every attachment needs a fresh main-process registration.
-  webview.addEventListener("did-attach", () => {
+  // Extensions can make did-attach fire before getWebContentsId is usable.
+  // dom-ready also registers replacement WebContents on the same DOM element.
+  webview.addEventListener("dom-ready", () => {
     const webContentsId = webview.getWebContentsId();
     void browser
       .registerAttachedBrowser({
@@ -159,24 +244,24 @@ function findBrowserWebview(browserId: string, ownerDocument: Document): HTMLEle
   return null;
 }
 
-function dimensionsForBrowser(browserId: string | null): { width: number; height: number } {
+function dimensionsForBrowser(browserId: string | null): BrowserDimensions {
   if (!browserId) {
-    return { width: RESIDENT_VIEWPORT_WIDTH, height: RESIDENT_VIEWPORT_HEIGHT };
+    return { width: RESIDENT_VIEWPORT_WIDTH, height: RESIDENT_VIEWPORT_HEIGHT, mode: "fixed" };
   }
   return (
     residentWebviewSizesByBrowserId.get(browserId) ?? {
       width: RESIDENT_VIEWPORT_WIDTH,
       height: RESIDENT_VIEWPORT_HEIGHT,
+      mode: "fixed",
     }
   );
 }
 
 function applyResidentWebviewStyle(webview: HTMLElement, browserId: string | null): void {
   const dimensions = dimensionsForBrowser(browserId);
+  applyBrowserWebviewDimensions(webview, dimensions);
   webview.style.display = "inline-flex";
   webview.style.flex = "0 0 auto";
-  webview.style.width = `${dimensions.width}px`;
-  webview.style.height = `${dimensions.height}px`;
   webview.style.border = "0";
   webview.style.background = "transparent";
   webview.style.position = "absolute";
@@ -198,29 +283,35 @@ export function rememberBrowserWebviewSize(input: {
   browserId: string;
   width: number;
   height: number;
+  mode?: "fixed" | "responsive";
 }): { width: number; height: number } | null {
   const browserId = trimNonEmpty(input.browserId);
-  if (!browserId || input.width <= 0 || input.height <= 0) {
+  if (
+    !browserId ||
+    !Number.isFinite(input.width) ||
+    !Number.isFinite(input.height) ||
+    input.width <= 0 ||
+    input.height <= 0
+  ) {
     return null;
   }
   const dimensions = {
     width: Math.max(1, Math.round(input.width)),
     height: Math.max(1, Math.round(input.height)),
   };
-  residentWebviewSizesByBrowserId.set(browserId, dimensions);
+  residentWebviewSizesByBrowserId.set(browserId, { ...dimensions, mode: input.mode ?? "fixed" });
   return dimensions;
 }
 
-function applyBrowserWebviewDimensions(
-  webview: HTMLElement,
-  dimensions: { width: number; height: number },
-): void {
+function applyBrowserWebviewDimensions(webview: HTMLElement, dimensions: BrowserDimensions): void {
+  const scale = dimensions.mode === "fixed" ? getBrowserWebviewPresentationScale(webview) : 1;
+  if (scale === null) return;
   webview.style.display = "flex";
   webview.style.border = "0";
   webview.style.background = "transparent";
   webview.style.flex = "0 0 auto";
-  webview.style.width = `${Math.max(1, Math.round(dimensions.width))}px`;
-  webview.style.height = `${Math.max(1, Math.round(dimensions.height))}px`;
+  webview.style.width = `${Math.max(1, dimensions.width * scale)}px`;
+  webview.style.height = `${Math.max(1, dimensions.height * scale)}px`;
 }
 
 export function applyInactiveBrowserWebviewViewport(
@@ -282,12 +373,14 @@ export function presentBrowserWebview(
   surface.style.display = "flex";
   surface.style.visibility = "visible";
   clearResidentWebviewParkingStyle(webview);
-  applyBrowserWebviewDimensions(
-    webview,
-    viewport.mode === "responsive"
+  rememberBrowserWebviewSize({
+    browserId: normalizedBrowserId,
+    ...(viewport.mode === "responsive"
       ? { width: anchorBounds.width, height: anchorBounds.height }
-      : viewport,
-  );
+      : viewport),
+    mode: viewport.mode,
+  });
+  applyBrowserWebviewDimensions(webview, dimensionsForBrowser(normalizedBrowserId));
   webview.style.position = "absolute";
   webview.style.left = `${Math.round(anchorBounds.left - surfaceLeft)}px`;
   webview.style.top = `${Math.round(anchorBounds.top - surfaceTop)}px`;
@@ -311,7 +404,8 @@ export function prepareBrowserWebview(
   if (input.initialUrl) {
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
-  registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
+  registerBrowserWhenReady(webview as BrowserWebviewElement, input, browser);
+  observeBrowserZoom(webview, input.browserId);
 }
 
 export function ensureResidentBrowserWebview(input: {
@@ -418,7 +512,7 @@ export function resizeResidentBrowserWebview(input: {
   const ownerDocument = readDocument();
   const webview = ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
   if (webview) {
-    applyBrowserWebviewDimensions(webview, dimensions);
+    applyBrowserWebviewDimensions(webview, { ...dimensions, mode: "fixed" });
   }
 
   return dimensions;
@@ -432,6 +526,8 @@ export function removeResidentBrowserWebview(browserId: string): void {
 
   const resident = residentWebviewsByBrowserId.get(normalizedBrowserId) ?? null;
   const surface = residentSurfacesByBrowserId.get(normalizedBrowserId) ?? null;
+  residentZoomCleanups.get(normalizedBrowserId)?.();
+  residentZoomCleanups.delete(normalizedBrowserId);
   residentWebviewsByBrowserId.delete(normalizedBrowserId);
   residentSurfacesByBrowserId.delete(normalizedBrowserId);
   residentWebviewSizesByBrowserId.delete(normalizedBrowserId);
@@ -440,6 +536,8 @@ export function removeResidentBrowserWebview(browserId: string): void {
 }
 
 export function clearResidentBrowserWebviewsForTests(): void {
+  for (const cleanup of residentZoomCleanups.values()) cleanup();
+  residentZoomCleanups.clear();
   for (const webview of residentWebviewsByBrowserId.values()) {
     webview.remove();
   }

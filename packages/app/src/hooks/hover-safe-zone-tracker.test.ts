@@ -121,4 +121,24 @@ describe("hover safe-zone tracker", () => {
     expect(handle.enters).toBe(0);
     expect(handle.leaves).toBe(1);
   });
+  it("keeps the entire divider hit area and the route to nearby choices safe in both directions", () => {
+    const handle = createHandle({
+      trigger: { left: 395, right: 405, top: 40, bottom: 740 },
+      content: { left: 409, right: 709, top: 520, bottom: 590 },
+    });
+    for (const [x, y] of [
+      [396, 550],
+      [400, 550],
+      [404, 550],
+      [407, 550],
+      [420, 550],
+      [407, 550],
+      [396, 550],
+    ]) {
+      handle.pointerMoved(x!, y!);
+      expect(handle.leaves).toBe(0);
+    }
+    handle.pointerMoved(380, 550);
+    expect(handle.leaves).toBe(1);
+  });
 });

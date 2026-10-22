@@ -11,13 +11,17 @@ import { withProjectOwnership } from "./project-ownership";
 type NewWorkspaceDaemonClient = Pick<
   InternalDaemonClient,
   | "archivePaseoWorktree"
+  | "archiveAgent"
   | "archiveWorkspace"
   | "checkoutRefresh"
   | "close"
   | "connect"
   | "createPaseoWorktree"
+  | "createAgent"
   | "createWorkspace"
   | "fetchAgents"
+  | "fetchAgent"
+  | "fetchAgentHistory"
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
