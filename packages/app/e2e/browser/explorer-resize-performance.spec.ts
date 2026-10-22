@@ -116,3 +116,53 @@ test("Explorer drag previews without rerendering panes or rewriting the shared s
   expect(shrunk.paneRenders).toBe(0);
   await expectExplorerWidthSurvivesReload(page, shrunk.width);
 });
+
+test("Explorer divider hover presets honor pixel minimums and persist exact widths", async ({
+  page,
+  withWorkspace,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const workspace = await withWorkspace();
+  await workspace.navigateTo();
+  await page.getByTestId("workspace-explorer-toggle").first().click();
+  const explorer = page.getByTestId("workspace-explorer-sidebar");
+  await expect(explorer).toBeVisible();
+  const handle = page.getByTestId("workspace-explorer-sidebar-resize-handle");
+  const separator = handle.getByRole("separator");
+  const bounds = await separator.boundingBox();
+  if (!bounds) throw new Error("Explorer divider is missing");
+  // Enter the existing full divider hot area away from its center, as a real pointer would.
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 100);
+  const presets = page.getByTestId("workspace-split-presets");
+  await expect(presets).toBeVisible();
+  const preset = page.getByTestId("workspace-split-preset-60-40");
+  await expect(preset).toBeEnabled();
+  const shellWidth = await explorer.evaluate((element) => {
+    let shell = element.parentElement;
+    while (
+      shell &&
+      !shell.querySelector('[data-testid="workspace-explorer-sidebar-resize-handle"]')
+    ) {
+      shell = shell.parentElement;
+    }
+    if (!shell) throw new Error("Explorer dock shell is missing");
+    return shell.getBoundingClientRect().width;
+  });
+  await preset.click();
+  await expect
+    .poll(async () => (await explorer.boundingBox())?.width)
+    .toBeCloseTo(shellWidth * 0.4, 0);
+  await expectExplorerWidthSurvivesReload(page, shellWidth * 0.4);
+
+  // At this viewport the body is narrower than 400 / .3, making 30/70 impossible.
+  await page.setViewportSize({ width: 1000, height: 1000 });
+  const narrowBounds = await separator.boundingBox();
+  if (!narrowBounds) throw new Error("Explorer divider is missing after resize");
+  await page.mouse.move(narrowBounds.x + narrowBounds.width / 2, narrowBounds.y + 100);
+  await expect(presets).toBeVisible();
+  await expect(page.getByTestId("workspace-split-preset-30-70")).toBeDisabled();
+  // A disabled choice cannot write a clamped substitute width.
+  const retainedWidth = (await explorer.boundingBox())!.width;
+  await page.keyboard.press("Escape");
+  await expectExplorerWidthSurvivesReload(page, retainedWidth);
+});

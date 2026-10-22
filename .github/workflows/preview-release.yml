@@ -8,11 +8,12 @@ on:
         required: true
         type: string
       release_kind:
-        description: "Final updater prerelease bridge, or normal Latest after bridge qualification"
+        description: "Preview prerelease, once-only updater bridge, or qualified normal Latest"
         required: true
-        default: bridge
+        default: preview
         type: choice
         options:
+          - preview
           - bridge
           - latest
       verify_daemon_updates_only:

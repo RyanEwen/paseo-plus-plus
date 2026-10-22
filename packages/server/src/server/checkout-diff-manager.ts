@@ -152,22 +152,22 @@ export class CheckoutDiffManager {
   }
 
   private normalizeCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
-    const ignoreWhitespace = compare.ignoreWhitespace === true;
-    if (compare.mode === "uncommitted") {
-      return { mode: "uncommitted", ignoreWhitespace };
-    }
-    const trimmedBaseRef = compare.baseRef?.trim();
-    return trimmedBaseRef
-      ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace }
-      : { mode: "base", ignoreWhitespace };
+    const baseRef = compare.mode !== "uncommitted" ? compare.baseRef?.trim() : undefined;
+    return {
+      mode: compare.mode,
+      ...(baseRef ? { baseRef } : {}),
+      ignoreWhitespace: compare.ignoreWhitespace === true,
+      ...(compare.filePath !== undefined ? { filePath: compare.filePath } : {}),
+    };
   }
 
   private buildTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
     return JSON.stringify([
       cwd,
       compare.mode,
-      compare.mode === "base" ? (compare.baseRef ?? "") : "",
+      compare.mode !== "uncommitted" ? (compare.baseRef ?? "") : "",
       compare.ignoreWhitespace === true,
+      compare.filePath ?? null,
     ]);
   }
 
@@ -264,6 +264,7 @@ export class CheckoutDiffManager {
           baseRef: compare.baseRef,
           ignoreWhitespace: compare.ignoreWhitespace,
           includeStructured: true,
+          filePath: compare.filePath,
         },
         options?.force
           ? { force: true, reason: options.reason ?? "checkout-diff-refresh" }
@@ -364,7 +365,7 @@ export class CheckoutDiffManager {
   }
 
   private async openTarget(target: CheckoutDiffWatchTarget): Promise<void> {
-    if (target.compare.mode === "base") {
+    if (target.compare.mode !== "uncommitted") {
       const snapshot =
         this.workspaceGitService.peekSnapshot(target.cwd) ??
         (await this.workspaceGitService.getSnapshot(target.cwd, { includeForge: false }));
@@ -382,7 +383,7 @@ export class CheckoutDiffManager {
         return;
       }
       target.workspaceGitUnsubscribe = workspaceSubscription.unsubscribe;
-      return;
+      if (target.compare.mode === "base") return;
     }
 
     const { repoRoot, unsubscribe } = await this.workspaceGitService.requestWorkingTreeWatch(

@@ -20,7 +20,32 @@ interface UseWorkingDiffOptions {
   ignoreWhitespace: boolean;
   enabled: boolean;
   queryScope?: string;
+  filePath?: string;
+  includeFileOverview?: boolean;
   presentation?: string;
+}
+
+function useWorkingDiffQueries({
+  filePath,
+  includeFileOverview,
+  ...options
+}: Parameters<typeof useCheckoutDiffQuery>[0] & { includeFileOverview: boolean }) {
+  const queryScope = options.queryScope;
+  const overviewQuery = useCheckoutDiffQuery({
+    ...options,
+    enabled: options.enabled && filePath !== undefined && includeFileOverview,
+    queryScope: `${queryScope ?? ""}:working-diff-overview`,
+  });
+  const fileQuery = useCheckoutDiffQuery({
+    ...options,
+    filePath,
+    enabled: options.enabled,
+  });
+  return {
+    ...fileQuery,
+    overviewFiles:
+      filePath !== undefined && includeFileOverview ? overviewQuery.files : fileQuery.files,
+  };
 }
 
 export function useWorkingDiff({
@@ -30,6 +55,8 @@ export function useWorkingDiff({
   ignoreWhitespace,
   enabled,
   queryScope,
+  filePath,
+  includeFileOverview = false,
   presentation,
 }: UseWorkingDiffOptions) {
   const {
@@ -61,21 +88,29 @@ export function useWorkingDiff({
     statusReady: status !== null,
   });
   const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
+  const selectAll = useCallback(() => selectComparison("all"), [selectComparison]);
   const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
 
-  const {
-    files,
-    payloadError: diffPayloadError,
-    diffTooLarge,
-    isLoading: isDiffLoading,
-  } = useCheckoutDiffQuery({
+  const queryOptions = {
     serverId,
     cwd,
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
-    enabled: enabled && isGit && !comparisonLoading,
     queryScope,
+  };
+  const queryEnabled = enabled && isGit && !comparisonLoading;
+  const {
+    files,
+    overviewFiles,
+    payloadError: diffPayloadError,
+    diffTooLarge,
+    isLoading: isDiffLoading,
+  } = useWorkingDiffQueries({
+    ...queryOptions,
+    filePath,
+    includeFileOverview,
+    enabled: queryEnabled,
   });
   const reviewDraftKey = useMemo(
     () =>
@@ -116,7 +151,9 @@ export function useWorkingDiff({
     diffMode,
     selectUncommitted,
     selectBase,
+    selectAll,
     files,
+    overviewFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading: isDiffLoading || comparisonLoading,

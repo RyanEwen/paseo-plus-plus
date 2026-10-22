@@ -1,5 +1,8 @@
 import type { Locator } from "@playwright/test";
 import {
+  captureVisibleActualPrompt,
+  expectMatchingPromptInk,
+  expectActualTextIdentity,
   expectSingleLineStickyGeometry,
   expectInlineStickyAttachmentCount,
 } from "../support/helpers/sticky-preview-geometry";
@@ -339,7 +342,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
   const agent = await seedLongMockAgentTimeline({ turns: 20 });
   try {
     await openAgentTimeline(page, agent);
-    const sticky = page.getByTestId("sticky-user-message");
+
     await chatOutlineRail(page).getByRole("tab").first().click();
     await expectTimelinePromptLandedBelowTop(page, agent.oldestPrompt);
     await scrollTimelinePastPrompt(page, agent.oldestPrompt);
@@ -367,61 +370,36 @@ test("sticky user message preserves uploaded image and file attachments", async 
     });
     await expect(paddingEntries).toHaveCount(1);
     expect(attachmentSequence).toBeLessThan(await outlinePromptSequence(paddingEntries));
+    const attachmentRow = original.locator("xpath=ancestor::*[@data-actual-prompt-row][1]");
     await attachmentEntry.click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
-    const originalBody = (await original.getByTestId("user-message-bubble").boundingBox())!;
-    const viewportBox = (await timeline.boundingBox())!;
-    await timeline.hover();
-    await page.mouse.wheel(0, originalBody.y - viewportBox.y + 1);
-    await expect(sticky).toContainText("2 attachments");
+    await page.evaluate(() => document.fonts.ready);
     const originalText = original.getByTestId("user-message-text");
-    await expect(originalText).toBeInViewport();
-    await expect(original.getByTestId("user-message-prefix-mask")).toBeVisible();
-    // The full attachment layout places its text below the compact copy. Verify
-    // those source glyphs are actually covered instead of painting a second Files.
-    const originalTextBounds = (await originalText.boundingBox())!;
-    const stickyBounds = (await sticky.boundingBox())!;
-    const visibleTextTop = Math.max(originalTextBounds.y, stickyBounds.y + stickyBounds.height + 1);
-    const visibleTextHeight = originalTextBounds.y + originalTextBounds.height - visibleTextTop;
-    expect(visibleTextHeight).toBeGreaterThan(0);
-    const paintedText = await page.screenshot({
-      clip: {
-        x: originalTextBounds.x,
-        y: visibleTextTop,
-        width: originalTextBounds.width,
-        height: visibleTextHeight,
-      },
-      path: "../../docs/qa-evidence/sticky-user-message/attachment-covered-text.png",
-    });
-    const uniformBackground = await page.evaluate(async (base64) => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${base64}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const context = canvas.getContext("2d")!;
-      context.drawImage(image, 0, 0);
-      const pixels = context.getImageData(0, 0, image.width, image.height).data;
-      return pixels.every((channel, index) => channel === pixels[index % 4]);
-    }, paintedText.toString("base64"));
-    expect(uniformBackground).toBe(true);
+    const textIdentity = await originalText.elementHandle();
+    expect(textIdentity).not.toBeNull();
+    const originalInk = await captureVisibleActualPrompt(page, originalText);
+    await scrollTimelinePastPrompt(page, prompt);
+    await expect(attachmentRow).toContainText("2 attachments");
+    await expectActualTextIdentity(original, textIdentity!, prompt);
+    // The real text keeps its painted ink; there is no covered duplicate to mask.
+    await expectMatchingPromptInk(page, originalInk, originalText);
     await page.screenshot({
       path: "../../docs/qa-evidence/sticky-user-message/attachment-single-copy.png",
     });
     await scrollTimelinePastPrompt(page, prompt);
-    await expect(sticky).toContainText("2 attachments");
-    await expectInlineStickyAttachmentCount(sticky, "2 attachments", prompt, testInfo);
-    const attachmentTextGeometry = await expectSingleLineStickyGeometry(sticky);
-    await sticky.getByRole("button", { name: "Expand user message", exact: true }).click();
-    await expect(sticky.getByTestId("user-message")).toContainText(prompt);
-    await expect(sticky).toContainText(TEST_JSON.name);
+    await expect(attachmentRow).toContainText("2 attachments");
+    await expectInlineStickyAttachmentCount(attachmentRow, "2 attachments", prompt, testInfo);
+    const attachmentTextGeometry = await expectSingleLineStickyGeometry(attachmentRow);
+    await attachmentRow.getByRole("button", { name: "Expand user message", exact: true }).click();
+    await expect(attachmentRow.getByTestId("user-message")).toContainText(prompt);
+    await expectActualTextIdentity(original, textIdentity!, prompt);
+    await expect(attachmentRow).toContainText(TEST_JSON.name);
     await expect(
-      sticky.getByRole("button", { name: "Open image attachment", exact: true }),
+      attachmentRow.getByRole("button", { name: "Open image attachment", exact: true }),
     ).toBeVisible();
-    await sticky.getByRole("button", { name: "Collapse user message", exact: true }).click();
-    await expect(sticky).toContainText("2 attachments");
-    expect((await expectSingleLineStickyGeometry(sticky)).height).toBeCloseTo(
+    await attachmentRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
+    await expect(attachmentRow).toContainText("2 attachments");
+    expect((await expectSingleLineStickyGeometry(attachmentRow)).height).toBeCloseTo(
       attachmentTextGeometry.height,
       0,
     );
@@ -432,9 +410,14 @@ test("sticky user message preserves uploaded image and file attachments", async 
     await submitMessageWithButton(page, "");
     const attachmentOnlyOriginal = timeline
       .getByTestId("user-message")
-      .filter({ hasText: TEST_JSON.name })
       .filter({ hasNot: page.getByTestId("user-message-text") });
+    await expect(attachmentOnlyOriginal).toHaveCount(1);
     await expect(attachmentOnlyOriginal).toHaveAttribute("aria-busy", "false");
+    const attachmentOnlyRow = attachmentOnlyOriginal.locator(
+      "xpath=ancestor::*[@data-actual-prompt-row][1]",
+    );
+    const attachmentOnlyRowId = await attachmentOnlyRow.getAttribute("data-history-row-id");
+    expect(attachmentOnlyRowId).not.toBeNull();
     const attachmentOnlyEntry = chatOutlineRail(page).getByRole("tab", {
       name: /^\d+ of \d+:\s*$/,
     });
@@ -461,7 +444,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
     const readAttachmentOnlyLanding = () =>
       attachmentOnlyOriginal.getByTestId("user-message-bubble").evaluate((bubble) => {
         const viewport = bubble.closest<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
-        const originalBounds = bubble.getBoundingClientRect();
+        const originalBounds = bubble.closest("[data-actual-prompt-row]")!.getBoundingClientRect();
         const viewportBounds = viewport.getBoundingClientRect();
         return {
           messageId: bubble.closest("[data-message-id]")?.getAttribute("data-message-id"),
@@ -497,19 +480,36 @@ test("sticky user message preserves uploaded image and file attachments", async 
       contentType: "application/json",
     });
     await page.mouse.wheel(0, attachmentOnlyLanding.relativeTop + 1);
-    await expect(sticky).toContainText("2 attachments");
-    await expect(sticky.getByTestId("user-message-text")).toHaveCount(0);
-    await expectInlineStickyAttachmentCount(sticky, "2 attachments", "", testInfo);
-    const attachmentOnlyBubble = sticky.getByTestId("user-message-bubble");
+    await expect
+      .poll(() =>
+        attachmentOnlyRow.evaluate(
+          (row) =>
+            row.getBoundingClientRect().top -
+            row.closest('[data-testid="agent-chat-scroll"]')!.getBoundingClientRect().top,
+        ),
+      )
+      .toBeLessThan(0);
+    await expect(attachmentOnlyRow).toHaveAttribute("data-prompt-pinned", "true");
+    await expect(
+      timeline.locator('[data-actual-prompt-row][data-prompt-pinned="true"]'),
+    ).toHaveAttribute("data-history-row-id", attachmentOnlyRowId!);
+    await expect(attachmentOnlyRow).toContainText("2 attachments");
+    await expect(attachmentOnlyRow.getByTestId("user-message-text")).toHaveCount(0);
+    await expectInlineStickyAttachmentCount(attachmentOnlyRow, "2 attachments", "", testInfo);
+    const attachmentOnlyBubble = attachmentOnlyRow.getByTestId("user-message-bubble");
     await expect
       .poll(async () => (await attachmentOnlyBubble.boundingBox())!.height)
       .toBeCloseTo(attachmentTextGeometry.height, 0);
-    await sticky.getByRole("button", { name: "Expand user message", exact: true }).click();
-    await expect(sticky).toContainText(TEST_JSON.name);
+    await attachmentOnlyRow
+      .getByRole("button", { name: "Expand user message", exact: true })
+      .click();
+    await expect(attachmentOnlyRow).toContainText(TEST_JSON.name);
     await expect(
-      sticky.getByRole("button", { name: "Open image attachment", exact: true }),
+      attachmentOnlyRow.getByRole("button", { name: "Open image attachment", exact: true }),
     ).toBeVisible();
-    await sticky.getByRole("button", { name: "Collapse user message", exact: true }).click();
+    await attachmentOnlyRow
+      .getByRole("button", { name: "Collapse user message", exact: true })
+      .click();
     await expect
       .poll(async () => (await attachmentOnlyBubble.boundingBox())!.height)
       .toBeCloseTo(attachmentTextGeometry.height, 0);
@@ -517,12 +517,14 @@ test("sticky user message preserves uploaded image and file attachments", async 
     // Capture the still-owned conversation before agent cleanup can remove its route.
     try {
       const geometry = await page.evaluate(() => {
-        const sticky = document.querySelector('[data-testid="sticky-user-message"]');
+        const sticky = document.querySelector(
+          '[data-actual-prompt-row][data-prompt-pinned="true"]',
+        );
         const selectors = [
           '[data-testid="user-message-bubble"]',
           '[data-testid="user-message-text"]',
-          '[data-testid="sticky-user-message-controls"]',
-          '[data-testid="sticky-user-message-disclosure"]',
+          '[data-testid="user-message-trailing-row"]',
+          '[data-testid="user-message-disclosure"]',
           "[data-message-text=true]",
         ];
         return {

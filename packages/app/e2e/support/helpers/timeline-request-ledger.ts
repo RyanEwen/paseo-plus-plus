@@ -35,22 +35,61 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
   const content = new Map<string, ContentTarget>();
   const requestedContent = new Set<string>();
   const completedContent = new Set<string>();
+  const certifiedPrompts = new Map<string, { id: string; text: string }>();
+  const adoptedPromptIds = new Set<string>();
+  let mountingPrompt: { id: string; text: string } | null = null;
+  let mountingOwnerKey: string | null = null;
   const purposes = new Map<string, TimelineReadPurpose>();
   const errors: string[] = [];
   const sources = new Map<
     string,
     FetchAgentTimelineResponseMessage["payload"]["entries"][number]
   >();
-  const contextRequests = new Map<string, { epoch: string; cursor: number; probe: boolean }>();
+  const contextRequests = new Map<
+    string,
+    { epoch: string; cursor: number; probe: boolean; chainKey: string }
+  >();
   const contextSources = new Set<string>();
   const completedContext = new Set<string>();
-  let chain: { epoch: string; cursor: number; used: number; waiting: boolean } | null = null;
+  interface ContextChain {
+    epoch: string;
+    cursor: number;
+    used: number;
+    pendingRequestId: string | null;
+    key: string;
+    terminal: boolean;
+    source: FetchAgentTimelineResponseMessage["payload"]["entries"][number];
+  }
+  const contextChains = new Map<string, ContextChain>();
+  let currentChainKey: string | null = null;
   let allBefore = 0;
   let windowBefore = 0;
 
   const reject = (reason: string) => {
     errors.push(reason);
     return undefined;
+  };
+
+  /** Preserve only the nearest prompt certified by a validated, completed backward page. */
+  const certifyNearestPrompt = (
+    entries: FetchAgentTimelineResponseMessage["payload"]["entries"],
+    ownerKey: string | null = currentChainKey,
+  ) => {
+    const prompt = entries
+      .filter((entry) => entry.item.type === "user_message")
+      .sort((left, right) => right.seqEnd - left.seqEnd)[0]?.item;
+    if (prompt?.type !== "user_message") return false;
+    if (!prompt.messageId) {
+      reject("Certified prompt must carry its exact message identity");
+      return true;
+    }
+    const certificate = { id: prompt.messageId, text: prompt.text };
+    certifiedPrompts.set(prompt.messageId, certificate);
+    if (ownerKey === currentChainKey) {
+      mountingPrompt = certificate;
+      mountingOwnerKey = ownerKey;
+    }
+    return true;
   };
 
   /** Classify source probes and backward reads without consuming a viewed-window slot. */
@@ -62,25 +101,51 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     if (request.mergeWindow === true) return reject("Context cannot apply a viewed window");
     if (request.projection === "projected" && request.limit === 1) {
       const key = `${cursor.epoch}:${cursor.seq - 1}`;
-      if (!sources.has(key) || contextSources.has(key) || chain !== null)
+      const source = sources.get(key);
+      if (!source || contextSources.has(key))
         return reject("Context probe must name one uncached loaded source occurrence");
       contextSources.add(key);
-      chain = { epoch: cursor.epoch, cursor: cursor.seq, used: 1, waiting: true };
-      contextRequests.set(id, { epoch: cursor.epoch, cursor: cursor.seq, probe: true });
+      contextChains.set(id, {
+        epoch: cursor.epoch,
+        cursor: cursor.seq,
+        used: 1,
+        pendingRequestId: id,
+        key: id,
+        terminal: false,
+        source,
+      });
+      // Cancellation does not retract wire requests. Supersede only mounting ownership.
+      currentChainKey = id;
+      contextRequests.set(id, {
+        epoch: cursor.epoch,
+        cursor: cursor.seq,
+        probe: true,
+        chainKey: id,
+      });
     } else {
+      const eligible = [...contextChains.values()].filter(
+        (candidate) =>
+          !candidate.terminal &&
+          candidate.pendingRequestId === null &&
+          candidate.used < 8 &&
+          cursor.epoch === candidate.epoch &&
+          cursor.seq === candidate.cursor,
+      );
       if (
         request.projection !== "canonical" ||
         request.limit !== TIMELINE_FETCH_PAGE_SIZE ||
-        !chain ||
-        chain.waiting ||
-        chain.used >= 8 ||
-        cursor.epoch !== chain.epoch ||
-        cursor.seq !== chain.cursor
+        eligible.length !== 1
       )
         return reject("Context page does not belong to the bounded canonical probe chain");
+      const chain = eligible[0]!;
       chain.used += 1;
-      chain.waiting = true;
-      contextRequests.set(id, { epoch: cursor.epoch, cursor: cursor.seq, probe: false });
+      chain.pendingRequestId = id;
+      contextRequests.set(id, {
+        epoch: cursor.epoch,
+        cursor: cursor.seq,
+        probe: false,
+        chainKey: chain.key,
+      });
     }
     purposes.set(id, "context");
     return "context";
@@ -155,7 +220,12 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       ) {
         return reject("Unclassified before request projection or cursor");
       }
-      if (!indexed && (request.limit === 1 || request.projection === "canonical"))
+      // Reading an assistant source can require canonical context even on indexed hosts.
+      // Distinguish that observed non-user source from indexed prompt-content reads.
+      if (
+        request.projection === "canonical" ||
+        (request.limit === 1 && sources.has(`${cursor.epoch}:${cursor.seq! - 1}`))
+      )
         return classifyContext(request, id, { epoch: cursor.epoch, seq: cursor.seq! });
       if (request.projection === "projected" && request.limit === TIMELINE_FETCH_PAGE_SIZE) {
         purposes.set(id, "window");
@@ -192,7 +262,9 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       const page = result.data;
       if (!target || completedContent.has(id) || !matchesContentTarget(page, target, agentId)) {
         reject("Invalid or repeated canonical prompt-content response");
+        return;
       }
+      certifyNearestPrompt(page.entries);
       completedContent.add(id);
     },
 
@@ -207,49 +279,65 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       }
       completedContext.add(id);
       const page = parsed.data;
-      const fail = () => {
-        chain = null;
-        reject("Invalid canonical context response or source identity");
+      const chain = contextChains.get(target.chainKey);
+      const fail = (boundary: string) => {
+        if (chain) {
+          chain.terminal = true;
+          chain.pendingRequestId = null;
+        }
+        reject(`Invalid canonical context response or source identity: ${boundary}`);
       };
-      if (!chain || !matchesContextPage(page, target, agentId)) {
-        fail();
+      if (
+        !chain ||
+        chain.terminal ||
+        chain.pendingRequestId !== id ||
+        !matchesContextPage(page, target, agentId)
+      ) {
+        fail(chain ? "page ownership/ranges" : "missing chain");
         return;
       }
       if (target.probe) {
-        const source = sources.get(`${target.epoch}:${target.cursor - 1}`);
+        const source = chain.source;
         const entry = page.entries[0];
-        if (!source || !entry || !matchesProbeOccurrence(page, source, target)) {
-          fail();
+        if (!entry || !matchesProbeOccurrence(page, source, target)) {
+          fail("probe occurrence");
           return;
+        }
+        // A new validated reading source replaces mounting demand, not historical certification.
+        if (chain.key === currentChainKey) {
+          mountingPrompt = null;
+          mountingOwnerKey = chain.key;
         }
         chain.cursor = entry.seqStart;
       } else {
         if (!matchesContextBounds(page, target)) {
-          fail();
+          fail("canonical bounds/progress");
           return;
         }
         if (page.entries.some((entry) => entry.seqEnd >= target.cursor)) {
-          fail();
+          fail("canonical bounds/progress");
           return;
         }
-        if (page.entries.some((entry) => entry.item.type === "user_message") || !page.hasOlder) {
-          chain = null;
+        if (certifyNearestPrompt(page.entries, chain.key) || !page.hasOlder) {
+          chain.terminal = true;
+          chain.pendingRequestId = null;
           return;
         }
         const next = page.entries.length
           ? Math.min(...page.entries.map((entry) => entry.seqStart))
           : target.cursor;
         if (next >= target.cursor) {
-          fail();
+          fail("canonical bounds/progress");
           return;
         }
         chain.cursor = next;
         if (chain.used === 8) {
-          chain = null;
+          chain.terminal = true;
+          chain.pendingRequestId = null;
           return;
         }
       }
-      chain.waiting = false;
+      chain.pendingRequestId = null;
     },
 
     /** Track prompts already returned by authoritative pages, not by their sticky copies. */
@@ -261,9 +349,15 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
           sources.set(`${payload.epoch}:${result.data.seqEnd}`, result.data);
         if (result.success && result.data.item.type === "user_message") {
           loaded.add(`${payload.epoch}:${result.data.seqEnd}`);
+          if (result.data.item.messageId) adoptedPromptIds.add(result.data.item.messageId);
         }
       }
     },
+
+    /** Only exact prompt identities from validated completed content chains may augment rows. */
+    certifiedPrompts: () =>
+      [...certifiedPrompts.values()].filter((prompt) => !adoptedPromptIds.has(prompt.id)),
+    mountingPrompt: () => (mountingOwnerKey === currentChainKey ? mountingPrompt : null),
 
     summary() {
       return {
@@ -272,11 +366,12 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
         contentBefore: content.size,
         pendingContent: content.size - completedContent.size,
         errors: [...errors],
-        ...(!indexed && contextRequests.size
+        ...(contextRequests.size
           ? {
               contextBefore: contextRequests.size,
               pendingContext: contextRequests.size - completedContext.size,
-              contextChainActive: chain !== null,
+              contextChainActive:
+                currentChainKey !== null && !contextChains.get(currentChainKey)!.terminal,
             }
           : {}),
       };
@@ -346,7 +441,9 @@ function matchesContextPage(
     page.agentId === agentId &&
     page.direction === "before" &&
     page.epoch === target.epoch &&
-    page.projection === (target.probe ? "projected" : "canonical") &&
+    // Published daemons honor canonical requests; current daemons return projected context.
+    // Source probes always require the projected occurrence they requested.
+    (page.projection === "projected" || (!target.probe && page.projection === "canonical")) &&
     !page.error &&
     !page.reset &&
     !page.staleCursor &&
