@@ -54,7 +54,7 @@ async function expectHeaderContentsFit(page: Page, info: TestInfo, long: boolean
   const title = page.getByTestId("workspace-header-title");
   const project = page.getByTestId("workspace-header-subtitle");
   const badge = page.getByTestId(`host-badge-${getServerId()}`).filter({ visible: true });
-  const trigger = page.getByRole("button", { name: /Switch tabs/ });
+  const trigger = page.getByTestId("workspace-header-menu-trigger").filter({ visible: true });
   const measure = async () => ({
     menu: await menu.boundingBox(),
     title: await title.boundingBox(),

@@ -6,14 +6,16 @@ import { uploadWithRetry } from "../upload-release-assets.mjs";
 import { isMainModule } from "../is-main-module.mjs";
 import { validatePreviewAssets } from "./assets.mjs";
 import { requirePreviewRepository } from "./source.mjs";
-import { requirePublicationPolicy, updaterBridgeMarker } from "./publication-policy.mjs";
+import {
+  requirePublicationPolicy,
+  requirePreviewNotes,
+  updaterBridgeMarker,
+} from "./publication-policy.mjs";
 
 /** Publish only a complete validated draft; never replace the bytes of a published preview. */
-export async function publishPreviewRelease({ directory, repo, notes, publish, kind = "bridge" }) {
+export async function publishPreviewRelease({ directory, repo, notes, publish, kind = "preview" }) {
   requirePreviewRepository(repo);
-  if (!notes?.trim()) {
-    throw new Error("Provide user-facing release notes before creating a preview");
-  }
+  requirePreviewNotes(notes, kind);
   const release = JSON.parse(readFileSync(path.join(directory, "preview-release.json"), "utf8"));
   requirePublicationPolicy({ kind, repo, release });
   await validatePreviewAssets({ directory, release });
@@ -129,6 +131,6 @@ if (isMainModule(import.meta.url)) {
     repo: process.env.GITHUB_REPOSITORY,
     notes: process.env.PASEO_PREVIEW_NOTES,
     publish: process.env.PASEO_PREVIEW_PUBLISH === "true",
-    kind: process.env.PASEO_PREVIEW_RELEASE_KIND ?? "bridge",
+    kind: process.env.PASEO_PREVIEW_RELEASE_KIND ?? "preview",
   });
 }

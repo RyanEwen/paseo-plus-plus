@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Вкладки только со значками",
+    iconOnlyHint:
+      "Щёлкните правой кнопкой по вкладке проводника или пустому месту на панели и выберите «Вкладки только со значками». Названия доступны во всплывающих подсказках.",
+  },
   settingsSync: {
     title: "Синхронизация настроек",
     hint: "Синхронизируйте настройки и видимость элементов боковой панели через выбранный хост. Фильтры хостов/проектов, порядок пространств и свёрнутые группы остаются локальными. При переключении настройки загружаются до редактирования.",
@@ -37,6 +42,21 @@ export const ru: TranslationResources = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "Акцентный цвет",
+      hint: "Используется для основных элементов управления и ваших сообщений",
+      updateHost: "Обновите выбранный хост настроек, чтобы изменить акцентный цвет",
+      preview: "Так будут выглядеть ваши сообщения",
+      options: {
+        default: "По умолчанию",
+        blue: "Синий",
+        green: "Зелёный",
+        purple: "Фиолетовый",
+        rose: "Розовый",
+        orange: "Оранжевый",
+        teal: "Бирюзовый",
+      },
+    },
     workspaceLimit: {
       save: "Сохранить",
       title: "Ограничения рабочих пространств",
@@ -71,8 +91,8 @@ export const ru: TranslationResources = {
     saveFailed: "Не удалось сохранить. Попробуйте ещё раз.",
     features: {
       workspaceChatLinks: {
-        label: "Открывать ссылки чата в Paseo",
-        hint: "На компьютере открывать веб-ссылки чата в браузере его рабочего пространства. Выключите, чтобы использовать внешний браузер. Команда «Открыть в Paseo» останется в меню ссылки.",
+        label: "Ссылки рабочего пространства",
+        hint: "Открывать веб-ссылки рабочего пространства в новых вкладках его браузера на компьютере, включая терминал, чат и Git. Отключите для открытия во внешнем браузере. Явные действия остаются в меню.",
       },
       sidebarHostUpdates: {
         label: "Обновления хостов в боковой панели",
@@ -85,6 +105,10 @@ export const ru: TranslationResources = {
       mobileWorkspaceTabs: {
         label: "Вкладки рабочих пространств на мобильном",
         hint: "Показывать прокручиваемую панель вкладок в компактном режиме. Выключите, чтобы вернуть прежний выбор вкладок, сохранив текущую вкладку.",
+      },
+      widerWorkspaceTabs: {
+        label: "Широкие вкладки рабочего пространства",
+        hint: "Увеличивает максимальную ширину длинных заголовков на 50%. Короткие вкладки сохраняют естественную ширину. Отключите, чтобы вернуть прежний предел.",
       },
 
       descriptiveToolCalls: {
@@ -154,7 +178,7 @@ export const ru: TranslationResources = {
       },
       mobile: {
         label: "Мобильная навигация",
-        hint: "Большие зоны касания, безопасное действие Назад в Android и отдельные уведомления разработки",
+        hint: "Безопасное действие Назад в Android и отдельные уведомления разработки",
       },
       pickers: {
         label: "Выбор областей и состояния",
@@ -777,6 +801,7 @@ export const ru: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "Обновите хост, чтобы просмотреть сведения о настройке рабочего пространства",
       descriptor: {
         label: "Настройка",
         completed: "Настройка завершена",
@@ -813,6 +838,7 @@ export const ru: TranslationResources = {
     browser: {
       openInPaseo: "Открыть в браузере Paseo",
       openExternally: "Открыть во внешнем браузере",
+      copyLink: "Копировать ссылку",
       unavailable: {
         title: "Встроенный браузер доступен только в настольном приложении",
         subtitle:
@@ -820,6 +846,8 @@ export const ru: TranslationResources = {
       },
       session: "Сеанс браузера {{browserId}}",
       controls: {
+        pageZoom: "Масштаб страницы",
+        zoomFailed: "Не удалось изменить масштаб страницы",
         back: "Назад",
         forward: "Вперед",
         stopLoading: "Остановить загрузку",
@@ -841,6 +869,17 @@ export const ru: TranslationResources = {
         placeholder: "Сообщение агенту об этом элементе…",
         submit: "Прикрепить",
         cancel: "Отмена",
+      },
+      extensions: {
+        label: "Расширения",
+        empty: "Нет включённых расширений.",
+        noPopup: "Всплывающее окно не предусмотрено",
+        loading: "Загрузка расширений...",
+        manage: "Управление расширениями",
+        openFailed: "Не удалось открыть расширение",
+        pin: "Закрепить {{name}}",
+        unpin: "Открепить {{name}}",
+        pinFailed: "Не удалось сохранить закрепление расширения",
       },
       devices: {
         label: "Размер экрана устройства",
@@ -1175,6 +1214,7 @@ export const ru: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "Обновите этот хост, чтобы открыть изменения одного файла.",
         openChangesTab: "Открыть вкладку «Изменения»",
         openDiffTab: "Открыть вкладку «Дифф»",
         closeChangesTab: "Закрыть вкладку «Изменения»",
@@ -1208,6 +1248,7 @@ export const ru: TranslationResources = {
         checkingRepository: "Проверяем репозиторий...",
         notRepository: "Это не репозиторий Git",
         diffMode: "Режим диффа",
+        all: "Все изменения",
         uncommitted: "Незафиксированные изменения",
         committed: "Зафиксированные изменения",
         branchUnknown: "Неизвестная ветка",
@@ -1444,9 +1485,9 @@ export const ru: TranslationResources = {
         fiveDays: "5 дней",
         week: "1 неделю",
         twoWeeks: "2 недели",
-        month: "1 месяц",
-        twoMonths: "2 месяца",
-        threeMonths: "3 месяца",
+        month: "1 месяц (30 дней)",
+        twoMonths: "2 месяца (60 дней)",
+        threeMonths: "3 месяца (90 дней)",
       },
       expandAll: "Развернуть всё",
       collapseAll: "Свернуть всё",
@@ -1559,6 +1600,44 @@ export const ru: TranslationResources = {
       openProjectSettings: "Открыть настройки проекта",
     },
     project: {
+      archive: {
+        action: "Архивировать всё",
+        title: "Архивировать рабочие пространства проекта?",
+        message:
+          "Проект: «{{projectName}}»\nРабочие пространства: {{workspaceCount}}\nАгенты: {{agentCount}} (выполняются: {{runningAgentCount}})\nХосты: {{hostCount}}\n\nРаботающие агенты и задачи рабочих пространств будут остановлены. Рабочие деревья под управлением Paseo могут быть удалены. Проект будет сохранён.",
+        includeBackground: "Также архивировать фоновые рабочие пространства ({{count}})",
+        backgroundWarning:
+          "Если включить фоновые рабочие пространства, их агенты и задачи тоже будут остановлены.",
+        discovering: "Подсчёт рабочих пространств и агентов...",
+        progress: "Архивация рабочих пространств: {{completed}} из {{total}}",
+        completed: "Архивировано рабочих пространств: {{count}}",
+        failed:
+          "Архивировано рабочих пространств: {{completed}}. Операция остановлена на «{{workspace}}» на хосте {{host}}: {{error}}. Не обработано: {{unprocessed}}. Устраните проблему и повторите «Архивировать всё».",
+        empty: "В этом проекте нет активных рабочих пространств",
+        projectChanged:
+          "Проект изменился во время подтверждения. Проверьте количество и повторите «Архивировать всё».",
+        hostDisconnected:
+          "Хост {{host}} отключён. Подключите все хосты проекта и повторите попытку.",
+        updateRequired:
+          "Обновите хост {{host}}, чтобы безопасно архивировать рабочие пространства проекта.",
+        alreadyArchiving:
+          "Рабочее пространство «{{workspace}}» уже архивируется. Дождитесь завершения и повторите попытку.",
+        incompleteDiscovery:
+          "Не удалось подсчитать все рабочие пространства и агентов проекта. Повторите «Архивировать всё».",
+        verificationFailed:
+          "Не удалось подтвердить, что рабочее пространство «{{workspace}}» архивировано. Перед повторной попыткой откройте «История» и проверьте его состояние.",
+        agentsRemaining:
+          "В рабочем пространстве «{{workspace}}» ещё есть активные агенты. Откройте «История», чтобы проверить незавершённую архивацию.",
+        agentNotArchived:
+          "Не удалось подтвердить, что агент {{agent}} архивирован и остановлен. Откройте «История», чтобы проверить его состояние.",
+      },
+      restore: {
+        title: "Восстановить архивную рабочую область",
+        search: "Поиск архивных рабочих областей",
+        empty: "В этом проекте нет архивных рабочих областей",
+        updateRequired: "Обновите хост для просмотра архивных рабочих областей",
+        loadFailed: "Не удалось загрузить архивные рабочие области",
+      },
       actions: {
         menu: "Действия проекта",
         openSettings: "Открыть настройки проекта",
@@ -2261,12 +2340,32 @@ export const ru: TranslationResources = {
       creatingAgent: "Создание агента",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: "Открывать файлы .{{extension}} с помощью",
+        pickerTitleFilename: "Открывать {{filename}} с помощью",
+        dontAskAgain: "Больше не спрашивать",
+        use: "Использовать",
+        openWith: "Открыть с помощью…",
+        alwaysUseExtension: "Всегда использовать для .{{extension}}",
+        alwaysUseFilename: "Всегда использовать для {{filename}}",
+        option: "{{title}} — {{owner}}",
+        actions: "Действия с файлом",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "Изображение",
+          source: "Исходный текст",
+        },
+      },
       directoryMissing: "Каталог рабочего пространства не найден.",
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       tooLargeToDisplay: "Этот файл слишком велик для отображения",
+      documentUnsupported: "Файлы {{type}} нельзя показать на этом устройстве",
       failedToLoad: "Не удалось загрузить файл",
+      notFound: "Файл не найден",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
       editor: {
         fileSize: "Размер файла {{size}}",
@@ -2278,10 +2377,7 @@ export const ru: TranslationResources = {
         changedOnDisk: "Изменён на диске",
         vimMode: "Режим Vim {{mode}}",
         cursor: "Строка {{line}}, столбец {{column}}",
-        preview: "Предпросмотр",
-        source: "Исходный текст",
         deletedTitle: "Файл удалён с диска",
-        checkFailedTitle: "Не удалось проверить файл на диске",
         preservedDescription: "Открытая копия сохранена в редакторе.",
         conflictDescription:
           "Локальный буфер сохранён в редакторе. Выберите, какую версию оставить.",
@@ -2453,6 +2549,70 @@ export const ru: TranslationResources = {
       saveAccessibility: "Сохранить комментарий к ревью",
     },
   },
+  providerUsage: {
+    options: "Настройки",
+    refreshFailed: "Не удалось обновить использование",
+    noHosts: "Нет подключённых хостов",
+    agentError: "Не удалось загрузить использование: {{reason}}",
+    pin: "Закрепить",
+    unpin: "Открепить",
+    displayAs: "Проценты",
+    displayUsed: "Использовано",
+    displayRemaining: "Осталось",
+    showInSidebar: "Сводка на боковой панели",
+    showInSidebarHint: "Закреплённые периоды отображаются внизу боковой панели",
+    runToRefresh: "Выполните {{command}} для обновления.",
+    signInAgain: "Войдите снова.",
+    loginRejected: "Вход отклонён (HTTP {{status}}). {{remedy}}",
+    loginExpired: "Срок входа истёк {{relativeTime}}. {{remedy}}",
+    title: "Использование плана",
+    refresh: "Обновить",
+    refreshAll: "Обновить всё",
+    refreshing: "Обновление...",
+    loading: "Загрузка данных об использовании...",
+    empty: "Нет данных об использовании",
+    errorTitle: "Не удалось загрузить данные об использовании",
+    hostUnavailable: "Подключитесь к {{host}}, чтобы увидеть использование провайдера",
+    hostUpgradeRequired: "Обновите {{host}}, чтобы увидеть использование провайдера",
+    clientUnavailable: "Соединение с хостом не готово",
+    retry: "Повторить",
+    tooltipLoading: "Загрузка использования плана...",
+    status: {
+      error: "Ошибка",
+      unavailable: "Недоступно",
+    },
+    values: {
+      used: "Использовано: {{percentage}}",
+      remaining: "Осталось: {{amount}}",
+    },
+    labels: {
+      session: "Сессия",
+      weekly: "Еженедельно",
+      monthly: "Ежемесячно",
+      codeReview: "Проверка кода",
+      credits: "Кредиты",
+      monthlyCredits: "Ежемесячные кредиты",
+    },
+    duration: {
+      days: "{{value}} дн.",
+      hours: "{{value}} ч",
+      minutes: "{{value}} мин",
+    },
+    timing: {
+      lastUpdated: "Последнее обновление {{relativeTime}}",
+      noSuccessfulUpdate: "Успешных обновлений нет",
+      resetTimePassed: "Время сброса прошло",
+      resettingNow: "сброс сейчас",
+      resetsIn: "сброс через {{duration}}",
+      runsOutNow: "закончится сейчас",
+      runsOutIn: "закончится через {{duration}}",
+      justNow: "только что",
+      daysAgo: "{{value}} дн. назад",
+      hoursAgo: "{{value}} ч назад",
+      minutesAgo: "{{value}} мин назад",
+      updated: "Обновлено {{relativeTime}}",
+    },
+  },
   settings: {
     title: "Настройки",
     loading: "Загрузка настроек...",
@@ -2481,6 +2641,7 @@ export const ru: TranslationResources = {
       terminal: "Терминал",
       browser: "Браузер",
       editor: "Редактор",
+      files: "Файлы",
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",
       notifications: "Уведомления",
@@ -2518,6 +2679,14 @@ export const ru: TranslationResources = {
       title: "Редактор",
       vimKeybindings: "Сочетания клавиш Vim",
       vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
+    },
+    files: {
+      title: "Файлы",
+      askEveryTime: "Спрашивать каждый раз",
+      askAgain: "Спросить снова",
+      askAgainFor: "Спросить снова для {{label}}",
+      unavailable: "Нет на подключённых хостах",
+      empty: "Панели файлов появятся здесь, когда плагин добавит их",
     },
     notifications: {
       title: "Уведомления",
@@ -2564,6 +2733,26 @@ export const ru: TranslationResources = {
     general: {
       title: "Основные",
       sending: "Отправка",
+      browserExtensions: {
+        title: "Расширения",
+        compatibility:
+          "Некоторые функции расширений Chrome не поддерживаются. Расширения не обновляются автоматически.",
+        store: "Chrome Web Store",
+        openStore: "Открыть Web Store",
+        refresh: "Обновить",
+        enable: "Включить",
+        disable: "Отключить",
+        retry: "Повторить",
+        remove: "Удалить",
+        removeTitle: "Удалить {{name}}?",
+        removeMessage:
+          "Расширение будет удалено из Paseo. Исходные папки распакованных расширений сохраняются.",
+        loading: "Загрузка расширений...",
+        empty: "Нет установленных расширений.",
+        unpackedHint: "Загрузите расширение из папки, содержащей manifest.json.",
+        loadUnpacked: "Загрузить распакованное",
+        unavailable: "Расширения недоступны. Обновите настольное приложение.",
+      },
       browserData: {
         title: "Данные браузера",
         siteData: "Файлы cookie и данные сайтов",
@@ -2788,6 +2977,7 @@ export const ru: TranslationResources = {
       searchPlaceholder: "Поиск сочетаний клавиш",
       unavailableOnMobile: "Сочетания клавиш доступны только на рабочем столе.",
       capturePrompt: "Нажмите сочетание клавиш...",
+      captureIndexPrompt: "Завершите цифрой от 1 до 9.",
       unassigned: "Не задано",
       actions: {
         menu: "Действия для {{name}}",

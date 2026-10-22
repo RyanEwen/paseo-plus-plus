@@ -1,3 +1,12 @@
+import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
+import { useSyncExternalStore } from "react";
+import { resolveRetainedContextSource } from "./sticky-prompt-model";
+import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
+import { normalContextPageReader } from "./fetch-reading-prompt-context";
+import {
+  mergeRetainedPrompts,
+  retainedCanonicalPositions,
+} from "@/timeline/canonical-prompt-context";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { shouldIndexUserPrompts } from "./chat-outline/model";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -55,7 +64,7 @@ import type {
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type AgentTimelineCursorState } from "@/stores/session-store";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
@@ -267,6 +276,7 @@ export interface AgentStreamViewHandle {
 }
 
 export interface AgentStreamViewProps {
+  nativeViewportPlacement?: "docked" | "standalone";
   agentId: string;
   serverId?: string;
   context: AgentScreenAgent;
@@ -291,6 +301,9 @@ export interface AgentStreamViewProps {
     isLoadingOlder: boolean;
     progressKey: string | null;
     readPromptContext?: import("./fetch-reading-prompt-context").ContextPageReader;
+    promptContexts?: import("@/timeline/canonical-prompt-context").CanonicalPromptContexts;
+    coverage?: readonly import("@/timeline/canonical-prompt-context").CanonicalTimelineCoverage[];
+    sourceMetadata?: readonly import("@/timeline/canonical-source-metadata").CanonicalSourceMetadata[];
     onLoadOlder: (acceptance?: TimelinePageAcceptance) => boolean | Promise<boolean>;
   };
 }
@@ -323,6 +336,125 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
   return Math.max(16, clearance ?? 0);
 }
 
+function useTranscriptCursor(input: {
+  serverId: string;
+  agentId: string;
+  historyPagination: AgentStreamViewProps["historyPagination"];
+}) {
+  const rootTimelineCursor = useSessionStore((state) =>
+    state.sessions[input.serverId]?.agentTimelineCursor.get(input.agentId),
+  );
+  const rootTimelineEpoch = rootTimelineCursor?.epoch ?? null;
+  const timelineEpoch = resolveTranscriptEpoch(input.historyPagination, rootTimelineEpoch);
+  return { rootTimelineCursor, timelineEpoch };
+}
+
+interface RetainedCanonicalTranscriptInput {
+  resolvedServerId: string;
+  agentId: string;
+  timelineEpoch: string | null;
+  historyPagination: AgentStreamViewProps["historyPagination"];
+  rootTimelineCursor: AgentTimelineCursorState | undefined;
+  client: DaemonClient | null;
+  promptReading: ReturnType<typeof createPromptReadingPublisher>;
+  effectiveStreamItems: StreamItem[];
+  effectiveStreamHead: StreamItem[] | undefined;
+  stickyEnabled: boolean;
+  isActive: boolean;
+}
+
+/** Admit canonical sources before the single presentation pass, without extending window coverage. */
+function useRetainedCanonicalTranscript({
+  resolvedServerId,
+  agentId,
+  timelineEpoch,
+  historyPagination,
+  rootTimelineCursor,
+  client,
+  promptReading,
+  effectiveStreamItems,
+  effectiveStreamHead,
+  stickyEnabled,
+  isActive,
+}: RetainedCanonicalTranscriptInput) {
+  const timelineOwner = useSessionStore(
+    (state) => state.sessions[resolvedServerId]?.viewedTimelineSync ?? null,
+  );
+  const rootContextOwner = timelineOwner?.promptContexts ?? null;
+  const contextOwner = historyPagination
+    ? (historyPagination.promptContexts ?? null)
+    : rootContextOwner;
+  const childTranscript = historyPagination !== undefined;
+  const suppliedCoverage = historyPagination?.coverage;
+  const contextCoverage = useMemo(() => {
+    if (childTranscript) return suppliedCoverage ?? [];
+    return canonicalCoverageForCursor(rootTimelineCursor);
+  }, [childTranscript, suppliedCoverage, rootTimelineCursor]);
+  const sourceItems = useMemo(
+    () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
+    [effectiveStreamItems, effectiveStreamHead],
+  );
+  const readSource = useCallback(() => {
+    return resolveRetainedContextSource(
+      sourceItems,
+      timelineEpoch,
+      promptReading.getSnapshot(),
+      contextCoverage,
+    );
+  }, [promptReading, sourceItems, timelineEpoch, contextCoverage]);
+  const contextSource = useSyncExternalStore(promptReading.subscribe, readSource, readSource);
+  const suppliedContextReader = historyPagination?.readPromptContext;
+  const contextReader = useMemo(() => {
+    if (childTranscript) return suppliedContextReader;
+    if (client) return normalContextPageReader(client, agentId);
+    return undefined;
+  }, [childTranscript, suppliedContextReader, client, agentId]);
+  const contextLookup = useMemo(
+    () =>
+      contextReader
+        ? {
+            agentId,
+            readPage: contextReader,
+            projection: childTranscript ? ("projected" as const) : ("canonical" as const),
+          }
+        : undefined,
+    [contextReader, childTranscript, agentId],
+  );
+  const retainedContext = useCanonicalPromptContext({
+    owner: contextOwner,
+    agentId,
+    epoch: timelineEpoch,
+    source: contextSource,
+    ordinaryItems: sourceItems,
+    coverage: contextCoverage,
+    sourceMetadata: historyPagination?.sourceMetadata,
+    enabled: stickyEnabled && isActive,
+    lookup: contextLookup,
+  });
+  const canonicalTail = useMemo(
+    () =>
+      mergeRetainedPrompts(
+        effectiveStreamItems,
+        retainedContext.contexts,
+        effectiveStreamHead ?? [],
+      ),
+    [effectiveStreamItems, effectiveStreamHead, retainedContext.contexts],
+  );
+  const retainedPositions = useMemo(
+    () => retainedCanonicalPositions(canonicalTail, retainedContext.contexts),
+    [canonicalTail, retainedContext.contexts],
+  );
+  const contextOnlyIds = useMemo(
+    () =>
+      new Set(
+        mergeRetainedPrompts([], retainedContext.contexts, sourceItems).map((item) => item.id),
+      ),
+    [retainedContext.contexts, sourceItems],
+  );
+
+  return { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds };
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -341,6 +473,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
+      nativeViewportPlacement,
       historyPagination,
     },
     ref,
@@ -392,10 +525,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
     );
-    const rootTimelineEpoch = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
-    );
-    const timelineEpoch = resolveTranscriptEpoch(historyPagination, rootTimelineEpoch);
+    const { rootTimelineCursor, timelineEpoch } = useTranscriptCursor({
+      serverId: resolvedServerId,
+      agentId,
+      historyPagination,
+    });
     const isTimelineDetached = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
@@ -461,11 +595,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           serverId: resolvedServerId,
           workspaceId: context.workspaceId ?? "",
         }),
-        checkout: {
-          serverId: resolvedServerId,
-          cwd: context.cwd,
-          isGit: context.projectPlacement?.checkout?.isGit ?? true,
-        },
         view: "files",
       });
     });
@@ -526,11 +655,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const promptReading = useMemo(createPromptReadingPublisher, [
+      resolvedServerId,
+      agentId,
+      timelineEpoch,
+    ]);
+    const { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds } =
+      useRetainedCanonicalTranscript({
+        resolvedServerId,
+        agentId,
+        timelineEpoch,
+        historyPagination,
+        rootTimelineCursor,
+        client,
+        promptReading,
+        effectiveStreamItems,
+        effectiveStreamHead,
+        stickyEnabled,
+        isActive,
+      });
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
       () =>
         presentStream({
-          tail: effectiveStreamItems,
+          tail: canonicalTail,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
           level: toolCallDetailLevel,
@@ -538,7 +686,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [
         presentStream,
-        effectiveStreamItems,
+        canonicalTail,
         effectiveStreamHead,
         transformTimelineItem,
         toolCallDetailLevel,
@@ -568,6 +716,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
         historyStart: historyWindowStart,
+        retainedPositions,
       });
     }, [
       isMobile,
@@ -576,6 +725,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       presentation.tail,
       effectiveTurnPresentation.startedAt,
       historyWindowStart,
+      retainedPositions,
     ]);
     const streamLayout = useMemo(
       () =>
@@ -630,11 +780,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       chatOutline.jumpToMessage(id, { source: "sticky", placement }),
     );
     const stickyPromptRef = useRef<StickyPromptHandle>(null);
-    const promptReading = useMemo(createPromptReadingPublisher, [
-      resolvedServerId,
-      agentId,
-      timelineEpoch,
-    ]);
     const followLatestPrompt = useStableEvent(() => {
       chatOutline.cancelJump();
       stickyPromptRef.current?.followLatest();
@@ -1135,16 +1280,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [expandedToolCallGroupIds, isMobile, presentation.historyGroupUpdatesByHostId],
     );
 
-    const findItems = useMemo(
-      () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
-      [effectiveStreamItems, effectiveStreamHead],
+    const navigationItems = useMemo(
+      () => canonicalTail.concat(effectiveStreamHead ?? []),
+      [canonicalTail, effectiveStreamHead],
     );
     return (
       <ChatFind
         agentId={agentId}
         serverId={resolvedServerId}
         epoch={timelineEpoch}
-        items={findItems}
+        items={sourceItems}
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedHistory}
         visibleMessageIds={mountedMessageIds}
@@ -1154,7 +1299,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             <StickyPrompt
               key={`${resolvedServerId}:${agentId}`}
               enabled={stickyEnabled}
-              items={findItems}
+              items={navigationItems}
+              contextOnlyIds={contextOnlyIds}
               epoch={timelineEpoch}
               outline={chatOutline}
               indexed={canIndexPrompts}
@@ -1163,6 +1309,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               progressKey={remoteProgressKey}
               loadOlder={loadRemoteOlder}
               contextPageReader={resolveContextPageReader(historyPagination)}
+              retainedContext={retainedContext}
               jumpToLoaded={jumpToStickyMessage}
               serverId={resolvedServerId}
               client={client}
@@ -1175,6 +1322,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               <MessageOuterSpacingProvider disableOuterSpacing>
                 {streamRenderStrategy.render({
                   agentId,
+                  nativeViewportPlacement,
                   segments: renderModel.segments,
                   historyRowRevision,
                   liveHeadRowRevision: expandedToolCallGroupIds,
@@ -1330,7 +1478,19 @@ function historyPaginationPropsEqual(
     left?.isLoadingOlder === right?.isLoadingOlder &&
     left?.progressKey === right?.progressKey &&
     left?.onLoadOlder === right?.onLoadOlder &&
-    left?.readPromptContext === right?.readPromptContext
+    historyContextPropsEqual(left, right)
+  );
+}
+
+function historyContextPropsEqual(
+  left: AgentStreamViewProps["historyPagination"],
+  right: AgentStreamViewProps["historyPagination"],
+): boolean {
+  return (
+    left?.readPromptContext === right?.readPromptContext &&
+    left?.promptContexts === right?.promptContexts &&
+    left?.coverage === right?.coverage &&
+    left?.sourceMetadata === right?.sourceMetadata
   );
 }
 
@@ -1366,6 +1526,8 @@ function agentStreamViewPropsEqual(
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
+  if (left.nativeViewportPlacement !== right.nativeViewportPlacement)
+    reasons.push("nativeViewportPlacement");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
   }

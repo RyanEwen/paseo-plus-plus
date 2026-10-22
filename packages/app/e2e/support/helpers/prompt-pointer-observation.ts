@@ -64,7 +64,9 @@ export async function observePromptPointer(control: Locator) {
         bubbleBounds: bounds(bubble),
         historyRowId:
           original.closest("[data-history-row-id]")?.getAttribute("data-history-row-id") ?? null,
-        pinnedOwner: original.closest('[data-testid="sticky-user-message"]') !== null,
+        pinnedOwner:
+          original.closest("[data-actual-prompt-row]")?.getAttribute("data-prompt-pinned") ===
+          "true",
         ...readControls(row),
       };
     };

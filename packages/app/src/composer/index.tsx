@@ -146,7 +146,7 @@ import {
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -315,6 +315,7 @@ interface PendingFileAttachment {
 }
 
 interface RenderAttachmentTrayArgs {
+  serverId: string;
   selectedAttachments: ComposerAttachment[];
   pendingFiles: PendingFileAttachment[];
   isComposerLocked: boolean;
@@ -331,6 +332,7 @@ interface RenderAttachmentTrayArgs {
 
 function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | null {
   const {
+    serverId,
     selectedAttachments,
     pendingFiles,
     isComposerLocked,
@@ -343,6 +345,7 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
     <View style={styles.attachmentTray} testID="composer-attachment-tray">
       {selectedAttachments.map((attachment, index) =>
         renderComposerAttachmentPill({
+          serverId,
           attachment,
           index,
           disabled: isComposerLocked,
@@ -393,6 +396,7 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
 }
 
 interface RenderComposerAttachmentPillArgs {
+  serverId: string;
   attachment: ComposerAttachment;
   index: number;
   disabled: boolean;
@@ -453,6 +457,7 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
   if (attachment.kind === "plugin_resource") {
     return (
       <PluginResourceAttachmentPill
+        serverId={args.serverId}
         key={`${attachment.pluginId}:${attachment.sourceId}:${attachment.item.id}`}
         attachment={attachment}
         index={index}
@@ -1858,6 +1863,8 @@ function ComposerContentImpl({
     [removeAttachment, selectedAttachments, setSelectedAttachments],
   );
 
+  const { openPrimary: openWorkspaceLink } = useWorkspaceLinkOpeningContext();
+
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
       openComposerAttachment({
@@ -1865,11 +1872,11 @@ function ComposerContentImpl({
         setLightboxMetadata,
         openWorkspaceAttachment: openAttachment,
         openExternalUrl: (url) => {
-          void openExternalUrl(url);
+          void openWorkspaceLink(url);
         },
       });
     },
-    [openAttachment],
+    [openAttachment, openWorkspaceLink],
   );
 
   const handleCancelAgent = useCallback(() => {
@@ -2295,6 +2302,7 @@ function ComposerContentImpl({
   const attachmentTray = useMemo(
     () =>
       renderAttachmentTray({
+        serverId,
         selectedAttachments,
         pendingFiles,
         isComposerLocked,
@@ -2314,6 +2322,7 @@ function ComposerContentImpl({
       handleOpenAttachment,
       handleRemoveAttachment,
       isComposerLocked,
+      serverId,
       selectedAttachments,
       pendingFiles,
       t,

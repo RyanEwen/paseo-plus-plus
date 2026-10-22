@@ -1,3 +1,5 @@
+import { requestPromptFixture } from "@/timeline/canonical-prompt-context.test-fixture";
+import { canonicalPromptSourceKey } from "./canonical-prompt-context";
 import { DatabaseSync } from "node:sqlite";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import {
@@ -40,7 +42,10 @@ function cachedTimeline(): CachedTimeline {
   };
 }
 
-function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
+function createOwner(
+  storage: TimelineReplicaStorage,
+  readCursor: () => { epoch: string; endSeq: number } | undefined = () => undefined,
+): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
     storage,
@@ -53,7 +58,7 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
     drainQueuedAgentMessage: () => undefined,
     ports: {
       observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
-      readCursor: () => undefined,
+      readCursor,
       fetchPage: async () => ({ hasNewer: false, endCursor: null }),
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
@@ -747,5 +752,531 @@ describe("SQLite baseline restoration", () => {
       await preparation;
       database.close();
     }
+  });
+});
+
+describe("viewed owner canonical prompt retention", () => {
+  const storage: TimelineReplicaStorage = {
+    readTimeline: async () => undefined,
+    commitTimeline: () => undefined,
+  };
+  it("retains four isolated canonical points without changing the viewed cursor, tail or pagination", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 100);
+    const before = useSessionStore.getState().sessions[SERVER_ID]!;
+    const cursor = before.agentTimelineCursor.get(AGENT_ID)!;
+    const owner = createOwner(storage, () => cursor);
+    const channel = {};
+    for (let index = 0; index < 5; index += 1) {
+      const source = item(`source-${index}`, "answer", 60 + index);
+      const prompt: Extract<StreamItem, { kind: "user_message" }> = {
+        ...source,
+        kind: "user_message",
+        text: "answer",
+        id: `user-${index}`,
+        timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+      };
+      await requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => ({
+          sourceKey: canonicalPromptSourceKey(source),
+          sourceStart: 50 + index,
+          sourceEnd: 60 + index,
+          prompt,
+        }),
+      });
+    }
+    expect(owner.promptContexts.snapshot(AGENT_ID)?.ranges).toEqual(
+      [2, 3, 4, 5].map((seq) => ({ startSeq: seq, endSeq: seq })),
+    );
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1")).toHaveLength(4);
+    expect(useSessionStore.getState().sessions[SERVER_ID]).toBe(before);
+    expect(before.agentTimelineCursor.get(AGENT_ID)).toBe(cursor);
+    owner.dispose();
+  });
+
+  it("keeps five mounted readers independent and releases only the retired reader's points", async () => {
+    const owner = createOwner(storage, () => ({ epoch: "epoch-1", endSeq: 100 }));
+    const readers = Array.from({ length: 5 }, () => ({}));
+    for (const [index, channel] of readers.entries()) {
+      const source = item(`source-${index}`, "answer", 60 + index);
+      const prompt: Extract<StreamItem, { kind: "user_message" }> = {
+        ...source,
+        kind: "user_message",
+        text: "answer",
+        id: `user-${index}`,
+        timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+      };
+      await requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => ({
+          sourceKey: canonicalPromptSourceKey(source),
+          sourceStart: 50 + index,
+          sourceEnd: 60 + index,
+          prompt,
+        }),
+      });
+    }
+    for (const [index, channel] of readers.entries())
+      expect(
+        owner.promptContexts.read(AGENT_ID, "epoch-1", channel).map(({ prompt }) => prompt.id),
+      ).toEqual([`user-${index}`]);
+    const first = owner.promptContexts.read(AGENT_ID, "epoch-1", readers[0]);
+    owner.promptContexts.cancel(readers[0]!);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", readers[0])).toBe(first);
+    owner.promptContexts.release(readers[4]!);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", readers[4])).toEqual([]);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", readers[0])).toBe(first);
+    expect(owner.promptContexts.snapshot(AGENT_ID)?.ranges).toHaveLength(4);
+    for (const channel of readers) owner.promptContexts.release(channel);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1")).toEqual([]);
+    owner.dispose();
+  });
+
+  it("discards replaced-source, changed-epoch and disposed-owner completions", async () => {
+    let epoch = "epoch-1";
+    const owner = createOwner(storage, () => ({ epoch, endSeq: 100 }));
+    const source = item("source", "answer", 50);
+    const prompt: Extract<StreamItem, { kind: "user_message" }> = {
+      ...source,
+      kind: "user_message",
+      text: "answer",
+      id: "user",
+      timelineCursor: { epoch, seq: 4 },
+    };
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchContext = async () => {
+      await held;
+      return {
+        sourceKey: canonicalPromptSourceKey(source),
+        sourceStart: 40,
+        sourceEnd: 50,
+        prompt,
+      };
+    };
+    const channel = {};
+    const first = requestPromptFixture(owner.promptContexts, {
+      agentId: AGENT_ID,
+      source,
+      channel,
+      signal: new AbortController().signal,
+      fetchContext,
+    });
+    const rejected = expect(first).rejects.toThrow("no longer current");
+    owner.promptContexts.cancel(channel);
+    release();
+    await rejected;
+    const late = requestPromptFixture(owner.promptContexts, {
+      agentId: AGENT_ID,
+      source,
+      channel,
+      signal: new AbortController().signal,
+      fetchContext,
+    });
+    const changed = expect(late).rejects.toThrow("no longer current");
+    epoch = "epoch-2";
+    owner.promptContexts.setEpoch(AGENT_ID, epoch);
+    await changed;
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1")).toEqual([]);
+    owner.dispose();
+    await expect(
+      requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        source,
+        channel,
+        signal: new AbortController().signal,
+        fetchContext,
+      }),
+    ).rejects.toThrow("unavailable");
+  });
+});
+
+describe("viewed owner source metadata acceptance", () => {
+  type Payload = Parameters<ViewedTimelineOwner["applyTimelineResponse"]>[0];
+  function page(start = 2, end = 4): Payload {
+    return {
+      requestId: "metadata",
+      agent: null,
+      agentId: AGENT_ID,
+      direction: "tail",
+      projection: "projected",
+      epoch: "epoch-1",
+      reset: true,
+      window: { minSeq: 1, maxSeq: end, nextSeq: end + 1 },
+      startCursor: { epoch: "epoch-1", seq: start },
+      endCursor: { epoch: "epoch-1", seq: end },
+      hasOlder: true,
+      hasNewer: false,
+      error: null,
+      staleCursor: false,
+      gap: false,
+      entries: [
+        {
+          provider: "codex",
+          timestamp: new Date(0).toISOString(),
+          seqStart: start,
+          seqEnd: end,
+          sourceSeqRanges: [{ startSeq: start, endSeq: end }],
+          collapsed: [],
+          item: { type: "assistant_message", messageId: "same-provider-id", text: `Answer ${end}` },
+        },
+      ],
+    };
+  }
+  function fixture() {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    return createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      () => useSessionStore.getState().sessions[SERVER_ID]?.agentTimelineCursor.get(AGENT_ID),
+    );
+  }
+
+  it("publishes accepted projected source descriptors with the same observable ordinary revision", () => {
+    const owner = fixture();
+    const observations: boolean[] = [];
+    const unsubscribe = useSessionStore.subscribe((state) => {
+      const timeline = selectAgentTimelineState(state.sessions[SERVER_ID], AGENT_ID);
+      if (timeline.status !== "synced" || !timeline.items.length) return;
+      const metadata = owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1");
+      observations.push(metadata.length === 1 && metadata[0]!.revision === timeline.items[0]);
+    });
+    owner.applyTimelineResponse(page());
+    unsubscribe();
+    expect(observations.length).toBeGreaterThan(0);
+    expect(observations.every(Boolean)).toBe(true);
+    const first = owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1");
+    expect(first[0]).toMatchObject({
+      startSeq: 2,
+      endSeq: 4,
+      ranges: [{ startSeq: 2, endSeq: 4 }],
+    });
+    owner.applyTimelineResponse(page(7, 9));
+    const next = owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1");
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ startSeq: 7, endSeq: 9 });
+    expect(next[0]!.revision).not.toBe(first[0]!.revision);
+    owner.dispose();
+  });
+
+  it("admits no source metadata from discarded, erroneous or projected-before excluded entries", () => {
+    const owner = fixture();
+    owner.applyTimelineResponse(page(7, 9));
+    const accepted = owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1");
+    owner.applyTimelineResponse({
+      ...page(),
+      reset: false,
+      hasNewer: true,
+      window: { minSeq: 1, maxSeq: 9, nextSeq: 10 },
+    });
+    expect(owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1")).toBe(accepted);
+    owner.applyTimelineResponse({ ...page(), error: "unavailable" });
+    expect(owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1")).toBe(accepted);
+    const excluded = { ...page(1, 6).entries[0]!, seqStart: 1, seqEnd: 6 };
+    owner.applyTimelineResponse({
+      ...page(3, 6),
+      direction: "before",
+      reset: false,
+      entries: [excluded],
+    });
+    expect(
+      owner.promptContexts
+        .readSourceMetadata(AGENT_ID, "epoch-1")
+        .some((entry) => entry.startSeq === 1),
+    ).toBe(false);
+    owner.dispose();
+  });
+
+  it("checks the current root ordinary store before reusing or admitting an exact certificate", async () => {
+    const owner = fixture();
+    owner.applyTimelineResponse(page(500, 500));
+    const timeline = selectAgentTimelineState(
+      useSessionStore.getState().sessions[SERVER_ID],
+      AGENT_ID,
+    );
+    if (timeline.status !== "synced") throw new Error("Expected accepted fixture timeline");
+    const source = timeline.items[0]!;
+    const prior: Extract<StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: "prior",
+      text: "Prior",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "epoch-1", seq: 20 },
+    };
+    const newer = { ...prior, id: "newer", timelineCursor: { epoch: "epoch-1", seq: 450 } };
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const seed = {};
+    await requestPromptFixture(owner.promptContexts, {
+      agentId: AGENT_ID,
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => payload,
+    });
+    const proof = owner.promptContexts.read(AGENT_ID, "epoch-1", seed)[0]!;
+    function ordinary(items: StreamItem[]) {
+      useSessionStore.getState().applyAgentTimelineResponseState(SERVER_ID, AGENT_ID, {
+        items,
+        head: [],
+        range: {
+          epoch: "epoch-1",
+          startSeq: 490,
+          endSeq: 600,
+          retainedRanges: [{ startSeq: 400, endSeq: 460, hasOlder: true }],
+        },
+        older: "available",
+        newer: false,
+        synchronized: true,
+        acknowledgedClientMessageIds: [],
+      });
+    }
+    ordinary([newer, source]);
+    expect(owner.promptContexts.preview(AGENT_ID, source)).toBeUndefined();
+    const channel = {};
+    let calls = 0;
+    await expect(
+      requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        knownContext: { ...proof },
+        lookupAllowed: false,
+        fetchContext: async () => {
+          calls += 1;
+          return payload;
+        },
+      }),
+    ).rejects.toThrow("Reading context changed");
+    ordinary([source]);
+    expect(owner.promptContexts.isSupportedContext(AGENT_ID, proof)).toBe(false);
+    expect(owner.promptContexts.preview(AGENT_ID, source)).toBeUndefined();
+    expect(calls).toBe(0);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = requestPromptFixture(owner.promptContexts, {
+      agentId: AGENT_ID,
+      channel,
+      source,
+      signal: new AbortController().signal,
+      retryToken: 1,
+      fetchContext: async () => {
+        await held;
+        return payload;
+      },
+    });
+    const rejected = expect(pending).rejects.toThrow("Reading context changed");
+    ordinary([newer, source]);
+    release();
+    await rejected;
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", channel)).toEqual([]);
+    ordinary([source]);
+    await expect(
+      requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        retryToken: 2,
+        fetchContext: async () => ({ ...payload, prompt: newer }),
+      }),
+    ).resolves.toMatchObject(newer);
+    expect(
+      owner.promptContexts.readExactContext(AGENT_ID, source)?.prompt.timelineCursor?.seq,
+    ).toBe(450);
+    expect(owner.promptContexts.isSupportedContext(AGENT_ID, proof)).toBe(false);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", seed)).toEqual([proof]);
+    owner.dispose();
+  });
+
+  it("invalidates retained certificates at accepted history boundaries even without an intervening cache read", async () => {
+    const owner = fixture();
+    owner.applyTimelineResponse(page(500, 500));
+    function currentSource() {
+      const timeline = selectAgentTimelineState(
+        useSessionStore.getState().sessions[SERVER_ID],
+        AGENT_ID,
+      );
+      if (timeline.status !== "synced") throw new Error("Expected accepted fixture timeline");
+      const source = timeline.items.find((entry) => entry.kind === "assistant_message");
+      if (!source) throw new Error("Expected accepted assistant");
+      return source;
+    }
+    const source = currentSource();
+    const prior: Extract<StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: "prior",
+      text: "Prior",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "epoch-1", seq: 20 },
+    };
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const seed = {};
+    await requestPromptFixture(owner.promptContexts, {
+      agentId: AGENT_ID,
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => payload,
+    });
+    const proof = owner.promptContexts.read(AGENT_ID, "epoch-1", seed)[0]!;
+    const accepted = page(500, 500);
+    owner.applyTimelineResponse({
+      ...accepted,
+      startCursor: { epoch: "epoch-1", seq: 450 },
+      entries: [
+        {
+          ...accepted.entries[0]!,
+          seqStart: 450,
+          seqEnd: 450,
+          sourceSeqRanges: [{ startSeq: 450, endSeq: 450 }],
+          item: { type: "user_message", text: "Newer prompt", clientMessageId: "newer" },
+        },
+        ...accepted.entries,
+      ],
+    });
+    owner.applyTimelineResponse(page(500, 500));
+    expect(canonicalPromptSourceKey(currentSource())).toBe(proof.sourceKey);
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", seed)).toMatchObject([proof]);
+    expect(owner.promptContexts.readExactContext(AGENT_ID, currentSource())).toBeUndefined();
+    expect(owner.promptContexts.isSupportedContext(AGENT_ID, proof)).toBe(false);
+    owner.dispose();
+  });
+
+  it("fences a fresh held lookup across accepted root USER appearance and eviction without a cache read", async () => {
+    const owner = fixture();
+    owner.applyTimelineResponse(page(500, 500));
+    const timeline = selectAgentTimelineState(
+      useSessionStore.getState().sessions[SERVER_ID],
+      AGENT_ID,
+    );
+    if (timeline.status !== "synced") throw new Error("Expected accepted fixture timeline");
+    const source = timeline.items[0]!;
+    const prior: Extract<StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: "prior",
+      text: "Prior",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "epoch-1", seq: 20 },
+    };
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reads = 0;
+    const channel = {};
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const pending = requestPromptFixture(owner.promptContexts, {
+      agentId: AGENT_ID,
+      channel,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => {
+        reads += 1;
+        await held;
+        return payload;
+      },
+    });
+    const rejected = expect(pending).rejects.toThrow("Reading context changed");
+    const accepted = page(500, 500);
+    owner.applyTimelineResponse({
+      ...accepted,
+      startCursor: { epoch: "epoch-1", seq: 450 },
+      entries: [
+        {
+          ...accepted.entries[0]!,
+          seqStart: 450,
+          seqEnd: 450,
+          sourceSeqRanges: [{ startSeq: 450, endSeq: 450 }],
+          item: { type: "user_message", text: "Newer prompt", clientMessageId: "newer" },
+        },
+        ...accepted.entries,
+      ],
+    });
+    owner.applyTimelineResponse(page(500, 500));
+    release();
+    await rejected;
+    expect(owner.promptContexts.read(AGENT_ID, "epoch-1", channel)).toEqual([]);
+    await expect(
+      requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => {
+          reads += 1;
+          return payload;
+        },
+      }),
+    ).rejects.toThrow("Reading context changed");
+    expect(reads).toBe(1);
+    const newer = { ...prior, id: "newer", timelineCursor: { epoch: "epoch-1", seq: 450 } };
+    await expect(
+      requestPromptFixture(owner.promptContexts, {
+        agentId: AGENT_ID,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        retryToken: 1,
+        fetchContext: async () => ({ ...payload, prompt: newer }),
+      }),
+    ).resolves.toMatchObject(newer);
+    owner.dispose();
+  });
+
+  it("evicts removed and live-replaced source revisions without extending coverage or persisting metadata", () => {
+    const owner = fixture();
+    owner.applyTimelineResponse(page());
+    const cursor = useSessionStore
+      .getState()
+      .sessions[SERVER_ID]!.agentTimelineCursor.get(AGENT_ID)!;
+    owner.enqueueStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", messageId: "same-provider-id", text: " extended" },
+      },
+      epoch: "epoch-1",
+      seq: 5,
+      timestamp: new Date(1),
+    });
+    owner.flushStreamAgent(AGENT_ID);
+    expect(owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1")).toEqual([]);
+    expect(cursor).toMatchObject({ startSeq: 2, endSeq: 4 });
+    owner.applyTimelineResponse({
+      ...page(10, 12),
+      epoch: "epoch-2",
+      startCursor: { epoch: "epoch-2", seq: 10 },
+      endCursor: { epoch: "epoch-2", seq: 12 },
+    });
+    expect(owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-1")).toEqual([]);
+    expect(owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-2")).toHaveLength(1);
+    owner.dispose();
+    expect(owner.promptContexts.readSourceMetadata(AGENT_ID, "epoch-2")).toEqual([]);
   });
 });
