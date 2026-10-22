@@ -401,3 +401,33 @@ const SourceSchema = z.object({
     });
   });
 });
+
+it("generated validation accepts bounded durable reference replies", () => {
+  expect(
+    validateWSOutboundMessage({
+      type: "session",
+      message: {
+        type: "attachments.list.response",
+        payload: { references: [], next: null, error: null, requestId: "list" },
+      },
+    }).success,
+  ).toBe(true);
+  expect(
+    validateWSOutboundMessage({
+      type: "session",
+      message: {
+        type: "attachments.read.response",
+        payload: { reference: null, error: "Original unavailable", requestId: "read" },
+      },
+    }).success,
+  ).toBe(true);
+  expect(
+    validateWSOutboundMessage({
+      type: "session",
+      message: {
+        type: "attachments.read.response",
+        payload: { reference: { id: "../../secret" }, error: null, requestId: "read" },
+      },
+    }).success,
+  ).toBe(false);
+});

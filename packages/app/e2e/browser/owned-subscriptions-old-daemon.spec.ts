@@ -6,6 +6,7 @@ import {
   getTerminalBufferText,
 } from "../support/helpers/terminal-perf";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
+import { HISTORY_START_THRESHOLD_PX } from "../../src/agent-stream/history-start-pagination";
 import { metroTest as test, expect } from "../support/fixtures";
 import { buildCreateAgentPreferences, buildSeededHost } from "../support/helpers/daemon-registry";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
@@ -15,7 +16,7 @@ import {
   expectTimelinePromptVisible,
   holdOlderHistoryPages,
   openAgentTimeline,
-  scrollThroughOlderHistoryPages,
+  userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
 
 test("does not repeat an assistant block when the current app paginates a published 0.2.5 daemon", async ({
@@ -95,7 +96,20 @@ test("does not repeat an assistant block when the current app paginates a publis
       page,
       "timeline-pagination-turn-19: emit 1 coalesced agent stream updates",
     );
-    await scrollThroughOlderHistoryPages(page, 3, history);
+    for (let pageNumber = 1; pageNumber <= 3; pageNumber += 1) {
+      await userScrollsTimelineToHistoryStart(page);
+      await history.expectRequestedPages(pageNumber);
+      // Old expanded pages can contain only duplicates. Leave the edge before release
+      // so the product's legitimate same-operation continuation cannot request a fourth page.
+      const timeline = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+      await timeline.hover();
+      await page.mouse.wheel(0, 300);
+      await expect
+        .poll(() => timeline.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(HISTORY_START_THRESHOLD_PX);
+      history.releasePage(pageNumber);
+      await history.expectSettledWithRequestedPages(pageNumber);
+    }
 
     history.expectRepeatedEntries();
     await history.expectOwnedTextRendered("Now I have a clearer picture.");

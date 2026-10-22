@@ -218,6 +218,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       };
     };
     const findImageAttachment = (row: Element | undefined) =>
+      row?.querySelector('[data-testid="user-message-attachments-summary"]') ??
       row?.querySelector('[role="button"][aria-label="Open image attachment"]');
     const findAgentTabState = () => {
       const agentTab = Array.from(
@@ -493,7 +494,9 @@ function expectRowContinuity(frames: TurnFrame[]): void {
         ]
       : []),
     ...(viewportChanged >= 0 ? ["scroll viewport geometry changed"] : []),
-    ...(attachmentMissing >= 0 ? ["submitted image attachment left the painted layout"] : []),
+    ...(attachmentMissing >= 0
+      ? ["submitted attachment or compact summary left the painted layout"]
+      : []),
   ];
   let failure = Math.max(0, first);
   if (attachmentMissing >= 0) failure = attachmentMissing;

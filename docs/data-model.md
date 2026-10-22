@@ -61,6 +61,59 @@ disables it. Disabling changes presentation or automatic work without deleting s
 or user data. Keep fork fixes, installation identity and verification outside these opt-outs.
 The canonical preference schema lives in `packages/app/src/paseo-plus-plus/preferences.ts`.
 
+## Attachment originals
+
+The execution daemon owns `$PASEO_HOME/attachments`: immutable content-hash files in `blobs`,
+immutable per-agent records in `references`, private unpublished files in `staging`, and an
+exclusive `writer` ownership entry. Only new Paseo-owned `browser_screenshot` captures enter this
+store. Provider-native images, external MCP/plugin screenshots, arbitrary files/URLs and user
+attachments retain their existing paths.
+
+Reserve worst-case original storage before capture. The candidate defaults allow a 16 MiB
+original, 1 GiB of globally charged artifacts and 256 MiB of logical originals per owner. Blob,
+reference, metadata and pending-work ceilings apply independently; see
+`packages/server/src/server/attachments/store.ts`. Identical owner/content/MIME tuples reuse a
+reference, and different owners share immutable bytes while retaining separate logical charges.
+Admission near quota can reject a capture that might have deduplicated: its hash is unknown until
+after capture. Retained orphans and staging artifacts still consume quota. Insufficient disk or
+busy storage returns an error without capturing or reporting a saved original.
+
+Publication syncs a private file before linking its immutable final name. A reference publishes
+only after its blob. POSIX directory entries are synced; Node does not provide the same directory
+sync on Windows. These operations inherit the filesystem's durability guarantees and are not a
+qualified power-loss guarantee on every platform. Failed publication retains charged artifacts
+rather than overwriting or deleting committed originals. Cancellation after reference commit can
+leave an undisclosed but discoverable original.
+
+Exclusive owner-file creation admits one cooperative writer. Normal close freezes admission and
+drains actual capture/publication/cleanup before verifying the handle identity and exact token and
+releasing ownership. A timed-out drain retains ownership. A read-only instance never repairs,
+rewrites or removes another owner's entry. The identity check and unlink are not atomic against
+local filesystem actors; this store adds no isolation from coding agents with filesystem access.
+
+A retained owner entry after a crash disables new writes, independently of whether originals are
+readable. Restart does not re-enable writes; explicit write recovery is future work. Read recovery
+validates bounded committed reference files independently of owner metadata and refreshes discovery
+for later publications by another writer. Metadata checks the bounded reference and safely opened
+blob's size; original retrieval also verifies its content hash. Missing or corrupt original reads
+return an unavailable error. Listings do not promise a transactional snapshot. Archive, deletion of an agent record and
+RAM eviction remove no originals or reference records. No purge, GC, automatic backfill or session
+history rewrite is implemented. Copied reference IDs retain their recorded owner provenance.
+
+The reference API uses daemon-wide `workspace.read` authority and checks owner/reference equality;
+it does not introduce workspace isolation. `features.durableAttachments` gates the API once.
+`attachmentStorage` separately reports write availability and original-read support for the physical
+connection. Authenticated list/metadata work on plugin IPC, but original reads require the direct
+WebSocket or relay acknowledged-send path. Reads bind to their initiating socket, with four global
+and two session leases, no waiting queue, 64 KiB chunks and idle/total deadlines. Cancellation or
+source/permission loss stops further production and closes the file. A dispatched send keeps its
+global/session reservation until its actual acknowledgement settles, even after caller termination.
+The client treats an optional read request ID as a local cancellation handle and gives each attempt
+a fresh wire ID, so reusing that handle cannot admit late frames from an earlier attempt.
+The client returns bytes only after complete framing
+and the terminal successful reference response; no inline-base64 retrieval fallback exists.
+These transfer limits do not cap client assembly, image decoding, provider context or process RSS.
+
 ## Store Surface Rules
 
 Store APIs own persistence atomicity and should not make services coordinate raw reads and writes. A good store method maps cleanly to one SQL statement or one SQL transaction, even when the current implementation is JSON files. If a caller needs a queue, lock, read-merge-write loop, or uniqueness race workaround, that behavior belongs behind the store surface.

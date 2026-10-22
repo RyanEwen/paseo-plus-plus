@@ -1,0 +1,9 @@
+{
+  "version": "0.11.2-preview.32",
+  "upstreamVersion": "0.11.2",
+  "appVersion": "0.11.2",
+  "buildNumber": 32,
+  "androidVersionCode": 1000000032,
+  "tag": "v0.11.2-preview.32",
+  "commit": "750bc7480b09fa4f46915dc78a464ccdfd002d39"
+}

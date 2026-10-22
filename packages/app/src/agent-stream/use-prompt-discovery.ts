@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 
-export const PROMPT_DISCOVERY_PAGE_BUDGET = 8;
+import { PROMPT_DISCOVERY_PAGE_BUDGET } from "@/timeline/timeline-fetch-policy";
+export { PROMPT_DISCOVERY_PAGE_BUDGET } from "@/timeline/timeline-fetch-policy";
 export type PromptDiscoveryStatus =
   | "idle"
   | "loading"
