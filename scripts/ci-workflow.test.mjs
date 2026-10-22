@@ -15,6 +15,7 @@ import {
 } from "./preview-release/source.mjs";
 import {
   fingerprintBridgeAssets,
+  requirePreviewNotes,
   resolvePublicationPolicy,
   updaterBridgeMarker,
 } from "./preview-release/publication-policy.mjs";
@@ -148,7 +149,10 @@ test("preview releases build one checked commit and require every approved platf
     assert.ok(source.includes(`runner: ${runner}`), `missing ${runner}`);
   }
   assert.doesNotMatch(source, /macos|eas build|npm publish|contents: write[\s\S]*contents: write/);
-  assert.match(source, /release_kind:[\s\S]*default: bridge[\s\S]*- bridge[ \t]*\n[ \t]+- latest/);
+  assert.match(
+    source,
+    /release_kind:[\s\S]*default: preview[\s\S]*- preview[ \t]*\n[ \t]+- bridge[ \t]*\n[ \t]+- latest/,
+  );
   assert.match(
     jobs.get("source").join("\n"),
     /run: node scripts\/preview-release\/publication-policy\.mjs/,
@@ -202,6 +206,12 @@ function publicationFixture() {
       assetFingerprint: fingerprintBridgeAssets(assets),
       qualificationEvidence: "docs/qa-evidence/updater-bridge/acceptance.md",
     },
+    retainedBridge: {
+      releaseId: bridge.id,
+      tag: bridge.tag_name,
+      commit: bridge.target_commitish,
+      assetFingerprint: fingerprintBridgeAssets(assets),
+    },
     releases: [bridge],
     comparison: {
       status: "ahead",
@@ -224,7 +234,7 @@ test("normal Latest publication stays closed until a published bridge is qualifi
   );
   assert.throws(
     () => resolvePublicationPolicy({ ...fixture, kind: "stable" }),
-    /kind must be bridge or latest/,
+    /kind must be bridge, preview or latest/,
   );
   assert.throws(
     () => resolvePublicationPolicy({ ...fixture, kind: "bridge" }),
@@ -234,6 +244,36 @@ test("normal Latest publication stays closed until a published bridge is qualifi
     () => resolvePublicationPolicy({ ...fixture, kind: "bridge", qualifiedBridge: null }),
     /final updater bridge already exists/,
   );
+});
+
+test("continuing preview prereleases require retention but never invent Latest qualification", () => {
+  const fixture = { ...publicationFixture(), kind: "preview", qualifiedBridge: null };
+  assert.deepEqual(resolvePublicationPolicy(fixture), { prerelease: true, makeLatest: false });
+  assert.throws(
+    () => resolvePublicationPolicy({ ...fixture, kind: "latest" }),
+    /reviewed qualified-bridge receipt/,
+  );
+  for (const retainedBridge of [null, {}, { tag: fixture.releases[0].tag_name }]) {
+    assert.throws(
+      () => resolvePublicationPolicy({ ...fixture, retainedBridge }),
+      /bridge retention evidence/,
+    );
+  }
+  assert.throws(
+    () => resolvePublicationPolicy({ ...fixture, kind: "bridge" }),
+    /final updater bridge already exists/,
+  );
+});
+
+test("non-bridge release notes cannot create a second bridge marker", () => {
+  for (const kind of ["preview", "latest"]) {
+    assert.throws(() => requirePreviewNotes(updaterBridgeMarker, kind), /marker is reserved/);
+    assert.doesNotThrow(() => requirePreviewNotes("Reviewed changes", kind));
+  }
+  for (const notes of [undefined, null, "", "  ", {}]) {
+    assert.throws(() => requirePreviewNotes(notes, "preview"), /user-facing release notes/);
+  }
+  assert.doesNotThrow(() => requirePreviewNotes(updaterBridgeMarker, "bridge"));
 });
 
 test("normal release gate requires the exact retained prerelease, asset inventory and source ancestry", () => {
@@ -248,15 +288,19 @@ test("normal release gate requires the exact retained prerelease, asset inventor
     { ...bridge, assets: bridge.assets.slice(1) },
     { ...bridge, assets: [...bridge.assets, { ...bridge.assets[0], id: 103, name: "extra.apk" }] },
   ]) {
+    for (const kind of ["latest", "preview"]) {
+      assert.throws(
+        () => resolvePublicationPolicy({ ...fixture, kind, releases: [replacement] }),
+        /immutable assets must remain published/,
+      );
+    }
+  }
+  for (const kind of ["latest", "preview"]) {
     assert.throws(
-      () => resolvePublicationPolicy({ ...fixture, releases: [replacement] }),
+      () => resolvePublicationPolicy({ ...fixture, kind, releases: [] }),
       /immutable assets must remain published/,
     );
   }
-  assert.throws(
-    () => resolvePublicationPolicy({ ...fixture, releases: [] }),
-    /immutable assets must remain published/,
-  );
   for (const comparison of [
     null,
     { ...fixture.comparison, status: "identical" },
@@ -264,10 +308,12 @@ test("normal release gate requires the exact retained prerelease, asset inventor
     { ...fixture.comparison, base_commit: { sha: "c".repeat(40) } },
     { ...fixture.comparison, merge_base_commit: { sha: "c".repeat(40) } },
   ]) {
-    assert.throws(
-      () => resolvePublicationPolicy({ ...fixture, comparison }),
-      /descend from the qualified bridge/,
-    );
+    for (const kind of ["latest", "preview"]) {
+      assert.throws(
+        () => resolvePublicationPolicy({ ...fixture, kind, comparison }),
+        /descend from the retained bridge/,
+      );
+    }
   }
   for (const qualificationEvidence of [
     "../receipt.md",
@@ -292,14 +338,17 @@ test("normal publication preserves the native counter and desktop ordering witho
     ["0.11.2-preview.76", 76],
     ["0.11.1-preview.81", 81],
   ]) {
-    assert.throws(
-      () =>
-        resolvePublicationPolicy({
-          ...fixture,
-          release: { ...fixture.release, tag: `v${version}`, version, buildNumber },
-        }),
-      /advance the published/,
-    );
+    for (const kind of ["latest", "preview"]) {
+      assert.throws(
+        () =>
+          resolvePublicationPolicy({
+            ...fixture,
+            kind,
+            release: { ...fixture.release, tag: `v${version}`, version, buildNumber },
+          }),
+        /advance the published/,
+      );
+    }
   }
   assert.throws(
     () =>
@@ -606,6 +655,18 @@ test("gated checks are statically named jobs with real job-level gating", () => 
   }
 });
 
+test("pull-request checks run for every base branch, including stacked PRs", () => {
+  for (const workflowPath of [
+    ciWorkflowPath,
+    new URL(".github/workflows/desktop-packages.yml", repoRoot),
+  ]) {
+    const trigger = readFileSync(workflowPath, "utf8").split("jobs:", 1)[0];
+    const pullRequest = trigger.match(/^  pull_request:\n((?:    .*\n)*)/m);
+    assert.ok(pullRequest, `${workflowPath.pathname} runs on pull requests`);
+    assert.doesNotMatch(pullRequest[1], /branches/);
+  }
+});
+
 test("change gating allows superseded workflow runs to cancel", () => {
   const ci = readFileSync(ciWorkflowPath, "utf8");
   assert.match(
@@ -809,7 +870,7 @@ test("desktop packaging smokes main pushes and only the pull requests that touch
   const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
   const trigger = source.split("jobs:", 1)[0];
   assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
+  assert.match(trigger, /pull_request:\s*\n\s+paths:/);
   assert.match(trigger, /- "packages\/desktop\/\*\*"/);
   assert.doesNotMatch(source, /dorny\/paths-filter/);
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
@@ -880,6 +941,7 @@ test("quality preserves commands and routes each domain independently after fail
       "npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity",
       "npm audit signatures",
       "npm run lint",
+      "node --test scripts/oxlint/paseo-plugin.test.mjs",
     ],
     relay: ["npm run build:relay", "npm run test --workspace=@getpaseo/relay"],
     sdk: [
@@ -975,7 +1037,7 @@ test("Windows units and integration run independently with complete routed cover
   assert.doesNotMatch(invocations[0], / -t /);
   assert.equal(
     invocations[1],
-    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments"',
+    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts"',
   );
   const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
   assert.doesNotMatch(serverConfig, /maxWorkers/);

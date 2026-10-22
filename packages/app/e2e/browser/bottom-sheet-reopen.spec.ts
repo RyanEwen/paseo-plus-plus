@@ -76,10 +76,11 @@ async function closeBottomSheetWithBackdrop(page: Page) {
 }
 
 async function openTabActions(page: Page) {
-  const trigger = page
-    .getByTestId("workspace-tabs-row")
-    .getByRole("button", { name: /^Open menu for/ });
-  await trigger.click();
+  await page
+    .getByTestId("workspace-tabs-scroll")
+    .getByRole("tab")
+    .first()
+    .click({ button: "right" });
   await expectBottomSheetOpen(page);
 }
 

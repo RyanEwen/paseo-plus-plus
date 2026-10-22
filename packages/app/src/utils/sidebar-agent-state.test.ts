@@ -75,20 +75,20 @@ describe("aggregateSidebarStateBuckets", () => {
     expect(aggregateSidebarStateBuckets(["running", "attention", "failed"])).toBe("failed");
   });
 
-  it("prefers running over ready-to-review so a working project keeps its loader", () => {
-    expect(aggregateSidebarStateBuckets(["attention", "running"])).toBe("running");
+  it("prefers ready-to-review over running in a collapsed project", () => {
+    expect(aggregateSidebarStateBuckets(["attention", "running"])).toBe("attention");
   });
 
   it("prefers ready-to-review over done", () => {
     expect(aggregateSidebarStateBuckets(["done", "attention", "done"])).toBe("attention");
   });
 
-  it("follows the full needs_input > failed > running > attention > done ordering", () => {
+  it("follows the full needs_input > failed > attention > running > done ordering", () => {
     // Each pair of adjacent buckets: the more urgent one wins when both are present.
     expect(aggregateSidebarStateBuckets(["failed", "needs_input"])).toBe("needs_input");
-    expect(aggregateSidebarStateBuckets(["running", "failed"])).toBe("failed");
-    expect(aggregateSidebarStateBuckets(["attention", "running"])).toBe("running");
-    expect(aggregateSidebarStateBuckets(["done", "attention"])).toBe("attention");
+    expect(aggregateSidebarStateBuckets(["attention", "failed"])).toBe("failed");
+    expect(aggregateSidebarStateBuckets(["attention", "running"])).toBe("attention");
+    expect(aggregateSidebarStateBuckets(["done", "running"])).toBe("running");
   });
 
   it("is order-independent", () => {
@@ -107,7 +107,7 @@ describe("known project activity", () => {
     expect(aggregateKnownSidebarStateBuckets(["done", "done"])).toBe("done");
   });
   it("preserves real activity and the existing mixed-workspace priority", () => {
-    expect(aggregateKnownSidebarStateBuckets(["attention", "running", null])).toBe("running");
+    expect(aggregateKnownSidebarStateBuckets(["attention", "running", null])).toBe("attention");
     expect(aggregateKnownSidebarStateBuckets(["running", "failed"])).toBe("failed");
     expect(aggregateKnownSidebarStateBuckets(["failed", "needs_input"])).toBe("needs_input");
     expect(aggregateKnownSidebarStateBuckets(["done", "attention"])).toBe("attention");

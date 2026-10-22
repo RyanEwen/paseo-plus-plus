@@ -21,6 +21,8 @@ export interface AgentTimelineResponseGate {
 export interface OlderTimelinePagesGate {
   getRequestCount(): number;
   getReadAccounting(): ReturnType<ReturnType<typeof createTimelineRequestLedger>["summary"]>;
+  getCertifiedPrompts(): Array<{ id: string; text: string }>;
+  getMountingPrompt(): { id: string; text: string } | null;
   flushContentReads(): number;
   getRepeatedEntryCount(): number;
   getOwnedEntryCountContaining(text: string): number;
@@ -445,6 +447,8 @@ export async function holdAgentOlderTimelinePages(
   return {
     getRequestCount: () => requestCount,
     getReadAccounting: ledger.summary,
+    getCertifiedPrompts: ledger.certifiedPrompts,
+    getMountingPrompt: ledger.mountingPrompt,
     flushContentReads() {
       const forwards = contentForwards.splice(0);
       for (const forward of forwards) forward();

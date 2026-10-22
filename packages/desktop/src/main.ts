@@ -103,6 +103,8 @@ import {
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
+import { registerBrowserExtensions } from "./features/browser-extensions/index.js";
+import { buildBrowserExtensionContextMenuItems } from "./features/browser-extensions/context-menus.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
@@ -211,8 +213,17 @@ function showBrowserWebviewContextMenu(
   contents: Electron.WebContents,
   params: Electron.ContextMenuParams,
 ): void {
+  const items = buildStandardContextMenuItems(contents, params);
+  const extensionItems = buildBrowserExtensionContextMenuItems(contents, params);
+  if (extensionItems.length > 0) {
+    if (items.length > 0) {
+      items.push({ type: "separator" });
+    }
+    items.push(...extensionItems);
+  }
+
   const menu = Menu.buildFromTemplate([
-    ...buildStandardContextMenuItems(contents, params),
+    ...items,
     ...(app.isPackaged
       ? []
       : [
@@ -480,6 +491,10 @@ ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     return false;
   }
+  const host = BrowserWindow.fromWebContents(event.sender);
+  if (!host || host.webContents !== event.sender || !host.isFocused() || host.isMinimized()) {
+    return false;
+  }
   const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
   if (!contents) {
     return false;
@@ -549,7 +564,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: getPaseoBrowserWebContentsForHostWindow,
+  findGuest: (browserId, hostId) => getPaseoBrowserWebContentsForHostWindow(browserId, hostId),
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
@@ -991,6 +1006,7 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
+  await registerBrowserExtensions();
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).

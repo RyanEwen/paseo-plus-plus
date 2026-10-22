@@ -1,3 +1,4 @@
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -175,6 +176,7 @@ interface SessionTestAccess {
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
   emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void>;
   updateClientCapabilities(capabilities: Record<string, unknown> | null, source?: object): void;
+  publish: Session["publish"];
   emit(message: unknown): void;
   onMessage(message: unknown): void;
   paseoHome: string;
@@ -646,6 +648,7 @@ function createSessionForWorkspaceTests(
   const session = asTestSession(
     new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -1008,6 +1011,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     const session = asTestSession(
       new Session({
         messageReceipts: createMessageReceiptsStub(),
+        agentMessages: createAgentMessageDeliveryStub(),
         creationService: createTestCreationService(),
         clientId: "test-client",
         serverId: "test-server",
@@ -1163,6 +1167,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
     const emitted: SessionOutboundMessage[] = [];
     const session = new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -1302,6 +1307,7 @@ test("create_agent_request does not title an existing workspace from the agent p
     const session = asTestSession(
       new Session({
         messageReceipts: createMessageReceiptsStub(),
+        agentMessages: createAgentMessageDeliveryStub(),
         creationService: createTestCreationService(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
@@ -1573,6 +1579,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
   const session = asTestSession(
     new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -2057,6 +2064,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
   const session = asTestSession(
     new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -2227,6 +2235,7 @@ test("close_items_request archives stored agents that are not currently loaded",
   const session = asTestSession(
     new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -2388,6 +2397,7 @@ test("close_items_request continues after an archive failure", async () => {
   const session = asTestSession(
     new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -3647,6 +3657,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
   const session = asTestSession(
     new Session({
       messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
       creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
@@ -5171,6 +5182,57 @@ test("open_project_request keeps archived records and allocates a fresh workspac
   expect(response?.payload.workspace?.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
 });
 
+test("project-scoped archived workspace listing returns zero-agent records without active directory updates", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.projectRegistry.get = async (projectId) =>
+    projectId === "requested-project"
+      ? createPersistedProjectRecord({
+          projectId,
+          rootPath: "/repo",
+          kind: "git",
+          displayName: "Project",
+          createdAt: "2026-10-20T12:00:00Z",
+          updatedAt: "2026-10-20T12:00:00Z",
+        })
+      : null;
+  const record = createPersistedWorkspaceRecord({
+    workspaceId: "zero-agent-archive",
+    projectId: "requested-project",
+    cwd: "/repo/feature",
+    kind: "worktree",
+    displayName: "Feature",
+    createdAt: "2026-10-20T12:00:00Z",
+    updatedAt: "2026-10-20T12:00:00Z",
+    archivedAt: "2026-10-20T12:00:00Z",
+  });
+  session.workspaceRegistry.list = async () => [
+    record,
+    { ...record, workspaceId: "other", projectId: "other-project" },
+  ];
+  await session.handleMessage({
+    type: "workspace.recovery.list_archived.request",
+    requestId: "list-archives",
+    projectId: "requested-project",
+  });
+  expect(emitted).toHaveLength(1);
+  expect(findByType(emitted, "workspace.recovery.list_archived.response")?.payload).toMatchObject({
+    requestId: "list-archives",
+    projectId: "requested-project",
+    error: null,
+    entries: [{ workspaceId: "zero-agent-archive", workspaceName: "Feature" }],
+  });
+  expect(record.archivedAt).toBe("2026-10-20T12:00:00Z");
+  await session.handleMessage({
+    type: "workspace.recovery.list_archived.request",
+    requestId: "removed-project",
+    projectId: "missing",
+  });
+  expect(
+    findByType(emitted.slice(1), "workspace.recovery.list_archived.response")?.payload,
+  ).toMatchObject({ requestId: "removed-project", entries: [], error: expect.any(String) });
+});
+
 test("open_project_request does not repurpose an orphaned archived workspace", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
@@ -5705,7 +5767,7 @@ test("legacy refresh_agent_request restores a real deleted worktree", async () =
     cwd: repoDir,
     worktreeSlug: "keep",
     source: { kind: "checkout-branch", branchName: branch },
-    runSetup: false,
+
     paseoHome,
     worktreesRoot,
   });
@@ -5953,7 +6015,7 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
       baseBranch: "main",
       branchName: "worktree-kind-archive",
     },
-    runSetup: false,
+
     paseoHome,
   });
 
@@ -9628,3 +9690,82 @@ test("workspace.create.request reports an archived explicit project", async () =
     errorCode: "archived_project",
   });
 });
+
+test.each(["failed", "blocked"] as const)(
+  "workspace setup %s catches up from an existing directory cursor after releasing observation",
+  async (status) => {
+    const emitted: SessionOutboundMessage[] = [];
+    const session = createSessionForWorkspaceTests({
+      onMessage: (message) => emitted.push(message),
+    });
+    const source = {};
+    const capabilities = {
+      [CLIENT_CAPS.ownedSubscriptions]: true,
+      [CLIENT_CAPS.workspaceSetupObservation]: true,
+    };
+    session.updateClientCapabilities(capabilities, source);
+    await session.handleMessage(
+      { type: "fetch_workspaces_request", requestId: "before-setup", subscribe: {}, sync: {} },
+      source,
+    );
+    const initial = findByType(emitted, "fetch_workspaces_response")!.payload;
+    expect(initial.entries).toEqual([
+      expect.objectContaining({ id: "ws-repo-running", setupStatus: null }),
+    ]);
+    expect(initial.sync?.mode).toBe("snapshot");
+    await session.handleMessage(
+      {
+        type: "subscription.release.request",
+        requestId: "release-directory",
+        subscriptionId: initial.subscriptionId,
+      },
+      source,
+    );
+    emitted.length = 0;
+    session.publish({
+      type: "workspace_setup_progress",
+      payload: {
+        workspaceId: "ws-repo-running",
+        status,
+        error: status === "failed" ? "setup failed" : null,
+        detail: {
+          type: "worktree_setup",
+          worktreePath: REPO_CWD,
+          branchName: "main",
+          log: "output never requested",
+          commands: [],
+        },
+      },
+    });
+    await flushWorkspaceUpdateBackgroundWork();
+    expect(emitted).toEqual([]);
+    const reconnectSource = {};
+    session.updateClientCapabilities(capabilities, reconnectSource);
+    await session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "catch-up-setup",
+        subscribe: {},
+        sync: { generation: initial.sync!.generation, afterSeq: initial.sync!.headSeq },
+      },
+      reconnectSource,
+    );
+    const caughtUp = findByType(emitted, "fetch_workspaces_response")!.payload;
+    expect(caughtUp.sync?.mode).toBe("changes");
+    expect(caughtUp.entries).toEqual([
+      expect.objectContaining({ id: "ws-repo-running", setupStatus: status }),
+    ]);
+    expect(caughtUp.entries[0].syncSeq).toBeGreaterThan(initial.sync!.headSeq);
+    expect(filterByType(emitted, "workspace_setup_progress")).toEqual([]);
+    emitted.length = 0;
+    await session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "after-catch-up",
+        sync: { generation: caughtUp.sync!.generation, afterSeq: caughtUp.sync!.headSeq },
+      },
+      reconnectSource,
+    );
+    expect(findByType(emitted, "fetch_workspaces_response")!.payload.entries).toEqual([]);
+  },
+);

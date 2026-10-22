@@ -1,3 +1,4 @@
+import type { AcceptedCanonicalSources } from "./canonical-source-metadata";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
@@ -158,6 +159,7 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
+  onAcceptedSources?: (sources: AcceptedCanonicalSources) => void;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -175,6 +177,7 @@ export interface ProcessTimelineResponseOutput {
 }
 
 interface TimelineUnit {
+  sourceEntry?: TimelineResponseEntry;
   seq: number;
   seqEnd: number;
   sourceSeqRanges: TimelineSeqRange[];
@@ -183,6 +186,7 @@ interface TimelineUnit {
 }
 
 interface TimelinePathResult {
+  acceptedSourceEntries?: readonly TimelineResponseEntry[];
   tail: StreamItem[];
   head: StreamItem[];
   cursor: TimelineCursor | null | undefined;
@@ -469,6 +473,9 @@ function mergeTimelineWindow(args: {
     older,
     sideEffects: [],
     acknowledgedClientMessageIds: reconciled.acknowledgedClientMessageIds,
+    acceptedSourceEntries: timelineUnits.flatMap((unit) =>
+      unit.sourceEntry ? [unit.sourceEntry] : [],
+    ),
   };
 }
 
@@ -555,6 +562,9 @@ function applyTimelineReplacePath(args: {
     older: payload.hasOlder ? "available" : "none",
     sideEffects,
     acknowledgedClientMessageIds,
+    acceptedSourceEntries: timelineUnits.flatMap((unit) =>
+      unit.sourceEntry ? [unit.sourceEntry] : [],
+    ),
   };
 }
 interface IncrementalAcceptResult {
@@ -1230,7 +1240,34 @@ function applyTimelineIncrementalPath(args: {
     older: resolveOlderTimelineAvailability({ payload, cursor, currentCursor }),
     sideEffects,
     acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds,
+    acceptedSourceEntries: acceptedUnits.flatMap((unit) =>
+      unit.sourceEntry ? [unit.sourceEntry] : [],
+    ),
   };
+}
+
+function resolveTimelineResponseInitialization(
+  input: Pick<
+    ProcessTimelineResponseInput,
+    "payload" | "isInitializing" | "hasActiveInitDeferred" | "initRequestDirection"
+  >,
+) {
+  const { payload, isInitializing, hasActiveInitDeferred, initRequestDirection } = input;
+  const shouldResolveDeferredInit = shouldResolveTimelineInit({
+    hasActiveInitDeferred,
+    hasNewer: payload.hasNewer,
+    isInitializing,
+    initRequestDirection,
+    responseDirection: payload.direction,
+    reset: payload.reset,
+  });
+  const timelineResponseComplete = payload.direction !== "after" || !payload.hasNewer;
+  const clearInitializing =
+    (shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred)) &&
+    timelineResponseComplete;
+
+  const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
+  return { initResolution, clearInitializing };
 }
 
 export function processTimelineResponse(
@@ -1270,6 +1307,7 @@ export function processTimelineResponse(
   // Convert entries to timeline units
   // ------------------------------------------------------------------
   const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
+    sourceEntry: entry,
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:
@@ -1394,21 +1432,22 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Init resolution
   // ------------------------------------------------------------------
-  const shouldResolveDeferredInit = shouldResolveTimelineInit({
-    hasActiveInitDeferred,
-    hasNewer: payload.hasNewer,
+  const { initResolution, clearInitializing } = resolveTimelineResponseInitialization({
+    payload,
     isInitializing,
+    hasActiveInitDeferred,
     initRequestDirection,
-    responseDirection: payload.direction,
-    reset: payload.reset,
   });
-  const timelineResponseComplete = payload.direction !== "after" || !payload.hasNewer;
-  const clearInitializing =
-    (shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred)) &&
-    timelineResponseComplete;
-
-  const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
   const commit = discard ? "discard" : "apply";
+  if (!discard)
+    input.onAcceptedSources?.({
+      projection: payload.projection,
+      epoch: payload.epoch,
+      entries: timelineResult.acceptedSourceEntries ?? [],
+      tail: nextTail,
+      head: nextHead,
+      cursor: nextCursor,
+    });
 
   return {
     commit,
@@ -1840,6 +1879,7 @@ export interface CreateSessionAgentStreamReducerQueueInput {
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
   ) => void;
   recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  beforeCommit?: (agentId: string, result: ProcessAgentStreamEventOutput) => void;
   onCommitted?: (agentId: string) => void;
 }
 
@@ -1910,6 +1950,7 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
+      input.beforeCommit?.(agentId, result);
       if (
         result.changedTail ||
         result.changedHead ||

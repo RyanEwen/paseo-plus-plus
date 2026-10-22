@@ -1,6 +1,5 @@
 // @ts-nocheck
 import { vi } from "vitest";
-import React from "react";
 
 const globalWithTestShims = globalThis as typeof globalThis & Record<string, unknown>;
 
@@ -79,33 +78,3 @@ vi.mock("@xterm/addon-ligatures", () => ({
 // react-native-svg and expo-linking test doubles live in test-stubs/ and reach
 // every vitest project through the resolve.alias in vitest.config.ts, same as
 // react-native-unistyles and lucide-react-native.
-
-const RouterPassthrough = ({ children }: { children?: React.ReactNode }) => children;
-
-vi.mock("expo-router", () => ({
-  Redirect: () => null,
-  Stack: Object.assign(RouterPassthrough, {
-    Screen: () => null,
-    Protected: RouterPassthrough,
-  }),
-  router: {
-    back: vi.fn(),
-    canGoBack: vi.fn(() => false),
-    navigate: vi.fn(),
-    push: vi.fn(),
-    replace: vi.fn(),
-    setParams: vi.fn(),
-  },
-  useGlobalSearchParams: vi.fn(() => ({})),
-  useLocalSearchParams: vi.fn(() => ({})),
-  usePathname: vi.fn(() => "/"),
-  useRootNavigationState: vi.fn(() => ({ key: "root" })),
-  useRouter: vi.fn(() => ({
-    back: vi.fn(),
-    canGoBack: vi.fn(() => false),
-    navigate: vi.fn(),
-    push: vi.fn(),
-    replace: vi.fn(),
-    setParams: vi.fn(),
-  })),
-}));

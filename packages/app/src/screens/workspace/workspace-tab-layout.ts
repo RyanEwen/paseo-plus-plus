@@ -1,6 +1,13 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 export const MIN_WORKSPACE_TAB_WIDTH = 96;
 
-export type WorkspaceTabCloseButtonPolicy = "all";
+/** Desktop main/sheet tabs retain the fork minimum; compact chips use the upstream touch layout. */
+export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
+  if (compact || host === "explorer") return 64;
+  return MIN_WORKSPACE_TAB_WIDTH;
+}
+
+export type WorkspaceTabCloseButtonPolicy = "all" | "none";
 
 export interface WorkspaceTabLayoutMetrics {
   rowHorizontalInset: number;
@@ -19,8 +26,12 @@ export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
   tabLabelWidths: number[];
   metrics: WorkspaceTabLayoutMetrics;
-  /** Compact strips keep readable content widths and scroll instead of compressing tabs. */
-  preserveNaturalWidths?: boolean;
+  /** Compact chips keep natural widths and close through their menu. */
+  compact: boolean;
+  /** Raise only the title-width ceiling; short tabs stay content-driven. */
+  widerTabs?: boolean;
+  iconOnly?: boolean;
+  iconOnlyTabWidth?: number;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -58,10 +69,11 @@ export function computeWorkspaceTabLayout(
   input: WorkspaceTabLayoutInput,
 ): WorkspaceTabLayoutResult {
   const tabCount = input.tabLabelWidths.length;
+  const closeButtonPolicy: WorkspaceTabCloseButtonPolicy = input.compact ? "none" : "all";
   if (tabCount === 0) {
     return {
       items: [],
-      closeButtonPolicy: "all",
+      closeButtonPolicy,
       requiresHorizontalScrollFallback: false,
     };
   }
@@ -78,19 +90,33 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
+  if (input.iconOnly) {
+    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      closeButtonPolicy,
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
-    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
+    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
   const minimumTotalWidth = input.metrics.minTabWidth * tabCount;
-  const requiresHorizontalScrollFallback = input.preserveNaturalWidths
-    ? availableTabsWidth < naturalTotalWidth
+  // A row that scrolls has no reason to truncate: the tabs keep their natural widths and the
+  // viewport pans over them. Pointer layouts first shrink toward the clickable minimum and scroll
+  // only once even that does not fit; compact layouts skip the shrink.
+  const requiresHorizontalScrollFallback = input.compact
+    ? naturalTotalWidth > availableTabsWidth
     : availableTabsWidth < minimumTotalWidth;
 
   let resolvedWidths = naturalWidths;
-  if (!input.preserveNaturalWidths && requiresHorizontalScrollFallback) {
-    resolvedWidths = Array.from({ length: tabCount }, () => input.metrics.minTabWidth);
-  } else if (!input.preserveNaturalWidths && naturalTotalWidth > availableTabsWidth) {
+  if (
+    !requiresHorizontalScrollFallback &&
+    !input.compact &&
+    naturalTotalWidth > availableTabsWidth
+  ) {
     const widthToRemove = naturalTotalWidth - availableTabsWidth;
     const shrinkCapacity = naturalTotalWidth - minimumTotalWidth;
     const shrinkRatio = widthToRemove / shrinkCapacity;
@@ -100,7 +126,7 @@ export function computeWorkspaceTabLayout(
   }
 
   const roundedWidths = resolvedWidths.map((width) =>
-    Math.round(clamp(width, input.metrics.minTabWidth, input.metrics.maxTabWidth)),
+    Math.round(clamp(width, input.metrics.minTabWidth, maximumWidth)),
   );
 
   return {
@@ -108,7 +134,7 @@ export function computeWorkspaceTabLayout(
       width,
       showLabel: width > tabChromeWidth,
     })),
-    closeButtonPolicy: "all",
+    closeButtonPolicy,
     requiresHorizontalScrollFallback,
   };
 }

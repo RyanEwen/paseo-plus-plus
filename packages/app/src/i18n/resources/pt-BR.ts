@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Abas somente com ícones",
+    iconOnlyHint:
+      "Clique com o botão direito em uma aba do Explorador ou no espaço vazio da barra e escolha Abas somente com ícones. Os nomes continuam disponíveis nas dicas.",
+  },
   settingsSync: {
     title: "Sincronização de configurações",
     hint: "Sincronize as preferências e a visibilidade da barra lateral por um host escolhido. Filtros de host/projeto, ordem dos espaços e grupos recolhidos continuam locais. A troca carrega as configurações antes de editá-las.",
@@ -37,6 +42,21 @@ export const ptBR: TranslationResources = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "Cor de destaque",
+      hint: "Usada nos controles principais e nas suas mensagens",
+      updateHost: "Atualize o host de configurações selecionado para alterar a cor de destaque",
+      preview: "Suas mensagens terão esta aparência",
+      options: {
+        default: "Padrão",
+        blue: "Azul",
+        green: "Verde",
+        purple: "Roxo",
+        rose: "Rosa",
+        orange: "Laranja",
+        teal: "Verde-azulado",
+      },
+    },
     workspaceLimit: {
       save: "Salvar",
       title: "Limites de espaços de trabalho",
@@ -72,8 +92,8 @@ export const ptBR: TranslationResources = {
     saveFailed: "Não foi possível salvar. Tente novamente.",
     features: {
       workspaceChatLinks: {
-        label: "Abrir links de conversa no Paseo",
-        hint: "No computador, abrir links da conversa no navegador do próprio espaço. Desative para usar o navegador externo. Abrir no Paseo continua disponível no menu do link.",
+        label: "Links do espaço de trabalho",
+        hint: "Abrir links web do espaço de trabalho em novas abas do navegador no desktop, incluindo terminal, chat e Git. Desative para abrir externamente. As opções explícitas continuam disponíveis nos menus.",
       },
       sidebarHostUpdates: {
         label: "Atualizações de hosts na barra lateral",
@@ -86,6 +106,10 @@ export const ptBR: TranslationResources = {
       mobileWorkspaceTabs: {
         label: "Abas de espaços no celular",
         hint: "Mostrar uma barra de abas rolável em espaços compactos. Desative para usar o seletor anterior sem mudar a aba selecionada.",
+      },
+      widerWorkspaceTabs: {
+        label: "Abas do espaço de trabalho mais largas",
+        hint: "Permita até 50% mais largura para títulos longos. Abas curtas mantêm a largura natural. Desative para restaurar o limite anterior.",
       },
 
       descriptiveToolCalls: {
@@ -155,7 +179,7 @@ export const ptBR: TranslationResources = {
       },
       mobile: {
         label: "Navegação móvel",
-        hint: "Alvos de toque maiores, Voltar mais seguro no Android e notificações de desenvolvimento separadas",
+        hint: "Voltar mais seguro no Android e notificações de desenvolvimento separadas",
       },
       pickers: {
         label: "Seletores e estados dos espaços",
@@ -778,6 +802,7 @@ export const ptBR: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "Atualize o host para ver os detalhes da configuração do espaço de trabalho",
       descriptor: {
         label: "Configuração",
         completed: "Configuração concluída",
@@ -814,12 +839,15 @@ export const ptBR: TranslationResources = {
     browser: {
       openInPaseo: "Abrir no navegador do Paseo",
       openExternally: "Abrir em um navegador externo",
+      copyLink: "Copiar link",
       unavailable: {
         title: "O navegador é exclusivo do desktop",
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
       },
       session: "Sessão do navegador {{browserId}}",
       controls: {
+        pageZoom: "Zoom da página",
+        zoomFailed: "Não foi possível alterar o zoom da página",
         back: "Voltar",
         forward: "Avançar",
         stopLoading: "Parar carregamento",
@@ -841,6 +869,17 @@ export const ptBR: TranslationResources = {
         placeholder: "Mensagem ao agente sobre este elemento…",
         submit: "Anexar",
         cancel: "Cancelar",
+      },
+      extensions: {
+        label: "Extensões",
+        empty: "Nenhuma extensão ativada.",
+        noPopup: "Nenhuma janela fornecida",
+        loading: "Carregando extensões...",
+        manage: "Gerenciar extensões",
+        openFailed: "Não foi possível abrir a extensão",
+        pin: "Fixar {{name}}",
+        unpin: "Desafixar {{name}}",
+        pinFailed: "Não foi possível salvar a extensão fixada",
       },
       devices: {
         label: "Tamanho do dispositivo",
@@ -1182,6 +1221,7 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "Atualize este host para abrir a comparação de um único arquivo.",
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
@@ -1215,6 +1255,7 @@ export const ptBR: TranslationResources = {
         checkingRepository: "Verificando repositório...",
         notRepository: "Não é um repositório git",
         diffMode: "Modo de diff",
+        all: "Todas as alterações",
         uncommitted: "Sem commit",
         committed: "Com commit",
         branchUnknown: "Desconhecido",
@@ -1454,9 +1495,9 @@ export const ptBR: TranslationResources = {
         fiveDays: "5 dias",
         week: "1 semana",
         twoWeeks: "2 semanas",
-        month: "1 mês",
-        twoMonths: "2 meses",
-        threeMonths: "3 meses",
+        month: "1 mês (30 dias)",
+        twoMonths: "2 meses (60 dias)",
+        threeMonths: "3 meses (90 dias)",
       },
       expandAll: "Expandir tudo",
       collapseAll: "Recolher tudo",
@@ -1568,6 +1609,44 @@ export const ptBR: TranslationResources = {
       openProjectSettings: "Abrir configurações do projeto",
     },
     project: {
+      archive: {
+        action: "Arquivar tudo",
+        title: "Arquivar os espaços de trabalho do projeto?",
+        message:
+          'Projeto: "{{projectName}}"\nEspaços de trabalho: {{workspaceCount}}\nAgentes: {{agentCount}} (em execução: {{runningAgentCount}})\nHosts: {{hostCount}}\n\nOs agentes em execução e as tarefas dos espaços de trabalho serão interrompidos. As árvores de trabalho gerenciadas pelo Paseo poderão ser removidas. O projeto será mantido.',
+        includeBackground: "Arquivar também os espaços de trabalho em segundo plano ({{count}})",
+        backgroundWarning:
+          "Incluir os espaços de trabalho em segundo plano também interrompe seus agentes e tarefas.",
+        discovering: "Contando espaços de trabalho e agentes...",
+        progress: "Arquivando espaços de trabalho: {{completed}} de {{total}}",
+        completed: "Espaços de trabalho arquivados: {{count}}",
+        failed:
+          '{{completed}} espaços de trabalho foram arquivados. A operação parou em "{{workspace}}" no host {{host}}: {{error}}. Não tentados: {{unprocessed}}. Resolva o problema e tente Arquivar tudo novamente.',
+        empty: "Não há espaços de trabalho ativos neste projeto",
+        projectChanged:
+          "O projeto mudou durante a confirmação. Confira as contagens e tente Arquivar tudo novamente.",
+        hostDisconnected:
+          "O host {{host}} está desconectado. Conecte todos os hosts do projeto e tente novamente.",
+        updateRequired:
+          "Atualize o host {{host}} para arquivar os espaços de trabalho do projeto com segurança.",
+        alreadyArchiving:
+          'O espaço de trabalho "{{workspace}}" já está sendo arquivado. Aguarde a conclusão e tente novamente.',
+        incompleteDiscovery:
+          "Não foi possível contar todos os espaços de trabalho e agentes do projeto. Tente Arquivar tudo novamente.",
+        verificationFailed:
+          'Não foi possível verificar se o espaço de trabalho "{{workspace}}" está arquivado. Abra o Histórico de agentes para conferir seu estado antes de tentar novamente.',
+        agentsRemaining:
+          'O espaço de trabalho "{{workspace}}" ainda tem agentes ativos. Abra o Histórico de agentes para conferir o arquivamento incompleto.',
+        agentNotArchived:
+          "Não foi possível verificar se o agente {{agent}} está arquivado e parado. Abra o Histórico de agentes para conferir seu estado.",
+      },
+      restore: {
+        title: "Restaurar espaço de trabalho arquivado",
+        search: "Buscar espaços de trabalho arquivados",
+        empty: "Nenhum espaço de trabalho arquivado neste projeto",
+        updateRequired: "Atualize o host para ver os espaços de trabalho arquivados",
+        loadFailed: "Não foi possível carregar os espaços de trabalho arquivados",
+      },
       actions: {
         menu: "Ações do projeto",
         openSettings: "Abrir configurações do projeto",
@@ -2263,12 +2342,32 @@ export const ptBR: TranslationResources = {
       creatingAgent: "Criando agente",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: "Abrir arquivos .{{extension}} com",
+        pickerTitleFilename: "Abrir {{filename}} com",
+        dontAskAgain: "Não perguntar novamente",
+        use: "Usar",
+        openWith: "Abrir com…",
+        alwaysUseExtension: "Sempre usar para .{{extension}}",
+        alwaysUseFilename: "Sempre usar para {{filename}}",
+        option: "{{title}} — {{owner}}",
+        actions: "Ações do arquivo",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "Imagem",
+          source: "Fonte",
+        },
+      },
       directoryMissing: "Diretório do workspace não encontrado.",
       loading: "Carregando arquivo...",
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
+      documentUnsupported: "Arquivos {{type}} não podem ser exibidos neste dispositivo",
       failedToLoad: "Falha ao carregar arquivo",
+      notFound: "Arquivo não encontrado",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
       editor: {
         fileSize: "Tamanho {{size}}",
@@ -2280,10 +2379,7 @@ export const ptBR: TranslationResources = {
         changedOnDisk: "Alterado no disco",
         vimMode: "Modo Vim {{mode}}",
         cursor: "Linha {{line}}, coluna {{column}}",
-        preview: "Prévia",
-        source: "Fonte",
         deletedTitle: "Arquivo excluído do disco",
-        checkFailedTitle: "Não foi possível verificar o arquivo no disco",
         preservedDescription: "A cópia aberta foi preservada.",
         conflictDescription: "O conteúdo local foi preservado. Escolha qual versão manter.",
         overwrite: "Sobrescrever",
@@ -2461,6 +2557,70 @@ export const ptBR: TranslationResources = {
       saveAccessibility: "Salvar comentário de revisão",
     },
   },
+  providerUsage: {
+    options: "Configurações",
+    refreshFailed: "Não foi possível atualizar o uso",
+    noHosts: "Nenhum host conectado",
+    agentError: "Não foi possível carregar o uso: {{reason}}",
+    pin: "Fixar",
+    unpin: "Desafixar",
+    displayAs: "Porcentagens",
+    displayUsed: "Usado",
+    displayRemaining: "Restante",
+    showInSidebar: "Resumo na barra lateral",
+    showInSidebarHint: "Os períodos fixados aparecem no rodapé da barra lateral",
+    runToRefresh: "Execute {{command}} para atualizar.",
+    signInAgain: "Entre novamente.",
+    loginRejected: "Login rejeitado (HTTP {{status}}). {{remedy}}",
+    loginExpired: "O login expirou {{relativeTime}}. {{remedy}}",
+    title: "Uso do plano",
+    refresh: "Atualizar",
+    refreshAll: "Atualizar tudo",
+    refreshing: "Atualizando...",
+    loading: "Carregando uso...",
+    empty: "Sem dados de uso",
+    errorTitle: "Não foi possível carregar o uso",
+    hostUnavailable: "Conecte-se a {{host}} para ver o uso do provedor",
+    hostUpgradeRequired: "Atualize {{host}} para ver o uso do provedor",
+    clientUnavailable: "A conexão com o host não está pronta",
+    retry: "Tentar novamente",
+    tooltipLoading: "Carregando uso do plano...",
+    status: {
+      error: "Erro",
+      unavailable: "Indisponível",
+    },
+    values: {
+      used: "{{percentage}} usado",
+      remaining: "{{amount}} restantes",
+    },
+    labels: {
+      session: "Sessão",
+      weekly: "Semanal",
+      monthly: "Mensal",
+      codeReview: "Revisão de código",
+      credits: "Créditos",
+      monthlyCredits: "Créditos mensais",
+    },
+    duration: {
+      days: "{{value}} d",
+      hours: "{{value}} h",
+      minutes: "{{value}} min",
+    },
+    timing: {
+      lastUpdated: "Última atualização {{relativeTime}}",
+      noSuccessfulUpdate: "Nenhuma atualização bem-sucedida",
+      resetTimePassed: "O horário de redefinição passou",
+      resettingNow: "redefinindo agora",
+      resetsIn: "redefine em {{duration}}",
+      runsOutNow: "esgota agora",
+      runsOutIn: "esgota em {{duration}}",
+      justNow: "agora mesmo",
+      daysAgo: "há {{value}} d",
+      hoursAgo: "há {{value}} h",
+      minutesAgo: "há {{value}} min",
+      updated: "Atualizado {{relativeTime}}",
+    },
+  },
   settings: {
     title: "Configurações",
     loading: "Carregando configurações...",
@@ -2489,6 +2649,7 @@ export const ptBR: TranslationResources = {
       terminal: "Terminal",
       browser: "Navegador",
       editor: "Editor",
+      files: "Arquivos",
       shortcuts: "Atalhos",
       integrations: "Integrações",
       notifications: "Notificações",
@@ -2529,6 +2690,14 @@ export const ptBR: TranslationResources = {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
       vimHint: "Aplica-se a arquivos-fonte na web e no desktop.",
+    },
+    files: {
+      title: "Arquivos",
+      askEveryTime: "Perguntar sempre",
+      askAgain: "Perguntar de novo",
+      askAgainFor: "Perguntar de novo para {{label}}",
+      unavailable: "Não está em um host conectado",
+      empty: "Os painéis de arquivo aparecem aqui quando um plugin adiciona um",
     },
     notifications: {
       title: "Notificações",
@@ -2575,6 +2744,26 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       sending: "Envio",
+      browserExtensions: {
+        title: "Extensões",
+        compatibility:
+          "Alguns recursos das extensões do Chrome não são compatíveis. As extensões não são atualizadas automaticamente.",
+        store: "Chrome Web Store",
+        openStore: "Abrir Web Store",
+        refresh: "Atualizar",
+        enable: "Ativar",
+        disable: "Desativar",
+        retry: "Tentar novamente",
+        remove: "Remover",
+        removeTitle: "Remover {{name}}?",
+        removeMessage:
+          "Isso remove a extensão do Paseo. As pastas de origem sem compactação são mantidas.",
+        loading: "Carregando extensões...",
+        empty: "Nenhuma extensão instalada.",
+        unpackedHint: "Carregue uma extensão de uma pasta que contenha manifest.json.",
+        loadUnpacked: "Carregar sem compactação",
+        unavailable: "As extensões não estão disponíveis. Atualize o aplicativo para desktop.",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",
@@ -2794,6 +2983,7 @@ export const ptBR: TranslationResources = {
       searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
+      captureIndexPrompt: "Termine com um número de 1 a 9.",
       unassigned: "Não definido",
       actions: {
         menu: "Ações para {{name}}",

@@ -37,6 +37,7 @@ export function UserMessageAttachments({
   if (compact)
     return count > 0 ? (
       <Text
+        testID="user-message-attachments-summary"
         style={summaryStyle}
         numberOfLines={1}
         {...keyboardLink}

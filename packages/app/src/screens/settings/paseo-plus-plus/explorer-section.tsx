@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   SettingsCard,
   SettingsSection,
+  SettingsRow,
   SettingsSelect,
   SettingsSwitch,
 } from "@/components/settings";
@@ -106,9 +107,12 @@ export function ExplorerSection() {
   );
   const comparisonOptions = useMemo(
     () =>
-      (["uncommitted", "base"] as const).map((value) => ({
+      (["uncommitted", "base", "all"] as const).map((value) => ({
         value,
-        label: t(`settings.layout.explorer.comparison.options.${value}`),
+        label:
+          value === "all"
+            ? t("workspace.git.diff.all")
+            : t(`settings.layout.explorer.comparison.options.${value}`),
       })),
     [t],
   );
@@ -116,6 +120,10 @@ export function ExplorerSection() {
   return (
     <SettingsSection title={t("settings.layout.explorer.title")}>
       <SettingsCard>
+        <SettingsRow
+          label={t("explorerTabs.iconOnlyLabel")}
+          hint={t("explorerTabs.iconOnlyHint")}
+        />
         {isWeb ? (
           <SettingsSwitch
             label={t("settings.layout.explorer.autoOpen.label")}

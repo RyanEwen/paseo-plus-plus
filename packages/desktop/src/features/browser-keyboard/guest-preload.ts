@@ -97,3 +97,11 @@ ipcRenderer.on(POLICY_CHANNEL, (_event, value: BrowserKeyboardPolicyPayload) => 
 });
 
 ipcRenderer.send(POLICY_REQUEST_CHANNEL);
+
+// Only the top-level guest viewport controls the webview's page-CSS extent.
+// Send no page-provided dimensions or factors; the embedder re-reads native zoom.
+if (process.isMainFrame) {
+  window.addEventListener("resize", () => {
+    ipcRenderer.sendToHost("paseo:browser-viewport-resized");
+  });
+}

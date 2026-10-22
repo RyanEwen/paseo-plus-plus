@@ -31,8 +31,8 @@ export type MetaRowItem =
  * toggle answers for itself, so a row can end up showing checks with no change request beside
  * them, and CI resolves from the hint even when the hint itself is not drawn.
  *
- * The host is filtered upstream, where the badge map is built: a host that should show nothing
- * has no badge to hand down, so by the time a row sees one it is meant to be drawn.
+ * The upstream badge map decides whether a host is eligible (multiple visible hosts and the
+ * host's own appearance). The active mode's Host switch still applies here, like every peer.
  */
 export function selectMetaRowItems(input: {
   currentBranch: string | null;
@@ -62,7 +62,7 @@ export function selectMetaRowItems(input: {
   if (currentBranch && visible.branch) {
     items.push({ kind: "branch", name: currentBranch });
   }
-  if (hasHostBadge) {
+  if (hasHostBadge && visible.host) {
     items.push({ kind: "host" });
   }
   if (prHint && visible.changeRequest) {

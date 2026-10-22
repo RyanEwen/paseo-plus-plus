@@ -2,11 +2,12 @@ import type {
   NavigationAction,
   NavigationContainerRef,
   NavigationContainerRefWithCurrent,
-} from "@react-navigation/native";
+} from "expo-router/react-navigation";
 import { router, type Href } from "expo-router";
 import {
   encodeWorkspaceIdForPathSegment,
   getHostWorkspaceOpenParamFromPathname,
+  getHostWorkspaceRecoveryParamFromPathname,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 
@@ -133,6 +134,7 @@ function dispatchHostWorkspacePopTo(
           // Nested navigation merges params on a retained screen. Explicitly
           // clear an earlier notification intent when selecting another workspace.
           open: open ?? undefined,
+          recover: getHostWorkspaceRecoveryParamFromPathname(route),
         },
         // React Navigation consumes this nested hint when resolving the host child screen.
         // The browser-route canonicalizer strips the resulting ?pop=true URL artifact.

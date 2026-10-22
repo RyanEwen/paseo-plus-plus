@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useIsFocused, useNavigation } from "@react-navigation/native";
+import { useIsFocused } from "@react-navigation/native";
+import { useNavigation } from "expo-router/react-navigation";
 import { StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRootNavigationState } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
@@ -104,6 +105,7 @@ function HostWorkspaceRouteContent() {
     serverId?: string | string[];
     workspaceId?: string | string[];
     open?: string | string[];
+    recover?: string | string[];
   }>();
   const serverId = getParamValue(params.serverId);
   const workspaceValue = getParamValue(params.workspaceId);
@@ -199,7 +201,9 @@ function HostWorkspaceRouteContent() {
     return null;
   }
 
-  return <WorkspaceDeck recoveryRequested={isAgentOpenIntent} />;
+  return (
+    <WorkspaceDeck recoveryRequested={isAgentOpenIntent || getParamValue(params.recover) === "1"} />
+  );
 }
 
 function WorkspaceDeck({ recoveryRequested }: { recoveryRequested: boolean }) {

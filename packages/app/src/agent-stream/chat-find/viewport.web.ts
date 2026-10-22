@@ -1,3 +1,4 @@
+import { revealFindOccurrence } from "./body-reveal.web";
 import type { ChatFindOperations } from "./model";
 import type { ChatFindProps } from "./types";
 import { findMessageMatches, findMessageRows, findRenderedMatches } from "./ranges.web";
@@ -17,15 +18,19 @@ export function createFindViewport({
   getRoot,
   highlightName,
 }: ViewportInput): Pick<ChatFindOperations, "reveal" | "clear"> {
+  let generation = 0;
   return {
     clear() {
+      generation += 1;
       CSS.highlights.delete(highlightName);
     },
     // The source message owns navigation; the rendered occurrence owns its position.
     reveal(messageId, query, occurrence, signal) {
+      const owner = ++generation;
       return new Promise((resolve, reject) => {
         let frame = 0;
         let started = false;
+        let expansionRequested = false;
         const deadline = performance.now() + 5000;
         const cleanup = () => {
           cancelAnimationFrame(frame);
@@ -36,7 +41,7 @@ export function createFindViewport({
           reject(new Error("Search cancelled"));
         };
         const poll = () => {
-          if (signal.aborted) {
+          if (signal.aborted || owner !== generation) {
             cancelled();
             return;
           }
@@ -51,12 +56,23 @@ export function createFindViewport({
             frame = requestAnimationFrame(poll);
             return;
           }
-          if (!started) {
-            current.viewportRef.current?.scrollToMessage?.(messageId);
-            started = true;
+          if (!expansionRequested && current.viewportRef.current) {
+            current.viewportRef.current.expandMessageForFind?.(messageId, signal);
+            expansionRequested = true;
           }
           const rows = findMessageRows(getRoot(), messageId);
           if (!rows.some((row) => row.getBoundingClientRect().height)) {
+            if (!started) {
+              current.viewportRef.current?.scrollToMessage?.(messageId);
+              started = true;
+            }
+            frame = requestAnimationFrame(poll);
+            return;
+          }
+          const body = rows[0]?.querySelector<HTMLElement>(
+            '[data-testid="user-message-body-scroll"]',
+          );
+          if (body?.dataset.bodyExpanded === "false") {
             frame = requestAnimationFrame(poll);
             return;
           }
@@ -84,14 +100,20 @@ export function createFindViewport({
           current.viewportRef.current?.scrollToMessage?.(messageId, {
             signal,
             targetTop() {
-              const selected = row ? findRenderedMatches(row, query)[indexInRow] : undefined;
+              if (signal.aborted || owner !== generation || performance.now() >= deadline)
+                return null;
+              const selected = row?.isConnected
+                ? findRenderedMatches(row, query)[indexInRow]
+                : undefined;
               if (!selected) return null;
               CSS.highlights.set(highlightName, new Highlight(selected));
               const widget = getRoot()?.querySelector<HTMLElement>(
                 '[data-chat-find-widget="true"]',
               );
               const clearance = widget ? widget.getBoundingClientRect().height + 8 : 0;
-              return selected.getBoundingClientRect().top - clearance;
+              return row
+                ? revealFindOccurrence({ range: selected, row, signal, deadline, clearance })
+                : null;
             },
           });
           CSS.highlights.set(highlightName, new Highlight(range));

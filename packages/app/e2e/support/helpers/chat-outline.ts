@@ -1,3 +1,4 @@
+import { readOriginalUserMessageBounds } from "./timeline-pagination";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { openSettingsSection } from "./settings";
@@ -32,8 +33,11 @@ export async function expectReadingStreamedMarkdown(page: Page, prompt: string):
   const promptRow = timeline.getByTestId("user-message").filter({ hasText: prompt });
   await expect
     .poll(async () => {
-      const [viewport, row] = await Promise.all([timeline.boundingBox(), promptRow.boundingBox()]);
-      return viewport && row ? row.y + row.height - viewport.y : Number.POSITIVE_INFINITY;
+      const [viewport, row] = await Promise.all([
+        timeline.boundingBox(),
+        readOriginalUserMessageBounds(promptRow),
+      ]);
+      return viewport ? row.y + row.height - viewport.y : Number.POSITIVE_INFINITY;
     })
     .toBeLessThan(0);
   await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toBeVisible();
@@ -198,7 +202,7 @@ export async function expectLiveTurnPromptAboveFoldAndActive(
       async () => {
         const [timelineBox, promptBox, activeLabel] = await Promise.all([
           timeline.boundingBox(),
-          promptRow.boundingBox(),
+          readOriginalUserMessageBounds(promptRow),
           activeTick.getAttribute("aria-label"),
         ]);
         return Boolean(

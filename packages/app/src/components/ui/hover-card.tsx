@@ -10,12 +10,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { Portal } from "@gorhom/portal";
-import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import {
+  getOverlayRoot,
   OverlayLayerProvider,
   useOverlayLayer,
   useWebOverlayRegistration,
@@ -25,6 +25,7 @@ import { isWeb } from "@/constants/platform";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import {
   computePosition,
+  getPointerAnchorRect,
   measureElement,
   type Alignment,
   type Placement,
@@ -36,6 +37,7 @@ const CLOSE_GRACE_MS = 100;
 
 interface HoverCardContextValue {
   open: boolean;
+  pointerRef: RefObject<{ x: number; y: number } | null>;
   layer: number;
   setTriggerRef: (node: View | null) => void;
   triggerRef: RefObject<View | null>;
@@ -90,6 +92,7 @@ function WebHoverCard({
   const layer = useOverlayLayer("floating");
   const triggerRef = useRef<View>(null);
   const contentRef = useRef<View>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [open, setOpen] = useState(false);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -186,6 +189,7 @@ function WebHoverCard({
         ["ArrowDown", "Enter", " "].includes(event.key)
       ) {
         event.preventDefault();
+        pointerRef.current = null;
         openNow();
         requestAnimationFrame(() => {
           (contentRef.current as unknown as HTMLElement | null)
@@ -228,6 +232,7 @@ function WebHoverCard({
       const target = event.target as Element;
       keyboardFocusedRef.current = target.matches(":focus-visible");
       if (trigger.contains(target)) {
+        if (keyboardFocusedRef.current) pointerRef.current = null;
         openNow();
       } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
         clearGraceTimer();
@@ -258,12 +263,19 @@ function WebHoverCard({
       if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
         close();
     };
+    const pointerMoved = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    trigger.addEventListener("pointerover", pointerMoved);
+    trigger.addEventListener("pointermove", pointerMoved);
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
     trigger.addEventListener("keydown", activateClosedTrigger);
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     return () => {
+      trigger.removeEventListener("pointerover", pointerMoved);
+      trigger.removeEventListener("pointermove", pointerMoved);
       document.removeEventListener("focusin", focusEntered);
       document.removeEventListener("focusout", focusLeft);
       trigger.removeEventListener("keydown", activateClosedTrigger);
@@ -306,6 +318,7 @@ function WebHoverCard({
       setTriggerRef,
       triggerRef,
       contentRef,
+      pointerRef,
       openNow,
       scheduleOpen,
       scheduleClose,
@@ -352,6 +365,8 @@ export function HoverCardTrigger({
 
 interface HoverCardContentProps {
   placement: Placement;
+  /** Latch the opening pointer along a long trigger; keyboard opening uses the trigger. */
+  anchor?: "trigger" | "pointer";
   alignment?: Alignment;
   offset?: number;
   /** Layered over the default popover surface. */
@@ -371,6 +386,7 @@ export function HoverCardContent(props: HoverCardContentProps): ReactElement | n
       {...props}
       layer={ctx.layer}
       triggerRef={ctx.triggerRef}
+      pointerRef={ctx.pointerRef}
       contentRef={ctx.contentRef}
     />
   );
@@ -380,7 +396,9 @@ function HoverCardSurface({
   layer,
   triggerRef,
   contentRef,
+  pointerRef,
   placement,
+  anchor = "trigger",
   alignment = "center",
   offset = 4,
   style,
@@ -392,8 +410,8 @@ function HoverCardSurface({
   layer: number;
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
+  pointerRef: RefObject<{ x: number; y: number } | null>;
 }): ReactElement {
-  const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<Size | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -401,14 +419,17 @@ function HoverCardSurface({
   useEffect(() => {
     if (!triggerRef.current) return;
     let cancelled = false;
+    const point = anchor === "pointer" ? pointerRef.current : null;
     void measureElement(triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect(rect);
+      if (!cancelled) {
+        setTriggerRect(getPointerAnchorRect(rect, point, placement));
+      }
       return undefined;
     });
     return () => {
       cancelled = true;
     };
-  }, [triggerRef]);
+  }, [anchor, placement, pointerRef, triggerRef]);
 
   useEffect(() => {
     if (!triggerRect || !contentSize) return;
@@ -443,25 +464,26 @@ function HoverCardSurface({
   );
   const surfaceStyle = useMemo(() => [styles.surface, style], [style]);
 
-  return (
-    <Portal hostName={bottomSheetInternal?.hostName}>
-      <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
-        <FloatingSurface
-          ref={contentRef}
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          onLayout={handleLayout}
-          role={role}
-          accessibilityLabel={accessibilityLabel}
-          testID={testID}
-          style={surfaceStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
-      </View>
-    </Portal>
+  // Hover cards are web-only. Share the body overlay plane with menus and tooltips,
+  // outside the app stacking context and above resident browser surfaces.
+  return createPortal(
+    <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
+      <FloatingSurface
+        ref={contentRef}
+        entering={FadeIn.duration(80)}
+        exiting={FadeOut.duration(80)}
+        collapsable={false}
+        onLayout={handleLayout}
+        role={role}
+        accessibilityLabel={accessibilityLabel}
+        testID={testID}
+        style={surfaceStyle}
+        frameStyle={frameStyle}
+      >
+        {children}
+      </FloatingSurface>
+    </View>,
+    getOverlayRoot(),
   );
 }
 

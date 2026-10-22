@@ -9,6 +9,40 @@ import { createRoot, type Root } from "react-dom/client";
 import React from "react";
 import type { ReactElement } from "react";
 import { createProjectViewKey } from "@/projects/workspace-structure";
+import { ProjectArchiveBackgroundDialog } from "@/workspace/project-archive-background-dialog";
+import type { ProjectArchiveWorkspace } from "@/workspace/project-workspace-archive";
+import type { AdaptiveModalSheetProps } from "@/components/adaptive-modal-sheet";
+
+// Keep the owning domain's confirmation and controls real; native sheet placement is a separate check.
+vi.mock("@/components/adaptive-modal-sheet", () => ({
+  AdaptiveModalSheet: ({ header, children, footer, onClose, testID }: AdaptiveModalSheetProps) => (
+    <div role="dialog" aria-label={header.title} data-testid={testID}>
+      {children}
+      {footer}
+      <button type="button" data-testid="project-archive-dismiss" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  ),
+}));
+
+// Preserve real animation builders imported by shared menus; only fixture animations are immediate.
+vi.mock("react-native-reanimated", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-native-reanimated")>();
+  return {
+    ...actual,
+    default: {
+      ...actual.default,
+      View: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
+    },
+    Easing: { ease: "ease", inOut: (value: unknown) => value },
+    interpolateColor: (value: number, _input: number[], output: string[]) =>
+      value >= 1 ? output[1] : output[0],
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    useDerivedValue: (factory: () => unknown) => ({ value: factory() }),
+    withTiming: (value: unknown) => value,
+  };
+});
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -18,13 +52,18 @@ const pathnameState = vi.hoisted(() => ({
   value: "/",
 }));
 
-vi.mock("expo-router", () => ({
-  router: {
-    dismissTo: vi.fn(),
-  },
-  useLocalSearchParams: () => ({}),
-  usePathname: () => pathnameState.value,
-}));
+vi.mock("expo-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("expo-router")>();
+  return {
+    ...actual,
+    router: {
+      ...actual.router,
+      dismissTo: vi.fn(),
+    },
+    useLocalSearchParams: () => ({}),
+    usePathname: () => pathnameState.value,
+  };
+});
 
 import {
   createSidebarWorkspaceEntry,
@@ -438,4 +477,90 @@ describe("sidebar workspace render isolation", () => {
       "b-two": 1,
     });
   });
+});
+
+describe("project Archive all background confirmation", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+  const choose = vi.fn<(includeBackground: boolean | null) => void>();
+  const ordinary: ProjectArchiveWorkspace = {
+    serverId: "host-a",
+    workspaceId: "ordinary",
+    workspaceKind: "local_checkout",
+    name: "main",
+    background: false,
+    agentIds: ["ordinary-agent"],
+    runningAgentCount: 1,
+    archiveHasUncommittedChanges: null,
+    archiveUnpushedCommitCount: null,
+    diffStat: null,
+  };
+  const background: ProjectArchiveWorkspace = {
+    ...ordinary,
+    workspaceId: "background",
+    background: true,
+    agentIds: ["job", "child"],
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("React", React);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    choose.mockClear();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root.render(
+        <ProjectArchiveBackgroundDialog
+          projectName="Paseo++"
+          hostCount={2}
+          workspaces={[ordinary, background]}
+          onChoose={choose}
+        />,
+      ),
+    );
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  function click(testID: string): void {
+    const control = container.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
+    expect(Boolean(control)).toBe(true);
+    act(() => control?.click());
+  }
+
+  it("starts unchecked with ordinary counts, and updates counts after explicit accessible opt-in", () => {
+    const toggle = container.querySelector('[role="switch"]');
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    expect(toggle?.getAttribute("aria-label")).toBe("Also archive background workspaces (1)");
+    expect(container.textContent).toContain("Workspaces: 1");
+    expect(container.textContent).toContain("Agents: 1 (running: 1)");
+    expect(container.textContent).toContain("stops their agents and jobs too");
+    expect(choose).not.toHaveBeenCalled();
+
+    click("project-archive-include-background");
+    expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain("Workspaces: 2");
+    expect(container.textContent).toContain("Agents: 3 (running: 2)");
+    click("project-archive-confirm");
+    expect(choose.mock.calls).toEqual([[true]]);
+  });
+
+  it("confirms only ordinary workspaces when the switch remains off", () => {
+    click("project-archive-confirm");
+    expect(choose.mock.calls).toEqual([[false]]);
+  });
+
+  it.each(["project-archive-cancel", "project-archive-dismiss"])(
+    "%s cancels even after opt-in",
+    (testID) => {
+      click("project-archive-include-background");
+      click(testID);
+      expect(choose.mock.calls).toEqual([[null]]);
+    },
+  );
 });

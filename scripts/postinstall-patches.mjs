@@ -8,6 +8,18 @@ import { join, relative } from "node:path";
 // workspace root live in their workspace's own node_modules, and patch-package resolves
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
+  // Keep Chromium's native Web Store bindings from replacing the Electron shim
+  // after the first extension loads. The native status API requires Chrome services.
+  {
+    nodeModulesPath: "node_modules/electron-chrome-web-store",
+    patchPrefix: "electron-chrome-web-store+",
+  },
+  // Backport for expo-modules-core 57.0.23: https://github.com/expo/expo/pull/49634.
+  // Remove when the installed Expo SDK includes the Activity recreation fix.
+  {
+    nodeModulesPath: "node_modules/expo-modules-core",
+    patchPrefix: "expo-modules-core+",
+  },
   {
     nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
     patchPrefix: "react-native-enriched-markdown+",
@@ -27,6 +39,10 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
   },
+  // 5.2.14 leaves public present's RAF/portal generation alive after pending dismiss.
+  // Remove when the installed modal cancels pre-RAF and pre-commit presentations
+  // and reentrant registration preserves the live queue; the isolated modal
+  // scheduling regressions must then pass with this patch removed.
   // Exports BottomSheetModalInternalProvider so a subtree can host its own sheets on the shared
   // modal stack (see packages/app/src/components/ui/isolated-bottom-sheet-modal/host-scope.tsx), and
   // keeps a dismissing modal's status through its final onChange(-1), so a modal with
@@ -36,8 +52,9 @@ const patchedPackages = [
     patchPrefix: "@gorhom+bottom-sheet+",
   },
   {
-    nodeModulesPath: "node_modules/react-native-svg",
+    nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",
+    cwd: "packages/app",
   },
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",

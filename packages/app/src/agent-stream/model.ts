@@ -39,6 +39,8 @@ export interface BuildAgentStreamRenderModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   historyStart?: number;
+  /** Presented rows selected by retained canonical position survive the local slice. */
+  retainedPositions?: ReadonlySet<string>;
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -57,22 +59,38 @@ const splitHistoryCache = new WeakMap<
 // the rendered tail's identity, so the slice has to be reused, not recomputed.
 const renderedTailCache = new WeakMap<
   StreamItem[],
-  { historyStart: number; rendered: StreamItem[] }
+  {
+    historyStart: number;
+    retainedPositions: ReadonlySet<string> | undefined;
+    rendered: StreamItem[];
+  }
 >();
 
-function getRenderedTail(tail: StreamItem[], historyStart: number | undefined): StreamItem[] {
-  if (!historyStart) {
+/** Reuse the ordinary window while keeping this branch's leased canonical prompts mounted. */
+function getRenderedTail(
+  tail: StreamItem[],
+  historyStart: number | undefined,
+  retainedPositions: ReadonlySet<string> | undefined,
+): StreamItem[] {
+  if (!historyStart || historyStart < 0) {
     renderedTailCache.delete(tail);
     return tail;
   }
   const cached = renderedTailCache.get(tail);
-  if (cached?.historyStart === historyStart) {
+  if (cached?.historyStart === historyStart && cached.retainedPositions === retainedPositions) {
     return cached.rendered;
   }
-  const rendered = tail.slice(historyStart);
+  const rendered = retainedPositions?.size
+    ? tail.filter((item, index) => {
+        if (index >= historyStart) return true;
+        const cursor = item.timelineCursor;
+        if (!cursor) return false;
+        return retainedPositions.has(`${cursor.epoch}:${cursor.seq}`);
+      })
+    : tail.slice(historyStart);
   // Revealing older history replaces the previous window, allowing its arrays and
   // downstream layouts to be collected while the unchanged source tail stays alive.
-  renderedTailCache.set(tail, { historyStart, rendered });
+  renderedTailCache.set(tail, { historyStart, retainedPositions, rendered });
   return rendered;
 }
 
@@ -155,7 +173,7 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const orderingCacheKey = `${input.platform}:${input.isMobileBreakpoint}`;
-  const renderedTail = getRenderedTail(input.tail, input.historyStart);
+  const renderedTail = getRenderedTail(input.tail, input.historyStart, input.retainedPositions);
   const orderedTail = getOrderedItems({
     cache: orderedTailCache,
     source: renderedTail,
