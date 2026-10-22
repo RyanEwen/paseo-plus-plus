@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.12.0-beta.3",
+  "version": "0.12.0",
   "private": true,
   "description": "Paseo desktop app (Electron wrapper)",
   "homepage": "https://paseo.sh",
@@ -31,6 +31,7 @@
   "dependencies": {
     "@getpaseo/cli": "*",
     "@getpaseo/server": "*",
+    "electron-chrome-web-store": "^0.13.0",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
     "ws": "^8.14.2",
@@ -44,7 +45,7 @@
     "electron-builder": "26.8.1",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
-    "vitest": "^4.1.6",
+    "vitest": "^4.1.12",
     "wait-on": "8.0.5"
   },
   "desktopName": "Paseo.desktop"

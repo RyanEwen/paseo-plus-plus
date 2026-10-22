@@ -117,6 +117,7 @@ export interface AppSettings {
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
+  filePanelAssociations: Record<string, string>;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
   pullRequestOpenLocation: PullRequestOpenLocation;
@@ -125,7 +126,7 @@ export interface AppSettings {
   /** Scope of the diff opened by selecting a file in Changes. */
   explorerDiffScope: "all" | "single";
   /** Initial comparison when a workspace has no remembered selection. */
-  workingDiffDefaultComparison: "uncommitted" | "base";
+  workingDiffDefaultComparison: "uncommitted" | "base" | "all";
   /** Automatically follow checkout dirtiness instead of retaining the selected comparison. */
   workingDiffAutoSwitch: boolean;
 }
@@ -184,6 +185,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   toolCallDetailLevel: "overview",
   chatOutlineEnabled: true,
   vimKeybindings: false,
+  filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
   autoOpenExplorerSidebar: false,
@@ -298,6 +300,7 @@ const StoredAppSettingsSchema = z
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
+    filePanelAssociations: z.record(z.string(), z.string()).catch({}),
     openInSidePane: z
       .object({
         explorerFiles: z.boolean().catch(false),
@@ -323,7 +326,7 @@ const StoredAppSettingsSchema = z
     pullRequestOpenLocation: z.enum(["main", "side", "explorer"]).optional(),
     autoOpenExplorerSidebar: z.boolean().catch(false),
     explorerDiffScope: z.enum(["all", "single"]).catch("all"),
-    workingDiffDefaultComparison: z.enum(["uncommitted", "base"]).catch("uncommitted"),
+    workingDiffDefaultComparison: z.enum(["uncommitted", "base", "all"]).catch("uncommitted"),
     workingDiffAutoSwitch: z.boolean().catch(false),
     // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
     openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),

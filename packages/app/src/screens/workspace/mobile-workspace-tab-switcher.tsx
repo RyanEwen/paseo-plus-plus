@@ -514,8 +514,8 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
 const styles = StyleSheet.create((theme) => ({
   mobileTabsRow: {
     backgroundColor: theme.colors.surface0,
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
   },
   switcherTrigger: {
     flexDirection: "row",
