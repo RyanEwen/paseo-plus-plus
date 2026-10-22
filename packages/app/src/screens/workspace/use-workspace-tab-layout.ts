@@ -1,6 +1,7 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 import { useMemo } from "react";
-import { useSettings } from "@/hooks/use-settings";
 import { useWindowDimensions } from "react-native";
+import { useSettings } from "@/hooks/use-settings";
 import {
   computeWorkspaceTabLayout,
   type WorkspaceTabLayoutMetrics,
@@ -11,8 +12,8 @@ interface UseWorkspaceTabLayoutInput {
   tabLabelWidths: number[];
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
-  preserveNaturalWidths?: boolean;
-  host?: "main" | "explorer";
+  compact: boolean;
+  host?: PaneHost;
   iconOnlyTabWidth?: number;
 }
 
@@ -25,6 +26,7 @@ export function useWorkspaceTabLayout(
 ): UseWorkspaceTabLayoutResult {
   const { width: viewportWidth } = useWindowDimensions();
   const { settings } = useSettings();
+  const widerTabs = settings.paseoPlusPlus.widerWorkspaceTabs;
   const iconOnly = input.host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
   const resolvedViewportWidth =
     typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
@@ -37,15 +39,17 @@ export function useWorkspaceTabLayout(
         viewportWidth: resolvedViewportWidth,
         tabLabelWidths: input.tabLabelWidths,
         metrics: input.metrics,
-        preserveNaturalWidths: input.preserveNaturalWidths,
+        compact: input.compact,
+        widerTabs,
         iconOnly,
         iconOnlyTabWidth: input.iconOnlyTabWidth,
       }),
     [
       input.metrics,
       input.tabLabelWidths,
-      input.preserveNaturalWidths,
+      input.compact,
       resolvedViewportWidth,
+      widerTabs,
       iconOnly,
       input.iconOnlyTabWidth,
     ],

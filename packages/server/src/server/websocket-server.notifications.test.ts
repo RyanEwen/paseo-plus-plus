@@ -12,6 +12,17 @@ import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 
 const WORKSPACE_ID = "workspace-1";
 
@@ -82,7 +93,10 @@ class RecordingPushNotificationSender implements PushNotificationSender {
   }
 }
 
-function createServer(agentManagerOverrides?: Record<string, unknown>) {
+function createServer(
+  agentManagerOverrides?: Record<string, unknown>,
+  registries?: { projects: ProjectRegistry; workspaces: WorkspaceRegistry },
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
@@ -123,8 +137,8 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     "1.2.3-test",
     undefined,
-    undefined,
-    undefined,
+    registries?.projects,
+    registries?.workspaces,
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
@@ -222,6 +236,58 @@ function readAttentionRequiredMessage(ws: ReturnType<typeof createOpenSocket>) {
 }
 
 describe("VoiceAssistantWebSocketServer notification payloads", () => {
+  it("uses renamed workspace and project records for push and desktop recipients", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-notification-context-"));
+    try {
+      const logger = createStub<pino.Logger>(createLogger());
+      const projects = new FileBackedProjectRegistry(join(directory, "projects.json"), logger);
+      const workspaces = new FileBackedWorkspaceRegistry(
+        join(directory, "workspaces.json"),
+        logger,
+      );
+      await projects.initialize();
+      await workspaces.initialize();
+      const timestamp = new Date().toISOString();
+      await projects.upsert(
+        createPersistedProjectRecord({
+          projectId: "project-1",
+          rootPath: directory,
+          kind: "git",
+          displayName: "Derived project",
+          customName: "Chosen project",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+      await workspaces.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId: WORKSPACE_ID,
+          projectId: "project-1",
+          cwd: directory,
+          kind: "worktree",
+          displayName: "branch-name",
+          title: "Chosen workspace",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+      const { server, pushNotifications } = createServer(undefined, { projects, workspaces });
+      const socket = connectClient(server, null);
+      await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        reason: "finished",
+        provider: "claude",
+      });
+      const notification = readAttentionRequiredMessage(socket).notification;
+      expect(notification.title).toBe("Chosen workspace · Chosen project");
+      expect(notification.body).toBe("Agent finished\nFinished working.");
+      expect(notification.data.workspaceId).toBe(WORKSPACE_ID);
+      expect(pushNotifications.sent).toEqual([notification]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });

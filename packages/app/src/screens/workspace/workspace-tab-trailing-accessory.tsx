@@ -1,5 +1,5 @@
 import type { WorkspaceTabSplitMenu } from "./workspace-tab-split-menu";
-import { useCallback, useMemo, type ReactElement } from "react";
+import { Fragment, useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -20,6 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { FilePanelOpenWithMenu } from "@/file-panels";
 import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-menu";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -92,12 +93,15 @@ export function MobileTabTrailingAccessory({
   menuEntries,
   touchSized = false,
   splitMenu,
+  openWith,
 }: {
   menuTestIDBase: string;
   presentationLabel: string;
   menuEntries: WorkspaceTabMenuEntry[];
   touchSized?: boolean;
   splitMenu?: WorkspaceTabSplitMenu;
+  /** A file tab’s panel chooser and its submenu pages. */
+  openWith?: FilePanelOpenWithMenu;
 }): ReactElement {
   const { t } = useTranslation();
   const triggerStyle = useCallback(
@@ -123,18 +127,18 @@ export function MobileTabTrailingAccessory({
         align="end"
         width={220}
         sheetTitle={presentationLabel}
-        pages={splitMenu?.pages}
-        scrollable={Boolean(splitMenu?.pages.length)}
+        pages={[...(splitMenu?.pages ?? []), ...(openWith?.pages ?? [])]}
+        scrollable={Boolean(splitMenu?.pages.length || openWith?.pages.length)}
         testID={menuTestIDBase}
       >
         {splitMenu?.trigger}
-        {menuEntries.map((entry) =>
-          entry.kind === "separator" ? (
-            <DropdownMenuSeparator key={entry.key} />
-          ) : (
-            <MobileTabDropdownMenuItem key={entry.key} entry={entry} />
-          ),
-        )}
+        {menuEntries.map((entry) => {
+          if (entry.kind === "separator") return <DropdownMenuSeparator key={entry.key} />;
+          if (entry.kind === "file-panel-open-with") {
+            return <Fragment key={entry.key}>{openWith?.trigger}</Fragment>;
+          }
+          return <MobileTabDropdownMenuItem key={entry.key} entry={entry} />;
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

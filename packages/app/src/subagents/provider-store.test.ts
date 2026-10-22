@@ -1,8 +1,12 @@
+import { requestPromptFixture } from "@/timeline/canonical-prompt-context.test-fixture";
+import { canonicalPromptSourceKey } from "@/timeline/canonical-prompt-context";
+import type { StreamItem } from "@/types/stream";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   observeProviderSubagentTimeline,
+  createProviderSubagentPromptContexts,
   providerSubagentKey,
   refreshProviderSubagents,
   resyncProviderSubagents,
@@ -565,6 +569,356 @@ describe("projected child history", () => {
       .getState()
       .replaceTimeline(SERVER_ID, response(value, seqStart, seqEnd, direction));
   }
+  test("keeps accepted source metadata scoped to the exact child and drops invalidated live revisions", () => {
+    const store = useProviderSubagentStore.getState();
+    page("AB", 1, 2);
+    const initial = current().sourceMetadata;
+    expect(initial).toHaveLength(1);
+    expect(initial?.[0]).toMatchObject({ startSeq: 1, endSeq: 2 });
+    store.replaceTimeline(SERVER_ID, { ...response("other", 4, 5), parentAgentId: "other-parent" });
+    const other = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, "other-parent", SUBAGENT_ID));
+    expect(other?.sourceMetadata?.[0]?.revision).not.toBe(initial?.[0]?.revision);
+    store.replaceTimeline(SERVER_ID, { ...response("bad", 1, 2), error: "unavailable" });
+    expect(current().sourceMetadata).toBe(initial);
+    store.replaceTimeline(SERVER_ID, {
+      ...response("stale", 1, 1),
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+    });
+    expect(current().sourceMetadata).toBe(initial);
+    stream(3, "C");
+    expect(current().sourceMetadata).toEqual([]);
+    expect(other?.sourceMetadata).toHaveLength(1);
+    store.applyUpdate(SERVER_ID, {
+      kind: "remove",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+    });
+    expect(useProviderSubagentStore.getState().timelines.has(key)).toBe(false);
+    expect(
+      useProviderSubagentStore
+        .getState()
+        .timelines.get(providerSubagentKey(SERVER_ID, "other-parent", SUBAGENT_ID)),
+    ).toBe(other);
+  });
+
+  test("normalizes legitimate legacy singletons without treating unknown expanded ranges as singleton proof", () => {
+    const singleton = response("A", 1, 1);
+    const row = singleton.rows[0]!;
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+      ...singleton,
+      rows: [{ seq: row.seq, timestamp: row.timestamp, item: row.item }],
+    });
+    expect(current().sourceMetadata?.[0]).toMatchObject({
+      startSeq: 1,
+      endSeq: 1,
+      ranges: [{ startSeq: 1, endSeq: 1 }],
+    });
+    const expanded = response("AB", 1, 2);
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+      ...expanded,
+      reset: true,
+      rows: expanded.rows.map((entry) => Object.assign({}, entry, { sourceSeqRanges: undefined })),
+    });
+    expect(current().sourceMetadata).toEqual([]);
+  });
+
+  test("checks current compound-keyed child ordinary rows before exact-cache admission", async () => {
+    page("answer", 500, 500);
+    const source = [...current().tail, ...current().head][0]!;
+    const prior: Extract<StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: "prior",
+      text: "Prior",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "e", seq: 20 },
+    };
+    const newer = { ...prior, id: "newer", timelineCursor: { epoch: "e", seq: 450 } };
+    const scope = {
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      agentId: "child-transcript",
+      epoch: "e",
+    };
+    const owner = createProviderSubagentPromptContexts(scope);
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: scope.agentId,
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => payload,
+    });
+    const proof = owner.read(scope.agentId, "e", seed)[0]!;
+    function ordinary(rows: StreamItem[]) {
+      useProviderSubagentStore.setState((state) => {
+        const timelines = new Map(state.timelines);
+        timelines.set(key, {
+          ...current(),
+          tail: rows,
+          head: [],
+          cursor: {
+            epoch: "e",
+            startSeq: 490,
+            endSeq: 600,
+            retainedRanges: [{ startSeq: 400, endSeq: 460, hasOlder: true }],
+          },
+        });
+        return { timelines };
+      });
+    }
+    ordinary([newer, source]);
+    expect(owner.preview(scope.agentId, source)).toBeUndefined();
+    ordinary([source]);
+    expect(owner.read(scope.agentId, "e", seed)).toEqual([proof]);
+    expect(owner.isSupportedContext(scope.agentId, proof)).toBe(false);
+    const channel = {};
+    let calls = 0;
+    await expect(
+      requestPromptFixture(owner, {
+        agentId: scope.agentId,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        knownContext: { ...proof },
+        lookupAllowed: false,
+        fetchContext: async () => {
+          calls += 1;
+          return payload;
+        },
+      }),
+    ).rejects.toThrow("Reading context changed");
+    expect(calls).toBe(0);
+    await expect(
+      requestPromptFixture(owner, {
+        agentId: scope.agentId,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        retryToken: 1,
+        fetchContext: async () => ({ ...payload, prompt: newer }),
+      }),
+    ).resolves.toMatchObject(newer);
+    expect(owner.readExactContext(scope.agentId, source)?.prompt.timelineCursor?.seq).toBe(450);
+    expect(owner.isSupportedContext(scope.agentId, proof)).toBe(false);
+    expect(owner.read(scope.agentId, "e", seed)).toEqual([proof]);
+    owner.dispose();
+  });
+
+  test("invalidates child certificates at accepted window boundaries without an intervening reader query", async () => {
+    page("answer", 500, 500);
+    const source = [...current().tail, ...current().head][0]!;
+    const prior: Extract<StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: "prior",
+      text: "Prior",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "e", seq: 20 },
+    };
+    const scope = {
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      agentId: "child-transcript",
+      epoch: "e",
+    };
+    const owner = createProviderSubagentPromptContexts(scope);
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const seed = {};
+    await requestPromptFixture(owner, {
+      agentId: scope.agentId,
+      channel: seed,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => payload,
+    });
+    const proof = owner.read(scope.agentId, "e", seed)[0]!;
+    const accepted = response("answer", 500, 500);
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+      ...accepted,
+      reset: true,
+      startCursor: { epoch: "e", seq: 450 },
+      rows: [
+        {
+          seq: 450,
+          seqStart: 450,
+          seqEnd: 450,
+          sourceSeqRanges: [{ startSeq: 450, endSeq: 450 }],
+          timestamp,
+          item: { type: "user_message", text: "Newer prompt", clientMessageId: "newer" },
+        },
+        ...accepted.rows,
+      ],
+    });
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, { ...accepted, reset: true });
+    const latest = [...current().tail, ...current().head][0]!;
+    expect(canonicalPromptSourceKey(latest)).toBe(proof.sourceKey);
+    expect(owner.read(scope.agentId, "e", seed)).toMatchObject([proof]);
+    expect(owner.readExactContext(scope.agentId, latest)).toBeUndefined();
+    expect(owner.isSupportedContext(scope.agentId, proof)).toBe(false);
+    owner.dispose();
+  });
+
+  test("fences a fresh held child lookup across accepted USER appearance and eviction without a reader query", async () => {
+    page("answer", 500, 500);
+    const source = [...current().tail, ...current().head][0]!;
+    const prior: Extract<StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: "prior",
+      text: "Prior",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "e", seq: 20 },
+    };
+    const scope = {
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      agentId: "child-transcript",
+      epoch: "e",
+    };
+    const owner = createProviderSubagentPromptContexts(scope);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reads = 0;
+    const payload = {
+      sourceKey: canonicalPromptSourceKey(source),
+      sourceStart: 500,
+      sourceEnd: 500,
+      prompt: prior,
+    };
+    const channel = {};
+    const pending = requestPromptFixture(owner, {
+      agentId: scope.agentId,
+      channel,
+      source,
+      signal: new AbortController().signal,
+      fetchContext: async () => {
+        reads += 1;
+        await held;
+        return payload;
+      },
+    });
+    const rejected = expect(pending).rejects.toThrow("Reading context changed");
+    const accepted = response("answer", 500, 500);
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+      ...accepted,
+      reset: true,
+      startCursor: { epoch: "e", seq: 450 },
+      rows: [
+        {
+          seq: 450,
+          seqStart: 450,
+          seqEnd: 450,
+          sourceSeqRanges: [{ startSeq: 450, endSeq: 450 }],
+          timestamp,
+          item: { type: "user_message", text: "Newer prompt", clientMessageId: "newer" },
+        },
+        ...accepted.rows,
+      ],
+    });
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, { ...accepted, reset: true });
+    release();
+    await rejected;
+    expect(owner.read(scope.agentId, "e", channel)).toEqual([]);
+    await expect(
+      requestPromptFixture(owner, {
+        agentId: scope.agentId,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => {
+          reads += 1;
+          return payload;
+        },
+      }),
+    ).rejects.toThrow("Reading context changed");
+    expect(reads).toBe(1);
+    const newer = { ...prior, id: "newer", timelineCursor: { epoch: "e", seq: 450 } };
+    await expect(
+      requestPromptFixture(owner, {
+        agentId: scope.agentId,
+        channel,
+        source,
+        signal: new AbortController().signal,
+        retryToken: 1,
+        fetchContext: async () => ({ ...payload, prompt: newer }),
+      }),
+    ).resolves.toMatchObject(newer);
+    owner.dispose();
+  });
+
+  test("retires child certificate support on removal and epoch handoff even when the same epoch later returns", async () => {
+    for (const mode of ["remove", "epoch"]) {
+      page("answer", 500, 500);
+      const source = [...current().tail, ...current().head][0]!;
+      const prior: Extract<StreamItem, { kind: "user_message" }> = {
+        kind: "user_message",
+        id: "prior",
+        text: "Prior",
+        timestamp: new Date(0),
+        timelineCursor: { epoch: "e", seq: 20 },
+      };
+      const scope = {
+        serverId: SERVER_ID,
+        parentAgentId: PARENT_ID,
+        subagentId: SUBAGENT_ID,
+        agentId: "child-transcript",
+        epoch: "e",
+      };
+      const owner = createProviderSubagentPromptContexts(scope);
+      const seed = {};
+      await requestPromptFixture(owner, {
+        agentId: scope.agentId,
+        channel: seed,
+        source,
+        signal: new AbortController().signal,
+        fetchContext: async () => ({
+          sourceKey: canonicalPromptSourceKey(source),
+          sourceStart: 500,
+          sourceEnd: 500,
+          prompt: prior,
+        }),
+      });
+      const proof = owner.read(scope.agentId, "e", seed)[0]!;
+      expect(owner.isSupportedContext(scope.agentId, proof)).toBe(true);
+      if (mode === "remove")
+        useProviderSubagentStore.setState((state) => {
+          const timelines = new Map(state.timelines);
+          timelines.delete(key);
+          return { timelines };
+        });
+      else
+        useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+          ...response("answer", 500, 500),
+          epoch: "other",
+          startCursor: { epoch: "other", seq: 500 },
+          endCursor: { epoch: "other", seq: 500 },
+        });
+      page("answer", 500, 500);
+      expect(owner.read(scope.agentId, "e", seed)).toEqual([]);
+      expect(owner.isSupportedContext(scope.agentId, proof)).toBe(false);
+      expect(
+        owner.preview(scope.agentId, [...current().tail, ...current().head][0]!),
+      ).toBeUndefined();
+      owner.dispose();
+    }
+  });
+
   test("replaces overlapping fetched text and continues live streaming", () => {
     page("AB", 1, 2);
     stream(3, "C");
@@ -705,6 +1059,16 @@ describe("projected child history", () => {
       "tool_call",
       "assistant_message",
     ]);
+    const source = current().sourceMetadata?.find((entry) => entry.type === "tool_call");
+    expect(source).toMatchObject({
+      startSeq: 1,
+      endSeq: 5,
+      ranges: [
+        { startSeq: 1, endSeq: 1 },
+        { startSeq: 5, endSeq: 5 },
+      ],
+    });
+    expect([...current().tail, ...current().head]).toContain(source?.revision);
   });
   test("retains projected display state rather than cumulative tool snapshots", () => {
     for (let seq = 1; seq <= 2000; seq++) {

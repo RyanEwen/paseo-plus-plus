@@ -4,8 +4,7 @@ Codex's project hooks in `.codex/hooks.json` remind agents to keep the fork READ
 and owning developer docs aligned. `scripts/codex-docs-hook.mjs` supplies the review checklist at
 session start and after relevant changes, then requests one review pass before a turn finishes.
 
-Review actual behavior and its differences from current upstream. Correct stale descriptions,
-platform claims and screenshot examples. When a surface does not need an edit, explain why it
+Review actual behavior and its differences from current upstream. Keep the README to linked feature names; update the linked guides and settings help together. Remove duplicate fork claims and obsolete settings inventory when upstream adopts a feature. Correct stale descriptions, platform claims and screenshot examples. When a surface does not need an edit, explain why it
 remains accurate. Do not change prose just to satisfy the hook or modify another agent's work.
 
 The hook tracks content changes against a session baseline. Files already dirty when the session
