@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { supportsUsageReports } from "@getpaseo/client/internal/daemon-client";
 import { useCallback, useMemo } from "react";
 import {
@@ -9,6 +10,8 @@ import {
 } from "@tanstack/react-query";
 import { useShallow } from "zustand/shallow";
 import { useFetchQuery } from "@/data/query";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useAppVisible } from "@/hooks/use-app-visible";
 import {
   getHostRuntimeStore,
   useHostRuntimeConnectionStatuses,
@@ -31,9 +34,22 @@ import {
 } from "./model";
 import type { UsageReportEntry, UsageView } from "./types";
 
-// The daemon caches each report for five minutes, so re-reading it is cheap. Only
-// an explicit refresh passes `forceRefresh` and reaches the source's API.
+// The daemon caches reports for five minutes. Ordinary reads reach the source once
+// that cache expires; manual refresh bypasses it immediately.
 const REPORTS_STALE_TIME_MS = 60_000;
+const REPORTS_REFETCH_INTERVAL_MS = 15 * 60_000;
+
+/** Poll only displayed usage on a connected, capable host in the foreground app. */
+function useUsageQueryActivity(serverId: string | null) {
+  const canReport = useHostReportsUsage(serverId ?? "");
+  const panelActive = useRetainedPanelActive();
+  const appVisible = useAppVisible();
+  const enabled = serverId !== null && canReport && panelActive && appVisible;
+  return {
+    enabled,
+    refetchInterval: REPORTS_REFETCH_INTERVAL_MS,
+  };
+}
 
 /** Every report list of a host: its own and each agent's. */
 function hostUsageQueryKey(serverId: string) {
@@ -134,23 +150,28 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
+  const activity = useUsageQueryActivity(serverId);
   const query = useFetchQuery({
     queryKey: usageReportsQueryKey(serverId),
     queryFn: () => listReports(queryClient, serverId),
-    enabled: isConnected && isSupported,
+    ...activity,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
   const refresh = useCallback(() => {
     void refreshReports(queryClient, serverId).catch(() => undefined);
   }, [queryClient, serverId]);
+  const { t } = useTranslation();
   const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
-  const view = resolveUsageView({
-    hostLabel,
-    isConnected,
-    supportsUsage: isSupported,
-    query: toQueryState(query),
-  });
+  const view = resolveUsageView(
+    {
+      hostLabel,
+      isConnected,
+      supportsUsage: isSupported,
+      query: toQueryState(query),
+    },
+    t,
+  );
   return { view, refresh };
 }
 
@@ -162,9 +183,11 @@ const NO_REPORTS: UsageReportEntry[] = [];
  */
 export function useUsageHostReports(serverId: string | null): UsageReportEntry[] {
   const queryClient = useQueryClient();
+  const activity = useUsageQueryActivity(serverId);
   const query = useFetchQuery({
     queryKey: usageReportsQueryKey(serverId ?? ""),
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
+    ...activity,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
@@ -178,13 +201,14 @@ export function useUsageHostReports(serverId: string | null): UsageReportEntry[]
 export function useAgentUsage(serverId: string, agentId: string): AgentUsageView {
   const queryClient = useQueryClient();
   const canReport = useHostReportsUsage(serverId);
+  const activity = useUsageQueryActivity(serverId);
   const queryKey = agentUsageQueryKey(serverId, agentId);
   const query = useFetchQuery({
     queryKey,
     // Consuming the signal cancels the request when the details close, so a reopen sends a new
     // request instead of joining one scoped to the login the agent ran under before.
     queryFn: ({ signal }) => streamReports({ queryClient, queryKey, serverId, agentId, signal }),
-    enabled: canReport,
+    ...activity,
     // Another agent's reports never stand in while this one's load.
     dataShape: "value",
     // Dropped as soon as the details close: an agent resumed under another login keeps its ID, so
@@ -196,7 +220,8 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
     retry: false,
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
-  return resolveAgentUsageView({ canReport, query: toQueryState(query) });
+  const { t } = useTranslation();
+  return resolveAgentUsageView({ canReport, query: toQueryState(query) }, t);
 }
 
 /** Whether a host is connected and reports usage, read without fetching anything. */

@@ -16,8 +16,9 @@ import { useTranslation } from "react-i18next";
 import { Globe, History, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { resolvePluginIcon } from "@/plugins/icons";
+import { pluginIconComponent } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
@@ -153,6 +154,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
   const plugins = useInstalledPlugins();
+  const isCompact = useIsCompactFormFactor();
   ensurePanelsRegistered();
 
   const launchSelection = useCallback(
@@ -179,7 +181,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-agent",
         disabled: false,
         panelKind: "draft",
-        hidden: isExplorerMenu,
         launch: launchSelection(BUILT_IN_SELECTIONS.agent),
       },
       terminal: {
@@ -207,7 +208,8 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-changes",
         disabled: false,
         panelKind: "working_diff",
-        hidden: !launcher.showChanges,
+        // Compact Changes shows each file's diff inline, so a separate Diff panel is redundant.
+        hidden: !launcher.showChanges || isCompact,
         launch: launchSelection(BUILT_IN_SELECTIONS.diff),
       },
       files: {
@@ -268,8 +270,8 @@ export function useWorkspaceTabLaunchCatalog(input: {
         };
         pluginItems.push({
           id: `plugin:${plugin.id}:${panel.id}`,
-          label: panel.title,
-          Icon: resolvePluginIcon(panel.icon),
+          label: plugin.i18n.resolve(panel.title, plugin.locale),
+          Icon: pluginIconComponent(panel.icon),
           disabled: false,
           panelKind: "plugin",
           launch: launchSelection(selection),
@@ -282,7 +284,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     if (pluginItems.length > 0) {
       groups.push({ id: "plugin-panels", label: null, items: pluginItems });
     }
-    if (!isExplorerMenu && profiles.length > 0) {
+    if (profiles.length > 0) {
       groups.push({
         id: "terminal-profiles",
         label: t("workspace.tabs.actions.terminalProfilesMenu"),
@@ -311,6 +313,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   }, [
     config?.terminalProfiles,
     editTerminalProfiles,
+    isCompact,
     launchSelection,
     launcher,
     plugins,

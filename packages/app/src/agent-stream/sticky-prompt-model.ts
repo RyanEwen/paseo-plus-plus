@@ -1,3 +1,5 @@
+import { coversCanonicalInterval } from "@/timeline/canonical-reading-source";
+import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
 import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
@@ -16,6 +18,7 @@ export function buildPromptTargets(
   items: readonly StreamItem[],
   prompts: readonly ChatOutlinePrompt[],
   epoch: string | null,
+  contextOnlyIds?: ReadonlySet<string>,
 ): PromptTarget[] {
   const targets: PromptTarget[] = prompts.map(({ seq }) => ({ key: `${epoch}:${seq}`, seq }));
   const bySeq = new Map(targets.map((target) => [target.seq, target]));
@@ -27,8 +30,14 @@ export function buildPromptTargets(
     const indexed = seq === undefined ? undefined : bySeq.get(seq);
     if (indexed) {
       indexed.item = item;
+      if (contextOnlyIds?.has(item.id)) indexed.cached = true;
     } else {
-      targets.push({ key: seq === undefined ? item.id : `${epoch}:${seq}`, seq, item });
+      targets.push({
+        key: seq === undefined ? item.id : `${epoch}:${seq}`,
+        seq,
+        item,
+        ...(contextOnlyIds?.has(item.id) ? { cached: true } : {}),
+      });
     }
   }
   // Unpositioned local submissions follow authoritative history in submission order.
@@ -237,6 +246,34 @@ export function resolvePromptGeometry(
   };
 }
 
+/** Follow/latest presentation owns the newest loaded canonical USER only when
+ * ordinary coverage reaches the followed tail without holes. An optimistic row
+ * has no canonical cursor; sparse windows still need the bounded context reader.
+ * Manual reading always resolves its actual source, including interleaved turns. */
+export function resolveRetainedContextSource(
+  items: readonly StreamItem[],
+  epoch: string | null,
+  reading: Pick<PromptReadingPosition, "navigating" | "following" | "rowId" | "seq">,
+  coverage: readonly CanonicalTimelineCoverage[],
+): StreamItem | undefined {
+  if (reading.navigating) return undefined;
+  if (!reading.following && reading.rowId !== null)
+    return resolveContextSource(items, epoch, reading.rowId, reading.seq);
+
+  let latest: StreamItem | undefined;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    const cursor = item.timelineCursor;
+    if (!cursor || cursor.epoch !== epoch) continue;
+    latest ??= item;
+    if (item.kind === "user_message") {
+      const tailSeq = latest.timelineCursor!.seq;
+      return coversCanonicalInterval(coverage, cursor.epoch, cursor.seq, tailSeq) ? item : latest;
+    }
+  }
+  return latest;
+}
+
 /** Resolve a visible canonical source without conflating repeated provider message IDs. */
 export function resolveContextSource(
   items: readonly StreamItem[],
@@ -303,7 +340,7 @@ export function shouldDiscoverCachedPrompt(
   cancelled: boolean,
   readingMissing: boolean,
 ): boolean {
-  if (pending !== null && pending !== "previous" && pending.cached) return true;
+  if (pending !== null && pending !== "previous" && pending.cached) return !indexed;
   return (
     !readingMissing &&
     shouldDiscoverPrompt(pending === "previous", indexed, message, cancelled, false)
@@ -320,7 +357,9 @@ export function hasDiscoveredCachedPrompt(
   message: UserPrompt | undefined,
 ): boolean {
   if (pending !== null && pending !== "previous" && pending.cached)
-    return loaded.some((target) => target.key === pending.key && target.item !== undefined);
+    return loaded.some(
+      (target) => target.key === pending.key && target.item !== undefined && !target.cached,
+    );
   return hasDiscoveredPrompt(
     pending === "previous",
     previous,

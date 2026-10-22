@@ -35,7 +35,12 @@ export function ComposerDock({
   }, []);
   if (centered) {
     return (
-      <View ref={surfaceRef} style={styles.centered} onLayout={measureViewport}>
+      <View
+        testID="composer-dock-surface"
+        ref={surfaceRef}
+        style={styles.centered}
+        onLayout={measureViewport}
+      >
         <View style={styles.form}>
           <ScrollView style={styles.setup} keyboardShouldPersistTaps="handled">
             {content}
@@ -55,7 +60,12 @@ export function ComposerDock({
     );
   }
   return (
-    <View ref={surfaceRef} style={styles.surface} onLayout={measureViewport}>
+    <View
+      testID="composer-dock-surface"
+      ref={surfaceRef}
+      style={styles.surface}
+      onLayout={measureViewport}
+    >
       <View style={styles.content}>{content}</View>
       <View
         style={
