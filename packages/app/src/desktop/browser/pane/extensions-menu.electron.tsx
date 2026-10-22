@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  Image,
-  Pressable,
-  Text,
-  View,
-  type StyleProp,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
+import { Image, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { BrowserExtensionsIcon } from "@/components/icons/browser-extensions-icon";
 import { Pin, PinOff } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -218,7 +211,7 @@ function PinnedExtensionButton({
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
-        <Pressable
+        <PressHighlight
           accessibilityRole="button"
           accessibilityLabel={actionLabel(extension, extension.name)}
           accessibilityState={accessibilityState}
@@ -228,7 +221,7 @@ function PinnedExtensionButton({
           style={buttonStyle}
         >
           <ExtensionIcon extension={extension} />
-        </Pressable>
+        </PressHighlight>
       </TooltipTrigger>
       <TooltipContent side="bottom" align="center" offset={8}>
         <Text style={tooltipTextStyle}>

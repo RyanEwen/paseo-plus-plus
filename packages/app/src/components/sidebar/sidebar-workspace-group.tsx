@@ -1,6 +1,8 @@
 import { useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
+import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ChevronDown,
@@ -106,6 +108,11 @@ export function SidebarWorkspaceGroupHeader({
     [],
   );
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  // The row uses a state callback, so pass its static shape to the native highlight.
+  const highlightStyle = useMemo(
+    () => [resolveHighlightCorners(styles.statusGroupRow), styles.statusGroupRowPressed],
+    [],
+  );
 
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => (
@@ -135,18 +142,19 @@ export function SidebarWorkspaceGroupHeader({
   );
 
   return (
-    <Pressable
+    <PressHighlight
       accessibilityRole={platformIsWeb ? undefined : "button"}
       accessibilityLabel={t("sidebar.statusGroupAccessibility", {
         label: workspaceCount === undefined ? group.label : `${group.label} (${workspaceCount})`,
       })}
       accessibilityState={accessibilityState}
       style={rowStyle}
+      highlightStyle={highlightStyle}
       onPress={handlePress}
       testID={`sidebar-status-group-${group.key}`}
     >
       {renderContent}
-    </Pressable>
+    </PressHighlight>
   );
 }
 
