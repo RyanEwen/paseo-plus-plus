@@ -228,9 +228,11 @@ describe("applyAccentAppearance", () => {
     };
     const themed = { ...plugin, fontFamily: { ...plugin.fontFamily, ui: "custom-font" } };
     applyAccentAppearance({ choice: "blue", contributedTheme: plugin });
-    const blueUpdater = updateTheme.mock.calls[0][1] as (theme: Theme) => Theme;
+    const blueUpdater = updateTheme.mock.calls.find(([key]) => key === "pluginDark")![1] as (
+      theme: Theme,
+    ) => Theme;
     const blue = blueUpdater(themed);
-    expect(blue.colors.userMessageBackground).toBe("#93c5fd");
+    expect(blue.colors.userMessageBackground).toBe("#9bafc5");
     expect(blue.colors.statusDanger).toBe(plugin.colors.statusDanger);
     expect(blue.colors.success).toBe(plugin.colors.success);
     expect(blue.colors.terminal).toBe(plugin.colors.terminal);
@@ -239,7 +241,9 @@ describe("applyAccentAppearance", () => {
 
     updateTheme.mockClear();
     applyAccentAppearance({ choice: "default", contributedTheme: plugin });
-    const resetUpdater = updateTheme.mock.calls[0][1] as (theme: Theme) => Theme;
+    const resetUpdater = updateTheme.mock.calls.find(([key]) => key === "pluginDark")![1] as (
+      theme: Theme,
+    ) => Theme;
     const reset = resetUpdater(blue);
     expect(reset.colors.accent).toBe(plugin.colors.accent);
     expect(reset.colors.accentForeground).toBe(plugin.colors.accentForeground);

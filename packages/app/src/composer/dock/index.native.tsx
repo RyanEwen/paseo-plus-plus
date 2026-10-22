@@ -1,3 +1,5 @@
+import { ComposerViewportRef } from "./internal/viewport-ref";
+import { ComposerBottomBarHeightContext } from "./internal/bottom-bar-height";
 import { ComposerDockBackground } from "./internal/background";
 export { ComposerDockBackground } from "./internal/background";
 export { ComposerFullscreenBody, ComposerFullscreenFooter } from "./internal/fullscreen";
@@ -7,7 +9,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
 import { KeyboardTranslateView } from "@/keyboard/shift";
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useRef, useCallback, useContext, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type ViewProps, StyleSheet } from "react-native";
 import { StyleSheet as ThemedStyleSheet } from "react-native-unistyles";
 import Animated, {
@@ -39,6 +41,7 @@ function ComposerViewport({
   centered = false,
   ...props
 }: ComposerViewportProps) {
+  const viewportRef = useRef<View>(null);
   const measuredHeight = useSharedValue(0);
   const sizing = useSharedValue<ComposerCapacity | undefined>(undefined);
   const { layoutShift, bottomInset: safeAreaBottom } = useKeyboardShift();
@@ -65,8 +68,16 @@ function ComposerViewport({
   );
 
   return (
-    <View testID="composer-viewport" {...props} onLayout={measureViewport} collapsable={false}>
-      <ViewportSizing.Provider value={sizing}>{children}</ViewportSizing.Provider>
+    <View
+      ref={viewportRef}
+      testID="composer-viewport"
+      {...props}
+      onLayout={measureViewport}
+      collapsable={false}
+    >
+      <ComposerViewportRef.Provider value={viewportRef}>
+        <ViewportSizing.Provider value={sizing}>{children}</ViewportSizing.Provider>
+      </ComposerViewportRef.Provider>
     </View>
   );
 }
@@ -127,6 +138,7 @@ export function ComposerDock({
   fullscreen = false,
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
+  const bottomBarHeight = useContext(ComposerBottomBarHeightContext);
   const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
   const centeredClearance = useCenteredClearance(insets.bottom);
   // Preserve the existing centered form's visual balance on tablets.
@@ -186,7 +198,11 @@ export function ComposerDock({
   }
   return (
     <ComposerViewport style={dockStyles.viewport}>
-      <KeyboardTranslateView style={dockStyles.surface} enabled={!fullscreen}>
+      <KeyboardTranslateView
+        style={dockStyles.surface}
+        enabled={!fullscreen}
+        bottomClearance={Math.max(0, bottomBarHeight - insets.bottom)}
+      >
         <View
           testID="composer-dock-content"
           collapsable={false}
@@ -208,7 +224,7 @@ export function ComposerDock({
             style={
               fullscreen
                 ? fullscreenSurface
-                : [dockStyles.composer, { paddingBottom: insets.bottom }]
+                : [dockStyles.composer, { paddingBottom: bottomBarHeight > 0 ? 0 : insets.bottom }]
             }
           >
             {composer}

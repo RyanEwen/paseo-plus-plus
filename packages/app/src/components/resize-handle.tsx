@@ -13,6 +13,7 @@ import {
 export interface ResizeHandleProps {
   testID?: string;
   showPresets?: boolean;
+  canApplyPreset?: (sizes: number[]) => boolean;
   direction: "horizontal" | "vertical";
   hitAreaAlignment?: "center" | "end";
   groupId: string;
@@ -40,6 +41,7 @@ function resetWindowHorizontalScroll() {
 export function ResizeHandle({
   testID,
   showPresets = false,
+  canApplyPreset,
   direction,
   hitAreaAlignment = "center",
   groupId,
@@ -269,6 +271,7 @@ export function ResizeHandle({
           <SplitResizePresets
             style={hitAreaStyle}
             enabled={showPresets}
+            canApplyPreset={canApplyPreset}
             dragging={dragging}
             direction={direction}
             sizes={sizes}

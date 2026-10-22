@@ -61,6 +61,26 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it("opens workspace recovery without opening or unarchiving an agent", () => {
+    let revealed = false;
+    const { deps, navigations, remembered, openedTabs } = createFakeDeps({
+      revealWorkspaceContent: () => {
+        revealed = true;
+      },
+    });
+    navigateToWorkspace(
+      {
+        serverId: "archive-host",
+        workspaceId: "archived-workspace",
+        recoveryRequested: true,
+      },
+      deps,
+    );
+    expect(navigations).toEqual(["/h/archive-host/workspace/archived-workspace?recover=1"]);
+    expect(remembered).toEqual([{ serverId: "archive-host", workspaceId: "archived-workspace" }]);
+    expect(openedTabs).toEqual([]);
+    expect(revealed).toBe(true);
+  });
   it.each([true, false])(
     "reveals the notified agent from the workspace list with layout hydrated=%s",
     (hydrated) => {

@@ -1,3 +1,4 @@
+import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
 import { childContextPageReader } from "@/agent-stream/fetch-reading-prompt-context";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
@@ -22,10 +23,12 @@ import { useSubagentOpensInSheet } from "@/subagents/opens-in-sheet";
 import { SubagentsTrack } from "@/subagents/track";
 import {
   providerSubagentKey,
+  createProviderSubagentPromptContexts,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
   observeProviderSubagentTimeline,
   useProviderSubagentStore,
+  type ProviderSubagentTimelineState,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
@@ -113,6 +116,13 @@ function useProviderSubagentDescriptor(
         })
       : null,
   };
+}
+
+function childTimelineProgressKey(timeline: ProviderSubagentTimelineState | null): string | null {
+  const firstTimelineSeq = timeline?.cursor?.startSeq ?? null;
+  return timeline?.epoch && firstTimelineSeq !== null
+    ? `${timeline.epoch}:${firstTimelineSeq}`
+    : null;
 }
 
 function ProviderSubagentPanel() {
@@ -222,9 +232,7 @@ function ProviderSubagentPanel() {
       timeline,
     ],
   );
-  const firstTimelineSeq = timeline?.cursor?.startSeq ?? null;
-  const progressKey =
-    timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
+  const progressKey = childTimelineProgressKey(timeline);
   const subtitle = descriptor?.subtitle?.trim();
 
   const streamContext = useMemo<AgentScreenAgent>(
@@ -246,6 +254,19 @@ function ProviderSubagentPanel() {
         : undefined,
     [client, supported, target.parentAgentId, target.subagentId],
   );
+  const contextScope = useMemo(() => {
+    const scope = {
+      serverId,
+      parentAgentId: target.parentAgentId,
+      subagentId: target.subagentId,
+      epoch,
+      agentId: streamId,
+    };
+    return { ...scope, contexts: createProviderSubagentPromptContexts(scope) };
+  }, [serverId, target.parentAgentId, target.subagentId, epoch, streamId]);
+  const promptContexts = contextScope.contexts;
+  useEffect(() => () => promptContexts.dispose(), [promptContexts]);
+  const coverage = useMemo(() => canonicalCoverageForCursor(timeline?.cursor), [timeline?.cursor]);
   const historyPagination = useMemo(
     () => ({
       epoch,
@@ -254,8 +275,21 @@ function ProviderSubagentPanel() {
       progressKey,
       onLoadOlder: loadOlder,
       readPromptContext,
+      promptContexts,
+      sourceMetadata: timeline?.sourceMetadata,
+      coverage,
     }),
-    [epoch, isLoadingOlder, loadOlder, progressKey, timeline?.hasOlder, readPromptContext],
+    [
+      epoch,
+      isLoadingOlder,
+      loadOlder,
+      progressKey,
+      timeline?.hasOlder,
+      readPromptContext,
+      promptContexts,
+      timeline?.sourceMetadata,
+      coverage,
+    ],
   );
   const turnPresentation = useMemo<TurnPresentation>(
     () => ({
@@ -279,6 +313,7 @@ function ProviderSubagentPanel() {
     <View style={styles.container} testID="provider-subagent-panel">
       {subtitle ? <PaneSubtitle text={subtitle} testID="provider-subagent-pane-subtitle" /> : null}
       <AgentStreamView
+        nativeViewportPlacement="standalone"
         agentId={streamId}
         serverId={serverId}
         context={streamContext}

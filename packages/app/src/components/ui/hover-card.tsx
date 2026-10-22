@@ -10,12 +10,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { Portal } from "@gorhom/portal";
-import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import {
+  getOverlayRoot,
   OverlayLayerProvider,
   useOverlayLayer,
   useWebOverlayRegistration,
@@ -412,7 +412,6 @@ function HoverCardSurface({
   contentRef: RefObject<View | null>;
   pointerRef: RefObject<{ x: number; y: number } | null>;
 }): ReactElement {
-  const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<Size | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -465,25 +464,26 @@ function HoverCardSurface({
   );
   const surfaceStyle = useMemo(() => [styles.surface, style], [style]);
 
-  return (
-    <Portal hostName={bottomSheetInternal?.hostName}>
-      <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
-        <FloatingSurface
-          ref={contentRef}
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          onLayout={handleLayout}
-          role={role}
-          accessibilityLabel={accessibilityLabel}
-          testID={testID}
-          style={surfaceStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
-      </View>
-    </Portal>
+  // Hover cards are web-only. Share the body overlay plane with menus and tooltips,
+  // outside the app stacking context and above resident browser surfaces.
+  return createPortal(
+    <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
+      <FloatingSurface
+        ref={contentRef}
+        entering={FadeIn.duration(80)}
+        exiting={FadeOut.duration(80)}
+        collapsable={false}
+        onLayout={handleLayout}
+        role={role}
+        accessibilityLabel={accessibilityLabel}
+        testID={testID}
+        style={surfaceStyle}
+        frameStyle={frameStyle}
+      >
+        {children}
+      </FloatingSurface>
+    </View>,
+    getOverlayRoot(),
   );
 }
 

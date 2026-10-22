@@ -13,7 +13,7 @@ async function scrollToHomeFooter(page: Page) {
 
 async function expectHomeActionsReachable(page: Page) {
   const providers = page.getByTestId("open-project-setup-providers");
-  const community = page.getByRole("button", { name: "Community", exact: true });
+  const community = page.getByTestId("community-links-github-star");
   await expect(providers).toBeInViewport({ ratio: 1 });
   await expect(community).toBeInViewport({ ratio: 1 });
   const providerBounds = await providers.boundingBox();
