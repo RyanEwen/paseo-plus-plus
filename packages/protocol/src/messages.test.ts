@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   AgentTimelineItemPayloadSchema,
   CheckoutDiffGetRequestSchema,
+  SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -667,3 +668,24 @@ test("single-file diff capability is optional on older hosts", () => {
       ?.checkoutFileDiff,
   ).toBe(true);
 });
+test.each(["all", "base", "uncommitted"] as const)(
+  "preserves %s review attachments while ignoring unknown attachments",
+  (mode) => {
+    const attachment = {
+      type: "review",
+      mimeType: "application/paseo-review",
+      cwd: "/repo",
+      mode,
+      baseRef: "main",
+      comments: [],
+    };
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "review",
+      agentId: "agent",
+      text: "Review",
+      attachments: [{ type: "future_attachment" }, attachment],
+    });
+    expect(parsed.attachments).toEqual([attachment]);
+  },
+);

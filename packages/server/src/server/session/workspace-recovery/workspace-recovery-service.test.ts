@@ -196,7 +196,7 @@ describe("workspace recovery", () => {
       cwd: repoDir,
       worktreeSlug: "mixed-project",
       source: { kind: "checkout-branch", branchName: branch },
-      runSetup: false,
+
       paseoHome,
       worktreesRoot,
     });
@@ -252,7 +252,7 @@ describe("workspace recovery", () => {
       cwd: repoDir,
       worktreeSlug: "without-subproject",
       source: { kind: "checkout-branch", branchName: branch },
-      runSetup: false,
+
       paseoHome,
       worktreesRoot,
     });
@@ -346,7 +346,6 @@ async function createBaseRecoveryFixture(baseBranch: string | null) {
     paseoHome,
     worktreeSlug: "base-recovery",
     source: { kind: "branch-off", branchName: "feature", baseBranch: "main" },
-    runSetup: false,
   });
   writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
   execFileSync("git", ["add", "."], { cwd: created.worktreePath });

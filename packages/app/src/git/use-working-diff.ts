@@ -88,6 +88,7 @@ export function useWorkingDiff({
     statusReady: status !== null,
   });
   const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
+  const selectAll = useCallback(() => selectComparison("all"), [selectComparison]);
   const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
 
   const queryOptions = {
@@ -150,6 +151,7 @@ export function useWorkingDiff({
     diffMode,
     selectUncommitted,
     selectBase,
+    selectAll,
     files,
     overviewFiles,
     diffPayloadError,

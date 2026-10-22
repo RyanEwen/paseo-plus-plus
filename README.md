@@ -6,240 +6,71 @@ Paseo++ is [RyanEwen/paseo-plus-plus](https://github.com/RyanEwen/paseo-plus-plu
 
 For fork development and integration, follow the [worktree guide](docs/worktree-development.md#fork-branches-and-ownership). Published builds follow the [fork release process](docs/release.md#fork-preview-distribution).
 
-![Paseo++ settings showing optional features enabled and Explorer preferences](docs/qa-evidence/settings-examples/settings-overview-full.png)
+[Install Paseo++](docs/fork-installation.md) · [Feature settings](docs/fork-features/settings.md)
 
 ## Optional features
 
-All switches in **Optional features** start enabled. Display preferences have independent defaults; **Expand one project at a time** starts off. The settings button opens **Paseo++** first, where you can find their switches. Turning a feature off preserves its saved data and preferences.
+- [Keep user prompts in view](docs/fork-features/keep-user-prompts-in-view.md)
+- [Readable tool activity](docs/fork-features/readable-tool-activity.md)
 
-### Keep user prompts in view
+- [Previous agents](docs/fork-features/previous-agents.md)
+- [Project selector](docs/fork-features/project-selector.md)
 
-User messages start collapsed to one line and the actual message row sticks when it reaches the top. The user prompt preceding your reading position stays loaded, including when you first open a conversation. More… expands the full message and attachments in place. Expanded messages stay below 60% of the window and 80% of the chat pane; long bodies scroll inside that area while Less… and navigation stay reachable. Click a pinned message to return to its original position, or use the arrows to move between pinned prompts without moving the controls. Newer messages push the preceding pinned row away. Navigation arrows sit beside copy and rewind controls, appearing on hover on desktop and staying visible on touch screens. After arrow navigation, the destination’s controls stay visible until you move the mouse. Jump to latest sits above the composer’s right edge.
+- [Project activity chips](docs/fork-features/project-activity-chips.md)
+- [Bold project names](docs/fork-features/bold-project-names.md)
 
-### Readable tool activity
+- [Expand and collapse all](docs/fork-features/expand-and-collapse-all.md)
+- [Pin workspaces within projects](docs/fork-features/pin-workspaces-within-projects.md)
 
-See clearer descriptions of reading, editing, creating, searching and running scripts across compatible providers. Running, failed and canceled operations keep their status, and full commands, output and multi-file changes remain expandable. Turn this off to restore classic labels and grouping.
+- [Animate workspace moves](docs/fork-features/animate-workspace-moves.md)
+- [Status group counts](docs/fork-features/status-group-counts.md)
 
-[View example](packages/app/assets/settings-examples/annotated/descriptiveToolCalls-descriptive-tool-calls.svg)
-
-### Previous agents
-
-Reopen conversations with closed tabs or archived agents from the workspace **+** menu. Return to the same conversation, then choose **Unarchive** when you want to resume an archived agent.
-
-[View example](packages/app/assets/settings-examples/annotated/previousAgents-previous-agents.svg)
-
-### Project selector
-
-The **Selected project in heading** switch shows the selected project name in the workspace heading. Off uses **Workspaces**; host and project choices remain available. The chooser lists projects directly, with **Hosts** shown when multiple hosts are available. Click a project name to show only that project, or use checkboxes to include several. **All** clears both local filters.
-
-The workspace heading, project selector, and display controls stay visible while you scroll the workspace list. Desktop expand and collapse controls stay with the heading.
-
-Use **Archive all** in a project's actions menu to archive its active workspaces and agents across hosts while keeping the project. Confirmation shows the affected counts and offers a separate, initially off choice for background workspaces. Existing worktree warnings still apply.
-
-[View example](packages/app/assets/settings-examples/annotated/sidebarProjectSelector-project-selector.svg)
-
-### Project activity chips
-
-See whether a project's workspaces are working, need input, or have finished. Ready-to-review work takes priority over working workspaces, so a collapsed project keeps actionable work visible. When several workspaces are working, the chip shows their count. Project choices in the dropdown show the same badges, including when another project is selected.
-
-[View example](packages/app/assets/settings-examples/annotated/sidebarActivityChips-project-header.svg)
-
-### Bold project names
-
-Make project headings easier to distinguish from workspace rows.
-
-[View example](packages/app/assets/settings-examples/annotated/sidebarProjectEmphasis-project-header.svg)
-
-### Expand and collapse all
-
-Expand or collapse visible sidebar groups together while retaining hidden groups' preferences.
-
-[View example](packages/app/assets/settings-examples/annotated/sidebarBulkActions-bulk-actions.svg)
-
-### Pin workspaces within projects
-
-Keep selected workspaces at the top of their project, alongside the existing option to pin at the top of the whole sidebar. Project-pinned workspaces show a pin in the gutter to the left of their name. The marker uses the existing gutter without shifting workspace names; project icons and operation loaders retain their place. A global sidebar pin alone does not show this project-pin marker. Turning the feature off hides the marker; saved project pins return when it is re-enabled.
-
-[View example](packages/app/assets/settings-examples/annotated/projectPinning-project-pin.svg)
-
-### Animate workspace moves
-
-Follow workspaces as status changes or expanding and collapsing projects move them to new positions with quick transitions. Animations respect reduced-motion preferences and preserve collapsed groups and display limits. When expanding one project at a time, the sidebar brings the selected project header to the top of the visible list as groups above it collapse.
-
-### Status group counts
-
-See how many workspaces are in each Status group at the right edge of its heading. Counts follow sidebar filters and remain visible when groups are collapsed or rows are hidden by the display limit. Workspaces pinned at the top of the sidebar stay in their separate section.
-
-### Automatic Android update checks
-
-Check for published Paseo++ releases on startup and resume. Available updates appear in the sidebar. Follow download progress and verification in the sidebar or Settings, then approve installation in Android. Turning automatic checks off keeps manual checking and installation available.
-
-### Sidebar host updates
-
-Update a host from the sidebar when it confirms update support and a compatible release is available. Older hosts can use the manual update flow without a release-availability check. This sidebar action starts enabled; turn **Host updates in the sidebar** off in Paseo++ settings to hide it while keeping the ordinary update action in Host Settings.
+- [Automatic Android update checks](docs/fork-features/automatic-android-update-checks.md)
+- [Sidebar host updates](docs/fork-features/sidebar-host-updates.md)
 
 ## Display and reading preferences
 
-### Tool call display
+- [Tool call display](docs/fork-features/tool-call-display.md)
+- [Workspace tab widths](docs/fork-features/workspace-tab-widths.md)
 
-New preferences start in **Summary**. Choose **Full detail** in **Settings → Chat**; saved choices are preserved.
+- [Split layout controls](docs/fork-features/split-layout-controls.md)
+- [Mobile workspace tabs](docs/fork-features/mobile-workspace-tabs.md)
 
-### Workspace tab widths
+- [Accent colors](docs/fork-features/accent-colors.md)
+- [Sidebar display options](docs/fork-features/sidebar-display-options.md)
 
-Main-pane desktop tabs have a 96 px minimum width, so short names such as Dev stay comfortable to select. The strip scrolls when the available space cannot fit that minimum. Compact workspace tabs retain their larger touch targets; long-press a tab for its actions, without a separate three-dot button. Explorer sidebar tabs use a smaller minimum; enable icon-only tabs from an Explorer tab or the strip’s context menu to use compact square tabs.
-
-### Split layout controls
-
-Use the split icon beside a creation item in the workspace **+** menu, then click the region where the new view belongs. One set of diagrams splits left/right and another splits top/bottom. In a 60/40 diagram, clicking left or top gives the new pane 60%; clicking right or bottom gives it 40%. Clicking the creation item itself keeps its normal behavior.
-
-Right-click a tab and choose **Move tab** to move that same tab to an existing pane or a region in a split diagram. Compact diagrams use larger touch regions and wrap within the scrolling menu. Keyboard users can move through the region choices with Up/Down, Home/End, then Enter or Space.
-
-Hover a workspace divider, including the divider beside the Explorer dock, to choose 70/30, 60/40, 50/50, 40/60, or 30/70 proportions for its existing adjacent panes. The picker opens beside the pointer and stays open while moving between the divider and its choices. Choices that cannot fit the panes’ minimum widths are unavailable. Divider choices resize panes; they do not create or move a tab. Turn **Split layout controls** off in Paseo++ settings to hide these controls without changing your layout.
-
-### Mobile workspace tabs
-
-Switch between workspace tabs directly on your phone with the bottom tab strip enabled by default. Scroll it horizontally, use each tab's actions for renaming or closing, and open another tab from **+**. Turn **Mobile workspace tabs** off in Paseo++ settings to restore the earlier chooser while preserving your selected tab and drafts.
-
-Enable **Wider workspace tabs** in Paseo++ settings to give long tab titles up to 50% more width. Short tabs respect the minimum width, and turning it off restores the earlier maximum.
-
-### Accent colors
-
-Choose a muted accent color in **Paseo++** settings for primary controls and your messages, including pinned prompts. Every choice shows its message-bubble colors before you select it. Colors adapt to light and dark themes; Default restores your theme’s original appearance. If you sync settings, update the selected settings host to enable this preference.
-
-### Sidebar display options
-
-Workspace hover details wait 250 ms before opening. Moving away cancels the popup before its content mounts. Keyboard activation stays immediate.
-
-In Project mode, enable **Display → Expand one project at a time** to collapse other known project groups when you expand one. It starts off. Pinned and Status groups retain their existing behavior; **Expand all** still expands all visible groups.
-
-Switch between Project and Status views with the bell beside the workspace heading. Each view keeps its own Display preferences and device-local host/project filters. Display includes sorting, labels, background workspaces, row details and activity. **Show background workspaces** reveals workspaces explicitly created for background work, which are normally hidden; it does not mean every workspace you are not currently viewing. Background visibility is retained across app reloads and reconnects. Project labels start visible; branch labels start hidden. A selected settings host must support separate sidebar modes before these synchronized controls can be edited.
-
-The workspace chooser lists projects directly. With multiple hosts, its **Hosts** submenu filters them; projects from the selected hosts appear directly below it. Adding a project includes it in your current project selection. Host and label filters remain independent.
-
-Dragging is available only when the applicable project or workspace sort is **Custom**; it never changes the sort mode. Sorted workspace rows remain selectable and their action menus stay available. A filtered project move stays before or after the same anchor project when **All** is shown, preserving the relative order of other projects. Pinned workspaces retain independent manual ordering. Project status sorting places **Done** before **No status**.
-
-The filter icon beside the bell opens a quick text filter for the current mode. Match project or workspace names, titles and visible branches without changing the active workspace, saved order or sort. Project-name matches retain their scoped children; other matches retain the matching workspace and its project. Each mode keeps its own text for the current app session. Clear, close or press Escape to restore the list; collapsed sections keep their existing state.
-
-In **Display → Empty projects**, choose **Show**, **Group**, or **Hide** for project groups with no visible workspaces.
-
-In **Display → Workspace limits**, open **Count limit** or **Updated within** to choose each view’s limits independently. The count defaults to 20 and the age limit to All. Quick text matching runs before the count window, so a match beyond the first 20 can still appear. **Show more** reveals every matching workspace in that group, including older entries.
-
-### Explorer and Changes
-
-Choose whether Explorer starts open in new desktop workspaces and whether opening a changed file shows its own diff or all changed files. Single-file diffs use the selected file's budget independently of unrelated changes; update the workspace host to enable scoped acquisition. Set a default comparison, or automatically switch between Uncommitted when dirty and Committed when clean. Changes remembers each workspace's comparison across reloads. Hover over a truncated filename in Changes to see its full path. Find these preferences in **Settings → Paseo++**.
+- [Explorer and Changes](docs/fork-features/explorer-and-changes.md)
 
 ## Other additions
 
-### Desktop browser and extensions
+- [Desktop browser and extensions](docs/fork-features/desktop-browser-and-extensions.md)
+- [Automatic usage refresh](docs/fork-features/automatic-usage-refresh.md)
 
-Desktop browser tabs use resident DOM Electron webviews with the shared persistent
-browser profile. Pages stay attached across workspace changes. Menus use the normal
-DOM overlay plane; opening one no longer takes a still frame or hides the page.
-Device presets preserve page-CSS dimensions across independent page and app zoom.
-Use the page zoom menu to resize web content separately from the Paseo interface.
-Pages on the same origin share zoom according to Chromium’s policy.
+- [Sync app settings](docs/fork-features/sync-app-settings.md)
+- [Android SSH hosts](docs/fork-features/android-ssh-hosts.md)
 
-Manage Chrome extensions in **Settings → Browser → Extensions**, and open their popups from the browser toolbar. Pinned icons and the Extensions menu show the extension's own badge text and colors for the current page. Compatibility depends on Electron's APIs; installation does not guarantee every extension works. Background storage notifications use a private listener so extension state can follow popup and page changes. Confirmed extension-host crashes trigger a limited automatic restart; repeated failures keep **Retry** available in Settings. A restart can lock a password manager or require retrying autofill; Windows inline UI can still crash. See [Browser](public-docs/browser.md#chrome-extensions) for recovery limits. Extensions are not updated automatically.
-Pin extensions from the Extensions menu to keep their icons in the browser toolbar.
-Pins are local to the desktop browser profile and shared across panes and windows.
-Disabling an extension hides its icon without forgetting the pin; uninstalling removes it.
-Toolbar buttons use the existing supported popup actions.
-See [Browser](public-docs/browser.md) for supported actions and limitations.
+- [Restore archived workspaces](docs/fork-features/restore-archived-workspaces.md)
+- [Branch and worktree choices](docs/fork-features/branch-and-worktree-choices.md)
 
-### Automatic usage refresh
-
-Displayed connection usage refreshes every 15 minutes while the app is visible and the host is connected. Hidden usage panels pause automatic refresh; manual refresh remains available.
-
-### Sync app settings
-
-Choose a settings host in Paseo++ on Android or desktop to share preferences across your clients, including whether Usage appears in the sidebar. Switching hosts loads their saved settings first; an empty host requires an explicit publish action. Connection details, project filters, workspace order and collapsed groups stay local. Your settings host needs a daemon build with settings sync support. Shared settings refresh when the connection’s write permission changes. Retry recovers failed initial reads without leaving editing disabled. Read-only connections can retry the read without restarting the app or replacing saved preferences.
-
-### Android SSH hosts
-
-Connect directly to a remote daemon using an imported private key and optional passphrase, without requiring the Paseo relay. Verify the server fingerprint before connecting; saved credentials are encrypted on your phone. Setup can be dismissed safely during imports and checks.
-
-### Restore archived workspaces
-
-Choose **Restore archived workspace** from a project's menu to browse that project's archive on its host. Select a workspace to review and confirm recovery. Restoring the workspace leaves archived agents archived. Removed worktrees recover from Git; uncommitted changes and untracked files are not recovered.
-
-### Branch and worktree choices
-
-Create a workspace from an existing branch or a new one, with shared or separate branch and folder names. Adopt an existing checkout without creating another worktree, preserving its working subdirectory. Retry failed setup without losing the checkout already created for it.
-
-### Android plugin video
-
-Compatible plugins can display encoded video in workspace panels and recover playback after decoder errors. A plugin that supplies video is required.
-
-### Standalone Linux and WSL daemons
-
-Run a standalone Paseo++ daemon alongside upstream Paseo with separate settings, host identity, agents, and workspaces. Use the app's host **Update** action to receive published fork releases. See [installation instructions](#standalone-daemon-linux-and-wsl) below.
+- [Android plugin video](docs/fork-features/android-plugin-video.md)
+- [Standalone Linux and WSL daemons](docs/fork-features/standalone-linux-and-wsl-daemons.md)
 
 ## Fixes and fork essentials
 
-### Paseo++ links
+- [Paseo++ links](docs/fork-features/paseo-links.md)
+- [Workspace browser links](docs/fork-features/workspace-browser-links.md)
 
-Open the fork repository and published release notes from the app. Upstream issue, sponsorship, and Discord actions are removed.
+- [Background browser automation](docs/fork-features/background-browser-automation.md)
+- [Screenshot originals and capture guards](docs/fork-features/screenshot-originals-and-capture-guards.md)
 
-### Workspace browser links
+- [Codex async questions](docs/fork-features/codex-async-questions.md)
+- [Workspace notifications](docs/fork-features/workspace-notifications.md)
 
-On desktop, HTTP and HTTPS links in a workspace open in a new Paseo browser tab in that workspace, including terminal, chat, repository, pull request, check, and service links. Turn **Workspace links** off in Paseo++ settings to open primary clicks externally. Existing link menus offer explicit browser destinations. Native apps, plain web, links outside a workspace, and explicit external actions keep opening externally.
+- [Steadier reading](docs/fork-features/steadier-reading.md)
+- [Mobile navigation](docs/fork-features/mobile-navigation.md)
 
-### Background browser automation
-
-Resident browser tabs keep their page identity while hidden. Reliable keyboard input without focusing the app, including minimized Windows operation, remains unverified on the restored webview path.
-
-### Screenshot originals and capture guards
-
-Paseo-owned browser screenshots save admitted originals on the execution host and return a reference alongside the inline image. Client APIs list references and retrieve original bytes; direct and relay transfers require acknowledged delivery, while plugin IPC supports metadata only. Capture-size checks are best-effort Electron/CDP guards, not native allocation ceilings. Encoded-input, queue, storage and transfer limits remain enforced. They do not cap provider context or UI image memory. See [protected boundaries](docs/architecture.md#screenshot-capture-guards) and [storage limits and crash availability](docs/data-model.md#attachment-originals).
-
-### Codex async questions
-
-Unanswered questions stay available when a Codex turn is stopped or interrupted. You can answer or dismiss them later, including after reopening the conversation.
-
-### Workspace notifications
-
-Agent and terminal notifications name their workspace, with the project name included when it fits. Desktop and browser alerts use the project's icon. Mobile alerts keep the Paseo icon alongside the workspace text. Status and message previews remain visible below the workspace name.
-
-Chat notifications open their owning workspace, including older notifications without a workspace link. Windows banners and Notification Center entries retain their chat targets across app restarts.
-
-### Steadier reading
-
-Visible text on desktop and web stays in place when an image finishes loading at a shorter height. Prompt and history loading recover from failures without leaving navigation stuck.
-
-### Mobile navigation
-
-Use a larger tab-switcher touch target. Android Back returns from a workspace to the workspace list, and development and production apps keep notification delivery separate.
-
-### Workspace pickers and status
-
-Host, project, checkout, and branch choices follow the setup order and include explanations. Hover over truncated choices to see full values. Projects remain available when workspaces are pinned. Status sorting puts the newest workspaces first within each status; row actions and hover details accommodate statuses, branch names, and worktree paths.
-
-### Independent fork installations
-
-Paseo++ apps and daemons keep separate identities, settings, and update sources from upstream Paseo. Set up hosts and preferences independently in each installation.
-
-## Install Paseo++
-
-Download desktop and Android builds from [Paseo++ releases](https://github.com/RyanEwen/paseo-plus-plus/releases). New builds discover updates from this repository directly. The legacy repository redirect remains available for existing installations. Builds are available for Windows and Linux (x64 and ARM64), plus Android. Windows and Linux AppImage builds receive updates from Paseo++ releases. The desktop app includes its own daemon. macOS is deferred until Apple signing is available; iOS and hosted web are excluded. The upstream overview farther down retains upstream download links and installation commands.
-
-The planned transition to normal releases needs one final prerelease updater bridge for older Android apps and standalone hosts. That bridge has not been published by this change. The [release transition](docs/release.md#final-prerelease-bridge-and-normal-latest-releases) owns qualification, publication and bridge retention requirements.
-
-Paseo++ desktop and Android apps keep their own settings and identities, separate from upstream Paseo. Set up your hosts and preferences independently in each app. The desktop app also keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790, separate from the standalone daemon. Existing desktop profiles that saved port 6767 retain that setting; changing the packaged default does not rewrite saved addresses. Desktop and Android previews use fresh Paseo++ installations and settings; set up connections again when moving from the former Debug builds.
-
-### Standalone daemon (Linux and WSL)
-
-Install Node.js 22 or newer and at least one agent CLI. Download the matching `paseo-daemon-<version>-linux-<arch>.tgz` from [Paseo++ releases](https://github.com/RyanEwen/paseo-plus-plus/releases). Use `x64` for Intel/AMD or `arm64` for ARM. Linux packages require glibc; Alpine/musl is unsupported.
-
-Install the downloaded package, then start the daemon:
-
-```bash
-npm install -g ./paseo-daemon-<version>-linux-<arch>.tgz
-paseo-plus-plus daemon run
-```
-
-Keep that terminal open, or use `paseo-plus-plus daemon run` as your service's command. The standalone daemon keeps its settings, host identity, agents, and workspaces in `~/.paseo-plus-plus` and listens on `127.0.0.1:6791`. Upstream Paseo and Paseo++ can run side by side with their defaults. Set up the new daemon independently and connect your app to it. These defaults apply to previews built with the `paseo-plus-plus` command.
-
-Use **Update** next to a host in the sidebar footer's hosts list to install a newer eligible daemon release. The action appears when the host confirms that its installation supports updating and a compatible release is available. Older hosts keep their Settings update action. Source-built daemons need to switch to a release package to use this update path.
+- [Workspace pickers and status](docs/fork-features/workspace-pickers-and-status.md)
+- [Independent fork installations](docs/fork-features/independent-fork-installations.md)
 
 <!-- fork-overview:end -->
 

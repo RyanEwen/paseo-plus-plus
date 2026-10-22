@@ -81,9 +81,10 @@ Select the integration ref for the release lane from [release source and CI](#re
   the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
   `next`. Create it fresh when needed again.
 
-**Setup still needed:** CI, Docker, and Nix PR checks do not target `next`,
-and GitHub permits only squash merges. Enable checks and required-check protection
-for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+**Setup still needed:** PR checks run for every base branch, but CI, Docker, and Nix
+push runs target only `main`, and GitHub permits only squash merges. Enable
+required-check protection for `next`, CI on its pushes, and merge commits for the
+integration PR. Handle PR
 base changes (`edited` events) so retargeting runs checks against the new base;
 GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
 
@@ -100,8 +101,9 @@ short-lived hotfix branch, not another maintained release track.
 
 In RyanEwen/paseo-plus-plus, the opening README section owns the list of user-visible differences from
 upstream. Review it when you add or change a feature and when you merge upstream changes. Remove
-an addition from the list once upstream includes it. Describe available behavior; label planned
-distribution separately until builds are published.
+an addition from the list once upstream includes it. Keep each entry to the feature or change name and a link to its guide. Put usage, examples, limits and settings details in the owning guide, not inline in the README. Link to the integrated guide on `main`; the guide can also link to its maintained feature branch. Branch deletion must not break the README.
+
+Review **Settings → Paseo++** in the same pass. Remove inventory rows and redundant controls when upstream provides the same behavior, while preserving saved preferences unless their removal is explicitly part of the change. Update localized help and examples when behavior changes. Describe available behavior; label planned distribution separately until builds are published.
 
 The `fork-overview` check runs on pull requests to `main`, `ryan/dev`, and `ryan/preview`. A code or
 build change must update the marked README section, or check the fork overview review box in the
@@ -804,6 +806,14 @@ This policy governs the upstream `CHANGELOG.md` and stable/beta entries. Fork pr
 - Stable promotion renames the entry to `## 0.1.60 - YYYY-MM-DD` after a final review.
 
 Older prerelease bodies on GitHub keep the notes they were synced with; `Release Notes Sync` only writes the release whose tag matches the top entry.
+
+## Changelog translations
+
+`CHANGELOG.zh-CN.md` holds the Chinese notes for `paseo.sh/zh-CN/changelog`. Only the website reads it; the app's **What's new** sheet, GitHub release bodies and F-Droid read `CHANGELOG.md`.
+
+- Translations never gate a release. Translate a new entry in a follow-up PR, or in the changelog commit when you can.
+- A translated entry uses the English heading unchanged: `## X.Y.Z - YYYY-MM-DD`. The website uses it only while the version and date both match the English entry. Otherwise it shows that release whole in English under a notice, so a beta rewritten in place drops its old translation until the new notes are translated. Delete Chinese entries whose English entry was renamed.
+- Keep the English sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
 
 ## Changelog ownership
 

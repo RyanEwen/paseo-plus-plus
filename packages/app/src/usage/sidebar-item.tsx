@@ -35,11 +35,12 @@ import { UsageModal } from "./usage-modal";
 
 /** Each summary window with data on the usage host, under its source; empty while none has. */
 function useUsageSummary(): readonly PinnedUsageSource[] {
+  const { t } = useTranslation();
   const serverId = useUsageHostId();
   const { inSidebar } = useUsageInSidebar();
   const reports = useUsageHostReports(inSidebar ? serverId : null);
   const { preferences } = useUsageDisplay(reports);
-  return useMemo(() => resolvePinnedUsage(reports, preferences), [preferences, reports]);
+  return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
 }
 
 /** Whether the sidebar Usage item has anything to show. */

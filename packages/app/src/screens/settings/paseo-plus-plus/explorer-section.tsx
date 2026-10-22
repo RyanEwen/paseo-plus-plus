@@ -107,9 +107,12 @@ export function ExplorerSection() {
   );
   const comparisonOptions = useMemo(
     () =>
-      (["uncommitted", "base"] as const).map((value) => ({
+      (["uncommitted", "base", "all"] as const).map((value) => ({
         value,
-        label: t(`settings.layout.explorer.comparison.options.${value}`),
+        label:
+          value === "all"
+            ? t("workspace.git.diff.all")
+            : t(`settings.layout.explorer.comparison.options.${value}`),
       })),
     [t],
   );

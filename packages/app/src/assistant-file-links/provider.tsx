@@ -23,6 +23,7 @@ export interface AssistantFileLinkResolverConfig {
   client?: AssistantFileLinkDaemonClient | null;
   serverId?: string;
   workspaceRoot?: string;
+  relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
   onOpenHttpUrl?: (url: string) => void | Promise<void>;
@@ -48,6 +49,7 @@ export function AssistantFileLinkResolverProvider({
   client,
   serverId,
   workspaceRoot,
+  relativePathBase,
   onOpenWorkspaceFile,
   onOpenHttpUrl,
   toast,
@@ -60,6 +62,7 @@ export function AssistantFileLinkResolverProvider({
     client,
     serverId,
     workspaceRoot,
+    relativePathBase,
     onOpenWorkspaceFile,
     onOpenHttpUrl,
     toast,
@@ -68,6 +71,7 @@ export function AssistantFileLinkResolverProvider({
     client,
     serverId,
     workspaceRoot,
+    relativePathBase,
     onOpenWorkspaceFile,
     onOpenHttpUrl,
     toast,

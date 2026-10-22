@@ -12,7 +12,7 @@ interface UseWorkspaceTabLayoutInput {
   tabLabelWidths: number[];
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
-  preserveNaturalWidths?: boolean;
+  compact: boolean;
   host?: PaneHost;
   iconOnlyTabWidth?: number;
 }
@@ -39,7 +39,7 @@ export function useWorkspaceTabLayout(
         viewportWidth: resolvedViewportWidth,
         tabLabelWidths: input.tabLabelWidths,
         metrics: input.metrics,
-        preserveNaturalWidths: input.preserveNaturalWidths,
+        compact: input.compact,
         widerTabs,
         iconOnly,
         iconOnlyTabWidth: input.iconOnlyTabWidth,
@@ -47,7 +47,7 @@ export function useWorkspaceTabLayout(
     [
       input.metrics,
       input.tabLabelWidths,
-      input.preserveNaturalWidths,
+      input.compact,
       resolvedViewportWidth,
       widerTabs,
       iconOnly,

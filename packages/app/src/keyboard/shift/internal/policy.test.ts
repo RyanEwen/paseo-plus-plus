@@ -5,7 +5,6 @@ import {
   shouldReconcileHiddenKeyboardEnd,
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
-  shouldUseCompactExplorerKeyboardPadding,
 } from "./policy";
 
 describe("keyboard layout reservation", () => {

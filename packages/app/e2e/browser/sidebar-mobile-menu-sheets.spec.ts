@@ -17,6 +17,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
   page,
 }, testInfo) => {
   const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-sheet-" });
+  const secondProject = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-filter-" });
 
   try {
     await gotoAppShell(page);
@@ -34,7 +35,8 @@ test("project and workspace kebabs open action sheets on compact layouts", async
       /^Empty projects/,
       /^Title/,
       "Show",
-      "Show background workspaces",
+      "Project",
+      "Show background",
     ]);
     await closeMenuSheet(page);
 
@@ -87,6 +89,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
       .toBe(true);
     await page.screenshot({ path: testInfo.outputPath("project-pin-compact-menu.png") });
   } finally {
+    await secondProject.cleanup();
     await seeded.cleanup();
   }
 });

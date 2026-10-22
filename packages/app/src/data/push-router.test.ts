@@ -52,7 +52,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   subscribeCheckoutDiffCalls: Array<{
     cwd: string;
     compare: {
-      mode: "uncommitted" | "base";
+      mode: "uncommitted" | "base" | "all";
       baseRef?: string;
       ignoreWhitespace?: boolean;
       filePath?: string;
@@ -73,7 +73,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
     compare: {
-      mode: "uncommitted" | "base";
+      mode: "uncommitted" | "base" | "all";
       baseRef?: string;
       ignoreWhitespace?: boolean;
       filePath?: string;
@@ -446,12 +446,12 @@ describe("server data push router", () => {
     }
   });
 
-  it("subscribes active checkout diff queries and writes matching diff events", () => {
+  it.each(["base", "all"] as const)("routes %s diff snapshots and updates", (mode) => {
     const queryClient = new QueryClient();
     const fake = createFakeClient();
     const serverId = "server-1";
     const cwd = "/repo";
-    const queryKey = checkoutDiffQueryKey(serverId, cwd, "base", "main", true);
+    const queryKey = checkoutDiffQueryKey(serverId, cwd, mode, "main", true);
     const subscriptionId = `checkoutDiff:${JSON.stringify(queryKey)}`;
     const observer = new QueryObserver(queryClient, {
       queryKey,
@@ -464,17 +464,18 @@ describe("server data push router", () => {
         serverId,
         subscriptionId,
         cwd,
-        compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
+        compare: { mode, baseRef: "main", ignoreWhitespace: true },
       }),
     });
     const unsubscribeObserver = observer.subscribe(() => undefined);
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
 
+    expect(fake.subscribeCheckoutDiffCalls).toHaveLength(1);
     const serverSubscriptionId = fake.subscribeCheckoutDiffCalls[0]!.subscriptionId;
     expect(fake.subscribeCheckoutDiffCalls).toEqual([
       {
         cwd,
-        compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
+        compare: { mode, baseRef: "main", ignoreWhitespace: true },
         subscriptionId: serverSubscriptionId,
       },
     ]);

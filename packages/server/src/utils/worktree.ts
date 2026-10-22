@@ -1,13 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import {
-  constants as fsConstants,
-  existsSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-  statSync,
-} from "fs";
+import { constants as fsConstants, existsSync, mkdirSync, realpathSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
@@ -227,7 +220,6 @@ export interface CreateWorktreeOptions {
   worktreeSlug: string;
   exactNames?: boolean;
   source: WorktreeSource;
-  runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
 }
@@ -653,7 +645,6 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
 export async function runWorktreeSetupCommands(options: {
   worktreePath: string;
   branchName: string;
-  cleanupOnFailure: boolean;
   repoRootPath?: string;
   runtimeEnv?: WorktreeRuntimeEnv;
   signal?: AbortSignal;
@@ -693,16 +684,6 @@ export async function runWorktreeSetupCommands(options: {
     results.push(result);
 
     if (result.exitCode !== 0) {
-      if (options.cleanupOnFailure) {
-        try {
-          await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
-            cwd: options.worktreePath,
-            timeout: 120_000,
-          });
-        } catch {
-          rmSync(options.worktreePath, { recursive: true, force: true });
-        }
-      }
       throw new WorktreeSetupError(
         `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
         results,
@@ -1247,7 +1228,6 @@ export const createWorktree = async ({
   source,
   worktreeSlug,
   exactNames,
-  runSetup,
   paseoHome,
   worktreesRoot,
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
@@ -1313,27 +1293,6 @@ export const createWorktree = async ({
   });
 
   await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
-
-  if (runSetup) {
-    try {
-      await runWorktreeSetupCommands({
-        worktreePath,
-        branchName: sourcePlan.branchName,
-        // Exact-name failures recover by retrying setup in the retained checkout.
-        // A branch ref lock cannot exclude external Git operations that adopt HEAD.
-        cleanupOnFailure: !exactNames,
-      });
-    } catch (error) {
-      if (exactNames && error instanceof WorktreeSetupError) {
-        throw new WorktreeSetupError(
-          `${error.message}\nRetained worktree: ${worktreePath} (branch: ${sourcePlan.branchName}). Choose this existing worktree and retry setup there.`,
-          error.results,
-          { worktreePath, branchName: sourcePlan.branchName },
-        );
-      }
-      throw error;
-    }
-  }
 
   return {
     branchName: sourcePlan.branchName,

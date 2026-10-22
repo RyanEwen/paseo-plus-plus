@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 import { prepareNativePaneRenderer, runNativePaneRegression } from "./native-pane.electron.mjs";
@@ -1420,6 +1421,7 @@ async function main() {
         cwd: rootDir,
         env: {
           ...commonEnv,
+          EXPO_UNSTABLE_HEADLESS: "1",
           EXPO_PORT: String(expoPort),
           EXPO_DEV_URL: `http://localhost:${expoPort}`,
           PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
@@ -1438,6 +1440,7 @@ async function main() {
     page.on("pageerror", (error) =>
       fs.appendFileSync(path.join(artifactDir, "renderer-errors.txt"), `${error.stack}\n`),
     );
+    await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
     await waitForRendererReady(page, expoPort, artifactDir);
 
