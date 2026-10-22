@@ -1,7 +1,6 @@
 import { protectConsoleStreams } from "./diagnostics/console-streams.js";
 protectConsoleStreams();
 
-import { getNativeBrowserSurface } from "./features/browser-views/surfaces.js";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";
@@ -106,8 +105,6 @@ import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { registerBrowserExtensions } from "./features/browser-extensions/index.js";
 import { buildBrowserExtensionContextMenuItems } from "./features/browser-extensions/context-menus.js";
-import { NativeBrowserViewOwner } from "./features/browser-views/owner.js";
-import { registerNativeBrowserViewIpc } from "./features/browser-views/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
@@ -210,20 +207,6 @@ function readActiveBrowserInput(
 
 const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
 browserKeyboard.registerIpc();
-const nativeBrowserViews = new NativeBrowserViewOwner({
-  profile: () => getPaseoBrowserProfileSession(session),
-  preloadPath: getBrowserKeyboardPreloadPath,
-  prepare(contents, host) {
-    registerBrowserWebviewNavigationGuards(contents);
-    browserKeyboard.attach({ contents, hostContents: host.webContents });
-    installBrowserWindowOpenHandler({ contents, sourceContents: contents, mainWindow: host });
-    contents.on("context-menu", (_event, params) =>
-      showBrowserWebviewContextMenu(host, contents, params),
-    );
-    contents.once("destroyed", () => pendingBrowserWindowOpenRequests.delete(contents.id));
-  },
-});
-registerNativeBrowserViewIpc(nativeBrowserViews);
 
 function showBrowserWebviewContextMenu(
   win: BrowserWindow,
@@ -475,11 +458,7 @@ ipcMain.handle("paseo:browser:unregister-workspace-browser", async (event, brows
       event.sender.id,
       normalizedBrowserId,
     );
-    if (nativeBrowserViews.owns(event.sender.id, normalizedBrowserId)) {
-      nativeBrowserViews.close(event.sender.id, normalizedBrowserId);
-    } else {
-      unregisterPaseoBrowserFromHost(event.sender.id, normalizedBrowserId);
-    }
+    unregisterPaseoBrowserFromHost(event.sender.id, normalizedBrowserId);
     // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
     const legacyProfile = hasOtherHost
       ? null
@@ -515,9 +494,6 @@ ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   const host = BrowserWindow.fromWebContents(event.sender);
   if (!host || host.webContents !== event.sender || !host.isFocused() || host.isMinimized()) {
     return false;
-  }
-  if (nativeBrowserViews.owns(event.sender.id, browserId)) {
-    return nativeBrowserViews.focus(event.sender.id, browserId);
   }
   const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
   if (!contents) {
@@ -588,19 +564,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: (browserId, hostId) => {
-    const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostId);
-    if (!contents) return null;
-    const surface = getNativeBrowserSurface(contents.id);
-    if (!surface) return contents;
-    return {
-      isDestroyed: () => contents.isDestroyed(),
-      getZoomFactor: () => contents.getZoomFactor(),
-      // Main registers this surface from Electron capturePage, which returns NativeImage.
-      capturePage: async (rect) =>
-        (await surface.capture(AbortSignal.timeout(10000), rect)) as Electron.NativeImage,
-    };
-  },
+  findGuest: (browserId, hostId) => getPaseoBrowserWebContentsForHostWindow(browserId, hostId),
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
@@ -780,7 +744,6 @@ async function createWindow(
   });
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
-  nativeBrowserViews.registerHost(mainWindow);
   const webContentsId = mainWindow.webContents.id;
   options.onCreated?.(webContentsId);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {

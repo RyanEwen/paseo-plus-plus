@@ -991,7 +991,7 @@ describe("actual patched modal RAF and portal cancellation", () => {
             contextBridge={null}
             nativeBrowserOverlap
           >
-            <span data-second />
+            <input data-second defaultValue="retained draft" />
           </IsolatedBottomSheetModal>
         </>,
       ),
@@ -1002,6 +1002,8 @@ describe("actual patched modal RAF and portal cancellation", () => {
     await act(async () => frames[1]!.callback(1));
     const editor = container.querySelector("[data-actual-editor]");
     expect(document.activeElement).toBe(editor);
+    const secondEditor = container.querySelector<HTMLInputElement>("[data-second]")!;
+    secondEditor.value = "unsaved editor draft";
     act(() => ref.current?.dismiss());
     expect(release).not.toHaveBeenCalled();
     expect(editor?.isConnected).toBe(true);
@@ -1009,8 +1011,12 @@ describe("actual patched modal RAF and portal cancellation", () => {
     await act(async () => first());
     expect(release).toHaveBeenCalledOnce();
     expect(editor?.isConnected).toBe(false);
-    expect(container.querySelector("[data-second]")).not.toBeNull();
+    expect(container.querySelector("[data-second]")).toBe(secondEditor);
+    expect(secondEditor.value).toBe("unsaved editor draft");
+    const priorCloses = sheetControls.closes.length;
     act(() => second.current?.dismiss());
+    expect(sheetControls.closes).toHaveLength(priorCloses + 1);
+    expect(secondEditor.isConnected).toBe(true);
     expect(release).toHaveBeenCalledOnce();
     await act(async () => {
       [...sheetControls.finishCloses.values()][0]!();

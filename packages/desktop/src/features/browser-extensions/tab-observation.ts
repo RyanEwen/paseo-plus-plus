@@ -17,8 +17,11 @@ export function observeExtensionTab(options: TabObservationOptions) {
     throw new Error("A browser tab must be registered before observing it.");
   }
   let currentTab = initial;
+  // DOM guests may first register during a document load; preserve its eventual completion.
+  let waitingForCompletion = initial.status === "loading";
 
-  function update(): void {
+  /** Commit and completion publish status even when consecutive snapshots match. */
+  function update(includeStatus: boolean): void {
     if (options.contents.isDestroyed()) {
       return;
     }
@@ -33,7 +36,7 @@ export function observeExtensionTab(options: TabObservationOptions) {
     if (next.title !== currentTab.title) {
       changes.title = next.title;
     }
-    if (next.status !== currentTab.status) {
+    if (includeStatus) {
       changes.status = next.status;
     }
     currentTab = next;
@@ -42,23 +45,40 @@ export function observeExtensionTab(options: TabObservationOptions) {
     }
   }
 
+  /** Commit clears per-tab action state first. Only then can an extension recompute its badge. */
+  function committed(): void {
+    waitingForCompletion = true;
+    update(true);
+  }
+
+  /** Match Chromium: iframe activity must not repeat a completed document's load cycle. */
+  function stopped(): void {
+    if (!waitingForCompletion) {
+      return;
+    }
+    waitingForCompletion = false;
+    update(true);
+  }
+
+  function metadataChanged(): void {
+    update(false);
+  }
+
   /** Remove every installed listener; safe on either registry removal or native destruction. */
   function detach(): void {
     const contents = options.contents;
-    contents.removeListener("did-start-loading", update);
-    contents.removeListener("did-stop-loading", update);
-    contents.removeListener("did-navigate", update);
-    contents.removeListener("did-navigate-in-page", update);
-    contents.removeListener("page-title-updated", update);
+    contents.removeListener("did-stop-loading", stopped);
+    contents.removeListener("did-navigate", committed);
+    contents.removeListener("did-navigate-in-page", metadataChanged);
+    contents.removeListener("page-title-updated", metadataChanged);
     contents.removeListener("destroyed", detach);
   }
 
   const contents = options.contents;
-  contents.on("did-start-loading", update);
-  contents.on("did-stop-loading", update);
-  contents.on("did-navigate", update);
-  contents.on("did-navigate-in-page", update);
-  contents.on("page-title-updated", update);
+  contents.on("did-stop-loading", stopped);
+  contents.on("did-navigate", committed);
+  contents.on("did-navigate-in-page", metadataChanged);
+  contents.on("page-title-updated", metadataChanged);
   contents.once("destroyed", detach);
   return { getCurrent: () => currentTab, detach };
 }

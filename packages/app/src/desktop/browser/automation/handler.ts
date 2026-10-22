@@ -2,10 +2,16 @@ import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-aut
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
 import {
-  ensureResidentNativeBrowser,
-  removeResidentNativeBrowser,
-  resizeResidentNativeBrowser,
-} from "@/desktop/browser/resident-native-pages.electron";
+  ensureResidentBrowserWebview as ensureDesktopBrowserWebview,
+  removeResidentBrowserWebview,
+  resizeResidentBrowserWebview,
+} from "@/desktop/browser/resident-webviews";
+
+type ResizeBrowser = (input: {
+  browserId: string;
+  width: number;
+  height: number;
+}) => { width: number; height: number } | null | Promise<{ width: number; height: number } | null>;
 
 type EnsureBrowser = (input: {
   browserId: string;
@@ -46,7 +52,7 @@ export interface BrowserAutomationHandlerOptions {
   serverId?: string;
   getHost?: () => DesktopHostBridge | null;
   ensureResidentBrowserWebview?: EnsureBrowser;
-  resizeResidentBrowser?: typeof resizeResidentNativeBrowser;
+  resizeResidentBrowser?: ResizeBrowser;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }
@@ -60,10 +66,10 @@ export function mountBrowserAutomationHandler(
       client: options.client,
       getHost,
       request,
-      resizeResidentBrowser: options.resizeResidentBrowser ?? resizeResidentNativeBrowser,
+      resizeResidentBrowser: options.resizeResidentBrowser ?? resizeResidentBrowserWebview,
       serverId: options.serverId,
       ensureResidentBrowserWebview:
-        options.ensureResidentBrowserWebview ?? ensureResidentNativeBrowser,
+        options.ensureResidentBrowserWebview ?? ensureDesktopBrowserWebview,
       ...(options.registrationWaitTimeoutMs !== undefined
         ? { registrationWaitTimeoutMs: options.registrationWaitTimeoutMs }
         : {}),
@@ -113,7 +119,7 @@ async function handleBrowserAutomationRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
   ensureResidentBrowserWebview: EnsureBrowser;
-  resizeResidentBrowser: typeof resizeResidentNativeBrowser;
+  resizeResidentBrowser: ResizeBrowser;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<void> {
@@ -215,7 +221,7 @@ async function handleBrowserAutomationRequest(params: {
 async function resizeBrowserTabForRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
-  resizeResidentBrowser: typeof resizeResidentNativeBrowser;
+  resizeResidentBrowser: ResizeBrowser;
 }): Promise<BrowserAutomationResponsePayload> {
   const { request, serverId } = params;
   const command = request.command as Extract<
@@ -300,8 +306,8 @@ async function closeBrowserTabForRequest(params: {
 
   useWorkspaceLayoutStore.getState().closeTab(workspaceTab.workspaceKey, workspaceTab.tabId);
   useBrowserStore.getState().removeBrowser(browserId);
-  const closedNative = await removeResidentNativeBrowser(browserId);
-  if (!closedNative) await browserHost?.unregisterWorkspaceBrowser?.(browserId);
+  removeResidentBrowserWebview(browserId);
+  await browserHost?.unregisterWorkspaceBrowser?.(browserId);
 
   return {
     requestId: request.requestId,

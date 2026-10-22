@@ -1,7 +1,13 @@
-import { BrowserWindow, ipcMain, type Session, type WebContents } from "electron";
+import type { ExtensionActionBadge } from "./action-badges.js";
+import { BrowserWindow, ipcMain, nativeImage, type Session, type WebContents } from "electron";
 import { z } from "zod";
 import { getPaseoBrowserWebContentsForHostWindow } from "../browser-webviews/index.js";
-import { getExtensionPopupUrl } from "./manifest.js";
+import type { BrowserExtensionCatalog } from "./catalog.js";
+import {
+  getExtensionPopupUrl,
+  getExtensionToolbarMetadata,
+  readExtensionToolbarIcon,
+} from "./manifest.js";
 import { openBrowserExtensionDocumentWindow } from "./document-window.js";
 
 const PopupInputSchema = z.object({
@@ -11,7 +17,11 @@ const PopupInputSchema = z.object({
 
 interface ExtensionActionsOptions {
   profile: Session;
+  catalog: BrowserExtensionCatalog;
   assertAppSender(event: Electron.IpcMainInvokeEvent): BrowserWindow;
+  waitUntilReady?(extension: Electron.Extension): Promise<void>;
+  isExtensionReady?(id: string): boolean;
+  getBadge?(id: string, tabId: number): ExtensionActionBadge;
   onPopupCreated?(guest: WebContents, popup: WebContents): void;
 }
 
@@ -20,8 +30,27 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
   const { profile, assertAppSender } = options;
   const windows = new Map<string, BrowserWindow>();
   const pending = new Map<string, Promise<BrowserWindow>>();
+  const icons = new Map<string, Promise<string | null>>();
+  profile.extensions.on("extension-loaded", (_event, extension) => icons.delete(extension.id));
+  /** Reuse manifest icons across badge updates; reload/unload invalidates the static asset cache. */
+  function toolbarIcon(extension: Electron.Extension): Promise<string | null> {
+    let loading = icons.get(extension.id);
+    if (!loading) {
+      loading = (async () => {
+        const metadata = getExtensionToolbarMetadata(extension.manifest, extension.name);
+        const bytes = await readExtensionToolbarIcon(extension.path, metadata.iconPath);
+        const image = bytes ? nativeImage.createFromBuffer(bytes) : null;
+        return image && !image.isEmpty()
+          ? image.resize({ width: 32, height: 32 }).toDataURL()
+          : null;
+      })();
+      icons.set(extension.id, loading);
+    }
+    return loading;
+  }
 
   profile.extensions.on("extension-unloaded", (_event, extension) => {
+    icons.delete(extension.id);
     for (const [key, window] of windows) {
       if (key.endsWith(`:${extension.id}`)) {
         window.destroy();
@@ -29,13 +58,36 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
     }
   });
 
-  ipcMain.handle("paseo:browser:extensions:actions", (event) => {
+  ipcMain.handle("paseo:browser:extensions:actions", async (event, input: unknown) => {
     assertAppSender(event);
-    return profile.extensions.getAllExtensions().map((extension) => ({
-      id: extension.id,
-      name: extension.name,
-      hasPopup: getExtensionPopupUrl(extension.id, extension.manifest) !== null,
-    }));
+    const { browserId } = z.strictObject({ browserId: z.string().min(1) }).parse(input);
+    const guest = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+    if (!guest || guest.isDestroyed() || guest.session !== profile)
+      throw new Error("The browser tab is no longer available.");
+    const entries = await options.catalog.list();
+    return Promise.all(
+      profile.extensions
+        .getAllExtensions()
+        .filter((extension) => options.isExtensionReady?.(extension.id) ?? true)
+        .map(async (extension) => {
+          const metadata = getExtensionToolbarMetadata(extension.manifest, extension.name);
+          const iconDataUrl = await toolbarIcon(extension);
+          if (
+            getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id) !== guest ||
+            guest.isDestroyed()
+          )
+            throw new Error("The browser tab is no longer available.");
+          return {
+            id: extension.id,
+            name: extension.name,
+            title: metadata.title,
+            iconDataUrl,
+            badge: options.getBadge?.(extension.id, guest.id),
+            pinned: entries.find((entry) => entry.id === extension.id)?.pinned === true,
+            hasPopup: getExtensionPopupUrl(extension.id, extension.manifest) !== null,
+          };
+        }),
+    );
   });
 
   ipcMain.handle("paseo:browser:extensions:open-popup", async (event, input: unknown) => {
@@ -49,6 +101,7 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
     if (!extension) {
       throw new Error("This extension is disabled or no longer installed.");
     }
+    await options.waitUntilReady?.(extension);
     const key = `${owner.id}:${id}`;
     const opening = pending.get(key);
     if (opening) {

@@ -398,7 +398,7 @@ describe("mountBrowserAutomationHandler", () => {
     ]);
   });
 
-  test("browser_resize updates native viewport after its owner acknowledges", async () => {
+  test("browser_resize updates the resident viewport after its owner acknowledges", async () => {
     const browser = new BrowserAutomationHandlerHarness();
     browser.mount({ serverId: "server-1" });
 

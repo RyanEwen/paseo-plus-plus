@@ -30,13 +30,6 @@ export function resolveStreamKeyboardInset(input: {
   };
 }
 
-export function shouldUseCompactExplorerKeyboardPadding(input: {
-  isGit: boolean;
-  explorerTab: "changes" | "files" | "pr";
-}): boolean {
-  return !input.isGit || input.explorerTab !== "changes";
-}
-
 export function resolveKeyboardShift(input: {
   rawKeyboardHeight: number;
   keyboardProgress: number;
@@ -65,4 +58,30 @@ export function shouldReconcileHiddenKeyboardEnd(input: {
 }): boolean {
   "worklet";
   return !(input.height > 0) || !(input.progress > 0);
+}
+
+/** Physical translated dock endpoint: unlike app keyboard policy, accessory bars
+ * below 120px still displace the iOS graph and must reserve their actual extent. */
+export function resolveDockReservation(
+  height: number,
+  progress: number,
+  bottomInset: number,
+  clearance: number,
+): number {
+  "worklet";
+  return progress > 0 ? Math.max(0, Math.abs(height) - bottomInset * progress - clearance) : 0;
+}
+
+export interface DockReservationSnapshot {
+  extent: number;
+  settledRevision: number;
+}
+export function updateDockReservation(
+  snapshot: DockReservationSnapshot,
+  target: number,
+  phase: "start" | "end",
+) {
+  const extent = reserveKeyboardLayoutShift({ current: snapshot.extent, target, phase });
+  if (phase === "start" && extent === snapshot.extent) return snapshot;
+  return { extent, settledRevision: snapshot.settledRevision + (phase === "end" ? 1 : 0) };
 }

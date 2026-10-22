@@ -1,5 +1,6 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { hydrateStreamState } from "@/types/stream";
+import { hydratePromptEntry } from "@/timeline/hydrate-prompt-entry";
+export { hydratePromptEntry } from "@/timeline/hydrate-prompt-entry";
 import type { UserPrompt } from "./sticky-prompt-model";
 
 /** Fetch one indexed prompt without applying a viewport window; decode it with the
@@ -24,28 +25,4 @@ export async function fetchPromptContent(
   );
   if (!entry) throw new Error("Prompt content is unavailable");
   return hydratePromptEntry(entry, epoch);
-}
-
-/** Decode canonical prompt content with the transcript renderer, preserving attachments. */
-export function hydratePromptEntry(
-  entry: import("./fetch-reading-prompt-context").ContextEntry,
-  epoch: string,
-): UserPrompt {
-  const item = hydrateStreamState(
-    [
-      {
-        event: {
-          type: "timeline",
-          provider: entry.provider,
-          item: entry.item,
-          turnId: entry.turnId,
-        },
-        timestamp: new Date(entry.timestamp),
-        timelineCursor: { epoch, seq: entry.seqEnd },
-      },
-    ],
-    { source: "canonical" },
-  ).find((candidate): candidate is UserPrompt => candidate.kind === "user_message");
-  if (!item) throw new Error("Prompt content is unavailable");
-  return item;
 }

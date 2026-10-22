@@ -4,7 +4,12 @@ import { test, expect } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { renameModalInput, renameModalSubmit } from "../support/helpers/rename";
 import type { SeedDaemonClient } from "../support/helpers/seed-client";
-import { buildSettingsSectionRoute } from "@/utils/host-routes";
+import {
+  openSettingsSection,
+  openCompactSettings,
+  goBackInSettings,
+  closeCompactSettings,
+} from "../support/helpers/settings";
 import { WorkspaceLayoutPersistedStateSchema } from "@/stores/workspace-layout-storage";
 import { collectAllTabs, findPaneById } from "@/stores/workspace-layout-actions";
 import { getServerId } from "../support/helpers/server-id";
@@ -15,27 +20,8 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 test.use({ viewport: MOBILE_VIEWPORT, deviceScaleFactor: 2 });
 
-async function openTabSwitcher(page: Page) {
-  await page.getByRole("button", { name: /Switch tabs/ }).click();
-  const footer = page.getByRole("button", { name: "New terminal", exact: true });
-  await expect(footer).toBeVisible();
-  // Visibility alone passes while the sheet is still travelling up from below the viewport.
-  await expect
-    .poll(async () => {
-      const bounds = await footer.boundingBox();
-      return bounds ? bounds.y + bounds.height : Number.POSITIVE_INFINITY;
-    })
-    .toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
-}
-
 async function captureScreen(page: Page, testInfo: TestInfo, name: string) {
   await page.screenshot({ path: testInfo.outputPath(name + ".png") });
-}
-
-async function createTabFromSwitcher(page: Page, kind: "New agent" | "New terminal") {
-  await openTabSwitcher(page);
-  await page.getByRole("button", { name: kind, exact: true }).click();
-  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
 }
 
 async function fetchAgentTitle(client: SeedDaemonClient, agentId: string): Promise<string | null> {
@@ -54,7 +40,10 @@ async function toggleWorkspaceFeature(
   feature: "mobileWorkspaceTabs" | "previousAgents",
 ) {
   const workspacePath = new URL(page.url()).pathname;
-  await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+  // Compact layouts intentionally disable desktop shortcuts. Use the real
+  // Settings navigation so the retained draft survives without a page reload.
+  await openCompactSettings(page, workspacePath);
+  await openSettingsSection(page, "paseo-plus-plus");
   const control = page.getByTestId(`paseo-plus-plus-${feature}`).getByRole("switch");
   await expect(control).toBeVisible();
   const wasEnabled = await control.isChecked();
@@ -65,7 +54,9 @@ async function toggleWorkspaceFeature(
     await expect(control).toBeChecked();
   }
   await expect(control).toBeEnabled();
-  await page.goto(workspacePath);
+  await goBackInSettings(page);
+  await closeCompactSettings(page);
+  await expect(page).toHaveURL(workspacePath);
 }
 
 /** Read persisted identities and focused tab using the owning layout schema, without changing state. */
@@ -115,9 +106,8 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(page.getByTestId("workspace-new-tab-button")).toBeVisible();
 
       const menuBase = `workspace-tab-menu-agent_${session.agentId}`;
-      const actionsTrigger = page.getByTestId(`${menuBase}-trigger`);
-      await expect(actionsTrigger).toBeVisible({ timeout: 15_000 });
-      await actionsTrigger.click();
+      // Compact tabs use the same long-press/context menu, with no redundant ellipsis.
+      await tab.click({ button: "right" });
 
       const renameItem = page.getByTestId(`${menuBase}-rename`);
       await expect(renameItem).toBeVisible({ timeout: 10_000 });
@@ -136,7 +126,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(tab).toContainText(renamed, {
         timeout: 15_000,
       });
-      await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
+      await expect(page.getByTestId("workspace-tabs-scroll").getByRole("tab")).toHaveCount(1);
       await expect.poll(() => fetchAgentTitle(session.client, session.agentId)).toBe(renamed);
       await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
       await expect(
@@ -274,12 +264,8 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect
         .poll(() => readWorkspaceTabIds(page, session.workspaceId))
         .not.toContain(original.tabId);
-      // Closing a row can leave the chooser itself open. Dismiss it through its real backdrop.
-      await page
-        .getByRole("button", { name: "Bottom sheet backdrop" })
-        .filter({ visible: true })
-        .first()
-        .click({ position: { x: 12, y: 12 } });
+      // The full-height chooser has no exposed backdrop. Select the remaining draft instead.
+      await page.getByText("New Agent", { exact: true }).filter({ visible: true }).last().click();
       await expectCompactOverlaysClosed(page);
       await page.getByTestId("workspace-header-menu-trigger").click();
       await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
@@ -292,14 +278,15 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await page.getByTestId("workspace-header-menu-trigger").click();
       await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);
       await expect(page.getByTestId("workspace-header-new-agent")).toBeVisible();
-      await expect(page.getByTestId("workspace-header-new-terminal")).toBeVisible();
+      await expect(page.getByText("Terminal profiles", { exact: true })).toBeVisible();
+      await expect(page.getByTestId("workspace-header-edit-terminal-profiles")).toBeVisible();
     } finally {
       await session.cleanup();
     }
   });
 });
 
-test("switcher footer creates tabs and returns to the existing chat", async ({
+test("compact tab bar creates tabs and returns to the existing chat", async ({
   page,
 }, testInfo) => {
   const session = await seedMockAgentWorkspace({
@@ -308,33 +295,26 @@ test("switcher footer creates tabs and returns to the existing chat", async ({
   });
   try {
     await openAgentRoute(page, session);
-    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("1");
+    const tabs = page.getByTestId("workspace-tabs-scroll").getByRole("tab");
+    await expect(tabs).toHaveCount(1);
 
-    await createTabFromSwitcher(page, "New terminal");
-    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("2");
+    await page.getByTestId("workspace-new-tab-button").click();
+    await page.getByTestId("workspace-new-tab-menu-terminal").filter({ visible: true }).click();
+    await expect(tabs).toHaveCount(2);
     await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toHaveCount(1);
     await captureScreen(page, testInfo, "compact-terminal-header");
 
-    await createTabFromSwitcher(page, "New agent");
-    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("3");
-    await expect(
-      page.getByRole("textbox", { name: "Message agent..." }).filter({ visible: true }),
-    ).toHaveCount(1);
+    await page.getByTestId("workspace-new-tab-button").click();
+    await page.getByTestId("workspace-new-tab-menu-agent").filter({ visible: true }).click();
+    await expect(tabs).toHaveCount(3);
+    await expect(composerLocator(page)).toBeVisible();
     await captureScreen(page, testInfo, "compact-draft-header");
 
-    await openTabSwitcher(page);
-    await expect(page.getByText("Existing chat", { exact: true })).toBeVisible();
-    await captureScreen(page, testInfo, "switcher-three-tabs");
-    await page.getByText("Existing chat", { exact: true }).click();
-    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveText("3");
-
-    await openTabSwitcher(page);
-    await expect(page.getByText("Existing chat", { exact: true })).toBeVisible();
-    await page
-      .getByRole("button", { name: "Bottom sheet backdrop" })
-      .click({ position: { x: 10, y: 10 } });
-    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+    const existing = page.getByTestId(`workspace-tab-agent_${session.agentId}`);
+    await existing.click();
+    await expect(existing).toHaveAttribute("aria-selected", "true");
+    await expect(tabs).toHaveCount(3);
+    await expect(composerLocator(page)).toBeVisible();
     await captureScreen(page, testInfo, "returned-chat-header");
   } finally {
     await session.cleanup();

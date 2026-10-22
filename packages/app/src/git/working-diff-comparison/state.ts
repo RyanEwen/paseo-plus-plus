@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-export type WorkingDiffComparison = "uncommitted" | "base";
+export type WorkingDiffComparison = "uncommitted" | "base" | "all";
 
 export const WorkingDiffComparisonOverrideSchema = z.strictObject({
   serverId: z.string(),
   cwd: z.string(),
-  comparison: z.enum(["uncommitted", "base"]),
+  comparison: z.enum(["uncommitted", "base", "all"]),
   isDirtyAtSelection: z.boolean(),
 });
 export type WorkingDiffComparisonOverride = z.infer<typeof WorkingDiffComparisonOverrideSchema>;

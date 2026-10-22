@@ -9,8 +9,8 @@ import {
   attachTimelineScreenshot,
 } from "./timeline-scroll-smoothness";
 
-/** Prove text continuity with real wheel input on either side of an explicitly held image resize. */
-export async function expectShrinkingImageContinuity(
+/** Prove text continuity with real wheel input on either side of an explicitly held image completion. */
+export async function expectImageCompletionContinuity(
   page: Page,
   testInfo: TestInfo,
   order: "wheel-first" | "resize-first",
@@ -43,7 +43,7 @@ export async function expectShrinkingImageContinuity(
       await openAgentTimeline(page, agent);
       await expectTimelinePromptVisible(page, "Continuity turn 11");
       const timeline = page.getByTestId("agent-chat-scroll");
-      const image = page.getByRole("img", { name: "Controlled landscape" }).first();
+      const image = page.getByRole("button", { name: "Controlled landscape" }).first();
       await timeline.hover();
       for (let step = 0; step < 30 && !(await image.count()); step += 1) {
         await page.mouse.wheel(0, -300);
@@ -80,14 +80,18 @@ export async function expectShrinkingImageContinuity(
       await attachTimelineScreenshot(page, testInfo, "before-controlled-shrink");
       release();
       await expect
-        .poll(() => image.evaluate((element) => element.querySelector("img")?.naturalWidth))
+        .poll(() =>
+          image.evaluate(
+            (element) =>
+              (element instanceof HTMLImageElement ? element : element.querySelector("img"))
+                ?.naturalWidth,
+          ),
+        )
         .toBe(960);
-      await expect
-        .poll(async () => {
-          const bounds = await image.boundingBox();
-          return bounds ? Math.round((bounds.width / bounds.height) * 100) : 0;
-        })
-        .toBe(400);
+      // Shared Markdown reserves a 320px contain box before decoding. Completion
+      // must preserve that allocation rather than adopt the image's natural ratio.
+      await expect(image).toHaveCSS("height", "320px");
+      await expect(image).toHaveCSS("object-fit", "contain");
       const afterResize = await geometry();
       if (order === "resize-first") await wheel();
       const codeId = await code.getAttribute("data-history-row-id");

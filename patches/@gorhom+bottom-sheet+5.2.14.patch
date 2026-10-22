@@ -323,7 +323,7 @@ index ee51e76..e06cd7f 100644
 -    }, key)
 -  }, key) : null;
 +    }, operation.portalKey)
-+    })
++    }, operation.portalKey)
 +  }, operation.portalKey) : null;
  }
  const BottomSheetModal = /*#__PURE__*/(0, _react.memo)(/*#__PURE__*/(0, _react.forwardRef)(BottomSheetModalComponent));
@@ -719,7 +719,7 @@ index 94fabdb..e5992fe 100644
 -    }, key)
 -  }, key) : null;
 +    }, operation.portalKey)
-+    })
++    }, operation.portalKey)
 +  }, operation.portalKey) : null;
  }
  const BottomSheetModal = /*#__PURE__*/memo(/*#__PURE__*/forwardRef(BottomSheetModalComponent));
@@ -1132,7 +1132,7 @@ index 2954b3f..44e65cf 100644
        handleOnUnmount={handlePortalOnUnmount}
      >
 -      <ContainerComponent key={key}>
-+      <PresentationContent isLive={() => isCurrent(operation)} render={() => (
++      <PresentationContent key={operation.portalKey} isLive={() => isCurrent(operation)} render={() => (
 +      <ContainerComponent key={operation.portalKey}>
          <BottomSheet
            {...bottomSheetProps}

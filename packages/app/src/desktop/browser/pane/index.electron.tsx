@@ -19,7 +19,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Camera,
-  ChevronDown,
   Maximize,
   Monitor,
   MousePointer2,
@@ -66,20 +65,38 @@ import {
   useBrowserStore,
 } from "@/desktop/browser/store";
 import {
-  ensureResidentNativeBrowser,
-  presentResidentNativeBrowser,
-  hideResidentNativeBrowser,
-  removeResidentNativeBrowser,
-} from "../resident-native-pages.electron";
-import type { NativeBrowserPage } from "../native-page.electron";
+  ensureResidentBrowserWebview,
+  applyInactiveBrowserWebviewViewport,
+  presentBrowserWebview,
+  getBrowserWebviewPresentationScale,
+  BROWSER_PRESENTATION_CHANGED_EVENT,
+  releaseResidentBrowserWebview,
+  removeResidentBrowserWebview,
+} from "../resident-webviews";
 import {
   createElementSelectorController,
   type BrowserElementSelection,
   type ElementSelectorOutcome,
 } from "./element-selector.electron";
 import { ExtensionsMenu } from "./extensions-menu.electron";
+import { PageZoomMenu } from "./page-zoom-menu.electron";
+import { ToolbarMenuContent, useToolbarMenuTriggerStyle } from "./toolbar-menu-trigger.electron";
 
-type ElectronWebview = NativeBrowserPage;
+type ElectronWebview = HTMLElement & {
+  canGoBack?: () => boolean;
+  canGoForward?: () => boolean;
+  goBack?: () => void;
+  goForward?: () => void;
+  reload?: () => void;
+  stop?: () => void;
+  loadURL?: (url: string) => Promise<void>;
+  getURL?: () => string;
+  isLoading?: () => boolean;
+  executeJavaScript?: (code: string) => Promise<unknown>;
+  focus?: () => void;
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+  removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+};
 
 interface BrowserElementAnnotation {
   comment: string;
@@ -461,7 +478,6 @@ const ThemedMaximize = withUnistyles(Maximize);
 const ThemedSmartphone = withUnistyles(Smartphone);
 const ThemedTablet = withUnistyles(Tablet);
 const ThemedMonitor = withUnistyles(Monitor);
-const ThemedChevronDown = withUnistyles(ChevronDown);
 const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -514,6 +530,7 @@ function DeviceSizeMenu({
   triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
 }) {
   const { t } = useTranslation();
+  const menuTriggerStyle = useToolbarMenuTriggerStyle(triggerStyle);
   const selectedPreset =
     DEVICE_SIZE_PRESETS.find((preset) => preset.id === selectedId) ?? DEVICE_SIZE_PRESETS[0];
   const SelectedIcon = resolveThemedDeviceIcon(selectedPreset.icon);
@@ -522,11 +539,14 @@ function DeviceSizeMenu({
     <DropdownMenu>
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>
-          <DropdownMenuTrigger accessibilityLabel={label} style={triggerStyle}>
-            <View style={styles.deviceTrigger}>
+          <DropdownMenuTrigger
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            style={menuTriggerStyle}
+          >
+            <ToolbarMenuContent>
               <SelectedIcon size={16} uniProps={deviceMutedIconMapping} />
-              <ThemedChevronDown size={12} uniProps={deviceMutedIconMapping} />
-            </View>
+            </ToolbarMenuContent>
           </DropdownMenuTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="center" offset={8}>
@@ -730,22 +750,28 @@ export function BrowserPane({
       initialUrlRef.current,
       browserErrorLabelsRef.current,
     );
-    const webview = ensureResidentNativeBrowser({
+    const webview = ensureResidentBrowserWebview({
       browserId,
       workspaceId,
       url: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
-    });
+    }) as ElectronWebview | null;
+    if (!webview) {
+      return;
+    }
     webviewRef.current = webview;
-    const syncPresentationScale = () => setPresentationScale(webview.getPresentationScale());
+    const syncPresentationScale = () => {
+      const scale = getBrowserWebviewPresentationScale(webview);
+      if (scale !== null) setPresentationScale(scale);
+    };
     syncPresentationScale();
-    webview.addEventListener("presentation-changed", syncPresentationScale);
+    webview.addEventListener(BROWSER_PRESENTATION_CHANGED_EVENT, syncPresentationScale);
     const updatePresentation = () => {
-      const operation = isPresentedRef.current
-        ? presentResidentNativeBrowser(browserId, host, clip, browserViewportRef.current)
-        : hideResidentNativeBrowser(browserId, browserViewportRef.current);
-      void operation.catch((error) =>
-        updateBrowserRef.current(browserId, { lastError: String(error) }),
-      );
+      if (isPresentedRef.current) {
+        presentBrowserWebview(browserId, webview, host, clip, browserViewportRef.current);
+      } else {
+        releaseResidentBrowserWebview(browserId, webview);
+        applyInactiveBrowserWebviewViewport(browserId, webview, browserViewportRef.current);
+      }
     };
     updatePresentation();
     const sizeObserver =
@@ -867,7 +893,7 @@ export function BrowserPane({
     }
 
     return () => {
-      webview.removeEventListener("presentation-changed", syncPresentationScale);
+      webview.removeEventListener(BROWSER_PRESENTATION_CHANGED_EVENT, syncPresentationScale);
       sizeObserver?.disconnect();
       window.removeEventListener("resize", updatePresentation);
       document.removeEventListener("scroll", updatePresentation, true);
@@ -886,9 +912,9 @@ export function BrowserPane({
         useBrowserStore.getState().browsersById[browserIdRef.current],
       );
       if (browserStillExists) {
-        void hideResidentNativeBrowser(browserId).catch(console.error);
+        releaseResidentBrowserWebview(browserId, webview);
       } else {
-        void removeResidentNativeBrowser(browserId).catch(console.error);
+        removeResidentBrowserWebview(browserId);
       }
       selectorControllerRef.current?.stopForWebview(webview);
       if (webviewRef.current === webview) {
@@ -904,15 +930,14 @@ export function BrowserPane({
       return;
     }
     if (!isPresented) {
-      void hideResidentNativeBrowser(browserId, browserViewport).catch(console.error);
+      releaseResidentBrowserWebview(browserId, webview);
+      applyInactiveBrowserWebviewViewport(browserId, webview, browserViewport);
       return;
     }
     const host = webviewHostRef.current;
     const clip = webviewClipRef.current;
     if (host && clip) {
-      void presentResidentNativeBrowser(browserId, host, clip, browserViewport).catch(
-        console.error,
-      );
+      presentBrowserWebview(browserId, webview, host, clip, browserViewport);
     }
   }, [browserId, browserViewport, isPresented]);
 
@@ -1305,6 +1330,8 @@ export function BrowserPane({
       });
   }, []);
 
+  const getCurrentWebview = useCallback(() => webviewRef.current, []);
+
   const baseIconButtonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
       styles.iconButton,
@@ -1378,7 +1405,7 @@ export function BrowserPane({
             background: theme.colors.surface0,
           }
         : {
-            // The DOM frame must retain the same full extent as the native page.
+            // The DOM frame must retain the same full extent as the guest page.
             // Flex shrinking would move its center and shadow inside a small pane.
             display: "flex",
             flexShrink: 0,
@@ -1463,6 +1490,12 @@ export function BrowserPane({
         <View style={styles.chromeRight}>
           <ExtensionsMenu
             browserId={browserId}
+            triggerStyle={baseIconButtonStyle}
+            tooltipTextStyle={styles.toolbarTooltipText}
+          />
+          <PageZoomMenu
+            browserId={browserId}
+            getWebview={getCurrentWebview}
             triggerStyle={baseIconButtonStyle}
             tooltipTextStyle={styles.toolbarTooltipText}
           />
@@ -1707,7 +1740,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: `${String(theme.colors.accent)}20`,
   },
   iconButtonHovered: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.interactionHighlight,
   },
   iconButtonDisabled: {
     opacity: 0.45,
@@ -1753,11 +1786,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     backgroundColor: theme.colors.surface1,
     padding: theme.spacing[3],
-  },
-  deviceTrigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
   },
   toolbarTooltipText: {
     fontSize: theme.fontSize.sm,
