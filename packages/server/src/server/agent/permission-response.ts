@@ -2,8 +2,10 @@ import type { Logger } from "pino";
 
 import type { AgentPermissionResponse, AgentPermissionResult } from "./agent-sdk-types.js";
 import { startAgentRun, type AgentRunController } from "./agent-prompt.js";
+import type { AttentionAdmission } from "./attention/objectives.js";
 
 export interface PermissionResponseAgentManager extends AgentRunController {
+  captureAttentionContinuation(agentId: string): AttentionAdmission | undefined;
   respondToPermission(
     agentId: string,
     requestId: string,
@@ -28,6 +30,7 @@ export async function respondToAgentPermission(
     `Handling permission response for agent ${agentId}, request ${requestId}`,
   );
 
+  const attention = agentManager.captureAttentionContinuation(agentId);
   const result = await agentManager.respondToPermission(agentId, requestId, response);
   logger.debug({ agentId }, `Permission response forwarded to agent ${agentId}`);
 
@@ -35,6 +38,7 @@ export async function respondToAgentPermission(
     logger.debug({ agentId }, "Permission response requires follow-up turn, starting agent stream");
     await startAgentRun(agentManager, agentId, result.followUpPrompt, logger, {
       replaceRunning: true,
+      ...(attention ? { runOptions: { attention: [attention] } } : {}),
     });
   }
 }

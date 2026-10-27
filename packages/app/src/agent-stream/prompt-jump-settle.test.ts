@@ -1,11 +1,42 @@
 import { nativeTextPreviewMetrics } from "../components/ui/native-text-preview-metrics";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseSync, transformFromAstSync, traverse, types } from "@babel/core";
+import {
+  resolveMessageFlow,
+  readMessageTextLayout,
+  rebindMessageTextPrefix,
+  prepareNativeMessagePresentation,
+  bindNativeMessagePreparation,
+  advanceNativeMessagePresentation,
+  ordinaryNativeMessagePresentation,
+  nativeMessageRoleVisible,
+  acceptsNativeMessageDisclosure,
+  type MessageFlowMeasurements,
+} from "../components/user-message-flow-model";
 import {
   nativeBottomDistance,
+  publishMeasuredNativeNearBottom,
+  createNativeViewportLifetime,
+  createNativeViewportMetrics,
   resolveActualNativeReading,
   resolveNativeMotionOwner,
   resolveNativeMeasurementOwner,
   nativeOriginalTop,
   nativeStickyTranslation,
+  nativeStickyRowOwnsEdge,
+  nativeStickySuccessorOwnsEdge,
+  nativeStickyPresentationStyle,
+  createNativeMeasuredHeaderIndex,
+  isCurrentNativeReading,
+  resolveNativeStickyHeights,
+  nativeStickyVisualDelta,
+  nativeFullRowStickyTranslation,
+  nativeStickyInterpolation,
+  type ActualNativeRowGeometry,
+  type NativeStickyGeometry,
 } from "./native-actual-row-model";
 import { createNativeStickyLayout } from "./native-sticky-layout";
 import { resolveActualPromptPin } from "./actual-prompt-pin-model";
@@ -22,6 +53,1436 @@ import {
   createPromptJumpSettleController,
   type PromptJumpSettleViewport,
 } from "./prompt-jump-settle";
+
+type NativeBottomMeasurement = Parameters<typeof publishMeasuredNativeNearBottom>[0]["metrics"];
+
+describe("native presentation reaction inputs", () => {
+  const require = createRequire(import.meta.url);
+  const reanimatedRoot = path.dirname(require.resolve("react-native-reanimated/package.json"));
+
+  /** Select the actual production function, including its current lexical bindings. */
+  function sourceFunction(filename: string, name: string) {
+    const ast = parseSync(readFileSync(filename, "utf8"), {
+      filename,
+      babelrc: false,
+      configFile: false,
+      parserOpts: { plugins: ["typescript", "jsx"] },
+    });
+    if (!ast) throw new Error("Production source did not parse");
+    const matches: types.FunctionDeclaration[] = [];
+    traverse(ast, {
+      FunctionDeclaration(selected) {
+        if (selected.node.id?.name === name) matches.push(types.cloneNode(selected.node, true));
+      },
+    });
+    const [declaration] = matches;
+    if (!declaration || matches.length !== 1) throw new Error("Production function is not unique");
+    return declaration;
+  }
+
+  /** Compile real source without importing the native UI. Supplied bindings only
+   * capture registration or satisfy unexecuted native callback dependencies.
+   */
+  function bindSourceFunction(
+    declaration: types.FunctionDeclaration,
+    filename: string,
+    bindings: Record<string, unknown>,
+    worklets = false,
+  ) {
+    const result = transformFromAstSync(types.file(types.program([declaration])), undefined, {
+      filename,
+      babelrc: false,
+      configFile: false,
+      plugins: [
+        [require.resolve("@babel/plugin-transform-typescript"), { isTSX: true }],
+        ...(worklets ? [require.resolve("react-native-worklets/plugin")] : []),
+      ],
+    });
+    if (!result?.code || !declaration.id)
+      throw new Error("Production compiler emitted no function");
+    const loaded: unknown = new Function(
+      ...Object.keys(bindings),
+      `${result.code}\nreturn ${declaration.id.name};`,
+    )(...Object.values(bindings));
+    if (typeof loaded !== "function") throw new Error("Production function did not bind");
+    return (...args: unknown[]): unknown => Reflect.apply(loaded, undefined, args);
+  }
+
+  /** Preserve the real hook prefix and first reaction call. Returning its prepared
+   * callback lets the installed Worklets compiler expose exactly what it captures.
+   */
+  function compiledPrepare(input: unknown) {
+    const filename = fileURLToPath(
+      new URL("../components/user-message-native-flow.tsx", import.meta.url),
+    );
+    const declaration = sourceFunction(filename, "useNativeMessageProjection");
+    const statements = declaration.body.body;
+    const index = statements.findIndex(
+      (statement) =>
+        types.isExpressionStatement(statement) &&
+        types.isCallExpression(statement.expression) &&
+        types.isIdentifier(statement.expression.callee, { name: "useAnimatedReaction" }),
+    );
+    const reaction = statements[index];
+    if (!types.isExpressionStatement(reaction)) throw new Error("Production reaction is missing");
+    declaration.body.body = [
+      ...statements.slice(0, index),
+      types.returnStatement(reaction.expression),
+    ];
+    const prepare = bindSourceFunction(
+      declaration,
+      filename,
+      {
+        useAnimatedReaction: (callback: unknown) => callback,
+        advanceNativeMessagePresentation,
+        scrollTo: undefined,
+      },
+      true,
+    )(input);
+    if (typeof prepare !== "function") throw new Error("Production preparation did not bind");
+    const closure: unknown = Reflect.get(prepare, "__closure");
+    if (!closure || typeof closure !== "object") throw new Error("Worklets closure is missing");
+    return Object.values(closure);
+  }
+
+  /** Discover recursive SharedValue inputs using the installed Reanimated mapper. */
+  function discoverReactionInputs(closure: unknown[]) {
+    const markerFile = path.join(reanimatedRoot, "src/isSharedValue.ts");
+    const isSharedValue = bindSourceFunction(
+      sourceFunction(markerFile, "isSharedValue"),
+      markerFile,
+      {},
+    );
+    const mapperFile = path.join(reanimatedRoot, "src/mappers.ts");
+    const discover = bindSourceFunction(sourceFunction(mapperFile, "extractInputs"), mapperFile, {
+      isSharedValue,
+    });
+    const inputs = discover(closure, []);
+    if (!Array.isArray(inputs)) throw new Error("Actual mapper did not return its input list");
+    return inputs;
+  }
+
+  /** Evaluate the actual Android root style without importing native components.
+   * Keep its hook call so the installed compiler applies the real worklet transform.
+   */
+  function compiledStickyValue(name: "style" | "handoff", bindings: Record<string, unknown>) {
+    const filename = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "actual-sticky-header.android.tsx",
+    );
+    const declaration = sourceFunction(filename, "ActualStickyHeader");
+    const style = declaration.body.body.find(
+      (statement) =>
+        types.isVariableDeclaration(statement) &&
+        statement.declarations.some((entry) => types.isIdentifier(entry.id, { name })),
+    );
+    if (!style) throw new Error("Production sticky style is missing");
+    const reader = types.functionDeclaration(
+      types.identifier("readStickyStyle"),
+      [],
+      types.blockStatement([style, types.returnStatement(types.identifier(name))]),
+    );
+    const evaluate = bindSourceFunction(
+      reader,
+      filename,
+      {
+        ...bindings,
+        useAnimatedStyle: (callback: unknown) => callback,
+        useDerivedValue: (callback: unknown) => callback,
+      },
+      true,
+    )();
+    if (typeof evaluate !== "function") throw new Error("Production sticky style did not bind");
+    return (): unknown => Reflect.apply(evaluate, undefined, []);
+  }
+
+  /** Capture the real discrete retirement reaction; scheduling is delivered to
+   * its supplied RN sink directly, without claiming native queue or touch proof.
+   */
+  function compiledExpansionRetirement(input: unknown) {
+    const filename = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "actual-sticky-header.android.tsx",
+    );
+    let prepare: unknown;
+    let react: unknown;
+    bindSourceFunction(
+      sourceFunction(filename, "useNativeExpansionRetirement"),
+      filename,
+      {
+        nativeStickySuccessorOwnsEdge,
+        useAnimatedReaction: (read: unknown, reaction: unknown) => {
+          prepare = read;
+          react = reaction;
+        },
+        scheduleOnRN: (callback: unknown, value: boolean) => {
+          if (typeof callback !== "function") throw new Error("Retirement sink is missing");
+          Reflect.apply(callback, undefined, [value]);
+        },
+      },
+      true,
+    )(input);
+    if (typeof prepare !== "function" || typeof react !== "function")
+      throw new Error("Production retirement did not bind");
+    const read = prepare;
+    const reaction = react;
+    const closure: unknown = Reflect.get(read, "__closure");
+    if (!closure || typeof closure !== "object") throw new Error("Retirement closure is missing");
+    return {
+      captures: Object.values(closure),
+      read: (): unknown => Reflect.apply(read, undefined, []),
+      react: (value: unknown, previous: unknown): unknown =>
+        Reflect.apply(reaction, undefined, [value, previous]),
+    };
+  }
+
+  it.each([
+    { kind: "line", prefix: 20, controls: 44, legacy: 76, compact: 52, top: 4, textY: -96 },
+    { kind: "tall control", prefix: 20, controls: 60, legacy: 92, compact: 60, top: 0, textY: -92 },
+    { kind: "large font", prefix: 56, controls: 44, legacy: 88, compact: 88, top: 22, textY: -96 },
+  ])("fits Android compact $kind paint and controls without padding the control twice", (input) => {
+    const measurements = {
+      ...naturalMessageMeasurements(),
+      prefixHeight: input.prefix,
+      controls: { x: 0, y: 0, width: 64, height: input.controls },
+    };
+    const flow = resolveMessageFlow({ measurements, hasText: true });
+    expect(flow?.compactHeight).toBe(input.legacy);
+    const prepared = prepareNativeMessagePresentation({ measurements, flow, revision: 1 });
+    if (!prepared) throw new Error("The measured compact body must prepare");
+    const filename = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../components/user-message-flow-model.ts",
+    );
+    const project = bindSourceFunction(
+      sourceFunction(filename, "projectNativePinnedMessage"),
+      filename,
+      {},
+      true,
+    );
+    const compact = project(
+      { ...prepared, maximumHeight: 240 },
+      { binding: 17, revision: 1, cycle: 1, mode: "compact" },
+    );
+    expect(compact).toMatchObject({
+      mode: "compact",
+      flowHeight: 340,
+      bodyHeight: input.compact,
+      visualHeight: input.compact + 40,
+      controlsTop: input.top,
+      textTranslateY: input.textY,
+      prefixHeight: input.prefix,
+    });
+    expect(prepared.controlsTop + prepared.controlsHeight).toBeLessThanOrEqual(
+      prepared.compactHeight,
+    );
+  });
+
+  it("keeps Android painted clip offsets out of the natural body's width and origin", () => {
+    const filename = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../components/user-message-flow-model.ts",
+    );
+    const geometry = bindSourceFunction(
+      sourceFunction(filename, "nativeMessageViewportGeometry"),
+      filename,
+      {},
+      true,
+    );
+    const measurements = naturalMessageMeasurements();
+    const input = { width: measurements.width, bubble: measurements.bubble };
+    const fullRail = { clipLeft: 0, clipWidth: 320, bodyLeft: 0, bodyWidth: 320 };
+    expect(geometry({ ...input, mode: "ordinary" })).toEqual(fullRail);
+    expect(geometry({ ...input, mode: "compact" })).toEqual(fullRail);
+    // The narrow expanded bubble is clipped at its actual x, while the opposite
+    // ScrollView offset preserves the natural body's physical origin and width.
+    expect(geometry({ ...input, mode: "expanded" })).toEqual({
+      clipLeft: 60,
+      clipWidth: 260,
+      bodyLeft: -60,
+      bodyWidth: 320,
+    });
+    expect(geometry({ ...input, mode: "ordinary" })).toEqual(fullRail);
+    expect(geometry({ width: 0, bubble: null, mode: "ordinary" })).toEqual({
+      clipLeft: 0,
+      clipWidth: "100%",
+      bodyLeft: 0,
+      bodyWidth: "100%",
+    });
+  });
+
+  it("keeps explicit Android attachment expansion above following content until successor takeover", () => {
+    const measurements = {
+      ...naturalMessageMeasurements(),
+      bodyHeight: 80,
+      bubble: { x: 60, y: 0, width: 260, height: 80 },
+      content: { x: 16, y: 16, width: 228, height: 48 },
+      text: null,
+      prefixHeight: null,
+    };
+    const flow = resolveMessageFlow({ measurements, hasText: false });
+    const natural = prepareNativeMessagePresentation({ measurements, flow, revision: 1 });
+    if (!natural) throw new Error("Attachment-only preparation is missing");
+    const prepared = { ...natural, maximumHeight: 400 };
+    const expanded = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    const geometry = {
+      value: { binding: 17, ready: true, y: 1000, flowHeight: prepared.flowHeight, next: 1600 },
+    };
+    const y = { value: 1332 };
+    const presentation = { value: expanded };
+    const readStyle = compiledStickyValue("style", {
+      geometry,
+      presentation,
+      activeBinding: { value: 17 },
+      binding: 17,
+      enabled: true,
+      handoff: { value: true },
+      y,
+      k: { value: 40 },
+      topOverlayInset: 144,
+      nativeStickyTranslation,
+      nativeStickyPresentationStyle,
+    });
+
+    expect(expanded.bodyHeight).toBe(80);
+    expect(expanded.flowHeight).toBe(120);
+    // Only disclosure/actions fit before the next USER. More must not push the
+    // actual image body behind the header just to preserve compact collision.
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 516 }] });
+    expect(readStyle()).toMatchObject({ zIndex: 20 });
+
+    // A delayed presentation frame cannot keep covering the successor once its
+    // natural top reaches the same measured reading edge.
+    y.value = 1416;
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }] });
+    expect(readStyle()).toMatchObject({ zIndex: 10 });
+    y.value = 1417;
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }] });
+
+    const reset = vi.fn();
+    presentation.value = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: expanded,
+      prepared,
+      eligible: false,
+      expanded: true,
+      resetBody: reset,
+    });
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(nativeMessageRoleVisible(presentation.value.mode, "pinned")).toBe(false);
+
+    y.value = 1332;
+    presentation.value = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: expanded,
+      prepared,
+      eligible: true,
+      expanded: false,
+      resetBody: reset,
+    });
+    expect(presentation.value.mode).toBe("compact");
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 516 }] });
+    expect(readStyle()).toMatchObject({ zIndex: 10 });
+
+    y.value = 935;
+    presentation.value = ordinaryNativeMessagePresentation();
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }] });
+  });
+
+  it("retires Android expansion at the successor edge without reopening it on reverse", () => {
+    const value: NativeStickyGeometry = {
+      binding: 17,
+      ready: true,
+      y: 1000,
+      flowHeight: 340,
+      next: 1800,
+    };
+    const geometry = { _isReanimatedSharedValue: true, value };
+    const y = { _isReanimatedSharedValue: true, value: 1799 };
+    const k = { _isReanimatedSharedValue: true, value: 0 };
+    const readHandoff = compiledStickyValue("handoff", {
+      geometry,
+      binding: 17,
+      enabled: true,
+      y,
+      k,
+      topOverlayInset: 0,
+      nativeStickyRowOwnsEdge,
+    });
+    const handoff = { value: true };
+    const expanded = { _isReanimatedSharedValue: true, value: true };
+    const activeBinding = { _isReanimatedSharedValue: true, value: 17 };
+    const remember = vi.fn();
+    const retirement = compiledExpansionRetirement({
+      binding: 17,
+      activeBinding,
+      expanded,
+      onExpandedChange: remember,
+      geometry,
+      y,
+      k,
+      topOverlayInset: 0,
+    });
+    const inputs = discoverReactionInputs(retirement.captures);
+    for (const dependency of [geometry, y, k, activeBinding]) expect(inputs).toContain(dependency);
+    expect(inputs).not.toContain(expanded);
+    expect(readHandoff()).toBe(true);
+    retirement.react(retirement.read(), null);
+    expect(expanded.value).toBe(true);
+
+    // Returning to this row's ordinary body resets its viewport elsewhere but
+    // preserves the user's disclosure preference until a successor takes over.
+    y.value = 1300;
+    expect(readHandoff()).toBe(false);
+    retirement.react(retirement.read(), null);
+    expect(expanded.value).toBe(true);
+    expect(remember).not.toHaveBeenCalled();
+
+    y.value = 1800;
+    expect(readHandoff()).toBe(false);
+    handoff.value = false;
+    retirement.react(retirement.read(), true);
+    expect(expanded.value).toBe(false);
+    expect(remember).toHaveBeenCalledExactlyOnceWith(false);
+    y.value = 1801;
+    expect(readHandoff()).toBe(false);
+
+    const prepared = nativePresentationFixture();
+    const old = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    const reset = vi.fn();
+    const ordinary = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: old,
+      prepared,
+      eligible: handoff.value,
+      expanded: expanded.value,
+      resetBody: reset,
+    });
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(ordinary.mode).toBe("ordinary");
+    expect(ordinary.flowHeight).toBe(340);
+    expect(nativeMessageRoleVisible(ordinary.mode, "pinned")).toBe(false);
+
+    y.value = 1799;
+    expect(readHandoff()).toBe(true);
+    handoff.value = true;
+    retirement.react(retirement.read(), false);
+    const returned = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: ordinary,
+      prepared,
+      eligible: handoff.value,
+      expanded: expanded.value,
+      resetBody: reset,
+    });
+    expect(returned.mode).toBe("compact");
+    expect(acceptsNativeMessageDisclosure(returned, old.revision, old.cycle, "expanded")).toBe(
+      false,
+    );
+    expect(remember).toHaveBeenCalledTimes(1);
+
+    // Unknown geometry does not establish takeover, including a remount with
+    // remembered disclosure. Current geometry at the successor edge does.
+    y.value = 1800;
+    value.ready = false;
+    handoff.value = false;
+    expanded.value = true;
+    retirement.react(retirement.read(), null);
+    expect(expanded.value).toBe(true);
+    expect(remember).toHaveBeenCalledTimes(1);
+    value.ready = true;
+    retirement.react(retirement.read(), null);
+    expect(expanded.value).toBe(false);
+    expect(remember).toHaveBeenCalledTimes(2);
+
+    // A late reaction from a replaced row must not clear its successor's preference.
+    activeBinding.value = 18;
+    expanded.value = true;
+    handoff.value = false;
+    retirement.react(retirement.read(), true);
+    expect(expanded.value).toBe(true);
+    expect(remember).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects stale Android expanded roots and unready geometry without a raised overlay", () => {
+    const prepared = nativePresentationFixture();
+    const frame = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    const geometry = {
+      value: { binding: 17, ready: true, y: 1000, flowHeight: 340, next: 1800 },
+    };
+    const activeBinding = { value: 17 };
+    const presentation = { value: frame };
+    const y = { value: 1500 };
+    const bindings = {
+      geometry,
+      presentation,
+      activeBinding,
+      binding: 17,
+      enabled: true,
+      y,
+      k: { value: 0 },
+      topOverlayInset: 0,
+      nativeStickyPresentationStyle,
+    };
+    const readStyle = compiledStickyValue("style", bindings);
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 500 }], zIndex: 20 });
+    activeBinding.value = 18;
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }], zIndex: 10 });
+    activeBinding.value = 17;
+    geometry.value.binding = 18;
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }], zIndex: 10 });
+    geometry.value.binding = 17;
+    presentation.value = { ...frame, binding: 18 };
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }], zIndex: 10 });
+    presentation.value = frame;
+    geometry.value.ready = false;
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }], zIndex: 10 });
+    geometry.value.ready = true;
+    y.value = 1300;
+    expect(readStyle()).toMatchObject({ transform: [{ translateY: 0 }], zIndex: 10 });
+    y.value = 1500;
+    const disabledStyle = compiledStickyValue("style", { ...bindings, enabled: false });
+    expect(disabledStyle()).toMatchObject({ transform: [{ translateY: 0 }], zIndex: 10 });
+  });
+
+  it("rejects queued Android More after handoff retirement despite a stale compact frame", () => {
+    const filename = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../components/user-message-native-flow.tsx",
+    );
+    const invoke = (callback: unknown, ...args: unknown[]) => {
+      if (typeof callback !== "function") throw new Error("Disclosure callback is missing");
+      return Reflect.apply(callback, undefined, args);
+    };
+    const request = bindSourceFunction(
+      sourceFunction(filename, "requestNativeMessageDisclosure"),
+      filename,
+      { scheduleOnUI: invoke, scheduleOnRN: invoke, acceptsNativeMessageDisclosure },
+      true,
+    );
+    const prepared = nativePresentationFixture();
+    const compact = advanceNativeMessagePresentation({
+      binding: 17,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: false,
+      resetBody() {},
+    });
+    const changed = vi.fn();
+    const driver = {
+      binding: 17,
+      activeBinding: { value: 17 },
+      handoff: { value: false },
+      presentation: { value: compact },
+      expanded: { value: false },
+      onExpandedChange: changed,
+    };
+    const command = {
+      revision: compact.revision,
+      cycle: compact.cycle,
+      expected: "compact",
+      expanded: true,
+    };
+    request(driver, command);
+    expect(driver.expanded.value).toBe(false);
+    expect(changed).not.toHaveBeenCalled();
+
+    driver.handoff.value = true;
+    request(driver, command);
+    expect(driver.expanded.value).toBe(true);
+    expect(changed).toHaveBeenCalledExactlyOnceWith(true);
+
+    driver.expanded.value = false;
+    driver.activeBinding.value = 18;
+    request(driver, command);
+    expect(driver.expanded.value).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the native presentation output out of the compiled prepare inputs", () => {
+    // Input discovery only needs the real SharedValue marker, not a native runtime.
+    const shared = (value: unknown) => ({ _isReanimatedSharedValue: true, value });
+    const presentation = shared(ordinaryNativeMessagePresentation());
+    const prepared = shared(null);
+    const active = shared(true);
+    const available = shared(true);
+    const driver = {
+      binding: 17,
+      activeBinding: shared(17),
+      handoff: shared(false),
+      presentation,
+      maximumHeight: shared(400),
+      wrapperHeight: shared(500),
+      expanded: shared(false),
+    };
+    const closure = compiledPrepare({
+      driver,
+      prepared,
+      binding: { viewport: () => null, active, available },
+    });
+    const inputs = discoverReactionInputs(closure);
+    const expected = [
+      prepared,
+      active,
+      available,
+      driver.activeBinding,
+      driver.handoff,
+      driver.maximumHeight,
+      driver.wrapperHeight,
+      driver.expanded,
+    ];
+    for (const dependency of expected) expect(inputs).toContain(dependency);
+    expect(inputs).not.toContain(presentation);
+    expect(new Set(inputs).size).toBe(expected.length);
+  });
+});
+
+function naturalMessageMeasurements(): MessageFlowMeasurements {
+  return {
+    width: 320,
+    bodyHeight: 300,
+    trailingHeight: 40,
+    bubble: { x: 60, y: 0, width: 260, height: 300 },
+    content: { x: 16, y: 16, width: 228, height: 268 },
+    text: { x: 0, y: 96, width: 228, height: 172 },
+    prefixHeight: 20,
+    controls: { x: 0, y: 0, width: 64, height: 44 },
+  };
+}
+
+describe("native natural-flow sticky geometry", () => {
+  it("delayed native prompt handoff keeps a partially visible ordinary row unpinned and naturally positioned", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const geometry = new Map<string, ActualNativeRowGeometry>(fixture.geometry);
+    geometry.set("old", { index: 0, y: 1000, height: 340, pinnedHeight: 80 });
+    geometry.set("old-answer", { index: 1, y: 1340, height: 500 });
+    geometry.set("later", { index: 2, y: 1840, height: 100 });
+    geometry.set("later-answer", { index: 3, y: 1940, height: 300 });
+    const input = {
+      ...fixture,
+      geometry,
+      headers: createNativeMeasuredHeaderIndex({ items: fixture.items, geometry }),
+      clippedLeading: 0,
+      offset: 1000,
+      viewportHeight: 300,
+      handoff: "full-row" as const,
+    };
+    const atRowTop = resolveActualNativeReading(input);
+    const insideOrdinaryBody = resolveActualNativeReading({ ...input, offset: 1100 });
+    const motion = {
+      offset: 1100,
+      leadingInset: 0,
+      layout: 1000,
+      flowHeight: 340,
+      pinnedHeight: 80,
+      next: 1840,
+      handoff: "full-row" as const,
+    };
+    const outerTranslation = nativeStickyTranslation(
+      motion.offset,
+      motion.layout,
+      motion.flowHeight,
+      motion.next,
+    );
+    const innerCorrection = nativeStickyVisualDelta(motion);
+    const topTranslation = nativeStickyTranslation(
+      input.offset,
+      motion.layout,
+      motion.flowHeight,
+      motion.next,
+    );
+    const topCorrection = nativeStickyVisualDelta({ ...motion, offset: input.offset });
+
+    // Delaying only JS disclosure would leave RN moving the full ordinary body.
+    // Its bottom is still 240 below the reading edge, so cancel that movement.
+    expect(outerTranslation + innerCorrection).toBe(0);
+    expect(topTranslation + topCorrection).toBe(0);
+    expect(atRowTop.pinnedId).toBeNull();
+    expect(insideOrdinaryBody.pinnedId).toBeNull();
+    expect(atRowTop.rowId).toBe("old");
+    expect(insideOrdinaryBody.rowId).toBe("old");
+    expect(geometry.get("old")?.height).toBe(340);
+    expect(nativeOriginalTop(1340, 1100, 0, 0)).toBe(240);
+  });
+
+  it("recovers a changed natural line shape from current same-width frames without another Text event", () => {
+    const binding = { key: {}, message: "full prompt", fontScale: 1, width: 228 };
+    const original = readMessageTextLayout({
+      binding,
+      previous: null,
+      bounded: true,
+      lines: [{ y: 0, height: 20, width: 180 }],
+    });
+    expect(original.rebind).toBe(false);
+    const changed = readMessageTextLayout({
+      binding,
+      previous: original.prefix,
+      bounded: true,
+      lines: [
+        { y: 0, height: 56, width: 200 },
+        { y: 60, height: 56, width: 200 },
+        { y: 120, height: 52, width: 150 },
+      ],
+    });
+    expect(changed.rebind).toBe(true);
+    expect(changed.prefix.height).toBe(56);
+    const replacement = { ...binding, key: {} };
+    // From here on only current frames arrive. There is deliberately no second
+    // readMessageTextLayout call to rescue the replacement binding.
+    const rebound = rebindMessageTextPrefix({ prefix: changed.prefix, binding: replacement });
+    const measurements = { ...naturalMessageMeasurements(), prefixHeight: null };
+    expect(resolveMessageFlow({ measurements, hasText: true })).toBeNull();
+    const recovered = resolveMessageFlow({
+      measurements: { ...measurements, prefixHeight: rebound?.height ?? null },
+      hasText: true,
+    });
+    expect(rebound?.key).toBe(replacement.key);
+    expect(rebound?.width).toBe(228);
+    expect(recovered?.flowHeight).toBe(340);
+    expect(recovered?.compactHeight).toBe(88);
+    expect(
+      rebindMessageTextPrefix({ prefix: changed.prefix, binding: { ...replacement, width: 240 } }),
+    ).toBeNull();
+    expect(
+      rebindMessageTextPrefix({ prefix: changed.prefix, binding: { ...replacement, width: null } }),
+    ).toBeNull();
+    expect(
+      rebindMessageTextPrefix({
+        prefix: changed.prefix,
+        binding: { ...replacement, fontScale: 1.2 },
+      }),
+    ).toBeNull();
+    expect(
+      rebindMessageTextPrefix({
+        prefix: changed.prefix,
+        binding: { ...replacement, message: "another prompt" },
+      }),
+    ).toBeNull();
+    const unmeasured = { ...changed.prefix, width: null };
+    expect(rebindMessageTextPrefix({ prefix: unmeasured, binding: replacement })).toBeNull();
+  });
+
+  it("reserves the full ordinary bubble and action row while compact controls occupy only the visual extent", () => {
+    const measurements = naturalMessageMeasurements();
+    const compact = resolveMessageFlow({ measurements, hasText: true });
+    expect(compact?.flowHeight).toBe(340);
+    expect(compact?.compactHeight).toBe(76);
+    expect(compact?.textClipWidth).toBe(224);
+    expect(compact?.textWidth).toBe(228);
+    expect(compact?.textTranslateY).toBe(-96);
+    expect(compact?.textTranslateX).toBe(-60);
+
+    const largerControls = resolveMessageFlow({
+      measurements: { ...measurements, controls: { x: 0, y: 0, width: 80, height: 60 } },
+      hasText: true,
+    });
+    expect(largerControls?.flowHeight).toBe(340);
+    expect(largerControls?.compactHeight).toBe(92);
+    expect(largerControls?.textClipWidth).toBe(208);
+  });
+
+  it("keeps ordinary fallback until a rebound width, text prefix and both complete body extents are measured", () => {
+    const measurements = naturalMessageMeasurements();
+    expect(
+      resolveMessageFlow({ measurements: { ...measurements, width: 0 }, hasText: true }),
+    ).toBeNull();
+    expect(
+      resolveMessageFlow({ measurements: { ...measurements, prefixHeight: null }, hasText: true }),
+    ).toBeNull();
+    expect(
+      resolveMessageFlow({ measurements: { ...measurements, bodyHeight: null }, hasText: true }),
+    ).toBeNull();
+    expect(
+      resolveMessageFlow({
+        measurements: { ...measurements, trailingHeight: null },
+        hasText: true,
+      }),
+    ).toBeNull();
+    expect(
+      resolveMessageFlow({ measurements: { ...measurements, controls: null }, hasText: true }),
+    ).toBeNull();
+    const fresh = resolveMessageFlow({
+      measurements: {
+        ...measurements,
+        width: 280,
+        bodyHeight: 380,
+        bubble: { x: 0, y: 0, width: 280, height: 380 },
+        content: { x: 16, y: 16, width: 248, height: 348 },
+        text: { x: 0, y: 96, width: 248, height: 252 },
+        prefixHeight: 30,
+      },
+      hasText: true,
+    });
+    expect(fresh?.flowHeight).toBe(420);
+    expect(fresh?.textClipWidth).toBe(184);
+  });
+
+  it("retains attachment-only natural height without inventing a text line or waiting for a Text event", () => {
+    const measurements = naturalMessageMeasurements();
+    const flow = resolveMessageFlow({
+      measurements: { ...measurements, text: null, prefixHeight: null, trailingHeight: 0 },
+      hasText: false,
+    });
+    expect(flow?.flowHeight).toBe(300);
+    expect(flow?.compactHeight).toBe(76);
+    expect(flow?.textWidth).toBe(0);
+    expect(flow?.textTranslateY).toBe(0);
+  });
+
+  it("includes outer ordinary spacing and the entire visible action row without changing the list's flow height", () => {
+    const collapsed = resolveNativeStickyHeights({
+      layoutHeight: 372,
+      body: { flowHeight: 340, visualHeight: 116 },
+    });
+    const expanded = resolveNativeStickyHeights({
+      layoutHeight: 372,
+      body: { flowHeight: 340, visualHeight: 300 },
+    });
+    expect(collapsed?.flowHeight).toBe(372);
+    expect(expanded?.flowHeight).toBe(372);
+    expect(collapsed?.pinnedHeight).toBe(148);
+    expect(expanded?.pinnedHeight).toBe(332);
+    expect(
+      resolveNativeStickyHeights({
+        layoutHeight: 300,
+        body: { flowHeight: 340, visualHeight: 116 },
+      }),
+    ).toBeNull();
+    const fallback = resolveNativeStickyHeights({ layoutHeight: 372, body: null });
+    expect(fallback?.pinnedHeight).toBe(372);
+  });
+
+  it("publishes visual changes and invalidations without replaying a VirtualizedList layout event", () => {
+    const channel = createNativeStickyLayout<number>({ key: "prompt", index: 2 });
+    const listLayout = vi.fn<(event: number) => void>();
+    const visual = vi.fn<(body: { flowHeight: number; visualHeight: number } | null) => void>();
+    channel.subscribe(listLayout);
+    const stop = channel.subscribeBody(visual);
+    channel.publish(372);
+    channel.publishBody({ flowHeight: 340, visualHeight: 116 });
+    channel.publishBody({ flowHeight: 340, visualHeight: 116 });
+    expect(visual).toHaveBeenCalledTimes(1);
+    channel.publishBody({ flowHeight: 340, visualHeight: 300 });
+    channel.publishBody(null);
+    expect(visual).toHaveBeenCalledTimes(3);
+    expect(visual.mock.calls[0][0]?.visualHeight).toBe(116);
+    expect(visual.mock.calls[1][0]?.visualHeight).toBe(300);
+    expect(visual.mock.calls[2][0]).toBeNull();
+    expect(listLayout).toHaveBeenCalledExactlyOnceWith(372);
+    expect(channel.readBody()).toBeNull();
+    stop();
+    channel.publishBody({ flowHeight: 340, visualHeight: 116 });
+    expect(visual).toHaveBeenCalledTimes(3);
+    const rebound = createNativeStickyLayout<number>({ key: "prompt", index: 3 });
+    expect(rebound.readBody()).toBeNull();
+  });
+
+  it("corrects Android's full-flow outer transform only by the actual pinned collision extent and inset", () => {
+    const input = {
+      offset: 500,
+      leadingInset: 184,
+      layout: 100,
+      flowHeight: 372,
+      pinnedHeight: 148,
+      next: 800,
+    };
+    const original = nativeStickyTranslation(
+      input.offset,
+      input.layout,
+      input.flowHeight,
+      input.next,
+    );
+    const delta = nativeStickyVisualDelta(input);
+    expect(original).toBe(328);
+    expect(delta).toBe(224);
+    expect(input.layout - input.offset - input.leadingInset + original + delta).toBe(-32);
+    expect(
+      input.layout - input.offset - input.leadingInset + original + delta + input.pinnedHeight,
+    ).toBe(116);
+    expect(
+      nativeStickyVisualDelta({ ...input, leadingInset: 0, pinnedHeight: input.flowHeight }),
+    ).toBe(0);
+    expect(nativeStickyVisualDelta({ ...input, next: null })).toBe(184);
+  });
+
+  it("builds iOS collision ranges from the separate heights while preserving RN's unknown and overlapping successors", () => {
+    const ordinary = nativeStickyInterpolation(100, 372, 800);
+    const visible = nativeStickyInterpolation(100, 148, 800);
+    expect(ordinary.inputRange.join(",")).toBe("-1,0,100,428,429");
+    expect(ordinary.outputRange.join(",")).toBe("0,0,0,328,328");
+    expect(visible.inputRange.join(",")).toBe("-1,0,100,652,653");
+    expect(visible.outputRange.join(",")).toBe("0,0,0,552,552");
+    expect(nativeStickyInterpolation(100, 148, null).inputRange.join(",")).toBe("-1,0,100,101");
+    expect(nativeStickyInterpolation(100, 148, 200).outputRange.join(",")).toBe("0,0,0,1");
+  });
+
+  it("keeps the full original row intersection while sticky visibility uses the complete visual extent", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const geometry = new Map<string, ActualNativeRowGeometry>(fixture.geometry);
+    geometry.set("old", { index: 0, y: 1000, height: 340, pinnedHeight: 80 });
+    geometry.set("old-answer", { index: 1, y: 1340, height: 500 });
+    geometry.set("later", { index: 2, y: 1840, height: 0 });
+    geometry.set("later-answer", { index: 3, y: 1840, height: 300 });
+    fixture.mounted.delete("later");
+    const input = {
+      ...fixture,
+      geometry,
+      headers: createNativeMeasuredHeaderIndex({ items: fixture.items, geometry }),
+      clippedLeading: 0,
+      offset: 1280,
+      viewportHeight: 300,
+    };
+    const original = resolveActualNativeReading(input);
+    expect(original.rowId).toBe("old");
+    expect(original.pinnedId).toBe("old");
+    expect(input.headers.nextTop(0)).toBe(1840);
+
+    const collision = resolveActualNativeReading({ ...input, offset: 1800 });
+    expect(collision.rowId).toBe("old-answer");
+    expect(collision.pinnedId).toBe("old");
+    const passed = resolveActualNativeReading({ ...input, offset: 1840 });
+    expect(passed.pinnedId).toBeNull();
+    expect(passed.rowId).toBe("later-answer");
+  });
+});
+
+function nativePresentationFixture() {
+  const measurements = naturalMessageMeasurements();
+  const flow = resolveMessageFlow({ measurements, hasText: true });
+  const prepared = prepareNativeMessagePresentation({ measurements, flow, revision: 1 });
+  if (!prepared) throw new Error("The complete natural body fixture must prepare successfully");
+  return { ...prepared, maximumHeight: 240 };
+}
+
+describe("Android full-exit native presentation", () => {
+  it("Android full-exit effect replay preserves preparation and More offset until actual rebinding", () => {
+    const key = {};
+    const measurements = naturalMessageMeasurements();
+    const flow = resolveMessageFlow({ measurements, hasText: true });
+    const first = bindNativeMessagePreparation({
+      key,
+      measurements,
+      flow,
+      requiresControls: true,
+      previous: null,
+    });
+    const replay = bindNativeMessagePreparation({
+      key,
+      measurements,
+      flow,
+      requiresControls: true,
+      previous: first,
+    });
+    expect(replay.revision).toBe(first.revision);
+    expect(replay.value?.revision).toBe(first.value?.revision);
+    if (!first.value || !replay.value)
+      throw new Error("Complete natural measurements must prepare");
+    const prepared = { ...first.value, maximumHeight: 240 };
+    const expanded = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    let resets = 0;
+    const retained = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: expanded,
+      prepared: { ...replay.value, maximumHeight: 240 },
+      eligible: true,
+      expanded: true,
+      resetBody() {
+        resets += 1;
+      },
+    });
+    expect(resets).toBe(0);
+    expect(retained.mode).toBe("expanded");
+    const rebound = bindNativeMessagePreparation({
+      key: {},
+      measurements,
+      flow,
+      requiresControls: true,
+      previous: replay,
+    });
+    expect(rebound.revision > replay.revision).toBe(true);
+  });
+  it.each([
+    { kind: "short", height: 40 },
+    { kind: "tall", height: 340 },
+    { kind: "attachment-only", height: 184 },
+  ])("Android full-exit $kind row crosses only at its complete bottom", ({ height }) => {
+    const input = {
+      offset: 1000 + height - 1,
+      leadingInset: 0,
+      layout: 1000,
+      flowHeight: height,
+      pinnedHeight: 80,
+      next: 1840,
+    };
+    expect(nativeFullRowStickyTranslation(input)).toBe(0);
+    expect(nativeFullRowStickyTranslation({ ...input, offset: 1000 + height })).toBe(height);
+    expect(nativeFullRowStickyTranslation({ ...input, offset: 1000 + height + 1 })).toBe(
+      height + 1,
+    );
+    expect(nativeFullRowStickyTranslation({ ...input, offset: 1000 + height })).toBe(height);
+    expect(nativeFullRowStickyTranslation(input)).toBe(0);
+  });
+
+  it("Android full-exit uses actual keyboard and header displacement at the same boundary", () => {
+    const input = {
+      offset: 1200,
+      leadingInset: 140,
+      layout: 1000,
+      flowHeight: 340,
+      pinnedHeight: 80,
+      next: 1840,
+    };
+    expect(nativeFullRowStickyTranslation({ ...input, leadingInset: 139 })).toBe(0);
+    expect(nativeFullRowStickyTranslation(input)).toBe(340);
+    expect(nativeFullRowStickyTranslation({ ...input, leadingInset: 141 })).toBe(341);
+  });
+
+  it("Android full-exit restores ordinary paint only after the real More scroll reset", () => {
+    const prepared = nativePresentationFixture();
+    let resets = 0;
+    let published = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {
+        resets += 1;
+      },
+    });
+    let innerOffset = 96;
+    expect(published.mode).toBe("expanded");
+    expect(published.visualHeight).toBe(240);
+    expect(published.flowHeight).toBe(340);
+    const restored = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: published,
+      prepared,
+      eligible: false,
+      expanded: true,
+      resetBody() {
+        expect(published.mode).toBe("expanded");
+        innerOffset = 0;
+        resets += 1;
+      },
+    });
+    published = restored;
+    expect(innerOffset).toBe(0);
+    expect(resets).toBe(1);
+    expect(published.mode).toBe("ordinary");
+    expect(published.bodyHeight).toBe("auto");
+    expect(published.flowHeight).toBe(340);
+    expect(published.textTranslateY).toBe(0);
+    expect(nativeMessageRoleVisible(published.mode, "body")).toBe(true);
+    expect(nativeMessageRoleVisible(published.mode, "compact")).toBe(false);
+    expect(nativeMessageRoleVisible(published.mode, "expanded")).toBe(false);
+    expect(nativeMessageRoleVisible(published.mode, "pinned")).toBe(false);
+  });
+
+  it("Android full-exit Less resets the body before one-line paint and hides real attachment controls", () => {
+    const prepared = nativePresentationFixture();
+    const expanded = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    let reset = false;
+    const compact = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: expanded,
+      prepared,
+      eligible: true,
+      expanded: false,
+      resetBody() {
+        reset = true;
+      },
+    });
+    expect(reset).toBe(true);
+    expect(compact.mode).toBe("compact");
+    expect(compact.bodyHeight).toBe(52);
+    expect(compact.visualHeight).toBe(92);
+    expect(compact.flowHeight).toBe(340);
+    expect(compact.textTranslateY).toBe(-96);
+    expect(nativeMessageRoleVisible(compact.mode, "body")).toBe(false);
+    expect(nativeMessageRoleVisible(compact.mode, "compact")).toBe(true);
+    expect(nativeMessageRoleVisible(compact.mode, "expanded")).toBe(false);
+  });
+
+  it("Android full-exit unavailable or zero-cap preparation keeps full ordinary paint", () => {
+    const missing = { ...naturalMessageMeasurements(), controls: null };
+    const flow = resolveMessageFlow({ measurements: missing, hasText: true });
+    expect(
+      prepareNativeMessagePresentation({ measurements: missing, flow, revision: 2 }),
+    ).toBeNull();
+    for (const prepared of [null, { ...nativePresentationFixture(), maximumHeight: 0 }]) {
+      const frame = advanceNativeMessagePresentation({
+        binding: 7,
+        previous: ordinaryNativeMessagePresentation(),
+        prepared,
+        eligible: true,
+        expanded: false,
+        resetBody() {
+          throw new Error("An ordinary body must not reset");
+        },
+      });
+      expect(frame.mode).toBe("ordinary");
+      expect(frame.bodyHeight).toBe("auto");
+      expect(frame.textClipWidth).toBe("auto");
+      expect(nativeMessageRoleVisible(frame.mode, "body")).toBe(true);
+      expect(nativeMessageRoleVisible(frame.mode, "pinned")).toBe(false);
+    }
+  });
+
+  it("Android full-exit rebinding resets old More state before publishing a new ordinary owner", () => {
+    const prepared = nativePresentationFixture();
+    const old = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    let resets = 0;
+    const replacement = advanceNativeMessagePresentation({
+      binding: 8,
+      previous: old,
+      prepared: null,
+      eligible: false,
+      expanded: false,
+      resetBody() {
+        resets += 1;
+      },
+    });
+    expect(resets).toBe(1);
+    expect(replacement.binding).toBe(8);
+    expect(replacement.mode).toBe("ordinary");
+    expect(replacement.bodyHeight).toBe("auto");
+    expect(replacement.cycle > old.cycle).toBe(true);
+  });
+
+  it("Android full-exit reset failure never publishes ordinary or a later allowed disposition", () => {
+    const prepared = nativePresentationFixture();
+    let published = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: true,
+      resetBody() {},
+    });
+    const failure = new Error("held inner viewport reset failed");
+    let caught: unknown;
+    try {
+      published = advanceNativeMessagePresentation({
+        binding: 7,
+        previous: published,
+        prepared,
+        eligible: false,
+        expanded: false,
+        resetBody() {
+          throw failure;
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(failure);
+    expect(published.mode).toBe("expanded");
+  });
+
+  it("Android full-exit rejects stale disclosure after reverse or a natural measurement revision", () => {
+    const prepared = nativePresentationFixture();
+    const old = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinaryNativeMessagePresentation(),
+      prepared,
+      eligible: true,
+      expanded: false,
+      resetBody() {},
+    });
+    expect(acceptsNativeMessageDisclosure(old, old.revision, old.cycle, "compact")).toBe(true);
+    const ordinary = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: old,
+      prepared,
+      eligible: false,
+      expanded: false,
+      resetBody() {},
+    });
+    expect(acceptsNativeMessageDisclosure(ordinary, old.revision, old.cycle, "compact")).toBe(
+      false,
+    );
+    const reentered = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: ordinary,
+      prepared,
+      eligible: true,
+      expanded: false,
+      resetBody() {},
+    });
+    expect(acceptsNativeMessageDisclosure(reentered, old.revision, old.cycle, "compact")).toBe(
+      false,
+    );
+    const changed = advanceNativeMessagePresentation({
+      binding: 7,
+      previous: reentered,
+      prepared: { ...prepared, revision: 2 },
+      eligible: true,
+      expanded: false,
+      resetBody() {},
+    });
+    expect(acceptsNativeMessageDisclosure(changed, old.revision, changed.cycle, "compact")).toBe(
+      false,
+    );
+  });
+
+  it("Android full-exit preserves zero-height unmounted successor collision without pinning that successor", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const geometry = new Map(fixture.geometry);
+    geometry.set("old", { index: 0, y: 1000, height: 340, pinnedHeight: 80 });
+    geometry.set("later", { index: 2, y: 1400, height: 0 });
+    const mounted = new Set(["old", "old-answer"]);
+    const headers = createNativeMeasuredHeaderIndex({ items: fixture.items, geometry });
+    expect(headers.nextTop(0)).toBe(1400);
+    const input = {
+      ...fixture,
+      geometry,
+      mounted,
+      headers,
+      handoff: "full-row" as const,
+      offset: 1350,
+      clippedLeading: 0,
+    };
+    expect(resolveActualNativeReading(input).pinnedId).toBe("old");
+    expect(
+      nativeFullRowStickyTranslation({
+        offset: 1350,
+        leadingInset: 0,
+        layout: 1000,
+        flowHeight: 340,
+        pinnedHeight: 80,
+        next: headers.nextTop(0),
+      }),
+    ).toBe(320);
+    expect(resolveActualNativeReading({ ...input, offset: 1400 }).pinnedId).toBeNull();
+  });
+
+  it("Android full-exit opt-in preserves legacy iOS top-trigger and rejects unprepared Android pinning", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const geometry = new Map(fixture.geometry);
+    geometry.set("old", { index: 0, y: 1000, height: 340, pinnedHeight: 80, fullRowReady: false });
+    // The enlarged original USER must not overlap a later, already eligible USER.
+    geometry.set("old-answer", { index: 1, y: 1340, height: 150 });
+    geometry.set("later", { index: 2, y: 1490, height: 53 });
+    geometry.set("later-answer", { index: 3, y: 1543, height: 297 });
+    const input = {
+      ...fixture,
+      geometry,
+      headers: createNativeMeasuredHeaderIndex({ items: fixture.items, geometry }),
+      offset: 1100,
+      clippedLeading: 0,
+    };
+    expect(resolveActualNativeReading(input).pinnedId).toBe("old");
+    expect(resolveActualNativeReading({ ...input, handoff: "full-row" }).pinnedId).toBeNull();
+    expect(
+      resolveActualNativeReading({ ...input, offset: 1340, handoff: "full-row" }).pinnedId,
+    ).toBeNull();
+  });
+});
+
+function createNativeBottomMeasurement(): NativeBottomMeasurement {
+  return {
+    containerKey: "native-virtualized",
+    contentHeight: 0,
+    viewportHeight: 0,
+    offsetY: 0,
+    viewportMeasuredForKey: null,
+    contentMeasuredForKey: null,
+  };
+}
+
+describe("native viewport lifetime", () => {
+  it("rejects delayed callbacks from an old list instead of stamping the newly held list", () => {
+    const oldOrigin = createNativeViewportLifetime();
+    const oldViewport = {};
+    expect(oldOrigin.attach(oldViewport)).toBe(true);
+    expect(oldOrigin.isCurrent(oldOrigin, oldViewport)).toBe(true);
+
+    const nextOrigin = createNativeViewportLifetime();
+    const nextViewport = {};
+    expect(oldOrigin.release(oldViewport)).toBe(true);
+    expect(nextOrigin.attach(nextViewport)).toBe(true);
+
+    // Event closures retain oldOrigin even when the owner now holds nextViewport.
+    expect(oldOrigin.isCurrent(nextOrigin, nextViewport)).toBe(false);
+    expect(nextOrigin.isCurrent(nextOrigin, nextViewport)).toBe(true);
+    expect(nextOrigin.isCurrent(nextOrigin, oldViewport)).toBe(false);
+  });
+
+  it("requires the originating list component even if another owner holds the same object", () => {
+    const viewport = {};
+    const original = createNativeViewportLifetime();
+    const replacement = createNativeViewportLifetime();
+    expect(original.attach(viewport)).toBe(true);
+    expect(replacement.attach(viewport)).toBe(true);
+    expect(original.isCurrent(replacement, viewport)).toBe(false);
+    expect(replacement.isCurrent(replacement, viewport)).toBe(true);
+  });
+
+  it("retires a detached origin without allowing it to acquire a different physical list", () => {
+    const origin = createNativeViewportLifetime();
+    const viewport = {};
+    const other = {};
+    expect(origin.attach(viewport)).toBe(true);
+    expect(origin.release(other)).toBe(false);
+    expect(origin.isCurrent(origin, viewport)).toBe(true);
+    expect(origin.release(viewport)).toBe(true);
+    expect(origin.isCurrent(origin, viewport)).toBe(false);
+    expect(origin.attach(other)).toBe(false);
+    expect(origin.isCurrent(origin, other)).toBe(false);
+
+    // React may repeat a callback ref for the same physical instance.
+    expect(origin.attach(viewport)).toBe(true);
+    expect(origin.isCurrent(origin, viewport)).toBe(true);
+  });
+
+  it("clears the old observed bottom offset before a new viewport measures current content", () => {
+    const previous = createNativeViewportMetrics();
+    previous.contentHeight = 1800;
+    previous.viewportHeight = 600;
+    previous.offsetY = 1200;
+    previous.viewportMeasuredForKey = previous.containerKey;
+    previous.contentMeasuredForKey = previous.containerKey;
+    const current = createNativeViewportMetrics();
+    const publish = vi.fn<(nearBottom: boolean) => void>();
+
+    expect(current.offsetY).toBe(0);
+    expect(current.viewportMeasuredForKey).toBeNull();
+    expect(current.contentMeasuredForKey).toBeNull();
+    publishMeasuredNativeNearBottom({ metrics: current, threshold: 32, publish });
+    expect(publish).not.toHaveBeenCalled();
+
+    current.viewportHeight = 600;
+    current.contentHeight = 1800;
+    current.viewportMeasuredForKey = current.containerKey;
+    current.contentMeasuredForKey = current.containerKey;
+    publishMeasuredNativeNearBottom({ metrics: current, threshold: 32, publish });
+    expect(publish).toHaveBeenCalledExactlyOnceWith(false);
+    expect(current.offsetY).toBe(0);
+    expect(previous.offsetY).toBe(1200);
+  });
+});
+
+describe("native measured near-bottom publication", () => {
+  it("reveals an off-bottom list when content follows layout without a scroll event", () => {
+    const metrics = createNativeBottomMeasurement();
+    const publish = vi.fn<(nearBottom: boolean) => void>();
+    metrics.viewportHeight = 600;
+    metrics.viewportMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).not.toHaveBeenCalled();
+
+    metrics.contentHeight = 1800;
+    metrics.contentMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenCalledExactlyOnceWith(false);
+    expect(metrics.offsetY).toBe(0);
+  });
+
+  it("reveals an off-bottom list when layout follows content without a scroll event", () => {
+    const metrics = createNativeBottomMeasurement();
+    const publish = vi.fn<(nearBottom: boolean) => void>();
+    metrics.contentHeight = 1800;
+    metrics.contentMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).not.toHaveBeenCalled();
+
+    metrics.viewportHeight = 600;
+    metrics.viewportMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenCalledExactlyOnceWith(false);
+    expect(metrics.offsetY).toBe(0);
+  });
+
+  it("withholds incomplete or stale-container measurements until both are current and positive", () => {
+    const metrics = createNativeBottomMeasurement();
+    const publish = vi.fn<(nearBottom: boolean) => void>();
+    metrics.viewportMeasuredForKey = metrics.containerKey;
+    metrics.contentMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    metrics.viewportHeight = 600;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    metrics.contentHeight = 1800;
+    metrics.viewportHeight = 0;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).not.toHaveBeenCalled();
+
+    metrics.viewportHeight = 600;
+    metrics.containerKey = "rebound-container";
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    metrics.viewportMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).not.toHaveBeenCalled();
+    metrics.contentMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("publishes fitting content and current offsets using the existing bottom threshold", () => {
+    const metrics = createNativeBottomMeasurement();
+    const publish = vi.fn<(nearBottom: boolean) => void>();
+    metrics.viewportHeight = 600;
+    metrics.contentHeight = 400;
+    metrics.viewportMeasuredForKey = metrics.containerKey;
+    metrics.contentMeasuredForKey = metrics.containerKey;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenLastCalledWith(true);
+
+    metrics.contentHeight = 1800;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenLastCalledWith(false);
+    metrics.offsetY = 1167;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenLastCalledWith(false);
+    metrics.offsetY = 1168;
+    publishMeasuredNativeNearBottom({ metrics, threshold: 32, publish });
+    expect(publish).toHaveBeenLastCalledWith(true);
+    expect(publish).toHaveBeenCalledTimes(4);
+  });
+});
 
 interface FakeFrameScheduler {
   requestFrame(callback: () => void): number;
@@ -1073,7 +2534,7 @@ function effectiveNativeReadingFixture() {
       timelineCursor: { epoch: "epoch", seq: 1303 },
     },
   ];
-  const geometry = new Map([
+  const geometry = new Map<string, ActualNativeRowGeometry>([
     ["old", { index: 0, y: 1000, height: 100 }],
     ["old-answer", { index: 1, y: 1100, height: 150 }],
     ["later", { index: 2, y: 1250, height: 53 }],
@@ -1082,6 +2543,7 @@ function effectiveNativeReadingFixture() {
   return {
     items,
     geometry,
+    headers: createNativeMeasuredHeaderIndex({ items, geometry }),
     mounted: new Set(items.map((item) => item.id)),
     offset: 1000,
     viewportHeight: 600,
@@ -1136,6 +2598,177 @@ describe("actual native effective reading selection", () => {
       seq: null,
       visibleUserIds: [],
     });
+  });
+});
+
+describe("native mounted reading geometry", () => {
+  it("uses chronological indices when mounted and measured insertion orders are reversed", () => {
+    const fixture = effectiveNativeReadingFixture();
+    fixture.mounted = new Set([...fixture.mounted].toReversed());
+    fixture.geometry = new Map([...fixture.geometry].toReversed());
+    fixture.headers = createNativeMeasuredHeaderIndex(fixture);
+    const reading = resolveActualNativeReading({ ...fixture, offset: 1100, clippedLeading: 0 });
+
+    expect(reading.pinnedId).toBe("old");
+    expect(reading.rowId).toBe("old-answer");
+    expect(reading.seq).toBe(1100);
+    expect(reading.visibleUserIds.join(",")).toBe("old,later");
+  });
+
+  it("excludes pre-prepend geometry until current-index layouts are accepted", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const prefix: StreamItem = {
+      id: "prefix",
+      kind: "user_message",
+      text: "earlier",
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "epoch", seq: 900 },
+    };
+    const items = [prefix, ...fixture.items];
+    const headers = createNativeMeasuredHeaderIndex({ items, geometry: fixture.geometry });
+    const input = { ...fixture, items, headers };
+    const stale = resolveActualNativeReading(input);
+
+    expect(stale.pinnedId).toBeNull();
+    expect(stale.rowId).toBeNull();
+    expect(stale.seq).toBeNull();
+    expect(stale.visibleUserIds.length).toBe(0);
+    expect(headers.nextTop(0)).toBeNull();
+
+    for (const [id, previous] of fixture.geometry) {
+      const row = { index: previous.index + 1, y: previous.y, height: previous.height };
+      fixture.geometry.set(id, row);
+      headers.record(id, row);
+    }
+    const current = resolveActualNativeReading(input);
+    expect(current.pinnedId).toBe("later");
+    expect(current.rowId).toBe("later");
+    expect(current.seq).toBe(1250);
+    expect(current.visibleUserIds.join(",")).toBe("later");
+  });
+
+  it("retains an unmounted zero-height successor but removes stale-index collision evidence", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const successor = { index: 2, y: 1100, height: 0 };
+    fixture.geometry.set("later", successor);
+    fixture.headers.record("later", successor);
+    fixture.mounted.delete("later");
+    const input = { ...fixture, offset: 1100, clippedLeading: 0, viewportHeight: 100 };
+
+    expect(fixture.headers.nextTop(0)).toBe(1100);
+    const hidden = resolveActualNativeReading(input);
+    expect(hidden.pinnedId).toBeNull();
+    expect(hidden.rowId).toBe("old-answer");
+    expect(hidden.visibleUserIds.length).toBe(0);
+
+    fixture.mounted.add("later");
+    expect(resolveActualNativeReading(input).pinnedId).toBeNull();
+    const staleSuccessor = { index: 99, y: 1100, height: 0 };
+    fixture.geometry.set("later", staleSuccessor);
+    fixture.headers.record("later", staleSuccessor);
+    expect(fixture.headers.nextTop(0)).toBeNull();
+    const retained = resolveActualNativeReading(input);
+    expect(retained.pinnedId).toBe("old");
+    expect(retained.rowId).toBe("old-answer");
+    expect(retained.visibleUserIds.join(",")).toBe("old");
+  });
+
+  it("updates only measured USER successors and reads current metadata after list rebinding", () => {
+    const fixture = effectiveNativeReadingFixture();
+    fixture.headers.clear();
+    expect(fixture.headers.nextTop(0)).toBeNull();
+    fixture.headers.record("old-answer", { index: 1, y: 1200, height: 100 });
+    expect(fixture.headers.nextTop(0)).toBeNull();
+    fixture.headers.record("later", { index: 2, y: 1500, height: 0 });
+    expect(fixture.headers.nextTop(0)).toBe(1500);
+    fixture.headers.record("later", { index: 2, y: 1250, height: 53 });
+    expect(fixture.headers.nextTop(0)).toBe(1250);
+
+    const withoutLater = [fixture.items[0], fixture.items[1], fixture.items[3]];
+    const removed = createNativeMeasuredHeaderIndex({
+      items: withoutLater,
+      geometry: fixture.geometry,
+    });
+    expect(removed.nextTop(0)).toBeNull();
+
+    const items = fixture.items.map((item, index) =>
+      Object.assign({}, item, { timelineCursor: { epoch: "next-epoch", seq: 40 + index } }),
+    );
+    const headers = createNativeMeasuredHeaderIndex({ items, geometry: fixture.geometry });
+    const reading = resolveActualNativeReading({ ...fixture, items, headers });
+    expect(reading.pinnedId).toBe("later");
+    expect(reading.rowId).toBe("later");
+    expect(reading.seq).toBe(42);
+    expect(reading.visibleUserIds.join(",")).toBe("later");
+  });
+
+  it("reads mounted indices without traversing a large chronological history", () => {
+    const items = Array.from({ length: 10_000 }, (_, index): StreamItem => {
+      const kind = index === 0 || index === 9999 ? "user_message" : "assistant_message";
+      return {
+        id: `row-${index}`,
+        kind,
+        text: "row",
+        timestamp: new Date(0),
+        timelineCursor: { epoch: "epoch", seq: index },
+      };
+    });
+    let indexedReads = 0;
+    const countedItems = new Proxy(items, {
+      get(target, property, receiver) {
+        if (property === Symbol.iterator || property === "entries") {
+          throw new Error("A reading calculation must not traverse chronological history");
+        }
+        if (typeof property === "string" && /^\d+$/.test(property)) indexedReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const geometry = new Map([
+      ["row-0", { index: 0, y: 0, height: 50 }],
+      ["row-5000", { index: 5000, y: 500, height: 100 }],
+      ["row-9999", { index: 9999, y: 900, height: 0 }],
+    ]);
+    const headers = createNativeMeasuredHeaderIndex({ items: countedItems, geometry });
+    indexedReads = 0;
+    for (let index = 0; index < 20; index += 1) {
+      const reading = resolveActualNativeReading({
+        items: countedItems,
+        geometry,
+        headers,
+        mounted: new Set(["row-5000", "row-0"]),
+        offset: 500,
+        clippedLeading: 0,
+        viewportHeight: 100,
+        stickyEnabled: true,
+      });
+      expect(reading.pinnedId).toBe("row-0");
+      expect(reading.rowId).toBe("row-5000");
+      expect(reading.seq).toBe(5000);
+      expect(reading.visibleUserIds.join(",")).toBe("row-0");
+    }
+    expect(indexedReads).toBeLessThanOrEqual(160);
+  });
+
+  it("rejects an async measurement after a row or scope rebind before publication", () => {
+    const fixture = effectiveNativeReadingFixture();
+    const pending = {
+      request: 7,
+      latestRequest: 7,
+      headers: fixture.headers,
+      currentHeaders: fixture.headers,
+    };
+    expect(isCurrentNativeReading(pending)).toBe(true);
+    const rowRebind = createNativeMeasuredHeaderIndex({
+      items: [...fixture.items],
+      geometry: fixture.geometry,
+    });
+    expect(isCurrentNativeReading({ ...pending, currentHeaders: rowRebind })).toBe(false);
+    const scopeRebind = createNativeMeasuredHeaderIndex(fixture);
+    expect(isCurrentNativeReading({ ...pending, currentHeaders: scopeRebind })).toBe(false);
+    expect(isCurrentNativeReading({ ...pending, latestRequest: 8 })).toBe(false);
+    expect(
+      isCurrentNativeReading({ ...pending, headers: rowRebind, currentHeaders: rowRebind }),
+    ).toBe(true);
   });
 });
 

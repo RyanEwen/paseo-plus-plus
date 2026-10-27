@@ -115,3 +115,20 @@ describe("normalizeAgentSnapshot", () => {
     expect(nonString.parentAgentId).toBeNull();
   });
 });
+
+it("keeps the daemon human-audience decision in both snapshot directions", () => {
+  const snapshot = {
+    ...createSnapshot(),
+    humanAttentionRequired: false,
+    attentionMessage: "Account choice",
+  };
+  const normalized = normalizeAgentSnapshot(snapshot, "host");
+  expect(normalized).toMatchObject({
+    humanAttentionRequired: false,
+    attentionMessage: "Account choice",
+  });
+  expect(projectAgentSnapshot(normalized)).toMatchObject({
+    humanAttentionRequired: false,
+    attentionMessage: "Account choice",
+  });
+});

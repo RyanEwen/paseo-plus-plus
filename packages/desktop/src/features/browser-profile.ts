@@ -47,6 +47,35 @@ interface ElectronSessions {
   fromPartition(partition: string): BrowserProfileSession;
 }
 
+interface BrowserIdentityInput {
+  app: {
+    userAgentFallback: string;
+  };
+  appName: string;
+  appVersion: string;
+  electronVersion: string;
+}
+
+/** Configure Chromium's default once at startup, before any sessions or contents exist.
+ * Native popup navigations can bypass a session override, so their fallback must be clean too.
+ * Return the original branded UA for every main UI window to set before its first navigation.
+ * Only the current app/Electron tokens are removed; the engine, OS and other products remain.
+ */
+export function configurePaseoBrowserIdentity(input: BrowserIdentityInput): string {
+  const currentUserAgent = input.app.userAgentFallback;
+  // Electron removes ASCII spaces from the app name when building its product token.
+  const appProduct = `${input.appName.replaceAll(" ", "")}/${input.appVersion}`;
+  const electronProduct = `Electron/${input.electronVersion}`;
+  const retainedProducts = currentUserAgent
+    .split(" ")
+    .filter((product) => product !== appProduct && product !== electronProduct);
+  const userAgent = retainedProducts.join(" ");
+  if (userAgent !== currentUserAgent) {
+    input.app.userAgentFallback = userAgent;
+  }
+  return currentUserAgent;
+}
+
 /** Resolve the shared profile while retaining the caller's concrete session type. */
 export function getPaseoBrowserProfileSession<TSession extends BrowserProfileSession>(sessions: {
   fromPartition(partition: string): TSession;
