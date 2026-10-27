@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -92,6 +101,37 @@ test("a missing patch-package fails the install and leaves the package in place"
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /failed to spawn/);
+    assert.equal(existsSync(packageDir), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("jest-worker terminal retirement patch is delivered and reapplied idempotently", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "postinstall-jest-worker-"));
+  const packageDir = path.join(root, "node_modules", "jest-worker");
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "checkout" }));
+    cpSync(path.resolve("node_modules", "jest-worker"), packageDir, { recursive: true });
+    mkdirSync(path.join(root, "patches"));
+    copyFileSync(
+      path.resolve("patches", "jest-worker+29.7.0.patch"),
+      path.join(root, "patches", "jest-worker+29.7.0.patch"),
+    );
+
+    const first = install(root);
+    assert.equal(first.status, 0, first.stderr);
+    const workerPath = path.join(packageDir, "build", "workers", "NodeThreadsWorker.js");
+    const patched = readFileSync(workerPath, "utf8");
+    assert.equal(patched.match(/this\.state = _types\.WorkerStates\.SHUT_DOWN;/g)?.length, 2);
+    assert.equal(
+      JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")).version,
+      "29.7.0",
+    );
+
+    const repeated = install(root);
+    assert.equal(repeated.status, 0, repeated.stderr);
+    assert.equal(readFileSync(workerPath, "utf8"), patched);
     assert.equal(existsSync(packageDir), true);
   } finally {
     rmSync(root, { recursive: true, force: true });

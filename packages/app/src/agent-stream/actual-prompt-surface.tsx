@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { ActualPromptRowsProvider } from "./actual-prompt-rows";
 import { PromptDiscoverySurface } from "./prompt-navigation-surface";
 import { PromptNavigationContext } from "./prompt-navigation-actions";
@@ -17,6 +18,8 @@ import {
 import type { StreamItem } from "@/types/stream";
 import { fetchPromptContent } from "./fetch-prompt-content";
 import { useStickyPrompt } from "./use-sticky-prompt";
+import { resolvePromptFeedback } from "./sticky-prompt-model";
+import { useStreamTopOverlayInset } from "./top-overlay";
 
 type Props = Parameters<typeof useStickyPrompt>[0] & {
   contextPageReader?: ContextPageReader | null;
@@ -72,34 +75,31 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
     fetchContext: retainedContext ? undefined : readContext,
   });
   const controls = usePromptNavigationControls(navigation);
+  const feedback = resolvePromptFeedback(navigation, retainedContext);
   const retryContext = useStableEvent(() => {
-    if (retainedContext?.error || retainedContext?.cancelled || retainedContext?.limited)
-      retainedContext.retry();
+    if (feedback.retryContext) retainedContext?.retry();
     else navigation.retry();
   });
   const cancelContext = useStableEvent(() => {
     retainedContext?.cancel();
     navigation.cancel();
   });
-  let contextStatus = navigation.discoveryStatus;
-  if (retainedContext?.limited) contextStatus = "limited";
-  else if (retainedContext?.exhausted && !navigation.message) contextStatus = "exhausted";
   const feedbackNavigation = useMemo(
     () => ({
       ...navigation,
-      busy: navigation.busy || retainedContext?.loading === true,
-      error: navigation.error || retainedContext?.error === true,
-      cancelled: navigation.cancelled || retainedContext?.cancelled === true,
-      discoveryStatus: contextStatus,
+      busy: feedback.busy,
+      error: feedback.error,
+      cancelled: feedback.cancelled,
+      discoveryStatus: feedback.discoveryStatus,
       retry: retryContext,
       cancel: cancelContext,
     }),
     [
       navigation,
-      retainedContext?.loading,
-      retainedContext?.error,
-      retainedContext?.cancelled,
-      contextStatus,
+      feedback.busy,
+      feedback.error,
+      feedback.cancelled,
+      feedback.discoveryStatus,
       retryContext,
       cancelContext,
     ],
@@ -117,6 +117,12 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
     () => ({ width: "100%" as const, maxWidth: contentMaxWidth }),
     [contentMaxWidth],
   );
+  const topOverlayInset = useStreamTopOverlayInset();
+  // Feedback sits outside the list, so it needs the floating header's clearance too.
+  const feedbackStyle = useMemo(
+    () => [styles.feedback, inlineUnistylesStyle({ top: topOverlayInset })],
+    [topOverlayInset],
+  );
   return (
     <ActualPromptRowsProvider
       enabled={input.enabled !== false}
@@ -127,7 +133,7 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
         <View style={styles.timeline} testID="sticky-prompt-timeline">
           {children}
           {input.enabled !== false && (
-            <View style={styles.feedback} pointerEvents="box-none">
+            <View style={feedbackStyle} pointerEvents="box-none">
               <View style={rail} pointerEvents="box-none">
                 <PromptDiscoverySurface navigation={feedbackNavigation} />
               </View>
@@ -141,5 +147,5 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
 
 const styles = StyleSheet.create({
   timeline: { flex: 1, minHeight: 0 },
-  feedback: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 3, alignItems: "center" },
+  feedback: { position: "absolute", left: 0, right: 0, zIndex: 3, alignItems: "center" },
 });

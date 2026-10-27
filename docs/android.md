@@ -107,6 +107,10 @@ Run its native regression tests from `packages/app/android` after prebuild:
   --no-daemon --max-workers=1 -Dorg.gradle.parallel=false
 ```
 
+Keep `expo-notifications` in the app package's `expo.autolinking.android.buildFromSource` selection while its native presentation and dismissal-receiver patch is required. Expo's default prebuilt AAR bypasses the patched Kotlin source. Other modules keep their existing build selection; see [selective source builds](https://docs.expo.dev/guides/prebuilt-expo-modules/).
+
+The receipt module opts into Expo native presentation for Android notification messages. Firebase automatic background display bypasses Expo's serialized receipt and dismissal receiver, so foreground-only notification tests cannot qualify synchronized clearing. The patch retains Firebase message deduplication and acknowledgement and passes the original payload to Expo; it does not change the server payload or require background JavaScript. Its receive bridge is pinned to Firebase Messaging 25.0.1's internal synchronous dispatch contract. Recheck that contract when upgrading Expo/Firebase, then verify a real background push, selective clearing on resume, and a tray swipe after process exit. Silent messages stay on Firebase's original path.
+
 From repo root:
 
 ```bash

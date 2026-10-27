@@ -147,6 +147,19 @@ export const PASEO_TOOL_CATALOG = {
       outputFields: ["status", "lastMessage", "permission"],
     },
   },
+  get_attention_context: {
+    label: "Read task recipients",
+  },
+  report_objective_status: {
+    label: "Report task status",
+    context: field("disposition"),
+    detail: { inputOrder: ["objectiveId", "disposition"] },
+  },
+  request_human_attention: {
+    label: "Request human attention",
+    context: field("reason"),
+    detail: { inputOrder: ["objectiveId", "reason"] },
+  },
   get_agent_status: {
     label: "Check agent",
     context: targetAgent(),

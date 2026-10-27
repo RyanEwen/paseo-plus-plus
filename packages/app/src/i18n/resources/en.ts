@@ -99,11 +99,11 @@ export const en = {
       },
       mobileWorkspaceTabs: {
         label: "Mobile workspace tabs",
-        hint: "Show a scrolling tab strip in compact workspaces. Turn off to use the earlier tab chooser without changing the selected tab.",
+        hint: "Show a scrolling tab strip beneath the workspace title in compact workspaces. Turn off to use the earlier tab chooser without changing the selected tab.",
       },
       widerWorkspaceTabs: {
         label: "Wider workspace tabs",
-        hint: "Allow long tab titles up to 50% more width. Short tabs keep their natural width. Turn off to restore the earlier maximum.",
+        hint: "Allow long tab titles up to 50% more width. Phone workspace tabs always share the available width equally.",
       },
 
       descriptiveToolCalls: {
@@ -117,7 +117,7 @@ export const en = {
       },
       stickyUserPrompts: {
         label: "Keep user prompts in view",
-        hint: "Keep the current prompt above the chat, with expansion and previous/next navigation",
+        hint: "Pin a compact prompt with expansion and previous/next navigation. Ordinary messages stay expanded, and loading never covers an available prompt.",
       },
       previousAgents: {
         label: "Previous agents",
@@ -1443,6 +1443,16 @@ export const en = {
       title: "Projects",
     },
     statusGroupAccessibility: "{{label}} group",
+    workspaceTree: {
+      expand: "Expand child workspaces of {{name}}",
+      collapse: "Collapse child workspaces of {{name}}",
+      activeChild: "Contains the active workspace.",
+      summary_one: "{{count}} child workspace: {{status}}",
+      summary_other: "{{count}} child workspaces: {{status}}",
+      humanAttention_one: "{{count}} child workspace needs your attention",
+      humanAttention_other: "{{count}} child workspaces need your attention",
+      unknownStatus: "Status unavailable",
+    },
     statusBucket: {
       workingCount: "{{count}} working",
       needsInput: "Needs input",
@@ -2710,6 +2720,17 @@ export const en = {
     },
     notifications: {
       title: "Notifications",
+      chooseHost: "Choose a settings host to configure attention across its devices.",
+      hostTitle: "Notifications on {{host}}",
+      agentAware: "Agent-aware attention",
+      agentAwareHint:
+        "Keep routine agent-to-agent results quiet and show Ready badges when you need to act. Applies to every device connected to {{host}}. Human escalation and safety alerts remain available when disabled.",
+      updateHost: "Update this host to change agent-aware attention.",
+      readOnly: "Managing this host is required to change this setting.",
+      unavailable: "Connect to a supported host with management permission before saving.",
+      notSaved: "The host did not save this attention preference. Try again.",
+      loadFailed: "Unable to load the host's notification preference.",
+      saving: "Saving...",
       permission: "Notification permission",
       refreshAccessibility: "Refresh notification permission",
       playSound: "Play sound",

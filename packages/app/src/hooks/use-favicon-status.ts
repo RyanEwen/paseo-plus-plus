@@ -1,3 +1,4 @@
+import { hasHumanAgentAttention } from "@getpaseo/protocol/agent-attention";
 import { useEffect, useRef, useState } from "react";
 import { getIsElectronRuntimeMac } from "@/constants/layout";
 import { useAggregatedAgents } from "./use-aggregated-agents";
@@ -27,13 +28,20 @@ const FAVICON_IMAGES: Record<ColorScheme, Record<FaviconStatus, { uri: string } 
 function deriveFaviconStatus(
   agents: ReturnType<typeof useAggregatedAgents>["agents"],
 ): FaviconStatus {
+  if (agents.some((agent) => agent.humanAttentionRequired === true)) return "attention";
   const hasRunning = agents.some((agent) => agent.status === "running");
   if (hasRunning) {
     return "running";
   }
-  const hasAttention = agents.some((agent) => agent.requiresAttention);
-  const hasNeedsInput = agents.some((agent) => (agent.pendingPermissionCount ?? 0) > 0);
-  if (hasAttention || hasNeedsInput) {
+  if (
+    agents.some((agent) =>
+      hasHumanAgentAttention({
+        humanAttentionRequired: agent.humanAttentionRequired,
+        requiresAttention: agent.requiresAttention,
+        pendingPermissionCount: agent.pendingPermissionCount,
+      }),
+    )
+  ) {
     return "attention";
   }
   return "none";

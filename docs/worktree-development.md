@@ -10,13 +10,11 @@ Every fork feature has its own maintained branch, including its tests, documenta
 fixes. Maintain the fork assuming upstream never accepts those features. Upstream adoption is
 optional and does not determine whether we maintain or release a feature.
 
-Keep a clean upstream-facing branch alongside each fork feature branch. The upstream-facing
-branch contains upstream plus that feature and its required dependencies, ready for a focused PR
-whenever upstream wants it. Merge fork `main` into the fork companion, never into the clean
-upstream-facing branch. Carry feature changes to both branches and record their correspondence;
-a branch pair is ready only when the feature changes and checks are current on both sides.
-Resolve dependencies explicitly rather than bringing unrelated fork features into an upstream PR.
-Neither keeping a branch ready nor an upstream request authorizes pushing to upstream.
+Maintain each feature on its fork branch with the existing owner. The Paseo team may borrow those branches if useful. Upstream PR readiness, portable settings placement and compatibility with upstream product choices do not gate fork completion or releases.
+
+Preserve prepared upstream-facing branches and their qualification receipts as optional borrowing material. Do not require new counterparts or duplicate every subsequent fork change into them. Record the exact source and verification limits when one is used; its historical checks do not qualify later fork changes. Never reset or delete preserved work as part of this scope change.
+
+An upstream request does not authorize pushing or posting there.
 
 Keep only our own branches locally and in the fork. Our clean upstream-facing feature branches
 are ours; imported upstream feature branches and published upstream mirrors are not. Fetch
@@ -33,7 +31,7 @@ branch is `main`. This development checkout keeps the fork and upstream remotes 
 | `integration`, tracking `fork/integration` | Long-lived combined testing branch for selected feature work.                        |
 | `refs/upstream-source/main`                | Private comparison checkpoint for upstream main; not a local or published branch.    |
 | Fork feature branches                      | Own each feature and receive fork `main` updates.                                    |
-| Upstream-facing feature branches           | Keep the same feature ready for an upstream PR without unrelated fork history.       |
+| Preserved upstream-facing feature branches | Optional borrowing material with recorded source and verification limits.            |
 | Temporary review branches                  | Optional bounded reviews before combination in `integration`.                        |
 
 Inspect actual remote URLs and full heads when adopting a checkout. A ref's name does not prove

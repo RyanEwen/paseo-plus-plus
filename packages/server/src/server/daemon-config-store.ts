@@ -23,6 +23,7 @@ interface SupportedMutableConfigPatch {
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
   metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  notifications?: MutableDaemonConfig["notifications"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
@@ -178,6 +179,7 @@ const RELOADABLE_PATHS = [
   "daemon.trustedProxies",
   "daemon.git.maxProcessesPerSecond",
   "daemon.git.maxProcessConcurrency",
+  "daemon.notifications.agentAwareAttention",
   "daemon.autoArchiveAfterMerge",
   "daemon.enableTerminalAgentHooks",
   "daemon.appendSystemPrompt",
@@ -201,6 +203,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.trustedProxies", "trustedProxies"],
   ["daemon.git.maxProcessesPerSecond", "git.maxProcessesPerSecond"],
   ["daemon.git.maxProcessConcurrency", "git.maxProcessConcurrency"],
+  ["daemon.notifications.agentAwareAttention", "notifications.agentAwareAttention"],
   ["daemon.autoArchiveAfterMerge", "autoArchiveAfterMerge"],
   ["daemon.enableTerminalAgentHooks", "enableTerminalAgentHooks"],
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
@@ -249,6 +252,14 @@ function compactOwnedPaths(paths: readonly string[], owners: readonly string[]):
   return Array.from(compacted).sort();
 }
 
+/** Retain only the supported notification leaf; unrelated future preferences remain untouched. */
+function pickNotificationPatch(
+  notifications: SupportedMutableConfigPatch["notifications"],
+): Pick<SupportedMutableConfigPatch, "notifications"> {
+  if (notifications?.agentAwareAttention === undefined) return {};
+  return { notifications: { agentAwareAttention: notifications.agentAwareAttention } };
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...(patch.relay?.enabled !== undefined ? { relay: { enabled: patch.relay.enabled } } : {}),
@@ -263,6 +274,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.metadataGeneration?.providers !== undefined
       ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
       : {}),
+    ...pickNotificationPatch(patch.notifications),
     ...(patch.autoArchiveAfterMerge !== undefined
       ? { autoArchiveAfterMerge: patch.autoArchiveAfterMerge }
       : {}),
@@ -651,6 +663,12 @@ function mergeMutableDaemonPatch(
   }
   if (patch.browserTools?.enabled !== undefined) {
     next.browserTools = { ...next.browserTools, enabled: patch.browserTools.enabled };
+  }
+  if (patch.notifications?.agentAwareAttention !== undefined) {
+    next.notifications = {
+      ...next.notifications,
+      agentAwareAttention: patch.notifications.agentAwareAttention,
+    };
   }
   if (patch.autoArchiveAfterMerge !== undefined) {
     next.autoArchiveAfterMerge = patch.autoArchiveAfterMerge;
