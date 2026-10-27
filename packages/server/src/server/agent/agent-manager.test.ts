@@ -12818,6 +12818,7 @@ test.each(["human", "agent"] as const)(
       manager,
       agentId: worker.id,
       options,
+      nativeStart: { session: worker.session, turnId: worker.session.turnId },
     });
     worker.session.pushEvent({
       type: "permission_requested",
@@ -13388,8 +13389,18 @@ test("stale permission handoff cannot replace a newly accepted request", async (
   ]);
 });
 
+interface EscalationFaultFixtureInput {
+  name: string;
+  requesterPeer?: AgentAttentionPeer;
+  nativeStart?: boolean;
+}
+
 /** Admit a real agent objective before any escalation fault is installed. */
-async function createEscalationFaultFixture(name: string, requesterPeer?: AgentAttentionPeer) {
+async function createEscalationFaultFixture({
+  name,
+  requesterPeer,
+  nativeStart = false,
+}: EscalationFaultFixtureInput) {
   const fixture = createAttentionRegressionFixture(name);
   const requester = await fixture.createAgent("Escalation requester");
   const worker = await fixture.createAgent("Escalation worker");
@@ -13404,6 +13415,9 @@ async function createEscalationFaultFixture(name: string, requesterPeer?: AgentA
         { kind: "agent", requestId: "escalation-objective", requester: requesterIdentity },
       ],
     },
+    nativeStart: nativeStart
+      ? { session: worker.session, turnId: worker.session.turnId }
+      : undefined,
   });
   return {
     ...fixture,
@@ -13466,7 +13480,9 @@ function holdEscalationAtomicWrite(agentId: string, outcome: "fail" | "succeed")
 }
 
 test("escalation public competition retries the failed reason once", async () => {
-  const { manager, request, notify } = await createEscalationFaultFixture("competing-escalation");
+  const { manager, request, notify } = await createEscalationFaultFixture({
+    name: "competing-escalation",
+  });
   const write = holdEscalationAtomicWrite(request.agentId, "fail");
   const first = manager.requestHumanAttention(request);
   void first.catch(() => undefined);
@@ -13492,9 +13508,9 @@ test("escalation public competition retries the failed reason once", async () =>
 });
 
 test("escalation postcommit acknowledgement error keeps one durable announcement", async () => {
-  const { manager, storage, request, notify } = await createEscalationFaultFixture(
-    "committed-escalation-ack-error",
-  );
+  const { manager, storage, request, notify } = await createEscalationFaultFixture({
+    name: "committed-escalation-ack-error",
+  });
   const write = holdEscalationSnapshot(storage, "fail-after-write");
   const first = manager.requestHumanAttention(request);
   void first.catch(() => undefined);
@@ -13532,8 +13548,9 @@ test("escalation postcommit acknowledgement error keeps one durable announcement
 });
 
 test("escalation held failure preserves newer manual review state", async () => {
-  const { manager, storage, request, notify, worker, running } =
-    await createEscalationFaultFixture("newer-manual-attention");
+  const { manager, storage, request, notify, worker, running } = await createEscalationFaultFixture(
+    { name: "newer-manual-attention" },
+  );
   const write = holdEscalationAtomicWrite(worker.id, "succeed");
   const first = manager.requestHumanAttention(request);
   void first.catch(() => undefined);
@@ -13590,7 +13607,7 @@ test("escalation held failure preserves newer manual review state", async () => 
 
 test("escalation held success rejects a retired objective with a reused ID", async () => {
   const { manager, request, notify, worker, running, requesterIdentity } =
-    await createEscalationFaultFixture("same-id-retirement");
+    await createEscalationFaultFixture({ name: "same-id-retirement" });
   const write = holdEscalationAtomicWrite(worker.id, "succeed");
   const first = manager.requestHumanAttention(request);
   void first.catch(() => undefined);
@@ -13645,9 +13662,12 @@ test("escalation held success rejects a retired objective with a reused ID", asy
 test.each(["blocked", "resolved"] as const)(
   "background escalation retry for %s shares the failed public claim",
   async (state) => {
-    const fixture = await createEscalationFaultFixture(`background-escalation-${state}`, {
-      agentId: randomUUID(),
-      serverId: "remote",
+    const fixture = await createEscalationFaultFixture({
+      name: `background-escalation-${state}`,
+      requesterPeer: {
+        agentId: randomUUID(),
+        serverId: "remote",
+      },
     });
     const { manager, request, worker, notify } = fixture;
     const availabilityEntered = deferred<void>();
@@ -13699,7 +13719,7 @@ test.each(["blocked", "resolved"] as const)(
 
 test("escalation close reload keeps the unannounced same objective retryable", async () => {
   const { manager, storage, request, notify, worker, running, requesterIdentity } =
-    await createEscalationFaultFixture("unannounced-close-reload");
+    await createEscalationFaultFixture({ name: "unannounced-close-reload" });
   const original = manager.getAgent(worker.id);
   const write = holdEscalationAtomicWrite(worker.id, "succeed");
   const first = manager.requestHumanAttention(request);
@@ -13793,7 +13813,9 @@ test("escalation close reload keeps the unannounced same objective retryable", a
 
 test("escalation committed acknowledgement delay preserves newer manual attention", async () => {
   const { manager, storage, request, notify, worker, running } = await createEscalationFaultFixture(
-    "manual-after-durable-commit",
+    {
+      name: "manual-after-durable-commit",
+    },
   );
   const write = holdEscalationSnapshot(storage, "succeed-after-write");
   const first = manager.requestHumanAttention(request);
@@ -13861,7 +13883,7 @@ test("escalation committed acknowledgement delay preserves newer manual attentio
 
 test("escalation intervening permission snapshot retains the successful announcement", async () => {
   const { manager, storage, request, notify, worker, requesterIdentity } =
-    await createEscalationFaultFixture("permission-during-escalation-write");
+    await createEscalationFaultFixture({ name: "permission-during-escalation-write" });
   const write = holdEscalationSnapshot(storage, "succeed-after-write");
   const first = manager.requestHumanAttention(request);
   void first.catch(() => undefined);
@@ -13950,9 +13972,9 @@ test("escalation intervening permission snapshot retains the successful announce
 });
 
 test("escalation durable commit precedes the next queued permission snapshot", async () => {
-  const { manager, storage, request, notify, worker } = await createEscalationFaultFixture(
-    "permission-queued-before-durable-commit",
-  );
+  const { manager, storage, request, notify, worker } = await createEscalationFaultFixture({
+    name: "permission-queued-before-durable-commit",
+  });
   const write = holdEscalationAtomicWrite(worker.id, "succeed");
   const first = manager.requestHumanAttention(request);
   void first.catch(() => undefined);
@@ -14020,7 +14042,10 @@ test("escalation durable commit precedes the next queued permission snapshot", a
 
 test("escalation retired write repairs current attention after acknowledgement failure", async () => {
   const { manager, storage, request, notify, worker, running } = await createEscalationFaultFixture(
-    "retired-written-ack-failure",
+    {
+      name: "retired-written-ack-failure",
+      nativeStart: true,
+    },
   );
   const rename = fs.rename.bind(fs);
   const io = holdEscalationAtomicWrite(worker.id, "succeed");
@@ -14112,9 +14137,9 @@ test("escalation retired write repairs current attention after acknowledgement f
 test.each(["timeline", "state", "notification"] as const)(
   "escalation throwing %s observer preserves commit and later snapshots",
   async (throwingPhase) => {
-    const { manager, storage, request, notify, worker } = await createEscalationFaultFixture(
-      `observer-throws-${throwingPhase}`,
-    );
+    const { manager, storage, request, notify, worker } = await createEscalationFaultFixture({
+      name: `observer-throws-${throwingPhase}`,
+    });
     const attempted: string[] = [];
     const failure = new Error(`Injected ${throwingPhase} observer failure`);
     const unsubscribe = manager.subscribe(

@@ -196,6 +196,32 @@ async function countPaintedPromptPrefix(
   );
 }
 
+/** Ordinary rows expose their entire real text and bubble, with no sticky disclosure. */
+export async function expectActualExpandedGeometry(row: Locator) {
+  await expect(row).toHaveAttribute("data-prompt-pinned", "false");
+  const geometry = await row.getByTestId("user-message-text").evaluate((text) => {
+    const clip = text.closest('[data-testid="text-preview-clip"]')!;
+    const bubble = text.closest('[data-testid="user-message-bubble"]')!;
+    const style = getComputedStyle(bubble);
+    const textHeight = text.getBoundingClientRect().height;
+    return {
+      textHeight,
+      clipHeight: clip.getBoundingClientRect().height,
+      textClientHeight: text.clientHeight,
+      textScrollHeight: text.scrollHeight,
+      bubbleHeight: bubble.getBoundingClientRect().height,
+      expectedBubbleHeight:
+        textHeight + Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom),
+    };
+  });
+  expect(geometry.textHeight).toBeGreaterThan(0);
+  expect(geometry.clipHeight).toBe(geometry.textHeight);
+  expect(geometry.textScrollHeight).toBe(geometry.textClientHeight);
+  expect(geometry.bubbleHeight).toBeCloseTo(geometry.expectedBubbleHeight, 0);
+  await expect(row.getByTestId("user-message-disclosure")).toHaveCount(0);
+  await expect(row.getByTestId("text-preview-measurement")).toHaveCount(0);
+}
+
 /** Actual row measurements; no copied preview or hidden measurement ancestor. */
 export async function expectActualSingleLineGeometry(row: Locator) {
   const geometry = await row.getByTestId("user-message-text").evaluate((text) => {

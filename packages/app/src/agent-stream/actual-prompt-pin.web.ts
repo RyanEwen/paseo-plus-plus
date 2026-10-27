@@ -20,6 +20,19 @@ export function getNaturalPromptRowHeight(row: HTMLElement): number {
   const body = row.matches("[data-actual-prompt-row]")
     ? row.querySelector<HTMLElement>("[data-actual-prompt-content]")
     : null;
+  const naturalHeight = Number(body?.dataset.promptFlowHeight);
+  const visualHeight = Number(body?.dataset.promptVisualHeight);
+  if (
+    body &&
+    naturalHeight > 0 &&
+    visualHeight > 0 &&
+    Number.isFinite(naturalHeight) &&
+    Number.isFinite(visualHeight)
+  ) {
+    // The message renderer owns its inner extents. Keep the real row's remaining
+    // group spacing and margins too, rather than reconstructing caller chrome.
+    return naturalHeight + body.getBoundingClientRect().height - visualHeight;
+  }
   return (body ?? row).getBoundingClientRect().height;
 }
 
@@ -31,7 +44,7 @@ export function reconcilePromptFlow(content: HTMLElement, enabled: boolean): voi
   for (const row of content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]")) {
     const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
     if (!body) continue;
-    row.style.height = enabled ? `${body.getBoundingClientRect().height}px` : "";
+    row.style.height = enabled ? `${getNaturalPromptRowHeight(row)}px` : "";
     row.style.removeProperty("margin-bottom");
   }
 }

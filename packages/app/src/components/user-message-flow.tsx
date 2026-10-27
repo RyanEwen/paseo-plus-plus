@@ -42,8 +42,19 @@ export interface MessageFlowContext {
   /** Only the explicitly opted-in Android owner supplies a native presentation. */
   nativePresentation?: NativeMessagePresentationDriver;
   compact: boolean;
+  /** The web adapter preserves its existing inner padding cell and visual bubble. */
+  web?: boolean;
+  /** Prepared web paint moves vertical chrome inside the visual bubble. */
+  webContentPadding?: boolean;
+  bubbleHeight?: number;
+  contentWidth?: number;
+  registerAttachments?(node: Measurable | null): void;
   bubbleWidth: number | undefined;
   textWidth: number | undefined;
+  /** Web keeps the real Text's current full layout outside its clipped prefix. */
+  textHeight?: number;
+  /** Only the web adapter clips TextPreview itself; native keeps its current paint owner. */
+  clipText?: boolean;
   textClipWidth: number | undefined;
   /** Actual first-line paint boundary; absent outside qualified compact mode. */
   textPrefixHeight: number | undefined;
@@ -60,7 +71,7 @@ interface NaturalMessageBubbleProps extends ViewProps {
   ref?: Ref<Measurable>;
 }
 
-/** Compose the existing source bubble ref with its native natural-layout owner. */
+/** Compose the existing source bubble ref with its natural-layout owner. */
 export function NaturalMessageBubble({
   ref,
   onLayout,
@@ -98,7 +109,12 @@ export function NaturalMessageBubble({
       {...props}
       ref={register}
       onLayout={reportLayout}
-      style={[style, flow?.bubbleWidth === undefined ? undefined : { width: flow.bubbleWidth }]}
+      style={[
+        style,
+        flow?.bubbleWidth === undefined ? undefined : { width: flow.bubbleWidth },
+        flow?.bubbleHeight === undefined ? undefined : { height: flow.bubbleHeight },
+        flow?.webContentPadding ? { paddingTop: 0, paddingBottom: 0 } : undefined,
+      ]}
       collapsable={false}
     />
   );
@@ -119,6 +135,8 @@ export interface UserMessageFlowProps {
   /** Non-interactive absolute-fill background for the measured visible column. */
   visualBackdrop?: ReactNode;
   onGeometry(geometry: NaturalMessageGeometry | null): void;
+  /** Web reports actual pointer presence without owning message action policy. */
+  onHoverChange?(hovered: boolean): void;
 }
 
 function emptyMeasurements(width: number): MessageFlowMeasurements {

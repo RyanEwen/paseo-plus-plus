@@ -4,6 +4,7 @@ import {
   expectMatchingPromptInk,
   expectActualTextIdentity,
   expectActualSingleLineGeometry,
+  expectActualExpandedGeometry,
   expectActualRowUnpinned,
   expectActualFindVisible,
   expectSingleLineStickyGeometry,
@@ -743,7 +744,7 @@ test("actual user row preserves node identity while pinning and restores disclos
     const text = await row.getByTestId("user-message-text").elementHandle();
     expect(wrapper).not.toBeNull();
     expect(text).not.toBeNull();
-    await expectActualSingleLineGeometry(row);
+    await expectActualExpandedGeometry(row);
     await expectSinglePaintedPromptHandoff(page, prompt, WIDE_VIEWPORT.width);
     await scrollActualRowPastTop(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
@@ -781,7 +782,7 @@ test("actual user row preserves node identity while pinning and restores disclos
       .getByRole("tab", { name: /Actual row identity/ })
       .click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
-    await expectActualSingleLineGeometry(actualUserRow(page, prompt));
+    await expectActualExpandedGeometry(actualUserRow(page, prompt));
   } finally {
     await agent.cleanup();
   }
@@ -811,7 +812,7 @@ test("actual user row find expands each occurrence and preserves its text node",
     await entry.click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
     const row = actualUserRow(page, prompt);
-    await expectActualSingleLineGeometry(row);
+    await expectActualExpandedGeometry(row);
     const text = await row.getByTestId("user-message-text").elementHandle();
     expect(text).not.toBeNull();
     await scrollActualRowPastTop(page, row);
@@ -1355,7 +1356,9 @@ for (const viewport of [
   });
 }
 
-test("sticky user message exposes index loading and a retryable failure", async ({ page }) => {
+test("sticky user message retains its prompt during index loading and exposes a retryable failure", async ({
+  page,
+}) => {
   test.setTimeout(120_000);
   const agent = await seedLongMockAgentTimeline({ turns: 2 });
   const gate = await installDaemonWebSocketGate(page);
@@ -1365,7 +1368,11 @@ test("sticky user message exposes index loading and a retryable failure", async 
     await openAgentTimeline(page, agent);
     const sticky = page.getByTestId("sticky-user-message");
     await gate.waitForHeldServerMessage("agent.timeline.list_prompts.response");
-    await expect(sticky.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+    const retainedPrompt = actualUserRow(page, agent.newestPrompt);
+    await expect(retainedPrompt).toHaveCount(1);
+    await expect(retainedPrompt).toBeVisible();
+    await expect(retainedPrompt.getByTestId("user-message-text")).toHaveText(agent.newestPrompt);
+    await expect(sticky).toHaveCount(0);
     gate.releaseHeldServerMessage("agent.timeline.list_prompts.response");
     await expect(sticky.getByRole("alert")).toHaveText("Could not load user messages.");
     gate.allowPromptIndexResponses();

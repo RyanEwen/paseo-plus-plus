@@ -1,5 +1,6 @@
 import { useWindowDimensions } from "react-native";
 import { SPACING } from "@/styles/theme";
+import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
 import {
   createContext,
   useCallback,
@@ -28,6 +29,11 @@ interface NativeExpansionOwner {
   scope: string;
   expand(): void;
 }
+
+/** The web row consumes natural flow independently of its CSS-sticky painted child. */
+export const ActualPromptFlowGeometryContext = createContext<
+  ((geometry: NaturalMessageGeometry | null) => void) | null
+>(null);
 
 export const ActualPinnedRowContext = createContext(false);
 

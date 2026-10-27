@@ -1,5 +1,5 @@
 import { useTextLink } from "@/hooks/use-text-link";
-import { useCallback, useContext, useMemo } from "react";
+import { useCallback, useContext, useMemo, type ComponentRef } from "react";
 import { Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -30,6 +30,10 @@ export function UserMessageAttachments({
 }) {
   const { t } = useTranslation();
   const flow = useContext(NaturalMessageFlowContext);
+  const registerAttachments = useCallback(
+    (node: ComponentRef<typeof View> | null) => flow?.registerAttachments?.(node),
+    [flow],
+  );
   if (compact && !flow) {
     return (
       <UserMessageAttachmentSummary
@@ -84,6 +88,7 @@ export function UserMessageAttachments({
   }
   return (
     <View
+      ref={registerAttachments}
       style={flow.compact ? styles.hidden : undefined}
       pointerEvents={flow.compact ? "none" : "box-none"}
       accessibilityElementsHidden={flow.compact}

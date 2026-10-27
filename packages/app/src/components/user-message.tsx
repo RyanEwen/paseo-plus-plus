@@ -8,6 +8,7 @@ import {
   UserMessageFlow,
   type NaturalMessageGeometry,
 } from "./user-message-flow";
+import { WebUserMessageFlow } from "./user-message-web-flow";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
@@ -269,7 +270,10 @@ function UserMessageText({
           onTextLayout={reportTextLayout}
           selectable
           numberOfLines={previewLines ?? 1}
-          expanded={naturalFlow !== null || previewExpanded || previewLines === undefined}
+          expanded={
+            !naturalFlow?.clipText &&
+            (naturalFlow !== null || previewExpanded || previewLines === undefined)
+          }
           onOverflowChange={onPreviewOverflowChange ?? ignorePreviewOverflow}
           style={userMessageStylesheet.text}
           {...textAccessibility}
@@ -365,6 +369,21 @@ function userMessageHitAllocation(suppressed: boolean, actualWebPrompt: boolean)
   return "auto";
 }
 
+/** Select the platform flow and its presentation flags without changing body ownership. */
+function userMessageFlowConfiguration(
+  hasNaturalFlow: boolean,
+  hasBodyViewport: boolean,
+  hasNativeDriver: boolean,
+) {
+  const ordinaryFlow = isWeb ? WebUserMessageFlow : UserMessageFlow;
+  return {
+    actualWebPrompt: isWeb && hasBodyViewport,
+    webNaturalFlow: isWeb && hasNaturalFlow,
+    nativeNaturalFlow: !isWeb && hasNaturalFlow,
+    Flow: hasNativeDriver ? NativeUserMessageFlow : ordinaryFlow,
+  };
+}
+
 export const UserMessage = memo(function UserMessage({
   onNaturalFlowGeometry,
   onContentPress,
@@ -402,7 +421,12 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const nativeDriver = useContext(NativeMessagePresentationContext);
   const expandedCopy = isExpandedPromptCopy(copyMask);
-  const actualWebPrompt = isWeb && bodyViewportHeight !== undefined;
+  const flowConfiguration = userMessageFlowConfiguration(
+    onNaturalFlowGeometry !== undefined,
+    bodyViewportHeight !== undefined,
+    Boolean(nativeDriver),
+  );
+  const { actualWebPrompt, webNaturalFlow, nativeNaturalFlow } = flowConfiguration;
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
@@ -487,17 +511,17 @@ export const UserMessage = memo(function UserMessage({
   const trailingRowStyle = useMemo(
     () => [
       userMessageStylesheet.trailingRow,
-      actionRowBackdrop && !onNaturalFlowGeometry
+      actionRowBackdrop && !nativeNaturalFlow
         ? userMessageStylesheet.trailingRowWithBackdrop
         : undefined,
-      previewLines === undefined || onNaturalFlowGeometry
+      previewLines === undefined || nativeNaturalFlow
         ? undefined
         : userMessageStylesheet.trailingRowPreview,
       showTrailingRow
         ? userMessageStylesheet.trailingRowVisible
         : userMessageStylesheet.trailingRowHidden,
     ],
-    [showTrailingRow, previewLines, actionRowBackdrop, onNaturalFlowGeometry],
+    [showTrailingRow, previewLines, actionRowBackdrop, nativeNaturalFlow],
   );
 
   const attachmentContent = useMemo(
@@ -533,7 +557,7 @@ export const UserMessage = memo(function UserMessage({
   const bubbleContent = (
     <Bubble
       style={bubbleStyle}
-      pointerEvents={actualWebPrompt ? "auto" : undefined}
+      pointerEvents={actualWebPrompt || webNaturalFlow ? "auto" : undefined}
       ref={bubbleRef}
       onLayout={onBubbleLayout}
       testID="user-message-bubble"
@@ -584,8 +608,8 @@ export const UserMessage = memo(function UserMessage({
         </NativeMessageVisibility>
       );
     }
-    return onNaturalFlowGeometry ? null : actionRowBackdrop;
-  }, [nativeDriver, onNaturalFlowGeometry, actionRowBackdrop]);
+    return nativeNaturalFlow ? null : actionRowBackdrop;
+  }, [nativeDriver, nativeNaturalFlow, actionRowBackdrop]);
   const trailingContent = useMemo(
     () =>
       hasTrailingRow ? (
@@ -639,7 +663,7 @@ export const UserMessage = memo(function UserMessage({
     ),
     [images.length, attachments.length, onContentPress, contentAccessibilityLabel],
   );
-  const Flow = nativeDriver ? NativeUserMessageFlow : UserMessageFlow;
+  const Flow = flowConfiguration.Flow;
   const content = onNaturalFlowGeometry ? (
     <Flow
       driver={nativeDriver}
@@ -654,6 +678,7 @@ export const UserMessage = memo(function UserMessage({
       backdropStyle={bubbleStyle}
       visualBackdrop={actionRowBackdrop}
       onGeometry={onNaturalFlowGeometry}
+      onHoverChange={webNaturalFlow ? setIsHovered : undefined}
     >
       {bubbleContent}
     </Flow>

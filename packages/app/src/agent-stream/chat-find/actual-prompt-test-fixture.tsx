@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type ReactNode, type RefObject } from "
 import { vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
-import type { StreamItem } from "@/types/stream";
+import type { StreamItem, UserMessageImageAttachment } from "@/types/stream";
 import { ActualPromptRowsProvider } from "../actual-prompt-rows";
 import { PromptNavigationContext } from "../prompt-navigation-actions";
 import { PromptUserMessage } from "../prompt-user-message";
@@ -10,6 +10,7 @@ import { createWebStreamStrategy } from "../strategy-web";
 import type { StreamSegmentRenderers, StreamViewportHandle } from "../strategy";
 
 export const ACTUAL_PROMPT_ID = "message-1";
+export const ACTUAL_SUCCESSOR_ID = "message-2";
 const STREAM_STYLE = {
   height: "100%",
   width: "100%",
@@ -57,6 +58,7 @@ function renderRow(item: StreamItem) {
     <PromptUserMessage
       timelineMessageId={item.id}
       message={item.text}
+      images={item.images}
       timestamp={0}
       disableOuterSpacing
     />
@@ -73,6 +75,8 @@ const loadOlder = vi.fn(() => false);
 
 interface Props {
   text: string;
+  successorText?: string;
+  images?: UserMessageImageAttachment[];
   enabled?: boolean;
   scope?: string;
   viewportRef: RefObject<StreamViewportHandle | null>;
@@ -83,6 +87,8 @@ interface Props {
 /** Real user renderer and real outer scroll owner; only daemon-independent fixture data. */
 function ActualPromptStream({
   text,
+  successorText,
+  images,
   enabled = true,
   scope = "agent:epoch",
   viewportRef,
@@ -102,16 +108,43 @@ function ActualPromptStream({
     };
   }, [liveAuxiliary, wrapRow]);
   const prompt = useMemo<StreamItem>(
-    () => ({ kind: "user_message", id: ACTUAL_PROMPT_ID, text, timestamp: new Date(0) }),
-    [text],
+    () => ({ kind: "user_message", id: ACTUAL_PROMPT_ID, text, images, timestamp: new Date(0) }),
+    [text, images],
+  );
+  // A real preceding answer admits an ordinary reading position before the first
+  // prompt. The successor then closes the actual CSS sticky collision interval.
+  const liveHead = useMemo<StreamItem[]>(
+    () =>
+      successorText === undefined
+        ? [prompt, answer]
+        : [
+            { ...answer, id: "preceding-answer" },
+            prompt,
+            answer,
+            {
+              kind: "user_message",
+              id: ACTUAL_SUCCESSOR_ID,
+              text: successorText,
+              timestamp: new Date(2),
+            },
+            { ...answer, id: "following-answer", timestamp: new Date(3) },
+          ],
+    [prompt, successorText],
+  );
+  const navigation = useMemo(
+    () =>
+      successorText === undefined
+        ? controls
+        : { ...controls, targetIds: [ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID] },
+    [successorText],
   );
   return (
     <div data-chat-find-root="true" style={STREAM_STYLE}>
       <ActualPromptRowsProvider enabled={enabled} scope={scope} availableHeight={320}>
-        <PromptNavigationContext.Provider value={enabled ? controls : null}>
+        <PromptNavigationContext.Provider value={enabled ? navigation : null}>
           {strategy.render({
             agentId: "agent",
-            segments: { historyVirtualized: [], historyMounted: [], liveHead: [prompt, answer] },
+            segments: { historyVirtualized: [], historyMounted: [], liveHead },
             boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: true },
             renderers: streamRenderers,
             listEmptyComponent: null,

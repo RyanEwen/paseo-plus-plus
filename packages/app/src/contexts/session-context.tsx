@@ -260,7 +260,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
   useEffect(() => {
     if (!supportsNotificationReceipts) return;
-    return workspaceNotificationRuntime.start(serverId, client);
+    return workspaceNotificationRuntime.start({
+      serverId,
+      client,
+      observeWorkspaces: (observer) => getHostRuntimeStore().observeWorkspaces(serverId, observer),
+    });
   }, [client, serverId, supportsNotificationReceipts]);
   useEffect(() => {
     if (isAppVisible && supportsNotificationReceipts) workspaceNotificationRuntime.resume(serverId);

@@ -1,6 +1,11 @@
 import { PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
 import { uniqueStreamSegments, precedingPromptIndex } from "./actual-row-collection";
-import { ActualPinnedRowContext, ActualPromptRowsContext } from "./actual-prompt-rows";
+import {
+  ActualPinnedRowContext,
+  ActualPromptRowsContext,
+  ActualPromptFlowGeometryContext,
+} from "./actual-prompt-rows";
+import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
 import {
   getOriginalPromptTop,
   getNaturalPromptRowHeight,
@@ -306,18 +311,75 @@ const StreamRowContent = React.memo(function StreamRowContent({
   return render(item, index, items);
 });
 
+interface ActualPromptFlowOwner {
+  scope: string | undefined;
+  node: HTMLDivElement | null;
+  geometry: NaturalMessageGeometry | null;
+}
+
+/** Keep the natural reservation on the untransformed row, while CSS sticky sees
+ * only this child's current paint extent. Ref departure retires the exact owner.
+ */
 function ActualRowContent({
   pinned,
+  isPrompt,
   bodyRef,
+  onFlowGeometryChange,
   children,
 }: {
   pinned: boolean;
+  isPrompt: boolean;
   bodyRef?: React.RefCallback<HTMLDivElement>;
+  onFlowGeometryChange(): void;
   children: React.ReactNode;
 }) {
+  const scope = useContext(ActualPromptRowsContext)?.scope;
+  const owner = useMemo<ActualPromptFlowOwner>(
+    () => ({ scope, node: null, geometry: null }),
+    [scope],
+  );
+  const applyGeometry = useCallback(() => {
+    const node = owner.node;
+    if (!node) return;
+    const flow = owner.geometry ? String(owner.geometry.flowHeight) : undefined;
+    const visual = owner.geometry ? String(owner.geometry.visualHeight) : undefined;
+    if (node.dataset.promptFlowHeight === flow && node.dataset.promptVisualHeight === visual)
+      return;
+    if (flow === undefined || visual === undefined) {
+      delete node.dataset.promptFlowHeight;
+      delete node.dataset.promptVisualHeight;
+    } else {
+      node.dataset.promptFlowHeight = flow;
+      node.dataset.promptVisualHeight = visual;
+    }
+    onFlowGeometryChange();
+  }, [owner, onFlowGeometryChange]);
+  const reportGeometry = useCallback(
+    (geometry: NaturalMessageGeometry | null) => {
+      owner.geometry = geometry;
+      applyGeometry();
+    },
+    [owner, applyGeometry],
+  );
+  const registerBody = useCallback(
+    (node: HTMLDivElement | null) => {
+      owner.node = node;
+      if (!node) return;
+      applyGeometry();
+      const release = bodyRef?.(node);
+      return () => {
+        if (owner.node === node) owner.node = null;
+        if (typeof release === "function") release();
+        else bodyRef?.(null);
+      };
+    },
+    [owner, bodyRef, applyGeometry],
+  );
   return (
-    <div ref={bodyRef} data-actual-prompt-content style={streamRowStyle}>
-      <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
+    <div ref={registerBody} data-actual-prompt-content style={streamRowStyle}>
+      <ActualPromptFlowGeometryContext.Provider value={isPrompt ? reportGeometry : null}>
+        <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
+      </ActualPromptFlowGeometryContext.Provider>
     </div>
   );
 }
@@ -640,7 +702,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return resized;
   });
 
-  const onNaturalRowResizeRef = useRef<() => void>(() => {});
+  const onNaturalRowResizeRef = useRef<(synchronous?: boolean) => void>(() => {});
+  // Child layout publications already run inside React's layout commit. Only
+  // ResizeObserver delivery needs the existing synchronous virtual-row flush.
+  const onFlowGeometryChange = useCallback(() => onNaturalRowResizeRef.current(false), []);
   // Observe every real body, including normal-flow/live rows whose interval height
   // deliberately hides intrinsic growth from the content-container observer.
   const naturalRowObserver = useMemo(
@@ -924,12 +989,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
   });
 
-  onNaturalRowResizeRef.current = () => {
+  onNaturalRowResizeRef.current = (synchronous = true) => {
+    if (!isActiveRef.current) return;
     const content = contentRef.current;
     if (content) reconcilePromptFlow(content, actualRows !== null);
-    flushSync(() => {
-      measureVirtualizedRows();
-    });
+    if (synchronous)
+      flushSync(() => {
+        measureVirtualizedRows();
+      });
+    else if (measureVirtualizedRows()) return;
     reconcileReadingPosition();
     updatePinnedRow();
     updateScrollMetrics();
@@ -1473,7 +1541,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
-        <ActualRowContent bodyRef={observeActualRowBody} pinned={pinnedRowId === item.id}>
+        <ActualRowContent
+          bodyRef={observeActualRowBody}
+          onFlowGeometryChange={onFlowGeometryChange}
+          isPrompt={item.kind === "user_message"}
+          pinned={pinnedRowId === item.id}
+        >
           <StreamRowContent
             item={item}
             index={index}
@@ -1483,7 +1556,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         </ActualRowContent>
       </div>
     ));
-  }, [observeActualRowBody, pinnedRowId, renderHistoryMountedRow, segments.historyMounted]);
+  }, [
+    observeActualRowBody,
+    onFlowGeometryChange,
+    pinnedRowId,
+    renderHistoryMountedRow,
+    segments.historyMounted,
+  ]);
   const liveHeadRows = useMemo(() => {
     return segments.liveHead.map((item, index) => (
       <div
@@ -1494,7 +1573,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
-        <ActualRowContent bodyRef={observeActualRowBody} pinned={pinnedRowId === item.id}>
+        <ActualRowContent
+          bodyRef={observeActualRowBody}
+          onFlowGeometryChange={onFlowGeometryChange}
+          isPrompt={item.kind === "user_message"}
+          pinned={pinnedRowId === item.id}
+        >
           <StreamRowContent
             item={item}
             index={index}
@@ -1507,6 +1591,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     ));
   }, [
     observeActualRowBody,
+    onFlowGeometryChange,
     pinnedRowId,
     liveHeadRowRevision,
     renderLiveHeadRow,
@@ -1568,6 +1653,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                   >
                     <ActualRowContent
                       bodyRef={observeActualRowBody}
+                      onFlowGeometryChange={onFlowGeometryChange}
+                      isPrompt={item.kind === "user_message"}
                       pinned={pinnedRowId === item.id}
                     >
                       <StreamRowContent

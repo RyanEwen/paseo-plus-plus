@@ -9,7 +9,7 @@ import { memo, useMemo, useCallback, useContext, type ComponentProps } from "rea
 import { UserMessage } from "@/components/user-message";
 import { PromptNavigationActions, PromptNavigationContext } from "./prompt-navigation-actions";
 import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
-import { ActualPromptRowsContext } from "./actual-prompt-rows";
+import { ActualPromptRowsContext, ActualPromptFlowGeometryContext } from "./actual-prompt-rows";
 import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
 
 /** Attach viewport-owned navigation without changing the shared message renderer's identity. */
@@ -20,9 +20,13 @@ export const PromptUserMessage = memo(function PromptUserMessage({
   const presentation = useActualPromptPresentation(timelineMessageId, props);
   const nativeLayout = useContext(NativeStickyLayoutContext);
   const actualRows = useContext(ActualPromptRowsContext);
+  const webGeometry = useContext(ActualPromptFlowGeometryContext);
   const reportNaturalGeometry = useCallback(
-    (geometry: NaturalMessageGeometry | null) => nativeLayout?.publishBody(geometry),
-    [nativeLayout],
+    (geometry: NaturalMessageGeometry | null) => {
+      if (nativeLayout) nativeLayout.publishBody(geometry);
+      else webGeometry?.(geometry);
+    },
+    [nativeLayout, webGeometry],
   );
   const pixelOwner = useContext(PromptPixelOwnerContext);
   const copyMask = pixelOwner?.id === timelineMessageId ? pixelOwner : undefined;
@@ -59,7 +63,9 @@ export const PromptUserMessage = memo(function PromptUserMessage({
       navigationActions={actions}
       keepActionsVisible={navigation?.actionVisibleMessageId === timelineMessageId}
       {...presentation}
-      onNaturalFlowGeometry={nativeLayout && actualRows ? reportNaturalGeometry : undefined}
+      onNaturalFlowGeometry={
+        webGeometry || (nativeLayout && actualRows) ? reportNaturalGeometry : undefined
+      }
     />
   );
 });

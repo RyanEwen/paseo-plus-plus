@@ -852,6 +852,56 @@ describe("Cross-device workspace notification receipts", () => {
     }
   });
 
+  it("accepts a complete hidden-workspace baseline beyond page one while retaining newer alerts and a pending native dismissal until acknowledgement", async () => {
+    const device = memoryDevice([
+      { identifier: "old-hidden", data: receipt(1, "workspace-204") },
+      { identifier: "new-hidden", data: receipt(2, "workspace-204") },
+      { identifier: "other-workspace", data: receipt(1, "untouched") },
+    ]);
+    const f = fixture(device);
+    f.device.pending.push({ id: "swipe-while-hidden", data: receipt(1, "swiped") });
+    let releaseAcknowledgement!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseAcknowledgement = resolve;
+    });
+    f.ports.acknowledge = async (workspaceId, notification) => {
+      f.requests.push({ workspaceId, notification });
+      await held;
+    };
+    f.sync.setConnected(true);
+    const started = f.sync.start();
+    try {
+      await expect.poll(() => f.requests.length).toBe(1);
+      const baseline = Array.from({ length: 205 }, (_, index) => ({
+        id: `workspace-${index}`,
+        notificationReceipts: state(2, 1, "remote-read"),
+      }));
+      f.sync.accept(baseline);
+      const flushed = f.sync.flush();
+      expect(f.device.confirmed).toEqual([]);
+      expect(f.device.pending.map((entry) => entry.id)).toEqual(["swipe-while-hidden"]);
+      releaseAcknowledgement();
+      await Promise.all([started, flushed]);
+      expect(new Set(device.dismissed)).toEqual(new Set(["old-hidden"]));
+      expect(f.device.confirmed).toEqual(["swipe-while-hidden"]);
+      expect(f.requests).toEqual([
+        {
+          workspaceId: "swiped",
+          notification: {
+            kind: "event",
+            acknowledgementId: "swipe-while-hidden",
+            sequence: 1,
+            attention: [],
+          },
+        },
+      ]);
+      expect(f.errors).toEqual([]);
+    } finally {
+      releaseAcknowledgement();
+      f.sync.dispose();
+    }
+  });
+
   it("remote catch-up clears matching older deliveries and preserves other workspaces and newer events", async () => {
     const device = memoryDevice([
       { identifier: "old", data: receipt(1) },

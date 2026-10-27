@@ -2,13 +2,18 @@ import React, { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { userEvent } from "vitest/browser";
 import { i18n } from "@/i18n/i18next";
-import { ActualPromptTestFixture, ACTUAL_PROMPT_ID } from "./actual-prompt-test-fixture";
+import {
+  ActualPromptTestFixture,
+  ACTUAL_PROMPT_ID,
+  ACTUAL_SUCCESSOR_ID,
+} from "./actual-prompt-test-fixture";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFindViewport } from "./viewport.web";
 import type { ChatFindProps } from "./types";
 import type { StreamViewportHandle } from "../strategy";
 import { Text as NativeText, View, type ViewStyle } from "react-native";
 import { QuestionFormCard } from "@/components/question-form-card";
+import { deleteAttachments, persistAttachmentFromDataUrl } from "@/attachments/service";
 
 interface Capture {
   occurrence?: { signal: AbortSignal; targetTop(): number | null };
@@ -117,7 +122,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function actualPrompt(text: string) {
+function actualPrompt(
+  text: string,
+  options: Pick<
+    React.ComponentProps<typeof ActualPromptTestFixture>,
+    "successorText" | "images"
+  > = {},
+) {
   void i18n;
   const host = document.createElement("div");
   Object.assign(host.style, { width: "300px", height: "320px" });
@@ -127,7 +138,12 @@ function actualPrompt(text: string) {
   function render(enabled = true, nextText = text) {
     act(() =>
       actualRoot!.render(
-        React.createElement(ActualPromptTestFixture, { text: nextText, enabled, viewportRef: ref }),
+        React.createElement(ActualPromptTestFixture, {
+          ...options,
+          text: nextText,
+          enabled,
+          viewportRef: ref,
+        }),
       ),
     );
   }
@@ -495,4 +511,277 @@ it("waits for an asynchronous renderer before counting its matches", async () =>
   content.textContent = "needle and another needle";
   content.removeAttribute("aria-busy");
   expect(await reveal).toEqual({ occurrence: 0, count: 2 });
+});
+
+/** Read the untransformed row wrappers, not the CSS-sticky painted child. The
+ * following answer exposes the first prompt's actual normal-flow reservation.
+ */
+function naturalPromptFlow(host: HTMLElement) {
+  const scroll = host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  const origin = scroll.getBoundingClientRect().top;
+  const top = (id: string) =>
+    host.querySelector<HTMLElement>(`[data-history-row-id="${id}"]`)!.getBoundingClientRect().top -
+    origin +
+    scroll.scrollTop;
+  const promptTop = top(ACTUAL_PROMPT_ID);
+  return {
+    promptTop,
+    flowHeight: top("answer") - promptTop,
+    successorTop: top(ACTUAL_SUCCESSOR_ID),
+    scrollHeight: scroll.scrollHeight,
+  };
+}
+
+/** Capture real glyph layout relative to its persistent Text element. Clipping
+ * or inner scrolling may move it, but must not change wrapping or glyph widths.
+ */
+function naturalPromptText(text: HTMLElement, node: Text) {
+  const bounds = text.getBoundingClientRect();
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  return {
+    width: bounds.width,
+    height: bounds.height,
+    lines: Array.from(range.getClientRects(), (rect) => ({
+      x: rect.left - bounds.left,
+      y: rect.top - bounds.top,
+      width: rect.width,
+      height: rect.height,
+    })),
+  };
+}
+
+function pinnedPromptIds(host: HTMLElement) {
+  return Array.from(
+    host.querySelectorAll<HTMLElement>('[data-actual-prompt-row][data-prompt-pinned="true"]'),
+    (row) => row.dataset.historyRowId,
+  );
+}
+
+/** Use the existing manual-reading admission before positioning the real outer
+ * scroll owner. No layout values or renderer measurements are substituted.
+ */
+function readAt(host: HTMLElement, top: number) {
+  const scroll = host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  act(() => {
+    scroll.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
+    scroll.scrollTop = top;
+    scroll.dispatchEvent(new Event("scroll"));
+  });
+}
+
+it("preserves natural prompt flow and wrapping through real successor pin collision and disclosure", async () => {
+  const prompt = Array.from(
+    { length: 32 },
+    (_, index) =>
+      `Paragraph ${index}: ordinary wrapping remains the same when this actual message becomes sticky.`,
+  ).join("\n");
+  const successor = "A distinct real successor prompt";
+  const fixture = actualPrompt(prompt, { successorText: successor });
+  await document.fonts.ready;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const nextRow = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_SUCCESSOR_ID}"]`,
+  )!;
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const node = exactTextNodes(row, prompt)[0]!;
+  const ordinaryFlow = naturalPromptFlow(fixture.host);
+  const ordinaryText = naturalPromptText(text, node);
+  expect(ordinaryFlow.flowHeight).toBeGreaterThan(scroll.clientHeight);
+  expect(ordinaryText.lines.length).toBeGreaterThan(32);
+  expect(ordinaryText.height).toBeGreaterThan(scroll.clientHeight);
+
+  const assertNaturalBody = async (owners: string[]) => {
+    await expect
+      .poll(() => ({
+        flow: naturalPromptFlow(fixture.host),
+        owners: pinnedPromptIds(fixture.host),
+      }))
+      .toEqual({ flow: ordinaryFlow, owners });
+    expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+    expect(
+      exactTextNodes(fixture.host, prompt).length === 1 &&
+        exactTextNodes(fixture.host, prompt)[0] === node,
+    ).toBe(true);
+    expect(exactTextNodes(fixture.host, successor)).toHaveLength(1);
+    expect(
+      fixture.host.querySelectorAll(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`),
+    ).toHaveLength(1);
+    expect(
+      fixture.host.querySelectorAll(`[data-history-row-id="${ACTUAL_SUCCESSOR_ID}"]`),
+    ).toHaveLength(1);
+    expect(naturalPromptText(text, node)).toEqual(ordinaryText);
+  };
+
+  readAt(fixture.host, ordinaryFlow.promptTop + 24);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  const inner = row.querySelector<HTMLElement>('[data-testid="user-message-body-scroll"]')!;
+  const clip = text.closest<HTMLElement>('[data-testid="text-preview-clip"]')!;
+  const disclosure = () =>
+    row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+  await expect.poll(() => disclosure()).not.toBeNull();
+  await expect.poll(() => inner.dataset.bodyExpanded).toBe("false");
+  await assertNaturalBody([ACTUAL_PROMPT_ID]);
+  const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight);
+  expect(clip.getBoundingClientRect().height).toBe(lineHeight);
+  expect(body.getBoundingClientRect().height).toBeLessThan(ordinaryFlow.flowHeight);
+
+  await userEvent.click(disclosure());
+  await expect.poll(() => inner.dataset.bodyExpanded).toBe("true");
+  await expect.poll(() => inner.scrollHeight > inner.clientHeight).toBe(true);
+  await assertNaturalBody([ACTUAL_PROMPT_ID]);
+  expect(body.getBoundingClientRect().height).toBeLessThan(ordinaryFlow.flowHeight);
+  expect(body.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+    scroll.getBoundingClientRect().bottom,
+  );
+  const outerBefore = scroll.scrollTop;
+  act(() => {
+    inner.scrollTop = inner.scrollHeight - inner.clientHeight;
+    inner.dispatchEvent(new Event("scroll"));
+  });
+  expect(inner.scrollTop).toBeGreaterThan(0);
+  expect(scroll.scrollTop).toBe(outerBefore);
+  await assertNaturalBody([ACTUAL_PROMPT_ID]);
+
+  await userEvent.click(disclosure());
+  await expect.poll(() => inner.dataset.bodyExpanded).toBe("false");
+  await expect.poll(() => clip.getBoundingClientRect().height).toBe(lineHeight);
+  await assertNaturalBody([ACTUAL_PROMPT_ID]);
+  const compactHeight = body.getBoundingClientRect().height;
+  readAt(fixture.host, ordinaryFlow.successorTop - compactHeight / 2);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  // Collision uses the bounded painted extent, not the full natural reservation.
+  await expect
+    .poll(() => body.getBoundingClientRect().bottom)
+    .toBe(nextRow.getBoundingClientRect().top);
+  expect(body.getBoundingClientRect().top).toBeLessThan(scroll.getBoundingClientRect().top);
+  await assertNaturalBody([ACTUAL_PROMPT_ID]);
+
+  readAt(fixture.host, ordinaryFlow.successorTop + 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_SUCCESSOR_ID]);
+  await assertNaturalBody([ACTUAL_SUCCESSOR_ID]);
+  readAt(fixture.host, ordinaryFlow.promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  await expect
+    .poll(() => clip.getBoundingClientRect().height)
+    .toBe(text.getBoundingClientRect().height);
+  expect(disclosure()).toBeNull();
+  await assertNaturalBody([]);
+});
+
+it("preserves Attached sample glyph allocation beside real attachment and disclosure controls", async () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 2;
+  canvas.height = 2;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = "#356bd8";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const image = await persistAttachmentFromDataUrl({
+    dataUrl: canvas.toDataURL("image/png"),
+    fileName: "sample.png",
+  });
+  try {
+    const prompt = "Attached sample.";
+    const fixture = actualPrompt(prompt, {
+      successorText: "Following attachment response",
+      images: [image],
+    });
+    fixture.host.style.width = "390px";
+    await document.fonts.ready;
+    const row = fixture.host.querySelector<HTMLElement>(
+      `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+    )!;
+    readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+    // Exercise the actual persisted PNG and thumbnail loader, not fabricated metadata.
+    await expect
+      .poll(() =>
+        Array.from(row.querySelectorAll("img")).some(
+          (thumbnail) => thumbnail.complete && thumbnail.naturalWidth === 2,
+        ),
+      )
+      .toBe(true);
+    const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+    const node = exactTextNodes(row, prompt)[0]!;
+    const ordinaryText = naturalPromptText(text, node);
+    const ordinaryFlow = naturalPromptFlow(fixture.host);
+    expect(ordinaryText.lines).toHaveLength(1);
+    const disclosure = () =>
+      row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+    readAt(fixture.host, ordinaryFlow.promptTop + 24);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+    await expect.poll(() => disclosure()).not.toBeNull();
+    await expect
+      .poll(() => row.querySelector('[data-testid="user-message-attachments-summary"]'))
+      .not.toBeNull();
+    await expect.poll(() => naturalPromptFlow(fixture.host)).toEqual(ordinaryFlow);
+    expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+    expect(
+      exactTextNodes(fixture.host, prompt).length === 1 &&
+        exactTextNodes(fixture.host, prompt)[0] === node,
+    ).toBe(true);
+    expect(naturalPromptText(text, node)).toEqual(ordinaryText);
+    const glyphs = document.createRange();
+    glyphs.selectNodeContents(node);
+    const glyphBounds = glyphs.getBoundingClientRect();
+    const clip = text
+      .closest<HTMLElement>('[data-testid="text-preview-clip"]')!
+      .getBoundingClientRect();
+    expect(glyphBounds.left).toBeGreaterThanOrEqual(clip.left);
+    expect(glyphBounds.right).toBeLessThanOrEqual(clip.right);
+    expect(glyphBounds.top).toBeGreaterThanOrEqual(clip.top);
+    expect(glyphBounds.bottom).toBeLessThanOrEqual(clip.bottom);
+    expect(glyphBounds.right).toBeLessThanOrEqual(disclosure().getBoundingClientRect().left);
+
+    await userEvent.click(disclosure());
+    await expect
+      .poll(() =>
+        row
+          .querySelector('[data-testid="user-message-body-scroll"]')
+          ?.getAttribute("data-body-expanded"),
+      )
+      .toBe("true");
+    await expect
+      .poll(() =>
+        Array.from(row.querySelectorAll("img")).some(
+          (thumbnail) => thumbnail.complete && thumbnail.naturalWidth === 2,
+        ),
+      )
+      .toBe(true);
+    const openImage = Array.from(row.querySelectorAll<HTMLElement>('[role="button"]')).find(
+      (button) => button.getAttribute("aria-label") === i18n.t("composer.attachments.openImage"),
+    )!;
+    expect(openImage.getBoundingClientRect().height).toBeGreaterThan(0);
+    expect(getComputedStyle(openImage).pointerEvents).toBe("auto");
+    expect(naturalPromptFlow(fixture.host)).toEqual(ordinaryFlow);
+    expect(naturalPromptText(text, node)).toEqual(ordinaryText);
+    await userEvent.click(disclosure());
+    await expect
+      .poll(() =>
+        row
+          .querySelector('[data-testid="user-message-body-scroll"]')
+          ?.getAttribute("data-body-expanded"),
+      )
+      .toBe("false");
+    expect(naturalPromptFlow(fixture.host)).toEqual(ordinaryFlow);
+    expect(naturalPromptText(text, node)).toEqual(ordinaryText);
+    readAt(fixture.host, ordinaryFlow.promptTop - 8);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+    expect(
+      exactTextNodes(fixture.host, prompt).length === 1 &&
+        exactTextNodes(fixture.host, prompt)[0] === node,
+    ).toBe(true);
+    expect(naturalPromptFlow(fixture.host)).toEqual(ordinaryFlow);
+    expect(naturalPromptText(text, node)).toEqual(ordinaryText);
+  } finally {
+    act(() => actualRoot?.unmount());
+    actualRoot = null;
+    await deleteAttachments([image]);
+  }
 });

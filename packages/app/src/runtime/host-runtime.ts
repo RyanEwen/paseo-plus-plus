@@ -76,7 +76,11 @@ import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/co
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
-import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
+import {
+  DirectorySync,
+  type RefreshAgentDirectoryResult,
+  type WorkspaceDirectoryObserver,
+} from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
 import { createReplicaRowStore } from "@/runtime/replica-cache/row-store-factory";
@@ -2737,6 +2741,11 @@ export class HostRuntimeStore {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
     await directory.refreshDemand();
+  }
+
+  /** Share the host's complete workspace producer without demanding agents or projects. */
+  observeWorkspaces(serverId: string, observer: WorkspaceDirectoryObserver): () => void {
+    return this.requireDirectory(serverId).observeWorkspaces(observer);
   }
 
   acquireDirectoryDemand(serverId: string): () => void {

@@ -124,13 +124,32 @@ function NaturalMessageContent({
       {
         width: flow.textClipWidth,
         overflow: flow.compact ? "hidden" : "visible",
-        transform: [{ translateX: flow.textTranslateX }, { translateY: flow.textTranslateY }],
+        transform:
+          flow.web && flow.textTranslateX === 0 && flow.textTranslateY === 0
+            ? undefined
+            : [{ translateX: flow.textTranslateX }, { translateY: flow.textTranslateY }],
       },
     ],
-    [flow.textClipWidth, flow.compact, flow.textTranslateX, flow.textTranslateY],
+    [flow.textClipWidth, flow.compact, flow.textTranslateX, flow.textTranslateY, flow.web],
+  );
+  const textFrameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      styles.fullContent,
+      textWidthStyle,
+      flow.textHeight === undefined ? undefined : { height: flow.textHeight },
+    ],
+    [textWidthStyle, flow.textHeight],
   );
   const naturalText = <View style={textWidthStyle}>{hasText && children}</View>;
-  return (
+  const webContentStyle = useMemo(
+    () => [
+      styles.fullContent,
+      flow.webContentPadding ? styles.expandedText : undefined,
+      flow.contentWidth === undefined ? undefined : { width: flow.contentWidth },
+    ],
+    [flow.contentWidth, flow.webContentPadding],
+  );
+  const naturalBody = (
     <View
       style={styles.fullContent}
       ref={registerContent}
@@ -138,12 +157,7 @@ function NaturalMessageContent({
       collapsable={false}
     >
       {attachments}
-      <View
-        style={[styles.fullContent, textWidthStyle]}
-        ref={registerText}
-        onLayout={measureText}
-        collapsable={false}
-      >
+      <View style={textFrameStyle} ref={registerText} onLayout={measureText} collapsable={false}>
         {flow.nativePresentation ? (
           <NativeMessageTextPaint driver={flow.nativePresentation}>
             {naturalText}
@@ -154,6 +168,9 @@ function NaturalMessageContent({
       </View>
     </View>
   );
+  // Keep web's existing inner padding cell. Only its full natural contents, not
+  // the compact bubble's outer rectangle, determine the transcript reservation.
+  return flow.web ? <View style={webContentStyle}>{naturalBody}</View> : naturalBody;
 }
 
 const styles = StyleSheet.create((theme) => ({

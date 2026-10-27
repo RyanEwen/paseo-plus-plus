@@ -1411,6 +1411,9 @@ test(
       serverId: directory.self.serverId,
       snapshot: { title: "Unrelated equal ID on A" },
     });
+    // This fixture invokes MCP as an idle legacy caller, after prior callback work has finished.
+    await aClient.waitForFinish(parent.id, 10000);
+    expect(await call("get_attention_context", {})).toMatchObject({ activeObjectiveIds: [] });
     const beforeFollowup = parentPrompts.filter((prompt) =>
       prompt.includes(`Agent ${remote.agentId}`),
     ).length;
@@ -1465,6 +1468,8 @@ test(
         serverId: directory.self.serverId,
         snapshot: { title: "Self child" },
       });
+      await aClient.waitForFinish(parent.id, 10000);
+      expect(await call("get_attention_context", {})).toMatchObject({ activeObjectiveIds: [] });
       const previous = parentPrompts.filter((prompt) =>
         prompt.includes(`Agent ${self.agentId}`),
       ).length;

@@ -220,6 +220,16 @@ test("MCP delegates to self and B and opens both qualified children in ordinary 
       workspaceId: fleet.workspace.workspaceId,
       agentId: fleet.parent.id,
     });
+    await expect(page.getByTestId(`workspace-tab-agent_${fleet.parent.id}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // The default overview groups the two completed callback records until expanded.
+    const completionGroup = page
+      .getByTestId("tool-call-group")
+      .filter({ hasText: "2 other operations" });
+    await expect(completionGroup).toHaveCount(1);
+    await completionGroup.getByRole("button").click();
     await expect(
       page.getByRole("button", { name: /Agent finished.*MCP child on A/ }),
     ).toBeVisible();

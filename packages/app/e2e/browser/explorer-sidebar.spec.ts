@@ -389,6 +389,72 @@ test("reorders compact Explorer tabs with a pointer without changing selection",
   }
 });
 
+/** Check the selected chip against the actual clipped track, without scrolling it from the test. */
+async function expectExplorerTabInsideTrack(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+  testId: string,
+) {
+  const explorer = explorerSidebar(page);
+  const tab = explorer.getByTestId(testId);
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await expect(tab).toBeInViewport({ ratio: 1 });
+  await expect
+    .poll(async () => {
+      const chip = await tab.boundingBox();
+      const track = await explorer.getByTestId("workspace-tabs-scroll").boundingBox();
+      if (!chip || !track) return false;
+      return chip.x >= track.x && chip.x + chip.width <= track.x + track.width;
+    })
+    .toBe(true);
+}
+
+test("reveals selected and new compact Explorer tabs through overflow and rotation", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "explorer-compact-reveal-" });
+  try {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openFilesPanel(page);
+    const explorer = explorerSidebar(page);
+    const drafts = explorer.locator('[data-testid^="workspace-tab-draft_"]');
+    for (let index = 0; index < 5; index += 1) {
+      await explorer.getByTestId("workspace-new-tab-button").click();
+      await page.getByTestId("workspace-new-tab-menu-agent").filter({ visible: true }).click();
+      await expect(drafts).toHaveCount(index + 1);
+      const testId = await drafts.nth(index).getAttribute("data-testid");
+      if (!testId) throw new Error("New Explorer draft must retain its tab identity");
+      await expectExplorerTabInsideTrack(page, testId);
+    }
+    const identities = await drafts.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("data-testid")),
+    );
+    const latestId = identities[4];
+    if (!latestId) throw new Error("Expected the fifth Explorer draft");
+    const track = explorer.getByTestId("workspace-tabs-scroll");
+    await expect
+      .poll(() => track.evaluate((element) => element.scrollWidth > element.clientWidth))
+      .toBe(true);
+    await expect(explorer.getByTestId("workspace-tab-files")).not.toBeInViewport();
+
+    await explorer.getByTestId("workspace-tab-files").click();
+    await expectExplorerTabInsideTrack(page, "workspace-tab-files");
+    await reorderCompactExplorerTabs(page);
+    await expectExplorerTabInsideTrack(page, "workspace-tab-files");
+    await explorer.getByTestId(latestId).click();
+    await expectExplorerTabInsideTrack(page, latestId);
+    await page.setViewportSize({ width: 540, height: 390 });
+    await expectExplorerTabInsideTrack(page, latestId);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectExplorerTabInsideTrack(page, latestId);
+    expect(
+      await drafts.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-testid"))),
+    ).toEqual(identities);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 // Exercise appearance at its consumers while the real workspace navigator retains the panels.
 test("updates populated code and diff appearance without losing the editor instance or draft", async ({
   page,
