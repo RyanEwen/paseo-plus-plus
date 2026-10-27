@@ -1,4 +1,4 @@
-import { AgentAttentionObjectives } from "./attention/objectives.js";
+import { AgentAttentionObjectives, AttentionObjectiveError } from "./attention/objectives.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager } from "./agent-manager.js";
+import { AgentManager, AgentRunCancellationError } from "./agent-manager.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentStorage } from "./agent-storage.js";
 import {
@@ -939,6 +939,7 @@ it.each([
 ])("$name", async ({ mode }) => {
   const workdir = mkdtempSync(join(tmpdir(), "attention-watch-membership-"));
   const logger = createTestLogger();
+  const warnings = vi.spyOn(logger, "warn");
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const parentPrompts: string[] = [];
   const manager = new AgentManager({
@@ -1000,6 +1001,20 @@ it.each([
   const signals: AbortSignal[] = [];
   const acknowledgements: string[] = [];
   const stops: Array<() => void> = [];
+
+  /** Report fixed failure categories without leaking error payloads, paths, or endpoint details. */
+  function callbackErrorKind(error: unknown): string {
+    if (error instanceof AttentionObjectiveError) return "attention-objective-refused";
+    if (error instanceof AgentRunCancellationError) return "run-cancellation-refused";
+    if (!(error instanceof Error)) return "non-error-rejection";
+    if (error.message === "Active turn changed before steering could be delivered")
+      return "active-turn-changed-before-dispatch";
+    if (error.message === "A foreground turn is already active")
+      return "provider-foreground-already-active";
+    if (error.name === "AbortError") return "aborted";
+    return "unclassified-error";
+  }
+
   try {
     for (const [index, link] of links.entries()) {
       if (!link) throw new Error("Expected exact request link");
@@ -1062,21 +1077,41 @@ it.each([
               },
       });
     }
-    // Each watcher aborts its signal on completion, so negative assertions wait for the whole path.
+    // Abort also follows a failed watch. Inspect delivery evidence before checking prompt bodies.
     await expect
       .poll(() => signals.length === 2 && signals.every((signal) => signal.aborted))
       .toBe(true);
+    // Observe real public receipts only after both watch paths have settled, without wrapping dispatch.
+    const dispatched = enqueue.mock.results.flatMap((result) => {
+      if (result.type === "return") return [result.value.dispatched];
+      return [];
+    });
+    const settlements = await Promise.allSettled(dispatched);
+    const dispatches = settlements.map((result) => {
+      if (result.status === "fulfilled")
+        return { status: result.status, disposition: result.value };
+      return { status: result.status, rejection: callbackErrorKind(result.reason) };
+    });
+    const watchFailures = warnings.mock.calls.flatMap(([detail, message]) => {
+      if (message !== "Child finish wait stopped") return [];
+      const context: unknown = detail;
+      if (typeof context === "object" && context !== null && "err" in context)
+        return [callbackErrorKind(context.err)];
+      return ["unclassified-watch-warning"];
+    });
+    const diagnostic = `Exact routed callback evidence: ${JSON.stringify({ watchFailures, dispatches })}`;
     if (mode === "parented" || mode === "independent") {
-      expect(parentPrompts.join("\n")).toContain("EXACT_RESULT_0");
-      expect(parentPrompts.join("\n")).toContain("EXACT_RESULT_1");
-      expect(parentPrompts.join("\n")).not.toContain("Untrusted current message");
-      expect(reservations).toHaveBeenCalledTimes(2);
-      expect(enqueue).toHaveBeenCalledTimes(2);
-      expect(acknowledgements).toHaveLength(2);
+      expect(reservations, diagnostic).toHaveBeenCalledTimes(2);
+      expect(enqueue, diagnostic).toHaveBeenCalledTimes(2);
+      expect(acknowledgements, diagnostic).toHaveLength(2);
       const stored = (await storage.get(callerId))?.attentionObjectives;
       expect(
         stored?.delegations.map((entry) => entry.deliveries?.map((item) => item.status)),
+        diagnostic,
       ).toEqual([["consumed"], ["consumed"]]);
+      expect(parentPrompts.join("\n"), diagnostic).toContain("EXACT_RESULT_0");
+      expect(parentPrompts.join("\n"), diagnostic).toContain("EXACT_RESULT_1");
+      expect(parentPrompts.join("\n"), diagnostic).not.toContain("Untrusted current message");
     } else {
       expect(parentPrompts).toEqual([]);
       expect(enqueue).not.toHaveBeenCalled();
@@ -1088,6 +1123,7 @@ it.each([
       ).toBe(true);
     }
   } finally {
+    warnings.mockRestore();
     for (const stop of stops) stop();
     await delivery.close();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));

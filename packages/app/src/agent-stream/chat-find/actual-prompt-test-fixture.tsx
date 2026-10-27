@@ -53,6 +53,9 @@ function SurroundingAnswer() {
   );
 }
 function renderRow(item: StreamItem) {
+  return renderFixtureRow(item, true);
+}
+function renderFixtureRow(item: StreamItem, disableOuterSpacing: boolean) {
   if (item.kind !== "user_message") return <SurroundingAnswer />;
   return (
     <PromptUserMessage
@@ -60,7 +63,7 @@ function renderRow(item: StreamItem) {
       message={item.text}
       images={item.images}
       timestamp={0}
-      disableOuterSpacing
+      disableOuterSpacing={disableOuterSpacing}
     />
   );
 }
@@ -82,6 +85,10 @@ interface Props {
   viewportRef: RefObject<StreamViewportHandle | null>;
   liveAuxiliary?: ReactNode;
   wrapRow?: (content: ReactNode) => ReactNode;
+  /** Materialize one retained prompt in an existing normal or virtual history lane. */
+  historyPlacement?: "normal" | "virtual";
+  promptAvailable?: boolean;
+  disableOuterSpacing?: boolean;
 }
 
 /** Real user renderer and real outer scroll owner; only daemon-independent fixture data. */
@@ -94,19 +101,24 @@ function ActualPromptStream({
   viewportRef,
   liveAuxiliary,
   wrapRow,
+  historyPlacement,
+  promptAvailable = true,
+  disableOuterSpacing = true,
 }: Props) {
   const strategy = useMemo(() => createWebStreamStrategy({ isMobileBreakpoint: false }), []);
   const streamRenderers = useMemo<StreamSegmentRenderers>(() => {
     const renderContent: StreamSegmentRenderers["renderLiveHeadRow"] = (item) => {
-      const content = renderRow(item);
+      const content = renderFixtureRow(item, disableOuterSpacing);
       return wrapRow ? wrapRow(content) : content;
     };
     return {
       ...renderers,
       renderLiveHeadRow: renderContent,
+      renderHistoryMountedRow: renderContent,
+      renderHistoryVirtualizedRow: renderContent,
       renderLiveAuxiliary: () => liveAuxiliary ?? null,
     };
-  }, [liveAuxiliary, wrapRow]);
+  }, [liveAuxiliary, wrapRow, disableOuterSpacing]);
   const prompt = useMemo<StreamItem>(
     () => ({ kind: "user_message", id: ACTUAL_PROMPT_ID, text, images, timestamp: new Date(0) }),
     [text, images],
@@ -131,6 +143,16 @@ function ActualPromptStream({
           ],
     [prompt, successorText],
   );
+  const segments = useMemo(() => {
+    const rows = promptAvailable ? liveHead : liveHead.filter((item) => item.id !== prompt.id);
+    if (historyPlacement === "virtual") {
+      return { historyVirtualized: rows, historyMounted: [], liveHead: [] };
+    }
+    if (historyPlacement === "normal") {
+      return { historyVirtualized: [], historyMounted: rows, liveHead: [] };
+    }
+    return { historyVirtualized: [], historyMounted: [], liveHead: rows };
+  }, [liveHead, promptAvailable, prompt.id, historyPlacement]);
   const navigation = useMemo(
     () =>
       successorText === undefined
@@ -144,8 +166,12 @@ function ActualPromptStream({
         <PromptNavigationContext.Provider value={enabled ? navigation : null}>
           {strategy.render({
             agentId: "agent",
-            segments: { historyVirtualized: [], historyMounted: [], liveHead },
-            boundary: { hasVirtualizedHistory: false, hasMountedHistory: false, hasLiveHead: true },
+            segments,
+            boundary: {
+              hasVirtualizedHistory: segments.historyVirtualized.length > 0,
+              hasMountedHistory: segments.historyMounted.length > 0,
+              hasLiveHead: segments.liveHead.length > 0,
+            },
             renderers: streamRenderers,
             listEmptyComponent: null,
             viewportRef,

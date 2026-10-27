@@ -827,11 +827,29 @@ async function captureContentReadViewport(
         retainedHeight: rows
           .filter((row) => retainedIds.includes(row.dataset.historyRowId!))
           .reduce((sum, row) => {
-            // Both the virtualizer and normal flow allocate the body's natural height,
-            // while the outer sticky collision lane may extend past that allocation.
             const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
             if (!body) throw new Error("Certified retained prompt has no measurable body");
-            return sum + body.getBoundingClientRect().height;
+            const style = getComputedStyle(row);
+            const margins =
+              Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom);
+            // Normal flow allocates the outer lane plus its real collision margin.
+            // The painted sticky child can include different action-row chrome.
+            let height = row.getBoundingClientRect().height;
+            if (row.hasAttribute("data-index")) {
+              // Absolute virtual lanes have no compensating flow margin. Their
+              // published natural extent retains the actual caller/group spacing.
+              const flow = Number(body.dataset.promptFlowHeight);
+              const visual = Number(body.dataset.promptVisualHeight);
+              if (![flow, visual].every((value) => Number.isFinite(value) && value > 0)) {
+                throw new Error("Certified virtual prompt has no current flow geometry");
+              }
+              height = flow + body.getBoundingClientRect().height - visual;
+            }
+            const allocation = height + margins;
+            if (!Number.isFinite(allocation) || allocation <= 0) {
+              throw new Error("Certified retained prompt has no positive natural allocation");
+            }
+            return sum + allocation;
           }, 0),
         anchor: anchor
           ? {

@@ -126,7 +126,7 @@ function actualPrompt(
   text: string,
   options: Pick<
     React.ComponentProps<typeof ActualPromptTestFixture>,
-    "successorText" | "images"
+    "successorText" | "images" | "historyPlacement" | "promptAvailable" | "disableOuterSpacing"
   > = {},
 ) {
   void i18n;
@@ -135,11 +135,12 @@ function actualPrompt(
   document.body.append(host);
   const ref = createRef<StreamViewportHandle>();
   actualRoot = createRoot(host);
-  function render(enabled = true, nextText = text) {
+  function render(enabled = true, nextText = text, promptAvailable = options.promptAvailable) {
     act(() =>
       actualRoot!.render(
         React.createElement(ActualPromptTestFixture, {
           ...options,
+          promptAvailable,
           text: nextText,
           enabled,
           viewportRef: ref,
@@ -785,3 +786,101 @@ it("preserves Attached sample glyph allocation beside real attachment and disclo
     await deleteAttachments([image]);
   }
 });
+
+it.each(["normal", "virtual"] as const)(
+  "preserves the visible assistant when a retained prompt arrives in %s history",
+  async (historyPlacement) => {
+    const prompt = "A retained prompt.";
+    const fixture = actualPrompt(prompt, {
+      historyPlacement,
+      promptAvailable: false,
+      disableOuterSpacing: false,
+    });
+    await document.fonts.ready;
+    const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const host = fixture.host.querySelector<HTMLElement>("[data-stream-rows-host]")!;
+    await expect.poll(() => host.querySelectorAll('[data-history-row-id="answer"]').length).toBe(1);
+    const answer = fixture.host.querySelector<HTMLElement>('[data-history-row-id="answer"]')!;
+    const text = answer.querySelector<HTMLElement>('[data-testid="assistant-surrounding-text"]')!;
+    const textNode = text.firstChild!;
+    const answerText = text.textContent;
+    // In the virtual variant, wait for the real answer to replace its estimate.
+    // No dimensions are supplied to the virtualizer or any DOM measurement API.
+    await expect
+      .poll(() => host.getBoundingClientRect().height - answer.getBoundingClientRect().height)
+      .toBe(0);
+    readAt(fixture.host, 0);
+    await expect.poll(() => scroll.scrollTop).toBe(0);
+    const originalAnchor = () =>
+      answer.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    const before = {
+      scrollTop: scroll.scrollTop,
+      scrollHeight: scroll.scrollHeight,
+      clientHeight: scroll.clientHeight,
+      anchorTop: originalAnchor(),
+    };
+    expect(before.anchorTop).toBeGreaterThanOrEqual(0);
+    expect(before.anchorTop).toBeLessThan(scroll.clientHeight);
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (row) => row.dataset.historyRowId,
+      ),
+    ).toEqual(["answer"]);
+    expect(exactTextNodes(fixture.host, prompt)).toHaveLength(0);
+
+    fixture.render(true, prompt, true);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+    const row = fixture.host.querySelector<HTMLElement>(
+      `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+    )!;
+    const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+    // Adjacent original wrapper coordinates independently expose the allocation
+    // actually used by both normal flow and committed virtual item positions.
+    const allocation = () => answer.getBoundingClientRect().top - row.getBoundingClientRect().top;
+    await expect.poll(allocation).toBeGreaterThan(0);
+    await expect
+      .poll(() =>
+        Math.max(
+          Math.abs(scroll.scrollHeight - before.scrollHeight - allocation()),
+          Math.abs(scroll.scrollTop - before.scrollTop - allocation()),
+          Math.abs(originalAnchor() - before.anchorTop),
+        ),
+      )
+      .toBeLessThanOrEqual(1);
+    expect(scroll.clientHeight).toBe(before.clientHeight);
+    expect(row.getAttribute("data-index")).toBe(historyPlacement === "virtual" ? "0" : null);
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (item) => item.dataset.historyRowId,
+      ),
+    ).toEqual([ACTUAL_PROMPT_ID, "answer"]);
+    expect(fixture.host.querySelector('[data-history-row-id="answer"]') === answer).toBe(true);
+    expect(text.firstChild === textNode).toBe(true);
+    expect(text.textContent).toBe(answerText);
+    expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
+    expect(
+      fixture.host.querySelectorAll(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`),
+    ).toHaveLength(1);
+    expect(fixture.host.querySelectorAll('[data-history-row-id="answer"]')).toHaveLength(1);
+
+    const bodyHeight = body.getBoundingClientRect().height;
+    const flow = Number(body.dataset.promptFlowHeight);
+    const visual = Number(body.dataset.promptVisualHeight);
+    expect(flow).toBeGreaterThan(0);
+    expect(visual).toBeGreaterThan(0);
+    // The published inner flow plus real caller chrome must agree with the
+    // independent adjacent-row allocation, never merely with the painted body.
+    expect(Math.abs(flow + bodyHeight - visual - allocation())).toBeLessThanOrEqual(1);
+    expect(Math.abs(bodyHeight - allocation())).toBeGreaterThan(1);
+    if (historyPlacement === "normal") {
+      const style = getComputedStyle(row);
+      const outerAllocation =
+        row.getBoundingClientRect().height +
+        Number.parseFloat(style.marginTop) +
+        Number.parseFloat(style.marginBottom);
+      expect(Math.abs(outerAllocation - allocation())).toBeLessThanOrEqual(1);
+    }
+  },
+);
