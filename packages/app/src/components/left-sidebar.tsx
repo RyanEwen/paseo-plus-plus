@@ -394,8 +394,9 @@ function SidebarHostPicker({
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
-  const { settings } = useAppSettings();
-  const showHostUpdates = settings.paseoPlusPlus.sidebarHostUpdates;
+  const { settings, isLoading: settingsLoading, error: settingsError } = useAppSettings();
+  const showHostUpdates =
+    !settingsLoading && settingsError === null && settings.paseoPlusPlus.sidebarHostUpdates;
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);

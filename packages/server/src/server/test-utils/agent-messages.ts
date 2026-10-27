@@ -28,7 +28,7 @@ export function createTestAgentMessages(params: {
         activeTurnBehavior: request.activeTurnBehavior,
         clearPendingPermissions: request.clearPendingPermissions,
         onDispatch: request.onDispatch,
-        runOptions: { clientMessageId: request.messageIds[0] },
+        runOptions: { clientMessageId: request.messageIds[0], attention: request.attention },
       });
       if (result.disposition === "turn_started")
         await waitForAgentRunStartWithTimeout(params.agentManager, request.recipientId);

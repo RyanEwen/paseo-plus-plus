@@ -89,7 +89,7 @@ export function HostPickerOption({
     },
     [onOpenHostSettings, serverId],
   );
-  const trailingSlot = useMemo(() => {
+  const actions = useMemo(() => {
     const action = renderHostAction?.(serverId);
     if (!onOpenHostSettings) return action;
     return (
@@ -115,17 +115,26 @@ export function HostPickerOption({
     theme.iconSize.sm,
   ]);
 
-  return (
+  const primary = (
     <ComboboxItem
       label={label}
       description={connectionLabel}
       leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
       selected={selected}
       active={active}
       onPress={onPress}
       testID={testID}
     />
+  );
+
+  if (!actions) return primary;
+
+  // Independent controls stay outside the primary pressable, as in split menu rows.
+  return (
+    <View style={styles.row}>
+      <View style={styles.primary}>{primary}</View>
+      <View style={styles.rowActions}>{actions}</View>
+    </View>
   );
 }
 
@@ -331,6 +340,9 @@ export function HostPicker({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  row: { flexDirection: "row", alignItems: "center" },
+  primary: { flex: 1, minWidth: 0 },
+  rowActions: { paddingRight: theme.spacing[3] },
   actions: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3] },
   statusDotSlot: {
     width: theme.iconSize.sm,

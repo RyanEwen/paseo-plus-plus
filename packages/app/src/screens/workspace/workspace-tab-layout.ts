@@ -26,8 +26,10 @@ export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
   tabLabelWidths: number[];
   metrics: WorkspaceTabLayoutMetrics;
-  /** Compact chips keep natural widths and close through their menu. */
+  /** Compact chips close through their menu and retain natural widths unless filling the track. */
   compact: boolean;
+  /** Compact main tabs divide the measured track equally, retaining the touch minimum. */
+  fillAvailableWidth?: boolean;
   /** Raise only the title-width ceiling; short tabs stay content-driven. */
   widerTabs?: boolean;
   iconOnly?: boolean;
@@ -82,8 +84,10 @@ export function computeWorkspaceTabLayout(
     0,
     input.viewportWidth - input.metrics.rowHorizontalInset * 2 - input.metrics.actionsReservedWidth,
   );
-  const rowOverhead =
-    input.metrics.rowPaddingHorizontal * 2 + Math.max(tabCount - 1, 0) * input.metrics.tabGap;
+  const fillAvailableWidth = input.compact && input.fillAvailableWidth;
+  // Compact slots have half a gap on each side, including both ends of the track.
+  const gapCount = fillAvailableWidth ? tabCount : Math.max(tabCount - 1, 0);
+  const rowOverhead = input.metrics.rowPaddingHorizontal * 2 + gapCount * input.metrics.tabGap;
   const availableTabsWidth = Math.max(0, availableWidth - rowOverhead);
   const tabChromeWidth =
     input.metrics.tabIconWidth +
@@ -97,6 +101,15 @@ export function computeWorkspaceTabLayout(
       items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
       closeButtonPolicy,
       requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
+  if (fillAvailableWidth) {
+    const width = Math.max(input.metrics.minTabWidth, availableTabsWidth / tabCount);
+    return {
+      // Keep fractional widths so rounding cannot leave a gap or create an extra scroll range.
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: width > tabChromeWidth })),
+      closeButtonPolicy,
+      requiresHorizontalScrollFallback: availableTabsWidth < input.metrics.minTabWidth * tabCount,
     };
   }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>

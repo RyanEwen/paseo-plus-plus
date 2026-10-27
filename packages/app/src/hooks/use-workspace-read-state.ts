@@ -1,3 +1,4 @@
+import { workspaceNotificationRuntime } from "@/notifications/workspace-receipts-runtime";
 import { useCallback, useMemo } from "react";
 import { i18n } from "@/i18n/i18next";
 import { useHostFeature } from "@/runtime/host-features";
@@ -21,6 +22,7 @@ export function useWorkspaceReadState({
 }): WorkspaceReadStateController {
   const status = useWorkspaceFields(serverId, workspaceId, (workspace) => workspace.status);
   const supportsMarkUnread = useHostFeature(serverId, "workspaceMarkUnread");
+  const supportsNotificationReceipts = useHostFeature(serverId, "workspaceNotificationReceipts");
   const hasClearableAttention = status === "attention" || status === "failed";
   const canMarkUnread = supportsMarkUnread && status === "done";
 
@@ -32,8 +34,10 @@ export function useWorkspaceReadState({
     if (!client) {
       throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
     }
-    await client.clearWorkspaceAttention(workspaceId);
-  }, [hasClearableAttention, serverId, workspaceId]);
+    if (supportsNotificationReceipts)
+      await workspaceNotificationRuntime.markRead(serverId, workspaceId);
+    else await client.clearWorkspaceAttention(workspaceId);
+  }, [hasClearableAttention, serverId, workspaceId, supportsNotificationReceipts]);
 
   const markUnread = useCallback(async () => {
     if (!canMarkUnread) {
