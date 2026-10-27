@@ -6,7 +6,7 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
 
 /** Share filtered, persisted bulk transitions between desktop controls and the compact menu. */
 export function useSidebarBulkCollapse() {
-  const { projects, workspaceGroups, pinnedGroups } = useSidebarModel();
+  const { projects, workspaceGroups, pinnedGroups, workspaceTree } = useSidebarModel();
   const grouping = useSidebarViewStore((state) => state.groupMode);
   const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
   const setSectionsCollapsed = useSidebarCollapsedSectionsStore(
@@ -20,12 +20,21 @@ export function useSidebarBulkCollapse() {
           workspaceGroups,
           pinnedGroups,
           groupMode: grouping,
+          workspaceTree,
           groupEmptyProjects,
         }),
         collapsed,
       );
     },
-    [projects, pinnedGroups, workspaceGroups, grouping, groupEmptyProjects, setSectionsCollapsed],
+    [
+      projects,
+      pinnedGroups,
+      workspaceGroups,
+      workspaceTree,
+      grouping,
+      groupEmptyProjects,
+      setSectionsCollapsed,
+    ],
   );
   const expandAll = useCallback(() => setAllCollapsed(false), [setAllCollapsed]);
   const collapseAll = useCallback(() => setAllCollapsed(true), [setAllCollapsed]);

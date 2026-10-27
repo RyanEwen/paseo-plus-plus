@@ -559,7 +559,7 @@ test("fork main keeps upstream deployment and automatic Nix writes disabled", ()
   assert.match(website, /!github\.event\.release\.prerelease && !github\.event\.release\.draft/);
   assert.match(nix, /update-hash:\n    if: github\.repository == 'getpaseo\/paseo'/);
   const ci = readFileSync(ciWorkflowPath, "utf8");
-  assert.equal(ci.match(/branches: \[main, ryan\/dev, ryan\/preview\]/g).length, 2);
+  assert.match(ci, /^  push:\n    branches: \[main, ryan\/dev, ryan\/preview\]$/m);
 });
 
 const gatedCiJobs = new Map([

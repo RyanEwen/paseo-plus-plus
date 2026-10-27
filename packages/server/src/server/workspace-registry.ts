@@ -1,3 +1,4 @@
+import { WorkspaceNotificationReceiptsSchema } from "@getpaseo/protocol/notification-receipts";
 import { promises as fs } from "node:fs";
 
 import type { Logger } from "pino";
@@ -49,6 +50,7 @@ const PersistedProjectRecordSchema = z.object({
 });
 
 const PersistedWorkspaceRecordSchema = z.object({
+  notificationReceipts: WorkspaceNotificationReceiptsSchema.optional(),
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),

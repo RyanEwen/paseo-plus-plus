@@ -226,14 +226,16 @@ class WorkspaceStatus {
     });
   }
 
-  async workspaceDescriptor(): Promise<WorkspaceDescriptorPayload> {
+  async workspaceDescriptor(
+    workspaceId = this.workspace.workspaceId,
+  ): Promise<WorkspaceDescriptorPayload> {
     const entries = await this.directory.listFetchEntries({
       type: "fetch_workspaces_request",
       requestId: "workspace-descriptor",
     });
-    const entry = entries.entries[0];
+    const entry = entries.entries.find((workspace) => workspace.id === workspaceId);
     if (!entry) {
-      throw new Error("No workspace descriptor found");
+      throw new Error(`No workspace descriptor found for ${workspaceId}`);
     }
     return entry;
   }
@@ -244,6 +246,8 @@ interface AgentState {
   status: AgentSnapshotPayload["status"];
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
+  humanAttentionRequired?: boolean;
+  attentionMessage?: string;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
 }
 
@@ -287,6 +291,8 @@ function createAgent(
     title: null,
     labels: input.labels ?? {},
     requiresAttention: input.requiresAttention ?? false,
+    humanAttentionRequired: input.humanAttentionRequired,
+    attentionMessage: input.attentionMessage,
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: null,
     archivedAt: null,
@@ -731,4 +737,115 @@ test("Git observation targets exclude archived records without hydrating app des
   expect(await directory.listObservationTargets()).toEqual([
     { id: "observed", workspaceDirectory: "/workspace/observed", workspaceKind: "local_checkout" },
   ]);
+});
+
+test.each([
+  {
+    relationship: "same-workspace child",
+    workerWorkspaceId: "workspace-1",
+    parentStatus: "attention",
+    parentHumanAttention: true,
+  },
+  {
+    relationship: "cross-workspace child",
+    workerWorkspaceId: "workspace-worktree",
+    parentStatus: "done",
+    parentHumanAttention: false,
+  },
+  {
+    relationship: "independent",
+    workerWorkspaceId: "workspace-1",
+    parentStatus: "attention",
+    parentHumanAttention: true,
+  },
+])(
+  "$relationship separates routine status from explicit human escalation",
+  async ({ relationship, workerWorkspaceId, parentStatus, parentHumanAttention }) => {
+    const quiet = new WorkspaceStatus();
+    quiet.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
+    const escalated = new WorkspaceStatus();
+    escalated.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
+    const routine: AgentState = {
+      id: "worker",
+      status: "idle",
+      requiresAttention: false,
+      humanAttentionRequired: false,
+    };
+    const attention: AgentState = {
+      ...routine,
+      requiresAttention: true,
+      attentionReason: "finished",
+      humanAttentionRequired: true,
+    };
+    if (relationship === "same-workspace child") {
+      quiet.hasDelegatedAgent(routine);
+      escalated.hasDelegatedAgent(attention);
+    } else if (relationship === "cross-workspace child") {
+      quiet.hasWorktreeWorkspace();
+      escalated.hasWorktreeWorkspace();
+      quiet.hasDelegatedAgentInWorktree(routine);
+      escalated.hasDelegatedAgentInWorktree(attention);
+    } else {
+      quiet.hasRootAgent(routine);
+      escalated.hasRootAgent(attention);
+    }
+    expect(await quiet.workspaceDescriptor(workerWorkspaceId)).toMatchObject({
+      id: workerWorkspaceId,
+      status: "done",
+      humanAttentionRequired: false,
+    });
+    // The worker contributes to its exact workspace regardless of directory ordering.
+    expect(await escalated.workspaceDescriptor(workerWorkspaceId)).toMatchObject({
+      id: workerWorkspaceId,
+      status: "attention",
+      humanAttentionRequired: true,
+    });
+    expect(await escalated.workspaceDescriptor("workspace-1")).toMatchObject({
+      id: "workspace-1",
+      status: parentStatus,
+      humanAttentionRequired: parentHumanAttention,
+    });
+  },
+);
+
+test("agent-owned child blockers remain visible without a human badge", async () => {
+  const workspace = new WorkspaceStatus();
+  workspace.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
+  workspace.hasDelegatedAgent({ id: "worker", status: "error", humanAttentionRequired: false });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "failed",
+    humanAttentionRequired: false,
+  });
+  workspace.hasDelegatedAgent({
+    id: "permission-worker",
+    status: "idle",
+    pendingPermissionCount: 1,
+    humanAttentionRequired: false,
+  });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "needs_input",
+    humanAttentionRequired: false,
+  });
+});
+
+test("an explicit child escalation is Ready during ongoing work, with blocking status still primary", async () => {
+  const workspace = new WorkspaceStatus();
+  workspace.hasRootAgent({ id: "parent-agent", status: "running", humanAttentionRequired: false });
+  workspace.hasDelegatedAgent({
+    id: "worker",
+    status: "running",
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionMessage: "Choose an account",
+    humanAttentionRequired: true,
+  });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "attention",
+    humanAttentionRequired: true,
+  });
+  workspace.hasDelegatedAgent({ id: "blocked", status: "error", humanAttentionRequired: false });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "failed",
+    humanAttentionRequired: true,
+  });
 });

@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     open: (options?: Record<string, unknown>) => ipcRenderer.invoke("paseo:dialog:open", options),
   },
   notification: {
+    listDelivered: () => ipcRenderer.invoke("paseo:notification:listDelivered"),
+    dismissDelivered: (ids: string[]) =>
+      ipcRenderer.invoke("paseo:notification:dismissDelivered", ids),
+    pendingDismissals: () => ipcRenderer.invoke("paseo:notification:pendingDismissals"),
+    acknowledgeDismissals: (ids: string[]) =>
+      ipcRenderer.invoke("paseo:notification:acknowledgeDismissals", ids),
     setViewedAgent: (input: unknown) =>
       ipcRenderer.invoke("paseo:notification:setViewedAgent", input),
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),

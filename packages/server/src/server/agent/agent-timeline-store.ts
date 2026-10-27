@@ -153,10 +153,15 @@ export class InMemoryAgentTimelineStore {
     return state.projection.getRows().find((row) => row.seqEnd === state.nextSeq - 1)?.item ?? null;
   }
 
-  getLastAssistantMessage(agentId: string): string | null {
+  /** An optional turn fence keeps attention outcomes from capturing a later response. */
+  getLastAssistantMessage(agentId: string, turnId?: string): string | null {
     const row = this.requireState(agentId)
       .projection.getRows()
-      .findLast((candidate) => candidate.item.type === "assistant_message");
+      .findLast(
+        (candidate) =>
+          candidate.item.type === "assistant_message" &&
+          (turnId === undefined || candidate.turnId === turnId),
+      );
     return row?.item.type === "assistant_message" ? row.item.text : null;
   }
 

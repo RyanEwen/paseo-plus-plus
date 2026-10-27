@@ -107,20 +107,6 @@ describe("shouldReconcileHiddenKeyboardEnd", () => {
   });
 });
 
-describe("shouldUseCompactExplorerKeyboardPadding", () => {
-  it("keeps the changes viewport stable while preserving padding for other tabs", () => {
-    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: true, explorerTab: "changes" })).toBe(
-      false,
-    );
-    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: true, explorerTab: "files" })).toBe(
-      true,
-    );
-    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: false, explorerTab: "changes" })).toBe(
-      true,
-    );
-  });
-});
-
 describe("actual chronological dock reservation", () => {
   it("reserves a small actual iOS accessory displacement without the provider threshold", () => {
     expect(resolveDockReservation(90, 1, 34, 0)).toBe(56);

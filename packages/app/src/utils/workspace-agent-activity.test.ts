@@ -10,6 +10,8 @@ function agent(input: {
   updatedAt: string;
   attentionTimestamp?: string | null;
   requiresAttention?: boolean;
+  humanAttentionRequired?: boolean;
+  attentionMessage?: string;
   attentionReason?: Agent["attentionReason"];
   pendingPermissionCount?: number;
   archivedAt?: string | null;
@@ -57,6 +59,8 @@ function agent(input: {
     workspaceId: input.workspaceId,
     model: null,
     requiresAttention: input.requiresAttention,
+    humanAttentionRequired: input.humanAttentionRequired,
+    attentionMessage: input.attentionMessage,
     attentionReason: input.attentionReason,
     attentionTimestamp: input.attentionTimestamp ? new Date(input.attentionTimestamp) : null,
     archivedAt: input.archivedAt ? new Date(input.archivedAt) : null,
@@ -319,4 +323,83 @@ describe("workspace agent activity index", () => {
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
     });
   });
+});
+
+it.each(["same", "other", undefined])(
+  "projects human escalation in its owning workspace with parent workspace %s",
+  (parentWorkspace) => {
+    const parent = agent({
+      id: "parent",
+      workspaceId: parentWorkspace ?? "same",
+      updatedAt: "2026-06-01T12:00:00Z",
+      humanAttentionRequired: false,
+    });
+    const worker = agent({
+      id: "worker",
+      workspaceId: "same",
+      parentAgentId: parentWorkspace ? "parent" : undefined,
+      updatedAt: "2026-06-01T11:00:00Z",
+      requiresAttention: true,
+      attentionReason: "finished",
+      humanAttentionRequired: true,
+    });
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [parent.id, parent],
+        [worker.id, worker],
+      ]),
+    );
+    expect(index.get("same")).toMatchObject({ agentId: "worker", status: "attention" });
+    if (parentWorkspace === "other") expect(index.get("other")?.status).toBe("done");
+    const quiet = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [parent.id, parent],
+        [worker.id, { ...worker, requiresAttention: false, humanAttentionRequired: false }],
+      ]),
+    );
+    expect(quiet.get("same")?.status).toBe("done");
+    const blocked = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [parent.id, parent],
+        [worker.id, { ...worker, status: "error", humanAttentionRequired: false }],
+      ]),
+    );
+    expect(blocked.get("same")?.status).toBe("failed");
+  },
+);
+
+it("keeps an explicit escalating child Ready while its parent works and lets blockers stay primary", () => {
+  const parent = agent({
+    id: "parent",
+    workspaceId: "same",
+    status: "running",
+    updatedAt: "2026-06-01T12:00:00Z",
+    humanAttentionRequired: false,
+  });
+  const child = agent({
+    id: "child",
+    workspaceId: "same",
+    status: "running",
+    parentAgentId: "parent",
+    updatedAt: "2026-06-01T11:00:00Z",
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionMessage: "Choose an account",
+    humanAttentionRequired: true,
+  });
+  const agents = new Map([
+    [parent.id, parent],
+    [child.id, child],
+  ]);
+  expect(buildWorkspaceAgentActivityIndex(agents).get("same")).toMatchObject({
+    agentId: "child",
+    status: "attention",
+  });
+  agents.set("blocked", {
+    ...parent,
+    id: "blocked",
+    status: "error",
+    turn: { phase: "idle", cancellationRequestId: null },
+  });
+  expect(buildWorkspaceAgentActivityIndex(agents).get("same")?.status).toBe("failed");
 });

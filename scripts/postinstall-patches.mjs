@@ -8,6 +8,20 @@ import { join, relative } from "node:path";
 // workspace root live in their workspace's own node_modules, and patch-package resolves
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
+  // 29.7.0 reports terminal thread failures before retiring their queue slot.
+  // Remove when the installed release retires before dispatch callbacks and the
+  // queued-terminal-exit regression passes without this patch.
+  {
+    nodeModulesPath: "node_modules/jest-worker",
+    patchPrefix: "jest-worker+",
+  },
+  // 57.0.23 has no own-notification dismissal hook. Remove when Expo supplies an
+  // explicit-dismiss event or a supported app-owned deleteIntent receiver extension.
+  {
+    nodeModulesPath: "packages/app/node_modules/expo-notifications",
+    patchPrefix: "expo-notifications+",
+    cwd: "packages/app",
+  },
   // Keep Chromium's native Web Store bindings from replacing the Electron shim
   // after the first extension loads. The native status API requires Chrome services.
   {
@@ -34,6 +48,12 @@ const patchedPackages = [
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
+  },
+  // Backport Android's last-update-wins fix: https://github.com/software-mansion/react-native-reanimated/pull/10052.
+  // Remove this patch and entry when the installed release includes that fix (4.5.4+ on 4.5).
+  {
+    nodeModulesPath: "node_modules/react-native-reanimated",
+    patchPrefix: "react-native-reanimated+",
   },
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
