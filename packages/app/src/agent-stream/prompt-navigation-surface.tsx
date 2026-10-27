@@ -224,7 +224,9 @@ export function PromptDiscoverySurface({
   const compact = useIsCompactFormFactor();
   const size = compact ? "md" : "sm";
   const status = navigation.discoveryStatus;
-  const discoveryStyle = useMemo(() => [styles.container, styles.discoveryBackground], []);
+  // Actual message rows own pinning. Never replace one with a passive spinner;
+  // explicit navigation failures remain actionable beside the existing message.
+  if (navigation.message && !navigation.error && status !== "limited") return null;
   if (
     !navigation.busy &&
     !navigation.error &&
@@ -233,17 +235,13 @@ export function PromptDiscoverySurface({
     status !== "exhausted"
   )
     return null;
-  let label = t("common.loading");
-  if (navigation.error) label = t("stickyPrompt.failed");
-  else if (navigation.cancelled && !navigation.message) label = t("stickyPrompt.cancelled");
-  else if (status === "limited") label = t("stickyPrompt.moreHistory");
-  else if (status === "exhausted") label = t("stickyPrompt.none");
+  const label = t(resolvePromptDiscoveryLabel(navigation));
   return (
-    <View style={discoveryStyle} testID="sticky-user-message">
-      <View style={styles.row}>
+    <View style={styles.container} testID="sticky-user-message">
+      <View style={styles.discoveryMessage} testID="sticky-prompt-system-feedback">
         <View style={styles.preview}>
           <Text
-            style={styles.text}
+            style={styles.systemText}
             accessibilityRole={navigation.error ? "alert" : undefined}
             accessibilityLiveRegion="polite"
           >
@@ -267,6 +265,25 @@ export function PromptDiscoverySurface({
   );
 }
 
+/** Keep failure and cancellation copy ahead of bounded/exhausted discovery. */
+function resolvePromptDiscoveryLabel(
+  navigation: Pick<
+    ReturnType<typeof useStickyPrompt>,
+    "error" | "cancelled" | "message" | "discoveryStatus"
+  >,
+):
+  | "common.loading"
+  | "stickyPrompt.failed"
+  | "stickyPrompt.cancelled"
+  | "stickyPrompt.moreHistory"
+  | "stickyPrompt.none" {
+  if (navigation.error) return "stickyPrompt.failed";
+  if (navigation.cancelled && !navigation.message) return "stickyPrompt.cancelled";
+  if (navigation.discoveryStatus === "limited") return "stickyPrompt.moreHistory";
+  if (navigation.discoveryStatus === "exhausted") return "stickyPrompt.none";
+  return "common.loading";
+}
+
 const styles = StyleSheet.create((theme) => ({
   disclosureText: { color: theme.colors.userMessageForeground },
   container: {
@@ -274,13 +291,22 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingBottom: theme.spacing[2],
   },
-  discoveryBackground: { backgroundColor: theme.colors.surface0 },
+  discoveryMessage: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface2,
+  },
   row: { flexDirection: "row", alignItems: "center", gap: theme.spacing[1] },
   preview: { flex: 1, minWidth: 0 },
   // An opaque button covers only the preview suffix, not the original text layout.
   inlineDisclosure: { backgroundColor: theme.colors.surface3 },
   controls: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
   text: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
+  systemText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
 }));
 
 /** Only this prompt's actual measured clipping or summarized attachments need disclosure. */

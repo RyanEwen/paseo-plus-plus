@@ -160,7 +160,6 @@ describe("paseo worktree manager", () => {
           source: { kind: "branch-off", baseBranch: "main", branchName },
           worktreeSlug: "same-path",
           exactNames: true,
-          runSetup: false,
         }),
       ),
     );
@@ -189,7 +188,6 @@ describe("paseo worktree manager", () => {
           paseoHome,
           source: { kind: "branch-off", baseBranch: "main", branchName },
           worktreeSlug: "legacy-path",
-          runSetup: false,
         }),
       ),
     );
@@ -473,15 +471,23 @@ describe("paseo worktree manager", () => {
     git("-c", "commit.gpgsign=false", "commit", "-m", "setup fixture");
     git("branch", "existing-branch");
     const initialTip = git("rev-parse", "main");
+    // Creation and setup are separate production owners; exercise both real operations.
+    async function createAndRunSetup(input: CreateWorktreeOptions) {
+      const created = await createWorktreePrimitive(input);
+      await runWorktreeSetupCommands({
+        worktreePath: created.worktreePath,
+        branchName: created.branchName,
+      });
+      return created;
+    }
     const options = {
       cwd: repoDir,
       paseoHome,
-      runSetup: true,
       exactNames: true,
       source: { kind: "branch-off" as const, baseBranch: "main", branchName: "retry-branch" },
       worktreeSlug: "retry-directory",
     };
-    await expect(createWorktreePrimitive(options)).rejects.toThrow("Worktree setup command failed");
+    await expect(createAndRunSetup(options)).rejects.toThrow("Worktree setup command failed");
     const retained = (await listPaseoWorktrees({ cwd: repoDir, paseoHome })).find(
       (worktree) => worktree.branchName === "retry-branch",
     );
@@ -497,12 +503,11 @@ describe("paseo worktree manager", () => {
     await runWorktreeSetupCommands({
       worktreePath: retained!.path,
       branchName: "retry-branch",
-      cleanupOnFailure: false,
     });
     expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(2);
     rmSync(join(repoDir, "allow-setup"));
     await expect(
-      createWorktreePrimitive({
+      createAndRunSetup({
         ...options,
         worktreeSlug: "existing-directory",
         source: { kind: "checkout-branch", branchName: "existing-branch" },
@@ -511,7 +516,7 @@ describe("paseo worktree manager", () => {
     expect(git("rev-parse", "existing-branch")).toBe(initialTip);
     writeFileSync(join(repoDir, "advance-branch"), "");
     await expect(
-      createWorktreePrimitive({
+      createAndRunSetup({
         ...options,
         worktreeSlug: "advanced-directory",
         source: { ...options.source, branchName: "advanced-branch" },
@@ -522,7 +527,7 @@ describe("paseo worktree manager", () => {
     rmSync(join(repoDir, "advance-branch"));
     writeFileSync(join(repoDir, "reuse-branch"), "");
     await expect(
-      createWorktreePrimitive({
+      createAndRunSetup({
         ...options,
         worktreeSlug: "occupied-directory",
         source: { ...options.source, branchName: "occupied-branch" },

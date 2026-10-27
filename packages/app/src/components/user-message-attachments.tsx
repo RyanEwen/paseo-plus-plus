@@ -1,5 +1,5 @@
 import { useTextLink } from "@/hooks/use-text-link";
-import { useCallback, useMemo } from "react";
+import { useCallback, useContext, useMemo } from "react";
 import { Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -7,6 +7,8 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AttachmentFrame, AttachmentLabel, AttachmentThumbnail } from "./attachment-pill";
+import { NaturalMessageFlowContext } from "./user-message-flow";
+import { NativeMessageVisibility } from "./user-message-native-flow";
 
 /** A compact copy counts attachments; disclosure restores every original attachment pill. */
 export function UserMessageAttachments({
@@ -27,28 +29,18 @@ export function UserMessageAttachments({
   onOpen: (image: UserMessageImageAttachment) => void;
 }) {
   const { t } = useTranslation();
-  const keyboardLink = useTextLink(onContentPress);
-  const count = images.length + attachments.length;
-  // Share the compact cell with prompt text; an intrinsic count must not consume it.
-  const summaryStyle = useMemo(
-    () => [styles.summary, hasText ? styles.sharedSummary : undefined],
-    [hasText],
-  );
-  if (compact)
-    return count > 0 ? (
-      <Text
-        testID="user-message-attachments-summary"
-        style={summaryStyle}
-        numberOfLines={1}
-        {...keyboardLink}
-        onPress={onContentPress}
-        accessibilityRole={onContentPress ? "link" : undefined}
-        accessibilityHint={contentAccessibilityLabel}
-      >
-        {t("stickyPrompt.attachments", { count })}
-      </Text>
-    ) : null;
-  return (
+  const flow = useContext(NaturalMessageFlowContext);
+  if (compact && !flow) {
+    return (
+      <UserMessageAttachmentSummary
+        count={images.length + attachments.length}
+        hasText={hasText}
+        onContentPress={onContentPress}
+        contentAccessibilityLabel={contentAccessibilityLabel}
+      />
+    );
+  }
+  const attachmentPills = (
     <>
       {images.length > 0 && (
         <View style={[styles.row, (hasText || attachments.length > 0) && styles.spacing]}>
@@ -82,6 +74,59 @@ export function UserMessageAttachments({
       )}
     </>
   );
+  if (!flow) return attachmentPills;
+  if (flow.nativePresentation) {
+    return (
+      <NativeMessageVisibility driver={flow.nativePresentation} visible="body">
+        {attachmentPills}
+      </NativeMessageVisibility>
+    );
+  }
+  return (
+    <View
+      style={flow.compact ? styles.hidden : undefined}
+      pointerEvents={flow.compact ? "none" : "box-none"}
+      accessibilityElementsHidden={flow.compact}
+      importantForAccessibility={flow.compact ? "no-hide-descendants" : "auto"}
+      aria-hidden={flow.compact}
+    >
+      {attachmentPills}
+    </View>
+  );
+}
+
+/** The compact count is presentation chrome; the real attachment controls stay mounted. */
+export function UserMessageAttachmentSummary({
+  count,
+  hasText,
+  onContentPress,
+  contentAccessibilityLabel,
+}: {
+  count: number;
+  hasText: boolean;
+  onContentPress?: (event: GestureResponderEvent) => void;
+  contentAccessibilityLabel?: string;
+}) {
+  const { t } = useTranslation();
+  const keyboardLink = useTextLink(onContentPress);
+  const summaryStyle = useMemo(
+    () => [styles.summary, hasText ? styles.sharedSummary : undefined],
+    [hasText],
+  );
+  if (count === 0) return null;
+  return (
+    <Text
+      testID="user-message-attachments-summary"
+      style={summaryStyle}
+      numberOfLines={1}
+      {...keyboardLink}
+      onPress={onContentPress}
+      accessibilityRole={onContentPress ? "link" : undefined}
+      accessibilityHint={contentAccessibilityLabel}
+    >
+      {t("stickyPrompt.attachments", { count })}
+    </Text>
+  );
 }
 
 function ImagePill({
@@ -102,6 +147,7 @@ function ImagePill({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  hidden: { opacity: 0 },
   row: { flexDirection: "row", gap: theme.spacing[2], flexWrap: "wrap" },
   spacing: { marginBottom: theme.spacing[2] },
   sharedSummary: { flex: 1, minWidth: 0 },

@@ -1,3 +1,8 @@
+import { WorkspaceAttention } from "./agent/workspace-attention.js";
+import type { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
+import { NotificationReceipts } from "@getpaseo/protocol/notification-receipts";
+import type { AgentPromptSource } from "./agent/agent-messages/envelope.js";
+import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import { AttachmentSession } from "./attachments/session.js";
 import type { AttachmentStore } from "./attachments/store.js";
 import { AppSettingsSession } from "./app-settings/session.js";
@@ -461,6 +466,10 @@ export interface SessionOptions {
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
+  publishStoredAgentAttentionCleared?: (
+    record: StoredAgentRecord,
+    workspaceId: string,
+  ) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
@@ -487,6 +496,7 @@ export interface SessionOptions {
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
   appSettingsStore?: AppSettingsStore;
+  notificationReceipts?: WorkspaceNotificationReceipts;
   pluginRuntime?: {
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
@@ -722,6 +732,8 @@ export class Session {
       ),
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
+  private readonly publishStoredAgentAttentionCleared: SessionOptions["publishStoredAgentAttentionCleared"];
+  private readonly notificationReceipts: SessionOptions["notificationReceipts"];
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -888,6 +900,8 @@ export class Session {
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
     this.clientId = clientId;
+    this.publishStoredAgentAttentionCleared = options.publishStoredAgentAttentionCleared;
+    this.notificationReceipts = options.notificationReceipts;
     this.authorization = new SessionAuthorization(permissions);
 
     this.appVersion = appVersion ?? null;
@@ -1491,6 +1505,20 @@ export class Session {
       this.workspaceGitObserver.syncObservers([descriptor]);
   }
 
+  /** Reproject current stored/live rows after a committed host preference change, without marking unread. */
+  async refreshAttentionPresentation(): Promise<void> {
+    const records = await this.agentStorage.list();
+    for (const record of records) {
+      const live = this.agentManager.getAgent(record.id);
+      if (live) await this.agentUpdates.forwardLiveAgent(live);
+      else await this.agentUpdates.emitStoredRecord(record);
+    }
+    const workspaces = await this.workspaceRegistry.list();
+    await this.emitWorkspaceUpdatesForWorkspaceIds(
+      workspaces.map((workspace) => workspace.workspaceId),
+    );
+  }
+
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
   }
@@ -1527,6 +1555,15 @@ export class Session {
 
   clearWorkspaceArchivingForExternalMutation(workspaceIds: Iterable<string>): void {
     this.clearWorkspaceArchiving(workspaceIds);
+  }
+
+  /** Publish a stored attention mutation through each receiver's existing directory filters. */
+  async forwardStoredAgentAttentionCleared(
+    record: StoredAgentRecord,
+    workspaceId: string,
+  ): Promise<void> {
+    await this.agentUpdates.emitStoredRecord(record);
+    await this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
   }
 
   async emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void> {
@@ -2156,7 +2193,9 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(record, registeredProviderIds);
+    return buildStoredAgentPayload(record, registeredProviderIds, {
+      agentAwareAttention: this.agentManager.agentAwareAttentionEnabled,
+    });
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -2902,7 +2941,7 @@ export class Session {
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
-        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
+        return this.handleWaitForFinish(msg);
       case "create_agent_request":
         return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
@@ -3372,6 +3411,7 @@ export class Session {
 
     try {
       await this.agentStorage.remove(agentId);
+      this.agentManager.notifyRequesterRemovalCommitted(agentId);
       await this.agentManager.deleteAgentState(agentId);
     } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
@@ -4514,6 +4554,22 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
       }
 
+      let promptSource: AgentPromptSource | undefined;
+      if (msg.callerAgentId) {
+        promptSource = {
+          kind: "agent-message",
+          agentId: msg.callerAgentId,
+          attention: msg.agentAttention,
+        };
+      } else if (msg.sourceAgentId) {
+        promptSource = {
+          kind: "agent-message",
+          agentId: msg.sourceAgentId,
+          serverId: msg.sourceAgentServerId,
+          attention: msg.agentAttention,
+        };
+      }
+
       const { snapshot, liveSnapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager: this.agentManager,
@@ -4533,9 +4589,7 @@ export class Session {
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           initialPrompt,
-          source: msg.callerAgentId
-            ? { kind: "agent-message", agentId: msg.callerAgentId }
-            : undefined,
+          source: promptSource,
           clientMessageId,
           outputSchema,
           images,
@@ -5731,6 +5785,7 @@ export class Session {
         : undefined;
 
     return {
+      notificationReceipts: new NotificationReceipts(workspace.notificationReceipts).snapshot(),
       id: workspace.workspaceId,
       projectId: workspace.projectId,
       projectDisplayName: resolvedProjectRecord
@@ -5823,6 +5878,9 @@ export class Session {
   ): Promise<WorkspaceDescriptorPayload> {
     const projectRecord = await this.projectRegistry.get(result.workspace.projectId);
     return {
+      notificationReceipts: new NotificationReceipts(
+        result.workspace.notificationReceipts,
+      ).snapshot(),
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
       projectDisplayName: projectRecord
@@ -7641,10 +7699,13 @@ export class Session {
   private async handleWorkspaceClearAttentionRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.clear_attention.request" }>,
   ): Promise<void> {
-    const { requestId, workspaceId } = request;
+    const { requestId, workspaceId, notification } = request;
     const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
     let agents: AgentSnapshotPayload[];
     try {
+      if (notification && requestedWorkspaceIds.length !== 1) {
+        throw new Error("A notification acknowledgement must name exactly one workspace");
+      }
       agents = await this.listAgentPayloads({ includeBackground: true });
     } catch (error) {
       const message = getErrorMessage(error);
@@ -7674,6 +7735,14 @@ export class Session {
       error: string | null;
     }> = [];
 
+    const attention = new WorkspaceAttention({
+      manager: this.agentManager,
+      storage: this.agentStorage,
+      publishStored:
+        this.publishStoredAgentAttentionCleared ??
+        this.forwardStoredAgentAttentionCleared.bind(this),
+    });
+
     for (const requestedWorkspaceId of requestedWorkspaceIds) {
       const clearedAgentIds: string[] = [];
       try {
@@ -7682,55 +7751,22 @@ export class Session {
           throw new Error(`Workspace not found: ${requestedWorkspaceId}`);
         }
 
-        // Clearing attention is scoped to the workspace that OWNS the agent, by
-        // workspaceId — never by comparing cwd strings. A sibling workspace
-        // sharing the same directory keeps its own agents' attention.
-        const clearableAgentIds = agents
-          .filter((agent) => !agent.archivedAt)
-          .filter((agent) => agent.workspaceId === workspace.workspaceId)
-          .filter((agent) => agent.requiresAttention === true)
-          .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
-          .filter((agent) => agent.attentionReason !== "permission")
-          .map((agent) => agent.id);
-
-        for (const agentId of clearableAgentIds) {
-          const liveAgent = this.agentManager.getAgent(agentId);
-          if (liveAgent) {
-            await this.agentManager.clearAgentAttention(agentId);
-            clearedAgentIds.push(agentId);
-            continue;
-          }
-
-          const record = await this.agentStorage.get(agentId);
-          if (
-            !record ||
-            record.internal ||
-            record.archivedAt ||
-            record.requiresAttention !== true
-          ) {
-            continue;
-          }
-          const nextRecord: StoredAgentRecord = {
-            ...record,
-            updatedAt: new Date().toISOString(),
-            requiresAttention: false,
-            attentionReason: null,
-            attentionTimestamp: null,
-          };
-          await this.agentStorage.upsert(nextRecord);
-          const agent = this.buildStoredAgentPayload(nextRecord);
-          const project = await this.buildProjectPlacementForWorkspace(workspace);
-          this.emit({
-            type: "agent_update",
-            payload: {
-              kind: "upsert",
-              agent,
-              project,
-            },
-          });
-          clearedAgentIds.push(agentId);
+        // Reject unavailable sync and impossible future receipts before any attention mutation.
+        if (notification && !this.notificationReceipts) {
+          throw new Error("Workspace notification sync is unavailable");
         }
+        await attention.clear({
+          workspace,
+          agents,
+          notification,
+          onCleared: (agentId) => {
+            clearedAgentIds.push(agentId);
+          },
+        });
 
+        if (notification) {
+          await this.notificationReceipts!.acknowledge(workspace.workspaceId, notification);
+        }
         await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
         results.push({
           workspaceId: requestedWorkspaceId,
@@ -8354,6 +8390,7 @@ export class Session {
               kind: "agent-message",
               agentId: msg.sourceAgentId,
               serverId: msg.sourceAgentServerId,
+              attention: msg.agentAttention,
               title: !msg.sourceAgentServerId
                 ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
                 : undefined,
@@ -8393,6 +8430,7 @@ export class Session {
             request: {
               prompt,
               sourceAgentId: msg.sourceAgentId,
+              agentAttention: msg.agentAttention,
               sourceAgentServerId: msg.sourceAgentServerId,
               sessionMode: msg.sessionMode,
               activeTurnBehavior:
@@ -8436,11 +8474,49 @@ export class Session {
     }
   }
 
+  /** Reply from exact request evidence inside the caller's existing wait timeout and observation scope. */
+  private async replyForAttentionRequest(params: {
+    agentId: string;
+    requestId: string;
+    attentionRequest: AgentAttentionRequestQuery;
+    signal: AbortSignal;
+  }): Promise<void> {
+    const { agentId, requestId, attentionRequest, signal } = params;
+    let outcome = await this.agentManager.waitForAttentionOutcome({
+      agentId,
+      query: attentionRequest,
+      signal,
+    });
+    if (!outcome && !attentionRequest.acknowledgeOutcomeId) {
+      // Queue lifetime can delay a fresh submission, but only ledger evidence proves its outcome.
+      await this.agentMessages.waitForDispatch(agentId, signal).catch(() => undefined);
+      outcome = await this.agentManager.waitForAttentionOutcome({
+        agentId,
+        query: attentionRequest,
+        signal,
+      });
+    }
+    const final = await this.getAgentPayloadById(agentId);
+    let status: "idle" | "error" | "permission" = "error";
+    if (outcome?.kind === "permission") status = "permission";
+    if (outcome?.kind === "finished") status = "idle";
+    this.emit({
+      type: "wait_for_finish_response",
+      payload: {
+        requestId,
+        status,
+        final,
+        error: outcome?.error ?? null,
+        lastMessage: outcome?.lastMessage ?? null,
+        attentionOutcome: outcome,
+      },
+    });
+  }
+
   private async handleWaitForFinish(
-    agentIdOrIdentifier: string,
-    requestId: string,
-    timeoutMs?: number,
+    msg: Extract<SessionInboundMessage, { type: "wait_for_finish_request" }>,
   ): Promise<void> {
+    const { agentId: agentIdOrIdentifier, requestId, timeoutMs, attentionRequest } = msg;
     const sourceSignal = this.delivery.requestSignal;
     sourceSignal.throwIfAborted();
     const resolved = await this.resolveAgentIdentifier(agentIdOrIdentifier);
@@ -8468,10 +8544,17 @@ export class Session {
       : null;
 
     try {
-      await this.agentMessages.waitForDispatch(
-        agentId,
-        AbortSignal.any([abortController.signal, sourceSignal]),
-      );
+      const waitSignal = AbortSignal.any([abortController.signal, sourceSignal]);
+      if (attentionRequest) {
+        await this.replyForAttentionRequest({
+          agentId,
+          requestId,
+          attentionRequest,
+          signal: waitSignal,
+        });
+        return;
+      }
+      await this.agentMessages.waitForDispatch(agentId, waitSignal);
 
       const live = this.agentManager.getAgent(agentId);
       if (!live) {

@@ -187,6 +187,7 @@ describe("desktop packaging", () => {
     expect(resolveDesktopDistribution({ paseoPreview: true, paseoDebug: true })).toEqual({
       isPreview: true,
       appName: "Paseo++ Debug",
+      windowsAppUserModelId: null,
       userDataName: "Paseo++ Debug",
       desktopName: "paseo-plus-plus-debug.desktop",
       daemonHomeName: ".paseo-plus-plus-debug-desktop",
@@ -201,6 +202,7 @@ describe("desktop packaging", () => {
     expect(resolveDesktopDistribution({ paseoPreview: true })).toEqual({
       isPreview: true,
       appName: "Paseo++",
+      windowsAppUserModelId: "sh.paseo.plusplus.desktop",
       userDataName: "Paseo++",
       desktopName: "paseo-plus-plus.desktop",
       daemonHomeName: ".paseo-plus-plus-desktop",
@@ -406,4 +408,18 @@ it("installs the Linux helper as root-owned 4755 regardless of root's namespace 
   expect(installer).toContain("chown root:root '/opt/${sanitizedProductName}/chrome-sandbox'");
   expect(installer).toContain("chmod 4755 '/opt/${sanitizedProductName}/chrome-sandbox'");
   expect(installer).not.toContain("chmod 0755");
+});
+
+// The packaged identity must agree with the existing NSIS registration.
+describe("Windows packaged notification identity", () => {
+  it("uses the installer AUMID for the fork notification process", () => {
+    expect(resolveDesktopDistribution({ paseoPreview: true })).toMatchObject({
+      windowsAppUserModelId: "sh.paseo.plusplus.desktop",
+    });
+    const config = readFileSync(join(packageRoot, "electron-builder.preview.yml"), "utf8");
+    const installerAppId = config.match(/^appId:\s*(\S+)\s*$/m)?.[1];
+    expect(installerAppId).toBe(
+      resolveDesktopDistribution({ paseoPreview: true }).windowsAppUserModelId,
+    );
+  });
 });

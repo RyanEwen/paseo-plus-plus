@@ -97,11 +97,11 @@ export const zhCN: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "移动端工作区标签页",
-        hint: "在紧凑布局中显示可滚动的标签栏。关闭后使用原来的标签选择器，并保留当前选中的标签。",
+        hint: "在紧凑布局中，在工作区标题下方显示可滚动的标签栏。关闭后使用原来的标签选择器，并保留当前选中的标签。",
       },
       widerWorkspaceTabs: {
         label: "更宽的工作区标签页",
-        hint: "将长标题标签页的最大宽度增加 50%。短标签页保持自然宽度。关闭后恢复原来的宽度上限。",
+        hint: "将长标题标签页的最大宽度增加 50%。手机上的工作区标签页始终均分可用宽度。",
       },
 
       descriptiveToolCalls: {
@@ -115,7 +115,7 @@ export const zhCN: TranslationResources = {
       },
       stickyUserPrompts: {
         label: "保持用户消息可见",
-        hint: "将当前消息固定在聊天上方，支持展开和前后导航",
+        hint: "固定当前消息的简洁预览，支持展开和前后导航。普通消息始终完整展开，加载提示不会遮挡已有消息。",
       },
       previousAgents: {
         label: "历史智能体",
@@ -1420,6 +1420,16 @@ export const zhCN: TranslationResources = {
       multipleWorkspaces_other: "{{count}} 个项目的工作区",
       title: "项目",
     },
+    workspaceTree: {
+      expand: "展开 {{name}} 的子工作区",
+      collapse: "折叠 {{name}} 的子工作区",
+      activeChild: "包含当前工作区。",
+      summary_one: "{{count}} 个子工作区：{{status}}",
+      summary_other: "{{count}} 个子工作区：{{status}}",
+      humanAttention_one: "{{count}} 个子工作区需要你处理",
+      humanAttention_other: "{{count}} 个子工作区需要你处理",
+      unknownStatus: "状态不可用",
+    },
     statusGroupAccessibility: "{{label}} 分组",
     statusBucket: {
       workingCount: "{{count}} 个正在工作",
@@ -2614,6 +2624,17 @@ export const zhCN: TranslationResources = {
     },
     notifications: {
       title: "通知",
+      chooseHost: "选择设置所用的主机，为其连接的所有设备配置提醒。",
+      hostTitle: "{{host}} 上的通知",
+      agentAware: "智能体感知提醒",
+      agentAwareHint:
+        "智能体之间的常规结果保持静默，需要你处理时显示“待查看”徽章。此设置适用于连接到 {{host}} 的所有设备。关闭后，人工介入请求和安全提醒仍然可用。",
+      updateHost: "请更新此主机以更改智能体感知提醒。",
+      readOnly: "更改此设置需要该主机的管理权限。",
+      unavailable: "保存前，请连接到受支持且具有管理权限的主机。",
+      notSaved: "主机未保存此提醒偏好设置，请重试。",
+      loadFailed: "无法加载主机的通知偏好设置。",
+      saving: "正在保存...",
       permission: "通知权限",
       refreshAccessibility: "刷新通知权限",
       playSound: "播放声音",

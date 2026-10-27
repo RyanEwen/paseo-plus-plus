@@ -60,7 +60,6 @@ async function assertExtensionEventSubscriptions({
     }
   }
 
-  firstGuest.debugger.attach("1.3");
   try {
     await popup.loadURL(`chrome-extension://${extension.id}/popup.html`);
     const initial = await popup.webContents.executeJavaScript(
@@ -146,7 +145,6 @@ async function assertExtensionEventSubscriptions({
     if (unrelatedWindow && !unrelatedWindow.isDestroyed()) {
       unrelatedWindow.destroy();
     }
-    firstGuest.debugger.detach();
     popup.destroy();
     profile.extensions.removeExtension(extension.id);
     select("browser-first");

@@ -102,11 +102,11 @@ export const ja: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "モバイルのワークスペースタブ",
-        hint: "コンパクト表示でスクロール可能なタブバーを表示します。オフにすると、選択中のタブを変えずに以前のタブ選択に戻ります。",
+        hint: "コンパクト表示でワークスペースのタイトルの下にスクロール可能なタブバーを表示します。オフにすると、選択中のタブを変えずに以前のタブ選択に戻ります。",
       },
       widerWorkspaceTabs: {
         label: "ワークスペースのタブを広くする",
-        hint: "長いタブ名の最大幅を50%広げます。短いタブは自然な幅を保ちます。オフにすると以前の最大幅に戻ります。",
+        hint: "長いタブ名の最大幅を50%広げます。スマートフォンのワークスペースタブは常に利用可能な幅を均等に分けて表示されます。",
       },
 
       descriptiveToolCalls: {
@@ -120,7 +120,7 @@ export const ja: TranslationResources = {
       },
       stickyUserPrompts: {
         label: "ユーザーメッセージを表示し続ける",
-        hint: "現在のメッセージをチャット上部に表示し、展開と前後の移動を提供します",
+        hint: "現在のメッセージをコンパクトに固定し、展開と前後への移動ができます。通常のメッセージは全文表示され、読み込み表示が既存のメッセージを覆うことはありません。",
       },
       previousAgents: {
         label: "以前のエージェント",
@@ -1449,6 +1449,16 @@ export const ja: TranslationResources = {
       multipleWorkspaces_other: "{{count}} プロジェクトのワークスペース",
       title: "プロジェクト",
     },
+    workspaceTree: {
+      expand: "{{name}} の子ワークスペースを展開",
+      collapse: "{{name}} の子ワークスペースを折りたたむ",
+      activeChild: "現在のワークスペースを含みます。",
+      summary_one: "子ワークスペース {{count}} 件: {{status}}",
+      summary_other: "子ワークスペース {{count}} 件: {{status}}",
+      humanAttention_one: "{{count}} 件の子ワークスペースがあなたの対応を必要としています",
+      humanAttention_other: "{{count}} 件の子ワークスペースがあなたの対応を必要としています",
+      unknownStatus: "ステータスを取得できません",
+    },
     statusGroupAccessibility: "{{label}} グループ",
     statusBucket: {
       workingCount: "{{count}} 件作業中",
@@ -2679,6 +2689,18 @@ export const ja: TranslationResources = {
     },
     notifications: {
       title: "通知",
+      chooseHost:
+        "設定対象のホストを選び、そのホストに接続するすべてのデバイスの通知を設定してください。",
+      hostTitle: "{{host}} の通知",
+      agentAware: "エージェントを考慮した通知",
+      agentAwareHint:
+        "エージェント間の通常の結果は通知せず、対応が必要なときに「レビュー待ち」バッジを表示します。{{host}} に接続するすべてのデバイスに適用されます。無効にしても、人への対応依頼と安全に関する通知は引き続き利用できます。",
+      updateHost: "この設定を変更するには、ホストを更新してください。",
+      readOnly: "この設定を変更するには、このホストの管理権限が必要です。",
+      unavailable: "保存する前に、管理権限のある対応ホストに接続してください。",
+      notSaved: "ホストがこの通知設定を保存しませんでした。もう一度お試しください。",
+      loadFailed: "ホストの通知設定を読み込めません。",
+      saving: "保存中...",
       permission: "通知の権限",
       refreshAccessibility: "通知の権限を更新",
       playSound: "サウンドを再生",

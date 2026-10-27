@@ -65,29 +65,27 @@ export async function fetchCanonicalPromptContext(
   };
   const sourceKey = contextSourceKey(source);
   validateContextContinuation(progress, sourceKey, position.seq);
-  let sourceStart: number;
-  if (progress) sourceStart = progress.sourceStart;
-  else {
-    const probe = await read(position.seq + 1, 1, "projected");
-    const matches = probe.entries.filter((entry) => matchesContextSource(entry, source));
-    if (probe.entries.length !== 1 || matches.length !== 1)
-      throw new Error("Reading source occurrence is ambiguous");
-    sourceStart = matches[0]!.seqStart;
-  }
+  const probe = progress ? undefined : await probeContextSource(source, read);
+  const sourceStart = progress?.sourceStart ?? probe!.entry.seqStart;
+  let used = probe?.used ?? 0;
   // Report only after the probe or continuation has passed the existing validator,
   // including exhausted reads which never produce a prompt context.
   observeSourceStart?.(sourceStart);
   const ordinary = resolveOrdinary?.(sourceStart);
   if (ordinary) return { sourceKey, sourceStart, sourceEnd: position.seq, prompt: ordinary };
+  if (probe?.prompt)
+    return {
+      sourceKey,
+      sourceStart,
+      sourceEnd: position.seq,
+      prompt: hydratePromptEntry(probe.prompt, position.epoch),
+    };
   let cursor = progress?.cursor ?? sourceStart;
-  for (let used = progress ? 0 : 1; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
+  for (; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
     const page = await read(cursor, TIMELINE_FETCH_PAGE_SIZE, backwardProjection);
     const entries = page.entries;
-    if (entries.some((entry) => entry.seqEnd >= cursor))
-      throw new Error("Reading context did not move backward");
-    const prompt = entries
-      .filter((entry) => entry.item.type === "user_message")
-      .sort((a, b) => b.seqEnd - a.seqEnd)[0];
+    validateBackwardEntries(entries, cursor);
+    const prompt = nearestPrecedingPrompt(entries, sourceStart);
     if (prompt)
       return {
         sourceKey: contextSourceKey(source),
@@ -106,6 +104,63 @@ export async function fetchCanonicalPromptContext(
     sourceEnd: position.seq,
     cursor,
   });
+}
+
+interface ProbedContextSource {
+  entry: ContextEntry;
+  used: number;
+  prompt: ContextEntry | undefined;
+}
+
+type ReadContextPage = (
+  cursor: number,
+  limit: number,
+  projection: "projected" | "canonical",
+) => Promise<ContextPage>;
+
+/** Search display anchors, sharing the predecessor lookup's eight-read cap.
+ * Lifecycle updates can move a row's seqEnd past newer rows without moving its
+ * anchor. Every candidate still needs the exact source identity and actual range.
+ */
+async function probeContextSource(
+  source: StreamItem,
+  read: ReadContextPage,
+): Promise<ProbedContextSource> {
+  let cursor = source.timelineCursor!.seq + 1;
+  for (let used = 0; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
+    const limit = used === 0 ? 1 : TIMELINE_FETCH_PAGE_SIZE;
+    const probe = await read(cursor, limit, "projected");
+    validateBackwardEntries(probe.entries, cursor);
+    const matches = probe.entries.filter((entry) => matchesContextSource(entry, source));
+    if (matches.length > 1) throw new Error("Reading source occurrence is ambiguous");
+    const entry = matches[0];
+    if (entry)
+      return {
+        entry,
+        used: used + 1,
+        prompt: nearestPrecedingPrompt(probe.entries, entry.seqStart),
+      };
+    if (!probe.hasOlder || !probe.entries.length) break;
+    cursor = Math.min(...probe.entries.map((candidate) => candidate.seqStart));
+  }
+  throw new Error("Reading source occurrence is unavailable");
+}
+
+/** Expanded payloads may extend past the cursor. Their display anchors must
+ * still move backward; a future USER inside a source span is not its predecessor.
+ */
+function validateBackwardEntries(entries: readonly ContextEntry[], cursor: number): void {
+  if (entries.some((entry) => entry.seqStart >= cursor))
+    throw new Error("Reading context did not move backward");
+}
+
+function nearestPrecedingPrompt(
+  entries: readonly ContextEntry[],
+  sourceStart: number,
+): ContextEntry | undefined {
+  return entries
+    .filter((entry) => entry.item.type === "user_message" && entry.seqEnd < sourceStart)
+    .sort((a, b) => b.seqEnd - a.seqEnd)[0];
 }
 
 function validateContextContinuation(

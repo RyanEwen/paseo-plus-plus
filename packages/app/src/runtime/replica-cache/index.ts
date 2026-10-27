@@ -248,6 +248,8 @@ const StoredAgentSnapshotSchema = z.strictObject({
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()),
   requiresAttention: z.boolean().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: IsoDateSchema.nullable().optional(),
   archivedAt: IsoDateSchema.nullable().optional(),
@@ -312,11 +314,14 @@ const StoredWorkspaceSchema = z.strictObject({
   name: z.string(),
   title: z.string().nullable(),
   pinnedAt: z.string().nullable(),
+  // Optional for older cached rows; retain pin metadata when a current cursor skips redelivery.
+  projectPinnedAt: z.string().nullable().optional(),
   // Optional because entries written before labels existed have none. A cached workspace that
   // dropped them painted its row without its chips and stayed that way: the directory cursor is
   // current on reconnect, so the daemon has nothing newer to send back.
   labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
+  humanAttentionRequired: z.boolean().optional(),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
@@ -657,6 +662,8 @@ function serializeAgent(agent: Agent): StoredAgent {
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
+    humanAttentionRequired: agent.humanAttentionRequired,
+    attentionMessage: agent.attentionMessage,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
@@ -705,8 +712,10 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     name: workspace.name,
     title: workspace.title ?? null,
     pinnedAt: workspace.pinnedAt ?? null,
+    projectPinnedAt: workspace.projectPinnedAt,
     labels: workspace.labels,
     status: workspace.status,
+    humanAttentionRequired: workspace.humanAttentionRequired,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
     archivingAt: workspace.archivingAt,

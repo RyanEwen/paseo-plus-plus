@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, getPointerAnchorRect, getTransformOrigin, type Rect } from "./anchor";
+import {
+  computePosition,
+  getCursorAnchorRect,
+  getPointerAnchorRect,
+  getTransformOrigin,
+  type Rect,
+} from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
@@ -140,5 +146,57 @@ describe("pointer-anchored divider cards", () => {
   });
   it("keeps trigger-based positioning when opened without a pointer", () => {
     expect(getPointerAnchorRect(TRIGGER, null, "right")).toBe(TRIGGER);
+  });
+});
+
+describe("cursor-anchored divider cards", () => {
+  it("opens below the cursor at the midpoint of a tall vertical divider", () => {
+    const cursor = { x: 760, y: 394 };
+    const triggerRect = getCursorAnchorRect({ x: 750, y: 0, width: 20, height: 800 }, cursor);
+
+    expect(
+      position({
+        triggerRect,
+        alignment: "center",
+        offset: 4,
+      }),
+    ).toEqual({ x: 660, y: 398, actualPlacement: "bottom" });
+  });
+
+  it("opens below the cursor at the midpoint of a horizontal divider", () => {
+    const triggerRect = getCursorAnchorRect(
+      { x: 0, y: 390, width: 1600, height: 8 },
+      { x: 760, y: 394 },
+    );
+
+    expect(
+      position({
+        triggerRect,
+        alignment: "center",
+        offset: 4,
+      }),
+    ).toEqual({ x: 660, y: 398, actualPlacement: "bottom" });
+  });
+
+  it("clamps the cursor to the trigger and keeps viewport flip and clamp behavior", () => {
+    expect(
+      getCursorAnchorRect({ x: 100, y: 200, width: 40, height: 20 }, { x: 999, y: 0 }),
+    ).toEqual({ x: 140, y: 200, width: 0, height: 0 });
+
+    const triggerRect = getCursorAnchorRect(
+      { x: 0, y: 0, width: 1000, height: 800 },
+      { x: 995, y: 790 },
+    );
+    expect(
+      position({
+        triggerRect,
+        alignment: "center",
+        offset: 4,
+      }),
+    ).toEqual({ x: 792, y: 686, actualPlacement: "top" });
+  });
+
+  it("keeps trigger-based positioning when opened without a cursor", () => {
+    expect(getCursorAnchorRect(TRIGGER, null)).toBe(TRIGGER);
   });
 });

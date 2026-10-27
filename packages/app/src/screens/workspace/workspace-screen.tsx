@@ -1,4 +1,4 @@
-import { ComposerBottomBarHeightContext } from "@/composer/dock/internal/bottom-bar-height";
+import { useWorkspaceNotificationAcknowledgement } from "@/notifications/use-workspace-notification-acknowledgement";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { resolveWorkspaceTabLaunchDestination } from "@/workspace-tabs/launcher/internal/destination";
 import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
@@ -40,7 +40,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
@@ -1039,45 +1038,6 @@ function useWorkspaceLayoutReady(): boolean {
   return hydrated && !isLoading;
 }
 
-/** Keeps compact navigation below content and publishes its measured keyboard clearance. */
-function WorkspaceCenterColumn({
-  isMobile,
-  hasNavigation,
-  header,
-  navigation,
-  children,
-}: {
-  isMobile: boolean;
-  hasNavigation: boolean;
-  header: ReactNode;
-  navigation: ReactNode;
-  children: ReactNode;
-}) {
-  const insets = useSafeAreaInsets();
-  const [bottomBarHeight, setBottomBarHeight] = useState(0);
-  const handleBottomBarLayout = useCallback((event: LayoutChangeEvent) => {
-    setBottomBarHeight(event.nativeEvent.layout.height);
-  }, []);
-  const bottomBarStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
-  const hasBottomNavigation = isMobile && hasNavigation;
-  return (
-    <View style={styles.centerColumn}>
-      {header}
-      {!isMobile ? navigation : null}
-      <View style={styles.centerContent}>
-        <ComposerBottomBarHeightContext.Provider value={hasBottomNavigation ? bottomBarHeight : 0}>
-          {children}
-        </ComposerBottomBarHeightContext.Provider>
-      </View>
-      {hasBottomNavigation ? (
-        <View style={bottomBarStyle} onLayout={handleBottomBarLayout}>
-          {navigation}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1104,6 +1064,12 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  useWorkspaceNotificationAcknowledgement({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    focused: isRouteFocused,
+    workspace: workspaceDescriptor,
+  });
   useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
     void getHostRuntimeStore()
@@ -3598,11 +3564,6 @@ function WorkspaceScreenContent({
     [uiTabs, sheets],
   );
   const workspacePanelKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
-  const compactHeaderLayout = resolveCompactHeaderLayout({
-    header: compactWorkspaceHeader,
-    activeTab: activeTabDescriptor,
-    composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
-  });
 
   const workspaceTabsRow = useMemo(
     () =>
@@ -3712,26 +3673,31 @@ function WorkspaceScreenContent({
     ],
   );
 
+  // Measure title and navigation together so floating chat clearance includes both rows.
+  const compactHeaderLayout = resolveCompactHeaderLayout({
+    header: (
+      <View style={styles.containerWorkspaceBackground}>
+        {compactWorkspaceHeader}
+        {workspaceTabNavigation}
+      </View>
+    ),
+    activeTab: activeTabDescriptor,
+    composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
+  });
+
   // The shared workspace panel surface keeps sheet and Explorer panels under the same providers.
   const workspaceCenterColumn = isMobile ? (
     <View style={styles.centerColumn}>
-      <WorkspaceCenterColumn
-        isMobile
-        hasNavigation={showStandaloneTabs || showLegacyMobileSwitcher}
-        header={null}
-        navigation={workspaceTabNavigation}
+      <FloatingHeaderLayout
+        header={compactHeaderLayout.header}
+        floating={compactHeaderLayout.floating}
       >
-        <FloatingHeaderLayout
-          header={compactHeaderLayout.header}
-          floating={compactHeaderLayout.floating}
-        >
-          {(topOverlayInset) => (
-            <StreamTopOverlayProvider value={topOverlayInset}>
-              <View style={styles.content}>{content}</View>
-            </StreamTopOverlayProvider>
-          )}
-        </FloatingHeaderLayout>
-      </WorkspaceCenterColumn>
+        {(topOverlayInset) => (
+          <StreamTopOverlayProvider value={topOverlayInset}>
+            <View style={styles.content}>{content}</View>
+          </StreamTopOverlayProvider>
+        )}
+      </FloatingHeaderLayout>
       <SheetTabs
         workspaceKey={persistenceKey}
         serverId={normalizedServerId}

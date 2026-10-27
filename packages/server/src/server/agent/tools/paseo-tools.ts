@@ -3,6 +3,7 @@ import {
   createHostResolver,
   waitForPermissionChange,
   type HostOperation,
+  type AgentHostOperationResult,
   type HostOperations,
   type ToolHosts,
 } from "../host-operations/index.js";
@@ -16,6 +17,7 @@ import type { Logger } from "pino";
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
+import { AgentAttentionObjectivesSchema } from "@getpaseo/protocol/agent-attention";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -679,6 +681,9 @@ function createToolCatalog(
   const hostResolver = createHostResolver({
     serverId: options.serverId ?? "self",
     callerAgentId,
+    prepareAttention: callerAgentId
+      ? (request) => agentManager.prepareAttentionMessage({ agentId: callerAgentId, ...request })
+      : undefined,
     lockedCwd: callerContext?.lockedCwd,
     hosts: () => {
       if (!options.hosts) throw new Error("Connected hosts are not configured");
@@ -707,7 +712,28 @@ function createToolCatalog(
           unsubscribe();
         };
       },
-      async wait(agentId, signal) {
+      async wait({ agentId, signal, attentionRequest }) {
+        if (attentionRequest) {
+          const attentionOutcome = await agentManager.waitForAttentionOutcome({
+            agentId,
+            query: attentionRequest,
+            signal,
+          });
+          const snapshot = agentManager.getAgent(agentId);
+          const final = snapshot
+            ? await serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger)
+            : null;
+          let status: "idle" | "error" | "permission" = "error";
+          if (attentionOutcome?.kind === "finished") status = "idle";
+          if (attentionOutcome?.kind === "permission") status = "permission";
+          return {
+            status,
+            final,
+            attentionOutcome,
+            lastMessage: attentionOutcome?.lastMessage ?? null,
+            error: attentionOutcome?.error ?? null,
+          };
+        }
         const settled = await agentManager.waitForAgentEvent(agentId, {
           signal,
           waitForActive: true,
@@ -729,7 +755,7 @@ function createToolCatalog(
     name: string,
     config: PaseoToolConfig,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
-    handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
+    handler: (input: any, context: PaseoToolExecutionContext) => Promise<AgentHostOperationResult>,
   ) => {
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
       return;
@@ -755,14 +781,15 @@ function createToolCatalog(
       handler = async ({ serverId, ...input }, context) => {
         const destination = serverId ?? options.serverId;
         try {
-          const response = await hostResolver.use(serverId, (host) =>
-            host[operation](input, context),
+          const { attention, targetAgentId, ...response } = await hostResolver.use(
+            serverId,
+            (host) => host[operation](input, context),
           );
           let childAgentId: string | undefined;
           if (name === "create_agent") {
             childAgentId = (response.structuredContent as { agentId: string }).agentId;
           } else if (name === "send_agent_prompt" && destination !== options.serverId) {
-            childAgentId = input.agentId as string;
+            childAgentId = targetAgentId;
           }
           if (childAgentId && callerAgentId && input.notifyOnFinish !== false) {
             setupFinishWait({
@@ -773,9 +800,14 @@ function createToolCatalog(
               childServerId: destination,
               childAgentId,
               callerAgentId,
+              attention: attention?.requesterObjective
+                ? { continuation: attention.requesterObjective }
+                : undefined,
               logger: childLogger,
-              wait: (signal) =>
-                hostResolver.use(destination, (host) => host.wait(childAgentId, signal)),
+              wait: (signal, attentionRequest) =>
+                hostResolver.use(destination, (host) =>
+                  host.wait({ agentId: childAgentId, signal, attentionRequest }),
+                ),
               afterPermission: (requestId, signal) =>
                 hostResolver.use(destination, (host) =>
                   waitForPermissionChange(host, childAgentId, requestId, signal),
@@ -1178,6 +1210,13 @@ function createToolCatalog(
       .describe("Create a new workspace for the agent."),
   ]);
   const commonCreateAgentFields = {
+    objectiveId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Your objective from get_attention_context. Required when this turn handles multiple requests.",
+      ),
     title: z
       .string()
       .trim()
@@ -1269,6 +1308,13 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
+    objectiveId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Your objective from get_attention_context. Required when this turn handles multiple requests.",
+      ),
     activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
       'How to send into a running turn: "steer" joins it, falling back to interrupt when unavailable; "interrupt" replaces it. Defaults to steer for agent callers and interrupt otherwise.',
     ),
@@ -1596,7 +1642,7 @@ function createToolCatalog(
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain. Use get_attention_context and report_objective_status(waiting) before ending an interim reply while a human result is delegated.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1620,7 +1666,7 @@ function createToolCatalog(
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
-      const { snapshot, initialPromptStarted } = await createAgentCommand(
+      const { snapshot, initialPromptStarted, initialAttention } = await createAgentCommand(
         {
           agentManager,
           agentStorage,
@@ -1655,6 +1701,7 @@ function createToolCatalog(
           notifyOnFinish: false,
           detached: resolvedArgs.detached,
           callerAgentId,
+          callerObjectiveId: parsedArgs.objectiveId,
           callerContext,
         },
       );
@@ -1666,6 +1713,7 @@ function createToolCatalog(
           ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
           : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
       const response = {
+        attention: initialAttention,
         content: [],
         structuredContent: ensureValidJson({
           agentId: currentSnapshot.id,
@@ -1943,15 +1991,92 @@ function createToolCatalog(
     );
   }
 
+  if (callerAgentId) {
+    registerTool(
+      "get_attention_context",
+      {
+        title: "Get my attention objectives",
+        description:
+          "Read your accepted objectives and their output recipients. Before waiting for delegated human work, report its objective as waiting; report final only when its result for the human is ready. Use objectiveId to keep unrelated requests separate.",
+        inputSchema: {},
+        outputSchema: AgentAttentionObjectivesSchema.shape,
+      },
+      async () => ({
+        content: [],
+        structuredContent: ensureValidJson(agentManager.getAttentionObjectives(callerAgentId)),
+      }),
+    );
+    registerTool(
+      "report_objective_status",
+      {
+        title: "Report my objective status",
+        description:
+          "Declare your current objective waiting for agents or final for its intended recipient. Waiting human work keeps its obligation across callback turns without prematurely asking for review. This does not pause or stop any agent. Get objectiveId from get_attention_context.",
+        inputSchema: {
+          objectiveId: z.string().min(1),
+          disposition: z.enum(["waiting", "final"]),
+        },
+        outputSchema: AgentAttentionObjectivesSchema.shape,
+      },
+      async ({ objectiveId, disposition }) => ({
+        content: [],
+        structuredContent: ensureValidJson(
+          await agentManager.reportObjectiveStatus({
+            agentId: callerAgentId,
+            objectiveId,
+            disposition,
+          }),
+        ),
+      }),
+    );
+    registerTool(
+      "request_human_attention",
+      {
+        title: "Request human attention for my task",
+        description:
+          "Explicitly ask the human to review or intervene in your current task. State the reason; the notification opens this chat. Routine agent-directed results go to their requester instead. Repeating the same unresolved reason does not notify again. You cannot target another agent. Get objectiveId from get_attention_context.",
+        inputSchema: {
+          objectiveId: z.string().min(1),
+          reason: z.string().trim().min(1).max(2048),
+        },
+        outputSchema: { notified: z.boolean() },
+      },
+      async ({ objectiveId, reason }) => ({
+        content: [],
+        structuredContent: await agentManager.requestHumanAttention({
+          agentId: callerAgentId,
+          objectiveId,
+          reason,
+        }),
+      }),
+    );
+  }
+
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
     "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
+
+  /** Describe an already accepted dispatch without changing its watcher or admission lifecycle. */
+  function describePromptAcknowledgement(
+    disposition: PromptDispatchDisposition,
+    snapshot: ReturnType<AgentManager["getAgent"]>,
+    notifying: boolean,
+  ) {
+    return {
+      success: true,
+      disposition,
+      status: snapshot?.lifecycle ?? "idle",
+      guidance: notifying
+        ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
+        : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
+    };
+  }
 
   registerTool(
     "send_agent_prompt",
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Paseo supplies caller identity. Before ending your reply while a human result is still delegated, use get_attention_context and report_objective_status(waiting); report final when that result is ready.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -1965,10 +2090,18 @@ function createToolCatalog(
     async ({
       agentId,
       prompt,
+      objectiveId,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
       activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
     }) => {
+      const attention = callerAgentId
+        ? await agentManager.prepareAttentionMessage({
+            agentId: callerAgentId,
+            recipient: { agentId },
+            objectiveId,
+          })
+        : undefined;
       let stopNotification: (() => void) | undefined;
       let acceptDispatch!: (result: PromptDispatchDisposition | false) => void;
       const dispatchResult = new Promise<PromptDispatchDisposition | false>((resolve) => {
@@ -1984,6 +2117,9 @@ function createToolCatalog(
           childAgentId: agentId,
           childServerId: options.serverId,
           callerAgentId,
+          attention: attention?.requesterObjective
+            ? { continuation: attention.requesterObjective }
+            : undefined,
           waitForTurnStart: false,
           dispatchResult,
           logger: childLogger,
@@ -2006,6 +2142,9 @@ function createToolCatalog(
           childAgentId: agentId,
           childServerId: options.serverId,
           callerAgentId,
+          attention: attention?.requesterObjective
+            ? { continuation: attention.requesterObjective }
+            : undefined,
           waitForTurnStart: true,
           logger: childLogger,
         });
@@ -2017,10 +2156,12 @@ function createToolCatalog(
         }
         const receipt = agentMessages().enqueue({
           recipientId: agentId,
+          messageId: attention?.requesterObjective?.requestId,
           prompt,
           source: {
             kind: "agent-message",
             agentId: callerAgentId,
+            attention,
             title: resolveCallerAgent()?.config.title ?? undefined,
           },
           sessionMode,
@@ -2074,14 +2215,7 @@ function createToolCatalog(
       }
       const currentSnapshot = agentManager.getAgent(agentId);
 
-      const responseData = {
-        success: true,
-        disposition,
-        status: currentSnapshot?.lifecycle ?? "idle",
-        guidance: notifying
-          ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
-          : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
-      };
+      const responseData = describePromptAcknowledgement(disposition, currentSnapshot, notifying);
       const validJson = ensureValidJson(responseData);
 
       const response = {
@@ -2131,6 +2265,7 @@ function createToolCatalog(
       const structuredSnapshot = buildStoredAgentPayload(
         record,
         new Set(providerSnapshotManager.listRegisteredProviderIds()),
+        { agentAwareAttention: agentManager.agentAwareAttentionEnabled },
       );
       return {
         content: [],
@@ -2186,6 +2321,7 @@ function createToolCatalog(
           buildStoredAgentPayload(
             record,
             new Set(providerSnapshotManager.listRegisteredProviderIds()),
+            { agentAwareAttention: agentManager.agentAwareAttentionEnabled },
           ),
         isProviderVisible: () => true,
         isStoredProviderAvailable: (record) =>

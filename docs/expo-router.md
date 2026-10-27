@@ -128,12 +128,7 @@ the global `open` value there pairs another screen's chat with the wrong workspa
 Nested workspace navigation must also clear `open` when no target is supplied,
 because React Navigation merges params on retained screens.
 
-OS notification dismissal follows the visible chat, independently of navigation or
-server attention. A retained route, unfocused pane, loading chat, hidden window,
-or compact sidebar does not acknowledge a notification. Browser cleanup covers
-only notifications created by that browser session. Windows history cleanup
-requires the executable-owned fork notification identity; legacy Debug and upstream
-histories remain separate.
+Opening a selected, ready workspace in the foreground acknowledges its existing notifications through the host. A retained route, unfocused pane, loading workspace, hidden window, or compact sidebar must not acknowledge it. Capture the displayed delivery boundary once per activation; receiving a later event while the workspace stays open does not create another acknowledgement. See [workspace notifications](architecture.md#workspace-notifications) for synchronization and OS limits.
 
 ## Params
 

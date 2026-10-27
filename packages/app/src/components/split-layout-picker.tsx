@@ -1,5 +1,6 @@
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { useCallback, useMemo } from "react";
-import { Pressable, View, Text, type PressableStateCallbackType } from "react-native";
+import { View, Text, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -55,11 +56,14 @@ function SplitDiagram({
   label: string;
 }) {
   const horizontal = direction === "horizontal";
-  // Exclude the gap from hit regions: 30% of compact's 148px usable axis is
-  // 44.4px; the other axis is 48px. Adjacent regions need no overlapping hitSlop.
-  const width = compact && horizontal ? 150 : 48;
+  // A 220px usable axis keeps the smallest 20% region at 44px. The gap
+  // is outside both hit regions, so adjacent targets need no overlapping hitSlop.
+  const width = compact && horizontal ? 222 : 48;
   let height = 28;
-  if (compact) height = horizontal ? 48 : 150;
+  if (compact) height = horizontal ? 48 : 222;
+  const usableAxis = (horizontal ? width : height) - 2;
+  const firstRegionSize = usableAxis * fraction;
+  const secondRegionSize = usableAxis - firstRegionSize;
   const diagramStyle = useMemo(
     () => [
       styles.diagram,
@@ -76,8 +80,8 @@ function SplitDiagram({
           fraction={fraction}
           label={label}
           percent={Math.round(fraction * 100)}
-          width={horizontal ? (width - 2) * fraction : width}
-          height={horizontal ? height : (height - 2) * fraction}
+          width={horizontal ? firstRegionSize : width}
+          height={horizontal ? height : firstRegionSize}
         />
         <SplitRegion
           {...props}
@@ -85,8 +89,8 @@ function SplitDiagram({
           fraction={fraction}
           label={label}
           percent={Math.round((1 - fraction) * 100)}
-          width={horizontal ? (width - 2) * (1 - fraction) : width}
-          height={horizontal ? height : (height - 2) * (1 - fraction)}
+          width={horizontal ? secondRegionSize : width}
+          height={horizontal ? height : secondRegionSize}
         />
       </View>
       <Text style={styles.ratio}>{label}</Text>
@@ -142,7 +146,8 @@ function SplitRegion({
       ? t("workspace.splits.openRegion", { item: intent.item, side: sideLabel, percent })
       : t("workspace.splits.moveRegion", { side: sideLabel, percent });
   return (
-    <Pressable
+    <PressHighlight
+      highlightStyle={styles.highlighted}
       style={regionStyle}
       disabled={disabled}
       onPress={select}

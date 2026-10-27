@@ -13,6 +13,7 @@ import type { AgentAttachment, FirstAgentContext } from "../../messages.js";
 import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
 import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
+import type { AgentMessageAttention } from "@getpaseo/protocol/agent-attention";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
@@ -85,6 +86,7 @@ export interface CreateAgentFromMcpInput {
   }) => void;
   onWorktreeCreated?: (createdWorktree: CreatePaseoWorktreeWorkflowResult) => void;
   callerAgentId?: string;
+  callerObjectiveId?: string;
   callerContext?: {
     lockedCwd?: string;
     allowCustomCwd?: boolean;
@@ -105,6 +107,7 @@ export type CreateAgentCommandInput = CreateAgentFromSessionInput | CreateAgentF
 export type CreateAgentPromptFailureMode = "throw" | "log" | "return-error";
 
 export interface CreateAgentCommandResult {
+  initialAttention?: AgentMessageAttention;
   snapshot: ManagedAgent;
   liveSnapshot: ManagedAgent;
   initialPromptStarted: boolean;
@@ -156,6 +159,10 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
+  const callerTurnId =
+    input.kind === "mcp" && input.callerAgentId
+      ? (dependencies.agentManager.getAgent(input.callerAgentId)?.activeTurnId ?? null)
+      : undefined;
   const resolved =
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
@@ -167,6 +174,17 @@ export async function createAgentCommand(
     resolved.createOptions,
   );
 
+  let initialAttention: AgentMessageAttention | undefined;
+  if (input.kind === "mcp" && input.callerAgentId && resolved.prompt !== undefined) {
+    initialAttention = await dependencies.agentManager.prepareAttentionMessage({
+      agentId: input.callerAgentId,
+      objectiveId: input.callerObjectiveId,
+      expectedTurnId: callerTurnId,
+      recipient: { agentId: snapshot.id },
+    });
+    if (resolved.source) resolved.source = { ...resolved.source, attention: initialAttention };
+  }
+
   if (input.kind === "session") await input.onAgentReady?.(snapshot);
 
   let liveSnapshot = snapshot;
@@ -175,22 +193,13 @@ export async function createAgentCommand(
   if (input.kind === "mcp") {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
-  const stopNotification =
-    input.kind === "mcp" &&
-    input.notifyOnFinish &&
-    input.callerAgentId &&
-    resolved.prompt !== undefined
-      ? setupFinishNotification({
-          agentMessages: requireAgentMessages(dependencies),
-          agentManager: dependencies.agentManager,
-          agentStorage: dependencies.agentStorage,
-          childAgentId: snapshot.id,
-          callerAgentId: input.callerAgentId,
-          // Detached agents have no parent label, but still notify their creator.
-          requireParentOwnership: !(input.detached ?? false),
-          logger: dependencies.logger,
-        })
-      : undefined;
+  const stopNotification = armCreatedAgentFinishNotification({
+    dependencies,
+    input,
+    snapshot,
+    prompt: resolved.prompt,
+    attention: initialAttention,
+  });
 
   if (resolved.prompt !== undefined) {
     const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch((error) => {
@@ -203,12 +212,40 @@ export async function createAgentCommand(
   }
 
   return {
+    initialAttention,
     snapshot,
     liveSnapshot,
     initialPromptStarted,
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
+}
+
+/** Arm the creator's existing completion watch synchronously before the initial prompt is submitted. */
+function armCreatedAgentFinishNotification(params: {
+  dependencies: CreateAgentCommandDependencies;
+  input: CreateAgentCommandInput;
+  snapshot: ManagedAgent;
+  prompt: AgentPromptInput | undefined;
+  attention: AgentMessageAttention | undefined;
+}): (() => void) | undefined {
+  const { dependencies, input, snapshot, prompt, attention } = params;
+  if (input.kind !== "mcp" || !input.notifyOnFinish || !input.callerAgentId || prompt === undefined)
+    return undefined;
+
+  return setupFinishNotification({
+    agentMessages: requireAgentMessages(dependencies),
+    agentManager: dependencies.agentManager,
+    agentStorage: dependencies.agentStorage,
+    childAgentId: snapshot.id,
+    callerAgentId: input.callerAgentId,
+    attention: attention?.requesterObjective
+      ? { continuation: attention.requesterObjective }
+      : undefined,
+    // Detached agents have no parent label, but still notify their creator.
+    requireParentOwnership: !(input.detached ?? false),
+    logger: dependencies.logger,
+  });
 }
 
 async function resolveSessionCreateAgent(

@@ -117,14 +117,18 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
+        {
+          ...extractTimestamps(record),
+          attention: extractAttention(record),
+          attentionObjectives: record.attentionObjectives,
+          attentionMessage: record.attentionMessage ?? undefined,
+        },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
-      // No provider handle to resume: this starts the agent's first session rather than
-      // bringing one back, so it stamps activity and carries no stored attention. Records
-      // without a handle never got far enough to accumulate either.
+      // Provider startup can fail before a persistence handle exists. Retain its
+      // known audience and unread state when a later request recreates the session.
       const config = buildSessionConfig(record, {
         validProviders,
       });
@@ -135,6 +139,9 @@ export async function ensureAgentLoaded(
         labels: record.labels,
         workspaceId: record.workspaceId,
         owner: record.owner,
+        attentionObjectives: record.attentionObjectives,
+        attentionMessage: record.attentionMessage ?? undefined,
+        attention: extractAttention(record),
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

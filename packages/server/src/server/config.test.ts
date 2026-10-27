@@ -276,3 +276,17 @@ describe("packaged desktop managed defaults", () => {
     }
   });
 });
+
+test("attention preference startup defaults enabled and reload source retains explicit false", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "attention-config-load-"));
+  try {
+    expect(loadConfig(home, { env: {} }).notifications).toEqual({ agentAwareAttention: true });
+    await writeFile(
+      path.join(home, "config.json"),
+      JSON.stringify({ daemon: { notifications: { agentAwareAttention: false } } }),
+    );
+    expect(loadConfig(home, { env: {} }).notifications).toEqual({ agentAwareAttention: false });
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

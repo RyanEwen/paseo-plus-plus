@@ -61,10 +61,11 @@ export async function expectNoBranchSwitcherInWorkspaceHeader(page: Page): Promi
 /** Select a Changes comparison through its visible UI and wait for the selected mode. */
 export async function selectChangesComparison(
   page: Page,
-  comparison: "Committed" | "Uncommitted",
+  comparison: "Committed" | "Uncommitted" | "All changes",
 ): Promise<void> {
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   await tree.getByTestId("changes-diff-status-trigger").click();
-  await page.getByTestId(`changes-diff-mode-${comparison.toLowerCase()}`).click();
+  const mode = comparison === "All changes" ? "all" : comparison.toLowerCase();
+  await page.getByTestId(`changes-diff-mode-${mode}`).click();
   await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText(comparison);
 }

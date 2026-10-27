@@ -199,6 +199,15 @@
     ],
     "enableVideo": false
   },
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-notifications"
+        ]
+      }
+    }
+  },
   "reanimated": {
     "staticFeatureFlags": {
       "FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS": false

@@ -1,3 +1,5 @@
+import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
+import { toAgentPayload, buildStoredAgentPayload } from "./agent-projections.js";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
 import {
   prepareAgentMessage,
@@ -5,6 +7,7 @@ import {
   type AgentMessageDelivery,
 } from "./agent-messages/index.js";
 import type { Logger } from "pino";
+import { randomUUID } from "node:crypto";
 
 import type {
   AgentPermissionRequest,
@@ -20,6 +23,25 @@ import {
   getParentAddressFromLabels,
 } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import type { AgentMessageAttention } from "@getpaseo/protocol/agent-attention";
+import type { AttentionAdmission } from "./attention/objectives.js";
+
+/** Classify at the daemon-owned prompt entrypoint, before provider text encoding loses provenance. */
+function promptAttention(
+  source: AgentPromptSource | undefined,
+  requestId: string,
+): AttentionAdmission {
+  if (!source) return { kind: "human", requestId };
+  return {
+    kind: "agent",
+    requestId,
+    requester: {
+      agentId: source.agentId,
+      ...(source.serverId ? { serverId: source.serverId } : {}),
+    },
+    attention: source.attention,
+  };
+}
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -326,9 +348,13 @@ export async function sendPromptToAgent(
   return sendPreparedPromptToAgent({
     ...params,
     prompt: delivery.prompt,
-    runOptions: delivery.messageId
-      ? { ...params.runOptions, clientMessageId: delivery.messageId }
-      : params.runOptions,
+    runOptions: {
+      ...params.runOptions,
+      ...(delivery.messageId ? { clientMessageId: delivery.messageId } : {}),
+      attention: params.runOptions?.attention ?? [
+        promptAttention(source, delivery.messageId ?? params.messageId ?? randomUUID()),
+      ],
+    },
   });
 }
 
@@ -392,14 +418,20 @@ export async function startCreatedAgentInitialPrompt(
   const delivery = prepareAgentMessage(
     params.prompt,
     await resolvePromptSource(params.source, params.agentManager, params.agentStorage),
-    params.runOptions?.clientMessageId,
+    params.source?.attention?.requesterObjective?.requestId ?? params.runOptions?.clientMessageId,
   );
   const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
     delivery.prompt,
     params.logger,
-    { runOptions: { ...params.runOptions, clientMessageId: delivery.messageId } },
+    {
+      runOptions: {
+        ...params.runOptions,
+        clientMessageId: delivery.messageId,
+        attention: [promptAttention(params.source, delivery.messageId ?? randomUUID())],
+      },
+    },
   );
 
   if (dispatchResult.disposition === "turn_started") {
@@ -414,6 +446,7 @@ export async function startCreatedAgentInitialPrompt(
 }
 
 export interface SetupFinishNotificationParams {
+  attention?: AgentMessageAttention;
   agentMessages: AgentMessageDelivery;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -497,6 +530,11 @@ interface ArmedFinishNotification {
   supersedeWhen(accepted: Promise<boolean>): void;
 }
 
+type AttentionCallbackClaim = Omit<
+  Parameters<AgentManager["reserveAttentionCallback"]>[0],
+  "outcome"
+>;
+
 const armedFinishNotifications = new WeakMap<
   AgentManager,
   Map<string, Set<ArmedFinishNotification>>
@@ -504,6 +542,7 @@ const armedFinishNotifications = new WeakMap<
 
 /** Creation waits and accepted follow-ups share notification ownership. */
 export function setupFinishWait(params: {
+  attention?: AgentMessageAttention;
   agentMessages: AgentMessageDelivery;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -511,7 +550,11 @@ export function setupFinishWait(params: {
   childServerId?: string;
   childAgentId: string;
   callerAgentId: string;
-  wait(signal: AbortSignal): Promise<WaitForFinishResult>;
+  requireParentOwnership?: boolean;
+  wait(
+    signal: AbortSignal,
+    attentionRequest?: AgentAttentionRequestQuery,
+  ): Promise<WaitForFinishResult>;
   afterPermission(requestId: string, signal: AbortSignal): Promise<void>;
   logger: Logger;
 }): () => void {
@@ -520,11 +563,10 @@ export function setupFinishWait(params: {
     armedFinishNotifications.get(params.agentManager) ??
     new Map<string, Set<ArmedFinishNotification>>();
   armedFinishNotifications.set(params.agentManager, byManager);
-  const key = JSON.stringify([
-    params.childServerId ?? null,
-    params.childAgentId,
-    params.callerAgentId,
-  ]);
+  const watchIdentity = [params.childServerId ?? null, params.childAgentId, params.callerAgentId];
+  // Exact requests coexist: a later request must not discard an earlier immutable result.
+  if (params.attention?.continuation) watchIdentity.push(params.attention.continuation.requestId);
+  const key = JSON.stringify(watchIdentity);
   const registrations = byManager.get(key) ?? new Set<ArmedFinishNotification>();
   byManager.set(key, registrations);
   for (const previous of registrations) previous.stop();
@@ -542,46 +584,165 @@ export function setupFinishWait(params: {
     },
   };
   registrations.add(registration);
+  let attentionRequest: AgentAttentionRequestQuery | undefined = params.attention?.continuation
+    ? {
+        link: params.attention.continuation,
+        requester: params.agentManager.attentionRequester(params.callerAgentId),
+      }
+    : undefined;
+
+  /** Deliver one owned reservation, keeping the post-await ownership check synchronous with enqueue. */
+  async function deliverReservedOutcome(input: {
+    claim: AttentionCallbackClaim;
+    outcome: NonNullable<WaitForFinishResult["attentionOutcome"]>;
+    title: string;
+    lease: symbol;
+  }): Promise<boolean> {
+    const { claim, outcome, title, lease } = input;
+    let reason: FinishNotificationReason = "errored";
+    if (outcome.kind === "permission") reason = "needs permission";
+    if (outcome.kind === "finished") reason = "finished";
+    if (outcome.kind === "canceled") reason = "was canceled";
+    try {
+      let observedSupersession = superseded;
+      for (;;) {
+        const isSuperseded = await observedSupersession;
+        // Retirement and a newer supersession can arrive while the observed promise settles.
+        // Keep the final ownership check synchronous with enqueue, without another await.
+        if (controller.signal.aborted || isSuperseded) {
+          await params.agentManager.releaseAttentionCallback({ ...claim, lease });
+          return false;
+        }
+        if (observedSupersession === superseded) break;
+        observedSupersession = superseded;
+      }
+      const receipt = params.agentMessages.enqueue({
+        recipientId: params.callerAgentId,
+        messageId: claim.deliveryId,
+        prompt:
+          formatFinishNotificationBody({
+            childAgentId: params.childAgentId,
+            serverId: params.childServerId,
+            title,
+            reason,
+            lastAssistantMessage: outcome.lastMessage,
+            permissionRequest: outcome.permission,
+          }) + (outcome.error ? `\n\n${outcome.error}` : ""),
+        source: {
+          kind: "agent-notification",
+          agentId: params.childAgentId,
+          serverId: params.childServerId,
+          title,
+          event: finishNotificationEvents[reason],
+          attention: {
+            continuation: claim.link,
+            delivery: { outcomeId: outcome.id, deliveryId: claim.deliveryId },
+          },
+        },
+        activeTurnBehavior: "steer",
+        unarchive: false,
+      });
+      await receipt.dispatched;
+      // Actual provider admission consumes the reservation. Persist it before target acknowledgement.
+      await params.agentManager.persistAttentionDelivery(params.callerAgentId);
+      return true;
+    } catch (error) {
+      await params.agentManager.releaseAttentionCallback({ ...claim, lease });
+      throw error;
+    }
+  }
+
+  /** Return an acknowledgement ID only after exact evidence and durable source delivery succeed. */
+  async function deliverAttentionOutcome(
+    result: WaitForFinishResult,
+    query: AgentAttentionRequestQuery,
+  ): Promise<string | null> {
+    const outcome = result.attentionOutcome;
+    if (
+      !outcome ||
+      result.final?.id !== params.childAgentId ||
+      outcome.requestId !== query.link.requestId
+    )
+      return null;
+    const claim = {
+      agentId: params.callerAgentId,
+      peer: { agentId: params.childAgentId, serverId: params.childServerId },
+      link: query.link,
+      deliveryId: outcome.id,
+    };
+    const reserved = await params.agentManager.reserveAttentionCallback({ ...claim, outcome });
+    if (reserved.status === "consumed") return outcome.id;
+    const delivered = await deliverReservedOutcome({
+      claim,
+      outcome,
+      title: result.final?.title ?? params.childAgentId,
+      lease: reserved.lease,
+    });
+    return delivered ? outcome.id : null;
+  }
+
+  /** Forward a legacy result only after the watcher has applied its unchanged parent guard. */
+  async function deliverLegacyOutcome(result: WaitForFinishResult): Promise<boolean> {
+    if (result.status === "timeout") return false;
+    const reason = { idle: "finished", error: "errored", permission: "needs permission" }[
+      result.status
+    ] as FinishNotificationReason;
+    const permissionRequest = result.final?.pendingPermissions[0];
+    params.agentMessages.enqueue({
+      recipientId: params.callerAgentId,
+      prompt: formatFinishNotificationBody({
+        childAgentId: params.childAgentId,
+        serverId: params.childServerId,
+        title: result.final?.title ?? params.childAgentId,
+        reason,
+        lastAssistantMessage: result.lastMessage,
+        permissionRequest,
+      }),
+      source: {
+        kind: "agent-notification",
+        agentId: params.childAgentId,
+        serverId: params.childServerId,
+        title: result.final?.title ?? params.childAgentId,
+        event: finishNotificationEvents[reason],
+        attention: params.attention,
+      },
+      activeTurnBehavior: "steer",
+      unarchive: false,
+    });
+    if (result.status !== "permission" || !permissionRequest) return false;
+    await params.afterPermission(permissionRequest.id, controller.signal);
+    return true;
+  }
+
   async function watch(): Promise<void> {
     while (!controller.signal.aborted) {
-      const result = await params.wait(controller.signal);
+      const result = await params.wait(controller.signal, attentionRequest);
       if (controller.signal.aborted || (await superseded) || result.status === "timeout") return;
       const parent = getParentAddressFromLabels(
         result.final?.labels,
         params.childServerId ?? "self",
       );
+      if ((await params.agentStorage.get(params.callerAgentId))?.archivedAt) return;
+      if (attentionRequest) {
+        const acknowledgeOutcomeId = await deliverAttentionOutcome(result, attentionRequest);
+        if (acknowledgeOutcomeId === null) return;
+        attentionRequest = {
+          link: attentionRequest.link,
+          requester: attentionRequest.requester,
+          acknowledgeOutcomeId,
+        };
+        continue;
+      }
+
       if (
-        parent?.agentId !== params.callerAgentId ||
-        parent.serverId !== (params.originServerId ?? "self")
+        params.requireParentOwnership !== false &&
+        (parent?.agentId !== params.callerAgentId ||
+          parent.serverId !== (params.originServerId ?? "self"))
       )
         return;
-      if ((await params.agentStorage.get(params.callerAgentId))?.archivedAt) return;
-      const reason = { idle: "finished", error: "errored", permission: "needs permission" }[
-        result.status
-      ] as FinishNotificationReason;
-      const permissionRequest = result.final?.pendingPermissions[0];
-      params.agentMessages.enqueue({
-        recipientId: params.callerAgentId,
-        prompt: formatFinishNotificationBody({
-          childAgentId: params.childAgentId,
-          serverId: params.childServerId,
-          title: result.final?.title ?? params.childAgentId,
-          reason,
-          lastAssistantMessage: result.lastMessage,
-          permissionRequest,
-        }),
-        source: {
-          kind: "agent-notification",
-          agentId: params.childAgentId,
-          serverId: params.childServerId,
-          title: result.final?.title ?? params.childAgentId,
-          event: finishNotificationEvents[reason],
-        },
-        activeTurnBehavior: "steer",
-        unarchive: false,
-      });
-      if (result.status !== "permission" || !permissionRequest) return;
-      await params.afterPermission(permissionRequest.id, controller.signal);
+
+      const continueWatching = await deliverLegacyOutcome(result);
+      if (!continueWatching) return;
     }
   }
   void watch()
@@ -597,6 +758,51 @@ export function setupFinishWait(params: {
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): () => void {
+  if (params.attention?.continuation) {
+    return setupFinishWait({
+      ...params,
+      originServerId: params.childServerId,
+      requireParentOwnership: params.requireParentOwnership ?? false,
+      wait: async (signal, attentionRequest) => {
+        if (!attentionRequest) throw new Error("Missing attention request correlation");
+        if (params.dispatchResult && !(await params.dispatchResult))
+          return {
+            status: "error",
+            final: null,
+            error: null,
+            lastMessage: null,
+            attentionOutcome: null,
+          };
+        const attentionOutcome = await params.agentManager.waitForAttentionOutcome({
+          agentId: params.childAgentId,
+          query: attentionRequest,
+          signal,
+          waitForSubmission: attentionRequest.acknowledgeOutcomeId === undefined,
+        });
+        const record = await params.agentStorage.get(params.childAgentId);
+        const live = params.agentManager.getAgent(params.childAgentId);
+        let final: WaitForFinishResult["final"] = null;
+        if (live) {
+          final = toAgentPayload(live, { title: record?.title });
+        } else if (record) {
+          final = buildStoredAgentPayload(record, params.agentManager.getRegisteredProviderIds(), {
+            agentAwareAttention: params.agentManager.agentAwareAttentionEnabled,
+          });
+        }
+        let status: "idle" | "error" | "permission" = "error";
+        if (attentionOutcome?.kind === "finished") status = "idle";
+        if (attentionOutcome?.kind === "permission") status = "permission";
+        return {
+          status,
+          final,
+          lastMessage: attentionOutcome?.lastMessage ?? null,
+          error: attentionOutcome?.error ?? null,
+          attentionOutcome,
+        };
+      },
+      afterPermission: async () => {},
+    });
+  }
   const {
     agentManager,
     agentStorage,
@@ -698,6 +904,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         agentId: childAgentId,
         title,
         event: finishNotificationEvents[reason],
+        attention: params.attention,
       },
       activeTurnBehavior: "steer",
       unarchive: false,

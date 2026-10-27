@@ -1,3 +1,4 @@
+import { workspaceNotificationRuntime } from "@/notifications/workspace-receipts-runtime";
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
 import { AppState } from "react-native";
@@ -253,6 +254,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     focusedTerminalId,
   });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
+  const supportsNotificationReceipts = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.serverInfo?.features?.workspaceNotificationReceipts === true,
+  );
+  useEffect(() => {
+    if (!supportsNotificationReceipts) return;
+    return workspaceNotificationRuntime.start(serverId, client);
+  }, [client, serverId, supportsNotificationReceipts]);
+  useEffect(() => {
+    if (isAppVisible && supportsNotificationReceipts) workspaceNotificationRuntime.resume(serverId);
+  }, [isAppVisible, serverId, supportsNotificationReceipts]);
 
   const notifyAgentAttention = useCallback(
     (params: {
@@ -300,6 +312,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
+      if (workspaceNotificationRuntime.isAcknowledged(notification.data)) return;
       void sendWorkspaceOsNotification({
         title: notification.title,
         body: notification.body,
@@ -674,6 +687,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         data: {
           serverId: message.payload.serverId ?? serverId,
           terminalId: message.payload.terminalId,
+          notificationSequence: message.payload.notificationSequence,
           cwd: message.payload.cwd,
           ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
         },

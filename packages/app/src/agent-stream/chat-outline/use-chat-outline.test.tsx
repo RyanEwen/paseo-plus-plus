@@ -21,8 +21,16 @@ import {
 } from "@/timeline/canonical-prompt-context";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import { useNativeReadingRefresh } from "../native-sticky-viewport";
-import { resolveActualNativeReading } from "../native-actual-row-model";
-import { ActualPromptRowsContext, ActualPromptRowsProvider } from "../actual-prompt-rows";
+import {
+  createNativeMeasuredHeaderIndex,
+  resolveActualNativeReading,
+} from "../native-actual-row-model";
+import {
+  ActualPinnedRowContext,
+  ActualPromptRowsContext,
+  ActualPromptRowsProvider,
+} from "../actual-prompt-rows";
+import { useActualPromptPresentation } from "../use-actual-prompt-presentation";
 import React, { useContext, type ReactNode } from "react";
 import { useNavigationActionVisibility } from "../use-navigation-action-visibility";
 // @vitest-environment jsdom
@@ -44,7 +52,11 @@ import {
   type ContextPage,
   type ContextEntry,
 } from "../fetch-reading-prompt-context";
-import { resolveRetainedContextSource, type UserPrompt } from "../sticky-prompt-model";
+import {
+  resolveRetainedContextSource,
+  resolvePromptFeedback,
+  type UserPrompt,
+} from "../sticky-prompt-model";
 import { useReadingPrompt } from "../use-reading-prompt";
 import { useStickyPrompt } from "../use-sticky-prompt";
 import type { StreamItem } from "@/types/stream";
@@ -1744,6 +1756,152 @@ describe("index-free cache-only context", () => {
     gap: false,
   });
 
+  it("finds a manually read occurrence behind newer display anchors within the existing budget", async () => {
+    const newer: ContextEntry = {
+      ...entry(250, 270),
+      sourceSeqRanges: [
+        { startSeq: 250, endSeq: 255 },
+        { startSeq: 270, endSeq: 270 },
+      ],
+      item: { type: "assistant_message", messageId: "newer", text: "newer answer" },
+    };
+    const olderPrompt = entry(240, 240, "user_message");
+    const projectedSource: ContextEntry = {
+      ...entry(246, 280),
+      sourceSeqRanges: [
+        { startSeq: 246, endSeq: 249 },
+        { startSeq: 256, endSeq: 256 },
+        { startSeq: 280, endSeq: 280 },
+      ],
+    };
+    const reader = vi
+      .fn()
+      .mockResolvedValueOnce(page([newer]))
+      .mockResolvedValueOnce(page([olderPrompt, projectedSource], false));
+    const prompt = await fetchReadingPromptContext(reader, source, new AbortController().signal);
+    expect(prompt?.timelineCursor?.seq).toBe(240);
+    expect(prompt?.text).toBe("original prompt");
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(reader.mock.calls[0]![0].cursor).toBe(257);
+    expect(reader.mock.calls[0]![0].limit).toBe(1);
+    expect(reader.mock.calls[1]![0].cursor).toBe(250);
+    expect(reader.mock.calls[1]![0].limit).toBe(40);
+    expect(reader.mock.calls[1]![0].projection).toBe("projected");
+  });
+
+  it("accepts an older projected tool anchor whose later update crosses the context cursor", async () => {
+    const tool: ContextEntry = {
+      ...entry(220, 270),
+      sourceSeqRanges: [
+        { startSeq: 220, endSeq: 220 },
+        { startSeq: 270, endSeq: 270 },
+      ],
+      item: {
+        type: "tool_call",
+        callId: "interleaved",
+        name: "Read",
+        status: "completed",
+        error: null,
+        detail: { type: "read", filePath: "file" },
+      },
+    };
+    const reader = vi
+      .fn()
+      .mockResolvedValueOnce(page([entry(246, 256)]))
+      .mockResolvedValueOnce(page([entry(64, 64, "user_message"), tool], false));
+    const prompt = await fetchReadingPromptContext(reader, source, new AbortController().signal);
+    expect(prompt?.timelineCursor?.seq).toBe(64);
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(reader.mock.calls[1]![0].cursor).toBe(246);
+  });
+
+  it("keeps source-anchor search capped at eight reads and fences a cancelled fallback", async () => {
+    const unmatched = vi.fn(async ({ cursor }: { cursor: number }) =>
+      page([
+        {
+          ...entry(cursor - 1, cursor - 1),
+          item: { type: "assistant_message", messageId: "other", text: "other answer" },
+        },
+      ]),
+    );
+    await expect(
+      fetchReadingPromptContext(unmatched, source, new AbortController().signal),
+    ).rejects.toThrow("occurrence is unavailable");
+    expect(unmatched).toHaveBeenCalledTimes(8);
+    const held = deferred<ContextPage>();
+    const reader = vi
+      .fn()
+      .mockResolvedValueOnce(page([entry(250, 250, "user_message")]))
+      .mockImplementationOnce(() => held.promise);
+    const controller = new AbortController();
+    const pending = fetchReadingPromptContext(reader, source, controller.signal);
+    await waitFor(() => expect(reader).toHaveBeenCalledTimes(2));
+    controller.abort();
+    held.resolve(
+      page(
+        [
+          entry(240, 240, "user_message"),
+          {
+            ...entry(246, 280),
+            sourceSeqRanges: [
+              { startSeq: 246, endSeq: 249 },
+              { startSeq: 251, endSeq: 280 },
+            ],
+          },
+        ],
+        false,
+      ),
+    );
+    await expect(pending).rejects.toThrow("cancelled");
+    expect(reader).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares the eight-read cap between fallback source search and predecessor discovery", async () => {
+    const reader = vi.fn(async ({ cursor }: { cursor: number }) => {
+      if (cursor === 257) return page([entry(250, 250, "user_message")]);
+      if (cursor === 250)
+        return page([
+          {
+            ...entry(246, 256),
+            sourceSeqRanges: [
+              { startSeq: 246, endSeq: 249 },
+              { startSeq: 251, endSeq: 256 },
+            ],
+          },
+        ]);
+      return page([entry(cursor - 1, cursor - 1)]);
+    });
+    await expect(
+      fetchReadingPromptContext(reader, source, new AbortController().signal),
+    ).rejects.toThrow("request budget");
+    expect(reader).toHaveBeenCalledTimes(8);
+    expect(reader.mock.calls[7]![0].cursor).toBe(241);
+  });
+
+  it("never treats a newer USER inside the expanded source span as its predecessor", async () => {
+    const reader = vi
+      .fn()
+      .mockResolvedValueOnce(page([entry(250, 250, "user_message")]))
+      .mockResolvedValueOnce(
+        page(
+          [
+            entry(200, 200, "user_message"),
+            {
+              ...entry(246, 256),
+              sourceSeqRanges: [
+                { startSeq: 246, endSeq: 249 },
+                { startSeq: 251, endSeq: 256 },
+              ],
+            },
+          ],
+          false,
+        ),
+      );
+    const prompt = await fetchReadingPromptContext(reader, source, new AbortController().signal);
+    expect(prompt?.timelineCursor?.seq).toBe(200);
+    expect(reader).toHaveBeenCalledTimes(2);
+  });
+
   it("separates shared messageId occurrences and walks true expanded source starts", async () => {
     const reader = vi
       .fn()
@@ -1891,7 +2049,7 @@ describe("index-free cache-only context", () => {
     { staleCursor: true },
     { gap: true },
     { error: "failed" },
-    { entries: [entry(220, 242)] },
+    { entries: [entry(220, 242)], hasOlder: false },
     { entries: [entry(246, 256), entry(246, 256)] },
     { entries: [{ ...entry(246, 256), sourceSeqRanges: [] }] },
   ])("rejects changed, missing or ambiguous source metadata %j", async (invalid) => {
@@ -2562,6 +2720,62 @@ describe("actual prompt disclosure ownership", () => {
     act(() => release?.());
   });
 
+  it("keeps ordinary messages expanded independently of sticky disclosure across pin transitions", () => {
+    let pinned = false;
+    const attachments = [
+      { type: "text" as const, mimeType: "text/plain" as const, text: "Attachment body" },
+    ];
+    const props = { message: "First line\nSecond line\nThird line", timestamp: 0, attachments };
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <ActualPromptRowsProvider enabled scope="session:epoch" availableHeight={500}>
+          <ActualPinnedRowContext.Provider value={pinned}>
+            {children}
+          </ActualPinnedRowContext.Provider>
+        </ActualPromptRowsProvider>
+      );
+    }
+    const { result, rerender } = renderHook(
+      () => ({
+        presentation: useActualPromptPresentation("original", props),
+        rows: useContext(ActualPromptRowsContext),
+      }),
+      { wrapper: Wrapper },
+    );
+    expect(result.current.presentation.previewLines).toBeUndefined();
+    expect(result.current.presentation.previewExpanded).toBe(true);
+    expect(result.current.presentation.bodyViewportHeight).toBeUndefined();
+    expect(result.current.presentation.inlineContentAction).toBeNull();
+    expect(result.current.rows!.expandedIds.has("original")).toBe(false);
+
+    pinned = true;
+    rerender();
+    expect(result.current.presentation.previewLines).toBe(1);
+    expect(result.current.presentation.previewExpanded).toBe(false);
+    expect(result.current.presentation.bodyViewportHeight).toBe(
+      result.current.rows!.bodyViewportHeight,
+    );
+    expect(React.isValidElement(result.current.presentation.inlineContentAction)).toBe(true);
+    act(() => result.current.rows!.toggleExpanded("original"));
+    expect(result.current.presentation.previewExpanded).toBe(true);
+
+    pinned = false;
+    rerender();
+    expect(result.current.presentation.previewLines).toBeUndefined();
+    expect(result.current.presentation.bodyViewportHeight).toBeUndefined();
+    expect(result.current.presentation.inlineContentAction).toBeNull();
+    act(() => result.current.rows!.toggleExpanded("original"));
+    expect(result.current.rows!.expandedIds.has("original")).toBe(false);
+    expect(result.current.presentation.previewExpanded).toBe(true);
+    expect(props.attachments.length).toBe(1);
+    expect(props.attachments[0]!.text).toBe("Attachment body");
+
+    pinned = true;
+    rerender();
+    expect(result.current.presentation.previewExpanded).toBe(false);
+    expect(result.current.presentation.previewLines).toBe(1);
+  });
+
   it("provides no collapse or pin policy when the feature is disabled", () => {
     function Wrapper({ children }: { children: ReactNode }) {
       return (
@@ -2627,6 +2841,7 @@ async function nativeEndpointReadingFixture() {
       resolveActualNativeReading({
         items,
         geometry,
+        headers: createNativeMeasuredHeaderIndex({ items, geometry }),
         mounted,
         offset: 1000,
         viewportHeight: 600,
@@ -4836,5 +5051,60 @@ describe("latest sticky context source", () => {
       resolveRetainedContextSource(items, epoch, { ...following, navigating: true }, coverage),
     ).toBeUndefined();
     expect(resolveRetainedContextSource(items, "missing", following, coverage)).toBeUndefined();
+  });
+});
+
+describe("sticky context feedback ownership", () => {
+  const prompt = stickyUser("available-prompt", 4, "epoch");
+  const idle = {
+    message: prompt,
+    busy: false,
+    error: false,
+    cancelled: false,
+    discoveryStatus: "idle" as const,
+  };
+  const context = {
+    loading: false,
+    error: false,
+    cancelled: false,
+    limited: false,
+    exhausted: false,
+  };
+
+  it("keeps an available USER free of passive loading, failure and budget overlays", () => {
+    const feedback = resolvePromptFeedback(idle, {
+      ...context,
+      loading: true,
+      error: true,
+      limited: true,
+    });
+    expect(feedback.busy).toBe(false);
+    expect(feedback.error).toBe(false);
+    expect(feedback.discoveryStatus).toBe("idle");
+    expect(idle.message).toBe(prompt);
+  });
+
+  it("owns loading and actionable Retry in the rail when no USER is available", () => {
+    const missing = { ...idle, message: undefined };
+    const loading = resolvePromptFeedback(missing, { ...context, loading: true });
+    expect(loading.busy).toBe(true);
+    expect(loading.error).toBe(false);
+    const limited = resolvePromptFeedback(missing, { ...context, limited: true });
+    expect(limited.discoveryStatus).toBe("limited");
+    expect(limited.retryContext).toBe(true);
+    const failed = resolvePromptFeedback(missing, { ...context, error: true });
+    expect(failed.error).toBe(true);
+    expect(failed.retryContext).toBe(true);
+  });
+
+  it("keeps explicit navigation failures and their Retry ahead of a passive failure", () => {
+    const explicit = { ...idle, error: true, discoveryStatus: "limited" as const };
+    const feedback = resolvePromptFeedback(explicit, { ...context, limited: true, error: true });
+    expect(feedback.error).toBe(true);
+    expect(feedback.discoveryStatus).toBe("limited");
+    expect(feedback.retryContext).toBe(false);
+    const pending = resolvePromptFeedback({ ...idle, busy: true }, { ...context, loading: true });
+    expect(pending.busy).toBe(true);
+    expect(idle.message).toBe(prompt);
   });
 });

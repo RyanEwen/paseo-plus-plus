@@ -336,6 +336,83 @@ async function expectCurrentWorkspaceRefresh({
 }
 
 describe("ReplicaCache", () => {
+  it.each([
+    {
+      label: "project pin",
+      projectPinnedAt: "2026-10-26T12:00:00.000Z",
+      pinnedAt: null,
+      storedPinPresent: true,
+      restoredPin: "2026-10-26T12:00:00.000Z",
+    },
+    {
+      label: "global pin",
+      projectPinnedAt: null,
+      pinnedAt: "2026-10-25T12:00:00.000Z",
+      storedPinPresent: true,
+      restoredPin: null,
+    },
+    {
+      label: "older row without project pin metadata",
+      projectPinnedAt: undefined,
+      pinnedAt: null,
+      storedPinPresent: false,
+      restoredPin: null,
+    },
+  ])(
+    "retains $label through persisted workspace cache hydration without read-repair writes",
+    async ({ projectPinnedAt, pinnedAt, storedPinPresent, restoredPin }) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const checkpoint = {
+        projects: { generation: "project-generation", afterSeq: 7 },
+        workspaces: { generation: "workspace-generation", afterSeq: 17 },
+        agents: { generation: "agent-generation", afterSeq: 29 },
+      };
+      const baseline = directory(checkpoint);
+      const cachedWorkspace = {
+        ...normalizeWorkspaceDescriptor({
+          ...workspacePayload(),
+          title: "Cached pin metadata",
+          labels: ["triage"],
+          pinnedAt,
+          humanAttentionRequired: true,
+        }),
+        projectPinnedAt,
+      };
+      baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
+      writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+      writer.commitTimeline(SERVER_ID, "agent-1", timeline("Preserved sibling timeline"));
+      await writer.flush();
+      const storedWorkspace = storage.rows.get(`${SERVER_ID}:workspace:workspace-1`);
+      if (!storedWorkspace)
+        throw new Error("Expected the real writer to persist its workspace row");
+      expect(storedWorkspace.payload.includes('"projectPinnedAt"')).toBe(storedPinPresent);
+      const rowsBeforeRead = Array.from(storage.rows.values(), (row) => Object.assign({}, row));
+      const writesBeforeRead = storage.writes;
+      const reader = createCache(storage);
+      const restored = await reader.readDirectory(SERVER_ID);
+      expect(restored.workspaces.get("workspace-1")).toMatchObject({
+        projectPinnedAt: restoredPin,
+        pinnedAt,
+        title: "Cached pin metadata",
+        labels: ["triage"],
+        humanAttentionRequired: true,
+      });
+      expect(restored.checkpoint).toEqual(checkpoint);
+      expect(restored.agents).toEqual(baseline.agents);
+      expect(restored.projects).toEqual(baseline.projects);
+      expect((await reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace).toMatchObject({
+        projectPinnedAt: restoredPin,
+        pinnedAt,
+      });
+      expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(
+        timeline("Preserved sibling timeline"),
+      );
+      await reader.flush();
+      expect(storage.writes).toBe(writesBeforeRead);
+      expect([...storage.rows.values()]).toEqual(rowsBeforeRead);
+    },
+  );
   it("reads a healthy sibling during agent checkpoint streams after workspace repair", async () => {
     const cached = await cacheWithCorruptCurrentBackground();
     cached.reader.commitDirectoryMutations(SERVER_ID, [
@@ -1685,4 +1762,31 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   writer.commitTimeline(SERVER_ID, "agent-1", value);
   await writer.flush();
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+});
+
+it("retains the audience decision across offline agent and workspace restoration", async () => {
+  const storage = new MemoryStorage();
+  const cache = createCache(storage);
+  const baseline = directory();
+  const cachedAgent = agent();
+  cachedAgent.humanAttentionRequired = false;
+  cachedAgent.attentionMessage = "Intervention reason";
+  baseline.agents.set(cachedAgent.id, cachedAgent);
+  const cachedWorkspace = normalizeWorkspaceDescriptor({
+    ...workspacePayload(),
+    status: "failed",
+    humanAttentionRequired: false,
+  });
+  baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
+  commitDirectory(cache, SERVER_ID, baseline);
+  await cache.flush();
+  const restored = await createCache(storage).readDirectory(SERVER_ID);
+  expect(restored.agents.get(cachedAgent.id)).toMatchObject({
+    humanAttentionRequired: false,
+    attentionMessage: "Intervention reason",
+  });
+  expect(restored.workspaces.get(cachedWorkspace.id)).toMatchObject({
+    status: "failed",
+    humanAttentionRequired: false,
+  });
 });

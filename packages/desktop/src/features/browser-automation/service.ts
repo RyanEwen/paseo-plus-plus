@@ -1152,13 +1152,6 @@ async function executeType(
     requestId,
     contents: target.contents,
     task: async (page) => {
-      if (!page.sendDebugCommand) {
-        return fail(
-          requestId,
-          "browser_unsupported",
-          "browser_type requires trusted browser input",
-        );
-      }
       let actionable: ActionabilityResult | null = null;
       if (ref) {
         const elementExpression = snapshotEngine.runtimeElementExpression({
@@ -1176,7 +1169,9 @@ async function executeType(
         if (!actionable.ok) {
           return actionabilityFailure(requestId, ref, actionable);
         }
-        await dispatchTrustedClick(cdpSender(page), actionable.target.point);
+        const focused = await focusInputTarget(page, elementExpression, true);
+        if (focused === "stale_ref") return staleRefFailure(requestId, ref);
+        if (focused !== "focused") return inputFocusFailure(requestId);
       }
       await page.insertText(text);
       return {
@@ -1226,20 +1221,11 @@ async function executeKeypress(
         if (!actionable.ok) {
           return actionabilityFailure(requestId, ref, actionable);
         }
-        const focused = await focusKeypressTarget(page, elementExpression);
+        const focused = await focusInputTarget(page, elementExpression);
         if (focused === "stale_ref") {
           return staleRefFailure(requestId, ref);
         }
-        if (focused === "editable") {
-          if (!page.sendDebugCommand) {
-            return fail(
-              requestId,
-              "browser_unsupported",
-              "browser_keypress requires trusted browser input",
-            );
-          }
-          await dispatchTrustedClick(cdpSender(page), actionable.target.point);
-        }
+        if (focused !== "focused") return inputFocusFailure(requestId);
       }
       dispatchTrustedKey((event) => page.sendInputEvent(event), key);
       return {
@@ -1788,22 +1774,74 @@ function buildEvaluateScript(
 	  })()`;
 }
 
-async function focusKeypressTarget(
+/** Focus inside the guest without the pointer gesture that transfers host DOM focus.
+ * Revalidate after synchronous focus handlers, before native input. This does not make
+ * later page scripts and the separate native input message an atomic operation.
+ * Contenteditable input focuses its editing host and keeps an existing exact-ref selection.
+ */
+async function focusInputTarget(
   contents: Pick<TabContents, "executeJavaScript">,
   elementExpression: string,
-): Promise<"editable" | "focused" | "stale_ref"> {
+  requiresEditable = false,
+): Promise<"focused" | "stale_ref" | "not_focused"> {
   const result = await contents.executeJavaScript(String.raw`(() => {
-    const element = ${elementExpression};
-    if (!element) return { staleRef: true };
+    const resolveElement = () => (${elementExpression});
+    const element = resolveElement();
+    const connectedHere = (node) => node?.isConnected && node.ownerDocument === document &&
+      node.getRootNode() === document;
+    if (!connectedHere(element)) return { staleRef: true };
+    const editingHostFor = () => {
+      let host = element;
+      while (host.isContentEditable && host.parentElement?.isContentEditable) host = host.parentElement;
+      return host;
+    };
+    const editingHost = editingHostFor();
+    const selectionWithin = (selection) => Boolean(selection?.rangeCount) &&
+      element.contains(selection.anchorNode) && element.contains(selection.focusNode);
+    const selection = element.isContentEditable ? document.getSelection() : null;
+    const retainedSelection = selectionWithin(selection) ? {
+      anchor: selection.anchorNode, anchorOffset: selection.anchorOffset,
+      focus: selection.focusNode, focusOffset: selection.focusOffset,
+    } : null;
+    const stillCurrent = () => connectedHere(element) && connectedHere(editingHost) &&
+      resolveElement() === element && editingHostFor() === editingHost;
+    if (typeof editingHost.focus !== 'function') return { focused: false };
+    editingHost.focus({ preventScroll: true });
+    if (!stillCurrent()) return { staleRef: true };
     const tagName = element.tagName ? element.tagName.toLowerCase() : '';
     const inputType = tagName === 'input' ? String(element.getAttribute('type') || 'text').toLowerCase() : '';
     const editableInput = tagName === 'textarea' ||
       (tagName === 'input' && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
     const editable = editableInput || element.isContentEditable === true;
-    if (!editable && typeof element.focus === 'function') {
-      element.focus({ preventScroll: true });
+    if (element.disabled || element.closest('[aria-disabled="true"], fieldset[disabled]') ||
+        (${JSON.stringify(requiresEditable)} && (!editable || element.readOnly))) {
+      return { focused: false };
     }
-    return { editable };
+    if (element.isContentEditable) {
+      const currentSelection = document.getSelection();
+      if (document.activeElement !== editingHost || !currentSelection) return { focused: false };
+      if (retainedSelection) {
+        if (!element.contains(retainedSelection.anchor) || !element.contains(retainedSelection.focus)) {
+          return { focused: false };
+        }
+        const { anchor, anchorOffset, focus, focusOffset } = retainedSelection;
+        if (currentSelection.anchorNode !== anchor || currentSelection.anchorOffset !== anchorOffset ||
+            currentSelection.focusNode !== focus || currentSelection.focusOffset !== focusOffset) {
+          currentSelection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
+        }
+      } else {
+        // WebDriver Send Keys initializes a contenteditable caret after its child content.
+        // Use the exact ref subtree, never another selection in the surrounding editing host.
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        currentSelection.removeAllRanges();
+        currentSelection.addRange(range);
+      }
+      if (!stillCurrent()) return { staleRef: true };
+      return { focused: document.activeElement === editingHost && selectionWithin(currentSelection) };
+    }
+    return { focused: document.activeElement === element };
   })()`);
   if (!result || typeof result !== "object") {
     return "stale_ref";
@@ -1812,7 +1850,12 @@ async function focusKeypressTarget(
   if (record.staleRef === true) {
     return "stale_ref";
   }
-  return record.editable === true ? "editable" : "focused";
+  return record.focused === true ? "focused" : "not_focused";
+}
+
+/** Refuse native input when a page handler redirected focus or disabled the original target. */
+function inputFocusFailure(requestId: string): FailurePayload {
+  return fail(requestId, "browser_unsupported", "Browser input target did not retain focus.");
 }
 
 function readString(value: unknown): string | null {

@@ -237,6 +237,10 @@ interface TestDeps {
 function buildAgentManagerSpies() {
   return {
     createAgent: vi.fn(),
+    // Legacy catalogue fixtures have no accepted objective until a case supplies one.
+    prepareAttentionMessage: vi
+      .fn<AgentManager["prepareAttentionMessage"]>()
+      .mockResolvedValue(undefined),
     waitForAgentEvent: vi.fn().mockResolvedValue({
       status: "idle",
       permission: null,
@@ -925,6 +929,16 @@ describe("Paseo tool timeline presentation", () => {
         .filter((name) => name !== "speak" && !cataloged.has(name));
       expect(tools.length).toBeGreaterThan(40);
       expect(uncataloged).toEqual([]);
+      for (const name of [
+        "get_attention_context",
+        "report_objective_status",
+        "request_human_attention",
+      ]) {
+        const tool = tools.find((entry) => entry.name === name);
+        expect(tool).toBeDefined();
+        expect(tool?.inputSchema.properties).not.toHaveProperty("agentId");
+        expect(tool?.inputSchema.properties).not.toHaveProperty("serverId");
+      }
     } finally {
       await client.close();
       await server.close();
@@ -3954,6 +3968,11 @@ describe("send_agent_prompt MCP tool", () => {
     const response = await tool.handler(parsed.data as Record<string, unknown>);
 
     expect(response.structuredContent).toMatchObject({ deliveryStatus: "queued" });
+    expect(spies.agentManager.prepareAttentionMessage).toHaveBeenCalledExactlyOnceWith({
+      agentId: "parent-agent",
+      recipient: { agentId: "child-agent" },
+      objectiveId: undefined,
+    });
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     await serverDeliveries
       .get(server)!
@@ -3996,12 +4015,21 @@ describe("send_agent_prompt MCP tool", () => {
 
     await tool.handler(parsed.data as Record<string, unknown>);
 
+    expect(spies.agentManager.prepareAttentionMessage).not.toHaveBeenCalled();
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
   it("allows agent-scoped callers to opt out of finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
+    const attention = {
+      requesterObjective: {
+        objectiveId: "human-job",
+        token: "test-delegation-token",
+        requestId: "delegation-request",
+      },
+    };
+    spies.agentManager.prepareAttentionMessage.mockResolvedValue(attention);
     const parentAgent = {
       id: "parent-agent",
       config: {},
@@ -4036,9 +4064,30 @@ describe("send_agent_prompt MCP tool", () => {
     await invokeToolWithParsedInput(tool, {
       agentId: "child-agent",
       prompt: "Follow up",
+      objectiveId: "human-job",
       notifyOnFinish: false,
     });
 
+    expect(spies.agentManager.prepareAttentionMessage).toHaveBeenCalledExactlyOnceWith({
+      agentId: "parent-agent",
+      recipient: { agentId: "child-agent" },
+      objectiveId: "human-job",
+    });
+    expect(spies.agentManager.streamAgent).toHaveBeenCalledExactlyOnceWith(
+      "child-agent",
+      expect.any(String),
+      expect.objectContaining({
+        clientMessageId: "delegation-request",
+        attention: [
+          {
+            kind: "agent",
+            requestId: "delegation-request",
+            requester: { agentId: "parent-agent" },
+            attention,
+          },
+        ],
+      }),
+    );
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });

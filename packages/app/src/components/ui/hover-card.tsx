@@ -25,6 +25,7 @@ import { isWeb } from "@/constants/platform";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import {
   computePosition,
+  getCursorAnchorRect,
   getPointerAnchorRect,
   measureElement,
   type Alignment,
@@ -365,8 +366,8 @@ export function HoverCardTrigger({
 
 interface HoverCardContentProps {
   placement: Placement;
-  /** Latch the opening pointer along a long trigger; keyboard opening uses the trigger. */
-  anchor?: "trigger" | "pointer";
+  /** Anchor to the trigger, an adjacent pointer edge, or the cursor point. */
+  anchor?: "trigger" | "pointer" | "cursor";
   alignment?: Alignment;
   offset?: number;
   /** Layered over the default popover surface. */
@@ -419,10 +420,14 @@ function HoverCardSurface({
   useEffect(() => {
     if (!triggerRef.current) return;
     let cancelled = false;
-    const point = anchor === "pointer" ? pointerRef.current : null;
+    const point = anchor === "trigger" ? null : pointerRef.current;
     void measureElement(triggerRef.current).then((rect) => {
       if (!cancelled) {
-        setTriggerRect(getPointerAnchorRect(rect, point, placement));
+        const anchorRect =
+          anchor === "cursor"
+            ? getCursorAnchorRect(rect, point)
+            : getPointerAnchorRect(rect, point, placement);
+        setTriggerRect(anchorRect);
       }
       return undefined;
     });

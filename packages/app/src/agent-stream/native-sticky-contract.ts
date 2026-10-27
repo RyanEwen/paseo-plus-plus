@@ -3,8 +3,9 @@ import type { ReactElement, Ref } from "react";
 export interface NativeStickyHandle {
   setNextHeaderY(y: number): void;
 }
-/** Private RN 0.81.5 ScrollViewStickyHeader contract. Preserve wrapper/ref/Fabric
- * passthrough; the installed package source is part of this adapter's dependency. */
+/** RN 0.86.3 custom StickyHeaderComponent contract. Preserve layout and
+ * setNextHeaderY compatibility; Android owns its translated root, while iOS
+ * retains the installed RN wrapper. */
 export interface NativeStickyProps {
   children: ReactElement<ViewProps & { index?: number; item?: { id: string } }>;
   nextHeaderLayoutY?: number | null;

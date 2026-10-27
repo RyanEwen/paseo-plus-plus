@@ -102,11 +102,11 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 스크롤 가능한 탭 막대를 표시합니다. 끄면 선택한 탭을 유지하며 이전 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 작업 공간 제목 아래에 스크롤 가능한 탭 막대를 표시합니다. 끄면 선택한 탭을 유지하며 이전 탭 선택기를 사용합니다.",
       },
       widerWorkspaceTabs: {
         label: "더 넓은 작업 공간 탭",
-        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 짧은 탭은 자연스러운 너비를 유지합니다. 끄면 이전 최대 너비로 돌아갑니다.",
+        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰의 작업 공간 탭은 항상 사용 가능한 너비를 균등하게 나눕니다.",
       },
 
       descriptiveToolCalls: {
@@ -120,7 +120,7 @@ export const ko: TranslationResources = {
       },
       stickyUserPrompts: {
         label: "사용자 메시지 계속 표시",
-        hint: "현재 메시지를 채팅 위에 표시하고 펼치기와 이전/다음 이동을 제공합니다",
+        hint: "현재 메시지를 간단히 고정하고 펼치거나 이전/다음으로 이동할 수 있습니다. 일반 메시지는 항상 펼쳐져 있으며 로딩 표시가 기존 메시지를 가리지 않습니다.",
       },
       previousAgents: {
         label: "이전 에이전트",
@@ -1441,6 +1441,16 @@ export const ko: TranslationResources = {
       multipleWorkspaces_other: "{{count}}개 프로젝트의 워크스페이스",
       title: "프로젝트",
     },
+    workspaceTree: {
+      expand: "{{name}}의 하위 워크스페이스 펼치기",
+      collapse: "{{name}}의 하위 워크스페이스 접기",
+      activeChild: "활성 워크스페이스가 포함되어 있습니다.",
+      summary_one: "하위 워크스페이스 {{count}}개: {{status}}",
+      summary_other: "하위 워크스페이스 {{count}}개: {{status}}",
+      humanAttention_one: "하위 워크스페이스 {{count}}개에 사용자의 확인이 필요합니다",
+      humanAttention_other: "하위 워크스페이스 {{count}}개에 사용자의 확인이 필요합니다",
+      unknownStatus: "상태를 확인할 수 없음",
+    },
     statusGroupAccessibility: "{{label}} 그룹",
     statusBucket: {
       workingCount: "{{count}}개 작업 중",
@@ -2660,6 +2670,17 @@ export const ko: TranslationResources = {
     },
     notifications: {
       title: "알림",
+      chooseHost: "설정할 호스트를 선택하여 연결된 모든 기기의 알림을 구성하세요.",
+      hostTitle: "{{host}}의 알림",
+      agentAware: "에이전트를 고려한 알림",
+      agentAwareHint:
+        "에이전트 간의 일반적인 결과는 조용히 처리하고, 조치가 필요할 때 «검토 대기» 배지를 표시합니다. {{host}}에 연결된 모든 기기에 적용됩니다. 이 설정을 꺼도 사람의 개입 요청과 안전 알림은 계속 제공됩니다.",
+      updateHost: "이 알림 설정을 변경하려면 호스트를 업데이트하세요.",
+      readOnly: "이 설정을 변경하려면 해당 호스트의 관리 권한이 필요합니다.",
+      unavailable: "저장하기 전에 관리 권한이 있는 지원 호스트에 연결하세요.",
+      notSaved: "호스트에서 이 알림 설정을 저장하지 않았습니다. 다시 시도하세요.",
+      loadFailed: "호스트의 알림 설정을 불러올 수 없습니다.",
+      saving: "저장 중...",
       permission: "알림 권한",
       refreshAccessibility: "알림 권한 새로 고침",
       playSound: "소리 재생",

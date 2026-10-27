@@ -1,3 +1,4 @@
+import type { NotificationDismissal } from "@getpaseo/protocol/notification-receipts";
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
@@ -55,6 +56,12 @@ export interface DesktopDialogBridge {
 }
 
 export interface DesktopNotificationBridge {
+  listDelivered?: () => Promise<
+    Array<{ identifier: string; data: Record<string, unknown> | undefined }>
+  >;
+  dismissDelivered?: (identifiers: string[]) => Promise<void>;
+  pendingDismissals?: () => Promise<NotificationDismissal[]>;
+  acknowledgeDismissals?: (identifiers: string[]) => Promise<void>;
   setViewedAgent?: (input: {
     target: AgentDeepLinkTarget | null;
     revision: number;

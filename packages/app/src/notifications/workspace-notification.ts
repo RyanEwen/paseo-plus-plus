@@ -12,7 +12,12 @@ const defaultPorts: WorkspaceNotificationPorts = {
   },
   async send(payload) {
     const { sendOsNotification } = await import("@/utils/os-notifications");
-    return sendOsNotification(payload);
+    const { workspaceNotificationRuntime } = await import("./workspace-receipts-runtime");
+    if (workspaceNotificationRuntime.isAcknowledged(payload.data)) return true;
+    const sent = await sendOsNotification(payload);
+    if (sent && typeof payload.data?.serverId === "string")
+      workspaceNotificationRuntime.resume(payload.data.serverId);
+    return sent;
   },
 };
 

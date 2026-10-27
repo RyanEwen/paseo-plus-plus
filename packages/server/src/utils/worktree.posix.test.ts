@@ -45,7 +45,7 @@ import {
   readlinkSync,
   symlinkSync,
 } from "fs";
-import { delimiter, dirname, join } from "path";
+import { basename, delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
 
@@ -87,6 +87,18 @@ function createLegacyWorktreeForTest(
 
 describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
   describe("createWorktree", () => {
+    /** Creates the checkout before exposing the separately owned setup operation. */
+    async function prepareSetup(options: CreateWorktreeOptions) {
+      const created = await createWorktreePrimitive(options);
+      return {
+        created,
+        run: () =>
+          runWorktreeSetupCommands({
+            worktreePath: created.worktreePath,
+            branchName: created.branchName,
+          }),
+      };
+    }
     let tempDir: string;
     let repoDir: string;
     let paseoHome: string;
@@ -930,13 +942,11 @@ if (process.argv[2] === "prepared" && updates.some(line => {
         cwd: repoDir,
         paseoHome,
         exactNames: true,
-        runSetup: true,
         worktreeSlug: "slow-hook-directory",
         source: { kind: "branch-off" as const, baseBranch: "main", branchName: "slow-hook-branch" },
       };
-      await expect(createWorktreePrimitive(options)).rejects.toThrow(
-        "Worktree setup command failed",
-      );
+      const setup = await prepareSetup(options);
+      await expect(setup.run()).rejects.toThrow("Worktree setup command failed");
       expect(existsSync(markerPath)).toBe(false);
       const retained = (await listPaseoWorktrees({ cwd: repoDir, paseoHome })).find(
         (worktree) => worktree.branchName === "slow-hook-branch",
@@ -953,7 +963,6 @@ if (process.argv[2] === "prepared" && updates.some(line => {
         runWorktreeSetupCommands({
           worktreePath: retained!.path,
           branchName: "slow-hook-branch",
-          cleanupOnFailure: false,
         }),
       ).resolves.toMatchObject([{ exitCode: 0 }]);
       expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(2);
@@ -1003,16 +1012,14 @@ if (args.includes("update-ref") && args.includes("--stdin")) {
       process.env.PATH = `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`;
       const startedAt = performance.now();
       try {
-        await expect(
-          createWorktreePrimitive({
-            cwd: repoDir,
-            paseoHome,
-            exactNames: true,
-            runSetup: true,
-            worktreeSlug: "buffered-directory",
-            source: { kind: "branch-off", baseBranch: "main", branchName: "buffered-branch" },
-          }),
-        ).rejects.toThrow("Worktree setup command failed: exit 1");
+        const setup = await prepareSetup({
+          cwd: repoDir,
+          paseoHome,
+          exactNames: true,
+          worktreeSlug: "buffered-directory",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "buffered-branch" },
+        });
+        await expect(setup.run()).rejects.toThrow("Worktree setup command failed: exit 1");
       } finally {
         if (originalPath === undefined) {
           delete process.env.PATH;
@@ -1063,22 +1070,21 @@ process.exit(1);
         const branchTip = git("rev-parse", "HEAD");
         expect(branchTip).not.toBe(initialTip);
 
-        const error = await createWorktreePrimitive({
+        const setup = await prepareSetup({
           cwd: repoDir,
           paseoHome,
           exactNames: true,
-          runSetup: true,
           worktreeSlug: "failed-adopted-directory",
           source: { kind: "branch-off", baseBranch: "main", branchName: "adopted-branch" },
-        }).catch((caughtError: unknown) => caughtError);
+        });
+        const error = await setup.run().catch((caughtError: unknown) => caughtError);
         expect(error).toBeInstanceOf(WorktreeSetupError);
         const setupError = error as WorktreeSetupError;
         expect(setupError.message).toContain("setup failed after adoption");
         expect(setupError.results[0]?.exitCode).toBe(1);
-        expect(setupError.retainedWorktree?.branchName).toBe("adopted-branch");
-        expect(existsSync(setupError.retainedWorktree!.worktreePath)).toBe(true);
-        expect(setupError.message).toContain(setupError.retainedWorktree!.worktreePath);
-        expect(setupError.message).toContain("retry setup there");
+        expect(setup.created.branchName).toBe("adopted-branch");
+        expect(basename(setup.created.worktreePath)).toBe("failed-adopted-directory");
+        expect(existsSync(setup.created.worktreePath)).toBe(true);
         const adoptedCheckout = action === "switch" ? repoDir : concurrentPath;
         expect(git("-C", adoptedCheckout, "symbolic-ref", "HEAD")).toBe(
           "refs/heads/adopted-branch",
@@ -1087,6 +1093,11 @@ process.exit(1);
         expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(
           action === "switch" ? 2 : 3,
         );
+        // Retry the retained checkout through the same public setup boundary.
+        writeFileSync(join(setup.created.worktreePath, "adopt.cjs"), "process.exit(0);\n");
+        await expect(setup.run()).resolves.toMatchObject([{ exitCode: 0 }]);
+        expect(git("rev-parse", "adopted-branch")).toBe(branchTip);
+        expect(existsSync(setup.created.worktreePath)).toBe(true);
       },
     );
 

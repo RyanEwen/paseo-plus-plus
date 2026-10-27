@@ -71,13 +71,11 @@ window, and a loaded row may sit outside the mounted presentation window. Resolv
 rows to authoritative timeline positions before selecting prompts; Markdown blocks and plugin
 cards do not share the canonical row IDs. Child transcripts use their own history pagination.
 
-The actual user row owns both its one-line collapsed presentation and its expanded body.
-Pinning moves that same row without changing its original measured position or adding a
-second rendered message. Virtualization retains the preceding user row; the next user
-row pushes it away. Stable keys and component ancestry must survive live completion,
-history prepend and virtualization. Disclosure state is scoped to canonical identity and
-epoch. Expanded bodies retain their text and attachments in one bounded scrollable body,
-with disclosure and navigation outside that body.
+For message display and disclosure behavior, see [Keep user prompts in view](fork-features/keep-user-prompts-in-view.md). Pinning keeps the same message identity and component ancestry; disclosure changes only the pinned presentation. Virtualization retains the preceding user row, and compact previews yield to the next user row. Disclosure state is scoped to canonical identity and epoch. Expanded sticky bodies stay in one bounded scrollable body, with disclosure and navigation outside that body.
+
+Native sticky rows retain their full ordinary transcript height even while their visible body collapses. Measure the one natural body at ordinary width, including attachment pills, padding and ordinary actions. Keep the compact summary and disclosure outside that measurement. Width, font and content changes require current measurements before compact presentation resumes. The full flow extent owns list layout and original intersections; compact collision uses the whole visible extent, including sticky actions. The Android expansion policy in the feature guide is an explicit collision exception, while retaining the same flow reservation and viewport position. Visual-only disclosure must not report a transcript resize to VirtualizedList. Transparent reserved flow must not capture touches over later rows, and hidden attachment controls must leave the accessibility tree. The viewport remains the owner of measurements and anchor reconciliation.
+
+Android uses one UI-owned presentation for the full-row exit boundary, motion, clipping, disclosure and hidden-control access. React's reading selection cannot compact the body. A reverse handoff resets the held inner More viewport before restoring ordinary paint; a queued disclosure request must still own its binding and handoff token. The iOS keyboard/sticky owner remains separate and retains its existing trigger. Do not substitute an independently timed keyboard value or broaden this Android contract to iOS without migrating its actual physical owner.
 
 The viewport owns original row measurements, pinning, reading anchors and explicit prompt
 landings. It must not use a translated bubble as its original scroll target. Manual scrolling
@@ -93,8 +91,7 @@ the same presentation as ordinary history. A retained context row does not prove
 before it is loaded. Original reveal and arrow navigation must materialize the target through
 the ordinary history owner before claiming a landing.
 
-Index-free discovery checks canonical cursor progress and stops with usable feedback on
-exhaustion, failure, cancellation, or its work budget. An explicit retry can continue past the
+Index-free discovery checks projected display-anchor progress and stops with usable feedback on exhaustion, failure, cancellation, or its work budget. A projected row can have later updates beyond the backward cursor; its first source position owns pagination. Passive context reads keep an available prompt visible. When no prompt is available, the sticky rail shows a muted system placeholder and owns any actionable retry. Explicit navigation failures retain their own feedback and retry. An explicit retry can continue past the
 budget; streamed cursor advances cannot restart that budget. A transcript change during an
 isolated read can also require an explicit retry. Scrolling through already proven context
 reuses its user row. Split panes retain their own reading context, including while hidden or

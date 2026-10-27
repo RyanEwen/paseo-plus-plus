@@ -13,7 +13,7 @@ import {
   buildEffectiveBindings,
   getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
-import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
+import { isKeyboardControlTarget, resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
   buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
@@ -259,6 +259,9 @@ export function useKeyboardShortcuts({
         isDesktop: isDesktopApp,
         focusScope: input.focusScope,
         commandCenterOpen: store.commandCenterOpen,
+        interactiveControlFocused: input.domEvent
+          ? isKeyboardControlTarget(input.domEvent.target)
+          : false,
       },
       chordState: chordStateRef.current,
       onChordReset: () => {

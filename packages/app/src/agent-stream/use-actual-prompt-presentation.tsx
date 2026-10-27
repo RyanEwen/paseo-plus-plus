@@ -8,6 +8,15 @@ import type { UserMessage } from "@/components/message";
 import { ActualPinnedRowContext, ActualPromptRowsContext } from "./actual-prompt-rows";
 import { PromptNavigationContext } from "./prompt-navigation-actions";
 import { PinnedMessageActionBackdrop } from "./pinned-message-action-backdrop";
+import {
+  NativeMessagePresentationContext,
+  NativeMessageDisclosureAuthorityContext,
+  type NativeMessagePresentationDriver,
+} from "@/components/user-message-native-presentation";
+import {
+  NativeMessageDisclosureSlot,
+  requestNativeMessageDisclosure,
+} from "@/components/user-message-native-flow";
 
 type MessageProps = ComponentProps<typeof UserMessage>;
 type Presentation = Partial<
@@ -26,6 +35,65 @@ type Presentation = Partial<
     | "contentAccessibilityLabel"
   >
 >;
+
+const EXPANDED_DISCLOSURE = { expanded: true } as const;
+const COLLAPSED_DISCLOSURE = { expanded: false } as const;
+
+interface NativePromptDisclosureActionProps {
+  driver: NativeMessagePresentationDriver;
+  expanded: boolean;
+}
+
+/** The native gate owns availability; a queued React activation carries the
+ * boundary token it received and cannot enroll itself into a newer handoff.
+ */
+function NativePromptDisclosureAction({ driver, expanded }: NativePromptDisclosureActionProps) {
+  const authority = useContext(NativeMessageDisclosureAuthorityContext);
+  const { t } = useTranslation();
+  const toggle = useCallback(
+    () =>
+      requestNativeMessageDisclosure(driver, {
+        ...authority,
+        expected: expanded ? "compact" : "expanded",
+        expanded,
+      }),
+    [driver, authority, expanded],
+  );
+  return (
+    <Button
+      variant="ghost"
+      size="md"
+      textStyle={styles.disclosureText}
+      accessibilityLabel={t(expanded ? "stickyPrompt.expand" : "stickyPrompt.collapse")}
+      accessibilityState={expanded ? COLLAPSED_DISCLOSURE : EXPANDED_DISCLOSURE}
+      onPress={toggle}
+      testID={expanded ? "user-message-disclosure" : "user-message-collapse"}
+    >
+      {t(expanded ? "stickyPrompt.more" : "stickyPrompt.less")}
+    </Button>
+  );
+}
+
+function useNativePromptDisclosure(
+  driver: NativeMessagePresentationDriver | null,
+  available: boolean,
+) {
+  const more = useMemo(
+    () => (driver ? <NativePromptDisclosureAction driver={driver} expanded /> : null),
+    [driver],
+  );
+  const less = useMemo(
+    () => (driver ? <NativePromptDisclosureAction driver={driver} expanded={false} /> : null),
+    [driver],
+  );
+  return useMemo(
+    () =>
+      driver && available ? (
+        <NativeMessageDisclosureSlot driver={driver} more={more} less={less} />
+      ) : null,
+    [driver, available, more, less],
+  );
+}
 
 function selectedPromptText(event: GestureResponderEvent): boolean {
   if (!isWeb) return false;
@@ -75,7 +143,7 @@ function usePromptDisclosure(id: string, props: MessageProps) {
       ) : null,
     [rows, expanded, hiddenText, attachments, t, disclosureState, toggle],
   );
-  return { expanded, report, action };
+  return { expanded, report, action, available: expanded || hiddenText || attachments > 0 };
 }
 
 /** The shared renderer keeps the real body; this hook only supplies its policy. */
@@ -84,6 +152,8 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
   const pinned = useContext(ActualPinnedRowContext);
   const navigation = useContext(PromptNavigationContext);
   const disclosure = usePromptDisclosure(id, props);
+  const nativeDriver = useContext(NativeMessagePresentationContext);
+  const nativeDisclosure = useNativePromptDisclosure(nativeDriver, disclosure.available);
   const { t } = useTranslation();
   const backdrop = useMemo(() => <PinnedMessageActionBackdrop />, []);
   const reveal = useCallback(
@@ -93,15 +163,34 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
     [navigation, id],
   );
   if (!rows) return {};
+  if (nativeDriver) {
+    return {
+      copyMask: undefined,
+      // These nodes are prepared while ordinary. Android's UI owner alone
+      // selects paint, controls, clipping and the full-row handoff boundary.
+      previewLines: undefined,
+      previewExpanded: true,
+      bodyViewportHeight: undefined,
+      pinned: false,
+      actionRowBackdrop: backdrop,
+      onPreviewOverflowChange: disclosure.report,
+      inlineContentAction: nativeDisclosure,
+      contentAction: undefined,
+      onContentPress: reveal,
+      contentAccessibilityLabel: t("stickyPrompt.goToMessage"),
+    };
+  }
   return {
     copyMask: undefined,
-    previewLines: 1,
-    previewExpanded: disclosure.expanded,
-    bodyViewportHeight: rows.bodyViewportHeight,
+    // Ordinary history keeps its full body. Only the row currently pinned at
+    // the viewport edge owns a compact preview and bounded sticky expansion.
+    previewLines: pinned ? 1 : undefined,
+    previewExpanded: !pinned || disclosure.expanded,
+    bodyViewportHeight: pinned ? rows.bodyViewportHeight : undefined,
     pinned,
-    actionRowBackdrop: backdrop,
-    onPreviewOverflowChange: disclosure.report,
-    inlineContentAction: disclosure.action,
+    actionRowBackdrop: pinned ? backdrop : undefined,
+    onPreviewOverflowChange: pinned ? disclosure.report : undefined,
+    inlineContentAction: pinned ? disclosure.action : null,
     contentAction: undefined,
     onContentPress: pinned ? reveal : props.onContentPress,
     contentAccessibilityLabel: pinned

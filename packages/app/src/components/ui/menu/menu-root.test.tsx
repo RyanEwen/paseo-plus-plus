@@ -166,10 +166,10 @@ describe("literal split regions", () => {
     },
   );
 
-  it("exposes twenty separate keyboard targets in geometric order, with no side rows", () => {
+  it("exposes twenty-eight separate keyboard targets in geometric order, with no side rows", () => {
     const view = renderPicker(vi.fn());
     const regions = view.getAllByRole("menuitem");
-    expect(regions).toHaveLength(20);
+    expect(regions).toHaveLength(28);
     const order = ["left", "right", "top", "bottom"] as const;
     const expected: string[] = [];
     for (const sides of [order.slice(0, 2), order.slice(2)]) {
@@ -203,7 +203,9 @@ describe("literal split regions", () => {
   it("allocates both compact region axes at least 44px without overlapping hit expansion", () => {
     formFactor.compact = true;
     const view = renderPicker(vi.fn());
-    for (const region of view.getAllByRole("menuitem")) {
+    const regions = view.getAllByRole("menuitem");
+    expect(regions).toHaveLength(28);
+    for (const region of regions) {
       const style = getComputedStyle(region);
       expect(Number.parseFloat(style.width)).toBeGreaterThanOrEqual(44);
       expect(Number.parseFloat(style.height)).toBeGreaterThanOrEqual(44);
@@ -211,8 +213,8 @@ describe("literal split regions", () => {
     const left = view.getByTestId("region-left-70-30");
     const right = view.getByTestId("region-right-70-30");
     expect(left.parentElement).toBe(right.parentElement);
-    expect(Number.parseFloat(getComputedStyle(left).width)).toBeCloseTo(103.6);
-    expect(Number.parseFloat(getComputedStyle(right).width)).toBeCloseTo(44.4);
+    expect(Number.parseFloat(getComputedStyle(left).width)).toBeCloseTo(154);
+    expect(Number.parseFloat(getComputedStyle(right).width)).toBeCloseTo(66);
     expect(getComputedStyle(left.parentElement!).direction).toBe("ltr");
   });
 

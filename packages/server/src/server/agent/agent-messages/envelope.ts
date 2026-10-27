@@ -1,6 +1,7 @@
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { AgentMessageAttentionSchema } from "@getpaseo/protocol/agent-attention";
 import type {
   AgentPromptContentBlock,
   AgentPromptInput,
@@ -14,6 +15,7 @@ const sourceSchema = z.discriminatedUnion("kind", [
     agentId: agentIdSchema,
     serverId: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
+    attention: AgentMessageAttentionSchema.optional(),
   }),
   z.object({
     kind: z.literal("agent-notification"),
@@ -21,6 +23,7 @@ const sourceSchema = z.discriminatedUnion("kind", [
     serverId: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
     event: z.enum(["finished", "errored", "permission-required", "closed"]),
+    attention: AgentMessageAttentionSchema.optional(),
   }),
 ]);
 export type AgentPromptSource = z.infer<typeof sourceSchema>;

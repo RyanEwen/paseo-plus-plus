@@ -1,6 +1,6 @@
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   DaemonClient,
@@ -16,11 +16,22 @@ import { selectAgentListItems } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
 import { expandUserPath } from "../../path-utils.js";
 import type { PaseoToolExecutionContext, PaseoToolResult } from "../tools/types.js";
+import type {
+  AgentAttentionPeer,
+  AgentAttentionRequestQuery,
+  AgentMessageAttention,
+} from "@getpaseo/protocol/agent-attention";
+
+/** Internal dispatch provenance is stripped by the MCP catalog before returning the tool result. */
+export interface AgentHostOperationResult extends PaseoToolResult {
+  attention?: AgentMessageAttention;
+  targetAgentId?: string;
+}
 
 export type HostOperation = (
   input: Record<string, unknown>,
   context: PaseoToolExecutionContext,
-) => Promise<PaseoToolResult>;
+) => Promise<AgentHostOperationResult>;
 export interface HostOperations {
   createAgent: HostOperation;
   createWorkspace: HostOperation;
@@ -29,7 +40,11 @@ export interface HostOperations {
   getStatus: HostOperation;
   getActivity: HostOperation;
   listAgents: HostOperation;
-  wait(agentId: string, signal: AbortSignal): Promise<WaitForFinishResult>;
+  wait(input: {
+    agentId: string;
+    signal: AbortSignal;
+    attentionRequest?: AgentAttentionRequestQuery;
+  }): Promise<WaitForFinishResult>;
   observe(
     agentId: string,
     handler: (snapshot: AgentSnapshotPayload | null) => void,
@@ -134,6 +149,7 @@ const remoteCreate = z
     labels: z.record(z.string(), z.string()).optional(),
     notifyOnFinish: z.boolean().optional(),
     idempotencyKey: z.string().optional(),
+    objectiveId: z.string().optional(),
     settings: z
       .object({
         modeId: z.string().optional(),
@@ -154,7 +170,22 @@ export function createHostResolver(input: {
   hosts: () => ToolHosts;
   callerAgentId?: string;
   lockedCwd?: string;
+  prepareAttention?: (input: {
+    recipient: AgentAttentionPeer;
+    objectiveId?: string;
+    requestId?: string;
+  }) => Promise<AgentMessageAttention | undefined>;
 }) {
+  /** Stable caller-selected IDs preserve creation idempotency across tool retries and restarts. */
+  function delegatedAgentId(destination: string, key?: string): string {
+    if (!key) return randomUUID();
+    const hex = createHash("sha256")
+      .update(
+        JSON.stringify(["agent-attention", input.serverId, input.callerAgentId, destination, key]),
+      )
+      .digest("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  }
   return {
     directory: () => input.hosts().directory(),
     async use<T>(
@@ -169,6 +200,18 @@ export function createHostResolver(input: {
         action({
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
+            const agentId = input.callerAgentId
+              ? delegatedAgentId(destination, parsed.idempotencyKey)
+              : undefined;
+            const attention = agentId
+              ? await input.prepareAttention?.({
+                  recipient: { serverId: destination, agentId },
+                  objectiveId: parsed.objectiveId,
+                  requestId: parsed.idempotencyKey
+                    ? delegatedAgentId(destination, `attention:${parsed.idempotencyKey}`)
+                    : undefined,
+                })
+              : undefined;
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
             const workspace = (await client.fetchWorkspaces({})).entries.find(
               (row) => row.id === parsed.workspaceId,
@@ -181,6 +224,11 @@ export function createHostResolver(input: {
                 : {}),
             };
             const snapshot = await client.createAgent({
+              agentId,
+              sourceAgentId: input.callerAgentId,
+              sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
+              agentAttention: attention,
+              clientMessageId: attention?.requesterObjective?.requestId,
               config: {
                 provider,
                 model,
@@ -195,18 +243,30 @@ export function createHostResolver(input: {
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
             });
-            return result({
-              agentId: snapshot.id,
-              type: snapshot.provider,
-              status: snapshot.status,
-              cwd: snapshot.cwd,
-              workspaceId: snapshot.workspaceId,
-              currentModeId: snapshot.currentModeId,
-              availableModes: snapshot.availableModes,
-            });
+            if (agentId && snapshot.id !== agentId) {
+              throw new Error("Host returned a different agent identity for the delegated request");
+            }
+            return {
+              ...result({
+                agentId: snapshot.id,
+                type: snapshot.provider,
+                status: snapshot.status,
+                cwd: snapshot.cwd,
+                workspaceId: snapshot.workspaceId,
+                currentModeId: snapshot.currentModeId,
+                availableModes: snapshot.availableModes,
+              }),
+              attention,
+            };
           },
           async sendPrompt(args) {
-            const agentId = args.agentId as string;
+            const target = (await client.fetchAgent(z.string().parse(args.agentId)))?.agent;
+            if (!target) throw new Error(`Agent ${String(args.agentId)} not found`);
+            const agentId = target.id;
+            const attention = await input.prepareAttention?.({
+              recipient: { serverId: destination, agentId },
+              objectiveId: z.string().optional().parse(args.objectiveId),
+            });
             // Human sends retain the established mode RPC on older connected hosts.
             // Agent sends apply their requested mode when the recipient dispatches the batch.
             if (!input.callerAgentId && args.sessionMode !== undefined) {
@@ -218,21 +278,27 @@ export function createHostResolver(input: {
                 : undefined,
               sourceAgentId: input.callerAgentId,
               sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
+              agentAttention: attention,
+              messageId: attention?.requesterObjective?.requestId,
               activeTurnBehavior:
                 (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
                 (input.callerAgentId ? "steer" : "interrupt"),
             });
             const agent = (await client.fetchAgent(agentId))?.agent;
             if (!agent) throw new Error(`Agent ${agentId} not found`);
-            return result({
-              success: true,
-              ...receipt,
-              status: agent.status,
-              guidance:
-                receipt.deliveryStatus === "queued"
-                  ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
-                  : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
-            });
+            return {
+              ...result({
+                success: true,
+                ...receipt,
+                status: agent.status,
+                guidance:
+                  receipt.deliveryStatus === "queued"
+                    ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
+                    : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
+              }),
+              attention,
+              targetAgentId: agentId,
+            };
           },
           async getStatus(args) {
             const agent = (await client.fetchAgent(args.agentId as string))?.agent;
@@ -342,12 +408,13 @@ export function createHostResolver(input: {
               await observation.release();
             };
           },
-          wait: (agentId, signal) => {
+          wait: ({ agentId, signal, attentionRequest }) => {
             const close = () => void client.close();
             signal.addEventListener("abort", close, { once: true });
-            return client
-              .waitForFinish(agentId, 0)
-              .finally(() => signal.removeEventListener("abort", close));
+            const waiting = attentionRequest
+              ? client.waitForAttentionOutcome({ agentId, attentionRequest })
+              : client.waitForFinish(agentId, 0);
+            return waiting.finally(() => signal.removeEventListener("abort", close));
           },
         }),
       );

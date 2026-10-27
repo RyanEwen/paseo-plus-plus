@@ -1,3 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { readPreviousAgentsAvailability } from "@/hooks/previous-agents-availability";
+import {
+  createPreviousAgentLaunchAction,
+  isPreviousAgentsAvailable,
+} from "@/hooks/previous-agents";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import type { SplitSide } from "@/components/split-layout-presets";
 import {
   createContext,
@@ -5,7 +12,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ComponentType,
   type ReactNode,
@@ -88,19 +94,42 @@ export function NewTabLauncherProvider({
   value: NewTabLauncher;
   children: ReactNode;
 }) {
-  const { settings } = useAppSettings();
-  const previousAgentsEnabled = settings.paseoPlusPlus.previousAgents;
-  const [reopenVisible, setReopenVisible] = useState(false);
-  const previousAgentsEnabledRef = useRef(previousAgentsEnabled);
-  // Disable dismisses this transient surface without changing sessions or cached history.
+  const { settings, isReadReady } = useAppSettings();
+  const queryClient = useQueryClient();
+  const availability = {
+    serverId: value.serverId,
+    workspaceId: value.workspaceId,
+    readReady: isReadReady,
+    enabled: settings.paseoPlusPlus.previousAgents,
+  };
+  const previousAgentsEnabled = isPreviousAgentsAvailable(availability);
+  const [reopenIdentity, setReopenIdentity] = useState<{
+    serverId: string;
+    workspaceId: string;
+  } | null>(null);
+  const readAvailability = useStableEvent(() =>
+    readPreviousAgentsAvailability({
+      queryClient,
+      identity: { serverId: value.serverId, workspaceId: value.workspaceId },
+    }),
+  );
+  const reopenClosedAgent = useMemo(
+    () =>
+      createPreviousAgentLaunchAction({
+        identity: { serverId: value.serverId, workspaceId: value.workspaceId },
+        readAvailability,
+        open: setReopenIdentity,
+      }),
+    [readAvailability, value.serverId, value.workspaceId],
+  );
+  const closeReopenDialog = useCallback(() => setReopenIdentity(null), []);
+  const sameWorkspace =
+    reopenIdentity?.serverId === value.serverId &&
+    reopenIdentity?.workspaceId === value.workspaceId;
+  // Hide synchronously; clear the invocation so re-enabling never remounts an old dialog.
   useEffect(() => {
-    previousAgentsEnabledRef.current = previousAgentsEnabled;
-    if (!previousAgentsEnabled) setReopenVisible(false);
-  }, [previousAgentsEnabled]);
-  const reopenClosedAgent = useCallback(() => {
-    if (previousAgentsEnabledRef.current) setReopenVisible(true);
-  }, []);
-  const closeReopenDialog = useCallback(() => setReopenVisible(false), []);
+    if (!previousAgentsEnabled || !sameWorkspace) setReopenIdentity(null);
+  }, [previousAgentsEnabled, sameWorkspace]);
   const context = useMemo(
     () => ({ ...value, previousAgentsEnabled, reopenClosedAgent }),
     [value, previousAgentsEnabled, reopenClosedAgent],
@@ -108,10 +137,10 @@ export function NewTabLauncherProvider({
   return (
     <NewTabLauncherContext.Provider value={context}>
       {children}
-      {previousAgentsEnabled && reopenVisible ? (
+      {previousAgentsEnabled && sameWorkspace && reopenIdentity ? (
         <ReopenClosedAgentDialog
-          serverId={value.serverId}
-          workspaceId={value.workspaceId}
+          serverId={reopenIdentity.serverId}
+          workspaceId={reopenIdentity.workspaceId}
           onClose={closeReopenDialog}
         />
       ) : null}
