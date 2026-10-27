@@ -6,7 +6,7 @@ nav: 连接
 
 # 连接 {#connectivity}
 
-你的 Paseo 应用连接的是运行在你电脑或服务器上的 daemon。Paseo 桌面端和 CLI 可以通过 SSH 隧道连接。移动客户端可以通过 Paseo 中继连接，或者用 Tailscale 直接连接。
+你的 Paseo 应用连接的是运行在你电脑或服务器上的 daemon。Paseo 桌面端、Android 和 CLI 可以通过 SSH 隧道连接。移动客户端也可以通过 Paseo 中继连接，或者用 Tailscale 直接连接。
 
 这里说的是客户端到 daemon 的传输。如果你要找的是由 GitHub、Slack 和 Discord 事件启动 Agent 的服务，那是 [Hub](/docs/hub)。
 
@@ -16,12 +16,12 @@ nav: 连接
 
 ## SSH {#ssh}
 
-SSH 传输通过你本地的 OpenSSH 客户端连接到一个已有的 daemon。它不会在远程主机上安装、启动或配置 Paseo。
+SSH 传输连接到一个已有的 daemon。它不会在远程主机上安装、启动或配置 Paseo。桌面端和 CLI 使用你本地的 OpenSSH 客户端，Android 使用导入的私钥。
 
 连接之前：
 
 1. 在远程主机上启动 Paseo daemon。
-2. 确认 `ssh user@host` 可以通过密钥或 SSH agent 登录。Paseo 使用非交互式 SSH，并遵循你的 OpenSSH 配置。
+2. 确认基于密钥的 SSH 登录可用。桌面端和 CLI 使用非交互式 SSH，并遵循你的 OpenSSH 配置。
 
 CLI 接受 SSH URI 作为主机：
 
@@ -46,6 +46,16 @@ paseo --host 'ssh://user@host?daemonPort=7777' ls -a
 在 Paseo 桌面端中，打开 **设置 → 添加主机 → 远程 SSH**，输入同样的 `ssh://` 目标地址；如果端口与默认值不同，请带上 `:port` 或 `?daemonPort=`。
 
 如果远程 daemon 设置了密码，请在 **守护进程密码** 中输入；它会随主机一起保存，并在每次连接时发送，与直连的密码一样。SSH 登录本身仍然基于密钥，Paseo 从不提示输入 SSH 密码。
+
+### Android {#android}
+
+打开 **设置 → 添加主机 → 远程 SSH**，输入 `ssh://user@hostname`，然后选择 **导入私钥**。请选择 OpenSSH 或 PEM 私钥文件，而不是 `.pub` 文件。如果文件已加密，请输入密钥口令。**守护进程密码** 与密钥口令分开设置。
+
+选择 **连接** 以读取服务器指纹。通过可信渠道将其与服务器的指纹进行比较，然后选择 **信任并连接**。之后的连接中，如果指纹发生变化，应用会拒绝连接。要批准替换后的服务器密钥，请先验证变更，再移除并重新添加 SSH 连接。
+
+密钥和口令使用 Android Keystore 加密，并且不包含在备份中。移除 SSH 连接会删除其保存的凭据。应用会删除临时导入副本；你选择的原始文件仍保留在原来的位置。
+
+请明确填写用户名，以及可以访问的主机名或 IP 地址。Android 不读取你电脑上的 SSH 别名、SSH agent 或跳板主机配置。不支持 SSH 密码登录。iOS 和浏览器客户端可以使用中继或直接连接。
 
 ## Paseo 中继 {#paseo-relay}
 

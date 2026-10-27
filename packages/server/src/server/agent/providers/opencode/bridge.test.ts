@@ -76,6 +76,79 @@ function readPluginOptions(env: Record<string, string>): {
 }
 
 describe("OpenCodeBridge", () => {
+  test("attention manifest schemas retain caller-bound execution", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-attention-manifest-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const clients = createTestAgentClients();
+    const agentStorage = new AgentStorage(path.join(paseoHome, "agents"), logger);
+    const agentManager = new AgentManager({ clients, registry: agentStorage, logger });
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger, extraClients: clients });
+    const agentMessages = createTestAgentMessages({ agentManager, agentStorage, logger });
+    const dependencies = {
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      logger,
+      agentMessages: () => agentMessages,
+    };
+    try {
+      const manifest = createPaseoAgentToolManifest(dependencies);
+      const topLevel = createPaseoToolCatalog(dependencies);
+      const missingCaller = createPaseoToolCatalog({
+        ...dependencies,
+        callerAgentId: "missing-attention-caller",
+      });
+      const operations = [
+        { name: "get_attention_context", input: {} },
+        {
+          name: "report_objective_status",
+          input: { objectiveId: "not-admitted", disposition: "final" },
+        },
+        {
+          name: "request_human_attention",
+          input: { objectiveId: "not-admitted", reason: "Do not authorize an unbound caller" },
+        },
+      ];
+      for (const { name, input } of operations) {
+        expect(topLevel.getTool(name)).toBeUndefined();
+        const definition = manifest.tools.get(name);
+        if (!definition) throw new Error(`Missing agent manifest schema: ${name}`);
+        expect(serializePaseoToolInputParameters(definition)).toEqual(
+          serializePaseoToolInputParameters(missingCaller.getTool(name)!),
+        );
+        await expect(definition.handler(input, {})).rejects.toThrow(
+          "Attention tools require an agent-scoped caller",
+        );
+        await expect(missingCaller.executeTool(name, input)).rejects.toThrow(
+          "Parent agent missing-attention-caller not found",
+        );
+      }
+      const caller = await agentManager.createAgent(
+        { provider: "codex", cwd: paseoHome },
+        undefined,
+        { workspaceId: "manifest-workspace" },
+      );
+      const bound = createPaseoToolCatalog({ ...dependencies, callerAgentId: caller.id });
+      await expect(bound.executeTool("get_attention_context", {})).resolves.toMatchObject({
+        structuredContent: { activeObjectiveIds: [], objectives: [] },
+      });
+      await expect(
+        bound.executeTool("request_human_attention", {
+          objectiveId: "not-admitted",
+          reason: "No objective authority was granted by the schema",
+        }),
+      ).rejects.toThrow("does not belong to this accepted turn");
+    } finally {
+      await agentMessages.close();
+      await Promise.all(
+        agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),
+      );
+      await agentManager.flushForShutdown();
+      await providerSnapshotManager.shutdown();
+    }
+  });
+
   test("advertises agent-scoped schemas that execute through both bridge plugins", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-manifest-"));
     temporaryDirectories.push(paseoHome);

@@ -897,6 +897,15 @@ function createToolCatalog(
     return parentAgent;
   };
 
+  /** Pre-caller manifests advertise schemas; invocation still requires a current bound agent. */
+  const requireAttentionCallerId = (): string => {
+    const caller = resolveCallerAgent();
+    if (!caller) {
+      throw new PaseoToolInputError("Attention tools require an agent-scoped caller");
+    }
+    return caller.id;
+  };
+
   const resolveInheritedProviderConfig = (
     selectedProvider: string,
   ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
@@ -1991,7 +2000,7 @@ function createToolCatalog(
     );
   }
 
-  if (callerAgentId) {
+  if (scope === "agent") {
     registerTool(
       "get_attention_context",
       {
@@ -2003,7 +2012,9 @@ function createToolCatalog(
       },
       async () => ({
         content: [],
-        structuredContent: ensureValidJson(agentManager.getAttentionObjectives(callerAgentId)),
+        structuredContent: ensureValidJson(
+          agentManager.getAttentionObjectives(requireAttentionCallerId()),
+        ),
       }),
     );
     registerTool(
@@ -2022,7 +2033,7 @@ function createToolCatalog(
         content: [],
         structuredContent: ensureValidJson(
           await agentManager.reportObjectiveStatus({
-            agentId: callerAgentId,
+            agentId: requireAttentionCallerId(),
             objectiveId,
             disposition,
           }),
@@ -2044,7 +2055,7 @@ function createToolCatalog(
       async ({ objectiveId, reason }) => ({
         content: [],
         structuredContent: await agentManager.requestHumanAttention({
-          agentId: callerAgentId,
+          agentId: requireAttentionCallerId(),
           objectiveId,
           reason,
         }),

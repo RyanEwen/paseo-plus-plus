@@ -157,10 +157,20 @@ export default defineConfig({
     include: [
       "react-native",
       "react/jsx-runtime",
+      "react/jsx-dev-runtime",
       // These are real browser imports; prebundle them before the first test executes.
       "react",
       "react-dom/client",
       "react-dom",
+      // These viewport imports otherwise trigger a reload during cold browser tests.
+      "react-native-worklets",
+      "react-native-enriched-markdown",
+      "micromark-extension-gfm-table",
+      "mdast-util-gfm-table",
+      "micromark-util-decode-string",
+      "mdast-util-from-markdown",
+      "htmlparser2",
+      "expo-clipboard",
       "@floating-ui/react-native",
       "@tanstack/react-query",
       "@tanstack/react-virtual",

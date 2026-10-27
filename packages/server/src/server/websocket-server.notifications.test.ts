@@ -451,10 +451,12 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     );
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-1",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });
@@ -484,11 +486,13 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const getLastAssistantMessage = vi.fn(async () => "Done.");
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-2",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         labels: {},
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });

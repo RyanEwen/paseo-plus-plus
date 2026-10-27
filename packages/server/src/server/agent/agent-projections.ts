@@ -116,6 +116,18 @@ export function toStoredAgentRecord(
   } satisfies StoredAgentRecord;
 }
 
+/** Omit absent audience metadata before JSON sanitization, preserving known false and explicit null. */
+function projectAttentionPresentation(
+  input: Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage">,
+): Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage"> {
+  return {
+    ...(input.humanAttentionRequired !== undefined
+      ? { humanAttentionRequired: input.humanAttentionRequired }
+      : {}),
+    ...(input.attentionMessage !== undefined ? { attentionMessage: input.attentionMessage } : {}),
+  };
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -127,6 +139,7 @@ export function toAgentPayload(
     configuredThinkingOptionId: thinkingOptionId,
   });
 
+  const attentionObjectives = agent.attentionObjectives?.describe();
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
@@ -156,9 +169,11 @@ export function toAgentPayload(
     labels: agent.labels,
     archivedAt: options?.archivedAt ?? null,
     ...(agent.internal ? { internal: true } : {}),
-    attentionObjectives: agent.attentionObjectives?.describe(),
-    humanAttentionRequired: AttentionPresentation.forAgent(agent),
-    attentionMessage: agent.attentionMessage,
+    ...(attentionObjectives !== undefined ? { attentionObjectives } : {}),
+    ...projectAttentionPresentation({
+      humanAttentionRequired: AttentionPresentation.forAgent(agent),
+      attentionMessage: agent.attentionMessage,
+    }),
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
@@ -280,8 +295,10 @@ export function buildStoredAgentPayload(
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
-    humanAttentionRequired: storedHumanAttention(record, options),
-    attentionMessage: record.attentionMessage,
+    ...projectAttentionPresentation({
+      humanAttentionRequired: storedHumanAttention(record, options),
+      attentionMessage: record.attentionMessage,
+    }),
     archivedAt: record.archivedAt ?? null,
     ...(record.internal ? { internal: true } : {}),
     labels: normalizeLabels(record.labels),
@@ -308,8 +325,10 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
-    humanAttentionRequired: agent.humanAttentionRequired,
-    attentionMessage: agent.attentionMessage,
+    ...projectAttentionPresentation({
+      humanAttentionRequired: agent.humanAttentionRequired,
+      attentionMessage: agent.attentionMessage,
+    }),
     labels: agent.labels,
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };

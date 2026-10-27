@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Text, View, type Pressable } from "react-native";
+import { Text, View, type PressableProps } from "react-native";
 import { GitBranch } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
@@ -33,7 +33,7 @@ export function WorktreeBranchPicker({
 }: WorktreeBranchPickerProps & {
   disabled: boolean;
   tooltipLabel: string;
-  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
+  badgePressableStyle: PressableProps["style"];
 }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<View>(null);

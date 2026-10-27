@@ -1162,6 +1162,14 @@ async function copyResult() {
 
 可运行的[弹窗 UI 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)包含一个带内边距的表单、全宽的行、一个虚拟化列表、水平标签页和一个支持复制/粘贴的输入框。
 
+### Android 上的编码视频 {#encoded-video-on-android}
+
+`@getpaseo/plugin/client/react-native` 中的 `EncodedVideo` 提供由宿主管理的 Android 画布，用于原始 WebCodecs 数据块。采用此 API 前，请使用包含它的 SDK 并重新构建 Android 应用。渲染器通过现有的插件 RPC 传输接收编码字节，不打开媒体 URL，也不需要其他端口。其他平台会报告不支持。
+
+等待 `onReady` 后再配置解码器。最多保留四个已提交且尚未收到 `onDequeue` 的数据块，并在呈现或丢弃后释放每个 `onFrame` 结果。`present(id)` 在对应帧绘制完成后才会 resolve。重置和卸载会 reject 尚未完成的呈现请求，并释放保留的帧。请向用户展示 `onError`；旧版本的 Android System WebView 可能缺少 WebCodecs 或源编解码器支持。
+
+远程输入应保持在画布之外。在调用 `present` 前撤销上一帧的输入权限，并在其 resolve 后重新检查源身份和变更 epoch。收到或解码数据包不代表其像素已经显示。应用或保留的面板不再活跃时，暂停读取并重置解码器；恢复时使用新的关键帧。
+
 ### Toast {#toasts}
 
 `useToast()` 返回两个方法：

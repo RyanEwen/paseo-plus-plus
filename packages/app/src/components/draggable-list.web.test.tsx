@@ -14,7 +14,12 @@ import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { Active, ClientRect, Over, DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { useDragReorderState, type DragReorderState } from "./drag-reorder/use-drag-reorder-state";
 import type { DragReorderMove } from "./drag-reorder/reorder-items";
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
+import {
+  SidebarWorkspaceTreeProvider,
+  type SidebarWorkspaceTreeModel,
+} from "./sidebar/workspace-tree-context";
+import { useWorkspaceFamilyDragAuthority } from "./sidebar/use-workspace-family-drag";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -291,6 +296,24 @@ function createPinnedDragEvents(): { start: DragStartEvent; end: DragEndEvent } 
   };
 }
 
+/** Give flat pin rows the same collection-owned admission used by the real sidebar. */
+function PinnedDragOwner({ children }: { children: React.ReactNode }) {
+  const authority = useWorkspaceFamilyDragAuthority([]);
+  const value = useMemo<SidebarWorkspaceTreeModel>(
+    () => ({
+      tree: new Map(),
+      revision: "flat-pins",
+      dragAuthority: authority,
+      collapsedKeys: new Set(),
+      activeWorkspaceKey: null,
+      entries: new Map(),
+      humanAttentionWorkspaceKeys: new Set(),
+    }),
+    [authority],
+  );
+  return <SidebarWorkspaceTreeProvider value={value}>{children}</SidebarWorkspaceTreeProvider>;
+}
+
 it.each(["project", "status"] as const)(
   "guards top-level %s pins without disabling their independent manual order",
   async (mode) => {
@@ -306,12 +329,14 @@ it.each(["project", "status"] as const)(
     const dragEvents = createPinnedDragEvents();
     const original = [{ id: "one" }, { id: "two" }, { id: "three" }];
     const renderPins = (data: Item[]) => (
-      <SidebarPinnedList
-        data={data}
-        keyExtractor={keyExtractor}
-        renderItem={renderPinnedRow}
-        onDragEnd={dropped}
-      />
+      <PinnedDragOwner>
+        <SidebarPinnedList
+          data={data}
+          keyExtractor={keyExtractor}
+          renderItem={renderPinnedRow}
+          onDragEnd={dropped}
+        />
+      </PinnedDragOwner>
     );
     try {
       await act(() => root?.render(renderPins(original)));

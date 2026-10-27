@@ -1409,8 +1409,12 @@ describe("content max width", () => {
   });
 });
 
-it("includes every app preference in the daemon sync scope and excludes desktop settings", () => {
-  expect([...SYNC_APP_SETTING_KEYS].sort()).toEqual(Object.keys(DEFAULT_CLIENT_SETTINGS).sort());
+it("includes shared app preferences in the daemon sync scope and excludes device settings", () => {
+  const sharedKeys = Object.keys(DEFAULT_CLIENT_SETTINGS).filter(
+    (key) => key !== "filePanelAssociations",
+  );
+  expect([...SYNC_APP_SETTING_KEYS].sort()).toEqual(sharedKeys.sort());
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("filePanelAssociations");
   expect(SYNC_APP_SETTING_KEYS).not.toContain("manageBuiltInDaemon");
   expect(SYNC_APP_SETTING_KEYS).not.toContain("releaseChannel");
 });

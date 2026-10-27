@@ -176,7 +176,10 @@ describe("desktop renderer client bootstrap", () => {
   });
 
   it("selects the renderer client after inherited flags and before ready or contents", () => {
-    const source = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./main.ts", import.meta.url), "utf8").replace(
+      /\r\n/g,
+      "\n",
+    );
     const configuration = "configureDesktopRendererClient({";
     const configurationIndex = source.indexOf(configuration);
     const hook = `configureDesktopRendererClient({
@@ -196,7 +199,10 @@ ${hook}`);
     expect(configurationIndex).toBeLessThan(source.indexOf("void runDesktopStartup({"));
     expect(source.split(configuration)).toHaveLength(2);
 
-    const harness = readFileSync(new URL("../capture-harness/main.js", import.meta.url), "utf8");
+    const harness = readFileSync(
+      new URL("../capture-harness/main.js", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
     const productionImport =
       'const { configureDesktopRendererClient } = require("../dist/desktop-startup.js");';
     const harnessIndex = harness.indexOf(configuration);

@@ -265,6 +265,8 @@ test.describe("Settings — compact master-detail", () => {
     await page.getByTestId("sidebar-hosts-trigger").click();
     await page
       .getByTestId(`sidebar-host-row-${getServerId()}`)
+      // Host selection and settings are sibling controls in the host row.
+      .locator("../..")
       .getByRole("button", { name: "Open localhost settings", exact: true })
       .click();
 
