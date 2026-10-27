@@ -1,3 +1,4 @@
+import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { AttachmentStore } from "./attachments/store.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
@@ -407,6 +408,7 @@ export interface PaseoDaemonConfig {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
   };
+  notifications?: MutableDaemonConfig["notifications"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
@@ -561,6 +563,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
     },
+    notifications: { agentAwareAttention: isAgentAwareAttentionEnabled(config) },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: config.appendSystemPrompt ?? "",

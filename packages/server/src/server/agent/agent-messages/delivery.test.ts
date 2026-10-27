@@ -283,3 +283,59 @@ test("batches retain each sender's attachment context and image order", async ()
     )?.map((message) => message.source?.agentId),
   ).toEqual(["one", "two"]);
 });
+
+test("batch provenance retains separate recipients and capability links without rendering tokens", async () => {
+  const requests: Array<
+    Parameters<Parameters<typeof createAgentMessageDelivery>[0]["dispatch"]>[0]
+  > = [];
+  const delivery = createAgentMessageDelivery({
+    dispatch: async (request) => {
+      requests.push(request);
+      return "steered";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "one",
+    prompt: "result one",
+    source: {
+      kind: "agent-message",
+      agentId: "worker-a",
+      serverId: "host-a",
+      attention: {
+        continuation: {
+          objectiveId: "human-job",
+          token: "private-reply-capability",
+          requestId: "original-request",
+        },
+      },
+    },
+  });
+  delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "two",
+    prompt: "result two",
+    source: { kind: "agent-notification", agentId: "worker-b", event: "finished" },
+  });
+  await delivery.close();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.attention).toEqual([
+    {
+      kind: "agent",
+      requestId: "one",
+      requester: { agentId: "worker-a", serverId: "host-a" },
+      attention: {
+        continuation: {
+          objectiveId: "human-job",
+          token: "private-reply-capability",
+          requestId: "original-request",
+        },
+      },
+    },
+    { kind: "agent", requestId: "two", requester: { agentId: "worker-b" } },
+  ]);
+  expect(JSON.stringify(requests[0]?.prompt)).not.toContain("private-reply-capability");
+});

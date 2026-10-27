@@ -43,6 +43,29 @@ function createDictationKeyboard({ startsRecording }: { startsRecording: boolean
   };
 }
 
+describe("voice mute keyboard action", () => {
+  it.each([false, true])(
+    "reports handled only when voice is active (%s)",
+    (isRealtimeVoiceActive) => {
+      const toggleRealtimeVoiceMute = vi.fn();
+      const handled = runMessageInputKeyboardAction("voice-mute-toggle", {
+        focusInput: () => undefined,
+        isDictationRecording: () => false,
+        markTranscriptForSend: () => undefined,
+        startDictation: () => undefined,
+        confirmDictation: () => undefined,
+        cancelDictation: () => undefined,
+        toggleRealtimeVoice: () => undefined,
+        isRealtimeVoiceActive,
+        toggleRealtimeVoiceMute,
+      });
+
+      expect(handled).toBe(isRealtimeVoiceActive);
+      expect(toggleRealtimeVoiceMute).toHaveBeenCalledTimes(Number(isRealtimeVoiceActive));
+    },
+  );
+});
+
 describe("composer surface presentation", () => {
   it("shows only the input when no voice overlay is active", () => {
     expect(resolveComposerSurfacePresentation(false)).toEqual({

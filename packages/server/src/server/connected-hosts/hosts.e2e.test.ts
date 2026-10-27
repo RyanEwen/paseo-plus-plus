@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -1713,5 +1714,139 @@ test(
       "send_agent_message_request",
     ]);
     expect(requests[1]).not.toHaveProperty("sessionMode");
+  },
+);
+
+test(
+  "routed request rejection before observation cannot become an unrelated completion callback",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => {
+          if (JSON.stringify(prompt).includes("REJECT_BEFORE_ACCEPTANCE"))
+            throw new Error("Exact requested start failed");
+        },
+      }),
+    });
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const serverId = directory.hosts[0]?.serverId;
+    if (!serverId) throw new Error("Expected routed target host");
+    const routed = new DaemonClient({
+      url: "ws://attention-target/ws",
+      clientId: "attention-target",
+      transportFactory: createHostChannelTransport(
+        origin.client,
+        serverId,
+        "attention-target",
+        null,
+      ),
+      reconnect: { enabled: false },
+    });
+    cleanup.push(() => routed.close());
+    await routed.connect();
+    expect(routed.getLastServerInfoMessage()?.serverId).toBe(serverId);
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const worker = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Request correlation",
+    });
+    const requester = { agentId: randomUUID(), serverId: directory.self.serverId };
+    const link = { objectiveId: randomUUID(), requestId: randomUUID(), token: randomUUID() };
+    await routed.sendAgentMessage(worker.id, "REJECT_BEFORE_ACCEPTANCE", {
+      messageId: link.requestId,
+      sourceAgentId: requester.agentId,
+      sourceAgentServerId: requester.serverId,
+      agentAttention: { requesterObjective: link },
+    });
+    await destination.client.waitForFinish(worker.id, 10000);
+    await b.daemon.agentManager.reloadAgentSession(worker.id);
+    await routed.sendAgentMessage(worker.id, "UNRELATED_LATER_RESULT");
+    await routed.waitForFinish(worker.id, 10000);
+    // Attach only after the failed queue entry is gone and later work has completed.
+    const result = await routed.waitForAttentionOutcome({
+      agentId: worker.id,
+      attentionRequest: { requester, link },
+    });
+    expect(result.attentionOutcome).toMatchObject({
+      requestId: link.requestId,
+      kind: "rejected",
+      acceptedTurnId: null,
+      lastMessage: null,
+      error: "Exact requested start failed",
+    });
+    expect(result.lastMessage).toBeNull();
+  },
+);
+
+test(
+  "routed completed request keeps its exact outcome after a later accepted turn",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon();
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const serverId = directory.hosts[0]?.serverId;
+    if (!serverId) throw new Error("Expected routed target host");
+    const routed = new DaemonClient({
+      url: "ws://attention-exact/ws",
+      clientId: "attention-exact",
+      transportFactory: createHostChannelTransport(
+        origin.client,
+        serverId,
+        "attention-exact",
+        null,
+      ),
+      reconnect: { enabled: false },
+    });
+    cleanup.push(() => routed.close());
+    await routed.connect();
+    expect(routed.getLastServerInfoMessage()?.serverId).toBe(serverId);
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const worker = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Exact request",
+    });
+    const requester = { agentId: randomUUID(), serverId: directory.self.serverId };
+    const link = { objectiveId: randomUUID(), requestId: randomUUID(), token: randomUUID() };
+    await routed.sendAgentMessage(worker.id, "Respond with exactly: EXACT_ACCEPTED_A", {
+      messageId: link.requestId,
+      sourceAgentId: requester.agentId,
+      sourceAgentServerId: requester.serverId,
+      agentAttention: { requesterObjective: link },
+    });
+    await routed.waitForFinish(worker.id, 10000);
+    expect(await b.daemon.agentManager.getLastAssistantMessage(worker.id)).toBe("EXACT_ACCEPTED_A");
+    await routed.sendAgentMessage(worker.id, "Respond with exactly: UNRELATED_B");
+    await routed.waitForFinish(worker.id, 10000);
+    expect(await b.daemon.agentManager.getLastAssistantMessage(worker.id)).toBe("UNRELATED_B");
+    const result = await routed.waitForAttentionOutcome({
+      agentId: worker.id,
+      attentionRequest: { requester, link },
+    });
+    expect(result.attentionOutcome).toMatchObject({
+      kind: "finished",
+      requestId: link.requestId,
+      requester,
+    });
+    expect(result.attentionOutcome?.acceptedTurnId).toBeTruthy();
+    expect(result.lastMessage).toContain("EXACT_ACCEPTED_A");
+    expect(result.lastMessage).not.toContain("UNRELATED_B");
+    const acknowledged = await routed.waitForAttentionOutcome({
+      agentId: worker.id,
+      attentionRequest: { requester, link, acknowledgeOutcomeId: result.attentionOutcome?.id },
+    });
+    expect(acknowledged.attentionOutcome).toBeNull();
   },
 );

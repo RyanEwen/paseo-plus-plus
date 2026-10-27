@@ -1,3 +1,4 @@
+import { AttentionPresentation } from "./attention/presentation.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -104,6 +105,12 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
+    attentionObjectives: agent.attentionObjectives?.snapshot(),
+    humanAttentionRequired: agent.attentionObjectives?.requiresHumanAttention({
+      hasUnread: agent.attention.requiresAttention,
+      hasProblem: agent.lifecycle === "error" || agent.pendingPermissions.size > 0,
+    }),
+    attentionMessage: agent.attentionMessage,
     internal: options?.internal,
     owner: agent.owner,
   } satisfies StoredAgentRecord;
@@ -149,6 +156,9 @@ export function toAgentPayload(
     labels: agent.labels,
     archivedAt: options?.archivedAt ?? null,
     ...(agent.internal ? { internal: true } : {}),
+    attentionObjectives: agent.attentionObjectives?.describe(),
+    humanAttentionRequired: AttentionPresentation.forAgent(agent),
+    attentionMessage: agent.attentionMessage,
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
@@ -205,9 +215,23 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+/** Apply the current host presentation choice to retained facts without mutating the stored record. */
+function storedHumanAttention(
+  record: StoredAgentRecord,
+  options?: { agentAwareAttention?: boolean },
+): boolean | undefined {
+  return AttentionPresentation.project({
+    enabled: options?.agentAwareAttention ?? true,
+    humanAttentionRequired: record.humanAttentionRequired,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionMessage: record.attentionMessage,
+  });
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
+  options?: { agentAwareAttention?: boolean },
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -256,6 +280,8 @@ export function buildStoredAgentPayload(
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
+    humanAttentionRequired: storedHumanAttention(record, options),
+    attentionMessage: record.attentionMessage,
     archivedAt: record.archivedAt ?? null,
     ...(record.internal ? { internal: true } : {}),
     labels: normalizeLabels(record.labels),
@@ -282,6 +308,8 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
+    humanAttentionRequired: agent.humanAttentionRequired,
+    attentionMessage: agent.attentionMessage,
     labels: agent.labels,
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };

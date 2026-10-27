@@ -40,7 +40,19 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     titleState: label ? "ready" : "loading",
     statusBucket: deriveSidebarStateBucket({
       status,
-      requiresAttention: false,
+      requiresAttention:
+        row.kind === "paseo" &&
+        row.humanAttentionRequired === true &&
+        row.requiresAttention === true,
+      attentionReason:
+        row.kind === "paseo" && row.humanAttentionRequired !== undefined
+          ? row.attentionReason
+          : undefined,
+      attentionMessage: row.kind === "paseo" ? row.attentionMessage : undefined,
+      pendingPermissionCount:
+        row.kind === "paseo" && row.humanAttentionRequired !== undefined
+          ? row.pendingPermissionCount
+          : undefined,
     }),
   };
 }
