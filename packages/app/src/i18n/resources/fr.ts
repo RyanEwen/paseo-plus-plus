@@ -104,11 +104,11 @@ export const fr: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Onglets des espaces sur mobile",
-        hint: "Afficher une barre d’onglets défilante dans les espaces compacts. Désactivez pour retrouver le sélecteur précédent sans changer l’onglet actif.",
+        hint: "Afficher une barre d’onglets défilante sous le titre de l’espace de travail en mode compact. Désactivez pour retrouver le sélecteur précédent sans changer l’onglet actif.",
       },
       widerWorkspaceTabs: {
         label: "Onglets d’espace de travail plus larges",
-        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Les onglets courts gardent leur largeur naturelle. Désactivez pour rétablir la limite précédente.",
+        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Sur téléphone, les onglets de l’espace de travail se partagent toujours la largeur disponible à parts égales.",
       },
 
       descriptiveToolCalls: {
@@ -122,7 +122,7 @@ export const fr: TranslationResources = {
       },
       stickyUserPrompts: {
         label: "Garder les messages en vue",
-        hint: "Affiche le message courant au-dessus du chat avec développement et navigation",
+        hint: "Épingle un message compact avec développement et navigation précédent/suivant. Les messages ordinaires restent déployés et le chargement ne masque jamais un message disponible.",
       },
       previousAgents: {
         label: "Agents précédents",
@@ -1467,6 +1467,16 @@ export const fr: TranslationResources = {
       multipleWorkspaces_other: "Espaces de {{count}} projets",
       title: "Projets",
     },
+    workspaceTree: {
+      expand: "Développer les espaces de travail enfants de {{name}}",
+      collapse: "Replier les espaces de travail enfants de {{name}}",
+      activeChild: "Contient l’espace de travail actif.",
+      summary_one: "{{count}} espace de travail enfant : {{status}}",
+      summary_other: "{{count}} espaces de travail enfants : {{status}}",
+      humanAttention_one: "{{count}} espace de travail enfant nécessite votre attention",
+      humanAttention_other: "{{count}} espaces de travail enfants nécessitent votre attention",
+      unknownStatus: "État indisponible",
+    },
     statusGroupAccessibility: "Groupe {{label}}",
     statusBucket: {
       workingCount: "{{count}} en cours",
@@ -2716,6 +2726,19 @@ export const fr: TranslationResources = {
     },
     notifications: {
       title: "Notifications",
+      chooseHost:
+        "Choisissez un hôte de réglages pour configurer les alertes sur tous ses appareils.",
+      hostTitle: "Notifications sur {{host}}",
+      agentAware: "Alertes adaptées aux agents",
+      agentAwareHint:
+        "Gardez silencieux les résultats courants entre agents et affichez le badge « À relire » quand vous devez intervenir. Ce réglage s’applique à tous les appareils connectés à {{host}}. Les demandes d’intervention humaine et les alertes de sécurité restent disponibles quand il est désactivé.",
+      updateHost: "Mettez cet hôte à jour pour modifier les alertes adaptées aux agents.",
+      readOnly: "Vous devez pouvoir administrer cet hôte pour modifier ce réglage.",
+      unavailable:
+        "Connectez-vous à un hôte compatible avec les droits d’administration avant d’enregistrer.",
+      notSaved: "L’hôte n’a pas enregistré cette préférence d’alertes. Réessayez.",
+      loadFailed: "Impossible de charger la préférence de notifications de l’hôte.",
+      saving: "Enregistrement...",
       permission: "Autorisation des notifications",
       refreshAccessibility: "Actualiser l’autorisation des notifications",
       playSound: "Émettre un son",

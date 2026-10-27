@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** Must match the normal fork NSIS appId in electron-builder.preview.yml. */
+export const WINDOWS_FORK_APP_ID = "sh.paseo.plusplus.desktop";
+
 const distributionMetadataSchema = z.object({
   paseoPreview: z.boolean().default(false),
   paseoDebug: z.boolean().default(false),
@@ -12,6 +15,7 @@ export function resolveDesktopDistribution(metadata: unknown) {
     return {
       isPreview: true,
       appName: "Paseo++ Debug",
+      windowsAppUserModelId: null,
       userDataName: "Paseo++ Debug",
       desktopName: "paseo-plus-plus-debug.desktop",
       daemonHomeName: ".paseo-plus-plus-debug-desktop",
@@ -22,6 +26,7 @@ export function resolveDesktopDistribution(metadata: unknown) {
     return {
       isPreview: true,
       appName: "Paseo++",
+      windowsAppUserModelId: WINDOWS_FORK_APP_ID,
       // The fork uses a fresh profile independent of upstream and legacy preview installs.
       userDataName: "Paseo++",
       desktopName: "paseo-plus-plus.desktop",
@@ -33,6 +38,7 @@ export function resolveDesktopDistribution(metadata: unknown) {
   return {
     isPreview: false,
     appName: "Paseo",
+    windowsAppUserModelId: null,
     userDataName: "Paseo",
     desktopName: "Paseo.desktop",
     daemonHomeName: null,

@@ -1,4 +1,5 @@
 import { daemonDistribution } from "./daemon-distribution.js";
+import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -620,6 +621,11 @@ export function resolveConfigFromPersisted(
     browserToolsEnabled,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
+    notifications: {
+      agentAwareAttention: isAgentAwareAttentionEnabled({
+        notifications: persisted.daemon?.notifications,
+      }),
+    },
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,

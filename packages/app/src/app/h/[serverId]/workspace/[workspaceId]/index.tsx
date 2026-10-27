@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useIsFocused } from "@react-navigation/native";
 import { useNavigation } from "expo-router/react-navigation";
 import { StyleSheet, View } from "react-native";
-import { useLocalSearchParams, useRootNavigationState } from "expo-router";
+import { useIsFocused, useLocalSearchParams, useRootNavigationState } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { RetainedPanel } from "@/components/retained-panel";
 import {

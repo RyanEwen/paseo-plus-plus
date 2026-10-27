@@ -105,11 +105,11 @@ export const ptBR: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Abas de espaços no celular",
-        hint: "Mostrar uma barra de abas rolável em espaços compactos. Desative para usar o seletor anterior sem mudar a aba selecionada.",
+        hint: "Mostrar uma barra de abas rolável abaixo do título do espaço de trabalho no layout compacto. Desative para usar o seletor anterior sem mudar a aba selecionada.",
       },
       widerWorkspaceTabs: {
         label: "Abas do espaço de trabalho mais largas",
-        hint: "Permita até 50% mais largura para títulos longos. Abas curtas mantêm a largura natural. Desative para restaurar o limite anterior.",
+        hint: "Permita até 50% mais largura para títulos longos. No celular, as abas do espaço de trabalho sempre dividem igualmente a largura disponível.",
       },
 
       descriptiveToolCalls: {
@@ -123,7 +123,7 @@ export const ptBR: TranslationResources = {
       },
       stickyUserPrompts: {
         label: "Manter mensagens visíveis",
-        hint: "Mostra a mensagem atual acima do chat, com expansão e navegação anterior/próxima",
+        hint: "Fixa uma mensagem compacta com expansão e navegação anterior/próxima. As mensagens normais ficam expandidas, e o carregamento nunca cobre uma mensagem disponível.",
       },
       previousAgents: {
         label: "Agentes anteriores",
@@ -1465,6 +1465,16 @@ export const ptBR: TranslationResources = {
       multipleWorkspaces_other: "Espaços de {{count}} projetos",
       title: "Projetos",
     },
+    workspaceTree: {
+      expand: "Expandir os espaços de trabalho filhos de {{name}}",
+      collapse: "Recolher os espaços de trabalho filhos de {{name}}",
+      activeChild: "Contém o espaço de trabalho ativo.",
+      summary_one: "{{count}} espaço de trabalho filho: {{status}}",
+      summary_other: "{{count}} espaços de trabalho filhos: {{status}}",
+      humanAttention_one: "{{count}} espaço de trabalho filho precisa da sua atenção",
+      humanAttention_other: "{{count}} espaços de trabalho filhos precisam da sua atenção",
+      unknownStatus: "Status indisponível",
+    },
     statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       workingCount: "{{count}} trabalhando",
@@ -2701,6 +2711,19 @@ export const ptBR: TranslationResources = {
     },
     notifications: {
       title: "Notificações",
+      chooseHost:
+        "Escolha um host de configurações para ajustar os alertas em todos os dispositivos dele.",
+      hostTitle: "Notificações de {{host}}",
+      agentAware: "Alertas conforme o destinatário",
+      agentAwareHint:
+        "Mantenha silenciosos os resultados rotineiros entre agentes e mostre o indicador «Para revisar» quando você precisar agir. Aplica-se a todos os dispositivos conectados a {{host}}. Os pedidos de intervenção humana e os alertas de segurança continuam disponíveis quando desativado.",
+      updateHost: "Atualize este host para alterar os alertas conforme o destinatário.",
+      readOnly: "É necessária permissão para administrar este host para alterar esta configuração.",
+      unavailable:
+        "Conecte-se a um host compatível com permissão de administração antes de salvar.",
+      notSaved: "O host não salvou esta preferência de alertas. Tente novamente.",
+      loadFailed: "Não foi possível carregar a preferência de notificações do host.",
+      saving: "Salvando...",
       permission: "Permissão de notificações",
       refreshAccessibility: "Atualizar permissão de notificações",
       playSound: "Reproduzir som",

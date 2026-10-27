@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
-import React, { act } from "react";
+import React, { act, useCallback } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostUpdateAction, HostUpdateSheet } from "./host-update-action";
+import { HostPickerOption } from "./host-picker";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { i18n } from "@/i18n/i18next";
 import type { HostProfile } from "@/types/host-connection";
@@ -27,10 +28,26 @@ vi.mock("@/runtime/host-runtime", () => ({
     on: () => () => {},
   }),
   useHostRuntimeIsConnected: () => runtime.connected,
+  useHostRuntimeSnapshot: () => ({ activeConnection: null }),
+  useHostRuntimeConnectionStatus: () => (runtime.connected ? "online" : "offline"),
   getHostRuntimeStore: () => ({ getSnapshot: () => runtime.connected }),
   isHostRuntimeConnected: (connected: boolean) => connected,
 }));
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: runtime.confirm }));
+// The real picker row imports the popover module, but these cases never render a popover.
+// Keep native positioning outside this DOM unit boundary and fail if a case starts using it.
+vi.mock("@floating-ui/react-native", () => {
+  function unexpectedPopoverPositioning(): never {
+    throw new Error("Host picker row tests must not invoke native popover positioning");
+  }
+  return {
+    flip: unexpectedPopoverPositioning,
+    offset: unexpectedPopoverPositioning,
+    shift: unexpectedPopoverPositioning,
+    size: unexpectedPopoverPositioning,
+    useFloating: unexpectedPopoverPositioning,
+  };
+});
 // The native sheet boundary is substituted; the shared update hook, lifecycle and rendered feedback are real.
 vi.mock("@/components/adaptive-modal-sheet", () => ({
   AdaptiveModalSheet: ({ visible, children }: { visible: boolean; children: React.ReactNode }) =>
@@ -71,6 +88,14 @@ const updateHost: HostProfile = {
 beforeEach(() => {
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   notifyManager.setScheduler(queueMicrotask);
   runtime.connected = true;
   runtime.version = "0.11.1-preview.12";
@@ -92,6 +117,7 @@ afterEach(() => {
   queryClient.clear();
   notifyManager.setScheduler((callback) => setTimeout(callback, 0));
   container.remove();
+  vi.unstubAllGlobals();
 });
 async function renderAction(
   options: {
@@ -225,5 +251,107 @@ describe("footer host update actions", () => {
     expect(
       within(container).getByRole("button", { name: "Close" }).getAttribute("aria-disabled"),
     ).not.toBe("true");
+  });
+});
+
+interface HostRowActionsProps {
+  onRow: () => void;
+  onSettings: (serverId: string) => void;
+  onUpdate: (host: HostProfile) => void;
+}
+
+/** Exercise the existing fork update action through the real picker row's stable action slot. */
+function HostRowActions({ onRow, onSettings, onUpdate }: HostRowActionsProps) {
+  const daemonVersion = runtime.version;
+  const renderHostAction = useCallback(
+    () => (
+      <HostUpdateAction
+        host={updateHost}
+        supportsAvailability
+        legacyManualUpdate={false}
+        daemonVersion={daemonVersion}
+        enabled
+        busy={false}
+        onUpdate={onUpdate}
+      />
+    ),
+    [daemonVersion, onUpdate],
+  );
+  return (
+    <HostPickerOption
+      serverId={updateHost.serverId}
+      label={updateHost.label}
+      showActiveConnection={false}
+      active={false}
+      onPress={onRow}
+      onOpenHostSettings={onSettings}
+      renderHostAction={renderHostAction}
+    />
+  );
+}
+
+describe("host picker independent row actions", () => {
+  it("keeps host selection, settings and update as independent focus targets without button nesting", async () => {
+    const onRow = vi.fn();
+    const onSettings = vi.fn();
+    const onUpdate = vi.fn();
+    await act(async () =>
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <HostRowActions onRow={onRow} onSettings={onSettings} onUpdate={onUpdate} />
+        </QueryClientProvider>,
+      ),
+    );
+    await act(async () => {});
+    const primary = within(container).getByRole("button", { name: "Host A" });
+    const settings = within(container).getByRole("button", { name: "Open Host A settings" });
+    const update = within(container).getByRole("button", { name: "Update Host A" });
+
+    expect(primary.contains(settings)).toBe(false);
+    expect(primary.contains(update)).toBe(false);
+    for (const control of [primary, settings, update]) {
+      expect(control.parentElement?.closest("button, [role='button']") ?? null).toBeNull();
+      expect(control.tabIndex).toBe(0);
+      await act(async () => control.focus());
+      expect(document.activeElement).toBe(control);
+    }
+
+    const onAncestorClick = vi.fn();
+    document.body.addEventListener("click", onAncestorClick);
+    try {
+      await act(async () => update.click());
+      await act(async () => settings.click());
+      expect(onUpdate).toHaveBeenCalledExactlyOnceWith(updateHost);
+      expect(onSettings).toHaveBeenCalledExactlyOnceWith("host-a");
+      expect(onRow).not.toHaveBeenCalled();
+      expect(onAncestorClick).not.toHaveBeenCalled();
+      await act(async () => primary.click());
+      expect(onRow).toHaveBeenCalledOnce();
+      expect(onAncestorClick).not.toHaveBeenCalled();
+    } finally {
+      document.body.removeEventListener("click", onAncestorClick);
+    }
+  });
+
+  it("keeps the plain host option selectable without an action wrapper", async () => {
+    const onRow = vi.fn();
+    await act(async () =>
+      root.render(
+        <HostPickerOption
+          serverId={updateHost.serverId}
+          label={updateHost.label}
+          showActiveConnection={false}
+          selected
+          active={false}
+          onPress={onRow}
+        />,
+      ),
+    );
+    const primary = within(container).getByRole("button", { name: "Host A" });
+    expect(within(container).getAllByRole("button")).toHaveLength(1);
+    expect(container.firstElementChild).toBe(primary);
+    expect(primary.querySelector("button, [role='button']")).toBeNull();
+    await act(async () => primary.click());
+    expect(onRow).toHaveBeenCalledOnce();
   });
 });

@@ -1,3 +1,4 @@
+import { useWorkspaceFamilyDrag } from "@/components/sidebar/use-workspace-family-drag";
 import { RestoreProjectWorkspaceDialog } from "@/components/restore-project-workspace-dialog";
 import {
   ProjectExpansionAnchorContext,
@@ -131,7 +132,8 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import { useWorkspaceFamilyWindow } from "@/components/sidebar/use-workspace-family-window";
+import { WorkspaceTreeBranch } from "@/components/sidebar/workspace-tree-branch";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -1759,10 +1761,11 @@ function ProjectBlock({
   );
   const {
     visibleItems: visibleWorkspaces,
+    itemsByKey: familyItemsByKey,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(project.workspaces, getStatusEnteredAt);
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -1827,23 +1830,7 @@ function ProjectBlock({
     ],
   );
 
-  const renderWorkspace = useCallback(
-    ({
-      item,
-      drag: workspaceDrag,
-      isActive,
-      dragHandleProps: workspaceDragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return renderWorkspaceRow(item, {
-        drag: workspaceDrag,
-        isDragging: isActive,
-        dragHandleProps: workspaceDragHandleProps,
-      });
-    },
-    [renderWorkspaceRow],
-  );
-
-  const workspaceDrag = useSidebarReorderGuard("workspace");
+  const workspaceDrag = useWorkspaceFamilyDrag();
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
   const projectPinning = useAppSettings().settings.paseoPlusPlus.projectPinning;
   const workspaceDragGroup = useCallback(
@@ -1857,6 +1844,43 @@ function ProjectBlock({
     },
     [projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
   );
+  const renderFamilyRow = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) =>
+      renderWorkspaceRow(row.item, {
+        drag: row.drag,
+        isDragging: row.isActive,
+        dragHandleProps: row.dragHandleProps,
+      }),
+    [renderWorkspaceRow],
+  );
+  const reorderFamilySiblings = useCallback(
+    (rows: SidebarWorkspacePlacement[]) => onWorkspaceReorder(project.viewKey, rows),
+    [onWorkspaceReorder, project.viewKey],
+  );
+  const renderWorkspace = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return (
+        <WorkspaceTreeBranch
+          row={row}
+          itemsByKey={familyItemsByKey}
+          renderRow={renderFamilyRow}
+          onSiblingReorder={reorderFamilySiblings}
+          getDragGroupKey={workspaceDragGroup}
+          parentGestureRef={parentGestureRef}
+          dragGestureHostActive={dragGestureHostActive}
+        />
+      );
+    },
+    [
+      familyItemsByKey,
+      renderFamilyRow,
+      reorderFamilySiblings,
+      workspaceDragGroup,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
+  );
+
   const handleWorkspaceDragEnd = useCallback(
     (workspaces: SidebarWorkspacePlacement[], move?: DragReorderMove) => {
       if (!move) return;
@@ -2458,10 +2482,11 @@ function ProjectModeList({
   );
   const {
     visibleItems: visiblePinnedChats,
+    itemsByKey: pinnedFamilyItemsByKey,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(pinnedChats, getStatusEnteredAt);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2689,7 +2714,7 @@ function ProjectModeList({
     [renderProjectBlock],
   );
 
-  const renderPinnedChat = useCallback(
+  const renderPinnedChatRow = useCallback(
     ({
       item: workspace,
       drag,
@@ -2732,6 +2757,27 @@ function ProjectModeList({
       onToggleWorkspacePin,
       projectIconByProjectViewKey,
       workspaceEntriesByKey,
+    ],
+  );
+
+  const renderPinnedChat = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => (
+      <WorkspaceTreeBranch
+        row={row}
+        itemsByKey={pinnedFamilyItemsByKey}
+        renderRow={renderPinnedChatRow}
+        onSiblingReorder={onPinnedWorkspaceReorder}
+        manualPins
+        parentGestureRef={parentGestureRef}
+        dragGestureHostActive={dragGestureHostActive}
+      />
+    ),
+    [
+      pinnedFamilyItemsByKey,
+      renderPinnedChatRow,
+      onPinnedWorkspaceReorder,
+      parentGestureRef,
+      dragGestureHostActive,
     ],
   );
 

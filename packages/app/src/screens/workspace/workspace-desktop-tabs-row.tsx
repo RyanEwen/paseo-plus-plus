@@ -1172,22 +1172,26 @@ function CompactWorkspaceTabSlot({
   );
 }
 
-/** Uses measured label/viewport data when available and preserves initial layout fallbacks. */
+/** Selects the measured track for fill sizing and preserves other layouts' initial fallbacks. */
 function useMeasuredWorkspaceTabLayout(input: {
   host: PaneHost;
   iconOnlyTabWidth: number;
   trackSnapshot: WorkspaceTabTrackSnapshot | null;
-  measuredWidth: number;
+  containerWidth: number;
+  scrollWidth: number;
   metrics: WorkspaceTabLayoutMetrics;
   compact: boolean;
+  fillAvailableWidth: boolean;
 }) {
+  const measuredWidth = input.fillAvailableWidth ? input.scrollWidth : input.containerWidth;
   return useWorkspaceTabLayout({
     host: input.host,
     iconOnlyTabWidth: input.iconOnlyTabWidth,
     tabLabelWidths: input.trackSnapshot?.labelWidths ?? [],
-    viewportWidthOverride: input.measuredWidth > 0 ? input.measuredWidth : null,
+    viewportWidthOverride: measuredWidth > 0 ? measuredWidth : null,
     metrics: input.metrics,
     compact: input.compact,
+    fillAvailableWidth: input.fillAvailableWidth,
   });
 }
 
@@ -1229,7 +1233,9 @@ function ResolvedWorkspaceDesktopTabsRow({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
+  const fillAvailableWidth = isCompact && host === "main";
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
+  const [tabsScrollWidth, setTabsScrollWidth] = useState(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const explorerDisplay = useExplorerTabDisplay(host);
   const iconOnly = explorerDisplay.enabled;
@@ -1253,16 +1259,25 @@ function ResolvedWorkspaceDesktopTabsRow({
     updateMeasuredWidth(setExitFocusModeWidth, event);
   }, []);
 
-  const layoutMetrics = useMemo(
-    () => ({
-      rowHorizontalInset: 0,
-      actionsReservedWidth: Math.max(
+  const layoutMetrics = useMemo(() => {
+    // The measured compact scroll viewport already excludes the toolbar and other actions.
+    let actionsReservedWidth = 0;
+    if (!fillAvailableWidth) {
+      const newTabWidth = isCompact
+        ? CONTROL_HEIGHTS.field
+        : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH;
+      actionsReservedWidth = Math.max(
         0,
-        (isCompact ? CONTROL_HEIGHTS.field : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH) +
+        newTabWidth +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
           (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
-      ),
+      );
+    }
+
+    return {
+      rowHorizontalInset: 0,
+      actionsReservedWidth,
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
       minTabWidth: workspaceTabMinimumWidth(host, isCompact),
@@ -1271,16 +1286,16 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabContentGap: TAB_CONTENT_GAP,
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       closeButtonWidth: isCompact ? 0 : TAB_CLOSE_BUTTON_RESERVED_WIDTH,
-    }),
-    [
-      exitFocusModeWidth,
-      focusModeEnabled,
-      host,
-      isCompact,
-      showPaneMaximizeAction,
-      showPaneSplitActions,
-    ],
-  );
+    };
+  }, [
+    exitFocusModeWidth,
+    fillAvailableWidth,
+    focusModeEnabled,
+    host,
+    isCompact,
+    showPaneMaximizeAction,
+    showPaneSplitActions,
+  ]);
 
   const panePanelKinds = useMemo(() => tabs.map(({ tab }) => tab.kind), [tabs]);
 
@@ -1410,9 +1425,11 @@ function ResolvedWorkspaceDesktopTabsRow({
     host,
     iconOnlyTabWidth,
     trackSnapshot,
-    measuredWidth: tabsContainerWidth,
+    containerWidth: tabsContainerWidth,
+    scrollWidth: tabsScrollWidth,
     metrics: layoutMetrics,
     compact: isCompact,
+    fillAvailableWidth,
   });
   // A scroll view keeps its offset when its content shrinks under the viewport, so a row that
   // stops scrolling would leave the tabs it had panned past out of view with no way back.
@@ -1562,10 +1579,13 @@ function ResolvedWorkspaceDesktopTabsRow({
     tabScroll;
   const onScrollLayout = useCallback(
     (event: LayoutChangeEvent) => {
+      if (fillAvailableWidth) {
+        updateMeasuredWidth(setTabsScrollWidth, event);
+      }
       boundaryOnLayout(event);
       selectedTabOnLayout(event);
     },
-    [boundaryOnLayout, selectedTabOnLayout],
+    [boundaryOnLayout, selectedTabOnLayout, fillAvailableWidth],
   );
   const onScrollContentSizeChange = useCallback(
     (width: number) => {
