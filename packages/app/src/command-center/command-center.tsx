@@ -531,6 +531,9 @@ function ResultContent({ result, query }: { result: CommandCenterResult; query: 
             <AgentStatusDot
               status={agent.status}
               requiresAttention={agent.requiresAttention}
+              attentionReason={agent.attentionReason}
+              attentionMessage={agent.attentionMessage}
+              pendingPermissionCount={agent.pendingPermissionCount}
               showInactive
             />
           </View>

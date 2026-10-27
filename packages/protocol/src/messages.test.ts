@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
   AgentTimelineItemPayloadSchema,
   CheckoutDiffGetRequestSchema,
   SendAgentMessageRequestSchema,
@@ -689,3 +691,17 @@ test.each(["all", "base", "uncommitted"] as const)(
     expect(parsed.attachments).toEqual([attachment]);
   },
 );
+
+test("attention preference config remains optional and rejects nonboolean writes", () => {
+  expect(MutableDaemonConfigSchema.safeParse({ mcp: { injectIntoAgents: false } }).success).toBe(
+    true,
+  );
+  expect(
+    MutableDaemonConfigPatchSchema.safeParse({ notifications: { agentAwareAttention: false } })
+      .success,
+  ).toBe(true);
+  expect(
+    MutableDaemonConfigPatchSchema.safeParse({ notifications: { agentAwareAttention: "false" } })
+      .success,
+  ).toBe(false);
+});

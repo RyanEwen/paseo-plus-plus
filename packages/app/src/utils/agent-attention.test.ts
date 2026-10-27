@@ -267,3 +267,42 @@ describe("pickAttentionAgent", () => {
     ).toBe("error-agent");
   });
 });
+
+it.each([null, "parent-in-this-workspace", "parent-in-another-workspace"])(
+  "opens the exact escalating chat regardless of parent %s",
+  (parentAgentId) => {
+    const worker = createAgent({
+      id: "worker",
+      parentAgentId,
+      humanAttentionRequired: true,
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    const parent = createAgent({ id: "parent", humanAttentionRequired: false });
+    expect(pickAttentionAgent([parent, worker])).toBe("worker");
+    expect(
+      pickAttentionAgent([
+        parent,
+        { ...worker, requiresAttention: false, humanAttentionRequired: false },
+      ]),
+    ).toBeNull();
+  },
+);
+
+it("navigates to the escalating child's blocking problem before ordinary Ready results", () => {
+  const ready = createAgent({
+    id: "ready",
+    humanAttentionRequired: true,
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+  const child = createAgent({
+    id: "child",
+    parentAgentId: "parent",
+    status: "error",
+    humanAttentionRequired: true,
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+  expect(pickAttentionAgent([ready, child])).toBe("child");
+});

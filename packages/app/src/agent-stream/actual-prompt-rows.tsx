@@ -14,10 +14,19 @@ interface ActualPromptRows {
   scope: string;
   expandedIds: ReadonlySet<string>;
   toggleExpanded(id: string): void;
+  /** Remember a native disclosure that changed only paint, without a list resize. */
+  rememberExpanded(id: string, expanded: boolean): void;
+  /** Route an explicit Find expansion to a mounted native presentation owner. */
+  registerNativeExpansion(id: string, expand: () => void): () => void;
   expand(id: string): void;
   bodyViewportHeight: number;
   reportViewportHeight(height: number): void;
   registerViewport(prepare: (id: string) => void): () => void;
+}
+
+interface NativeExpansionOwner {
+  scope: string;
+  expand(): void;
 }
 
 export const ActualPinnedRowContext = createContext(false);
@@ -59,6 +68,18 @@ export function ActualPromptRowsProvider({
     Math.min(windowHeight * 0.6, viewportHeight * 0.8) - SPACING[2],
   );
   const viewportOwner = useRef<((id: string) => void) | null>(null);
+  const nativeExpansionOwners = useRef(new Map<string, NativeExpansionOwner>());
+  const registerNativeExpansion = useCallback(
+    (id: string, expand: () => void) => {
+      const owner = { scope, expand };
+      nativeExpansionOwners.current.set(id, owner);
+      return () => {
+        if (nativeExpansionOwners.current.get(id) === owner)
+          nativeExpansionOwners.current.delete(id);
+      };
+    },
+    [scope],
+  );
   const registerViewport = useCallback((prepare: (id: string) => void) => {
     viewportOwner.current = prepare;
     return () => {
@@ -87,9 +108,23 @@ export function ActualPromptRowsProvider({
     },
     [scope],
   );
+  const rememberExpanded = useCallback(
+    (id: string, expanded: boolean) => {
+      setState((current) => {
+        if (current.scope === scope && current.expandedIds.has(id) === expanded) return current;
+        const ids = new Set(current.scope === scope ? current.expandedIds : []);
+        if (expanded) ids.add(id);
+        else ids.delete(id);
+        return { scope, expandedIds: ids };
+      });
+    },
+    [scope],
+  );
   const expand = useCallback(
     (id: string) => {
       viewportOwner.current?.(id);
+      const nativeOwner = nativeExpansionOwners.current.get(id);
+      if (nativeOwner?.scope === scope) nativeOwner.expand();
       setState((current) => {
         if (current.scope === scope && current.expandedIds.has(id)) return current;
         const ids = new Set(current.scope === scope ? current.expandedIds : []);
@@ -106,6 +141,8 @@ export function ActualPromptRowsProvider({
             scope,
             expandedIds,
             toggleExpanded,
+            rememberExpanded,
+            registerNativeExpansion,
             expand,
             bodyViewportHeight,
             reportViewportHeight,
@@ -117,6 +154,8 @@ export function ActualPromptRowsProvider({
       scope,
       expandedIds,
       toggleExpanded,
+      rememberExpanded,
+      registerNativeExpansion,
       expand,
       bodyViewportHeight,
       reportViewportHeight,

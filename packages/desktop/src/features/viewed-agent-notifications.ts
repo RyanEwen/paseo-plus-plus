@@ -2,6 +2,8 @@ import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 
 export interface DeliveredAgentToast {
+  /** Native history provenance, supplied only by the verified Windows adapter. */
+  namespace?: "current" | "legacy";
   tag: string;
   group: string;
   arguments: string;

@@ -486,7 +486,9 @@ describe("accordion expansion scroll anchoring", () => {
           return nextFrame;
         },
         cancelFrame: (id) => {
-          frames.delete(id);
+          if (typeof id === "number") {
+            frames.delete(id);
+          }
         },
       });
     };

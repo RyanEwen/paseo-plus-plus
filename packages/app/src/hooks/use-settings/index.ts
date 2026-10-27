@@ -1,5 +1,9 @@
-import { getSettingsSyncSaveHandler } from "@/settings-sync/save-handler";
-import { useCallback, useMemo } from "react";
+import {
+  getSettingsSyncSaveHandler,
+  getSettingsReadAvailable,
+  subscribeSettingsReadAvailable,
+} from "@/settings-sync/save-handler";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/data/query-client";
@@ -129,6 +133,8 @@ export interface UseAppSettingsReturn {
   settings: AppSettings;
   isLoading: boolean;
   error: unknown;
+  /** The selected settings authority has successfully supplied readable values. */
+  isReadReady: boolean;
   updateSettings: (updates: AppSettingsUpdate) => Promise<void>;
   resetSettings: () => Promise<void>;
 }
@@ -137,6 +143,8 @@ export interface UseSettingsReturn {
   settings: Settings;
   isLoading: boolean;
   error: unknown;
+  /** The selected settings authority has successfully supplied readable values. */
+  isReadReady: boolean;
   updateSettings: (updates: Partial<Settings>) => Promise<void>;
   resetSettings: () => Promise<void>;
 }
@@ -145,6 +153,11 @@ type SettingsSelector<TSelected> = (settings: Settings) => TSelected;
 
 export function useAppSettings(): UseAppSettingsReturn {
   const queryClient = useQueryClient();
+  const readAvailable = useSyncExternalStore(
+    subscribeSettingsReadAvailable,
+    getSettingsReadAvailable,
+    getSettingsReadAvailable,
+  );
   const { data, isPending, error } = useQuery({
     queryKey: APP_SETTINGS_QUERY_KEY,
     queryFn: () => loadAppSettingsFromStorage(),
@@ -181,6 +194,7 @@ export function useAppSettings(): UseAppSettingsReturn {
     settings,
     isLoading: isPending,
     error: error ?? null,
+    isReadReady: readAvailable && !isPending && error == null,
     updateSettings,
     resetSettings,
   };
@@ -245,6 +259,7 @@ export function useSettings<TSelected>(
     settings,
     isLoading: appSettings.isLoading || desktopSettings.isLoading,
     error: appSettings.error ?? desktopSettings.error,
+    isReadReady: appSettings.isReadReady,
     updateSettings,
     resetSettings,
   };
