@@ -61,20 +61,14 @@ function frame(node: HTMLElement, origin: HTMLElement): MessageFlowFrame {
   };
 }
 
-/** The actual action row changes its painted padding while pinned. Its ordinary
- * reservation is the measured action content plus the existing ordinary row gap.
- * No previous body height or maximum-ever extent participates in this read.
+/** The one live content lane retains its ordinary inline layout while its
+ * parent paints pinned padding. The visual host is measured separately for caps.
  */
-function ordinaryTrailingHeight(trailing: HTMLElement): number {
+function ordinaryTrailingHeight(trailing: HTMLElement): number | null {
   const row = trailing.querySelector<HTMLElement>('[data-testid="user-message-trailing-row"]');
   if (!row) return 0;
-  const style = getComputedStyle(row);
-  return (
-    row.getBoundingClientRect().height -
-    Number.parseFloat(style.paddingTop) -
-    Number.parseFloat(style.paddingBottom) +
-    SPACING[2]
-  );
+  const content = row.querySelector<HTMLElement>('[data-testid="user-message-action-content"]');
+  return content ? content.getBoundingClientRect().height + SPACING[2] : null;
 }
 
 /** Read the one full Text's actual first line. Range geometry retains glyph
@@ -276,6 +270,7 @@ export function useWebMessageMeasurements(
     registerControls,
     reportFrame,
     reportText,
+    width,
     measurement: measurement?.binding === binding ? measurement : null,
   };
 }

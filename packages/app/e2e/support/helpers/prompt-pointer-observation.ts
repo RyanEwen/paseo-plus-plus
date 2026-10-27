@@ -54,8 +54,14 @@ export async function observePromptPointer(control: Locator) {
           ...readControls(null),
         };
       const bubble = original.querySelector('[data-testid="user-message-bubble"]');
-      const wrapper = bubble?.parentElement ?? null;
       const row = original.querySelector('[data-testid="user-message-trailing-row"]');
+      // The hover owner contains both paint and actions. The natural body's
+      // immediate parent sits inside the ScrollView and does not own action hover.
+      let wrapper = bubble?.parentElement ?? null;
+      if (row) {
+        while (wrapper && !wrapper.contains(row)) wrapper = wrapper.parentElement;
+      }
+      if (!row || !wrapper || !original.contains(wrapper)) wrapper = null;
       return {
         hitInsideOriginal: target !== null && original.contains(target),
         hitInsideHoverWrapper: target !== null && wrapper !== null && wrapper.contains(target),

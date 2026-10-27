@@ -20,7 +20,10 @@ export function revealFindOccurrence(input: {
     return null;
   const parent = input.range.startContainer.parentElement;
   const body = parent?.closest<HTMLElement>('[data-testid="user-message-body-scroll"]');
-  if (!body) {
+  const prompt = body?.closest<HTMLElement>("[data-actual-prompt-content]");
+  // A Find-selected prompt is physically ordinary. Its unbounded body cannot
+  // reveal a deep range by inner scrolling; the real outer owner must move it.
+  if (!body || (prompt && prompt.style.position !== "sticky")) {
     const localOffset = parent
       ? getOriginalPromptTop(parent) - parent.getBoundingClientRect().top
       : 0;

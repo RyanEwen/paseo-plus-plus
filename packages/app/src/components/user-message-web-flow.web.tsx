@@ -97,41 +97,16 @@ function webMessageGeometry(
   };
 }
 
-/** Summary and disclosure consume paint allocation, never natural Text width. */
+/** Compact controls cover the right end without moving the natural bubble or Text. */
 function webMessageWidths(g: WebMessageGeometry, compact: boolean, bounded: boolean) {
-  const summaryGap = g.summaryWidth > 0 ? SPACING[2] : 0;
-  const controlGap = g.controlsWidth > 0 ? SPACING[2] : 0;
-  const compactWidth = Math.min(
-    g.width,
-    g.padding * 2 + g.textWidth + g.summaryWidth + summaryGap + g.controlsWidth + controlGap,
-  );
-  let clipWidth: number | undefined;
-  if (bounded) {
-    clipWidth = g.naturalWidth;
-    if (compact) {
-      clipWidth = compactWidth;
-    }
-  }
+  const clipWidth = bounded ? g.naturalWidth : undefined;
   const inset = bounded && clipWidth !== undefined ? g.width - clipWidth : 0;
   return {
     clipWidth,
     inset,
-    controlGap,
-    clipTextWidth: compact
-      ? Math.max(
-          0,
-          Math.min(
-            g.textWidth,
-            compactWidth -
-              g.padding * 2 -
-              g.summaryWidth -
-              summaryGap -
-              g.controlsWidth -
-              controlGap,
-          ),
-        )
-      : undefined,
-    textTranslateX: compact ? g.summaryWidth + summaryGap : 0,
+    controlGap: g.controlsWidth > 0 ? SPACING[2] : 0,
+    clipTextWidth: compact ? g.textWidth : undefined,
+    textTranslateX: 0,
   };
 }
 
@@ -158,6 +133,43 @@ function webMessageHeights(
       : undefined,
     textTranslateY: compact ? (compactHeight - g.prefixHeight) / 2 - g.textTop : 0,
   };
+}
+
+/** Paint the exact opaque control rectangle; the original bubble keeps its own corners. */
+function CompactControlBacking({
+  visible,
+  style,
+  region,
+  height,
+}: {
+  visible: boolean;
+  style: StyleProp<ViewStyle>;
+  region: "summary" | "controls";
+  height: number;
+}) {
+  const dataSet = useMemo(() => ({ userMessageCompactOcclusion: region }), [region]);
+  const backing = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      style,
+      StyleSheet.absoluteFill,
+      {
+        width: "100%",
+        height: "100%",
+        padding: 0,
+        minWidth: 0,
+        minHeight: 0,
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
+        borderBottomRightRadius: 0,
+        borderBottomLeftRadius: 0,
+      },
+    ],
+    [style],
+  );
+  if (!visible || height === 0) return null;
+  return (
+    <View style={backing} pointerEvents="none" accessible={false} aria-hidden dataSet={dataSet} />
+  );
 }
 
 /** The existing web body remains one ordinary-width layout. Its outer row owns
@@ -206,6 +218,7 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
   const context = useMemo<MessageFlowContext>(
     () => ({
       web: true,
+      webRailWidth: measured.width,
       webContentPadding: bounded,
       compact,
       bubbleWidth: clipWidth,
@@ -234,6 +247,7 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
       clipTextWidth,
       textTranslateX,
       textTranslateY,
+      measured.width,
       measured.register,
       measured.reportFrame,
       measured.reportText,
@@ -303,14 +317,17 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
   const summaryStyle = useMemo<CSSProperties>(
     () => ({
       position: "absolute",
-      left: inset + padding,
+      right: padding + controlsWidth + controlGap,
       top: ((bodyHeight ?? 0) - summaryHeight) / 2,
       width: "max-content",
+      overflow: "hidden",
+      // The end overlay may extend left of a very small bubble within the rail.
+      // Its count can ellipsize; More keeps its independent hit area.
       maxWidth: Math.max(0, width - padding * 2 - controlsWidth - controlGap),
       visibility: compact ? "visible" : "hidden",
       pointerEvents: compact ? "auto" : "none",
     }),
-    [inset, padding, bodyHeight, summaryHeight, width, controlsWidth, controlGap, compact],
+    [padding, bodyHeight, summaryHeight, width, controlsWidth, controlGap, compact],
   );
   const controlsStyle = useMemo<CSSProperties>(
     () => ({
@@ -366,9 +383,21 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
           </ScrollView>
         </div>
         <div ref={measured.summary} style={summaryStyle} aria-hidden={!compact}>
+          <CompactControlBacking
+            visible={compact}
+            style={props.backdropStyle}
+            region="summary"
+            height={summaryHeight}
+          />
           {props.summary}
         </div>
         <div ref={measured.registerControls} style={controlsStyle} aria-hidden={!bounded}>
+          <CompactControlBacking
+            visible={compact}
+            style={props.backdropStyle}
+            region="controls"
+            height={controlsHeight}
+          />
           {expanded ? props.visualBackdrop : null}
           {props.controls}
         </div>

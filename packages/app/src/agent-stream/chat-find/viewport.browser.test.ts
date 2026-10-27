@@ -9,6 +9,8 @@ import {
 } from "./actual-prompt-test-fixture";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFindViewport } from "./viewport.web";
+import { revealFindOccurrence } from "./body-reveal.web";
+import { findMessageMatches } from "./ranges.web";
 import type { ChatFindProps } from "./types";
 import type { StreamViewportHandle } from "../strategy";
 import { Text as NativeText, View, type ViewStyle } from "react-native";
@@ -127,19 +129,24 @@ function actualPrompt(
   options: Pick<
     React.ComponentProps<typeof ActualPromptTestFixture>,
     "successorText" | "images" | "historyPlacement" | "promptAvailable" | "disableOuterSpacing"
-  > = {},
+  > & { hostWidth?: number } = {},
 ) {
   void i18n;
+  const { hostWidth = 300, ...fixtureOptions } = options;
   const host = document.createElement("div");
-  Object.assign(host.style, { width: "300px", height: "320px" });
+  Object.assign(host.style, { width: `${hostWidth}px`, height: "320px" });
   document.body.append(host);
   const ref = createRef<StreamViewportHandle>();
   actualRoot = createRoot(host);
-  function render(enabled = true, nextText = text, promptAvailable = options.promptAvailable) {
+  function render(
+    enabled = true,
+    nextText = text,
+    promptAvailable = fixtureOptions.promptAvailable,
+  ) {
     act(() =>
       actualRoot!.render(
         React.createElement(ActualPromptTestFixture, {
-          ...options,
+          ...fixtureOptions,
           promptAvailable,
           text: nextText,
           enabled,
@@ -338,7 +345,86 @@ it("updates actual prompt More availability from wrapping at the real width", as
   expect(exactTextNodes(fixture.host, "Short")).toHaveLength(1);
 });
 
-it("reveals a deep actual user match inside its body then its original row, and fences stale inner writes", async () => {
+it("keeps explicit More's bounded inner reveal and fences cancelled inner writes", async () => {
+  const prompt =
+    Array.from({ length: 80 }, (_, index) => `Line ${index}`).join("\n") + "\nneedle tail";
+  const fixture = actualPrompt(prompt);
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const text = fixture.host.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const body = row.querySelector<HTMLElement>('[data-testid="user-message-body-scroll"]')!;
+  act(() => fixture.ref.current!.scrollToMessage!(ACTUAL_PROMPT_ID, undefined, "pinned"));
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  await expect
+    .poll(() => row.querySelector('[data-testid="user-message-disclosure"]'))
+    .not.toBeNull();
+  await userEvent.click(row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!);
+  await expect.poll(() => body.dataset.bodyExpanded).toBe("true");
+  await expect.poll(() => body.scrollHeight > body.clientHeight).toBe(true);
+  const signalOwner = new AbortController();
+  const deadline = performance.now() + 5000;
+  const range = findMessageMatches(fixture.host, ACTUAL_PROMPT_ID, "needle tail")[0]!;
+  const stale = {
+    targetTop: () =>
+      revealFindOccurrence({
+        range,
+        row,
+        signal: signalOwner.signal,
+        deadline,
+        clearance: 0,
+      }),
+  };
+  // Explicit More retains its real bounded inner viewport. This exported owner
+  // performs the inner reveal without dispatching a new outer-row navigation.
+  expect(stale.targetTop()).toBeTypeOf("number");
+  await expect.poll(() => body.scrollTop > 0).toBe(true);
+  await expect
+    .poll(() => {
+      const target = range.getBoundingClientRect();
+      const inner = body.getBoundingClientRect();
+      const outer = fixture.host
+        .querySelector('[data-testid="agent-chat-scroll"]')!
+        .getBoundingClientRect();
+      return (
+        target.top >= Math.max(inner.top, outer.top) - 1 &&
+        target.bottom <= Math.min(inner.bottom, outer.bottom) + 1
+      );
+    })
+    .toBe(true);
+  const deepOffset = body.scrollTop;
+  const firstRange = findMessageMatches(fixture.host, ACTUAL_PROMPT_ID, "Line 0")[0]!;
+  const latest = {
+    targetTop: () =>
+      revealFindOccurrence({
+        range: firstRange,
+        row,
+        signal: signalOwner.signal,
+        deadline,
+        clearance: 0,
+      }),
+  };
+  expect(latest.targetTop()).toBeTypeOf("number");
+  await expect.poll(() => body.scrollTop < deepOffset).toBe(true);
+  const firstMatch = firstRange.getBoundingClientRect();
+  const bodyBounds = body.getBoundingClientRect();
+  expect(firstMatch.top).toBeGreaterThanOrEqual(bodyBounds.top);
+  expect(firstMatch.bottom).toBeLessThanOrEqual(bodyBounds.bottom);
+  expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+  expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
+  signalOwner.abort();
+  const innerBefore = body.scrollTop;
+  const outer = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  const outerBefore = outer.scrollTop;
+  expect(stale.targetTop()).toBeNull();
+  expect(latest.targetTop()).toBeNull();
+  expect(body.scrollTop).toBe(innerBefore);
+  expect(outer.scrollTop).toBe(outerBefore);
+  await userEvent.click(row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!);
+  await expect.poll(() => body.dataset.bodyExpanded).toBe("false");
+});
+
+it("reveals a deep actual user match in its ordinary original row and fences stale viewport writes", async () => {
   const prompt =
     Array.from({ length: 80 }, (_, index) => `Line ${index}`).join("\n") + "\nneedle tail";
   const fixture = actualPrompt(prompt);
@@ -375,8 +461,6 @@ it("reveals a deep actual user match inside its body then its original row, and 
   const first = new AbortController();
   await find.reveal(ACTUAL_PROMPT_ID, "needle tail", 0, first.signal);
   await expect.poll(() => body.dataset.bodyExpanded).toBe("true");
-  await expect.poll(() => body.scrollHeight > body.clientHeight).toBe(true);
-  await expect.poll(() => body.scrollTop > 0).toBe(true);
   await expect
     .poll(() => {
       const range = highlightedRanges()[0]?.getBoundingClientRect();
@@ -395,10 +479,14 @@ it("reveals a deep actual user match inside its body then its original row, and 
   expect(fixture.host.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
   expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
   const stale = operations[0]!;
-  const deepOffset = body.scrollTop;
-  await userEvent.click(
-    fixture.host.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!,
+  expect(fixture.host.querySelector('[data-testid="user-message-disclosure"]')).toBeNull();
+  find.clear();
+  const original = actualPromptGeometry(fixture.host);
+  readAt(
+    fixture.host,
+    original.originalWrapper.top - original.viewport.top + original.scrollTop + 24,
   );
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
   await expect.poll(() => body.dataset.bodyExpanded).toBe("false");
   const aborted = new AbortController();
   aborted.abort();
@@ -414,7 +502,6 @@ it("reveals a deep actual user match inside its body then its original row, and 
   const second = new AbortController();
   await find.reveal(ACTUAL_PROMPT_ID, "Line 0", 0, second.signal);
   await expect.poll(() => body.dataset.bodyExpanded).toBe("true");
-  await expect.poll(() => body.scrollTop < deepOffset).toBe(true);
   await expect.poll(highlightedText).toEqual(["Line 0"]);
   const firstMatch = highlightedRanges()[0]!.getBoundingClientRect();
   const bodyBounds = body.getBoundingClientRect();
@@ -738,7 +825,7 @@ it("preserves Attached sample glyph allocation beside real attachment and disclo
     expect(glyphBounds.right).toBeLessThanOrEqual(clip.right);
     expect(glyphBounds.top).toBeGreaterThanOrEqual(clip.top);
     expect(glyphBounds.bottom).toBeLessThanOrEqual(clip.bottom);
-    expect(glyphBounds.right).toBeLessThanOrEqual(disclosure().getBoundingClientRect().left);
+    expectOpaqueControlBacking(row, disclosure().getBoundingClientRect());
 
     await userEvent.click(disclosure());
     await expect
@@ -884,3 +971,503 @@ it.each(["normal", "virtual"] as const)(
     }
   },
 );
+
+/** Verify the actual opaque rectangle allowed to cover this unchanged text frame. */
+function expectOpaqueControlBacking(row: HTMLElement, control: DOMRect) {
+  const backing = row.querySelector<HTMLElement>(
+    '[data-user-message-compact-occlusion="controls"]',
+  )!;
+  expect(backing).not.toBeNull();
+  const occlusion = backing.getBoundingClientRect();
+  expect(occlusion.x).toBe(control.x);
+  expect(occlusion.y).toBe(control.y);
+  expect(occlusion.width).toBe(control.width);
+  expect(occlusion.height).toBe(control.height);
+  expect(occlusion.toJSON()).toEqual(control.toJSON());
+  expect(getComputedStyle(backing).backgroundColor).toMatch(/^rgb\(/);
+  const backingStyle = getComputedStyle(backing);
+  expect([
+    backingStyle.borderTopLeftRadius,
+    backingStyle.borderTopRightRadius,
+    backingStyle.borderBottomRightRadius,
+    backingStyle.borderBottomLeftRadius,
+  ]).toEqual(["0px", "0px", "0px", "0px"]);
+}
+
+/** Await the public flow/visual publication for the current real DOM layout.
+ * Ownership alone can precede the measurement hook's layout publication. This
+ * gate never requires the frame, glyph or attachment-center outcome under test.
+ */
+async function expectCurrentPromptGeometry(host: HTMLElement) {
+  const row = host.querySelector<HTMLElement>(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`)!;
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  const bubble = row.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')!;
+  const actions = row.querySelector<HTMLElement>('[data-testid="user-message-trailing-row"]')!;
+  let rail = bubble.parentElement;
+  while (rail && !rail.contains(actions)) rail = rail.parentElement;
+  if (!rail || !body.contains(rail)) throw new Error("Expected the actual prompt flow rail");
+  const currentRail = rail;
+  await expect
+    .poll(() => {
+      const flow = Number(body.dataset.promptFlowHeight);
+      const visual = Number(body.dataset.promptVisualHeight);
+      const actualVisual = currentRail.getBoundingClientRect().height;
+      const style = getComputedStyle(row);
+      const allocated =
+        row.getBoundingClientRect().height +
+        Number.parseFloat(style.marginTop) +
+        Number.parseFloat(style.marginBottom);
+      const caller = body.getBoundingClientRect().height - actualVisual;
+      return (
+        Number.isFinite(flow) &&
+        flow > 0 &&
+        Number.isFinite(visual) &&
+        visual > 0 &&
+        visual === actualVisual &&
+        allocated === flow + caller
+      );
+    })
+    .toBe(true);
+}
+
+it("preserves the absolute three-line bubble and first-line glyph frame through the top trigger", async () => {
+  const prompt = "Actual row identity\nSecond rendered line\nThird rendered line";
+  const fixture = actualPrompt(prompt, {
+    successorText: "Following frame control",
+    hostWidth: 820,
+  });
+  await document.fonts.ready;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  await expectCurrentPromptGeometry(fixture.host);
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const node = exactTextNodes(row, prompt)[0]!;
+  const bubble = row.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')!;
+  const clip = text.closest<HTMLElement>('[data-testid="text-preview-clip"]')!;
+  const firstLine = document.createRange();
+  firstLine.setStart(node, 0);
+  firstLine.setEnd(node, prompt.indexOf("\n"));
+  const ordinaryBubble = bubble.getBoundingClientRect();
+  const ordinaryGlyphs = firstLine.getBoundingClientRect();
+  const ordinaryPadding = getComputedStyle(bubble);
+  const horizontalPadding =
+    Number.parseFloat(ordinaryPadding.paddingLeft) +
+    Number.parseFloat(ordinaryPadding.paddingRight);
+  const ordinaryText = naturalPromptText(text, node);
+  const ordinaryFlow = naturalPromptFlow(fixture.host);
+  const bodyInset = ordinaryBubble.top - row.getBoundingClientRect().top;
+  const glyphInset = ordinaryGlyphs.top - ordinaryBubble.top;
+  const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight);
+  expect(text.getBoundingClientRect().height).toBe(lineHeight * 3);
+
+  for (const offset of [6, 3, 1, -1, -3, -6, -12, -24, -12, -3, -1, 1, 3, 6]) {
+    readAt(fixture.host, ordinaryFlow.promptTop - offset);
+    await expect
+      .poll(() => row.getBoundingClientRect().top - scroll.getBoundingClientRect().top)
+      .toBeCloseTo(offset, 0);
+    await expect
+      .poll(() => pinnedPromptIds(fixture.host))
+      .toEqual(offset > 0 ? [] : [ACTUAL_PROMPT_ID]);
+    await expectCurrentPromptGeometry(fixture.host);
+    const bounds = bubble.getBoundingClientRect();
+    const glyphs = firstLine.getBoundingClientRect();
+    const disclosure = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]');
+    const controlBounds = disclosure?.getBoundingClientRect();
+    const gap = controlBounds ? controlBounds.left - clip.getBoundingClientRect().right : 0;
+    const fixedBubbleInkCapacity =
+      ordinaryBubble.width - horizontalPadding - (controlBounds?.width ?? 0) - gap;
+    const allocation = {
+      ordinaryBubble: ordinaryBubble.toJSON(),
+      currentBubble: bounds.toJSON(),
+      firstLine: glyphs.toJSON(),
+      originalFirstLine: ordinaryGlyphs.toJSON(),
+      disclosure: controlBounds?.toJSON() ?? null,
+      fixedBubbleInkCapacity,
+      fullFirstLineFitsFixedBubble: ordinaryGlyphs.width <= fixedBubbleInkCapacity,
+    };
+    // Q24 keeps the exact natural horizontal frame. The real control may
+    // obscure its right end, but never shifts or narrows the persistent Text.
+    expect(bounds.x, JSON.stringify(allocation)).toBeCloseTo(ordinaryBubble.x, 0);
+    expect(bounds.width).toBeCloseTo(ordinaryBubble.width, 0);
+    expect(glyphs.left).toBeCloseTo(ordinaryGlyphs.left, 3);
+    expect(glyphs.width).toBeCloseTo(ordinaryGlyphs.width, 3);
+    expect(glyphs.height).toBeCloseTo(ordinaryGlyphs.height, 3);
+    const expectedTop =
+      offset > 0
+        ? row.getBoundingClientRect().top + bodyInset
+        : scroll.getBoundingClientRect().top + bodyInset;
+    expect(bounds.top).toBeCloseTo(expectedTop, 0);
+    expect(glyphs.top - bounds.top).toBeCloseTo(glyphInset, 3);
+    expect(naturalPromptText(text, node)).toEqual(ordinaryText);
+    expect(naturalPromptFlow(fixture.host)).toEqual(ordinaryFlow);
+    expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+    expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
+    if (offset > 0) {
+      expect(bounds.height).toBeCloseTo(ordinaryBubble.height, 0);
+      expect(disclosure).toBeNull();
+    } else {
+      expect(disclosure).not.toBeNull();
+      const control = disclosure!.getBoundingClientRect();
+      expect(control.width).toBeGreaterThanOrEqual(44);
+      expect(control.height).toBeGreaterThanOrEqual(44);
+      expect(clip.getBoundingClientRect().height).toBeCloseTo(lineHeight, 0);
+      let paddingCell = clip.parentElement;
+      while (
+        paddingCell &&
+        paddingCell !== bubble &&
+        Number.parseFloat(getComputedStyle(paddingCell).paddingTop) === 0
+      ) {
+        paddingCell = paddingCell.parentElement;
+      }
+      expect(paddingCell !== null && paddingCell !== bubble).toBe(true);
+      const padding = getComputedStyle(paddingCell!);
+      expect(bounds.height).toBeCloseTo(
+        lineHeight +
+          Number.parseFloat(padding.paddingTop) +
+          Number.parseFloat(padding.paddingBottom),
+        0,
+      );
+      expect(glyphs.left).toBeGreaterThanOrEqual(clip.getBoundingClientRect().left);
+      expect(glyphs.right).toBeLessThanOrEqual(clip.getBoundingClientRect().right);
+      expectOpaqueControlBacking(row, control);
+    }
+  }
+});
+
+it("centers the actual attachment count within one pixel of the compact text clip", async () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 2;
+  canvas.height = 2;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = "#356bd8";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const image = await persistAttachmentFromDataUrl({
+    dataUrl: canvas.toDataURL("image/png"),
+    fileName: "centered-sample.png",
+  });
+  try {
+    const prompt = "Attached sample.";
+    const fixture = actualPrompt(prompt, {
+      successorText: "Following attachment center control",
+      images: [image],
+      hostWidth: 390,
+    });
+    await document.fonts.ready;
+    const row = fixture.host.querySelector<HTMLElement>(
+      `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+    )!;
+    readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+    await expect
+      .poll(() =>
+        Array.from(row.querySelectorAll("img")).some(
+          (thumbnail) => thumbnail.complete && thumbnail.naturalWidth === 2,
+        ),
+      )
+      .toBe(true);
+    await expectCurrentPromptGeometry(fixture.host);
+    const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+    const originalNode = exactTextNodes(row, prompt)[0]!;
+    const originalFlow = naturalPromptFlow(fixture.host);
+    const originalFrame = text.getBoundingClientRect();
+    readAt(fixture.host, originalFlow.promptTop + 24);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+    await expect
+      .poll(() => row.querySelector('[data-testid="user-message-disclosure"]'))
+      .not.toBeNull();
+    await expectCurrentPromptGeometry(fixture.host);
+    const count = row.querySelector<HTMLElement>(
+      '[data-testid="user-message-attachments-summary"]',
+    )!;
+    const clip = text.closest<HTMLElement>('[data-testid="text-preview-clip"]')!;
+    expect(count.textContent).toBe(i18n.t("stickyPrompt.attachments", { count: 1 }));
+    const countBounds = count.getBoundingClientRect();
+    const clipBounds = clip.getBoundingClientRect();
+    expect(countBounds.width).toBeGreaterThan(0);
+    expect(clipBounds.width).toBeGreaterThan(0);
+    expect(
+      Math.abs(countBounds.top + countBounds.height / 2 - clipBounds.top - clipBounds.height / 2),
+    ).toBeLessThanOrEqual(1);
+    const more = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+    const summaryAllocation = count.parentElement!.getBoundingClientRect();
+    expect(summaryAllocation.right).toBeLessThanOrEqual(more.getBoundingClientRect().left);
+    expect(text.getBoundingClientRect().x).toBeCloseTo(originalFrame.x, 3);
+    expect(text.getBoundingClientRect().width).toBeCloseTo(originalFrame.width, 3);
+    expect(text.getBoundingClientRect().height).toBeCloseTo(originalFrame.height, 3);
+    expect(naturalPromptFlow(fixture.host)).toEqual(originalFlow);
+    expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+    expect(exactTextNodes(fixture.host, prompt)[0] === originalNode).toBe(true);
+    expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
+  } finally {
+    act(() => actualRoot?.unmount());
+    actualRoot = null;
+    await deleteAttachments([image]);
+  }
+});
+
+it("reveals both deep Find occurrences through the real viewport after an original-row landing", async () => {
+  const query = "deep-flow-needle";
+  const prompt = `Actual find ownership\n${"padding content for inner scrolling\n".repeat(65)}${query} first\n${"more padding\n".repeat(65)}${query} second`;
+  const fixture = actualPrompt(prompt, {
+    successorText: "Following Find ownership control",
+    hostWidth: 820,
+  });
+  await document.fonts.ready;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop + 24);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  await expect
+    .poll(() => row.querySelector('[data-testid="user-message-disclosure"]'))
+    .not.toBeNull();
+  await expectCurrentPromptGeometry(fixture.host);
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const originalNode = exactTextNodes(row, prompt)[0]!;
+  const body = row.querySelector<HTMLElement>('[data-testid="user-message-body-scroll"]')!;
+  const find = createFindViewport({
+    getBindings: () => ({
+      viewportRef: fixture.ref,
+      revealLoadedMessage: () => true,
+      visibleMessageIds: new Set([ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID]),
+    }),
+    getRoot: () => fixture.host,
+    highlightName: "paseo-chat-find-test",
+  });
+  const abort = new AbortController();
+  try {
+    for (const occurrence of [0, 1]) {
+      await expect(find.reveal(ACTUAL_PROMPT_ID, query, occurrence, abort.signal)).resolves.toEqual(
+        { occurrence, count: 2 },
+      );
+      // The original-row reveal contract must be observed after the real outer
+      // owner moves, not inferred from the expansion request's early acknowledgement.
+      await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+      await expect.poll(() => body.dataset.bodyExpanded).toBe("true");
+      await expectCurrentPromptGeometry(fixture.host);
+      await expect
+        .poll(() => {
+          const ranges = highlightedRanges();
+          const range = ranges[0];
+          if (ranges.length !== 1 || !range || !text.contains(range.startContainer)) return false;
+          const prefix = document.createRange();
+          prefix.selectNodeContents(text);
+          prefix.setEnd(range.startContainer, range.startOffset);
+          const expectedStart =
+            occurrence === 0 ? prompt.indexOf(query) : prompt.lastIndexOf(query);
+          if (prefix.toString().length !== expectedStart) return false;
+          const target = range.getBoundingClientRect();
+          const limits = [
+            scroll,
+            body,
+            text.closest<HTMLElement>('[data-testid="text-preview-clip"]')!,
+          ].map((element) => {
+            const bounds = element.getBoundingClientRect();
+            return {
+              left: bounds.left + element.clientLeft,
+              top: bounds.top + element.clientTop,
+              right: bounds.left + element.clientLeft + element.clientWidth,
+              bottom: bounds.top + element.clientTop + element.clientHeight,
+            };
+          });
+          return (
+            target.width > 0 &&
+            target.height > 0 &&
+            target.left >= Math.max(...limits.map((bounds) => bounds.left)) &&
+            target.right <= Math.min(...limits.map((bounds) => bounds.right)) &&
+            target.top >= Math.max(...limits.map((bounds) => bounds.top)) - 1 &&
+            target.bottom <= Math.min(...limits.map((bounds) => bounds.bottom)) + 1
+          );
+        })
+        .toBe(true);
+      expect(highlightedText()).toEqual([query]);
+      expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+      expect(exactTextNodes(fixture.host, prompt)[0] === originalNode).toBe(true);
+      expect(exactTextNodes(fixture.host, prompt)).toHaveLength(1);
+      expect(
+        fixture.host.querySelectorAll(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`),
+      ).toHaveLength(1);
+    }
+  } finally {
+    abort.abort();
+    find.clear();
+  }
+});
+
+it("retires Find ordinary ownership on clear, supersession, abort and an empty reveal with a reused caller signal", async () => {
+  const query = "selected-lifetime-needle";
+  const prompt = `Selected original\n${"natural content\n".repeat(60)}${query}`;
+  const successor = `Successor original\n${"following content\n".repeat(30)}${query}`;
+  const fixture = actualPrompt(prompt, { successorText: successor, hostWidth: 820 });
+  await document.fonts.ready;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const nextRow = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_SUCCESSOR_ID}"]`,
+  )!;
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  const nextBody = nextRow.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  const handle = fixture.ref.current!;
+  const originalScroll = handle.scrollToMessage!;
+  const originalExpand = handle.expandMessageForFind!;
+  const operations: NonNullable<Capture["occurrence"]>[] = [];
+  const selections: AbortSignal[] = [];
+  handle.scrollToMessage = (id, occurrence, placement) => {
+    if (occurrence) operations.push(occurrence);
+    originalScroll(id, occurrence, placement);
+  };
+  handle.expandMessageForFind = (id, signal) => {
+    selections.push(signal);
+    originalExpand(id, signal);
+  };
+  const find = createFindViewport({
+    getBindings: () => ({
+      viewportRef: fixture.ref,
+      revealLoadedMessage: () => true,
+      visibleMessageIds: new Set([ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID]),
+    }),
+    getRoot: () => fixture.host,
+    highlightName: "paseo-chat-find-test",
+  });
+  const caller = new AbortController();
+  try {
+    await find.reveal(ACTUAL_PROMPT_ID, query, 0, caller.signal);
+    const first = operations.at(-1)!;
+    expect(first.signal).not.toBe(caller.signal);
+    expect(first.signal.aborted).toBe(false);
+    expect(caller.signal.aborted).toBe(false);
+    await expect.poll(() => row.dataset.promptPinned).toBe("false");
+    expect(body.style.position).not.toBe("sticky");
+    find.clear();
+    expect(first.signal.aborted).toBe(true);
+    expect(first.targetTop()).toBeNull();
+    expect(caller.signal.aborted).toBe(false);
+    readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop + 24);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+    expect(body.style.position).toBe("sticky");
+    await expect
+      .poll(() =>
+        row.querySelector('[data-testid="user-message-disclosure"]')?.getAttribute("aria-expanded"),
+      )
+      .toBe("false");
+
+    await find.reveal(ACTUAL_PROMPT_ID, query, 0, caller.signal);
+    const second = operations.at(-1)!;
+    expect(second.signal).not.toBe(first.signal);
+    expect(second.signal.aborted).toBe(false);
+    expect(first.targetTop()).toBeNull();
+    await find.reveal(ACTUAL_SUCCESSOR_ID, query, 0, caller.signal);
+    const third = operations.at(-1)!;
+    expect(second.signal.aborted).toBe(true);
+    expect(second.targetTop()).toBeNull();
+    expect(third.signal.aborted).toBe(false);
+    expect(caller.signal.aborted).toBe(false);
+    await expect.poll(() => nextRow.dataset.promptPinned).toBe("false");
+    expect(nextBody.style.position).not.toBe("sticky");
+    expect(body.style.position).toBe("sticky");
+    caller.abort();
+    expect(third.signal.aborted).toBe(true);
+    expect(third.targetTop()).toBeNull();
+    await expect.poll(() => nextBody.style.position).toBe("sticky");
+
+    const emptyCaller = new AbortController();
+    await expect(
+      find.reveal(ACTUAL_PROMPT_ID, "missing selected occurrence", 0, emptyCaller.signal),
+    ).resolves.toEqual({ occurrence: 0, count: 0 });
+    expect(selections.at(-1)!.aborted).toBe(true);
+    expect(emptyCaller.signal.aborted).toBe(false);
+    await expect.poll(() => body.style.position).toBe("sticky");
+  } finally {
+    caller.abort();
+    find.clear();
+  }
+});
+
+it("keeps a narrow wrapped first line stationary beneath the real right-side More overlay", async () => {
+  const prompt =
+    "A naturally wrapped first line must retain all of its original horizontal geometry even where More covers the end.";
+  const fixture = actualPrompt(prompt, {
+    successorText: "Following narrow control",
+    hostWidth: 180,
+  });
+  await document.fonts.ready;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  await expectCurrentPromptGeometry(fixture.host);
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const node = exactTextNodes(row, prompt)[0]!;
+  const bubble = row.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')!;
+  const naturalText = naturalPromptText(text, node);
+  const naturalBubble = bubble.getBoundingClientRect();
+  const naturalFrame = text.getBoundingClientRect();
+  const flow = naturalPromptFlow(fixture.host);
+  // Read the real row's content box, independently of the natural-height adapter.
+  // Pinned paint padding must not change the width or wrapping of its actions.
+  const actions = row.querySelector<HTMLElement>('[data-testid="user-message-trailing-row"]')!;
+  const actionContent = () => {
+    const bounds = actions.getBoundingClientRect();
+    const style = getComputedStyle(actions);
+    return {
+      width:
+        bounds.width - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight),
+      height:
+        bounds.height -
+        Number.parseFloat(style.paddingTop) -
+        Number.parseFloat(style.paddingBottom),
+    };
+  };
+  const originalActions = actionContent();
+  expect(originalActions.width).toBeGreaterThan(0);
+  expect(originalActions.height).toBeGreaterThan(0);
+  expect(naturalText.lines.length).toBeGreaterThan(1);
+  readAt(fixture.host, flow.promptTop + 24);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  await expectCurrentPromptGeometry(fixture.host);
+  const more = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+  const control = more.getBoundingClientRect();
+  const scrollBounds = scroll.getBoundingClientRect();
+  expect(control.width).toBeGreaterThanOrEqual(44);
+  expect(control.height).toBeGreaterThanOrEqual(44);
+  expect(control.left).toBeGreaterThanOrEqual(scrollBounds.left);
+  expect(control.right).toBeLessThanOrEqual(scrollBounds.right);
+  expectOpaqueControlBacking(row, control);
+  expect(bubble.getBoundingClientRect().x).toBeCloseTo(naturalBubble.x, 3);
+  expect(bubble.getBoundingClientRect().width).toBeCloseTo(naturalBubble.width, 3);
+  expect(text.getBoundingClientRect().x).toBeCloseTo(naturalFrame.x, 3);
+  expect(text.getBoundingClientRect().width).toBeCloseTo(naturalFrame.width, 3);
+  expect(text.getBoundingClientRect().height).toBeCloseTo(naturalFrame.height, 3);
+  expect(naturalPromptText(text, node)).toEqual(naturalText);
+  expect(actionContent()).toEqual(originalActions);
+  const actionStyle = getComputedStyle(actions);
+  expect([
+    actionStyle.paddingTop,
+    actionStyle.paddingRight,
+    actionStyle.paddingBottom,
+    actionStyle.paddingLeft,
+  ]).toEqual(["8px", "8px", "8px", "8px"]);
+  const paintedActions = actions.getBoundingClientRect();
+  expect(paintedActions.left).toBeGreaterThanOrEqual(scrollBounds.left);
+  expect(paintedActions.right).toBeLessThanOrEqual(scrollBounds.right);
+  expect(naturalPromptFlow(fixture.host)).toEqual(flow);
+  expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
+  expect(exactTextNodes(row, prompt)).toHaveLength(1);
+  await userEvent.click(more);
+  await expect.poll(() => more.getAttribute("aria-expanded")).toBe("true");
+  await userEvent.click(more);
+  await expect.poll(() => more.getAttribute("aria-expanded")).toBe("false");
+  expect(actionContent()).toEqual(originalActions);
+  expect(naturalPromptFlow(fixture.host)).toEqual(flow);
+  readAt(fixture.host, flow.promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  expect(naturalPromptText(text, node)).toEqual(naturalText);
+});

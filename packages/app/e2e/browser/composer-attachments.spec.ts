@@ -377,12 +377,16 @@ test("sticky user message preserves uploaded image and file attachments", async 
     const originalText = original.getByTestId("user-message-text");
     const textIdentity = await originalText.elementHandle();
     expect(textIdentity).not.toBeNull();
-    const originalInk = await captureVisibleActualPrompt(page, originalText);
+    const originalInk = await captureVisibleActualPrompt(page, originalText, true);
     await scrollTimelinePastPrompt(page, prompt);
     await expect(attachmentRow).toContainText("2 attachments");
     await expectActualTextIdentity(original, textIdentity!, prompt);
-    // The real text keeps its painted ink; there is no covered duplicate to mask.
-    await expectMatchingPromptInk(page, originalInk, originalText);
+    // Compare the same natural first line outside only the declared opaque
+    // right-side controls. The real Text owner and its wrapping remain unchanged.
+    await expectMatchingPromptInk(page, originalInk, originalText, {
+      firstLineOnly: true,
+      allowCompactOverlay: true,
+    });
     await page.screenshot({
       path: "../../docs/qa-evidence/sticky-user-message/attachment-single-copy.png",
     });

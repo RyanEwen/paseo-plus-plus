@@ -15,6 +15,7 @@ import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mut
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { SPACING } from "@/styles/theme";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { formatMessageTimestamp } from "@/utils/time";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -165,11 +166,13 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   trailingRow: {
     alignSelf: "flex-end",
+    marginTop: theme.spacing[2],
+  },
+  trailingContent: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: 24,
     gap: theme.spacing[2],
-    marginTop: theme.spacing[2],
   },
   // The absolute-fill backdrop follows this padding, keeping content inside its edges.
   trailingRowWithBackdrop: { padding: theme.spacing[2], flexShrink: 0 },
@@ -613,14 +616,15 @@ export const UserMessage = memo(function UserMessage({
   const trailingContent = useMemo(
     () =>
       hasTrailingRow ? (
-        <View
+        <UserMessageTrailingRow
           style={trailingRowStyle}
+          backed={Boolean(actionRowBackdrop)}
+          backdrop={trailingBackdrop}
           pointerEvents={showTrailingRow ? "auto" : "none"}
           testID="user-message-trailing-row"
           aria-hidden={!!copyMask}
           accessibilityElementsHidden={!!copyMask}
         >
-          {trailingBackdrop}
           {showMessageActions ? (
             <UserMessageTextActions
               formattedTimestamp={formattedTimestamp}
@@ -633,11 +637,12 @@ export const UserMessage = memo(function UserMessage({
             />
           ) : null}
           {navigationActions}
-        </View>
+        </UserMessageTrailingRow>
       ) : null,
     [
       hasTrailingRow,
       trailingRowStyle,
+      actionRowBackdrop,
       showTrailingRow,
       copyMask,
       trailingBackdrop,
@@ -710,6 +715,61 @@ export const UserMessage = memo(function UserMessage({
     </View>
   );
 });
+
+/** Keep web action content at its ordinary rail width. Pinned padding paints
+ * into the existing chat gutter instead of narrowing and rewrapping the content.
+ * Native keeps the same single View and the original composed row styles.
+ */
+function UserMessageTrailingRow({
+  backed,
+  backdrop,
+  style,
+  children,
+  ...props
+}: React.ComponentProps<typeof View> & { backed: boolean; backdrop: ReactNode }) {
+  const flow = useContext(NaturalMessageFlowContext);
+  const web = flow?.web === true;
+  const railWidth = flow?.webRailWidth;
+  const preparedWidth = railWidth !== undefined && railWidth > 0;
+  const padding = backed ? SPACING[2] : 0;
+  const paintStyle = useMemo<React.ComponentProps<typeof View>["style"]>(() => {
+    if (!web) return [userMessageStylesheet.trailingContent, style];
+    return [
+      style,
+      {
+        maxWidth: preparedWidth ? railWidth + padding * 2 : "100%",
+        marginLeft: preparedWidth ? -padding : 0,
+        marginRight: preparedWidth ? -padding : 0,
+      },
+    ];
+  }, [web, style, preparedWidth, railWidth, padding]);
+  const contentStyle = useMemo<React.ComponentProps<typeof View>["style"]>(
+    () => [
+      userMessageStylesheet.trailingContent,
+      {
+        maxWidth: preparedWidth ? railWidth : "100%",
+        minWidth: 0,
+        flexShrink: 1,
+      },
+    ],
+    [preparedWidth, railWidth],
+  );
+  if (!web)
+    return (
+      <View {...props} style={paintStyle}>
+        {backdrop}
+        {children}
+      </View>
+    );
+  return (
+    <View {...props} style={paintStyle}>
+      {backdrop}
+      <View style={contentStyle} testID="user-message-action-content">
+        {children}
+      </View>
+    </View>
+  );
+}
 
 /** Keep timestamp, rewind and copy together beside optional prompt navigation. */
 function UserMessageTextActions({

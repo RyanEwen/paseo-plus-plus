@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { replaceCodeMirrorContent } from "./code-mirror";
 
 /** A sheet tab's body, named after the tab it shows. */
 export function sheet(page: Page, label: string): Locator {
@@ -66,9 +67,7 @@ export async function replaceSheetFileText(
   content: string,
 ): Promise<void> {
   const editor = sheet(page, label).getByTestId("file-source-editor").locator(".cm-content");
-  await editor.click();
-  await editor.press("ControlOrMeta+A");
-  await editor.pressSequentially(content);
+  await replaceCodeMirrorContent({ editor, content });
 }
 
 export async function selectTabFromSwitcher(page: Page, label: string): Promise<void> {

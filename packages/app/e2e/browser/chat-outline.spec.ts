@@ -817,7 +817,8 @@ test("actual user row find expands each occurrence and preserves its text node",
     expect(text).not.toBeNull();
     await scrollActualRowPastTop(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
-    // Use the existing app shortcut; opening find must expand, not a manual More click.
+    // Use the existing app shortcut; Find exposes the full original body,
+    // independently of explicit pinned More/Less disclosure.
     // Pinned metadata is deliberately pointer-disabled; focus the owning transcript itself.
     await page.getByTestId("agent-chat-scroll").focus();
     await page.keyboard.press("ControlOrMeta+f");
@@ -827,17 +828,15 @@ test("actual user row find expands each occurrence and preserves its text node",
     await query.fill("deep-actual-needle");
     await expect(panel.getByRole("status", { name: "Find matches" })).toHaveText("1 of 2");
     const disclosure = row.getByTestId("user-message-disclosure");
-    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(disclosure).toHaveCount(0);
     const firstOccurrence = await expectActualFindVisible(
       row,
       prompt.indexOf("deep-actual-needle"),
     );
     await expectActualTextIdentity(row, text!, prompt);
-    await disclosure.click();
-    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
     await query.press("Enter");
     await expect(panel.getByRole("status", { name: "Find matches" })).toHaveText("2 of 2");
-    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(disclosure).toHaveCount(0);
     const secondOccurrence = await expectActualFindVisible(
       row,
       prompt.lastIndexOf("deep-actual-needle"),
@@ -848,6 +847,15 @@ test("actual user row find expands each occurrence and preserves its text node",
     await query.fill("deep-actual-needle first");
     await query.press("Escape");
     await expect(query).toHaveCount(0);
+    // Find's selected generation has now been released. Re-establish the real
+    // original landing and pin before exercising explicit bounded disclosure.
+    await entry.click();
+    await expectTimelinePromptLandedBelowTop(page, prompt);
+    await scrollActualRowPastTop(page, row);
+    await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
     await disclosure.click();
     await expect(disclosure).toHaveAttribute("aria-expanded", "false");
     // One finite observation, never retried: any sampled reopen is retained as failure.
@@ -1574,7 +1582,7 @@ async function expectSinglePaintedPromptHandoff(page: Page, prompt: string, widt
   const originalText = row.getByTestId("user-message-text");
   const textHandle = await originalText.elementHandle();
   const originalTextBox = (await originalText.boundingBox())!;
-  const originalPixels = await captureVisibleActualPrompt(page, originalText);
+  const originalPixels = await captureVisibleActualPrompt(page, originalText, true);
   for (const offset of [6, 3, 1, -1, -3, -6, -12, -24, -12, -3, -1, 1, 3, 6]) {
     const current = (await row.boundingBox())!;
     await page.mouse.wheel(0, current.y - viewport.y - offset);
@@ -1584,15 +1592,22 @@ async function expectSinglePaintedPromptHandoff(page: Page, prompt: string, widt
     const bounds = (await body.boundingBox())!;
     expect(bounds.x).toBeCloseTo(sourceBox.x, 0);
     expect(bounds.width).toBeCloseTo(sourceBox.width, 0);
-    expect(bounds.height).toBeCloseTo(sourceBox.height, 0);
-    if (offset > 0) continue;
+    if (offset > 0) {
+      expect(bounds.height).toBeCloseTo(sourceBox.height, 0);
+      continue;
+    }
+    await expectActualSingleLineGeometry(row);
     // Pin the original row edge; bubble padding remains inside that actual row.
     expect(bounds.y).toBeCloseTo(viewport.y + sourceBox.y - originalWrapper.y, 0);
     const textBounds = (await originalText.boundingBox())!;
     expect(textBounds.x).toBeCloseTo(originalTextBox.x, 3);
     expect(textBounds.y - bounds.y).toBeCloseTo(originalTextBox.y - sourceBox.y, 3);
     expect(textBounds.width).toBeCloseTo(originalTextBox.width, 3);
-    await expectMatchingPromptInk(page, originalPixels, originalText);
+    expect(textBounds.height).toBeCloseTo(originalTextBox.height, 3);
+    await expectMatchingPromptInk(page, originalPixels, originalText, {
+      firstLineOnly: true,
+      allowCompactOverlay: true,
+    });
     await page.screenshot({
       path: `../../docs/qa-evidence/sticky-user-message/single-copy-${width}-${offset}.png`,
     });

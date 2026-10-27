@@ -8,6 +8,7 @@ import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspac
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { replaceCodeMirrorContent } from "../support/helpers/code-mirror";
 import {
   openFileExplorer,
   openFileFromExplorer,
@@ -91,7 +92,9 @@ async function chooseRichMarkdown(page: Page) {
 }
 
 async function replaceMarkdown(page: Page, text: string) {
-  await page.getByRole("textbox", { name: "Rich Markdown editor", exact: true }).fill(text);
+  const editor = page.getByRole("textbox", { name: "Rich Markdown editor", exact: true });
+  await replaceCodeMirrorContent({ editor, content: text });
+  await expect(editor.locator(".cm-line")).toHaveText(text.split("\n"));
 }
 
 async function selectPanel(page: Page, title: string) {

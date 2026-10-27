@@ -64,11 +64,19 @@ export function syncActualPromptPin(
   enabled: boolean,
   virtualPrompts: readonly PromptLayoutPosition[] = [],
   virtualEnd = 0,
+  originalMessageId: string | null = null,
 ): string | null {
   if (!isWeb) return null;
   reconcilePromptFlow(content, enabled);
   const viewportTop = viewport.getBoundingClientRect().top;
   const rows = Array.from(content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]"));
+  // Preserve the natural lane and collision boundaries while this one selected
+  // message yields physical sticky motion to Find's original-range reveal.
+  const originalRows = new Set(
+    rows
+      .filter((row) => row.dataset.messageId === originalMessageId)
+      .map((row) => row.dataset.historyRowId),
+  );
   const geometry = rows.map((row) => ({
     id: row.dataset.historyRowId!,
     top: row.getBoundingClientRect().top - viewportTop + viewport.scrollTop,
@@ -102,6 +110,7 @@ export function syncActualPromptPin(
         viewport.scrollTop,
       )
     : null;
+  const pinnedId = pin && !originalRows.has(pin.id) ? pin.id : null;
   for (const row of rows) {
     const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
     if (!body) continue;
@@ -109,9 +118,16 @@ export function syncActualPromptPin(
     const index = ordered.findIndex((item) => item.id === own.id);
     const end = ordered[index + 1]?.top ?? naturalEnd;
     const height = Math.max(own.height, end - own.top);
-    applyPromptLane(row, body, enabled, own.height, height, row.dataset.historyRowId === pin?.id);
+    applyPromptLane(
+      row,
+      body,
+      enabled && !originalRows.has(own.id),
+      own.height,
+      height,
+      own.id === pinnedId,
+    );
   }
-  return pin?.id ?? null;
+  return pinnedId;
 }
 
 function applyPromptLane(

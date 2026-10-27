@@ -95,6 +95,13 @@ function isStyleFactory<T>(styles: T | StyleFactory<T>): styles is StyleFactory<
 }
 
 export const StyleSheet = {
+  absoluteFill: {
+    position: "absolute" as const,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  },
   create: <T>(styles: T | StyleFactory<T>): T =>
     isStyleFactory(styles) ? styles(testTheme) : styles,
 };

@@ -54,9 +54,8 @@ export async function expectInlineStickyAttachmentCount(
   expect(geometry.prefixBounds!.left).toBeGreaterThanOrEqual(geometry.text!.bounds.left);
   expect(geometry.prefixBounds!.top).toBeGreaterThanOrEqual(geometry.text!.bounds.top);
   expect(geometry.prefixBounds!.bottom).toBeLessThanOrEqual(geometry.text!.bounds.bottom);
-  expect(geometry.count!.bounds.x + geometry.count!.bounds.width).toBeLessThanOrEqual(
-    geometry.text!.bounds.x,
-  );
+  expect(geometry.cell!.bounds.right).toBeLessThanOrEqual(geometry.disclosure!.bounds.left);
+  expect(geometry.cell!.bounds.left).toBeGreaterThanOrEqual(geometry.viewport!.bounds.left);
   expect(
     Math.abs(
       geometry.count!.bounds.y +
@@ -66,12 +65,28 @@ export async function expectInlineStickyAttachmentCount(
     ),
   ).toBeLessThanOrEqual(1);
   expect(geometry.prefixBounds!.right).toBeLessThanOrEqual(geometry.text!.bounds.right);
-  const prefixInk = await countPaintedPromptPrefix(sticky, geometry.prefixBounds!);
-  await testInfo.attach("compact-prompt-prefix-ink", {
-    body: JSON.stringify({ prefix: geometry.prefix, ink: prefixInk }),
-    contentType: "application/json",
-  });
-  expect(prefixInk).toBeGreaterThan(0);
+  const frame = await captureActualPromptFrame(
+    sticky.page(),
+    sticky.locator("[data-message-text=true]"),
+    0,
+    true,
+  );
+  const prefix = geometry.prefixBounds!;
+  const obscured = frame.occlusions.some(
+    (rect) =>
+      rect.left < prefix.right &&
+      rect.right > prefix.left &&
+      rect.top < prefix.bottom &&
+      rect.bottom > prefix.top,
+  );
+  if (!obscured) {
+    const prefixInk = await countPaintedPromptPrefix(sticky, prefix);
+    await testInfo.attach("compact-prompt-prefix-ink", {
+      body: JSON.stringify({ prefix: geometry.prefix, ink: prefixInk }),
+      contentType: "application/json",
+    });
+    expect(prefixInk).toBeGreaterThan(0);
+  }
 }
 
 /** Snapshot actual compact allocation before any assertions can end the case. */
@@ -116,6 +131,7 @@ async function measureInlineAttachmentAllocation(
       const disclosure = node.querySelector('[data-testid="user-message-disclosure"]');
       return {
         bubble: describe(node.querySelector('[data-testid="user-message-bubble"]')),
+        viewport: describe(node.closest('[data-testid="agent-chat-scroll"]')),
         count: describe(countNode),
         cell: describe(countNode.parentElement),
         text: describe(text),
@@ -362,77 +378,144 @@ export async function expectActualFindVisible(row: Locator, expectedStart: numbe
   return observedStart;
 }
 
-async function captureActualPromptFrame(page: Page, text: Locator, prefixLength = 0) {
+async function captureActualPromptFrame(
+  page: Page,
+  text: Locator,
+  prefixLength = 0,
+  firstLineOnly = false,
+) {
   const snapshot = () =>
-    text.evaluate((node, length) => {
-      const row = node.closest("[data-actual-prompt-row]")!;
-      const outer = row.closest('[data-testid="agent-chat-scroll"]')!;
-      const body = row.querySelector('[data-testid="user-message-body-scroll"]')!;
-      const clip = node.closest('[data-testid="text-preview-clip"]')!;
-      function clientBounds(element: Element) {
-        const bounds = element.getBoundingClientRect();
+    text.evaluate(
+      (node, { length, firstLineOnly: captureFirstLine }) => {
+        const row = node.closest("[data-actual-prompt-row]")!;
+        const outer = row.closest('[data-testid="agent-chat-scroll"]')!;
+        const body = row.querySelector('[data-testid="user-message-body-scroll"]')!;
+        const clip = node.closest('[data-testid="text-preview-clip"]')!;
+        function clientBounds(element: Element) {
+          const bounds = element.getBoundingClientRect();
+          return {
+            left: bounds.left + element.clientLeft,
+            top: bounds.top + element.clientTop,
+            right: bounds.left + element.clientLeft + element.clientWidth,
+            bottom: bounds.top + element.clientTop + element.clientHeight,
+          };
+        }
+        let prefix: { left: number; right: number; top: number; bottom: number } | null = null;
+        if (length > 0) {
+          const first = document.createTreeWalker(node, NodeFilter.SHOW_TEXT).nextNode();
+          if (!first) throw new Error("Expected a mounted prompt text node");
+          const range = document.createRange();
+          range.setStart(first, 0);
+          range.setEnd(first, length);
+          const rect = range.getBoundingClientRect();
+          prefix = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+        }
+        const bounds = node.getBoundingClientRect();
+        const limits = [clip, body, outer].map(clientBounds);
+        const left = Math.max(0, bounds.left, ...limits.map((rect) => rect.left));
+        const top = Math.max(0, bounds.top, ...limits.map((rect) => rect.top));
+        const right = Math.min(innerWidth, bounds.right, ...limits.map((rect) => rect.right));
+        const lineBottom = captureFirstLine
+          ? bounds.top + Number.parseFloat(getComputedStyle(node).lineHeight)
+          : bounds.bottom;
+        const bottom = Math.min(
+          innerHeight,
+          bounds.bottom,
+          lineBottom,
+          ...limits.map((rect) => rect.bottom),
+        );
+        const occlusions = Array.from(
+          row.querySelectorAll<HTMLElement>("[data-user-message-compact-occlusion]"),
+          (backing) => {
+            const region = backing.dataset.userMessageCompactOcclusion;
+            const parent = backing.parentElement!;
+            const target =
+              region === "controls"
+                ? parent.querySelector('[data-testid="user-message-disclosure"]')
+                : parent.querySelector('[data-testid="user-message-attachments-summary"]');
+            if (!target || (region !== "controls" && region !== "summary"))
+              throw new Error("Expected a declared real compact control backing");
+            const backingStyle = getComputedStyle(backing);
+            const corners = [
+              backingStyle.borderTopLeftRadius,
+              backingStyle.borderTopRightRadius,
+              backingStyle.borderBottomRightRadius,
+              backingStyle.borderBottomLeftRadius,
+            ];
+            if (corners.some((radius) => radius !== "0px"))
+              throw new Error("Compact rectangular occlusion must have square corners");
+            const color = backingStyle.backgroundColor;
+            if (
+              backingStyle.opacity !== "1" ||
+              (!color.startsWith("rgb(") && !/^rgba\([^)]*,\s*1\)$/.test(color))
+            )
+              throw new Error("Compact occlusion must have an opaque background");
+            const rectangle = backing.getBoundingClientRect();
+            const allocation = parent.getBoundingClientRect();
+            if (
+              rectangle.x !== allocation.x ||
+              rectangle.y !== allocation.y ||
+              rectangle.width !== allocation.width ||
+              rectangle.height !== allocation.height
+            )
+              throw new Error("Compact backing must equal its actual control allocation");
+            return {
+              left: rectangle.left,
+              right: rectangle.right,
+              top: rectangle.top,
+              bottom: rectangle.bottom,
+            };
+          },
+        );
         return {
-          left: bounds.left + element.clientLeft,
-          top: bounds.top + element.clientTop,
-          right: bounds.left + element.clientLeft + element.clientWidth,
-          bottom: bounds.top + element.clientTop + element.clientHeight,
+          capture: { x: left, y: top, width: right - left, height: bottom - top },
+          prefix,
+          occlusions,
+          wrapper: row.getBoundingClientRect().toJSON(),
+          text: bounds.toJSON(),
+          pin: row.getAttribute("data-prompt-pinned"),
+          translation: row.getAttribute("data-prompt-translation"),
+          outer: {
+            top: outer.scrollTop,
+            left: outer.scrollLeft,
+            bounds: outer.getBoundingClientRect().toJSON(),
+          },
+          body: {
+            top: body.scrollTop,
+            left: body.scrollLeft,
+            bounds: body.getBoundingClientRect().toJSON(),
+          },
+          window: { x: scrollX, y: scrollY },
         };
-      }
-      let prefix: { left: number; right: number; top: number; bottom: number } | null = null;
-      if (length > 0) {
-        const first = document.createTreeWalker(node, NodeFilter.SHOW_TEXT).nextNode();
-        if (!first) throw new Error("Expected a mounted prompt text node");
-        const range = document.createRange();
-        range.setStart(first, 0);
-        range.setEnd(first, length);
-        const rect = range.getBoundingClientRect();
-        prefix = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-      }
-      const bounds = node.getBoundingClientRect();
-      const limits = [clip, body, outer].map(clientBounds);
-      const left = Math.max(0, bounds.left, ...limits.map((rect) => rect.left));
-      const top = Math.max(0, bounds.top, ...limits.map((rect) => rect.top));
-      const right = Math.min(innerWidth, bounds.right, ...limits.map((rect) => rect.right));
-      const bottom = Math.min(innerHeight, bounds.bottom, ...limits.map((rect) => rect.bottom));
-      return {
-        capture: { x: left, y: top, width: right - left, height: bottom - top },
-        prefix,
-        wrapper: row.getBoundingClientRect().toJSON(),
-        text: bounds.toJSON(),
-        pin: row.getAttribute("data-prompt-pinned"),
-        translation: row.getAttribute("data-prompt-translation"),
-        outer: {
-          top: outer.scrollTop,
-          left: outer.scrollLeft,
-          bounds: outer.getBoundingClientRect().toJSON(),
-        },
-        body: {
-          top: body.scrollTop,
-          left: body.scrollLeft,
-          bounds: body.getBoundingClientRect().toJSON(),
-        },
-        window: { x: scrollX, y: scrollY },
-      };
-    }, prefixLength);
+      },
+      { length: prefixLength, firstLineOnly },
+    );
   const before = await snapshot();
   expect(before.capture.width).toBeGreaterThan(0);
   expect(before.capture.height).toBeGreaterThan(0);
   const pixels = await page.screenshot({ animations: "disabled", clip: before.capture });
   // The screenshot must belong to the measured frame, not one scrolled by capture.
   expect(await snapshot()).toEqual(before);
-  return { pixels, capture: before.capture, prefix: before.prefix };
+  return { pixels, capture: before.capture, prefix: before.prefix, occlusions: before.occlusions };
 }
 
-export async function captureVisibleActualPrompt(page: Page, text: Locator): Promise<Buffer> {
-  return (await captureActualPromptFrame(page, text)).pixels;
+export async function captureVisibleActualPrompt(
+  page: Page,
+  text: Locator,
+  firstLineOnly = false,
+): Promise<Buffer> {
+  return (await captureActualPromptFrame(page, text, 0, firstLineOnly)).pixels;
 }
 
 export async function expectMatchingPromptInk(
   page: Page,
   originalScreenshot: Buffer,
   pinnedText: Locator,
+  options: { firstLineOnly?: boolean; allowCompactOverlay?: boolean } = {},
 ) {
-  const pinnedScreenshot = await captureVisibleActualPrompt(page, pinnedText);
+  const frame = await captureActualPromptFrame(page, pinnedText, 0, options.firstLineOnly);
+  const pinnedScreenshot = frame.pixels;
+  if (options.allowCompactOverlay) expect(frame.occlusions.length).toBeGreaterThan(0);
   const textColor = await pinnedText.evaluate((node) => {
     for (let parent: Element | null = node; parent; parent = parent.parentElement) {
       if (getComputedStyle(parent).opacity !== "1") throw new Error("Pinned foreground is dimmed");
@@ -440,7 +523,7 @@ export async function expectMatchingPromptInk(
     return getComputedStyle(node).color;
   });
   const ink = await page.evaluate(
-    async ({ source, pinned, color }) => {
+    async ({ source, pinned, color, capture, occlusions }) => {
       const foreground = color.match(/\d+/g)!.slice(0, 3).map(Number);
       async function decodeInk(base64: string) {
         const image = new Image();
@@ -472,6 +555,24 @@ export async function expectMatchingPromptInk(
       }
       const original = await decodeInk(source);
       const copy = await decodeInk(pinned);
+      const rawOriginalCount = original.count;
+      // Compare homologous first-line pixels everywhere except the actual opaque
+      // control rectangles. The identical mask applies to both images; neither
+      // arbitrary crop nor missing ink elsewhere can be excused by this policy.
+      for (const image of [original, copy]) {
+        for (let index = 0; index < image.mask.length; index += 1) {
+          const x = capture.x + (((index % image.width) + 0.5) * capture.width) / image.width;
+          const y =
+            capture.y + ((Math.floor(index / image.width) + 0.5) * capture.height) / image.height;
+          if (
+            occlusions.some(
+              (rect) => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom,
+            )
+          )
+            image.mask[index] = false;
+        }
+        image.count = image.mask.filter(Boolean).length;
+      }
       /** LCD color fringing and grayscale smoothing can choose neighboring edge pixels. */
       function unmatchedPixels(from: typeof original, to: typeof original) {
         return from.mask.filter((painted, index) => {
@@ -496,6 +597,7 @@ export async function expectMatchingPromptInk(
       return {
         original: { width: original.width, height: original.height, count: original.count },
         copy: { width: copy.width, height: copy.height, count: copy.count },
+        rawOriginalCount,
         missing: unmatchedPixels(original, copy),
         added: unmatchedPixels(copy, original),
       };
@@ -504,15 +606,19 @@ export async function expectMatchingPromptInk(
       source: originalScreenshot.toString("base64"),
       pinned: pinnedScreenshot.toString("base64"),
       color: textColor,
+      capture: frame.capture,
+      occlusions: options.allowCompactOverlay ? frame.occlusions : [],
     },
   );
-  expect(ink.original.count).toBeGreaterThan(0);
+  expect(ink.rawOriginalCount).toBeGreaterThan(0);
   expect(ink.copy.width).toBe(ink.original.width);
   expect(ink.copy.height).toBe(ink.original.height);
   expect(ink.missing).toBe(0);
   expect(ink.added).toBe(0);
-  expect(ink.copy.count / ink.original.count).toBeGreaterThan(0.9);
-  expect(ink.copy.count / ink.original.count).toBeLessThan(1.1);
+  if (ink.original.count > 0) {
+    expect(ink.copy.count / ink.original.count).toBeGreaterThan(0.9);
+    expect(ink.copy.count / ink.original.count).toBeLessThan(1.1);
+  }
 }
 
 export async function expectActualTextIdentity(

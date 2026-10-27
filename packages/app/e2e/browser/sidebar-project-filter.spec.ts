@@ -3,7 +3,7 @@ import {
   startWorkingWorkspace,
   startNeedsInputWorkspace,
 } from "../helpers/project-status-badge";
-import { expect, type Page, type Locator } from "@playwright/test";
+import { expect, type Page, type Locator, type TestInfo } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -62,6 +62,43 @@ async function expectStatusOnRight(row: Locator, state: string): Promise<void> {
   const statusBounds = await row.getByTestId(`workspace-status-indicator-${state}`).boundingBox();
   if (!rowBounds || !statusBounds) throw new Error("Workspace status has no rendered bounds");
   expect(statusBounds.x).toBeGreaterThan(rowBounds.x + rowBounds.width / 2);
+}
+
+/** Record focus ownership before cleanup without replacing the original keyboard failure. */
+async function captureProjectSelectorFocus(page: Page, testInfo: TestInfo): Promise<void> {
+  // Capture before cleanup removes the menu. Preserve the original failure
+  // even if the page has already closed or diagnostic collection fails.
+  try {
+    const focus = await page.evaluate(() => {
+      const active = document.activeElement;
+      const menu = document.querySelector('[data-testid="sidebar-project-selector-content"]');
+      return {
+        documentFocused: document.hasFocus(),
+        active: active
+          ? {
+              tag: active.tagName,
+              role: active.getAttribute("role"),
+              testId: active.getAttribute("data-testid"),
+              connected: active.isConnected,
+              insideMenu: menu?.contains(active) ?? false,
+            }
+          : null,
+        items: Array.from(menu?.querySelectorAll('[data-menu-item="true"]') ?? [], (item) => ({
+          testId: item.getAttribute("data-testid"),
+          role: item.getAttribute("role"),
+          disabled: item.getAttribute("data-menu-disabled"),
+          focused: item === active,
+          connected: item.isConnected,
+        })),
+      };
+    });
+    await testInfo.attach("project-selector-keyboard-focus-before-cleanup", {
+      body: JSON.stringify(focus, null, 2),
+      contentType: "application/json",
+    });
+  } catch (captureError) {
+    console.error("Project selector focus capture failed before cleanup", String(captureError));
+  }
 }
 
 test.describe("Sidebar project filter", () => {
@@ -792,6 +829,9 @@ test.describe("Sidebar project selector", () => {
       await expect(surface).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
+    } catch (error) {
+      await captureProjectSelectorFocus(page, testInfo);
+      throw error;
     } finally {
       await alpha.cleanup();
     }

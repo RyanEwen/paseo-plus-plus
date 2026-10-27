@@ -59,7 +59,10 @@ import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
 } from "./history-start-settle-scheduler";
-import { useChatFindSelectedMessageId } from "@/agent-stream/chat-find/selection";
+import {
+  useChatFindOriginalMessage,
+  useChatFindSelectedMessageId,
+} from "@/agent-stream/chat-find/selection";
 import { getStreamItemMessageId } from "./presentation";
 import { useScrollToMessage } from "./use-scroll-to-message.web";
 
@@ -384,6 +387,31 @@ function ActualRowContent({
   );
 }
 
+/** Derive Find's temporary original-row owner and the real rows it must retain. */
+function useFindRowOwnership(
+  owner: { scope: string } | null,
+  agentId: string,
+  active: boolean,
+  historyVirtualized: readonly StreamItem[],
+) {
+  const { messageId: originalFindMessageId, select: selectFindOriginalMessage } =
+    useChatFindOriginalMessage(owner?.scope ?? agentId, active);
+  const selectedFindMessageId = useChatFindSelectedMessageId();
+  const chatFindMessageId = originalFindMessageId ?? selectedFindMessageId;
+  // Chat find counts and highlights occurrences from the DOM, so every block row of
+  // the message it selected has to be mounted even when the scroll window is nowhere
+  // near it. Without this a hit in a far paragraph is invisible to the count and Next
+  // walks off to the following message.
+  const chatFindRowIndexes = useMemo(() => {
+    if (!chatFindMessageId) return null;
+    const indexes = historyVirtualized.flatMap((item, index) =>
+      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
+    );
+    return indexes.length > 0 ? indexes : null;
+  }, [chatFindMessageId, historyVirtualized]);
+  return { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes };
+}
+
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
     segments: inputSegments,
@@ -415,10 +443,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     [historyMounted, historyVirtualized, inputSegments],
   );
   const actualRows = useContext(ActualPromptRowsContext);
-  const expandActualMessage = actualRows?.expand;
   const registerActualViewport = actualRows?.registerViewport;
   const [pinnedRowId, setPinnedRowId] = useState<string | null>(null);
   const isActive = useRetainedPanelActive();
+  const { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes } =
+    useFindRowOwnership(actualRows, props.agentId, isActive, segments.historyVirtualized);
   const isActiveRef = useRef(isActive);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -482,18 +511,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
   const isActivationReady = !hasRouteBottomAnchorRequest || isAuthoritativeHistoryReady;
 
-  // Chat find counts and highlights occurrences from the DOM, so every block row of
-  // the message it selected has to be mounted even when the scroll window is nowhere
-  // near it. Without this a hit in a far paragraph is invisible to the count and Next
-  // walks off to the following message.
-  const chatFindMessageId = useChatFindSelectedMessageId();
-  const chatFindRowIndexes = useMemo(() => {
-    if (!chatFindMessageId) return null;
-    const indexes = segments.historyVirtualized.flatMap((item, index) =>
-      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
-    );
-    return indexes.length > 0 ? indexes : null;
-  }, [chatFindMessageId, segments.historyVirtualized]);
   const virtualUserIndices = useMemo(
     () =>
       segments.historyVirtualized.flatMap((item, index) =>
@@ -847,6 +864,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       actualRows !== null,
       virtualPrompts,
       virtualEnd,
+      originalFindMessageId,
     );
     setPinnedRowId((current) => (current === next ? current : next));
   });
@@ -1014,6 +1032,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     updatePinnedRow();
   }, [
     updatePinnedRow,
+    originalFindMessageId,
     actualRows,
     contentWidth,
     isActive,
@@ -1454,9 +1473,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
-      expandMessageForFind: (id, signal) => {
-        if (!signal.aborted) expandActualMessage?.(id);
-      },
+      expandMessageForFind: selectFindOriginalMessage,
       scrollToMessage,
       cancelMessageScroll: cancelScrollToMessage,
     };
@@ -1470,7 +1487,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     cancelPendingStickToBottom,
     forceStickToBottom,
-    expandActualMessage,
+    selectFindOriginalMessage,
     cancelScrollToMessage,
     scheduleStickToBottom,
     scrollToMessage,

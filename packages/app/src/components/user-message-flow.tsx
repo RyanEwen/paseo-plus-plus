@@ -44,6 +44,8 @@ export interface MessageFlowContext {
   compact: boolean;
   /** The web adapter preserves its existing inner padding cell and visual bubble. */
   web?: boolean;
+  /** Current measured reading rail, independent of compact paint or preparation. */
+  webRailWidth?: number;
   /** Prepared web paint moves vertical chrome inside the visual bubble. */
   webContentPadding?: boolean;
   bubbleHeight?: number;
