@@ -21,6 +21,8 @@ export interface KeyboardShortcutContext {
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
+  /** DOM control ownership, independent of scope so unrelated shortcuts keep their eligibility. */
+  interactiveControlFocused?: boolean;
 }
 
 export interface KeyboardShortcutInput {
@@ -77,6 +79,8 @@ interface ShortcutWhen {
   terminal?: false;
   /** false = disabled when command center is open */
   commandCenter?: false;
+  /** false = leave focused controls' keyboard interaction to the control */
+  interactiveControl?: false;
   /** Allowed focus scope or scopes */
   focusScope?: KeyboardFocusScope | readonly KeyboardFocusScope[];
 }
@@ -1162,7 +1166,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     action: "message-input.action",
     combo: "Space",
     repeat: false,
-    when: { commandCenter: false, focusScope: "other" },
+    when: { commandCenter: false, focusScope: "other", interactiveControl: false },
     payload: { type: "message-input", kind: "voice-mute-toggle" },
     help: {
       id: "voice-mute-toggle",
@@ -1217,6 +1221,14 @@ export function normalizeCapturedShortcutCombo(bindingId: string, combo: string)
   return combo.replace(/(^|\+)[1-9]$/, "$1Digit");
 }
 
+/** Index navigation needs a final number; earlier combos may be any chord prefix. */
+export function isShortcutCaptureComplete(bindingId: string, combos: readonly string[]): boolean {
+  const lastCombo = combos.at(-1);
+  if (!lastCombo) return false;
+  const binding = DEFAULT_BINDINGS.find((candidate) => candidate.id === bindingId);
+  return binding?.payload?.type !== "index" || /(^|\+)(Digit|[1-9])$/.test(lastCombo);
+}
+
 export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShortcutBinding[] {
   return DEFAULT_BINDINGS.map(function (binding) {
     const override = overrides[binding.id];
@@ -1237,7 +1249,7 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
     if (binding.repeat === false && lastCombo) {
       lastCombo.repeat = false;
     }
-    const when = withoutDefaultComboGuard(binding.when);
+    const when = withoutDefaultComboGuard(binding.when, parsedChord);
     if (!binding.help?.defaultDisplayKeys) {
       return { ...binding, combo: override, parsedChord, when };
     }
@@ -1254,13 +1266,30 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
  * go, the same way `defaultDisplayKeys` does — otherwise the combo the user
  * picked in Settings silently refuses to fire wherever they are typing.
  *
- * The other guards stay. Platform, command center, terminal and focus scope
+ * The interactive-control guard protects bare Space activation. Keep it for
+ * an explicit Space override, but remove it for modified keys and chords.
+ * Platform, command center, terminal and focus scope guards stay: they
  * are properties of the action and of where it makes sense, and none of them
  * change because the keys did.
  */
-function withoutDefaultComboGuard(when: ShortcutWhen | undefined): ShortcutWhen | undefined {
-  if (when?.editable !== false) return when;
-  const { editable: _editable, ...rest } = when;
+function withoutDefaultComboGuard(
+  when: ShortcutWhen | undefined,
+  parsedChord: readonly KeyCombo[],
+): ShortcutWhen | undefined {
+  if (!when) return when;
+  const { editable: _editable, interactiveControl, ...rest } = when;
+  const combo = parsedChord[0];
+  const isBareSpace =
+    parsedChord.length === 1 &&
+    combo.code === "Space" &&
+    !combo.meta &&
+    !combo.ctrl &&
+    !combo.alt &&
+    !combo.shift &&
+    !combo.mod;
+  if (interactiveControl === false && isBareSpace) {
+    return { ...rest, interactiveControl };
+  }
   return rest;
 }
 
@@ -1345,6 +1374,7 @@ export function matchesKeyboardShortcutContext(
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
+  if (when.interactiveControl === false && context.interactiveControlFocused) return false;
   if (
     when.focusScope !== undefined &&
     !(typeof when.focusScope === "string"

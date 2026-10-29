@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "아이콘 전용 탭",
+    iconOnlyHint:
+      "탐색기 탭이나 탭 표시줄의 빈 공간을 마우스 오른쪽 버튼으로 클릭한 다음 아이콘 전용 탭을 선택하세요. 탭 이름은 툴팁에서 확인할 수 있습니다.",
+  },
   settingsSync: {
     title: "설정 동기화",
     hint: "선택한 호스트를 통해 앱 환경설정과 사이드바 항목 표시를 동기화합니다. 호스트/프로젝트 필터, 작업공간 순서와 접힌 그룹은 로컬에 유지됩니다. 전환하면 설정을 읽은 후 편집할 수 있습니다.",
@@ -35,6 +40,21 @@ export const ko: TranslationResources = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "강조 색상",
+      hint: "주요 컨트롤과 내 메시지에 사용됩니다",
+      updateHost: "강조 색상을 변경하려면 선택한 설정 호스트를 업데이트하세요",
+      preview: "메시지가 이렇게 표시됩니다",
+      options: {
+        default: "기본값",
+        blue: "파랑",
+        green: "초록",
+        purple: "보라",
+        rose: "장미색",
+        orange: "주황",
+        teal: "청록",
+      },
+    },
     workspaceLimit: {
       save: "저장",
       title: "작업 공간 표시 제한",
@@ -69,8 +89,8 @@ export const ko: TranslationResources = {
     saveFailed: "저장하지 못했습니다. 다시 시도하세요.",
     features: {
       workspaceChatLinks: {
-        label: "채팅 링크를 Paseo에서 열기",
-        hint: "데스크톱에서 채팅 웹 링크를 해당 작업공간의 브라우저로 엽니다. 끄면 외부 브라우저를 사용합니다. 링크 메뉴의 Paseo에서 열기는 계속 사용할 수 있습니다.",
+        label: "작업 공간 링크",
+        hint: "데스크톱에서 터미널, 채팅, Git의 웹 링크를 해당 작업 공간 브라우저의 새 탭으로 엽니다. 끄면 외부 브라우저로 엽니다. 메뉴의 명시적인 동작은 계속 사용할 수 있습니다.",
       },
       sidebarHostUpdates: {
         label: "사이드바의 호스트 업데이트",
@@ -82,7 +102,11 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 스크롤 가능한 탭 막대를 표시합니다. 끄면 선택한 탭을 유지하며 이전 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 같은 너비의 탭을 표시하고 필요한 경우에만 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
+      },
+      widerWorkspaceTabs: {
+        label: "더 넓은 작업 공간 탭",
+        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰의 작업 공간 탭은 항상 사용 가능한 너비를 균등하게 나눕니다.",
       },
 
       descriptiveToolCalls: {
@@ -90,13 +114,9 @@ export const ko: TranslationResources = {
         hint: "알려진 작업을 설명하고 정확한 명령과 출력은 세부 정보에 보존합니다. 끄면 기존 레이블로 돌아갑니다.",
       },
 
-      sidebarProjectSelector: {
-        label: "제목에 선택한 프로젝트 표시",
-        hint: "워크스페이스 제목에 선택한 프로젝트 이름을 표시합니다. 끄면 워크스페이스로 표시되며 호스트와 프로젝트 선택은 계속 사용할 수 있습니다.",
-      },
       stickyUserPrompts: {
         label: "사용자 메시지 계속 표시",
-        hint: "현재 메시지를 채팅 위에 표시하고 펼치기와 이전/다음 이동을 제공합니다",
+        hint: "현재 메시지를 간단히 고정하고 펼치거나 이전/다음으로 이동할 수 있습니다. 일반 메시지는 항상 펼쳐져 있으며 로딩 표시가 기존 메시지를 가리지 않습니다.",
       },
       previousAgents: {
         label: "이전 에이전트",
@@ -152,7 +172,7 @@ export const ko: TranslationResources = {
       },
       mobile: {
         label: "모바일 탐색",
-        hint: "더 큰 터치 영역, 안전한 Android 뒤로 가기 및 개발 알림 분리",
+        hint: "안전한 Android 뒤로 가기 및 개발 알림 분리",
       },
       pickers: {
         label: "워크스페이스 선택과 상태",
@@ -575,6 +595,7 @@ export const ko: TranslationResources = {
       details: "세부 정보",
     },
     dictation: {
+      paused: "마이크가 중단되었습니다. 재개를 기다리는 중…",
       start: "음성 받아쓰기 시작",
       cancel: "받아쓰기 취소",
       retry: "받아쓰기 다시 시도",
@@ -768,6 +789,7 @@ export const ko: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "작업 공간 설정 세부 정보를 보려면 호스트를 업데이트하세요",
       descriptor: {
         label: "설정",
         completed: "설정 완료",
@@ -804,12 +826,15 @@ export const ko: TranslationResources = {
     browser: {
       openInPaseo: "Paseo 브라우저에서 열기",
       openExternally: "외부 브라우저에서 열기",
+      copyLink: "링크 복사",
       unavailable: {
         title: "브라우저는 데스크톱 전용입니다",
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
       },
       session: "브라우저 세션 {{browserId}}",
       controls: {
+        pageZoom: "페이지 확대/축소",
+        zoomFailed: "페이지 확대/축소를 변경하지 못했습니다",
         back: "뒤로",
         forward: "앞으로",
         stopLoading: "로딩 중지",
@@ -831,6 +856,17 @@ export const ko: TranslationResources = {
         placeholder: "이 요소에 관해 에이전트에게 보낼 메시지…",
         submit: "첨부",
         cancel: "취소",
+      },
+      extensions: {
+        label: "확장 프로그램",
+        empty: "활성화된 확장 프로그램이 없습니다.",
+        noPopup: "팝업이 제공되지 않음",
+        loading: "확장 프로그램 불러오는 중...",
+        manage: "확장 프로그램 관리",
+        openFailed: "확장 프로그램을 열 수 없습니다",
+        pin: "{{name}} 고정",
+        unpin: "{{name}} 고정 해제",
+        pinFailed: "확장 프로그램 고정을 저장하지 못했습니다",
       },
       devices: {
         label: "장치 크기",
@@ -1160,6 +1196,7 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "단일 파일 diff를 열려면 이 호스트를 업데이트하세요.",
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
@@ -1193,6 +1230,7 @@ export const ko: TranslationResources = {
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",
         diffMode: "Diff 모드",
+        all: "모든 변경 사항",
         uncommitted: "커밋되지 않음",
         committed: "커밋됨",
         branchUnknown: "알 수 없음",
@@ -1399,6 +1437,16 @@ export const ko: TranslationResources = {
       multipleWorkspaces_other: "{{count}}개 프로젝트의 워크스페이스",
       title: "프로젝트",
     },
+    workspaceTree: {
+      expand: "{{name}}의 하위 워크스페이스 펼치기",
+      collapse: "{{name}}의 하위 워크스페이스 접기",
+      activeChild: "활성 워크스페이스가 포함되어 있습니다.",
+      summary_one: "하위 워크스페이스 {{count}}개: {{status}}",
+      summary_other: "하위 워크스페이스 {{count}}개: {{status}}",
+      humanAttention_one: "하위 워크스페이스 {{count}}개에 사용자의 확인이 필요합니다",
+      humanAttention_other: "하위 워크스페이스 {{count}}개에 사용자의 확인이 필요합니다",
+      unknownStatus: "상태를 확인할 수 없음",
+    },
     statusGroupAccessibility: "{{label}} 그룹",
     statusBucket: {
       workingCount: "{{count}}개 작업 중",
@@ -1429,9 +1477,9 @@ export const ko: TranslationResources = {
         fiveDays: "5일",
         week: "1주",
         twoWeeks: "2주",
-        month: "1개월",
-        twoMonths: "2개월",
-        threeMonths: "3개월",
+        month: "1개월 (30일)",
+        twoMonths: "2개월 (60일)",
+        threeMonths: "3개월 (90일)",
       },
       expandAll: "모두 펼치기",
       collapseAll: "모두 접기",
@@ -1543,6 +1591,43 @@ export const ko: TranslationResources = {
       openProjectSettings: "프로젝트 설정 열기",
     },
     project: {
+      archive: {
+        action: "모두 보관",
+        title: "프로젝트의 작업 공간을 보관할까요?",
+        message:
+          '프로젝트: "{{projectName}}"\n작업 공간: {{workspaceCount}}\n에이전트: {{agentCount}} (실행 중: {{runningAgentCount}})\n호스트: {{hostCount}}\n\n실행 중인 에이전트와 작업 공간의 작업이 중지됩니다. Paseo가 관리하는 워크트리가 제거될 수 있습니다. 프로젝트는 유지됩니다.',
+        includeBackground: "백그라운드 작업 공간도 보관 ({{count}})",
+        backgroundWarning: "백그라운드 작업 공간을 포함하면 해당 에이전트와 작업도 중지됩니다.",
+        discovering: "작업 공간과 에이전트 수를 확인하는 중...",
+        progress: "작업 공간 보관 중: {{total}}개 중 {{completed}}개",
+        completed: "보관된 작업 공간: {{count}}",
+        failed:
+          '작업 공간 {{completed}}개를 보관했습니다. {{host}}의 "{{workspace}}"에서 작업이 중지되었습니다: {{error}}. 시도하지 않은 항목: {{unprocessed}}개. 문제를 해결한 후 모두 보관을 다시 시도하세요.',
+        empty: "이 프로젝트에 활성 작업 공간이 없습니다",
+        projectChanged:
+          "확인 중 프로젝트가 변경되었습니다. 개수를 확인하고 모두 보관을 다시 시도하세요.",
+        hostDisconnected:
+          "호스트 {{host}}의 연결이 끊어졌습니다. 프로젝트의 모든 호스트에 연결한 후 다시 시도하세요.",
+        updateRequired:
+          "프로젝트의 작업 공간을 안전하게 보관하려면 호스트 {{host}}를 업데이트하세요.",
+        alreadyArchiving:
+          '작업 공간 "{{workspace}}"을(를) 이미 보관하고 있습니다. 완료된 후 다시 시도하세요.',
+        incompleteDiscovery:
+          "프로젝트의 모든 작업 공간과 에이전트 수를 확인할 수 없습니다. 모두 보관을 다시 시도하세요.",
+        verificationFailed:
+          '작업 공간 "{{workspace}}"이(가) 보관되었는지 확인할 수 없습니다. 다시 시도하기 전에 기록을 열어 상태를 확인하세요.',
+        agentsRemaining:
+          '작업 공간 "{{workspace}}"에 아직 활성 에이전트가 있습니다. 기록을 열어 완료되지 않은 보관 상태를 확인하세요.',
+        agentNotArchived:
+          "에이전트 {{agent}}이(가) 보관되고 중지되었는지 확인할 수 없습니다. 기록을 열어 상태를 확인하세요.",
+      },
+      restore: {
+        title: "보관된 작업 공간 복원",
+        search: "보관된 작업 공간 검색",
+        empty: "이 프로젝트에 보관된 작업 공간이 없습니다",
+        updateRequired: "보관된 작업 공간을 보려면 호스트를 업데이트하세요",
+        loadFailed: "보관된 작업 공간을 불러오지 못했습니다",
+      },
       actions: {
         menu: "프로젝트 작업",
         openSettings: "프로젝트 설정 열기",
@@ -1636,8 +1721,9 @@ export const ko: TranslationResources = {
     },
     fields: {
       project: "프로젝트",
-      base: "기준",
+      branch: "브랜치",
       baseNotApplicable: "해당 없음",
+      host: "호스트",
     },
     titlePlaceholder: "제목(선택 사항)",
     errors: {
@@ -2232,12 +2318,32 @@ export const ko: TranslationResources = {
       creatingAgent: "에이전트 생성 중",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: ".{{extension}} 파일 열기 방식",
+        pickerTitleFilename: "{{filename}} 열기 방식",
+        dontAskAgain: "다시 묻지 않기",
+        use: "사용",
+        openWith: "다음으로 열기…",
+        alwaysUseExtension: ".{{extension}}에 항상 사용",
+        alwaysUseFilename: "{{filename}}에 항상 사용",
+        option: "{{title}} — {{owner}}",
+        actions: "파일 작업",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "이미지",
+          source: "소스",
+        },
+      },
       directoryMissing: "워크스페이스 디렉터리를 찾을 수 없습니다.",
       loading: "파일 불러오는 중...",
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
       tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
+      documentUnsupported: "{{type}} 파일은 이 기기에서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
+      notFound: "파일을 찾을 수 없습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
         fileSize: "파일 크기 {{size}}",
@@ -2249,10 +2355,7 @@ export const ko: TranslationResources = {
         changedOnDisk: "디스크에서 변경됨",
         vimMode: "Vim 모드 {{mode}}",
         cursor: "{{line}} 라인, {{column}} 열",
-        preview: "미리보기",
-        source: "소스",
         deletedTitle: "디스크에서 파일이 삭제되었습니다.",
-        checkFailedTitle: "디스크의 파일을 확인할 수 없습니다.",
         preservedDescription: "열린 복사본은 보존됩니다.",
         conflictDescription: "로컬 버퍼가 보존되었습니다. 유지할 버전을 선택하세요.",
         overwrite: "덮어쓰기",
@@ -2423,6 +2526,70 @@ export const ko: TranslationResources = {
       saveAccessibility: "리뷰 댓글 저장",
     },
   },
+  providerUsage: {
+    options: "설정",
+    refreshFailed: "사용량을 새로 고칠 수 없습니다",
+    noHosts: "연결된 호스트가 없습니다",
+    agentError: "사용량을 불러올 수 없습니다: {{reason}}",
+    pin: "고정",
+    unpin: "고정 해제",
+    displayAs: "백분율",
+    displayUsed: "사용됨",
+    displayRemaining: "남음",
+    showInSidebar: "사이드바에 요약 표시",
+    showInSidebarHint: "고정된 기간이 사이드바 하단에 표시됩니다",
+    runToRefresh: "{{command}} 명령을 실행하여 새로 고치세요.",
+    signInAgain: "다시 로그인하세요.",
+    loginRejected: "로그인이 거부되었습니다 (HTTP {{status}}). {{remedy}}",
+    loginExpired: "로그인이 {{relativeTime}}에 만료되었습니다. {{remedy}}",
+    title: "플랜 사용량",
+    refresh: "새로 고침",
+    refreshAll: "모두 새로 고침",
+    refreshing: "새로 고치는 중...",
+    loading: "사용량 불러오는 중...",
+    empty: "사용량 데이터가 없습니다",
+    errorTitle: "사용량을 불러올 수 없습니다",
+    hostUnavailable: "{{host}}에 연결하여 제공업체 사용량을 확인하세요",
+    hostUpgradeRequired: "{{host}}를 업데이트하여 제공업체 사용량을 확인하세요",
+    clientUnavailable: "호스트 연결이 준비되지 않았습니다",
+    retry: "다시 시도",
+    tooltipLoading: "플랜 사용량 불러오는 중...",
+    status: {
+      error: "오류",
+      unavailable: "사용할 수 없음",
+    },
+    values: {
+      used: "{{percentage}} 사용됨",
+      remaining: "{{amount}} 남음",
+    },
+    labels: {
+      session: "세션",
+      weekly: "주간",
+      monthly: "월간",
+      codeReview: "코드 검토",
+      credits: "크레딧",
+      monthlyCredits: "월간 크레딧",
+    },
+    duration: {
+      days: "{{value}}일",
+      hours: "{{value}}시간",
+      minutes: "{{value}}분",
+    },
+    timing: {
+      lastUpdated: "마지막 업데이트: {{relativeTime}}",
+      noSuccessfulUpdate: "성공한 업데이트가 없습니다",
+      resetTimePassed: "초기화 시간이 지났습니다",
+      resettingNow: "지금 재설정 중",
+      resetsIn: "{{duration}} 후 재설정",
+      runsOutNow: "지금 한도에 도달",
+      runsOutIn: "{{duration}} 후 한도에 도달",
+      justNow: "방금",
+      daysAgo: "{{value}}일 전",
+      hoursAgo: "{{value}}시간 전",
+      minutesAgo: "{{value}}분 전",
+      updated: "{{relativeTime}}에 업데이트됨",
+    },
+  },
   settings: {
     title: "설정",
     loading: "설정 불러오는 중...",
@@ -2451,6 +2618,7 @@ export const ko: TranslationResources = {
       terminal: "터미널",
       browser: "브라우저",
       editor: "편집기",
+      files: "파일",
       shortcuts: "단축키",
       integrations: "통합",
       notifications: "알림",
@@ -2488,8 +2656,27 @@ export const ko: TranslationResources = {
       vimKeybindings: "Vim 키 바인딩",
       vimHint: "웹 및 데스크톱의 소스 파일에 적용됩니다.",
     },
+    files: {
+      title: "파일",
+      askEveryTime: "매번 묻기",
+      askAgain: "다시 묻기",
+      askAgainFor: "{{label}} 다시 묻기",
+      unavailable: "연결된 호스트에 없음",
+      empty: "플러그인이 파일 패널을 추가하면 여기에 표시됩니다",
+    },
     notifications: {
       title: "알림",
+      chooseHost: "설정할 호스트를 선택하여 연결된 모든 기기의 알림을 구성하세요.",
+      hostTitle: "{{host}}의 알림",
+      agentAware: "에이전트를 고려한 알림",
+      agentAwareHint:
+        "에이전트 간의 일반적인 결과는 조용히 처리하고, 조치가 필요할 때 «검토 대기» 배지를 표시합니다. {{host}}에 연결된 모든 기기에 적용됩니다. 이 설정을 꺼도 사람의 개입 요청과 안전 알림은 계속 제공됩니다.",
+      updateHost: "이 알림 설정을 변경하려면 호스트를 업데이트하세요.",
+      readOnly: "이 설정을 변경하려면 해당 호스트의 관리 권한이 필요합니다.",
+      unavailable: "저장하기 전에 관리 권한이 있는 지원 호스트에 연결하세요.",
+      notSaved: "호스트에서 이 알림 설정을 저장하지 않았습니다. 다시 시도하세요.",
+      loadFailed: "호스트의 알림 설정을 불러올 수 없습니다.",
+      saving: "저장 중...",
       permission: "알림 권한",
       refreshAccessibility: "알림 권한 새로 고침",
       playSound: "소리 재생",
@@ -2533,6 +2720,25 @@ export const ko: TranslationResources = {
     general: {
       title: "일반",
       sending: "전송",
+      browserExtensions: {
+        title: "확장 프로그램",
+        compatibility:
+          "일부 Chrome 확장 프로그램 기능은 지원되지 않습니다. 확장 프로그램은 자동으로 업데이트되지 않습니다.",
+        store: "Chrome 웹 스토어",
+        openStore: "웹 스토어 열기",
+        refresh: "새로 고침",
+        enable: "사용",
+        disable: "사용 중지",
+        retry: "다시 시도",
+        remove: "삭제",
+        removeTitle: "{{name}}을(를) 삭제할까요?",
+        removeMessage: "Paseo에서 확장 프로그램을 삭제합니다. 압축 해제된 소스 폴더는 유지됩니다.",
+        loading: "확장 프로그램 로딩 중...",
+        empty: "설치된 확장 프로그램이 없습니다.",
+        unpackedHint: "manifest.json이 있는 폴더에서 확장 프로그램을 로드합니다.",
+        loadUnpacked: "압축 해제된 확장 로드",
+        unavailable: "확장 프로그램을 사용할 수 없습니다. 데스크톱 앱을 업데이트하세요.",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
@@ -2750,6 +2956,7 @@ export const ko: TranslationResources = {
       searchPlaceholder: "검색 단축키",
       unavailableOnMobile: "키보드 단축키는 데스크톱에서만 사용할 수 있습니다",
       capturePrompt: "단축키를 누르세요...",
+      captureIndexPrompt: "마지막에 1부터 9까지의 숫자를 입력하세요.",
       unassigned: "설정되지 않음",
       actions: {
         menu: "{{name}} 작업",

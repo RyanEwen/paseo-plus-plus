@@ -214,7 +214,7 @@ async function verifyChatLinkDestinations({
   return { agentId, primaryInternal: true, externalContextMenu: true };
 }
 
-/** Exercise the actual titlebar repository target, retaining its selected external default. */
+/** Exercise repository links through the workspace preference and both explicit destinations. */
 async function verifyRepositoryLinkOptions({ page, artifactDir, externalOpenLog }) {
   const url = "https://github.com/acme/workspace-links/tree/main";
   const caret = page.getByTestId("workspace-open-in-editor-caret");
@@ -222,13 +222,31 @@ async function verifyRepositoryLinkOptions({ page, artifactDir, externalOpenLog 
   await caret.click();
   await page.getByTestId("workspace-open-in-editor-item-github").click();
   await expect(primary).toHaveAttribute("aria-label", "Open workspace in GitHub");
+  const priorExternal = externalOpenLog ? fs.readFileSync(externalOpenLog, "utf8") : null;
+  const readPresentedBrowserIds = () =>
+    page
+      .locator("webview")
+      .evaluateAll((views) =>
+        views
+          .filter((view) => view.parentElement?.getAttribute("aria-hidden") === "false")
+          .map((view) => view.getAttribute("data-paseo-browser-id")),
+      );
   await primary.click();
+  await expectPresentedBrowser(page, url);
+  const primaryBrowserIds = await readPresentedBrowserIds();
+  expect(primaryBrowserIds).toHaveLength(1);
+  expect(primaryBrowserIds[0]).toBeTruthy();
+  if (externalOpenLog) {
+    expect(fs.readFileSync(externalOpenLog, "utf8")).toBe(priorExternal);
+  }
+  await caret.click();
+  await page.getByText("Open in external browser", { exact: true }).click();
   if (externalOpenLog) {
     await expect
-      .poll(() => fs.readFileSync(externalOpenLog, "utf8").trim().split("\n").at(-1))
-      .toBe(url);
+      .poll(() => fs.readFileSync(externalOpenLog, "utf8").trim().split("\n"))
+      .toEqual([...priorExternal.trim().split("\n"), url]);
   }
-  const priorExternal = externalOpenLog ? fs.readFileSync(externalOpenLog, "utf8") : null;
+  const afterExternal = externalOpenLog ? fs.readFileSync(externalOpenLog, "utf8") : null;
   await caret.click();
   await expect(page.getByTestId("workspace-open-in-editor-menu")).toHaveCSS("opacity", "1");
   const internalOption = page.getByText("Open in Paseo browser", { exact: true });
@@ -245,10 +263,23 @@ async function verifyRepositoryLinkOptions({ page, artifactDir, externalOpenLog 
     path: path.join(artifactDir, "workspace-repository-internal-option.png"),
   });
   await page.getByText("Open in Paseo browser", { exact: true }).click();
+  // The previously opened repository URL must not satisfy this second navigation.
+  await expect
+    .poll(async () => {
+      const ids = await readPresentedBrowserIds();
+      return ids.length === 1 && Boolean(ids[0]) && ids[0] !== primaryBrowserIds[0];
+    })
+    .toBe(true);
   await expectPresentedBrowser(page, url);
   await expect(primary).toHaveAttribute("aria-label", "Open workspace in GitHub");
   if (externalOpenLog) {
-    expect(fs.readFileSync(externalOpenLog, "utf8")).toBe(priorExternal);
+    expect(fs.readFileSync(externalOpenLog, "utf8")).toBe(afterExternal);
   }
-  return { url, defaultExternal: true, internalOption: true, preferredTargetRetained: true };
+  return {
+    url,
+    primaryInternal: true,
+    externalOption: true,
+    internalOption: true,
+    preferredTargetRetained: true,
+  };
 }

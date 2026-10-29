@@ -6,6 +6,8 @@ export interface AgentAttentionNotificationData {
   [key: string]: unknown;
   serverId: string;
   workspaceId?: string;
+  notificationSequence?: number;
+  attentionTimestamp?: string;
   agentId: string;
   reason: AgentAttentionReason;
 }
@@ -21,8 +23,32 @@ interface BuildAgentAttentionNotificationPayloadInput {
   serverId: string;
   workspaceId: string;
   agentId: string;
+  workspaceName?: string | null;
+  projectName?: string | null;
   assistantMessage?: string | null;
+  attentionMessage?: string;
   permissionRequest?: NotificationPermissionRequest | null;
+}
+
+/** Adds workspace identity without sacrificing the event or its message preview.
+ * Project names are secondary: omit duplicates and names that crowd the heading.
+ * Missing registry context preserves notifications for targets already removed.
+ */
+export function withNotificationWorkspaceContext<T extends { title: string; body: string }>(
+  notification: T,
+  context: { workspaceName?: string | null; projectName?: string | null },
+): T {
+  const workspaceName = normalizeNotificationText(context.workspaceName ?? "");
+  if (!workspaceName) {
+    return notification;
+  }
+
+  const projectName = normalizeNotificationText(context.projectName ?? "");
+  const combinedName = `${workspaceName} · ${projectName}`;
+  const includeProject = projectName && projectName !== workspaceName && combinedName.length <= 64;
+  const title = includeProject ? combinedName : workspaceName;
+
+  return { ...notification, title, body: `${notification.title}\n${notification.body}` };
 }
 
 export interface NotificationPermissionRequest {
@@ -196,18 +222,24 @@ function resolveAgentAttentionFallbackBody(reason: AgentAttentionReason): string
 export function buildAgentAttentionNotificationPayload(
   input: BuildAgentAttentionNotificationPayloadInput,
 ): AgentAttentionNotificationPayload {
-  const title = resolveAgentAttentionTitle(input.reason);
-  const preview = resolveAgentAttentionPreview(input);
+  const title = input.attentionMessage
+    ? "Agent needs attention"
+    : resolveAgentAttentionTitle(input.reason);
+  const preview =
+    buildNotificationPreview(input.attentionMessage) ?? resolveAgentAttentionPreview(input);
   const body = preview ?? resolveAgentAttentionFallbackBody(input.reason);
 
-  return {
-    title,
-    body,
-    data: {
-      serverId: input.serverId,
-      workspaceId: input.workspaceId,
-      agentId: input.agentId,
-      reason: input.reason,
+  return withNotificationWorkspaceContext(
+    {
+      title,
+      body,
+      data: {
+        serverId: input.serverId,
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        reason: input.reason,
+      },
     },
-  };
+    input,
+  );
 }

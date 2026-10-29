@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+import type { NativeBrowserOverlayTarget } from "./features/browser-views/contracts.js";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
 
@@ -58,6 +59,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     openNew: (options?: { pendingOpenProjectPath?: string | null }) =>
       ipcRenderer.invoke("paseo:window:openNew", options),
     getCurrentWindow: () => ({
+      getZoomFactor: () => webFrame.getZoomFactor(),
       minimize: () => ipcRenderer.invoke("paseo:window:minimize"),
       close: () => ipcRenderer.invoke("paseo:window:close"),
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
@@ -87,11 +89,21 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     open: (options?: Record<string, unknown>) => ipcRenderer.invoke("paseo:dialog:open", options),
   },
   notification: {
+    listDelivered: () => ipcRenderer.invoke("paseo:notification:listDelivered"),
+    dismissDelivered: (ids: string[]) =>
+      ipcRenderer.invoke("paseo:notification:dismissDelivered", ids),
+    pendingDismissals: () => ipcRenderer.invoke("paseo:notification:pendingDismissals"),
+    acknowledgeDismissals: (ids: string[]) =>
+      ipcRenderer.invoke("paseo:notification:acknowledgeDismissals", ids),
     setViewedAgent: (input: unknown) =>
       ipcRenderer.invoke("paseo:notification:setViewedAgent", input),
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),
-    sendNotification: (payload: { title: string; body?: string; data?: Record<string, unknown> }) =>
-      ipcRenderer.invoke("paseo:notification:send", payload),
+    sendNotification: (payload: {
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+      icon?: string;
+    }) => ipcRenderer.invoke("paseo:notification:send", payload),
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
@@ -116,6 +128,64 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
+    views: {
+      prepareOverlay: (token: string) =>
+        ipcRenderer.invoke("paseo:browser-view:overlay-prepare", { token }),
+      commitOverlay: (input: { token: string; frames: NativeBrowserOverlayTarget[] }) =>
+        ipcRenderer.invoke("paseo:browser-view:overlay-commit", input),
+      captureOverlay: (input: {
+        token: string;
+        browserId: string;
+        webContentsId: number;
+        revision: number;
+      }) => ipcRenderer.invoke("paseo:browser-view:overlay-frame", input),
+      endOverlay: (token: string) =>
+        ipcRenderer.invoke("paseo:browser-view:overlay-end", { token }),
+      create: (input: { browserId: string; workspaceId: string; url: string }) =>
+        ipcRenderer.invoke("paseo:browser-view:create", input),
+      present: (input: {
+        browserId: string;
+        webContentsId: number;
+        visible: boolean;
+        viewportMode: "fixed" | "responsive";
+        bounds: { x: number; y: number; width: number; height: number };
+        clip?: { x: number; y: number; width: number; height: number };
+      }) => ipcRenderer.invoke("paseo:browser-view:present", input),
+      navigate: (browserId: string, webContentsId: number, url: string) =>
+        ipcRenderer.invoke("paseo:browser-view:navigate", { browserId, webContentsId, url }),
+      executeScript: (browserId: string, webContentsId: number, code: string) =>
+        ipcRenderer.invoke("paseo:browser-view:execute-script", { browserId, webContentsId, code }),
+      control: (
+        browserId: string,
+        webContentsId: number,
+        command: "back" | "forward" | "reload" | "stop",
+      ) => ipcRenderer.invoke("paseo:browser-view:control", { browserId, webContentsId, command }),
+      state: (browserId: string, webContentsId: number) =>
+        ipcRenderer.invoke("paseo:browser-view:state", { browserId, webContentsId }),
+      focus: (browserId: string, webContentsId: number) =>
+        ipcRenderer.invoke("paseo:browser-view:focus", { browserId, webContentsId }),
+      close: (browserId: string, webContentsId: number) =>
+        ipcRenderer.invoke("paseo:browser-view:close", { browserId, webContentsId }),
+    },
+    extensions: {
+      list: () => ipcRenderer.invoke("paseo:browser:extensions:list"),
+      actions: (browserId: string) =>
+        ipcRenderer.invoke("paseo:browser:extensions:actions", { browserId }),
+      setPinned: (id: string, pinned: boolean) =>
+        ipcRenderer.invoke("paseo:browser:extensions:set-pinned", { id, pinned }),
+      onChanged: (handler: () => void): (() => void) => {
+        const listener = () => handler();
+        ipcRenderer.on("paseo:browser:extensions:changed", listener);
+        return () => ipcRenderer.removeListener("paseo:browser:extensions:changed", listener);
+      },
+      openPopup: (id: string, browserId: string) =>
+        ipcRenderer.invoke("paseo:browser:extensions:open-popup", { id, browserId }),
+      setEnabled: (id: string, enabled: boolean) =>
+        ipcRenderer.invoke("paseo:browser:extensions:set-enabled", { id, enabled }),
+      remove: (id: string) => ipcRenderer.invoke("paseo:browser:extensions:remove", id),
+      loadUnpacked: () => ipcRenderer.invoke("paseo:browser:extensions:load-unpacked"),
+      openStore: () => ipcRenderer.invoke("paseo:browser:extensions:open-store"),
+    },
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,

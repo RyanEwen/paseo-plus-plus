@@ -3,7 +3,7 @@ import {
   startWorkingWorkspace,
   startNeedsInputWorkspace,
 } from "../helpers/project-status-badge";
-import { expect, type Page, type Locator } from "@playwright/test";
+import { expect, type Page, type Locator, type TestInfo } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -64,9 +64,46 @@ async function expectStatusOnRight(row: Locator, state: string): Promise<void> {
   expect(statusBounds.x).toBeGreaterThan(rowBounds.x + rowBounds.width / 2);
 }
 
+/** Record focus ownership before cleanup without replacing the original keyboard failure. */
+async function captureProjectSelectorFocus(page: Page, testInfo: TestInfo): Promise<void> {
+  // Capture before cleanup removes the menu. Preserve the original failure
+  // even if the page has already closed or diagnostic collection fails.
+  try {
+    const focus = await page.evaluate(() => {
+      const active = document.activeElement;
+      const menu = document.querySelector('[data-testid="sidebar-project-selector-content"]');
+      return {
+        documentFocused: document.hasFocus(),
+        active: active
+          ? {
+              tag: active.tagName,
+              role: active.getAttribute("role"),
+              testId: active.getAttribute("data-testid"),
+              connected: active.isConnected,
+              insideMenu: menu?.contains(active) ?? false,
+            }
+          : null,
+        items: Array.from(menu?.querySelectorAll('[data-menu-item="true"]') ?? [], (item) => ({
+          testId: item.getAttribute("data-testid"),
+          role: item.getAttribute("role"),
+          disabled: item.getAttribute("data-menu-disabled"),
+          focused: item === active,
+          connected: item.isConnected,
+        })),
+      };
+    });
+    await testInfo.attach("project-selector-keyboard-focus-before-cleanup", {
+      body: JSON.stringify(focus, null, 2),
+      contentType: "application/json",
+    });
+  } catch (captureError) {
+    console.error("Project selector focus capture failed before cleanup", String(captureError));
+  }
+}
+
 test.describe("Sidebar project filter", () => {
   test.describe.configure({ timeout: 180_000 });
-  // Heading opt-out keeps the essential chooser available; richer labels are covered below.
+  // Retired label preferences must not disable the chooser or its active filter label.
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       const key = "@paseo:app-settings";
@@ -149,11 +186,14 @@ test.describe("Sidebar project filter", () => {
 
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await expect(page.getByRole("menuitem")).toHaveText([
-        /^Grouping/,
+        "Expand one project at a time",
+        "Workspace limits",
+        /^Sort projects/,
+        /^Sort workspaces/,
+        /^Empty projects/,
         /^Title/,
         "Show",
-        "Project",
-        "Show background",
+        "Show background workspaces",
       ]);
       await closeSidebarDisplayPreferences(page);
 
@@ -165,7 +205,9 @@ test.describe("Sidebar project filter", () => {
       await expect(alphaRow).toBeVisible();
       await expect(betaRow).toHaveCount(0, { timeout: 10_000 });
 
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("Workspaces");
+      await expect(page.getByTestId("sidebar-project-selector")).toHaveText(
+        `${alpha.projectDisplayName} Workspaces`,
+      );
       await selectSidebarStatusGrouping(page);
       await expect(alphaRow).toBeVisible({ timeout: 15_000 });
       await expect(betaRow).toBeVisible();
@@ -242,7 +284,7 @@ test.describe("Sidebar project filter", () => {
     }
   });
 
-  test("keeps the essential chooser with one project and heading opt-out", async ({ page }) => {
+  test("keeps the chooser and active labels with a retired label preference", async ({ page }) => {
     const only = await seedWorkspace({ repoPrefix: "project-filter-solo-", title: "Solo work" });
     const serverId = getServerId();
 
@@ -256,7 +298,7 @@ test.describe("Sidebar project filter", () => {
       await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible();
       await expect(page.getByTestId("sidebar-display-project-filter")).toHaveCount(0);
       await closeSidebarDisplayPreferences(page);
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("Workspaces");
+      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("All Workspaces");
       await openSidebarProjectFilter(page);
       await expect(page.getByTestId("sidebar-chooser-hosts")).toHaveCount(0);
       await expect(
@@ -789,12 +831,15 @@ test.describe("Sidebar project selector", () => {
       await expect(surface).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
+    } catch (error) {
+      await captureProjectSelectorFocus(page, testInfo);
+      throw error;
     } finally {
       await alpha.cleanup();
     }
   });
 
-  test("keeps saved multi-project and offline keys through the feature opt-out", async ({
+  test("keeps saved multi-project and offline keys through a retired label preference", async ({
     page,
   }) => {
     const alpha = await seedWorkspace({ repoPrefix: "selector-saved-alpha-" });
@@ -834,7 +879,7 @@ test.describe("Sidebar project selector", () => {
         );
       });
       await page.reload();
-      await expect(trigger).toHaveText("Workspaces");
+      await expect(trigger).toHaveText("2 Projects’ Workspaces");
       await openSidebarProjectFilter(page);
       await expect(
         page.getByTestId(`sidebar-project-selector-root-${alpha.projectKey}-checkbox`),
@@ -982,5 +1027,121 @@ test.describe("Sidebar project selector activity", () => {
         await busy.seed.cleanup();
       }
     });
+  }
+});
+
+test("single-project expansion keeps a smaller clicked project visible throughout the collapse animation", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 450 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const projects: Awaited<ReturnType<typeof seedWorkspace>>[] = [];
+  try {
+    // Collapsed groups below the target keep this a genuinely scrollable sidebar after the switch.
+    for (let index = 0; index < 12; index++) {
+      const seed = await seedWorkspace({
+        repoPrefix: "accordion-anchor-",
+        title: `Anchor workspace ${index}`,
+        git: false,
+      });
+      projects.push(seed);
+      await seed.client.renameProject(seed.projectId, `Anchor ${String(index).padStart(2, "0")}`);
+    }
+    const [large, small] = projects;
+    for (let index = 1; index < 16; index++) {
+      const created = await large.client.createWorkspace({
+        source: { kind: "directory", path: large.repoPath, projectId: large.projectId },
+        title: `Large workspace ${index}`,
+      });
+      expect(created.workspace).not.toBeNull();
+    }
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await selectSidebarProjectGrouping(page);
+    await page.getByTestId("sidebar-collapse-all").click();
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await page.getByTestId("sidebar-one-project-at-a-time").click();
+    await closeSidebarDisplayPreferences(page);
+    const largeHeader = page.getByTestId(`sidebar-project-row-${large.projectKey}`);
+    const smallHeader = page.getByTestId(`sidebar-project-row-${small.projectKey}`);
+    const scroll = page.getByTestId("sidebar-project-workspace-list-scroll");
+    await largeHeader.click();
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${large.workspaceId}`),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("group", { name: "Anchor 00", exact: true })
+        .locator('[data-testid^="sidebar-workspace-row-"]'),
+    ).toHaveCount(16);
+    await smallHeader.scrollIntoViewIfNeeded();
+    expect(await readScrollTop(scroll)).toBeGreaterThan(200);
+    await smallHeader.evaluate((header) => {
+      header.addEventListener(
+        "click",
+        () => {
+          const viewport = header.closest('[data-testid="sidebar-project-workspace-list-scroll"]');
+          if (!viewport) throw new Error("Project has no scroll owner");
+          const samples: Array<{
+            top: number;
+            bottom: number;
+            viewportTop: number;
+            viewportBottom: number;
+            scrollTop: number;
+          }> = [];
+          const start = performance.now();
+          function afterPaint() {
+            setTimeout(sample, 0);
+          }
+          const sample = () => {
+            const row = header.getBoundingClientRect();
+            const bounds = viewport.getBoundingClientRect();
+            samples.push({
+              top: row.top,
+              bottom: row.bottom,
+              viewportTop: bounds.top,
+              viewportBottom: bounds.bottom,
+              scrollTop: viewport.scrollTop,
+            });
+            if (performance.now() - start < 250) requestAnimationFrame(afterPaint);
+            else header.setAttribute("data-anchor-samples", JSON.stringify(samples));
+          };
+          requestAnimationFrame(afterPaint);
+        },
+        { once: true },
+      );
+    });
+    await smallHeader.click();
+    await expect(smallHeader).toHaveAttribute("data-anchor-samples", /./);
+    const samples = JSON.parse((await smallHeader.getAttribute("data-anchor-samples"))!) as Array<{
+      top: number;
+      bottom: number;
+      viewportTop: number;
+      viewportBottom: number;
+      scrollTop: number;
+    }>;
+    expect(samples.length).toBeGreaterThan(2);
+    for (const sample of samples) {
+      expect(sample.top).toBeGreaterThanOrEqual(sample.viewportTop - 2);
+      expect(sample.bottom).toBeLessThanOrEqual(sample.viewportBottom + 2);
+    }
+    expect(samples.at(-1)!.scrollTop).toBeLessThan(samples[0].scrollTop);
+    // The selected project becomes topmost; preceding collapsed projects remain above the viewport.
+    expect(samples.at(-1)!.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(samples.at(-1)!.top - samples.at(-1)!.viewportTop)).toBeLessThanOrEqual(2);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${large.workspaceId}`),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${small.workspaceId}`),
+    ).toBeVisible();
+    await testInfo.attach("accordion-animation-frames", {
+      body: JSON.stringify(samples, null, 2),
+      contentType: "application/json",
+    });
+    await page.screenshot({ path: testInfo.outputPath("accordion-selected-project.png") });
+  } finally {
+    for (const seed of projects.toReversed()) await seed.cleanup();
   }
 });

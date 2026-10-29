@@ -1,5 +1,5 @@
 import type { PromptJumpPlacement } from "../prompt-jump-placement";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { AgentTimelinePromptIndexPayload } from "@getpaseo/client/internal/daemon-client";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -110,20 +110,21 @@ export function useChatOutline({
   const jumpFrameRef = useRef<number | null>(null);
   const nextJumpRequestIdRef = useRef(0);
   const nextIndexRequestIdRef = useRef(0);
-  // A disabled prompt index must not scan the timeline per streamed delta.
-  // Local/child navigation below still searches its transcript on explicit demand.
-  const loadedTail = enabled ? tail : NO_STREAM_ITEMS;
-  const loadedHead = enabled ? (head ?? NO_STREAM_ITEMS) : NO_STREAM_ITEMS;
+  // Local sticky navigation still needs loaded rows when the remote prompt index is disabled.
+  const loadedTail = tail;
+  const loadedHead = head ?? NO_STREAM_ITEMS;
   const prompts = enabled ? (index?.prompts ?? NO_PROMPTS) : NO_PROMPTS;
 
   // The viewed timeline already owns live delivery and reconnect catch-up. Its complete
   // loaded items (including rows outside the mounted window) invalidate the prompt index.
   // Only the head changes per streamed delta, so the tail's contribution is memoized.
   const tailPromptSeq = useMemo(
-    () => latestPromptSeqIn(loadedTail, timelineEpoch),
-    [loadedTail, timelineEpoch],
+    () => (enabled ? latestPromptSeqIn(loadedTail, timelineEpoch) : -1),
+    [enabled, loadedTail, timelineEpoch],
   );
-  const latestPromptSeq = Math.max(tailPromptSeq, latestPromptSeqIn(loadedHead, timelineEpoch));
+  const latestPromptSeq = enabled
+    ? Math.max(tailPromptSeq, latestPromptSeqIn(loadedHead, timelineEpoch))
+    : -1;
 
   useEffect(() => setIndex(null), [agentId, enabled, serverId, timelineEpoch]);
 
@@ -217,8 +218,8 @@ export function useChatOutline({
     )
       return;
     const target = findLoadedItem(
-      tail,
-      head ?? NO_STREAM_ITEMS,
+      loadedTail,
+      loadedHead,
       (item) => item.timelineCursor?.seq === pendingJump.seq,
     );
     if (target) {
@@ -229,7 +230,7 @@ export function useChatOutline({
       const isMounted =
         mountedHistoryMessageIds === undefined ||
         mountedHistoryMessageIds.has(target.id) ||
-        (head ?? NO_STREAM_ITEMS).includes(target);
+        loadedHead.includes(target);
       if (pendingJump.scroll && !isMounted) {
         revealLoadedMessage?.(target.id);
         return;
@@ -247,8 +248,8 @@ export function useChatOutline({
       setPendingJump(null);
     }
   }, [
-    tail,
-    head,
+    loadedTail,
+    loadedHead,
     ownerKey,
     pendingJump,
     revealLoadedMessage,
@@ -256,7 +257,7 @@ export function useChatOutline({
     mountedHistoryMessageIds,
   ]);
 
-  const jumpToPrompt = useStableEvent(
+  const jumpToPrompt = useCallback(
     (
       seq: number,
       options?: {
@@ -269,8 +270,8 @@ export function useChatOutline({
       cancelJump();
       jumpSourceRef.current = options?.source ?? "outline";
       const loaded = findLoadedItem(
-        tail,
-        head ?? NO_STREAM_ITEMS,
+        loadedTail,
+        loadedHead,
         (item) => item.timelineCursor?.seq === seq,
       );
       if (loaded) {
@@ -324,12 +325,24 @@ export function useChatOutline({
           });
         });
     },
+    [
+      agentId,
+      cancelJump,
+      index,
+      loadedTail,
+      loadedHead,
+      onJumpError,
+      ownerKey,
+      revealLoadedMessage,
+      serverId,
+      viewportRef,
+    ],
   );
 
   /** Local submissions and child transcript rows do not require a root prompt index. */
   const jumpToMessage = useStableEvent(
     (id: string, options?: { source?: "sticky" | "outline"; placement?: PromptJumpPlacement }) => {
-      const item = findLoadedItem(tail, head ?? NO_STREAM_ITEMS, (entry) => entry.id === id);
+      const item = findLoadedItem(loadedTail, loadedHead, (entry) => entry.id === id);
       if (item?.timelineCursor) {
         jumpToPrompt(item.timelineCursor.seq, options);
         return;

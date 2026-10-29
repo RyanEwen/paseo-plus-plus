@@ -74,7 +74,7 @@ export async function fetchAgentHistoryPage(input: {
   workspaceId?: string;
 }): Promise<AgentHistoryPage> {
   const payload = await input.client.fetchAgentHistory({
-    ...(input.workspaceId
+    ...(input.workspaceId !== undefined
       ? {
           workspaceId: input.workspaceId,
           filter: { includeArchived: true, includeBackground: true },
@@ -106,6 +106,8 @@ export async function fetchAgentHistoryPage(input: {
       provider: agent.provider,
       pendingPermissionCount: agent.pendingPermissions.length,
       requiresAttention: agent.requiresAttention,
+      humanAttentionRequired: agent.humanAttentionRequired,
+      attentionMessage: agent.attentionMessage,
       attentionReason: agent.attentionReason,
       attentionTimestamp: agent.attentionTimestamp ?? null,
       archivedAt: agent.archivedAt ?? null,
@@ -179,7 +181,7 @@ export async function fetchAgentHistoryBatch(input: {
         client: host.client,
         serverId: host.serverId,
         cursor: cursorByServerId[host.serverId] ?? null,
-        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
         ...(input.search ? { search: input.search } : {}),
       });
       return { host, page };

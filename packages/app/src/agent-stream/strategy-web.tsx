@@ -1,7 +1,22 @@
+import { PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
+import { uniqueStreamSegments, precedingPromptIndex } from "./actual-row-collection";
+import {
+  ActualPinnedRowContext,
+  ActualPromptRowsContext,
+  ActualPromptFlowGeometryContext,
+} from "./actual-prompt-rows";
+import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import {
+  getOriginalPromptTop,
+  getNaturalPromptRowHeight,
+  syncActualPromptPin,
+  reconcilePromptFlow,
+} from "./actual-prompt-pin.web";
 import { resolvePromptHandoffProgress, type PromptHandoff } from "./prompt-handoff";
 import React, {
   type CSSProperties,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -44,7 +59,10 @@ import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
 } from "./history-start-settle-scheduler";
-import { useChatFindSelectedMessageId } from "@/agent-stream/chat-find";
+import {
+  useChatFindOriginalMessage,
+  useChatFindSelectedMessageId,
+} from "@/agent-stream/chat-find/selection";
 import { getStreamItemMessageId } from "./presentation";
 import { useScrollToMessage } from "./use-scroll-to-message.web";
 
@@ -296,9 +314,108 @@ const StreamRowContent = React.memo(function StreamRowContent({
   return render(item, index, items);
 });
 
+interface ActualPromptFlowOwner {
+  scope: string | undefined;
+  node: HTMLDivElement | null;
+  geometry: NaturalMessageGeometry | null;
+}
+
+/** Keep the natural reservation on the untransformed row, while CSS sticky sees
+ * only this child's current paint extent. Ref departure retires the exact owner.
+ */
+function ActualRowContent({
+  pinned,
+  isPrompt,
+  bodyRef,
+  onFlowGeometryChange,
+  children,
+}: {
+  pinned: boolean;
+  isPrompt: boolean;
+  bodyRef?: React.RefCallback<HTMLDivElement>;
+  onFlowGeometryChange(): void;
+  children: React.ReactNode;
+}) {
+  const scope = useContext(ActualPromptRowsContext)?.scope;
+  const owner = useMemo<ActualPromptFlowOwner>(
+    () => ({ scope, node: null, geometry: null }),
+    [scope],
+  );
+  const applyGeometry = useCallback(() => {
+    const node = owner.node;
+    if (!node) return;
+    const flow = owner.geometry ? String(owner.geometry.flowHeight) : undefined;
+    const visual = owner.geometry ? String(owner.geometry.visualHeight) : undefined;
+    if (node.dataset.promptFlowHeight === flow && node.dataset.promptVisualHeight === visual)
+      return;
+    if (flow === undefined || visual === undefined) {
+      delete node.dataset.promptFlowHeight;
+      delete node.dataset.promptVisualHeight;
+    } else {
+      node.dataset.promptFlowHeight = flow;
+      node.dataset.promptVisualHeight = visual;
+    }
+    onFlowGeometryChange();
+  }, [owner, onFlowGeometryChange]);
+  const reportGeometry = useCallback(
+    (geometry: NaturalMessageGeometry | null) => {
+      owner.geometry = geometry;
+      applyGeometry();
+    },
+    [owner, applyGeometry],
+  );
+  const registerBody = useCallback(
+    (node: HTMLDivElement | null) => {
+      owner.node = node;
+      if (!node) return;
+      applyGeometry();
+      const release = bodyRef?.(node);
+      return () => {
+        if (owner.node === node) owner.node = null;
+        if (typeof release === "function") release();
+        else bodyRef?.(null);
+      };
+    },
+    [owner, bodyRef, applyGeometry],
+  );
+  return (
+    <div ref={registerBody} data-actual-prompt-content style={streamRowStyle}>
+      <ActualPromptFlowGeometryContext.Provider value={isPrompt ? reportGeometry : null}>
+        <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
+      </ActualPromptFlowGeometryContext.Provider>
+    </div>
+  );
+}
+
+/** Derive Find's temporary original-row owner and the real rows it must retain. */
+function useFindRowOwnership(
+  owner: { scope: string } | null,
+  agentId: string,
+  active: boolean,
+  historyVirtualized: readonly StreamItem[],
+) {
+  const { messageId: originalFindMessageId, select: selectFindOriginalMessage } =
+    useChatFindOriginalMessage(owner?.scope ?? agentId, active);
+  const selectedFindMessageId = useChatFindSelectedMessageId();
+  const chatFindMessageId = originalFindMessageId ?? selectedFindMessageId;
+  // Chat find counts and highlights occurrences from the DOM, so every block row of
+  // the message it selected has to be mounted even when the scroll window is nowhere
+  // near it. Without this a hit in a far paragraph is invisible to the count and Next
+  // walks off to the following message.
+  const chatFindRowIndexes = useMemo(() => {
+    if (!chatFindMessageId) return null;
+    const indexes = historyVirtualized.flatMap((item, index) =>
+      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
+    );
+    return indexes.length > 0 ? indexes : null;
+  }, [chatFindMessageId, historyVirtualized]);
+  return { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes };
+}
+
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
     segments: inputSegments,
+    contextOnlyIds,
     historyRowRevision,
     liveHeadRowRevision,
     boundary,
@@ -323,10 +440,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const historyMounted = useRevisedHistoryRows(inputSegments.historyMounted, historyRowRevision);
   const segments = useMemo(
-    () => ({ ...inputSegments, historyVirtualized, historyMounted }),
+    () => uniqueStreamSegments({ ...inputSegments, historyVirtualized, historyMounted }),
     [historyMounted, historyVirtualized, inputSegments],
   );
+  const actualRows = useContext(ActualPromptRowsContext);
+  const registerActualViewport = actualRows?.registerViewport;
+  const [pinnedRowId, setPinnedRowId] = useState<string | null>(null);
   const isActive = useRetainedPanelActive();
+  const { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes } =
+    useFindRowOwnership(actualRows, props.agentId, isActive, segments.historyVirtualized);
   const isActiveRef = useRef(isActive);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -390,23 +512,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
   const isActivationReady = !hasRouteBottomAnchorRequest || isAuthoritativeHistoryReady;
 
-  // Chat find counts and highlights occurrences from the DOM, so every block row of
-  // the message it selected has to be mounted even when the scroll window is nowhere
-  // near it. Without this a hit in a far paragraph is invisible to the count and Next
-  // walks off to the following message.
-  const chatFindMessageId = useChatFindSelectedMessageId();
-  const chatFindRowIndexes = useMemo(() => {
-    if (!chatFindMessageId) return null;
-    const indexes = segments.historyVirtualized.flatMap((item, index) =>
-      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
-    );
-    return indexes.length > 0 ? indexes : null;
-  }, [chatFindMessageId, segments.historyVirtualized]);
+  const virtualUserIndices = useMemo(
+    () =>
+      segments.historyVirtualized.flatMap((item, index) =>
+        item.kind === "user_message" ? [index] : [],
+      ),
+    [segments.historyVirtualized],
+  );
   const rowVirtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(null);
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
+      const anchorRowId = readingAnchor.getRowId();
       const anchorIndex = segments.historyVirtualized.findIndex(
-        (row) => row.id === readingAnchor.getRowId(),
+        (row) => row.id === anchorRowId && !contextOnlyIds?.has(row.id),
       );
       const container = scrollContainerRef.current;
       // TanStack has computed the new measurements before calling the extractor.
@@ -433,15 +551,29 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         if (first && last)
           visibleRange = { ...range, startIndex: first.index, endIndex: last.index };
       }
+      // Retain only the one preceding actual user row outside the ordinary
+      // virtual range. Its outer measurement stays at its original position.
+      const retainedPrompt =
+        actualRows && correctedOffset !== undefined
+          ? precedingPromptIndex(virtualUserIndices, virtualizer.measurementsCache, correctedOffset)
+          : -1;
       return [
         ...new Set([
           ...defaultRangeExtractor(visibleRange),
+          ...(retainedPrompt < 0 ? [] : [retainedPrompt]),
           ...(chatFindRowIndexes ?? []),
           ...(anchorIndex < 0 ? [] : [anchorIndex]),
         ]),
       ].sort((left, right) => left - right);
     },
-    [chatFindRowIndexes, readingAnchor, segments.historyVirtualized],
+    [
+      actualRows,
+      chatFindRowIndexes,
+      contextOnlyIds,
+      readingAnchor,
+      segments.historyVirtualized,
+      virtualUserIndices,
+    ],
   );
   const virtualOffsetListener = useRef<((offset: number, scrolling: boolean) => void) | null>(null);
   const observeVirtualOffset = useCallback<typeof observeElementOffset>((instance, onOffset) => {
@@ -580,7 +712,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       "[data-history-row-id][data-index]",
     ) ?? []) {
       const index = Number(element.dataset.index);
-      const height = measureVirtualElement(element, undefined, rowVirtualizer);
+      const height = element.matches("[data-actual-prompt-row]")
+        ? getNaturalPromptRowHeight(element)
+        : measureVirtualElement(element, undefined, rowVirtualizer);
       if (rowVirtualizer.measurementsCache[index]?.size === height) continue;
       rowVirtualizer.resizeItem(index, height);
       resized = true;
@@ -588,27 +722,29 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return resized;
   });
 
-  // Measure the committed DOM rather than queued observer entries: flushSync can
-  // also commit an image's pending intrinsic dimensions, invalidating those entries.
-  const virtualRowObserver = useMemo(
+  const onNaturalRowResizeRef = useRef<(synchronous?: boolean) => void>(() => {});
+  // Child layout publications already run inside React's layout commit. Only
+  // ResizeObserver delivery needs the existing synchronous virtual-row flush.
+  const onFlowGeometryChange = useCallback(() => onNaturalRowResizeRef.current(false), []);
+  // Observe every real body, including normal-flow/live rows whose interval height
+  // deliberately hides intrinsic growth from the content-container observer.
+  const naturalRowObserver = useMemo(
     () =>
       new ResizeObserver(() => {
         if (!isActiveRef.current) return;
-        flushSync(() => {
-          measureVirtualizedRows();
-        });
+        onNaturalRowResizeRef.current();
       }),
-    [measureVirtualizedRows],
+    [],
   );
-  const measureVirtualizedRowElement = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      virtualRowObserver.observe(node, { box: "border-box" });
-      return () => virtualRowObserver.unobserve(node);
+  const observeActualRowBody = useCallback(
+    (body: HTMLDivElement | null) => {
+      if (!body) return;
+      naturalRowObserver.observe(body, { box: "border-box" });
+      return () => naturalRowObserver.unobserve(body);
     },
-    [virtualRowObserver],
+    [naturalRowObserver],
   );
-  useEffect(() => () => virtualRowObserver.disconnect(), [virtualRowObserver]);
+  useEffect(() => () => naturalRowObserver.disconnect(), [naturalRowObserver]);
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -701,7 +837,43 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   // Rows are laid out in DOM order, virtualized block first, so the first row whose bottom
   // clears the reading line is the one the reader is looking at.
+  const updatePinnedRow = useStableEvent(() => {
+    const container = scrollContainerRef.current;
+    const content = contentRef.current;
+    if (!container || !content || !isActiveRef.current) return;
+    const widget = content
+      .closest('[data-chat-find-root="true"]')
+      ?.querySelector<HTMLElement>('[data-chat-find-widget="true"]');
+    const clearance = widget ? widget.getBoundingClientRect().height + 8 : 0;
+    actualRows?.reportViewportHeight(
+      Math.max(0, container.clientHeight - clearance - PROMPT_JUMP_TOP_INSET_PX),
+    );
+    reconcilePromptFlow(content, actualRows !== null);
+    const virtualPrompts = virtualUserIndices.flatMap((index) => {
+      const item = segments.historyVirtualized[index];
+      const measurement = rowVirtualizer.measurementsCache[index];
+      return item && measurement ? [{ id: item.id, top: measurement.start }] : [];
+    });
+    const host = content.querySelector<HTMLElement>("[data-stream-rows-host]");
+    const virtualEnd = host
+      ? host.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop +
+        rowVirtualizer.getTotalSize()
+      : 0;
+    const next = syncActualPromptPin(
+      content,
+      container,
+      actualRows !== null,
+      virtualPrompts,
+      virtualEnd,
+      originalFindMessageId,
+    );
+    setPinnedRowId((current) => (current === next ? current : next));
+  });
+
   const reportReadingPosition = useStableEvent(() => {
+    updatePinnedRow();
     if (!isActiveRef.current) {
       return;
     }
@@ -728,7 +900,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       ? []
       : contentNode.querySelectorAll<HTMLElement>('[data-testid="user-message"]')) {
       const body = bubble.querySelector<HTMLElement>('[data-testid="user-message-bubble"]');
-      const bounds = (body ?? bubble).getBoundingClientRect();
+      const renderedBounds = (body ?? bubble).getBoundingClientRect();
+      const originalTop = getOriginalPromptTop(body ?? bubble);
+      const bounds = {
+        ...renderedBounds,
+        top: originalTop,
+        bottom: originalTop + renderedBounds.height,
+        width: renderedBounds.width,
+        height: renderedBounds.height,
+        left: renderedBounds.left,
+      };
       const id = bubble.closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
       if (id && bounds.width > 0 && bounds.height > 0) {
         if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) visibleUsers.push(id);
@@ -789,23 +970,29 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const container = scrollContainerRef.current;
     const content = contentRef.current;
     if (!isActiveRef.current || !container || !content) return;
+    reconcilePromptFlow(content, actualRows !== null);
     const viewportTop = container.getBoundingClientRect().top;
     const scrollTop = container.scrollTop;
     const width = content.getBoundingClientRect().width;
+    // Measure every mounted row, including the isolated prompt's full reservation.
+    // Only ordinary window rows may own a prepend correction across an unloaded gap.
     const rows = Array.from(
       content.querySelectorAll<HTMLElement>("[data-history-row-id]"),
       (element) => {
         const bounds = element.getBoundingClientRect();
         const id = element.dataset.historyRowId!;
-        measuredRowHeights.current.set(id, { width, height: bounds.height });
+        const naturalHeight = getNaturalPromptRowHeight(element);
+        measuredRowHeights.current.set(id, { width, height: naturalHeight });
         return {
           id,
           top: bounds.top - viewportTop + scrollTop,
-          height: bounds.height,
+          height: naturalHeight,
           preserveFollowingOnShrink: !!element.querySelector('[data-paseo-markdown-tag="img"]'),
         };
       },
-    );
+    ).filter((row) => !contextOnlyIds?.has(row.id));
+    const anchorRowId = readingAnchor.getRowId();
+    if (anchorRowId !== null && contextOnlyIds?.has(anchorRowId)) readingAnchor.reset();
     const shouldAnchor = !followOutputRef.current && !isJumpSettling();
     if (!shouldAnchor) readingAnchor.reset();
     const correctedTop = readingAnchor.reconcile(
@@ -827,6 +1014,21 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
   });
 
+  onNaturalRowResizeRef.current = (synchronous = true) => {
+    if (!isActiveRef.current) return;
+    const content = contentRef.current;
+    if (content) reconcilePromptFlow(content, actualRows !== null);
+    if (synchronous)
+      flushSync(() => {
+        measureVirtualizedRows();
+      });
+    else if (measureVirtualizedRows()) return;
+    reconcileReadingPosition();
+    updatePinnedRow();
+    updateScrollMetrics();
+    if (followOutputRef.current) scheduleStickToBottom();
+  };
+
   // Apply row positions and their scroll correction in the same paint, including
   // the ordinary-to-virtualized handoff and measurements of newly mounted rows.
   useLayoutEffect(() => {
@@ -834,8 +1036,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     // Child layout can change during this commit, ahead of ResizeObserver delivery.
     if (!isActive || measureVirtualizedRows()) return;
     reconcileReadingPosition();
+    updatePinnedRow();
   }, [
+    updatePinnedRow,
+    originalFindMessageId,
+    actualRows,
     contentWidth,
+    contextOnlyIds,
     isActive,
     segments,
     virtualRows,
@@ -843,11 +1050,31 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reconcileReadingPosition,
   ]);
 
+  useLayoutEffect(
+    () =>
+      registerActualViewport?.(() => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+        if (followOutputRef.current) scheduleStickToBottom();
+        else readingAnchor.scroll(container.scrollTop, container.clientHeight);
+      }),
+    [registerActualViewport, readingAnchor, scheduleStickToBottom],
+  );
+
   const stopFollowingOutputFromUserIntent = useStableEvent(() => {
     manualReadingRef.current = true;
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
+      // Input can arrive before its scroll event. Resize and pin reconciliation
+      // must relinquish bottom ownership before either can run in this frame.
+      followOutputRef.current = false;
       setFollowOutput(false);
+    }
+    const container = scrollContainerRef.current;
+    if (container && isScrollContainerMeasurable(container) && !isJumpSettling()) {
+      // Rearming may synchronously reveal local rows. Capture the committed reader
+      // first, including PageUp at an underfilled top where no scroll event follows.
+      readingAnchor.scroll(container.scrollTop, container.clientHeight);
     }
     rearmHistoryStartFromUserIntent();
   });
@@ -1093,6 +1320,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     const markUpwardViewportInput = () => {
       markUpwardInputEvidence();
+      stopFollowingOutputFromUserIntent();
       if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
         rearmHistoryStartFromUserIntent();
       }
@@ -1108,8 +1336,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         canNestedScrollerConsumeInput(event.target, scrollContainer, event.deltaY)
       )
         return;
-      markManualReading();
       if (event.deltaY < 0) markUpwardViewportInput();
+      markManualReading();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableEventTarget(event.target)) return;
@@ -1117,8 +1345,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const downward = ["ArrowDown", "PageDown", "End", " "].includes(event.key);
       if (!upward && !downward) return;
       if (canNestedScrollerConsumeInput(event.target, scrollContainer, upward ? -1 : 1)) return;
-      markManualReading();
       if (upward) markUpwardViewportInput();
+      markManualReading();
     };
     const handlePointerDown = (event: PointerEvent) => {
       clearMouseScrollGesture();
@@ -1194,8 +1422,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         Math.abs(delta) > 1 &&
         !canNestedScrollerConsumeInput(event.target, scrollContainer, delta)
       ) {
-        markManualReading();
         if (delta < 0) markUpwardViewportInput();
+        markManualReading();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -1241,10 +1469,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     markUpwardInputEvidence,
     rearmHistoryStartFromUserIntent,
     reportReadingPosition,
+    stopFollowingOutputFromUserIntent,
   ]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
+      focus: () => scrollContainerRef.current?.focus({ preventScroll: true }),
       scrollToBottom: () => {
         cancelScrollToMessage();
         setFollowOutput(true);
@@ -1257,6 +1487,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
+      expandMessageForFind: selectFindOriginalMessage,
       scrollToMessage,
       cancelMessageScroll: cancelScrollToMessage,
     };
@@ -1270,6 +1501,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     cancelPendingStickToBottom,
     forceStickToBottom,
+    selectFindOriginalMessage,
     cancelScrollToMessage,
     scheduleStickToBottom,
     scrollToMessage,
@@ -1322,12 +1554,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const renderVirtualRowStyle = useCallback(
     (start: number): CSSProperties => ({
       position: "absolute",
-      top: 0,
+      top: start - VIRTUALIZER_SCROLL_MARGIN_PX,
       left: 0,
       display: "flex",
       flexDirection: "column",
       width: "100%",
-      transform: `translateY(${start - VIRTUALIZER_SCROLL_MARGIN_PX}px)`,
     }),
     [],
   );
@@ -1337,35 +1568,66 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         key={item.id}
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
+        data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+        data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
-        <StreamRowContent
-          item={item}
-          index={index}
-          items={segments.historyMounted}
-          render={renderHistoryMountedRow}
-        />
+        <ActualRowContent
+          bodyRef={observeActualRowBody}
+          onFlowGeometryChange={onFlowGeometryChange}
+          isPrompt={item.kind === "user_message"}
+          pinned={pinnedRowId === item.id}
+        >
+          <StreamRowContent
+            item={item}
+            index={index}
+            items={segments.historyMounted}
+            render={renderHistoryMountedRow}
+          />
+        </ActualRowContent>
       </div>
     ));
-  }, [renderHistoryMountedRow, segments.historyMounted]);
+  }, [
+    observeActualRowBody,
+    onFlowGeometryChange,
+    pinnedRowId,
+    renderHistoryMountedRow,
+    segments.historyMounted,
+  ]);
   const liveHeadRows = useMemo(() => {
     return segments.liveHead.map((item, index) => (
       <div
         key={item.id}
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
+        data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+        data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
-        <StreamRowContent
-          item={item}
-          index={index}
-          items={segments.liveHead}
-          revision={liveHeadRowRevision}
-          render={renderLiveHeadRow}
-        />
+        <ActualRowContent
+          bodyRef={observeActualRowBody}
+          onFlowGeometryChange={onFlowGeometryChange}
+          isPrompt={item.kind === "user_message"}
+          pinned={pinnedRowId === item.id}
+        >
+          <StreamRowContent
+            item={item}
+            index={index}
+            items={segments.liveHead}
+            revision={liveHeadRowRevision}
+            render={renderLiveHeadRow}
+          />
+        </ActualRowContent>
       </div>
     ));
-  }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
+  }, [
+    observeActualRowBody,
+    onFlowGeometryChange,
+    pinnedRowId,
+    liveHeadRowRevision,
+    renderLiveHeadRow,
+    segments.liveHead,
+  ]);
   const mountedRows = useMemo(
     () => [...mountedHistoryRows, ...liveHeadRows],
     [liveHeadRows, mountedHistoryRows],
@@ -1404,7 +1666,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       >
         <div ref={handleContentRef} style={contentContainerStyle}>
           {historyStartSlot}
-          <div style={streamRowsHostStyle}>
+          <div data-stream-rows-host style={streamRowsHostStyle}>
             <div style={virtualRowsContainerStyle} />
             {[
               ...virtualRows.map((virtualRow) => {
@@ -1412,26 +1674,36 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                 if (!item) return null;
                 return (
                   <div
-                    key={virtualRow.key}
+                    key={item.id}
                     data-index={virtualRow.index}
                     data-history-row-id={item.id}
                     data-message-id={getStreamItemMessageId(item)}
-                    ref={measureVirtualizedRowElement}
+                    data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+                    data-plugin-row={item.kind === "plugin" ? "true" : undefined}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >
-                    <StreamRowContent
-                      item={item}
-                      index={virtualRow.index}
-                      items={segments.historyVirtualized}
-                      render={renderHistoryVirtualizedRow}
-                    />
+                    <ActualRowContent
+                      bodyRef={observeActualRowBody}
+                      onFlowGeometryChange={onFlowGeometryChange}
+                      isPrompt={item.kind === "user_message"}
+                      pinned={pinnedRowId === item.id}
+                    >
+                      <StreamRowContent
+                        item={item}
+                        index={virtualRow.index}
+                        items={segments.historyVirtualized}
+                        render={renderHistoryVirtualizedRow}
+                      />
+                    </ActualRowContent>
                   </div>
                 );
               }),
               ...mountedRows,
             ]}
           </div>
-          {liveAuxiliary}
+          <div data-stream-auxiliary style={streamRowStyle}>
+            {liveAuxiliary}
+          </div>
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>

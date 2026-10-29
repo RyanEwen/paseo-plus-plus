@@ -1,3 +1,4 @@
+import { WorkspaceNotificationReceiptsSchema } from "@getpaseo/protocol/notification-receipts";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -60,6 +61,11 @@ export interface DirectoryCheckpoint {
   projects?: DirectoryCursor;
   workspaces?: DirectoryCursor;
   agents?: DirectoryCursor;
+}
+
+/** Coverage declared by an accepted complete workspace baseline in the queued directory batch. */
+export interface DirectoryCheckpointCommitOptions {
+  workspaceBaseline?: boolean;
 }
 
 export interface CachedTimeline {
@@ -248,6 +254,8 @@ const StoredAgentSnapshotSchema = z.strictObject({
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()),
   requiresAttention: z.boolean().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: IsoDateSchema.nullable().optional(),
   archivedAt: IsoDateSchema.nullable().optional(),
@@ -297,6 +305,8 @@ const WorkspaceGitRuntimeSchema = z
   .optional();
 
 const StoredWorkspaceSchema = z.strictObject({
+  // Null is known legacy absence; omission identifies an older incomplete projection.
+  notificationReceipts: WorkspaceNotificationReceiptsSchema.nullable().optional(),
   id: z.string(),
   projectId: z.string(),
   projectDisplayName: z.string(),
@@ -307,15 +317,19 @@ const StoredWorkspaceSchema = z.strictObject({
   worktreeSlug: z.string().optional(),
   projectKind: z.enum(["git", "non_git", "directory"]),
   workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
+  // Legacy/provisional rows may omit this; a current workspace cursor requires it.
   background: z.boolean().optional(),
   name: z.string(),
   title: z.string().nullable(),
   pinnedAt: z.string().nullable(),
+  // Optional for older cached rows; retain pin metadata when a current cursor skips redelivery.
+  projectPinnedAt: z.string().nullable().optional(),
   // Optional because entries written before labels existed have none. A cached workspace that
   // dropped them painted its row without its chips and stayed that way: the directory cursor is
   // current on reconnect, so the daemon has nothing newer to send back.
   labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
+  humanAttentionRequired: z.boolean().optional(),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
@@ -384,15 +398,20 @@ const DirectoryCheckpointSchema = z.strictObject({
 // Revalidate directory contents once without evicting cached rows or timelines.
 const StoredDirectoryCheckpointSchema = z.strictObject({
   version: z.literal(2),
+  // Optional on older checkpoints; only current writers carry receipt projection coverage.
+  workspaceReceiptCoverage: z.literal(true).optional(),
   cursors: DirectoryCheckpointSchema,
 });
 
 function serializeDirectoryCheckpoint(cursors: DirectoryCheckpoint) {
-  return { version: 2 as const, cursors };
+  return { version: 2 as const, workspaceReceiptCoverage: true as const, cursors };
 }
 
 function deserializeDirectoryCheckpoint(payload: string): DirectoryCheckpoint {
-  return parseStoredPayload(StoredDirectoryCheckpointSchema, payload).cursors;
+  const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, payload);
+  const cursors = { ...stored.cursors };
+  if (stored.workspaceReceiptCoverage !== true) delete cursors.workspaces;
+  return cursors;
 }
 
 function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | null {
@@ -656,6 +675,8 @@ function serializeAgent(agent: Agent): StoredAgent {
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
+    humanAttentionRequired: agent.humanAttentionRequired,
+    attentionMessage: agent.attentionMessage,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
@@ -690,6 +711,7 @@ function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
 
 function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
   return {
+    notificationReceipts: workspace.notificationReceipts ?? null,
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
@@ -704,8 +726,10 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     name: workspace.name,
     title: workspace.title ?? null,
     pinnedAt: workspace.pinnedAt ?? null,
+    projectPinnedAt: workspace.projectPinnedAt,
     labels: workspace.labels,
     status: workspace.status,
+    humanAttentionRequired: workspace.humanAttentionRequired,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
     archivingAt: workspace.archivingAt,
@@ -828,17 +852,29 @@ function parseStoredPayload<Value>(schema: z.ZodType<Value>, payload: string): V
   return parsed.data;
 }
 
+function deserializeWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
+  return normalizeWorkspaceDescriptor({
+    ...stored,
+    notificationReceipts: stored.notificationReceipts ?? undefined,
+  });
+}
+
 interface DirectoryReadAccumulator {
+  receiptCoverageIncomplete?: boolean;
   agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   projects: Map<string, ProjectDescriptor>;
   checkpoint?: DirectoryCheckpoint;
 }
 
+/** The accepted workspace cursor, including explicit absence, for each pending complete baseline. */
+type WorkspaceBaselineCheckpoints = Map<string, DirectoryCursor | undefined>;
+
 interface PendingReplicaChanges {
   upserts: StructuredReplicaUpsert[];
   deletes: ReplicaRowKey[];
   baselines: Set<string>;
+  workspaceBaselines: WorkspaceBaselineCheckpoints;
 }
 
 function applyDirectoryRow(
@@ -859,7 +895,10 @@ function applyDirectoryRow(
       if (stored.background === undefined && result.checkpoint?.workspaces) {
         throw new Error("Current workspace baseline is missing background visibility");
       }
-      result.workspaces.set(row.id, normalizeWorkspaceDescriptor(stored));
+      if (stored.notificationReceipts === undefined && result.checkpoint?.workspaces) {
+        result.receiptCoverageIncomplete = true;
+      }
+      result.workspaces.set(row.id, deserializeWorkspace(stored));
       return;
     }
     case "project": {
@@ -868,12 +907,16 @@ function applyDirectoryRow(
       result.projects.set(row.id, normalizeProjectDescriptor(stored));
       return;
     }
-    case "checkpoint":
+    case "checkpoint": {
       if (row.id !== REPLICA_SINGLETON_ROW_ID) {
         throw new Error("Replica checkpoint row id mismatch");
       }
-      result.checkpoint = deserializeDirectoryCheckpoint(row.payload);
+      const checkpoint = parseStoredPayload(StoredDirectoryCheckpointSchema, row.payload);
+      result.checkpoint = checkpoint.cursors;
+      if (checkpoint.workspaceReceiptCoverage !== true && checkpoint.cursors.workspaces)
+        result.receiptCoverageIncomplete = true;
       return;
+    }
     default:
       return;
   }
@@ -891,10 +934,14 @@ function validateWorkspaceSnapshot(
   checkpointRow: ReplicaRow | undefined,
 ) {
   let checkpoint: DirectoryCheckpoint | undefined;
+  let receiptCoverageIncomplete = false;
   const invalidRows: ReplicaRow[] = [];
   if (checkpointRow) {
     try {
-      checkpoint = deserializeDirectoryCheckpoint(checkpointRow.payload);
+      const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, checkpointRow.payload);
+      checkpoint = stored.cursors;
+      receiptCoverageIncomplete =
+        stored.workspaceReceiptCoverage !== true && Boolean(checkpoint.workspaces);
     } catch {
       invalidRows.push(checkpointRow);
     }
@@ -906,7 +953,15 @@ function validateWorkspaceSnapshot(
     if (stored.background === undefined && checkpoint?.workspaces) {
       throw new Error("Current workspace baseline is missing background visibility");
     }
-    workspace = normalizeWorkspaceDescriptor(stored);
+    if (
+      (receiptCoverageIncomplete || stored.notificationReceipts === undefined) &&
+      checkpoint?.workspaces
+    ) {
+      checkpoint = { ...checkpoint };
+      delete checkpoint.workspaces;
+      receiptCoverageIncomplete = true;
+    }
+    workspace = deserializeWorkspace(stored);
   } catch {
     invalidRows.push(workspaceRow);
     if (checkpoint) {
@@ -914,7 +969,7 @@ function validateWorkspaceSnapshot(
       delete checkpoint.workspaces;
     }
   }
-  return { workspace, checkpoint, invalidRows };
+  return { workspace, checkpoint, invalidRows, receiptCoverageIncomplete };
 }
 
 interface ReplicaRead {
@@ -972,6 +1027,7 @@ export class ReplicaCache {
   private pendingUpserts = new Map<string, StructuredReplicaUpsert>();
   private pendingDeletes = new Map<string, ReplicaRowKey>();
   private pendingBaselines = new Set<string>();
+  private pendingWorkspaceBaselines: WorkspaceBaselineCheckpoints = new Map();
   private readonly invalidatedHosts = new Set<string>();
   private readonly maxBytes: number;
   private totalBytes = 0;
@@ -1037,11 +1093,9 @@ export class ReplicaCache {
         const checkpointRow = rows.find(
           (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
         );
-        const { workspace, checkpoint, invalidRows } = validateWorkspaceSnapshot(
-          workspaceRow,
-          checkpointRow,
-        );
-        if (invalidRows.length) {
+        const { workspace, checkpoint, invalidRows, receiptCoverageIncomplete } =
+          validateWorkspaceSnapshot(workspaceRow, checkpointRow);
+        if (invalidRows.length || receiptCoverageIncomplete) {
           try {
             if (
               !(await this.repairInvalidDirectoryRows({
@@ -1051,6 +1105,7 @@ export class ReplicaCache {
                 checkpointRow,
                 revision,
                 observedRows: [workspaceRow, ...invalidRows],
+                invalidEntities: receiptCoverageIncomplete ? ["workspaces"] : [],
               }))
             )
               return RETRY_REPLICA_READ;
@@ -1071,12 +1126,7 @@ export class ReplicaCache {
         const projectRow = projectRows[0];
         if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
         try {
-          if (projectRow) {
-            const stored = parseStoredPayload(StoredProjectSchema, projectRow.payload);
-            if (stored.projectId !== projectRow.id)
-              throw new Error("Replica project row id mismatch");
-            project = normalizeProjectDescriptor(stored);
-          }
+          project = this.parseProjectRow(projectRow);
         } catch {
           if (!projectRow) throw new Error("Missing project row during validation");
           try {
@@ -1091,6 +1141,14 @@ export class ReplicaCache {
       },
       true,
     );
+  }
+
+  /** Validate an optional project row within the caller's existing read and repair scope. */
+  private parseProjectRow(row: ReplicaRow | undefined): ProjectDescriptor | undefined {
+    if (!row) return undefined;
+    const stored = parseStoredPayload(StoredProjectSchema, row.payload);
+    if (stored.projectId !== row.id) throw new Error("Replica project row id mismatch");
+    return normalizeProjectDescriptor(stored);
   }
 
   async readDirectory(serverId: string): Promise<CachedDirectory> {
@@ -1133,11 +1191,12 @@ export class ReplicaCache {
               invalidRows.push(row);
             }
           }
+          if (result.receiptCoverageIncomplete) invalidEntities.add("workspaces");
           if (result.checkpoint && invalidEntities.size) {
             result.checkpoint = { ...result.checkpoint };
             for (const entity of invalidEntities) delete result.checkpoint[entity];
           }
-          if (invalidRows.length) {
+          if (invalidRows.length || result.receiptCoverageIncomplete) {
             try {
               const checkpointRow = rows.find(
                 (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
@@ -1149,6 +1208,8 @@ export class ReplicaCache {
                   checkpoint: result.checkpoint,
                   checkpointRow,
                   revision,
+                  observedRows: result.receiptCoverageIncomplete ? rows : invalidRows,
+                  invalidEntities: result.receiptCoverageIncomplete ? ["workspaces"] : [],
                 }))
               )
                 return RETRY_REPLICA_READ;
@@ -1295,10 +1356,17 @@ export class ReplicaCache {
       (candidate) => candidate.kind === "checkpoint" && candidate.id === REPLICA_SINGLETON_ROW_ID,
     );
     let checkpoint: DirectoryCheckpoint | undefined;
+    const invalidEntities: Array<keyof DirectoryCheckpoint> = [];
     const invalidRows = [row];
     if (checkpointRow) {
       try {
-        checkpoint = { ...deserializeDirectoryCheckpoint(checkpointRow.payload) };
+        const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, checkpointRow.payload);
+        checkpoint = { ...stored.cursors };
+        if (stored.workspaceReceiptCoverage !== true) {
+          delete checkpoint.workspaces;
+          // Rewriting the row with current coverage must retain the raw checkpoint's uncertainty.
+          invalidEntities.push("workspaces");
+        }
         delete checkpoint[entity];
       } catch {
         invalidRows.push(checkpointRow);
@@ -1310,6 +1378,7 @@ export class ReplicaCache {
       checkpoint,
       checkpointRow,
       revision,
+      invalidEntities,
     });
   }
 
@@ -1321,6 +1390,7 @@ export class ReplicaCache {
     revision: ReplicaRead;
     observedRows?: readonly ReplicaRow[];
     guardCheckpoint?: boolean;
+    invalidEntities?: readonly (keyof DirectoryCheckpoint)[];
   }): Promise<boolean> {
     const { serverId, invalidRows, checkpoint, checkpointRow, revision } = input;
     const namespace = {
@@ -1380,6 +1450,7 @@ export class ReplicaCache {
           const invalid =
             this.invalidDirectoryCursors.get(namespace.serverId) ??
             new Set<keyof DirectoryCheckpoint>();
+          for (const entity of input.invalidEntities ?? []) invalid.add(entity);
           for (const row of invalidRows) {
             const entity = directoryEntityForRow(row);
             if (entity) invalid.add(entity);
@@ -1402,9 +1473,16 @@ export class ReplicaCache {
     serverId: string,
     mutations: readonly DirectoryReplicaMutation[],
     checkpoint?: DirectoryCheckpoint,
+    coverage: DirectoryCheckpointCommitOptions = {},
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (this.invalidatedHosts.has(serverId)) return;
+    if (coverage.workspaceBaseline && checkpoint) {
+      // Coverage belongs to this workspace cursor, not to later checkpoints in the same batch.
+      const cursor = checkpoint.workspaces;
+      this.pendingWorkspaceBaselines.set(serverId, cursor ? { ...cursor } : undefined);
+      this.invalidateHostReads(serverId, ["workspace", "checkpoint"]);
+    }
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
         this.queueEntityDelete(serverId, mutation.kind, mutation.id);
@@ -1431,6 +1509,7 @@ export class ReplicaCache {
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
     this.invalidateHostReads(serverId, ["agent", "workspace", "project", "checkpoint"]);
+    this.pendingWorkspaceBaselines.delete(serverId);
     // Replacing the directory must not discard independently accepted timeline changes.
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
@@ -1551,7 +1630,10 @@ export class ReplicaCache {
       .then(async () => {
         const pending = this.drainPendingChanges();
         const baselineIncarnations = new Map(
-          [...pending.baselines].map((id) => [id, this.hostIncarnations.get(id)]),
+          [...pending.baselines, ...pending.workspaceBaselines.keys()].map((id) => [
+            id,
+            this.hostIncarnations.get(id),
+          ]),
         );
         try {
           await this.prepareStore();
@@ -1568,6 +1650,20 @@ export class ReplicaCache {
               if (this.hostIncarnations.get(serverId) === baselineIncarnations.get(serverId))
                 this.invalidDirectoryCursors.delete(serverId);
             }
+          }
+          // Only a committed complete workspace projection can retire its coverage fence.
+          for (const row of pending.upserts) {
+            if (row.kind !== "checkpoint") continue;
+            if (!this.matchesWorkspaceBaseline(row, pending.workspaceBaselines)) continue;
+            const serverId = row.serverId;
+            if (
+              evicted.has(serverId) ||
+              this.hostIncarnations.get(serverId) !== baselineIncarnations.get(serverId)
+            )
+              continue;
+            const invalid = this.invalidDirectoryCursors.get(serverId);
+            invalid?.delete("workspaces");
+            if (invalid?.size === 0) this.invalidDirectoryCursors.delete(serverId);
           }
         } catch {
           this.restorePendingChanges(pending);
@@ -1589,6 +1685,23 @@ export class ReplicaCache {
   }
 
   private queueUpsert(row: StructuredReplicaUpsert): void {
+    if (row.kind === "checkpoint") {
+      const completeWorkspaceBaseline = this.matchesWorkspaceBaseline(
+        row,
+        this.pendingWorkspaceBaselines,
+      );
+      if (!completeWorkspaceBaseline) this.pendingWorkspaceBaselines.delete(row.serverId);
+      // Capture ineligibility now, before an earlier in-flight baseline can retire the fence.
+      row = {
+        ...row,
+        value: this.checkpointForWrite(
+          row.serverId,
+          row.value,
+          this.pendingBaselines.has(row.serverId),
+          completeWorkspaceBaseline,
+        ),
+      };
+    }
     this.invalidateRowReads(row);
     const key = pendingRowKey(row);
     this.pendingDeletes.delete(key);
@@ -1596,6 +1709,7 @@ export class ReplicaCache {
   }
 
   private queueDelete(key: ReplicaRowKey): void {
+    if (key.kind === "checkpoint") this.pendingWorkspaceBaselines.delete(key.serverId);
     this.invalidateRowReads(key);
     const pendingKey = pendingRowKey(key);
     this.pendingUpserts.delete(pendingKey);
@@ -1604,19 +1718,36 @@ export class ReplicaCache {
 
   private hasPendingChanges(): boolean {
     return (
-      this.pendingUpserts.size > 0 || this.pendingDeletes.size > 0 || this.pendingBaselines.size > 0
+      this.pendingUpserts.size > 0 ||
+      this.pendingDeletes.size > 0 ||
+      this.pendingBaselines.size > 0 ||
+      this.pendingWorkspaceBaselines.size > 0
     );
+  }
+
+  /** Only the accepted workspace cursor can authorize a pending complete workspace projection. */
+  private matchesWorkspaceBaseline(
+    row: Extract<StructuredReplicaUpsert, { kind: "checkpoint" }>,
+    baselines: ReadonlyMap<string, DirectoryCursor | undefined>,
+  ): boolean {
+    if (!baselines.has(row.serverId)) return false;
+    const accepted = baselines.get(row.serverId);
+    const current = row.value.workspaces;
+    if (!accepted || !current) return accepted === current;
+    return accepted.generation === current.generation && accepted.afterSeq === current.afterSeq;
   }
 
   private checkpointForWrite(
     serverId: string,
     value: DirectoryCheckpoint,
     completeBaseline: boolean,
+    completeWorkspaceBaseline = false,
   ): DirectoryCheckpoint {
     const checkpoint = { ...value };
     if (!completeBaseline) {
-      for (const entity of this.invalidDirectoryCursors.get(serverId) ?? [])
-        delete checkpoint[entity];
+      for (const entity of this.invalidDirectoryCursors.get(serverId) ?? []) {
+        if (entity !== "workspaces" || !completeWorkspaceBaseline) delete checkpoint[entity];
+      }
     }
     return checkpoint;
   }
@@ -1631,6 +1762,7 @@ export class ReplicaCache {
       row.serverId,
       row.value,
       this.pendingBaselines.has(row.serverId),
+      this.matchesWorkspaceBaseline(row, this.pendingWorkspaceBaselines),
     );
     return (
       read.workspaceAuthority.observed !==
@@ -1640,8 +1772,10 @@ export class ReplicaCache {
 
   private hasPendingReadChanges(read: ReplicaRead): boolean {
     if (
-      this.pendingBaselines.has(read.serverId) &&
-      read.kinds.some((kind) => kind !== "timeline")
+      (this.pendingBaselines.has(read.serverId) &&
+        read.kinds.some((kind) => kind !== "timeline")) ||
+      (this.pendingWorkspaceBaselines.has(read.serverId) &&
+        read.kinds.some((kind) => kind === "workspace" || kind === "checkpoint"))
     ) {
       return true;
     }
@@ -1662,6 +1796,7 @@ export class ReplicaCache {
                 row.serverId,
                 row.value,
                 this.pendingBaselines.has(row.serverId),
+                this.matchesWorkspaceBaseline(row, this.pendingWorkspaceBaselines),
               ),
             ),
           ),
@@ -1690,7 +1825,8 @@ export class ReplicaCache {
   }
 
   private hasPendingHostChanges(serverId: string): boolean {
-    if (this.pendingBaselines.has(serverId)) return true;
+    if (this.pendingBaselines.has(serverId) || this.pendingWorkspaceBaselines.has(serverId))
+      return true;
     for (const row of this.pendingUpserts.values()) {
       if (row.serverId === serverId) return true;
     }
@@ -1705,10 +1841,12 @@ export class ReplicaCache {
       upserts: [...this.pendingUpserts.values()],
       deletes: [...this.pendingDeletes.values()],
       baselines: this.pendingBaselines,
+      workspaceBaselines: this.pendingWorkspaceBaselines,
     };
     this.pendingUpserts = new Map();
     this.pendingDeletes = new Map();
     this.pendingBaselines = new Set();
+    this.pendingWorkspaceBaselines = new Map();
     return changes;
   }
 
@@ -1716,7 +1854,12 @@ export class ReplicaCache {
     const deletes = new Map(pending.deletes.map((row) => [pendingRowKey(row), row]));
     const upserts: ReplicaRow[] = [];
     for (const upsert of pending.upserts) {
-      const row = this.materializeUpsert(upsert, pending.baselines.has(upsert.serverId));
+      const row = this.materializeUpsert(
+        upsert,
+        pending.baselines.has(upsert.serverId),
+        upsert.kind === "checkpoint" &&
+          this.matchesWorkspaceBaseline(upsert, pending.workspaceBaselines),
+      );
       if (row) upserts.push(row);
       else deletes.set(pendingRowKey(upsert), upsert);
     }
@@ -1736,6 +1879,7 @@ export class ReplicaCache {
   private materializeUpsert(
     upsert: StructuredReplicaUpsert,
     completeBaseline: boolean,
+    completeWorkspaceBaseline: boolean,
   ): ReplicaRow | null {
     let value: unknown;
     switch (upsert.kind) {
@@ -1754,7 +1898,12 @@ export class ReplicaCache {
         break;
       case "checkpoint": {
         value = serializeDirectoryCheckpoint(
-          this.checkpointForWrite(upsert.serverId, upsert.value, completeBaseline),
+          this.checkpointForWrite(
+            upsert.serverId,
+            upsert.value,
+            completeBaseline,
+            completeWorkspaceBaseline,
+          ),
         );
         break;
       }
@@ -1767,7 +1916,25 @@ export class ReplicaCache {
     };
   }
 
+  /** Restore failed coverage only when no newer checkpoint has replaced its workspace cursor. */
+  private restoreWorkspaceBaselines(baselines: WorkspaceBaselineCheckpoints): void {
+    for (const [serverId, cursor] of baselines) {
+      if (!this.activeServerIds.has(serverId) || this.pendingWorkspaceBaselines.has(serverId))
+        continue;
+      const key = pendingRowKey({ serverId, kind: "checkpoint", id: REPLICA_SINGLETON_ROW_ID });
+      if (this.pendingDeletes.has(key)) continue;
+      const pending = this.pendingUpserts.get(key);
+      if (
+        pending &&
+        (pending.kind !== "checkpoint" || !this.matchesWorkspaceBaseline(pending, baselines))
+      )
+        continue;
+      this.pendingWorkspaceBaselines.set(serverId, cursor);
+    }
+  }
+
   private restorePendingChanges(changes: PendingReplicaChanges): void {
+    this.restoreWorkspaceBaselines(changes.workspaceBaselines);
     for (const serverId of changes.baselines) {
       if (this.activeServerIds.has(serverId)) this.pendingBaselines.add(serverId);
     }
@@ -1893,6 +2060,7 @@ export class ReplicaCache {
 
   private dropPendingHostChanges(serverId: string): void {
     this.pendingBaselines.delete(serverId);
+    this.pendingWorkspaceBaselines.delete(serverId);
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId) this.pendingUpserts.delete(key);
     }
@@ -1908,6 +2076,21 @@ export class ReplicaCache {
     }
     for (const row of changes.upserts) {
       this.queueUpsert(row.serverId === oldServerId ? { ...row, serverId: newServerId } : row);
+    }
+    for (const [serverId, cursor] of changes.workspaceBaselines) {
+      const targetServerId = serverId === oldServerId ? newServerId : serverId;
+      const key = pendingRowKey({
+        serverId: targetServerId,
+        kind: "checkpoint",
+        id: REPLICA_SINGLETON_ROW_ID,
+      });
+      const checkpoint = this.pendingUpserts.get(key);
+      if (
+        checkpoint?.kind === "checkpoint" &&
+        this.matchesWorkspaceBaseline({ ...checkpoint, serverId }, changes.workspaceBaselines)
+      ) {
+        this.pendingWorkspaceBaselines.set(targetServerId, cursor);
+      }
     }
     for (const serverId of changes.baselines) {
       this.pendingBaselines.add(serverId === oldServerId ? newServerId : serverId);

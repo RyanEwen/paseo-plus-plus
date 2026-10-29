@@ -1,6 +1,8 @@
 import { useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
+import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ChevronDown,
@@ -79,12 +81,15 @@ interface SidebarWorkspaceGroupHeading {
 interface SidebarWorkspaceGroupHeaderProps {
   group: SidebarWorkspaceGroupHeading;
   collapsed: boolean;
+  /** Full projected membership, before collapse and Show more hide any workspace rows. */
+  workspaceCount?: number;
 }
 
 /** Collapsible section header shared by status buckets and the empty-project section. */
 export function SidebarWorkspaceGroupHeader({
   group,
   collapsed,
+  workspaceCount,
 }: SidebarWorkspaceGroupHeaderProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -103,38 +108,53 @@ export function SidebarWorkspaceGroupHeader({
     [],
   );
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  // The row uses a state callback, so pass its static shape to the native highlight.
+  const highlightStyle = useMemo(
+    () => [resolveHighlightCorners(styles.statusGroupRow), styles.statusGroupRowPressed],
+    [],
+  );
 
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => (
-      <View style={styles.statusGroupRowLeft}>
-        <View style={styles.statusGroupLeadingVisualSlot}>
-          <StatusGroupLeadingVisual
-            leading={group.leading}
-            collapsed={collapsed}
-            showChevron={hovered || platformIsNative || isCompact}
-          />
+      <>
+        <View style={styles.statusGroupRowLeft}>
+          <View style={styles.statusGroupLeadingVisualSlot}>
+            <StatusGroupLeadingVisual
+              leading={group.leading}
+              collapsed={collapsed}
+              showChevron={hovered || platformIsNative || isCompact}
+            />
+          </View>
+          <View style={styles.statusGroupTitleGroup}>
+            <Text style={styles.statusGroupTitle} numberOfLines={1}>
+              {group.label}
+            </Text>
+          </View>
         </View>
-        <View style={styles.statusGroupTitleGroup}>
-          <Text style={styles.statusGroupTitle} numberOfLines={1}>
-            {group.label}
+        {workspaceCount !== undefined ? (
+          <Text style={styles.statusGroupCount} testID={`sidebar-status-group-count-${group.key}`}>
+            {workspaceCount}
           </Text>
-        </View>
-      </View>
+        ) : null}
+      </>
     ),
-    [collapsed, group.leading, group.label, isCompact],
+    [collapsed, group.leading, group.label, group.key, isCompact, workspaceCount],
   );
 
   return (
-    <Pressable
+    <PressHighlight
       accessibilityRole={platformIsWeb ? undefined : "button"}
-      accessibilityLabel={t("sidebar.statusGroupAccessibility", { label: group.label })}
+      accessibilityLabel={t("sidebar.statusGroupAccessibility", {
+        label: workspaceCount === undefined ? group.label : `${group.label} (${workspaceCount})`,
+      })}
       accessibilityState={accessibilityState}
       style={rowStyle}
+      highlightStyle={highlightStyle}
       onPress={handlePress}
       testID={`sidebar-status-group-${group.key}`}
     >
       {renderContent}
-    </Pressable>
+    </PressHighlight>
   );
 }
 
@@ -223,5 +243,11 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
+  },
+  statusGroupCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    flexShrink: 0,
   },
 }));

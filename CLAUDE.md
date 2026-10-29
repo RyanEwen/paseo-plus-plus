@@ -26,7 +26,8 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 
 | Doc                                                                      | What's in it                                                                                                                   |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| [docs/agent-documentation-review.md](docs/agent-documentation-review.md) | Codex lifecycle hooks for keeping fork descriptions and developer docs aligned                                                 |
+| [Fork feature guides](docs/fork-features/settings.md)                    | User-facing fork features, settings and links to maintained feature branches                                                   |
+| [Fork installation](docs/fork-installation.md)                           | Paseo++ downloads and standalone daemon setup                                                                                  |
 | [docs/product.md](docs/product.md)                                       | What Paseo is, who it's for, where it's going                                                                                  |
 | [docs/architecture.md](docs/architecture.md)                             | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                |
 | [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                       | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
@@ -45,12 +46,13 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/forge-providers.md](docs/forge-providers.md)                       | Adding a git forge: registry/manifest, drop-in checklist, self-host/GHES, the two facts tiers                                  |
 | [docs/custom-providers.md](docs/custom-providers.md)                     | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |
 | [docs/plugins.md](docs/plugins.md)                                       | Local plugin manifest, directory source config, RPCs, native surfaces, and attachment sources                                  |
+| [docs/website-i18n.md](docs/website-i18n.md)                             | Website languages: locale URLs, translated Markdown pairs, `{#id}` anchors, Chinese style                                      |
 | [docs/service-proxy.md](docs/service-proxy.md)                           | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                      |
 | [docs/development.md](docs/development.md)                               | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                     |
-| [docs/worktree-development.md](docs/worktree-development.md)             | Fork branch roles, owner lifecycle, upstream synchronization, environment qualification, and review assembly                   |
 | [docs/rpc-namespacing.md](docs/rpc-namespacing.md)                       | WebSocket RPC naming convention — dotted namespaces and `.request`/`.response` pairs                                           |
 | [docs/protocol-compatibility.md](docs/protocol-compatibility.md)         | Why app/daemon versions drift, protocol vs feature contract, capability gating, COMPAT tagging                                 |
 | [docs/protocol-validation.md](docs/protocol-validation.md)               | zod-aot generated inbound WebSocket validation, patched compiler regressions, schema-purity rules                              |
+| [docs/connected-hosts.md](docs/connected-hosts.md)                       | Daemon-owned host registrations, routed SDK scopes, identity and authority boundaries                                          |
 | [docs/permissions.md](docs/permissions.md)                               | Semantic daemon permissions, principals, credentials, pairing invitations, and Hub authority                                   |
 | [docs/terminal-performance.md](docs/terminal-performance.md)             | Terminal latency pipeline, coalescing/backpressure invariants, benchmark + perf spec usage                                     |
 | [docs/agent-stream-performance.md](docs/agent-stream-performance.md)     | Assistant text pipeline — coalescing window, paced reveal, why arrival lumps are smoothed at render                            |
@@ -64,13 +66,15 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/explorer-sidebar.md](docs/explorer-sidebar.md)                     | Explorer sidebar, side-pane, and compact workspace sheet host contracts, lifecycle, placement, routing preferences             |
 | [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md)           | Isolated in-process daemon test harness                                                                                        |
 | [docs/browser-capture-harness.md](docs/browser-capture-harness.md)       | Real-Electron browser screenshot harness and compositor-surface gotcha                                                         |
-| [docs/native-browser-feasibility.md](docs/native-browser-feasibility.md) | Deferred native-browser research and historical qualification boundaries                                                       |
 | [docs/android.md](docs/android.md)                                       | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
 | [docs/docker.md](docs/docker.md)                                         | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/release.md](docs/release.md)                                       | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)                   | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                               | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [public-docs/hub/security.md](public-docs/hub/security.md)               | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
+| [docs/agent-documentation-review.md](docs/agent-documentation-review.md) | Codex lifecycle hooks for keeping fork descriptions and developer docs aligned                                                 |
+| [docs/worktree-development.md](docs/worktree-development.md)             | Fork branch roles, owner lifecycle, upstream synchronization, environment qualification, and review assembly                   |
+| [docs/native-browser-feasibility.md](docs/native-browser-feasibility.md) | Native browser ownership, practical extension limits and qualification gates                                                   |
 
 ### Writing docs
 
@@ -115,6 +119,8 @@ npm run format:check                 # Check formatting without writing
 ```
 
 Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged desktop app and production-style daemon keep using `~/.paseo` on port `6767`.
+
+When Mo requests an APK, use `npm run build:apk:arm64` for an ARM64 build: writes `artifacts/paseo-dogfood-arm64.apk` with diagnostics without starting a device; `npm run build:apk` builds all four Android architectures.
 
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 

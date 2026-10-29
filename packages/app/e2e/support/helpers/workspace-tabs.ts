@@ -1,4 +1,51 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { WorkspaceLayoutPersistedStateSchema } from "../../../src/stores/workspace-layout-storage";
+import { collectAllTabs, findPaneById } from "../../../src/stores/workspace-layout-actions";
+import { getServerId } from "./server-id";
+
+interface MainWorkspaceTabRowInput {
+  page: Page;
+  agentId?: string;
+  deck?: Locator;
+}
+
+/**
+ * Locate main workspace rails without including Explorer's independently retained rail.
+ * Bind a visible fixture through its agent's DOM identity, which can differ from an adopted
+ * tab's persisted draft ID. Omit that binding when asserting that the whole main rail is absent.
+ * Pass a known deck to keep adoption checks inside that exact retained workspace.
+ */
+export function mainWorkspaceTabRow({ page, agentId, deck }: MainWorkspaceTabRowInput): Locator {
+  const rows = (deck ?? page).locator(
+    '[data-testid="workspace-tabs-row"]:not([data-testid="workspace-explorer-sidebar"] *)',
+  );
+  return agentId === undefined
+    ? rows
+    : rows.filter({ has: page.getByTestId(`workspace-tab-agent_${agentId}`) });
+}
+
+/** Locate a chooser label by the actual persisted tab ID, including optimistic draft identities. */
+export function chooserTabLabel(page: Page, tabId: string, label: string): Locator {
+  // WorkspaceTabOptionRow places the actions trigger inside its trailing slot, beside the label.
+  return page
+    .getByTestId(`workspace-tab-menu-${tabId}-trigger`)
+    .locator("../..")
+    .getByText(label, { exact: true });
+}
+
+/** Read persisted identities and focused tab through the owning schema without writing state. */
+export async function readWorkspaceTabSnapshot(page: Page, workspaceId: string) {
+  const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
+  if (!raw) throw new Error("Expected the workspace layout to be persisted");
+  const persisted = WorkspaceLayoutPersistedStateSchema.parse(JSON.parse(raw).state);
+  const layout = persisted.layoutByWorkspace[`${getServerId()}:${workspaceId}`];
+  if (!layout) throw new Error("Expected the active workspace layout");
+  const pane = findPaneById(layout.root, layout.focusedPaneId);
+  return {
+    focusedTabId: pane?.focusedTabId,
+    tabs: collectAllTabs(layout.root).map((tab) => ({ tabId: tab.tabId, target: tab.target })),
+  };
+}
 
 export async function getWorkspaceTabTestIds(page: Page): Promise<string[]> {
   const tabs = page.locator('[data-testid^="workspace-tab-"]');

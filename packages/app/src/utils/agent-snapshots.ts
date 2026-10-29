@@ -1,6 +1,6 @@
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
   TURN_LIVENESS_IDLE,
   type ActiveTurnIdentity,
@@ -82,6 +82,8 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
+    humanAttentionRequired: agent.humanAttentionRequired,
+    attentionMessage: agent.attentionMessage,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
@@ -98,7 +100,8 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     ? new Date(snapshot.attentionTimestamp)
     : null;
   const archivedAt = snapshot.archivedAt ? new Date(snapshot.archivedAt) : null;
-  const parentAgentId = getParentAgentIdFromLabels(snapshot.labels);
+  const parent = getParentAddressFromLabels(snapshot.labels, serverId);
+  const parentAgentId = parent?.serverId === serverId ? parent.agentId : null;
   // COMPAT(agentTurnIdentity): added in v0.2.6, remove after 2027-01-31 once daemon floor >= v0.2.6.
   // Old daemons expose only status. Normalize that legacy signal once so the rest
   // of the app consumes one activity shape.
@@ -129,6 +132,8 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     features: snapshot.features,
     thinkingOptionId: snapshot.thinkingOptionId ?? null,
     requiresAttention: snapshot.requiresAttention ?? false,
+    humanAttentionRequired: snapshot.humanAttentionRequired,
+    attentionMessage: snapshot.attentionMessage,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     archivedAt,

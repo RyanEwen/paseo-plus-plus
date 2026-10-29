@@ -17,7 +17,6 @@ import {
   GitBranch,
   Server,
   Settings,
-  X,
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -44,6 +43,7 @@ import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -394,8 +394,9 @@ function SidebarHostPicker({
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
-  const { settings } = useAppSettings();
-  const showHostUpdates = settings.paseoPlusPlus.sidebarHostUpdates;
+  const { settings, isLoading: settingsLoading, error: settingsError } = useAppSettings();
+  const showHostUpdates =
+    !settingsLoading && settingsError === null && settings.paseoPlusPlus.sidebarHostUpdates;
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -653,6 +654,19 @@ function MobileSidebar({
     closeSidebar();
   }, [closeSidebar]);
 
+  const closeButton = useMemo(
+    () => (
+      <SidebarCloseButton
+        label={labels.closeSidebar}
+        onPress={closeSidebar}
+        testID="sidebar-close"
+        nativeID="sidebar-close"
+        style={styles.mobileCloseButton}
+      />
+    ),
+    [labels.closeSidebar, closeSidebar],
+  );
+
   const mobileSidebarInsetStyle = useMemo(
     () => ({
       paddingTop: insetsTop,
@@ -670,30 +684,11 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
-        <WindowChromeSafeArea
-          placement="inline"
-          pointerEvents="box-none"
-          style={styles.mobileCloseButtonRow}
-        >
-          <Pressable
-            style={styles.mobileCloseButton}
-            onPress={closeSidebar}
-            testID="sidebar-close"
-            nativeID="sidebar-close"
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel={labels.closeSidebar}
-            hitSlop={8}
-          >
-            {({ hovered, pressed }) => (
-              <X
-                size={theme.iconSize.md}
-                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-            )}
-          </Pressable>
-        </WindowChromeSafeArea>
+        <SidebarNavRows
+          style={styles.sidebarHeaderGroup}
+          onBeforeNavigate={closeSidebar}
+          firstRowTrailing={closeButton}
+        />
 
         {workspacesSectionHeaderElement}
 
@@ -765,7 +760,9 @@ function DesktopSidebar({
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const viewportWidth = windowWidth - insets.left - insets.right;
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
     requestedWidth: sidebarWidth,
     viewportWidth,
@@ -992,24 +989,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  mobileCloseButtonRow: {
-    position: "absolute",
-    top: theme.spacing[3],
-    left: 0,
-    right: 0,
-    zIndex: 2,
-    alignItems: "flex-end",
-  },
   mobileCloseButton: {
-    // The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
-    // This optical inset puts their painted right edges on the same sidebar rail.
-    marginRight: theme.spacing[2] + 1.5,
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surfaceSidebar,
+    marginRight: theme.spacing[2],
   },
   desktopSidebarBorder: {
     borderRightWidth: 1,

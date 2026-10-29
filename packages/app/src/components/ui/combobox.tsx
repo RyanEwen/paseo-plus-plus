@@ -1,4 +1,8 @@
 import {
+  useWebOverlayPresentationLifetime,
+  WebOverlayLifetimeMarker,
+} from "@/lib/overlay-presentation-lifetime";
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -1001,6 +1005,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
   return (
     <IsolatedBottomSheetModal
       ref={props.bottomSheetRef}
+      nativeBrowserOverlap
       contextBridge={null}
       snapPoints={props.snapPoints}
       index={0}
@@ -1189,7 +1194,13 @@ function DesktopComboboxOptionsBody(props: {
   );
 }
 
-function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
+function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
+  const { ready: presentationReady, retainNode: retainPresentationNode } =
+    useWebOverlayPresentationLifetime({
+      active: isWeb && props.isOpen,
+      nativeBrowserOverlap: true,
+      onAdmissionFailed: props.handleClose,
+    });
   const handleDesktopKey = props.handleDesktopKey;
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -1199,7 +1210,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
     [handleDesktopKey],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && props.isOpen,
+    active: isWeb && props.isOpen && presentationReady,
     layer: props.overlayLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
@@ -1207,14 +1218,25 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
     (node: View | null) => {
       props.refs.setFloating(node);
       setWebOverlayScope(node);
+      retainPresentationNode(node);
     },
-    [props.refs, setWebOverlayScope],
+    [props.refs, setWebOverlayScope, retainPresentationNode],
   );
+
+  const setOffsetParent = useCallback(
+    (node: View | null) => {
+      props.refs.setOffsetParent(node);
+      retainPresentationNode(node);
+    },
+    [props.refs, retainPresentationNode],
+  );
+
+  if (!presentationReady) return null;
 
   const overlay = (
     <OverlayLayerProvider layer={props.overlayLayer}>
       <View
-        ref={props.refs.setOffsetParent}
+        ref={setOffsetParent}
         collapsable={false}
         style={[
           styles.desktopOverlay,
@@ -1236,6 +1258,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
           tabIndex={-1}
           onLayout={props.handleDesktopContentLayout}
         >
+          <WebOverlayLifetimeMarker retainNode={retainPresentationNode} />
           {props.hasChildren ? (
             <DesktopComboboxChildrenBody
               header={props.header}
@@ -1786,7 +1809,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   desktopOverlayWeb: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     pointerEvents: "auto" as const,
   },
   desktopBackdrop: {

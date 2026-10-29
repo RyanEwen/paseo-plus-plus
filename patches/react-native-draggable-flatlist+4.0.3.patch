@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts b/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts
-index d3a4f1fa6930ade7148bbca95c06db66b306c86d..0ab6ceb6c1442041c6f40905f723e2afa64b70ca 100644
+index d3a4f1f..0ab6ceb 100644
 --- a/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts
 +++ b/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts
 @@ -16,12 +16,14 @@ declare const _default: <T>(props: Omit<FlatListProps<T>, "keyExtractor" | "data
@@ -27,7 +27,7 @@ index d3a4f1fa6930ade7148bbca95c06db66b306c86d..0ab6ceb6c1442041c6f40905f723e2af
      enableLayoutAnimationExperimental?: boolean | undefined;
      onContainerLayout?: ((params: {
 diff --git a/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts b/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts
-index d3c6cbb0ee6bb3086243173e2fc5e60f707af8b0..ee55791a2d97227ad65466227750cfa7c237e3cf 100644
+index d3c6cbb..ee55791 100644
 --- a/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts
 +++ b/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts
 @@ -15,12 +15,14 @@ export declare const NestableDraggableFlatList: <T>(props: Omit<import("react-na
@@ -55,7 +55,7 @@ index d3c6cbb0ee6bb3086243173e2fc5e60f707af8b0..ee55791a2d97227ad65466227750cfa7
      enableLayoutAnimationExperimental?: boolean | undefined;
      onContainerLayout?: ((params: {
 diff --git a/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts b/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts
-index 2abb4a272eb4d3374d677f78a298d7690fd7e064..2e6d826018926271d3f8c1aa09f61ae6be248abd 100644
+index 2abb4a2..2e6d826 100644
 --- a/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts
 +++ b/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts
 @@ -23,16 +23,22 @@ export declare type DraggableFlatListProps<T> = Modify<FlatListProps<T>, {
@@ -82,7 +82,7 @@ index 2abb4a272eb4d3374d677f78a298d7690fd7e064..2e6d826018926271d3f8c1aa09f61ae6
      enableLayoutAnimationExperimental?: boolean;
      onContainerLayout?: (params: {
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/CellRendererComponent.tsx b/node_modules/react-native-draggable-flatlist/src/components/CellRendererComponent.tsx
-index e4e861a6663ae59838af08c965ab6782fc41f8b0..b5a33f8d5e56312c338b76777799c3a2e015f437 100644
+index e4e861a..b5a33f8 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/CellRendererComponent.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/CellRendererComponent.tsx
 @@ -1,13 +1,11 @@
@@ -193,7 +193,7 @@ index e4e861a6663ae59838af08c965ab6782fc41f8b0..b5a33f8d5e56312c338b76777799c3a2
 -  return global.RNDFLLayoutAnimationConfigStash[tag] as Record<string, unknown>;
 -}
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
-index 7c88afc54e5d7db3dd8b15819d5833681757f039..f955239e4c03ecb3039f1fa30eda41d0e8491043 100644
+index 7c88afc..f955239 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 @@ -1,3 +1,4 @@
@@ -649,7 +649,7 @@ index 7c88afc54e5d7db3dd8b15819d5833681757f039..f955239e4c03ecb3039f1fa30eda41d0
            ref={containerRef}
            onLayout={onContainerLayout}
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx
-index 155935276d83e232adba7486c3803998c1b90c7b..33eb5deb72d846018239b1896c4f0740699863c5 100644
+index 1559352..33eb5de 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx
 @@ -1,5 +1,5 @@
@@ -689,7 +689,7 @@ index 155935276d83e232adba7486c3803998c1b90c7b..33eb5deb72d846018239b1896c4f0740
    );
 diff --git a/node_modules/react-native-draggable-flatlist/src/drag-session.ts b/node_modules/react-native-draggable-flatlist/src/drag-session.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d71cf852764bf6c55061f548618866601ecc47de
+index 0000000..d71cf85
 --- /dev/null
 +++ b/node_modules/react-native-draggable-flatlist/src/drag-session.ts
 @@ -0,0 +1,42 @@
@@ -736,7 +736,7 @@ index 0000000000000000000000000000000000000000..d71cf852764bf6c55061f54861886660
 +  return true;
 +}
 diff --git a/node_modules/react-native-draggable-flatlist/src/hooks/useCellTranslate.tsx b/node_modules/react-native-draggable-flatlist/src/hooks/useCellTranslate.tsx
-index efea24038ffa1b340b601cea16588ed1a5823e5a..3a7bcc3253c6ea46a5fe80dd8c91aa4f85b6274e 100644
+index efea240..3a7bcc3 100644
 --- a/node_modules/react-native-draggable-flatlist/src/hooks/useCellTranslate.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/hooks/useCellTranslate.tsx
 @@ -23,7 +23,8 @@ export function useCellTranslate({ cellIndex, cellSize, cellOffset }: Params) {
@@ -774,7 +774,7 @@ index efea24038ffa1b340b601cea16588ed1a5823e5a..3a7bcc3253c6ea46a5fe80dd8c91aa4f
    return translate;
  }
 diff --git a/node_modules/react-native-draggable-flatlist/src/types.ts b/node_modules/react-native-draggable-flatlist/src/types.ts
-index d6755c8fbf04a753b329aa4bade486ce58deab22..d49a43890dddb63840f4f1f7b3f259d881b6acaf 100644
+index d6755c8..d49a438 100644
 --- a/node_modules/react-native-draggable-flatlist/src/types.ts
 +++ b/node_modules/react-native-draggable-flatlist/src/types.ts
 @@ -36,16 +36,22 @@ export type DraggableFlatListProps<T> = Modify<

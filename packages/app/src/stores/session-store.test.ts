@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type {
+  WorkspaceDescriptorPayload,
+  ServerInfoStatusPayload,
+} from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
+  toDaemonServerInfo,
   selectAgentTurnPresentation,
   selectAgentTimelineState,
   useSessionStore,
@@ -799,4 +803,47 @@ describe("removeWorkspace", () => {
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
   });
+});
+
+it("attention preference authority preserves handshake grant changes and removal", () => {
+  initializeTestSession();
+  const changes: Array<ServerInfoStatusPayload["permissions"]> = [];
+  const unsubscribe = useSessionStore.subscribe(
+    (state) => state.sessions["test-server"]?.serverInfo,
+    (info) => changes.push(info?.permissions),
+  );
+  const apply = (permissions: ServerInfoStatusPayload["permissions"]) => {
+    const info: ServerInfoStatusPayload = {
+      status: "server_info",
+      serverId: "test-server",
+      hostname: null,
+      version: null,
+      permissions,
+    };
+    useSessionStore.getState().updateSessionServerInfo("test-server", toDaemonServerInfo(info));
+  };
+  try {
+    apply(["workspace.read"]);
+    apply(["workspace.read"]);
+    expect(changes).toEqual([["workspace.read"]]);
+    apply(["workspace.read", "daemon.manage"]);
+    expect(useSessionStore.getState().sessions["test-server"]?.serverInfo?.permissions).toEqual([
+      "workspace.read",
+      "daemon.manage",
+    ]);
+    apply([]);
+    expect(useSessionStore.getState().sessions["test-server"]?.serverInfo?.permissions).toEqual([]);
+    apply(undefined);
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.serverInfo?.permissions,
+    ).toBeUndefined();
+    expect(changes).toEqual([
+      ["workspace.read"],
+      ["workspace.read", "daemon.manage"],
+      [],
+      undefined,
+    ]);
+  } finally {
+    unsubscribe();
+  }
 });

@@ -1,8 +1,60 @@
+import { coversCanonicalInterval } from "@/timeline/canonical-reading-source";
+import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
 import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
+import type { PromptDiscoveryStatus } from "./use-prompt-discovery";
 
 export type UserPrompt = Extract<StreamItem, { kind: "user_message" }>;
+
+interface PromptFeedbackState {
+  busy: boolean;
+  error: boolean;
+  cancelled: boolean;
+  discoveryStatus: PromptDiscoveryStatus;
+}
+
+interface RetainedContextFeedback {
+  loading: boolean;
+  error: boolean;
+  cancelled: boolean;
+  limited: boolean;
+  exhausted: boolean;
+}
+
+const EMPTY_CONTEXT_FEEDBACK: RetainedContextFeedback = {
+  loading: false,
+  error: false,
+  cancelled: false,
+  limited: false,
+  exhausted: false,
+};
+
+/** Passive context never covers an available prompt with loading feedback.
+ * Explicit navigation keeps its own failure and retry, even if context also failed.
+ * Without a prompt, the same rail owns the system placeholder and context retry.
+ */
+export function resolvePromptFeedback(
+  navigation: PromptFeedbackState & { message: UserPrompt | undefined },
+  context: RetainedContextFeedback = EMPTY_CONTEXT_FEEDBACK,
+): PromptFeedbackState & { retryContext: boolean } {
+  if (navigation.message) return { ...navigation, retryContext: false };
+  const navigationNeedsRetry =
+    navigation.error || navigation.cancelled || navigation.discoveryStatus === "limited";
+  let discoveryStatus = navigation.discoveryStatus;
+  if (!navigationNeedsRetry) {
+    if (context.limited) discoveryStatus = "limited";
+    else if (context.exhausted) discoveryStatus = "exhausted";
+  }
+  return {
+    busy: navigation.busy || context.loading,
+    error: navigation.error || context.error,
+    cancelled: navigation.cancelled || context.cancelled,
+    discoveryStatus,
+    retryContext: !navigationNeedsRetry && (context.error || context.cancelled || context.limited),
+  };
+}
+
 export interface PromptTarget {
   key: string;
   seq?: number;
@@ -16,6 +68,7 @@ export function buildPromptTargets(
   items: readonly StreamItem[],
   prompts: readonly ChatOutlinePrompt[],
   epoch: string | null,
+  contextOnlyIds?: ReadonlySet<string>,
 ): PromptTarget[] {
   const targets: PromptTarget[] = prompts.map(({ seq }) => ({ key: `${epoch}:${seq}`, seq }));
   const bySeq = new Map(targets.map((target) => [target.seq, target]));
@@ -27,8 +80,14 @@ export function buildPromptTargets(
     const indexed = seq === undefined ? undefined : bySeq.get(seq);
     if (indexed) {
       indexed.item = item;
+      if (contextOnlyIds?.has(item.id)) indexed.cached = true;
     } else {
-      targets.push({ key: seq === undefined ? item.id : `${epoch}:${seq}`, seq, item });
+      targets.push({
+        key: seq === undefined ? item.id : `${epoch}:${seq}`,
+        seq,
+        item,
+        ...(contextOnlyIds?.has(item.id) ? { cached: true } : {}),
+      });
     }
   }
   // Unpositioned local submissions follow authoritative history in submission order.
@@ -237,6 +296,33 @@ export function resolvePromptGeometry(
   };
 }
 
+/** Published reading geometry owns physical context even while following output.
+ * Before the viewport publishes an edge, use the latest canonical source, or its
+ * loaded USER when ordinary coverage reaches the tail without holes. Semantic
+ * latest navigation is independent of this source selection. */
+export function resolveRetainedContextSource(
+  items: readonly StreamItem[],
+  epoch: string | null,
+  reading: Pick<PromptReadingPosition, "navigating" | "following" | "rowId" | "seq">,
+  coverage: readonly CanonicalTimelineCoverage[],
+): StreamItem | undefined {
+  if (reading.navigating) return undefined;
+  if (reading.rowId !== null) return resolveContextSource(items, epoch, reading.rowId, reading.seq);
+
+  let latest: StreamItem | undefined;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    const cursor = item.timelineCursor;
+    if (!cursor || cursor.epoch !== epoch) continue;
+    latest ??= item;
+    if (item.kind === "user_message") {
+      const tailSeq = latest.timelineCursor!.seq;
+      return coversCanonicalInterval(coverage, cursor.epoch, cursor.seq, tailSeq) ? item : latest;
+    }
+  }
+  return latest;
+}
+
 /** Resolve a visible canonical source without conflating repeated provider message IDs. */
 export function resolveContextSource(
   items: readonly StreamItem[],
@@ -303,7 +389,7 @@ export function shouldDiscoverCachedPrompt(
   cancelled: boolean,
   readingMissing: boolean,
 ): boolean {
-  if (pending !== null && pending !== "previous" && pending.cached) return true;
+  if (pending !== null && pending !== "previous" && pending.cached) return !indexed;
   return (
     !readingMissing &&
     shouldDiscoverPrompt(pending === "previous", indexed, message, cancelled, false)
@@ -320,7 +406,9 @@ export function hasDiscoveredCachedPrompt(
   message: UserPrompt | undefined,
 ): boolean {
   if (pending !== null && pending !== "previous" && pending.cached)
-    return loaded.some((target) => target.key === pending.key && target.item !== undefined);
+    return loaded.some(
+      (target) => target.key === pending.key && target.item !== undefined && !target.cached,
+    );
   return hasDiscoveredPrompt(
     pending === "previous",
     previous,

@@ -1,3 +1,4 @@
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -7,7 +8,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, onTestFinished, test, vi } from "vitest";
 
 import {
   assertPullRequestAutoMergeDisableReady,
@@ -15,6 +16,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { deriveAgentStateBucket } from "@getpaseo/protocol/agent-state-bucket";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -26,8 +28,12 @@ import { Session } from "./session.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { AgentManager, type AgentManagerEvent } from "./agent/agent-manager.js";
+import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
+import { toAgentPayload } from "./agent/agent-projections.js";
+import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -288,6 +294,8 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  agentRuntime?: Pick<SessionOptions, "agentManager" | "agentStorage">;
+  sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
@@ -368,6 +376,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     messageReceipts: createMessageReceiptsStub(),
+    agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
@@ -440,7 +449,10 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
+    // Inject real instances without spreading their prototype methods into partial stubs.
+    ...options.agentRuntime,
   };
+  if (options.sendToSource) sessionOptions.onMessageToSource = options.sendToSource;
   return new Session(sessionOptions);
 }
 
@@ -4694,7 +4706,6 @@ describe("session paseo worktree creation handling", () => {
     await asSessionInternals(session).createPaseoWorktree({
       cwd: "/tmp/repo",
       worktreeSlug: "new-worktree",
-      runSetup: false,
     });
 
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
@@ -5814,3 +5825,207 @@ test("provider snapshots preserve versionless visibility while capabilities upda
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
 });
+
+test("a failing direct source observes fire-and-forget file replies without unhandled rejections", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-send-failure-"));
+  writeFileSync(join(root, "readme.txt"), "source reply");
+  let attempts = 0;
+  const unhandled: unknown[] = [];
+  const collect = (error: unknown) => unhandled.push(error);
+  process.on("unhandledRejection", collect);
+  const session = createSessionForTest({
+    sendToSource: async () => {
+      attempts++;
+      throw new Error("Physical source closed during send");
+    },
+  });
+  try {
+    const source = {};
+    session.updateClientCapabilities(null, source);
+    await session.handleMessage(
+      {
+        type: "file_explorer_request",
+        requestId: "direct-file",
+        cwd: root,
+        path: "readme.txt",
+        mode: "file",
+        acceptBinary: false,
+      },
+      source,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(attempts).toBeGreaterThan(0);
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", collect);
+    await session.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** Exercise the real Session lifecycle route while reusing its existing non-lifecycle service stubs. */
+async function createRealAgentSessionFixture() {
+  const workdir = mkdtempSync(join(tmpdir(), "session-requester-deletion-"));
+  const logger = pino({ level: "silent" });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const timeline = new InMemoryAgentTimelineStore();
+  const manager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    timelineStore: timeline,
+    logger,
+  });
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    paseoHome: workdir,
+    messages,
+    agentRuntime: { agentManager: manager, agentStorage: storage },
+  });
+  const runs: Promise<unknown>[] = [];
+  onTestFinished(async () => {
+    await session.cleanup();
+    for (const agent of manager.listAgents()) {
+      if (manager.hasInFlightRun(agent.id)) await manager.cancelAgentRun(agent.id);
+      await manager.closeAgent(agent.id);
+    }
+    await Promise.allSettled(runs);
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const requester = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Independent requester" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const worker = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Blocked worker",
+      modeId: "default",
+      providerOptions: { approval_policy: "on-request" },
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  return {
+    workdir,
+    logger,
+    manager,
+    storage,
+    timeline,
+    session,
+    messages,
+    requester,
+    worker,
+    runs,
+  };
+}
+
+test.each(["committed", "rejected"] as const)(
+  "hard delete %s removal preserves the requester-loss boundary",
+  async (boundary) => {
+    const fixture = await createRealAgentSessionFixture();
+    const {
+      workdir,
+      logger,
+      manager,
+      storage,
+      timeline,
+      session,
+      messages,
+      requester,
+      worker,
+      runs,
+    } = fixture;
+    const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
+    manager.setAgentAttentionCallback(notify);
+    const running = manager.runAgent(worker.id, "printf ok > permission.txt", {
+      clientMessageId: "delete-requester-job",
+      attention: [
+        {
+          kind: "agent",
+          requestId: "delete-requester-job",
+          requester: manager.attentionRequester(requester.id),
+        },
+      ],
+    });
+    void running.catch(() => undefined);
+    runs.push(running);
+    await manager.waitForAgentRunStart(worker.id);
+    await vi.waitFor(() => expect(manager.getPendingPermissions(worker.id)).toHaveLength(1));
+    await manager.flush();
+    const [permission] = manager.getPendingPermissions(worker.id);
+    if (!permission) throw new Error("Expected the fake SDK's actual unresolved tool permission");
+    const before = manager.getAgent(worker.id);
+    if (!before?.session) throw new Error("Expected the actual blocked worker session");
+    expect(toAgentPayload(before).humanAttentionRequired).toBe(false);
+    expect(await storage.get(requester.id)).toEqual(expect.objectContaining({ id: requester.id }));
+    expect((await storage.get(requester.id))?.archivedAt).toBeUndefined();
+    expect(notify).not.toHaveBeenCalled();
+    const providerEvents: AgentStreamEvent[] = [];
+    const stopObserving = before.session.subscribe((event) => providerEvents.push(event));
+    onTestFinished(stopObserving);
+
+    const failure = new Error(`Injected ${boundary} deletion boundary failure`);
+    const remove = vi.spyOn(storage, "remove");
+    const originalDelete = timeline.delete.bind(timeline);
+    const cleanup = vi.spyOn(timeline, "delete").mockImplementation((agentId) => {
+      if (boundary === "committed" && agentId === requester.id) throw failure;
+      originalDelete(agentId);
+    });
+    if (boundary === "rejected") remove.mockRejectedValueOnce(failure);
+    try {
+      await session.handleMessage({
+        type: "delete_agent_request",
+        agentId: requester.id,
+        requestId: "delete-requester",
+      });
+      await manager.flush();
+      expect(remove).toHaveBeenCalledExactlyOnceWith(requester.id);
+      expect(manager.getAgent(requester.id)).toBeNull();
+      expect(findByType(messages, "agent_deleted")?.payload).toEqual({
+        agentId: requester.id,
+        requestId: "delete-requester",
+      });
+      const persisted = await new AgentStorage(join(workdir, "agents"), logger).get(requester.id);
+      if (boundary === "committed") {
+        expect(persisted).toBeNull();
+        expect(cleanup).toHaveBeenCalledExactlyOnceWith(requester.id);
+        expect(cleanup.mock.results).toEqual([{ type: "throw", value: failure }]);
+      } else {
+        expect(persisted).toEqual(expect.objectContaining({ id: requester.id }));
+        expect(persisted?.archivedAt).toBeUndefined();
+        expect(cleanup).not.toHaveBeenCalled();
+      }
+      expect(providerEvents).toEqual([]);
+      expect(manager.getPendingPermissions(worker.id)).toEqual([permission]);
+      const after = manager.getAgent(worker.id);
+      if (!after) throw new Error("Expected independent worker to survive requester deletion");
+      const payload = toAgentPayload(after);
+      expect(
+        deriveAgentStateBucket({
+          ...payload,
+          pendingPermissionCount: payload.pendingPermissions.length,
+        }),
+      ).toBe("needs_input");
+      expect(payload.humanAttentionRequired).toBe(boundary === "committed");
+      if (boundary === "committed") {
+        expect(notify).toHaveBeenCalledExactlyOnceWith({
+          agentId: worker.id,
+          provider: "codex",
+          reason: "finished",
+          message: "This task needs permission, but its requesting agent is no longer available.",
+        });
+      } else {
+        expect(notify).not.toHaveBeenCalled();
+      }
+      expect((await storage.get(worker.id))?.requiresAttention).toBe(boundary === "committed");
+    } finally {
+      remove.mockRestore();
+      cleanup.mockRestore();
+      stopObserving();
+    }
+  },
+);

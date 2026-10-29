@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesktopDialogBridge, DesktopDialogOpenOptions } from "@/desktop/host";
 import { normalizePickedImageAssets, pickImagesWithDesktopDialog } from "./image-attachment-picker";
+import { getImageAttachmentPickerFailure } from "./image-attachment-picker-error";
 
 function fakeDialogReturning(selection: string | string[] | null): {
   dialog: DesktopDialogBridge;
@@ -21,6 +22,47 @@ function fakeDialogReturning(selection: string | string[] | null): {
 }
 
 describe("image-attachment-picker", () => {
+  it("reports only the failed stage and bounded Expo code without reading private error details", () => {
+    const error = Object.assign(new Error("Failed to read file:///private/photos/family.png"), {
+      code: "ERR_UNEXPECTED",
+      uri: "content://private/photos/family.png",
+      assets: [{ uri: "file:///private/photos/family.png" }],
+    });
+    Object.defineProperty(error, "cause", {
+      get() {
+        throw new Error("Private error details must not be inspected");
+      },
+    });
+
+    expect(getImageAttachmentPickerFailure("library-launch", error)).toEqual({
+      stage: "library-launch",
+      code: "ERR_UNEXPECTED",
+    });
+    expect(error.code).toBe("ERR_UNEXPECTED");
+    expect(error.message).toBe("Failed to read file:///private/photos/family.png");
+
+    for (const code of ["ERR_file:///private/photos/family.png", "ERR_" + "A".repeat(81), 42]) {
+      expect(getImageAttachmentPickerFailure("pending-result", { code })).toEqual({
+        stage: "pending-result",
+        code: "unknown",
+      });
+    }
+
+    expect(
+      getImageAttachmentPickerFailure("permission", "file:///private/photos/family.png"),
+    ).toEqual({ stage: "permission", code: "unknown" });
+    expect(
+      getImageAttachmentPickerFailure(
+        "pending-normalization",
+        Object.defineProperty({}, "code", {
+          get() {
+            throw new Error("Private accessor must not be called");
+          },
+        }),
+      ),
+    ).toEqual({ stage: "pending-normalization", code: "unknown" });
+  });
+
   it("normalizes a picked File into a blob source", async () => {
     const file = new File(["hello"], "picked.png", { type: "image/png" });
 

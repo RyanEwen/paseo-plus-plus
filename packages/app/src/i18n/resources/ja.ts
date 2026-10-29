@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "アイコンのみのタブ",
+    iconOnlyHint:
+      "エクスプローラーのタブまたはタブバーの空白を右クリックし、「アイコンのみのタブ」を選択します。タブ名はツールチップで確認できます。",
+  },
   settingsSync: {
     title: "設定の同期",
     hint: "選択したホストでアプリ設定とサイドバー項目の表示を同期します。ホスト・プロジェクトの絞り込み、ワークスペースの順序、折りたたみは端末に保存します。切り替え後は設定を読み込んでから編集できます。",
@@ -35,6 +40,21 @@ export const ja: TranslationResources = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "アクセントカラー",
+      hint: "主要な操作と自分のメッセージに使用します",
+      updateHost: "アクセントカラーを変更するには、選択した設定ホストを更新してください",
+      preview: "メッセージはこのように表示されます",
+      options: {
+        default: "デフォルト",
+        blue: "ブルー",
+        green: "グリーン",
+        purple: "パープル",
+        rose: "ローズ",
+        orange: "オレンジ",
+        teal: "ティール",
+      },
+    },
     workspaceLimit: {
       save: "保存",
       title: "ワークスペースの表示制限",
@@ -69,8 +89,8 @@ export const ja: TranslationResources = {
     saveFailed: "保存できませんでした。もう一度お試しください。",
     features: {
       workspaceChatLinks: {
-        label: "チャットのリンクをPaseoで開く",
-        hint: "デスクトップでは、チャットのウェブリンクをそのワークスペースのブラウザーで開きます。オフにすると外部ブラウザーを使います。リンクメニューの「Paseoで開く」は引き続き使えます。",
+        label: "ワークスペースのリンク",
+        hint: "デスクトップでは、ターミナル、チャット、Git のウェブリンクを所属ワークスペースの新しいブラウザータブで開きます。オフにすると外部ブラウザーで開きます。メニューからの明示的な操作は引き続き利用できます。",
       },
       sidebarHostUpdates: {
         label: "サイドバーのホスト更新",
@@ -82,7 +102,11 @@ export const ja: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "モバイルのワークスペースタブ",
-        hint: "コンパクト表示でスクロール可能なタブバーを表示します。オフにすると、選択中のタブを変えずに以前のタブ選択に戻ります。",
+        hint: "コンパクトな画面ではタブを等幅で表示し、収まりきらない場合にのみスクロールできます。オフにすると、選択中のタブを変えずにタブ選択メニューを使います。",
+      },
+      widerWorkspaceTabs: {
+        label: "ワークスペースのタブを広くする",
+        hint: "長いタブ名の最大幅を50%広げます。スマートフォンのワークスペースタブは常に利用可能な幅を均等に分けて表示されます。",
       },
 
       descriptiveToolCalls: {
@@ -90,13 +114,9 @@ export const ja: TranslationResources = {
         hint: "既知の操作を説明し、正確なコマンドと出力は詳細に保持します。無効にすると従来のラベルに戻ります。",
       },
 
-      sidebarProjectSelector: {
-        label: "見出しに選択したプロジェクトを表示",
-        hint: "ワークスペースの見出しに選択したプロジェクト名を表示します。オフの場合は「ワークスペース」と表示され、ホストとプロジェクトの選択は引き続き使えます。",
-      },
       stickyUserPrompts: {
         label: "ユーザーメッセージを表示し続ける",
-        hint: "現在のメッセージをチャット上部に表示し、展開と前後の移動を提供します",
+        hint: "現在のメッセージをコンパクトに固定し、展開と前後への移動ができます。通常のメッセージは全文表示され、読み込み表示が既存のメッセージを覆うことはありません。",
       },
       previousAgents: {
         label: "以前のエージェント",
@@ -152,7 +172,7 @@ export const ja: TranslationResources = {
       },
       mobile: {
         label: "モバイルの操作",
-        hint: "タブ切り替えのタッチ領域拡大、安全な Android の戻る操作、開発通知の分離",
+        hint: "安全な Android の戻る操作、開発通知の分離",
       },
       pickers: {
         label: "ワークスペースの選択と状態",
@@ -581,6 +601,7 @@ export const ja: TranslationResources = {
       details: "詳細",
     },
     dictation: {
+      paused: "マイクが中断されました。再開を待っています…",
       start: "音声入力を開始",
       cancel: "音声入力をキャンセル",
       retry: "音声入力を再試行",
@@ -775,6 +796,7 @@ export const ja: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "ワークスペースのセットアップ詳細を表示するにはホストを更新してください",
       descriptor: {
         label: "セットアップ",
         completed: "セットアップ完了",
@@ -811,12 +833,15 @@ export const ja: TranslationResources = {
     browser: {
       openInPaseo: "Paseo ブラウザーで開く",
       openExternally: "外部ブラウザーで開く",
+      copyLink: "リンクをコピー",
       unavailable: {
         title: "ブラウザはデスクトップ専用です",
         subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",
       },
       session: "ブラウザセッション{{browserId}}",
       controls: {
+        pageZoom: "ページのズーム",
+        zoomFailed: "ページのズームを変更できませんでした",
         back: "戻る",
         forward: "進む",
         stopLoading: "読み込みを停止",
@@ -838,6 +863,17 @@ export const ja: TranslationResources = {
         placeholder: "この要素についてエージェントへのメッセージ…",
         submit: "添付",
         cancel: "キャンセル",
+      },
+      extensions: {
+        label: "拡張機能",
+        empty: "有効な拡張機能はありません。",
+        noPopup: "ポップアップはありません",
+        loading: "拡張機能を読み込み中...",
+        manage: "拡張機能を管理",
+        openFailed: "拡張機能を開けませんでした",
+        pin: "{{name}} を固定",
+        unpin: "{{name}} の固定を解除",
+        pinFailed: "拡張機能の固定を保存できませんでした",
       },
       devices: {
         label: "デバイスサイズ",
@@ -1168,6 +1204,7 @@ export const ja: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "単一ファイルの差分を開くには、このホストを更新してください。",
         openChangesTab: "変更タブを開く",
         openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",
@@ -1201,6 +1238,7 @@ export const ja: TranslationResources = {
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",
         diffMode: "差分モード",
+        all: "すべての変更",
         uncommitted: "未コミット",
         committed: "コミット済み",
         branchUnknown: "不明",
@@ -1407,6 +1445,16 @@ export const ja: TranslationResources = {
       multipleWorkspaces_other: "{{count}} プロジェクトのワークスペース",
       title: "プロジェクト",
     },
+    workspaceTree: {
+      expand: "{{name}} の子ワークスペースを展開",
+      collapse: "{{name}} の子ワークスペースを折りたたむ",
+      activeChild: "現在のワークスペースを含みます。",
+      summary_one: "子ワークスペース {{count}} 件: {{status}}",
+      summary_other: "子ワークスペース {{count}} 件: {{status}}",
+      humanAttention_one: "{{count}} 件の子ワークスペースがあなたの対応を必要としています",
+      humanAttention_other: "{{count}} 件の子ワークスペースがあなたの対応を必要としています",
+      unknownStatus: "ステータスを取得できません",
+    },
     statusGroupAccessibility: "{{label}} グループ",
     statusBucket: {
       workingCount: "{{count}} 件作業中",
@@ -1437,9 +1485,9 @@ export const ja: TranslationResources = {
         fiveDays: "5日",
         week: "1週間",
         twoWeeks: "2週間",
-        month: "1か月",
-        twoMonths: "2か月",
-        threeMonths: "3か月",
+        month: "1か月（30日）",
+        twoMonths: "2か月（60日）",
+        threeMonths: "3か月（90日）",
       },
       expandAll: "すべて展開",
       collapseAll: "すべて折りたたむ",
@@ -1552,6 +1600,44 @@ export const ja: TranslationResources = {
       openProjectSettings: "プロジェクト設定を開く",
     },
     project: {
+      archive: {
+        action: "すべてアーカイブ",
+        title: "プロジェクトのワークスペースをアーカイブしますか？",
+        message:
+          "プロジェクト:「{{projectName}}」\nワークスペース: {{workspaceCount}}\nエージェント: {{agentCount}}（実行中: {{runningAgentCount}}）\nホスト: {{hostCount}}\n\n実行中のエージェントとワークスペースのジョブは停止します。Paseo が管理するワークツリーは削除される場合があります。プロジェクトは保持されます。",
+        includeBackground: "バックグラウンドのワークスペースもアーカイブ ({{count}})",
+        backgroundWarning:
+          "バックグラウンドのワークスペースを含めると、そのエージェントとジョブも停止します。",
+        discovering: "ワークスペースとエージェントを集計中...",
+        progress: "ワークスペースをアーカイブ中: {{completed}} / {{total}}",
+        completed: "アーカイブしたワークスペース: {{count}}",
+        failed:
+          "{{completed}} 個のワークスペースをアーカイブしました。{{host}} の「{{workspace}}」で処理を停止しました: {{error}}。未処理: {{unprocessed}}。問題を解決してから「すべてアーカイブ」を再試行してください。",
+        empty: "このプロジェクトに有効なワークスペースはありません",
+        projectChanged:
+          "確認中にプロジェクトが変更されました。件数を確認して「すべてアーカイブ」を再試行してください。",
+        hostDisconnected:
+          "ホスト {{host}} が切断されています。プロジェクトのすべてのホストに接続してから再試行してください。",
+        updateRequired:
+          "プロジェクトのワークスペースを安全にアーカイブするには、ホスト {{host}} を更新してください。",
+        alreadyArchiving:
+          "ワークスペース「{{workspace}}」はすでにアーカイブ中です。完了してから再試行してください。",
+        incompleteDiscovery:
+          "プロジェクトのすべてのワークスペースとエージェントを集計できませんでした。「すべてアーカイブ」を再試行してください。",
+        verificationFailed:
+          "ワークスペース「{{workspace}}」がアーカイブ済みか確認できませんでした。再試行する前に履歴を開いて状態を確認してください。",
+        agentsRemaining:
+          "ワークスペース「{{workspace}}」にはまだ有効なエージェントがあります。履歴を開いて未完了のアーカイブを確認してください。",
+        agentNotArchived:
+          "エージェント {{agent}} がアーカイブされ、停止していることを確認できませんでした。履歴を開いて状態を確認してください。",
+      },
+      restore: {
+        title: "アーカイブ済みワークスペースを復元",
+        search: "アーカイブ済みワークスペースを検索",
+        empty: "このプロジェクトにアーカイブ済みワークスペースはありません",
+        updateRequired: "アーカイブ済みワークスペースを表示するにはホストを更新してください",
+        loadFailed: "アーカイブ済みワークスペースを読み込めませんでした",
+      },
       actions: {
         menu: "プロジェクトアクション",
         openSettings: "プロジェクト設定を開く",
@@ -1646,8 +1732,9 @@ export const ja: TranslationResources = {
     },
     fields: {
       project: "プロジェクト",
-      base: "ベース",
+      branch: "ブランチ",
       baseNotApplicable: "該当なし",
+      host: "ホスト",
     },
     titlePlaceholder: "タイトル（任意）",
     errors: {
@@ -2244,12 +2331,32 @@ export const ja: TranslationResources = {
       creatingAgent: "エージェントを作成中",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: ".{{extension}} ファイルを開くアプリ",
+        pickerTitleFilename: "{{filename}} を開くアプリ",
+        dontAskAgain: "今後は確認しない",
+        use: "使用",
+        openWith: "このアプリで開く…",
+        alwaysUseExtension: ".{{extension}} に常に使用",
+        alwaysUseFilename: "{{filename}} に常に使用",
+        option: "{{title}} — {{owner}}",
+        actions: "ファイルの操作",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "画像",
+          source: "ソース",
+        },
+      },
       directoryMissing: "ワークスペースディレクトリが見つかりません。",
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
+      documentUnsupported: "{{type}} ファイルはこのデバイスでは表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
+      notFound: "ファイルが見つかりません",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
         fileSize: "ファイルサイズ {{size}}",
@@ -2261,10 +2368,7 @@ export const ja: TranslationResources = {
         changedOnDisk: "ディスク上で変更されました",
         vimMode: "Vim モード {{mode}}",
         cursor: "{{line}} 行、{{column}} 列",
-        preview: "プレビュー",
-        source: "ソース",
         deletedTitle: "ファイルはディスク上から削除されました",
-        checkFailedTitle: "ディスク上のファイルを確認できませんでした",
         preservedDescription: "開いているコピーは保持されています。",
         conflictDescription: "ローカルの内容は保持されています。残すバージョンを選択してください。",
         overwrite: "上書き",
@@ -2441,6 +2545,70 @@ export const ja: TranslationResources = {
       saveAccessibility: "レビューコメントを保存",
     },
   },
+  providerUsage: {
+    options: "設定",
+    refreshFailed: "使用状況を更新できません",
+    noHosts: "接続中のホストがありません",
+    agentError: "使用状況を読み込めません: {{reason}}",
+    pin: "ピン留め",
+    unpin: "ピン留めを解除",
+    displayAs: "割合",
+    displayUsed: "使用済み",
+    displayRemaining: "残り",
+    showInSidebar: "サイドバーに概要を表示",
+    showInSidebarHint: "ピン留めした期間をサイドバーの下部に表示します",
+    runToRefresh: "{{command}} を実行して更新してください。",
+    signInAgain: "再度サインインしてください。",
+    loginRejected: "ログインが拒否されました (HTTP {{status}})。{{remedy}}",
+    loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
+    title: "プラン使用量",
+    refresh: "更新",
+    refreshAll: "すべて更新",
+    refreshing: "更新中...",
+    loading: "使用状況を読み込み中...",
+    empty: "使用状況データがありません",
+    errorTitle: "使用状況を読み込めません",
+    hostUnavailable: "{{host}} に接続してプロバイダーの使用状況を確認してください",
+    hostUpgradeRequired: "{{host}} を更新してプロバイダーの使用状況を確認してください",
+    clientUnavailable: "ホスト接続の準備ができていません",
+    retry: "再試行",
+    tooltipLoading: "プラン使用状況を読み込み中...",
+    status: {
+      error: "エラー",
+      unavailable: "利用不可",
+    },
+    values: {
+      used: "{{percentage}} 使用済み",
+      remaining: "残り {{amount}}",
+    },
+    labels: {
+      session: "セッション",
+      weekly: "週間",
+      monthly: "月間",
+      codeReview: "コードレビュー",
+      credits: "クレジット",
+      monthlyCredits: "月間クレジット",
+    },
+    duration: {
+      days: "{{value}}日",
+      hours: "{{value}}時間",
+      minutes: "{{value}}分",
+    },
+    timing: {
+      lastUpdated: "最終更新: {{relativeTime}}",
+      noSuccessfulUpdate: "正常な更新はまだありません",
+      resetTimePassed: "リセット時刻を過ぎています",
+      resettingNow: "まもなくリセット",
+      resetsIn: "{{duration}}後にリセット",
+      runsOutNow: "まもなく上限に到達",
+      runsOutIn: "{{duration}}後に上限に到達",
+      justNow: "たった今",
+      daysAgo: "{{value}}日前",
+      hoursAgo: "{{value}}時間前",
+      minutesAgo: "{{value}}分前",
+      updated: "更新: {{relativeTime}}",
+    },
+  },
   settings: {
     title: "設定",
     loading: "設定を読み込み中...",
@@ -2469,6 +2637,7 @@ export const ja: TranslationResources = {
       terminal: "ターミナル",
       browser: "ブラウザ",
       editor: "エディター",
+      files: "ファイル",
       shortcuts: "ショートカット",
       integrations: "連携",
       notifications: "通知",
@@ -2506,8 +2675,28 @@ export const ja: TranslationResources = {
       vimKeybindings: "Vim キーバインド",
       vimHint: "Web とデスクトップのソースファイルに適用されます。",
     },
+    files: {
+      title: "ファイル",
+      askEveryTime: "毎回確認する",
+      askAgain: "もう一度確認する",
+      askAgainFor: "{{label}} をもう一度確認する",
+      unavailable: "接続中のホストにありません",
+      empty: "プラグインがファイルパネルを追加すると、ここに表示されます",
+    },
     notifications: {
       title: "通知",
+      chooseHost:
+        "設定対象のホストを選び、そのホストに接続するすべてのデバイスの通知を設定してください。",
+      hostTitle: "{{host}} の通知",
+      agentAware: "エージェントを考慮した通知",
+      agentAwareHint:
+        "エージェント間の通常の結果は通知せず、対応が必要なときに「レビュー待ち」バッジを表示します。{{host}} に接続するすべてのデバイスに適用されます。無効にしても、人への対応依頼と安全に関する通知は引き続き利用できます。",
+      updateHost: "この設定を変更するには、ホストを更新してください。",
+      readOnly: "この設定を変更するには、このホストの管理権限が必要です。",
+      unavailable: "保存する前に、管理権限のある対応ホストに接続してください。",
+      notSaved: "ホストがこの通知設定を保存しませんでした。もう一度お試しください。",
+      loadFailed: "ホストの通知設定を読み込めません。",
+      saving: "保存中...",
       permission: "通知の権限",
       refreshAccessibility: "通知の権限を更新",
       playSound: "サウンドを再生",
@@ -2551,6 +2740,25 @@ export const ja: TranslationResources = {
     general: {
       title: "一般",
       sending: "送信",
+      browserExtensions: {
+        title: "拡張機能",
+        compatibility:
+          "Chrome 拡張機能の一部の機能はサポートされていません。拡張機能は自動更新されません。",
+        store: "Chrome ウェブストア",
+        openStore: "ウェブストアを開く",
+        refresh: "更新",
+        enable: "有効にする",
+        disable: "無効にする",
+        retry: "再試行",
+        remove: "削除",
+        removeTitle: "{{name}} を削除しますか？",
+        removeMessage: "Paseo から拡張機能を削除します。展開済みのソースフォルダーは保持されます。",
+        loading: "拡張機能を読み込み中...",
+        empty: "拡張機能はインストールされていません。",
+        unpackedHint: "manifest.json を含むフォルダーから拡張機能を読み込みます。",
+        loadUnpacked: "展開済みを読み込む",
+        unavailable: "拡張機能を利用できません。デスクトップアプリを更新してください。",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
@@ -2768,6 +2976,7 @@ export const ja: TranslationResources = {
       searchPlaceholder: "ショートカットを検索",
       unavailableOnMobile: "キーボードショートカットはデスクトップでのみ利用できます",
       capturePrompt: "ショートカットを押してください...",
+      captureIndexPrompt: "最後に1〜9の数字を入力してください。",
       unassigned: "未設定",
       actions: {
         menu: "{{name}} のアクション",

@@ -1,11 +1,15 @@
-import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { AgentAttentionObjectives } from "./attention/objectives.js";
+import { buildStoredAgentPayload } from "./agent-projections.js";
+import { WorkspaceAttention } from "./workspace-attention.js";
+import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
+import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentStorage } from "./agent-storage.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -146,6 +150,338 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test.each([
+    ["completed human", "idle", "human", false],
+    ["human error", "error", "human", true],
+    ["agent error", "error", "agent", false],
+    ["old known error", "error", "missing", true],
+    ["old known quiet error", "error", "missing-quiet", false],
+    ["old known completed", "closed", "missing", false],
+    ["legacy undefined", "closed", "unknown", undefined],
+  ] as const)(
+    "T59 queued read preserves audience/problem policy after reload: %s",
+    async (_name, status, audience, expected) => {
+      const timestamp = "2026-10-26T10:00:00.000Z";
+      const ledger = new AgentAttentionObjectives();
+      if (audience === "human")
+        ledger.admit({ inputs: [{ kind: "human", requestId: "human-request" }] });
+      if (audience === "agent")
+        ledger.admit({
+          inputs: [
+            {
+              kind: "agent",
+              requestId: "worker-request",
+              requester: { serverId: "host", agentId: "requester" },
+            },
+          ],
+        });
+      if (status !== "error") ledger.finish();
+      await storage.applySnapshot(
+        createManagedAgent({
+          id: "read-agent",
+          lifecycle: status,
+          attention: {
+            requiresAttention: true,
+            attentionReason: status === "error" ? "error" : "finished",
+            attentionTimestamp: new Date(timestamp),
+          },
+        }),
+      );
+      const record = await storage.get("read-agent");
+      if (!record) throw new Error("Missing persisted fixture");
+      const original = {
+        ...record,
+        ...(audience === "unknown" ? {} : { humanAttentionRequired: audience !== "missing-quiet" }),
+        ...(audience === "human" || audience === "agent"
+          ? { attentionObjectives: ledger.snapshot() }
+          : {}),
+        attentionMessage: "Explicit event override",
+      };
+      await storage.upsert(original);
+      expect(await storage.clearAttentionIfUnchanged("read-agent", timestamp)).not.toBeNull();
+      const loaded = await new AgentStorage(storagePath, logger).get("read-agent");
+      if (!loaded) throw new Error("Cleared record missing after fresh load");
+      expect(loaded).toMatchObject({
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+        attentionMessage: null,
+      });
+      expect(loaded.humanAttentionRequired).toBe(expected);
+      expect(loaded.attentionObjectives).toEqual(original.attentionObjectives);
+      expect(buildStoredAgentPayload(loaded, ["codex"]).humanAttentionRequired).toBe(expected);
+    },
+  );
+
+  test.each(["newer", "permission", "archived", "internal"] as const)(
+    "T59 refused queued clear preserves every domain field: %s",
+    async (refusal) => {
+      const timestamp = "2026-10-26T10:00:00.000Z";
+      await storage.applySnapshot(
+        createManagedAgent({
+          id: "protected",
+          lifecycle: "idle",
+          attention: {
+            requiresAttention: true,
+            attentionReason: "finished",
+            attentionTimestamp: new Date(timestamp),
+          },
+        }),
+      );
+      const record = await storage.get("protected");
+      if (!record) throw new Error("Missing protected fixture");
+      const ledger = new AgentAttentionObjectives();
+      ledger.admit({ inputs: [{ kind: "human", requestId: "keep-obligation" }] });
+      const protectedRecord = {
+        ...record,
+        humanAttentionRequired: true,
+        attentionMessage: "Keep explicit override",
+        attentionObjectives: ledger.snapshot(),
+        ...(refusal === "permission" ? { attentionReason: "permission" as const } : {}),
+        ...(refusal === "archived" ? { archivedAt: timestamp } : {}),
+        ...(refusal === "internal" ? { internal: true } : {}),
+      };
+      await storage.upsert(protectedRecord);
+      const beforeRecord = await new AgentStorage(storagePath, logger).get("protected");
+      if (!beforeRecord) throw new Error("Protected fixture was not persisted");
+      const directories = await fs.readdir(storagePath);
+      expect(directories).toHaveLength(1);
+      const directory = directories[0];
+      if (!directory) throw new Error("Protected fixture directory is missing");
+      const recordPath = path.join(storagePath, directory, "protected.json");
+      const beforeBytes = await fs.readFile(recordPath);
+      const oldTimestamp = refusal === "newer" ? "2026-10-26T09:59:59.000Z" : timestamp;
+      expect(await storage.clearAttentionIfUnchanged("protected", oldTimestamp)).toBeNull();
+      expect(await new AgentStorage(storagePath, logger).get("protected")).toEqual(beforeRecord);
+      expect(await fs.readFile(recordPath)).toEqual(beforeBytes);
+    },
+  );
+
+  test("T59 legacy workspace read keeps a later queued title and problem projection", async () => {
+    const timestamp = "2026-10-26T10:00:00.000Z";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "legacy-read",
+        lifecycle: "idle",
+        attention: {
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date(timestamp),
+        },
+      }),
+    );
+    const initial = await storage.get("legacy-read");
+    if (!initial) throw new Error("Missing legacy fixture");
+    await storage.upsert({ ...initial, workspaceId: "workspace", humanAttentionRequired: true });
+    let continueRead!: () => void;
+    let captured!: () => void;
+    const held = new Promise<void>((resolve) => {
+      continueRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      captured = resolve;
+    });
+    const published: StoredAgentRecord[] = [];
+    const attention = new WorkspaceAttention({
+      manager: { getAgent: () => null, clearAgentAttention: async () => {} },
+      storage: {
+        get: async (id) => {
+          const record = await storage.get(id);
+          captured();
+          await held;
+          return record;
+        },
+        upsert: (record) => storage.upsert(record),
+        clearAttentionIfUnchanged: (id, observed) =>
+          storage.clearAttentionIfUnchanged(id, observed),
+      },
+      publishStored: async (record) => {
+        published.push(record);
+      },
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "workspace",
+      projectId: "project",
+      cwd: "/repo",
+      kind: "directory",
+      displayName: "Workspace",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const capturedRecord = await storage.get("legacy-read");
+    if (!capturedRecord) throw new Error("Missing captured legacy fixture");
+    const cleared: string[] = [];
+    const pending = attention.clear({
+      workspace,
+      agents: [buildStoredAgentPayload(capturedRecord, ["codex"])],
+      onCleared: (id) => {
+        cleared.push(id);
+      },
+    });
+    try {
+      await readStarted;
+      const currentLedger = new AgentAttentionObjectives();
+      currentLedger.admit({ inputs: [{ kind: "human", requestId: "still-owed" }] });
+      await storage.upsert({
+        ...capturedRecord,
+        title: "Newer title",
+        lastStatus: "error",
+        lastError: "Retain error detail",
+        attentionObjectives: currentLedger.snapshot(),
+      });
+      continueRead();
+      await pending;
+      const loaded = await new AgentStorage(storagePath, logger).get("legacy-read");
+      expect(loaded).toMatchObject({
+        title: "Newer title",
+        lastStatus: "error",
+        lastError: "Retain error detail",
+        requiresAttention: false,
+        humanAttentionRequired: true,
+      });
+      expect(cleared).toEqual(["legacy-read"]);
+      const committed = await storage.get("legacy-read");
+      if (!committed || !loaded) throw new Error("Committed legacy-read fixture is missing");
+      expect(published).toEqual([committed]);
+      const reloadedPayload = buildStoredAgentPayload(loaded, ["codex"]);
+      expect(buildStoredAgentPayload(committed, ["codex"])).toEqual(reloadedPayload);
+      expect(published.map((record) => buildStoredAgentPayload(record, ["codex"]))).toEqual([
+        reloadedPayload,
+      ]);
+    } finally {
+      continueRead();
+    }
+  });
+
+  test("clearAttentionIfUnchanged preserves a newer event and permission attention", async () => {
+    const oldTimestamp = "2026-10-21T12:00:00.000Z";
+    const newTimestamp = "2026-10-21T12:00:01.000Z";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "receipt-agent",
+        lifecycle: "idle",
+        attention: {
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date(newTimestamp),
+        },
+      }),
+    );
+    expect(await storage.clearAttentionIfUnchanged("receipt-agent", oldTimestamp)).toBeNull();
+    expect((await storage.get("receipt-agent"))?.attentionTimestamp).toBe(newTimestamp);
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "receipt-agent",
+        lifecycle: "idle",
+        attention: {
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: new Date(newTimestamp),
+        },
+      }),
+    );
+    expect(await storage.clearAttentionIfUnchanged("receipt-agent", newTimestamp)).toBeNull();
+    expect((await storage.get("receipt-agent"))?.requiresAttention).toBe(true);
+  });
+
+  test("clearAttentionIfUnchanged serializes with a newer stored write", async () => {
+    const timestamp = "2026-10-21T12:00:00.000Z";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "receipt-agent",
+        lifecycle: "idle",
+        attention: {
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date(timestamp),
+        },
+      }),
+    );
+    const current = await storage.get("receipt-agent");
+    if (!current) throw new Error("Missing receipt agent");
+    const newerTimestamp = "2026-10-21T12:00:01.000Z";
+    const write = storage.upsert({ ...current, attentionTimestamp: newerTimestamp });
+    const clear = storage.clearAttentionIfUnchanged("receipt-agent", timestamp);
+    await write;
+    expect(await clear).toBeNull();
+    expect((await storage.get("receipt-agent"))?.attentionTimestamp).toBe(newerTimestamp);
+    expect(
+      (await storage.clearAttentionIfUnchanged("receipt-agent", newerTimestamp))?.requiresAttention,
+    ).toBe(false);
+    expect(
+      (await new AgentStorage(storagePath, logger).get("receipt-agent"))?.requiresAttention,
+    ).toBe(false);
+  });
+
+  test("snapshot operation null skips its write and commit callback", async () => {
+    const agent = createManagedAgent({ id: "snapshot-null" });
+    await storage.applySnapshot(agent);
+    const before = await storage.get(agent.id);
+    const persistedBefore = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(persistedBefore?.id).toBe(agent.id);
+    const resolveSnapshot = vi.fn(() => null);
+    const onCommitted = vi.fn();
+    await storage.applySnapshot(
+      { ...agent, cwd: "/tmp/skipped-snapshot" },
+      { operation: { resolveSnapshot, onCommitted } },
+    );
+    expect(resolveSnapshot).toHaveBeenCalledOnce();
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(await storage.get(agent.id)).toEqual(before);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toEqual(persistedBefore);
+    await storage.applySnapshot({ ...agent, currentModeId: "after-skip" });
+    expect((await storage.get(agent.id))?.lastModeId).toBe("after-skip");
+  });
+
+  test("snapshot operation deleting skips resolution and commit callback", async () => {
+    const agent = createManagedAgent({ id: "snapshot-deleting" });
+    await storage.applySnapshot(agent);
+    const before = await storage.get(agent.id);
+    const persistedBefore = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(persistedBefore?.id).toBe(agent.id);
+    const resolveSnapshot = vi.fn(() => ({ ...agent, cwd: "/tmp/deleted-snapshot" }));
+    const onCommitted = vi.fn();
+    storage.beginDelete(agent.id);
+    await storage.applySnapshot(agent, { operation: { resolveSnapshot, onCommitted } });
+    expect(resolveSnapshot).not.toHaveBeenCalled();
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(await storage.get(agent.id)).toEqual(before);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toEqual(persistedBefore);
+    await storage.remove(agent.id);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toBeNull();
+  });
+
+  test("snapshot operation wrong identity cannot write another agent", async () => {
+    const first = createManagedAgent({ id: "snapshot-first" });
+    const second = createManagedAgent({ id: "snapshot-second" });
+    await storage.applySnapshot(first);
+    await storage.applySnapshot(second);
+    const beforeFirst = await storage.get(first.id);
+    const beforeSecond = await storage.get(second.id);
+    const persistedBefore = new AgentStorage(storagePath, logger);
+    const persistedFirst = await persistedBefore.get(first.id);
+    const persistedSecond = await persistedBefore.get(second.id);
+    expect(persistedFirst?.id).toBe(first.id);
+    expect(persistedSecond?.id).toBe(second.id);
+    const onCommitted = vi.fn();
+    await expect(
+      storage.applySnapshot(first, {
+        operation: {
+          resolveSnapshot: () => ({ ...second, currentModeId: "wrong-writer" }),
+          onCommitted,
+        },
+      }),
+    ).rejects.toThrow("Snapshot resolver changed agent identity");
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(await storage.get(first.id)).toEqual(beforeFirst);
+    expect(await storage.get(second.id)).toEqual(beforeSecond);
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.get(first.id)).toEqual(persistedFirst);
+    expect(await reloaded.get(second.id)).toEqual(persistedSecond);
+    await storage.applySnapshot({ ...first, currentModeId: "after-rejection" });
+    expect((await storage.get(first.id))?.lastModeId).toBe("after-rejection");
   });
 
   test("applySnapshot persists configs and snapshot metadata", async () => {

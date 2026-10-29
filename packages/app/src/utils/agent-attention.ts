@@ -21,7 +21,10 @@ const ATTENTION_REASON_PRIORITY = {
   finished: 2,
 } as const;
 
-function getAttentionPriority(reason: Agent["attentionReason"]): number | null {
+function getAttentionPriority(agent: Agent): number | null {
+  if (agent.pendingPermissions.length > 0 || agent.attentionReason === "permission") return 0;
+  if (agent.status === "error" || agent.attentionReason === "error") return 1;
+  const reason = agent.attentionReason;
   if (!reason) {
     return null;
   }
@@ -38,11 +41,15 @@ export function pickAttentionAgent(agents: Agent[]): string | null {
       continue;
     }
 
-    if (agent.parentAgentId) {
+    // COMPAT(agentAudienceAttention): added in v0.12.0, remove after 2027-04-22 once host floor includes audience metadata.
+    if (
+      agent.humanAttentionRequired === false ||
+      (agent.parentAgentId && agent.humanAttentionRequired === undefined)
+    ) {
       continue;
     }
 
-    const priority = getAttentionPriority(agent.attentionReason);
+    const priority = getAttentionPriority(agent);
     if (priority === null) {
       continue;
     }
