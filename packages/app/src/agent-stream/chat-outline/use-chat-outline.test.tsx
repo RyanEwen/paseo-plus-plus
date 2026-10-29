@@ -1546,6 +1546,72 @@ describe("explicit history-window and indexed-content accounting", () => {
     });
   });
 
+  it.each([
+    { request: "projected", response: "projected" },
+    { request: "canonical", response: "projected" },
+    { request: "canonical", response: "canonical" },
+  ])("binds indexed predecessor content %j to its completed source proof", (projection) => {
+    const ledger = indexedReadLedger();
+    const prompt = contentReadResponse();
+    const source = {
+      ...contentReadResponse("assistant_message"),
+      requestId: "probe",
+      startCursor: { epoch: "epoch", seq: 2 },
+      endCursor: { epoch: "epoch", seq: 2 },
+      entries: [
+        {
+          ...prompt.entries[0],
+          seqStart: 2,
+          seqEnd: 2,
+          sourceSeqRanges: [{ startSeq: 2, endSeq: 2 }],
+          item: { type: "assistant_message", text: "Answer 2", messageId: "answer-2" },
+        },
+      ],
+    };
+    ledger.observeWindow(source);
+    expect(
+      ledger.classify({
+        ...contentReadRequest("probe"),
+        cursor: { epoch: "epoch", seq: 3 },
+      }),
+    ).toBe("context");
+    ledger.completeContext(source);
+    ledger.observe(
+      { type: "agent.timeline.list_prompts.response" },
+      {
+        requestId: "fresh-index",
+        agentId: "agent",
+        epoch: "epoch",
+        error: null,
+        prompts: [1, 3].map((seq) => ({
+          seq,
+          timestamp: new Date(0).toISOString(),
+          preview: `Prompt ${seq}`,
+        })),
+      },
+    );
+    expect(ledger.classify({ ...contentReadRequest(), projection: projection.request })).toBe(
+      "content",
+    );
+    ledger.completeContent({ ...prompt, projection: projection.response });
+    expect(ledger.summary()).toEqual({
+      allBefore: 2,
+      windowBefore: 0,
+      contentBefore: 1,
+      pendingContent: 0,
+      contextBefore: 1,
+      pendingContext: 0,
+      contextChainActive: false,
+      errors: [],
+    });
+    expect(ledger.certifiedPrompts()).toEqual([{ id: "prompt-1", text: "Prompt 1" }]);
+    expect(ledger.mountingPrompt()).toEqual({ id: "prompt-1", text: "Prompt 1" });
+    expect(
+      ledger.classify({ ...contentReadRequest("duplicate"), projection: projection.request }),
+    ).toBeUndefined();
+    expect(ledger.summary().errors).toHaveLength(1);
+  });
+
   it("rejects cache-shaped reads without an advertised capability and canonical index", () => {
     const ledger = createTimelineRequestLedger("agent", protocolSchemas);
     expect(ledger.classify(contentReadRequest())).toBeUndefined();

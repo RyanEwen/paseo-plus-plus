@@ -180,6 +180,8 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
         candidate.epoch === cursor.epoch &&
         candidate.indexedPromptSeq === seq,
     );
+    if (request.projection === "canonical" && !chain)
+      return reject("Canonical indexed content requires its validated source chain");
     if (!promptSeqs.has(seq)) return reject("Content must target an indexed canonical prompt");
     if (!chain && (loaded.has(key) || requestedContent.has(key))) {
       return reject("Content read must target one uncached canonical indexed prompt per epoch");
