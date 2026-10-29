@@ -18,10 +18,7 @@ export interface CheckoutStatusClient {
   getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
 }
 
-// Checkout status enters the app through exactly two doors: daemon pushes
-// (applyCheckoutStatusUpdateFromEvent) and query fetches (fetchCheckoutStatus). Both run
-// the dirty-state reactions, so they hold regardless of which screens are mounted.
-
+/** Reconcile comparison choices at the fetch boundary, including while Changes is unmounted. */
 export async function fetchCheckoutStatus({
   client,
   serverId,
@@ -78,6 +75,8 @@ export function applyCheckoutStatusUpdateFromEvent({
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
   });
+
+  // Pushes must expire choices even when no Changes surface is mounted.
   expireWorkingDiffComparisons({
     serverId,
     cwd: payload.cwd,

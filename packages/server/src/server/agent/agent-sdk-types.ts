@@ -8,8 +8,10 @@ import type {
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { AttentionAdmission } from "./attention/objectives.js";
 
 export type {
   AgentFeature,
@@ -196,6 +198,8 @@ export type AgentPromptContentBlock =
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
 export interface AgentRunOptions {
+  /** Daemon-owned audience provenance, never inferred from provider prompt text. */
+  attention?: readonly AttentionAdmission[];
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
@@ -342,6 +346,8 @@ interface ToolCallBase {
   name: string;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;
+  /** Set when the row is a delivered agent message rather than a provider tool call. */
+  agentMessage?: AgentMessage;
 }
 
 type ToolCallRunningTimelineItem = ToolCallBase & {

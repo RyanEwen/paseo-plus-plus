@@ -1,3 +1,6 @@
+import { DockReservationContext } from "./dock-reservation";
+import { usePublishDockReservation } from "./use-dock-reservation";
+import { KeyboardDockDisplacementContext } from "./dock-displacement.ios";
 import { useMemo, useEffect, type ReactNode } from "react";
 import { Animated, useAnimatedValue, type ViewProps } from "react-native";
 import { useKeyboardAnimation } from "react-native-keyboard-controller";
@@ -17,6 +20,7 @@ export function KeyboardTranslateView({
   style,
   ...props
 }: KeyboardTranslateViewProps) {
+  const reservation = usePublishDockReservation(enabled, bottomClearance);
   const insets = useSafeAreaInsets();
   const { height, progress } = useKeyboardAnimation();
   const translateY = useMemo(
@@ -46,14 +50,27 @@ export function KeyboardTranslateView({
     animation.start();
     return () => animation.stop();
   }, [enabled, enabledValue]);
-  const keyboardStyle = useMemo(
-    () => ({ transform: [{ translateY: Animated.multiply(translateY, enabledValue) }] }),
+  // Measurement and sticky compensation must read the same gated native transform.
+  const effectiveTranslateY = useMemo(
+    () => Animated.multiply(translateY, enabledValue),
     [enabledValue, translateY],
+  );
+  const displacement = useMemo(
+    () => Animated.multiply(effectiveTranslateY, -1),
+    [effectiveTranslateY],
+  );
+  const keyboardStyle = useMemo(
+    () => ({ transform: [{ translateY: effectiveTranslateY }] }),
+    [effectiveTranslateY],
   );
 
   return (
     <Animated.View style={[style, keyboardStyle]} {...props}>
-      {children}
+      <KeyboardDockDisplacementContext.Provider value={displacement}>
+        <DockReservationContext.Provider value={reservation}>
+          {children}
+        </DockReservationContext.Provider>
+      </KeyboardDockDisplacementContext.Provider>
     </Animated.View>
   );
 }

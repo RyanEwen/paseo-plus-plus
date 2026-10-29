@@ -1,25 +1,22 @@
-import { useTextLink } from "@/hooks/use-text-link";
-import { useCallback, useMemo } from "react";
-import { Text, View, type GestureResponderEvent } from "react-native";
+import { useCallback, useContext, type ComponentRef } from "react";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AttachmentFrame, AttachmentLabel, AttachmentThumbnail } from "./attachment-pill";
+import { NaturalMessageFlowContext } from "./user-message-flow";
+import { NativeMessageVisibility } from "./user-message-native-flow";
 
-/** A compact copy counts attachments; disclosure restores every original attachment pill. */
+/** Compact paint omits attachments; disclosure reveals the original attachment pills. */
 export function UserMessageAttachments({
-  onContentPress,
-  contentAccessibilityLabel,
   images,
   attachments,
   compact,
   hasText,
   onOpen,
 }: {
-  onContentPress?: (event: GestureResponderEvent) => void;
-  contentAccessibilityLabel?: string;
   images: UserMessageImageAttachment[];
   attachments: AgentAttachment[];
   compact: boolean;
@@ -27,27 +24,13 @@ export function UserMessageAttachments({
   onOpen: (image: UserMessageImageAttachment) => void;
 }) {
   const { t } = useTranslation();
-  const keyboardLink = useTextLink(onContentPress);
-  const count = images.length + attachments.length;
-  // Share the compact cell with prompt text; an intrinsic count must not consume it.
-  const summaryStyle = useMemo(
-    () => [styles.summary, hasText ? styles.sharedSummary : undefined],
-    [hasText],
+  const flow = useContext(NaturalMessageFlowContext);
+  const registerAttachments = useCallback(
+    (node: ComponentRef<typeof View> | null) => flow?.registerAttachments?.(node),
+    [flow],
   );
-  if (compact)
-    return count > 0 ? (
-      <Text
-        style={summaryStyle}
-        numberOfLines={1}
-        {...keyboardLink}
-        onPress={onContentPress}
-        accessibilityRole={onContentPress ? "link" : undefined}
-        accessibilityHint={contentAccessibilityLabel}
-      >
-        {t("stickyPrompt.attachments", { count })}
-      </Text>
-    ) : null;
-  return (
+  if (compact && !flow) return null;
+  const attachmentPills = (
     <>
       {images.length > 0 && (
         <View style={[styles.row, (hasText || attachments.length > 0) && styles.spacing]}>
@@ -81,6 +64,26 @@ export function UserMessageAttachments({
       )}
     </>
   );
+  if (!flow) return attachmentPills;
+  if (flow.nativePresentation) {
+    return (
+      <NativeMessageVisibility driver={flow.nativePresentation} visible="body">
+        {attachmentPills}
+      </NativeMessageVisibility>
+    );
+  }
+  return (
+    <View
+      ref={registerAttachments}
+      style={flow.compact ? styles.hidden : undefined}
+      pointerEvents={flow.compact ? "none" : "box-none"}
+      accessibilityElementsHidden={flow.compact}
+      importantForAccessibility={flow.compact ? "no-hide-descendants" : "auto"}
+      aria-hidden={flow.compact}
+    >
+      {attachmentPills}
+    </View>
+  );
 }
 
 function ImagePill({
@@ -101,12 +104,7 @@ function ImagePill({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  hidden: { opacity: 0 },
   row: { flexDirection: "row", gap: theme.spacing[2], flexWrap: "wrap" },
   spacing: { marginBottom: theme.spacing[2] },
-  sharedSummary: { flex: 1, minWidth: 0 },
-  summary: {
-    color: theme.colors.userMessageMutedForeground,
-    fontSize: theme.fontSize.sm,
-    flexShrink: 1,
-  },
 }));

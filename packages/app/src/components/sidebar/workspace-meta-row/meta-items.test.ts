@@ -99,6 +99,7 @@ describe("selectMetaRowItems", () => {
   it.each([
     ["project", ["branch", "host", "changeRequest", "checks", "services", "labels"]],
     ["branch", ["project", "host", "changeRequest", "checks", "services", "labels"]],
+    ["host", ["project", "branch", "changeRequest", "checks", "services", "labels"]],
     ["changeRequest", ["project", "branch", "host", "checks", "services", "labels"]],
     ["services", ["project", "branch", "host", "changeRequest", "checks", "labels"]],
     ["labels", ["project", "branch", "host", "changeRequest", "checks", "services"]],
@@ -106,6 +107,15 @@ describe("selectMetaRowItems", () => {
     expect(
       kinds(select({ visible: { ...DEFAULT_SIDEBAR_ROW_ITEMS, branch: true, [item]: false } })),
     ).toEqual(expected);
+  });
+
+  it("restores an eligible host when enabled without reviving an unavailable badge", () => {
+    const visible = { ...DEFAULT_SIDEBAR_ROW_ITEMS, host: false };
+    expect(kinds(select({ visible }))).not.toContain("host");
+
+    visible.host = true;
+    expect(kinds(select({ visible }))).toContain("host");
+    expect(kinds(select({ visible, hasHostBadge: false }))).not.toContain("host");
   });
 
   it("drops checks and only checks when they are hidden", () => {

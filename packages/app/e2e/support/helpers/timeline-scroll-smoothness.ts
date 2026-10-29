@@ -513,13 +513,15 @@ export function findScrollJumps(frames: ScrollFrame[]) {
       ? previous.rows.reduce((growth, row) => {
           if (row.top < intendedRow.top || row.top >= before.top) return growth;
           const height = currentRows.get(row.id)?.height ?? row.height;
-          return growth + Math.max(0, height - row.height);
+          return growth + height - row.height;
         }, 0)
       : 0;
-    const excessForward = movement > wheelBudget + enteredRowGrowth + 32;
+    const readingMovement = movement - enteredRowGrowth;
+    const excessForward = readingMovement > wheelBudget + 32;
     // Upward wheel input moves the same text DOWN the viewport. A negative move
     // is a reversal, independent of legitimate scrollTop compensation on prepend.
-    if (movement >= -8 && (!idle || Math.abs(movement) <= 8) && !excessForward) return [];
+    if (readingMovement >= -8 && (!idle || Math.abs(readingMovement) <= 8) && !excessForward)
+      return [];
     return [
       {
         frame: index,

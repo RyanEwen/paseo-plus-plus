@@ -1,5 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { CompactHeader } from "@/components/headers/compact-header";
 import {
   EXPLORER_TOGGLE_KEYS,
@@ -60,13 +62,22 @@ export function CompactWorkspaceHeader({
   );
 
   return (
-    <CompactHeader
-      navigation="menu"
-      title={title}
-      titleTestID="workspace-header-title"
-      subtitle={projectRow}
-      loading={isLoading}
-      actions={actions}
-    />
+    <View style={styles.surface}>
+      <CompactHeader
+        navigation="menu"
+        title={title}
+        titleTestID="workspace-header-title"
+        subtitle={projectRow}
+        loading={isLoading}
+        actions={actions}
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  surface: {
+    // The workspace title stays opaque even when its header floats above the chat.
+    backgroundColor: theme.colors.surfaceWorkspace,
+  },
+}));

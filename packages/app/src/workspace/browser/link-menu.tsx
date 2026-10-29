@@ -9,35 +9,35 @@ import {
   ContextMenuContent,
   ContextMenuItem,
 } from "@/components/ui/context-menu";
-import { useToast } from "@/contexts/toast-context";
+import { useToast } from "@/contexts/toast-api-context";
 import { isWeb } from "@/constants/platform";
 import { isHttpUrl } from "@/utils/http-url";
-import { useWorkspaceBrowserOpeningContext } from "./context";
+import { useWorkspaceBrowserOpeningContext, useWorkspaceLinkOpeningContext } from "./context";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 /** Offer browser destinations while preserving the wrapped link's primary action. */
 export function WorkspaceHttpLinkMenu({
   url,
   children,
-  defaultDestination = "external",
-  inline = false,
+  defaultDestination,
 }: {
   url: string | null | undefined;
   children: ReactNode;
   defaultDestination?: BrowserLinkDestination;
-  inline?: boolean;
 }) {
   const openInPaseo = useWorkspaceBrowserOpeningContext();
+  const policy = useWorkspaceLinkOpeningContext();
+  const primaryDestination = defaultDestination ?? policy.defaultDestination;
   const destinations = workspaceBrowserLinkDestinations({
     url,
     hasWorkspaceBrowser: Boolean(openInPaseo),
-    defaultDestination,
+    defaultDestination: primaryDestination,
   });
   if (!isWeb || !url || destinations.length === 0) {
     return children;
   }
   return (
-    <BrowserLinkMenu url={url} destinations={destinations} inline={inline}>
+    <BrowserLinkMenu url={url} destinations={destinations}>
       {children}
     </BrowserLinkMenu>
   );
@@ -47,16 +47,14 @@ function BrowserLinkMenu({
   url,
   children,
   destinations,
-  inline,
 }: {
   url: string;
   children: ReactNode;
   destinations: BrowserLinkDestination[];
-  inline: boolean;
 }) {
   return (
     <ContextMenu>
-      <ContextMenuTrigger contextOnly inline={inline} style={styles.inline}>
+      <ContextMenuTrigger contextOnly style={styles.inline}>
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent testID="workspace-http-link-menu">
@@ -75,6 +73,12 @@ export function WorkspaceBrowserMenuItem({ url }: { url: string | null | undefin
     return null;
   }
   return <BrowserDestinationMenuItem url={url} destination="paseo" />;
+}
+
+/** Explicit external action for an existing workspace menu. */
+export function WorkspaceExternalBrowserMenuItem({ url }: { url: string | null | undefined }) {
+  if (!url || !isHttpUrl(url)) return null;
+  return <BrowserDestinationMenuItem url={url} destination="external" />;
 }
 
 function BrowserDestinationMenuItem({

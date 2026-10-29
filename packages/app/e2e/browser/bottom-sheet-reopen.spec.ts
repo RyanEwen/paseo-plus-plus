@@ -4,6 +4,12 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 
 import { buildSettingsSectionRoute } from "@/utils/host-routes";
 import { renameModalInput } from "../support/helpers/rename";
+import {
+  mainWorkspaceTabRow,
+  chooserTabLabel,
+  readWorkspaceTabSnapshot,
+} from "../support/helpers/workspace-tabs";
+import { getServerId } from "../support/helpers/server-id";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -76,10 +82,11 @@ async function closeBottomSheetWithBackdrop(page: Page) {
 }
 
 async function openTabActions(page: Page) {
-  const trigger = page
-    .getByTestId("workspace-tabs-row")
-    .getByRole("button", { name: /^Open menu for/ });
-  await trigger.click();
+  await page
+    .getByTestId("workspace-tabs-scroll")
+    .getByRole("tab")
+    .first()
+    .click({ button: "right" });
   await expectBottomSheetOpen(page);
 }
 
@@ -158,6 +165,15 @@ test.describe("mobile bottom sheet reopen", () => {
   }) => {
     const session = await openMockAgentAtMobileBreakpoint(page);
     try {
+      const deck = page
+        .getByTestId(`workspace-deck-entry-${getServerId()}:${session.workspaceId}`)
+        .filter({ visible: true });
+      const before = await readWorkspaceTabSnapshot(page, session.workspaceId);
+      const agentTab = before.tabs.find(
+        (tab) => tab.target.kind === "agent" && tab.target.agentId === session.agentId,
+      );
+      if (!agentTab) throw new Error("Expected the selected fixture agent tab");
+      expect(before.focusedTabId).toBe(agentTab.tabId);
       const workspacePath = new URL(page.url()).pathname;
       await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
       const control = page.getByTestId("paseo-plus-plus-mobileWorkspaceTabs").getByRole("switch");
@@ -166,26 +182,33 @@ test.describe("mobile bottom sheet reopen", () => {
       await expect(control).not.toBeChecked();
       await expect(control).toBeEnabled();
       await page.goto(workspacePath);
-      const chooser = page.getByTestId("workspace-tab-switcher-trigger");
+      const chooser = deck.getByTestId("workspace-tab-switcher-trigger");
       await expect(chooser).toBeVisible();
-      await expect(page.getByTestId("workspace-tabs-scroll")).toHaveCount(0);
+      await expect(chooser).toHaveText("1");
+      await expect(chooser).toHaveAccessibleName("Switch tabs (1 open)");
+      await expect(
+        mainWorkspaceTabRow({ page, deck }).getByTestId("workspace-tabs-scroll"),
+      ).toHaveCount(0);
+      expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
       for (let attempt = 0; attempt < 2; attempt++) {
         await chooser.click();
         await expectBottomSheetOpen(page);
-        const actions = page.getByTestId(`workspace-tab-menu-agent_${session.agentId}-trigger`);
+        const actions = page.getByTestId(`workspace-tab-menu-${agentTab.tabId}-trigger`);
         await actions.click();
-        await page.getByTestId(`workspace-tab-menu-agent_${session.agentId}-rename`).click();
+        await page.getByTestId(`workspace-tab-menu-${agentTab.tabId}-rename`).click();
         await expect(
           renameModalInput(page, `workspace-tab-rename-modal-agent-${session.agentId}`),
         ).toBeVisible();
         await page.getByRole("button", { name: "Cancel", exact: true }).click();
         await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
         await expect(
-          page.getByText("Bottom sheet reopen e2e", { exact: true }).last(),
+          chooserTabLabel(page, agentTab.tabId, "Bottom sheet reopen e2e"),
         ).toBeVisible();
         await closeBottomSheetWithBackdrop(page);
       }
-      await expect(chooser).toContainText("Bottom sheet reopen e2e");
+      await expect(chooser).toHaveText("1");
+      await expect(chooser).toHaveAccessibleName("Switch tabs (1 open)");
+      expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
       await expectComposerVisible(page);
     } finally {
       await session.cleanup();

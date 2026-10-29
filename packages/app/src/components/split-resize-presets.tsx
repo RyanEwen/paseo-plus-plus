@@ -22,6 +22,7 @@ export function SplitResizePresets({
   sizes,
   index,
   onSelect,
+  canApplyPreset,
 }: {
   children: ReactNode;
   style: StyleProp<ViewStyle>;
@@ -31,24 +32,30 @@ export function SplitResizePresets({
   sizes: number[];
   index: number;
   onSelect: (sizes: number[]) => void;
+  canApplyPreset?: (sizes: number[]) => boolean;
 }) {
   const { t } = useTranslation();
   const { settings } = useSettings();
   const available = enabled && settings.paseoPlusPlus.splitLayoutPresets;
   const choices = useMemo(
     () =>
-      SPLIT_LAYOUT_PRESETS.map((preset) => ({
-        label: preset.label,
-        fraction: preset.fraction,
-        icon: (
-          <SplitPresetGlyph
-            side={direction === "horizontal" ? "right" : "bottom"}
-            fraction={preset.fraction}
-          />
-        ),
-        select: () => onSelect(applySplitLayoutPreset(sizes, index, preset.fraction)),
-      })),
-    [sizes, index, onSelect, direction],
+      SPLIT_LAYOUT_PRESETS.map((preset) => {
+        const nextSizes = applySplitLayoutPreset(sizes, index, preset.fraction);
+        const allowed =
+          canApplySplitLayoutPreset(sizes, index, preset.fraction) &&
+          (canApplyPreset?.(nextSizes) ?? true);
+        return {
+          label: preset.label,
+          fraction: preset.fraction,
+          icon: <SplitPresetGlyph direction={direction} fraction={preset.fraction} />,
+          available: allowed,
+          select: () => {
+            // Custom dock limits must guard execution as well as the disabled control.
+            if (allowed) onSelect(nextSizes);
+          },
+        };
+      }),
+    [sizes, index, onSelect, direction, canApplyPreset],
   );
   const pair = (sizes[index] ?? 0) + (sizes[index + 1] ?? 0);
   return (
@@ -61,7 +68,8 @@ export function SplitResizePresets({
         {children}
       </HoverCardTrigger>
       <HoverCardContent
-        placement={direction === "horizontal" ? "right" : "bottom"}
+        anchor="cursor"
+        placement="bottom"
         testID="workspace-split-presets"
         accessibilityLabel={t("workspace.splits.chooseRatio")}
       >
@@ -78,7 +86,7 @@ export function SplitResizePresets({
               style={styles.choice}
               textStyle={styles.ratio}
               leftIcon={preset.icon}
-              disabled={!canApplySplitLayoutPreset(sizes, index, preset.fraction)}
+              disabled={!preset.available}
               accessibilityLabel={t("workspace.splits.ratio", { ratio: preset.label })}
               testID={`workspace-split-preset-${preset.label.replace("/", "-")}`}
               onPress={preset.select}

@@ -1,0 +1,118 @@
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
+@@ -1,6 +1,10 @@
+ package expo.modules.notifications.notifications.presentation.builders
+ 
+ import android.app.Notification
++import android.app.PendingIntent
++import android.content.ComponentName
++import android.content.Intent
++import android.net.Uri
+ import android.content.Context
+ import android.content.pm.PackageManager
+ import android.graphics.Bitmap
+@@ -153,7 +157,30 @@
+     } else {
+       builder.setLargeIcon(largeIcon)
+     }
+-    return builder.build()
++    val built = builder.build()
++    // An app may register its own nonexported receiver. Preserve Expo's intent if one exists.
++    try {
++      val receiver = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
++        .metaData?.getString("expo.modules.notifications.delete_intent_receiver")
++      if (built.deleteIntent == null && receiver != null) {
++        val component = ComponentName(context.packageName, receiver)
++        val receiverInfo = context.packageManager.getReceiverInfo(component, 0)
++        if (!receiverInfo.exported && receiverInfo.applicationInfo.uid == context.applicationInfo.uid) {
++          val dismissed = Intent().setComponent(component)
++            .setData(Uri.Builder().scheme("expo-notification-dismissed").authority(context.packageName)
++              .appendPath(notification.notificationRequest.identifier).build())
++            .putExtra("expo.notification.content", notificationContent.body?.toString())
++          built.deleteIntent = PendingIntent.getBroadcast(context, 0, dismissed,
++            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
++        }
++      }
++    } catch (error: PackageManager.NameNotFoundException) {
++      // An invalid optional app registration must not prevent the original alert.
++      Log.w("ExpoNotificationBuilder", "Notification dismissal receiver is unavailable", error)
++    } catch (error: SecurityException) {
++      Log.w("ExpoNotificationBuilder", "Notification dismissal receiver is inaccessible", error)
++    }
++    return built
+   }
+ 
+   private fun applySoundsAndVibrations(content: INotificationContent, builder: NotificationCompat.Builder) {
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/ExpoFirebaseMessagingService.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/ExpoFirebaseMessagingService.kt
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/ExpoFirebaseMessagingService.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/ExpoFirebaseMessagingService.kt
+@@ -1,5 +1,8 @@
+ package expo.modules.notifications.service
+ 
++import android.content.Intent
++import android.content.pm.PackageManager
++import android.os.Bundle
+ import com.google.firebase.messaging.FirebaseMessagingService
+ import com.google.firebase.messaging.RemoteMessage
+ import expo.modules.notifications.service.interfaces.FirebaseMessagingDelegate
+@@ -9,7 +12,58 @@
+     expo.modules.notifications.service.delegates.FirebaseMessagingDelegate(this)
+   }
+ 
+-  override fun onMessageReceived(remoteMessage: RemoteMessage) = firebaseMessagingDelegate.onMessageReceived(remoteMessage)
++  private val nativePresentationEnabled by lazy {
++    packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
++      .metaData?.getBoolean("expo.modules.notifications.native_presentation", false) == true
++  }
++
++  // Firebase dispatch is synchronous, but service entry points need not share a thread.
++  // Keep the original RemoteMessage local to this dispatch, including nested dispatches.
++  private val presentationMessage = ThreadLocal<RemoteMessage>()
++
++  /**
++   * Opt-in native presentation preserves Expo's serialized request and deleteIntent in background.
++   * Firebase Messaging 25.0.1 handleIntent is an internal, version-pinned seam: its superclass
++   * still owns duplicate rejection, message types, token callbacks and transport acknowledgement.
++   * Only auto-display classification changes during that call; Expo receives the original payload.
++   */
++  override fun handleIntent(intent: Intent) {
++    val extras = intent.extras
++    if (extras == null || !usesNativePresentation(intent, extras)) {
++      super.handleIntent(intent)
++      return
++    }
++
++    val previous = presentationMessage.get()
++    val original = Bundle(extras).apply { remove("androidx.content.wakelockid") }
++    val dispatch = Intent(intent).replaceExtras(Bundle(extras).apply {
++      putString("gcm.n.e", "0")
++      putString("gcm.notification.e", "0")
++    })
++    presentationMessage.set(RemoteMessage(original))
++    try {
++      super.handleIntent(dispatch)
++    } finally {
++      if (previous == null) presentationMessage.remove() else presentationMessage.set(previous)
++    }
++  }
++
++  /** Leave data-only, silent/no-UI and non-message events on Firebase's unchanged path. */
++  private fun usesNativePresentation(intent: Intent, extras: Bundle): Boolean {
++    if (!nativePresentationEnabled) return false
++    if (intent.action != "com.google.android.c2dm.intent.RECEIVE" &&
++      intent.action != "com.google.firebase.messaging.RECEIVE_DIRECT_BOOT") return false
++    val messageType = extras.getString("message_type")
++    if (messageType != null && messageType != "gcm") return false
++    val notification = extras.getString("gcm.n.e") == "1" ||
++      extras.getString("gcm.notification.e") == "1"
++    val noUi = extras.getString("gcm.n.noui") == "1" ||
++      extras.getString("gcm.notification.noui") == "1"
++    return notification && !noUi
++  }
++
++  override fun onMessageReceived(remoteMessage: RemoteMessage) =
++    firebaseMessagingDelegate.onMessageReceived(presentationMessage.get() ?: remoteMessage)
+   override fun onNewToken(token: String) = firebaseMessagingDelegate.onNewToken(token)
+   override fun onDeletedMessages() = firebaseMessagingDelegate.onDeletedMessages()
+ }

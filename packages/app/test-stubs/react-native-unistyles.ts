@@ -1,6 +1,9 @@
+import { lightHighlightColors } from "@getpaseo/highlight";
+
 const testTheme = {
   colorScheme: "light",
   colors: {
+    syntax: lightHighlightColors,
     foreground: "#111111",
     foregroundMuted: "#666666",
     statusSuccess: "#15803d",
@@ -20,6 +23,9 @@ const testTheme = {
     accentForeground: "#ffffff",
     destructive: "#dc2626",
     destructiveForeground: "#ffffff",
+    surface0: "#ffffff",
+    userMessageBackground: "#e4e4e7",
+    userMessageForeground: "#111111",
     surface1: "#fafafa",
     surface2: "#f4f4f5",
     surface3: "#e4e4e7",
@@ -40,6 +46,8 @@ const testTheme = {
     xs: 12,
     sm: 14,
     base: 16,
+    // The authored web message ramp, used by actual message-renderer geometry tests.
+    content: 15,
   },
   fontFamily: {
     ui: "sans-serif",
@@ -87,6 +95,13 @@ function isStyleFactory<T>(styles: T | StyleFactory<T>): styles is StyleFactory<
 }
 
 export const StyleSheet = {
+  absoluteFill: {
+    position: "absolute" as const,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  },
   create: <T>(styles: T | StyleFactory<T>): T =>
     isStyleFactory(styles) ? styles(testTheme) : styles,
 };

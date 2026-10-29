@@ -105,16 +105,18 @@ describe("loadAppSettingsFromStorage", () => {
   );
 
   it.each(Object.keys(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES))(
-    "normalizes missing or malformed %s to on while retaining an explicit off",
+    "normalizes missing or malformed %s to its default while retaining explicit choices",
     async (feature) => {
-      for (const value of [undefined, null, "false", 0, false]) {
+      for (const value of [undefined, null, "false", 0, false, true]) {
         const deps = makeDeps({
           storage: createInMemoryKeyValueStorage({
             [APP_SETTINGS_KEY]: JSON.stringify({ paseoPlusPlus: { [feature]: value } }),
           }),
         });
         const settings = await loadAppSettingsFromStorage(deps);
-        expect(settings.paseoPlusPlus[feature]).toBe(value !== false);
+        expect(settings.paseoPlusPlus[feature]).toBe(
+          typeof value === "boolean" ? value : DEFAULT_PASEO_PLUS_PLUS_PREFERENCES[feature],
+        );
       }
     },
   );
@@ -145,11 +147,12 @@ describe("loadAppSettingsFromStorage", () => {
       workspaceChatLinks: true,
       sidebarHostUpdates: true,
       mobileWorkspaceTabs: true,
+      widerWorkspaceTabs: true,
+      explorerIconOnlyTabs: false,
       splitLayoutPresets: true,
       descriptiveToolCalls: true,
       stickyUserPrompts: true,
       previousAgents: true,
-      sidebarProjectSelector: true,
       sidebarActivityChips: true,
       sidebarProjectEmphasis: true,
       sidebarBulkActions: true,
@@ -164,6 +167,7 @@ describe("loadAppSettingsFromStorage", () => {
             previousAgents: false,
             sidebarBulkActions: "invalid",
             futureFeature: false,
+            sidebarProjectSelector: false,
           },
         }),
       }),
@@ -173,6 +177,8 @@ describe("loadAppSettingsFromStorage", () => {
     expect(restored.paseoPlusPlus.sidebarBulkActions).toBe(true);
     expect(restored.paseoPlusPlus.stickyUserPrompts).toBe(true);
     expect(restored.paseoPlusPlus.futureFeature).toBe(false);
+    // Retired label preferences remain harmless stored data, like unknown future keys.
+    expect(restored.paseoPlusPlus.sidebarProjectSelector).toBe(false);
     await saveAppSettings({ queryClient: new QueryClient(), deps, updates: { language: "fr" } });
     expect((await loadAppSettingsFromStorage(deps)).paseoPlusPlus.futureFeature).toBe(false);
   });
@@ -228,45 +234,80 @@ describe("loadAppSettingsFromStorage", () => {
     expect(toggleSidebarTrailingItem({ trailing: neither, choice: "timestamp" })).toBe("timestamp");
   });
 
-  it("defaults Explorer preferences and preserves persisted choices", async () => {
-    const defaults = await loadAppSettingsFromStorage(makeDeps());
-    expect(defaults.autoOpenExplorerSidebar).toBe(false);
-    expect(defaults.explorerDiffScope).toBe("all");
-    expect(defaults.workingDiffDefaultComparison).toBe("uncommitted");
-    expect(defaults.workingDiffAutoSwitch).toBe(false);
+  it.each(["base", "all"] as const)(
+    "defaults Explorer preferences and preserves persisted %s",
+    async (comparison) => {
+      const defaults = await loadAppSettingsFromStorage(makeDeps());
+      expect(defaults.autoOpenExplorerSidebar).toBe(false);
+      expect(defaults.paseoPlusPlus.explorerIconOnlyTabs).toBe(false);
+      expect(defaults.explorerDiffScope).toBe("all");
+      expect(defaults.workingDiffDefaultComparison).toBe("uncommitted");
+      expect(defaults.workingDiffAutoSwitch).toBe(false);
 
-    const deps = makeDeps();
-    const queryClient = new QueryClient();
-    await saveAppSettings({
-      queryClient,
-      updates: {
-        autoOpenExplorerSidebar: true,
-        explorerDiffScope: "single",
-        workingDiffDefaultComparison: "base",
-        workingDiffAutoSwitch: true,
-      },
-      deps,
-    });
-    const restored = await loadAppSettingsFromStorage(deps);
-    expect(restored.autoOpenExplorerSidebar).toBe(true);
-    expect(restored.explorerDiffScope).toBe("single");
-    expect(restored.workingDiffDefaultComparison).toBe("base");
-    expect(restored.workingDiffAutoSwitch).toBe(true);
-  });
+      const deps = makeDeps();
+      const queryClient = new QueryClient();
+      await saveAppSettings({
+        queryClient,
+        updates: {
+          autoOpenExplorerSidebar: true,
+          paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, explorerIconOnlyTabs: true },
+          explorerDiffScope: "single",
+          workingDiffDefaultComparison: comparison,
+          workingDiffAutoSwitch: true,
+        },
+        deps,
+      });
+      const restored = await loadAppSettingsFromStorage(deps);
+      expect(restored.autoOpenExplorerSidebar).toBe(true);
+      expect(restored.paseoPlusPlus.explorerIconOnlyTabs).toBe(true);
+      expect(restored.explorerDiffScope).toBe("single");
+      expect(restored.workingDiffDefaultComparison).toBe(comparison);
+      expect(restored.workingDiffAutoSwitch).toBe(true);
+    },
+  );
 
   it("uses Explorer defaults when stored values are invalid", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({
           autoOpenExplorerSidebar: "yes",
+          paseoPlusPlus: { explorerIconOnlyTabs: "yes" },
           explorerDiffScope: "future",
         }),
       }),
     });
     const restored = await loadAppSettingsFromStorage(deps);
     expect(restored.autoOpenExplorerSidebar).toBe(false);
+    expect(restored.paseoPlusPlus.explorerIconOnlyTabs).toBe(false);
     expect(restored.explorerDiffScope).toBe("all");
   });
+
+  it("persists file panel associations, including panels absent from this host", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const filePanelAssociations = {
+      "ext:md": "builtin:markdown",
+      "name:Dockerfile": "plugin:absent/container",
+    };
+    await saveAppSettings({ queryClient, deps, updates: { filePanelAssociations } });
+    expect((await loadAppSettingsFromStorage(deps)).filePanelAssociations).toEqual(
+      filePanelAssociations,
+    );
+  });
+
+  it.each([undefined, null, [], "invalid", { "ext:md": 42 }])(
+    "defaults malformed file panel associations without discarding other settings: %j",
+    async (filePanelAssociations) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ filePanelAssociations, vimKeybindings: true }),
+        }),
+      });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.filePanelAssociations).toEqual({});
+      expect(settings.vimKeybindings).toBe(true);
+    },
+  );
 
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
@@ -1370,8 +1411,12 @@ describe("content max width", () => {
   });
 });
 
-it("includes every app preference in the daemon sync scope and excludes desktop settings", () => {
-  expect([...SYNC_APP_SETTING_KEYS].sort()).toEqual(Object.keys(DEFAULT_CLIENT_SETTINGS).sort());
+it("includes shared app preferences in the daemon sync scope and excludes device settings", () => {
+  const sharedKeys = Object.keys(DEFAULT_CLIENT_SETTINGS).filter(
+    (key) => key !== "filePanelAssociations",
+  );
+  expect([...SYNC_APP_SETTING_KEYS].sort()).toEqual(sharedKeys.sort());
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("filePanelAssociations");
   expect(SYNC_APP_SETTING_KEYS).not.toContain("manageBuiltInDaemon");
   expect(SYNC_APP_SETTING_KEYS).not.toContain("releaseChannel");
 });

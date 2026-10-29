@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { replaceCodeMirrorContent } from "./code-mirror";
 
 /** A sheet tab's body, named after the tab it shows. */
 export function sheet(page: Page, label: string): Locator {
@@ -38,9 +39,16 @@ export async function expectSheetAtSnap(page: Page, label: string): Promise<void
 }
 
 export async function expectOpenTabCount(page: Page, count: number): Promise<void> {
-  await expect(
-    page.getByRole("button", { name: `Switch tabs (${count} open)` }).filter({ visible: true }),
-  ).toBeVisible();
+  const tabs = page.getByTestId("workspace-tabs-scroll").filter({ visible: true });
+  const legacy = page
+    .getByRole("button", { name: `Switch tabs (${count} open)` })
+    .filter({ visible: true });
+  await expect
+    .poll(async () => {
+      if (await tabs.count()) return tabs.getByRole("tab").count();
+      return (await legacy.isVisible()) ? count : -1;
+    })
+    .toBe(count);
 }
 
 export async function closeSheet(page: Page, label: string): Promise<void> {
@@ -59,12 +67,15 @@ export async function replaceSheetFileText(
   content: string,
 ): Promise<void> {
   const editor = sheet(page, label).getByTestId("file-source-editor").locator(".cm-content");
-  await editor.click();
-  await editor.press("ControlOrMeta+A");
-  await editor.pressSequentially(content);
+  await replaceCodeMirrorContent({ editor, content });
 }
 
 export async function selectTabFromSwitcher(page: Page, label: string): Promise<void> {
+  const tabs = page.getByTestId("workspace-tabs-scroll").filter({ visible: true });
+  if (await tabs.count()) {
+    await tabs.getByRole("tab", { name: label, exact: true }).click();
+    return;
+  }
   await page
     .getByRole("button", { name: /Switch tabs/ })
     .filter({ visible: true })

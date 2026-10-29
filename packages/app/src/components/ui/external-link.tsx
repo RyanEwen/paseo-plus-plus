@@ -50,11 +50,15 @@ export function ExternalLink({
   );
 
   if (!tooltip) {
-    return <WorkspaceHttpLinkMenu url={href}>{trigger}</WorkspaceHttpLinkMenu>;
+    return (
+      <WorkspaceHttpLinkMenu url={href} defaultDestination="external">
+        {trigger}
+      </WorkspaceHttpLinkMenu>
+    );
   }
 
   return (
-    <WorkspaceHttpLinkMenu url={href}>
+    <WorkspaceHttpLinkMenu url={href} defaultDestination="external">
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent side="top" align="end" offset={6}>

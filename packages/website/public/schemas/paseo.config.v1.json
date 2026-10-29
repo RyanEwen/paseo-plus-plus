@@ -95,6 +95,15 @@
           },
           "additionalProperties": false
         },
+        "notifications": {
+          "type": "object",
+          "properties": {
+            "agentAwareAttention": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
         "autoArchiveAfterMerge": {
           "type": "boolean"
         },

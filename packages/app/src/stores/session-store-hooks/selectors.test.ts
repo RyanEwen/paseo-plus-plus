@@ -45,6 +45,7 @@ function createWorkspace(
     workspaceKind: input.workspaceKind ?? "local_checkout",
     name: input.name ?? "main",
     status: input.status ?? "done",
+    humanAttentionRequired: input.humanAttentionRequired,
     archivingAt: input.archivingAt ?? null,
     statusEnteredAt: null,
     diffStat: input.diffStat ?? null,
@@ -618,4 +619,26 @@ describe("selectWorkspaceStatusesForBadges", () => {
 
     tracked.stop();
   });
+});
+
+it("keeps agent-owned blocker statuses while counting only human-facing workspace badges", () => {
+  const quiet = createWorkspace({
+    id: "quiet",
+    status: "needs_input",
+    humanAttentionRequired: false,
+  });
+  const escalated = createWorkspace({
+    id: "escalated",
+    status: "attention",
+    humanAttentionRequired: true,
+  });
+  const legacy = createWorkspace({ id: "legacy", status: "failed" });
+  initializeWorkspaces([quiet, escalated, legacy]);
+  expect(selectWorkspaceStatusesForBadges(useSessionStore.getState())).toEqual([
+    "attention",
+    "failed",
+  ]);
+  expect(selectWorkspace(useSessionStore.getState(), SERVER_ID, "quiet")?.status).toBe(
+    "needs_input",
+  );
 });

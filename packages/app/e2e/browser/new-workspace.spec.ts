@@ -2,8 +2,6 @@ import type { Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, renameSync } from "node:fs";
 import path from "node:path";
-import { WorkspaceLayoutPersistedStateSchema } from "@/stores/workspace-layout-storage";
-import { collectAllTabs } from "@/stores/workspace-layout-actions";
 import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -55,6 +53,11 @@ import {
   hasGithubAuth,
   type LocalGhPrFixture,
 } from "../support/helpers/github-fixtures";
+import {
+  mainWorkspaceTabRow,
+  chooserTabLabel,
+  readWorkspaceTabSnapshot,
+} from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort, daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -108,19 +111,21 @@ async function expectCompactAdoptedAgent({
   page,
   workspaceId,
   agentTitle,
+  agentId,
 }: AdoptedAgentSession): Promise<void> {
   const adoptedDeck = page
     .getByTestId(`workspace-deck-entry-${getServerId()}:${workspaceId}`)
     .filter({ visible: true });
-  const tab = adoptedDeck.locator('[data-testid^="workspace-tab-agent_"]');
+  const row = mainWorkspaceTabRow({ page, agentId, deck: adoptedDeck });
+  const tab = row.locator('[data-testid^="workspace-tab-agent_"]');
   await expect(tab).toHaveCount(1, { timeout: 30_000 });
   await expect(tab).toBeVisible();
   await expect(tab).toContainText(agentTitle);
   await expect(tab).toHaveAttribute("aria-selected", "true");
-  await expect(adoptedDeck.getByTestId("workspace-new-tab-button")).toBeVisible();
+  await expect(row.getByTestId("workspace-new-tab-button")).toBeVisible();
 }
 
-/** First-agent conversion keeps its optimistic draft identity in the compact tab-count chooser. */
+/** First-agent conversion keeps its optimistic draft identity in the legacy chooser. */
 async function expectLegacyCompactAdoptedAgent({
   page,
   workspaceId,
@@ -131,40 +136,39 @@ async function expectLegacyCompactAdoptedAgent({
     .getByTestId(`workspace-deck-entry-${getServerId()}:${workspaceId}`)
     .filter({ visible: true });
   const switcher = deck.getByTestId("workspace-tab-switcher-trigger");
+  const mainRail = mainWorkspaceTabRow({ page, deck }).getByTestId("workspace-tabs-scroll");
   await expect(switcher).toHaveText("1");
-  await expect(switcher).toHaveAttribute("aria-label", "Switch tabs (1 open)");
-  await expect(deck.getByTestId("workspace-tabs-scroll")).toHaveCount(0);
-  const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
-  if (!raw) throw new Error("Expected the adopted workspace layout");
-  const persisted = WorkspaceLayoutPersistedStateSchema.parse(JSON.parse(raw).state);
-  const layout = persisted.layoutByWorkspace[`${getServerId()}:${workspaceId}`];
-  if (!layout) throw new Error("Expected the adopted workspace layout after persistence");
-  const tab = collectAllTabs(layout.root).find(
+  await expect(switcher).toHaveAccessibleName("Switch tabs (1 open)");
+  await expect(mainRail).toHaveCount(0);
+  const snapshot = await readWorkspaceTabSnapshot(page, workspaceId);
+  const tab = snapshot.tabs.find(
     (candidate) => candidate.target.kind === "agent" && candidate.target.agentId === agentId,
   );
   if (!tab) throw new Error("Expected the first agent tab after draft conversion");
   expect(tab.tabId).toMatch(/^draft_/);
+  expect(snapshot.focusedTabId).toBe(tab.tabId);
   const menuId = `workspace-tab-menu-${tab.tabId}-trigger`;
   await switcher.click();
   await expect(page.getByTestId(menuId)).toBeVisible();
-  await expect(page.getByText(agentTitle, { exact: true }).last()).toBeVisible();
-  await page
+  await expect(chooserTabLabel(page, tab.tabId, agentTitle)).toBeVisible();
+  const backdrop = page
     .getByRole("button", { name: "Bottom sheet backdrop" })
-    .filter({ visible: true })
-    .first()
-    .click({ position: { x: 12, y: 12 } });
+    .filter({ visible: true });
+  await expect(backdrop).toHaveCount(1);
+  await backdrop.click({ position: { x: 12, y: 12 } });
   await expect(page.getByTestId(menuId)).toHaveCount(0);
   await page.reload();
   await expect(switcher).toHaveText("1");
-  await expect(switcher).toHaveAttribute("aria-label", "Switch tabs (1 open)");
+  await expect(switcher).toHaveAccessibleName("Switch tabs (1 open)");
+  await expect(mainRail).toHaveCount(0);
+  const reloaded = await readWorkspaceTabSnapshot(page, workspaceId);
+  expect(reloaded.focusedTabId).toBe(tab.tabId);
+  expect(reloaded.tabs.find((candidate) => candidate.tabId === tab.tabId)).toEqual(tab);
   await switcher.click();
   await expect(page.getByTestId(menuId)).toBeVisible();
-  await expect(page.getByText(agentTitle, { exact: true }).last()).toBeVisible();
-  await page
-    .getByRole("button", { name: "Bottom sheet backdrop" })
-    .filter({ visible: true })
-    .first()
-    .click({ position: { x: 12, y: 12 } });
+  await expect(chooserTabLabel(page, tab.tabId, agentTitle)).toBeVisible();
+  await expect(backdrop).toHaveCount(1);
+  await backdrop.click({ position: { x: 12, y: 12 } });
 }
 
 async function switchSidebarToStatusGrouping(page: import("@playwright/test").Page) {
@@ -407,13 +411,13 @@ test.describe("New workspace flow", () => {
         await page.setViewportSize(viewport);
         await page.goto(`/new?${query.toString()}`);
         const trigger = page.getByTestId("workspace-create-isolation-trigger");
-        await expect(trigger).toHaveText("Local · main");
+        await expect(trigger.getByText("Local · main", { exact: true })).toBeVisible();
         await trigger.click();
         const localOption = page.getByTestId("workspace-create-isolation-local");
         await expect(localOption).toContainText("Local · main");
         await page.screenshot({ path: testInfo.outputPath(`local-${viewport.width}.png`) });
         await localOption.click();
-        await expect(trigger).toHaveText("Local · main");
+        await expect(trigger.getByText("Local · main", { exact: true })).toBeVisible();
       }
     } finally {
       await repo.cleanup();
@@ -438,9 +442,11 @@ test.describe("New workspace flow", () => {
         name: opened.projectDisplayName,
       });
       await page.goto(`/new?${query.toString()}`);
-      await expect(page.getByTestId("workspace-create-isolation-trigger")).toHaveText(
-        "Local · main",
-      );
+      await expect(
+        page
+          .getByTestId("workspace-create-isolation-trigger")
+          .getByText("Local · main", { exact: true }),
+      ).toBeVisible();
       expect(listDelay.requestCount()).toBe(0);
       await page.getByTestId("workspace-create-isolation-trigger").click();
       await listDelay.waitForResponse;
@@ -537,7 +543,7 @@ test.describe("New workspace flow", () => {
         const modeControl = page.getByTestId("new-workspace-branch-picker-trigger");
         const refControl = page.getByTestId("new-workspace-ref-picker-trigger");
         const isolationControl = page.getByTestId("workspace-create-isolation-trigger");
-        await expect(modeControl).toHaveText("New branch");
+        await expect(modeControl.getByText("New branch", { exact: true })).toBeVisible();
         await expect(refControl).toContainText("from main");
         if (viewport.width === 1440) {
           await modeControl.hover();
@@ -548,7 +554,7 @@ test.describe("New workspace flow", () => {
           ).toBeVisible();
           await refControl.hover();
           await expect(
-            page.getByText("Choose the branch to base the new branch on: from main", {
+            page.getByText("Choose the branch to base the new branch on", {
               exact: true,
             }),
           ).toBeVisible();
@@ -639,7 +645,7 @@ test.describe("New workspace flow", () => {
         await selectWorkspaceBranchChoice(page, "Release/1.2");
         await expect(branchName).toHaveCount(0);
         await expect(refControl).toHaveCount(0);
-        await expect(modeControl).toHaveText("Release/1.2");
+        await expect(modeControl.getByText("Release/1.2", { exact: true })).toBeVisible();
         await expect(worktreeName).toHaveValue("release-1-2");
         await page.screenshot({
           path: testInfo.outputPath(`existing-branch-${viewport.width}.png`),
@@ -760,9 +766,11 @@ test.describe("New workspace flow", () => {
         .getByTestId("combobox-desktop-container")
         .getByText(secondProject.projectDisplayName, { exact: true })
         .click();
-      await expect(page.getByTestId("new-workspace-branch-picker-trigger")).toHaveText(
-        "New branch",
-      );
+      await expect(
+        page
+          .getByTestId("new-workspace-branch-picker-trigger")
+          .getByText("New branch", { exact: true }),
+      ).toBeVisible();
       await expect(page.getByTestId("new-workspace-ref-picker-trigger")).toContainText("from main");
       await expect(page.getByTestId("new-workspace-worktree-name")).toHaveValue("retained-name");
       await page.getByTestId("new-workspace-branch-picker-trigger").click();

@@ -30,6 +30,7 @@ import type {
   CachedDirectory,
   CachedWorkspace,
   DirectoryCheckpoint,
+  DirectoryCheckpointCommitOptions,
   DirectoryCursor,
   DirectoryReplicaMutation,
 } from "@/runtime/replica-cache";
@@ -61,7 +62,44 @@ interface AgentSnapshot {
   syncRemovals: Array<{ id: string; seq: number }>;
 }
 
-interface WorkspaceRefreshSnapshot extends WorkspaceDirectorySnapshot {
+interface WorkspaceRefreshOperation {
+  client: DaemonClient;
+  source: DirectorySourceToken;
+  promise: Promise<void>;
+}
+
+interface RefreshWorkspaceDirectoryInput {
+  subscribe?: boolean;
+}
+
+interface WorkspaceRefreshRequest {
+  subscription?: RefreshWorkspaceDirectoryInput;
+  loadDirectoryCache: boolean;
+  includeProjects: boolean;
+  reuse: boolean;
+}
+
+interface WorkspaceRefreshScope {
+  includesWorkspaces: boolean;
+  includesProjects: boolean;
+}
+
+interface DirectoryReleaseOptions {
+  preserveWorkspaces?: boolean;
+}
+
+interface DemandRefreshInput {
+  force: boolean;
+}
+
+/** A complete current-source baseline followed by accepted upserts; cache paint is not fresh authority. */
+export interface WorkspaceDirectoryObserver {
+  snapshot(workspaces: readonly WorkspaceDescriptor[]): void;
+  update(workspaces: readonly WorkspaceDescriptor[]): void;
+  error(error: unknown): void;
+}
+
+interface WorkspaceRefreshSnapshot extends WorkspaceDirectorySnapshot, WorkspaceRefreshScope {
   readonly requestCursors: Readonly<Pick<DirectoryCheckpoint, "projects" | "workspaces">>;
 }
 
@@ -116,6 +154,7 @@ export interface DirectoryCheckpointStorage {
     serverId: string,
     mutations: readonly DirectoryReplicaMutation[],
     checkpoint?: DirectoryCheckpoint,
+    coverage?: DirectoryCheckpointCommitOptions,
   ): void;
   replaceDirectoryBaseline?(serverId: string, directory: CachedDirectory): void;
 }
@@ -162,6 +201,14 @@ export class DirectorySync {
   private demandRefresh: Promise<void> | null = null;
   private satisfiedDemandSource: DirectorySourceToken | null = null;
   private cursors: DirectoryCheckpoint = {};
+  private unselectedCacheCursors: DirectoryCheckpoint = {};
+  private cacheRead: Promise<CachedDirectory> | null = null;
+  private workspaceCacheLoad: Promise<void> | null = null;
+  private readonly workspaceObservers = new Set<WorkspaceDirectoryObserver>();
+  private workspaceRefresh: WorkspaceRefreshOperation | null = null;
+  private workspaceSnapshotSource: DirectorySourceToken | null = null;
+  private projectSnapshotSource: DirectorySourceToken | null = null;
+  private workspaceBaselineAccepted = false;
 
   constructor(
     private readonly serverId: string,
@@ -200,6 +247,7 @@ export class DirectorySync {
     // Reattach labels here because route-only demand can satisfy the epoch before full demand requests them.
     void this.connectWorkspaceLabels().catch(() => undefined);
     if (this.hasDemand()) void this.requestDemandRefresh().catch(() => undefined);
+    if (this.workspaceObservers.size > 0) this.requestWorkspaceObservation();
     return true;
   }
 
@@ -207,7 +255,8 @@ export class DirectorySync {
     const wasDemanded = this.fullDemandSources.size > 0;
     if (demanded) this.fullDemandSources.add(source);
     else this.fullDemandSources.delete(source);
-    if (!this.hasDemand()) this.releaseSubscriptions();
+    if (!this.hasDemand())
+      this.releaseSubscriptions({ preserveWorkspaces: this.workspaceObservers.size > 0 });
     if (!wasDemanded && this.fullDemandSources.size > 0) {
       void this.loadCachedDirectory().catch(() => undefined);
       if (this.getOnlineConnection()) void this.requestDemandRefresh().catch(() => undefined);
@@ -224,9 +273,74 @@ export class DirectorySync {
     }
     this.routeDemandIds.clear();
     for (const agentId of next) this.routeDemandIds.add(agentId);
-    if (!this.hasDemand()) this.releaseSubscriptions();
+    if (!this.hasDemand())
+      this.releaseSubscriptions({ preserveWorkspaces: this.workspaceObservers.size > 0 });
     if (this.routeDemandIds.size > 0 && this.getOnlineConnection()) {
       void this.requestDemandRefresh().catch(() => undefined);
+    }
+  }
+
+  /** Retain only workspace data, including background rows, independently of UI directory demand. */
+  observeWorkspaces(observer: WorkspaceDirectoryObserver): () => void {
+    this.workspaceObservers.add(observer);
+    if (this.hasCurrentWorkspaceSnapshot()) {
+      observer.snapshot([...this.workspaces.snapshot().workspaces.values()]);
+    }
+    this.requestWorkspaceObservation();
+    return () => {
+      this.workspaceObservers.delete(observer);
+      if (!this.hasDemand() && this.workspaceObservers.size === 0) this.releaseSubscriptions();
+    };
+  }
+
+  private hasCurrentWorkspaceSnapshot(): boolean {
+    const client = this.connection.client;
+    return Boolean(
+      client &&
+      this.workspaceSubscription &&
+      this.workspaceSnapshotSource &&
+      this.isCurrent(client, this.workspaceSnapshotSource),
+    );
+  }
+
+  private requestWorkspaceObservation(): void {
+    void this.refreshWorkspacesInternal({
+      subscription: { subscribe: true },
+      loadDirectoryCache: false,
+      includeProjects: false,
+      reuse: true,
+    }).catch((error) => {
+      if (error instanceof DirectoryRefreshSupersededError) return;
+      for (const observer of this.workspaceObservers) observer.error(error);
+    });
+  }
+
+  private publishWorkspaceSnapshot(): void {
+    if (!this.hasCurrentWorkspaceSnapshot()) return;
+    const workspaces = [...this.workspaces.snapshot().workspaces.values()];
+    for (const observer of this.workspaceObservers) {
+      try {
+        observer.snapshot(workspaces);
+      } catch (error) {
+        observer.error(error);
+      }
+    }
+  }
+
+  private publishWorkspaceUpserts(mutations: readonly DirectoryReplicaMutation[]): void {
+    if (!this.hasCurrentWorkspaceSnapshot()) return;
+    const workspaces: WorkspaceDescriptor[] = [];
+    for (const mutation of mutations) {
+      if (mutation.kind === "workspace" && mutation.type === "upsert")
+        workspaces.push(mutation.value);
+    }
+    if (workspaces.length === 0) return;
+    for (const observer of this.workspaceObservers) {
+      try {
+        observer.update(workspaces);
+      } catch (error) {
+        observer.error(error);
+      }
     }
   }
 
@@ -254,6 +368,7 @@ export class DirectorySync {
     this.flushAbortedTransactions();
     this.abortPendingSessionWaits();
     this.scriptStatusDemand.clear();
+    this.workspaceObservers.clear();
     this.releaseSubscriptions();
     this.releaseScriptStatusEvents();
     this.fullDemandSources.clear();
@@ -261,16 +376,21 @@ export class DirectorySync {
     workspaceLabels.disconnect(this.serverId);
   }
 
-  private releaseSubscriptions(): void {
+  private releaseSubscriptions(input: DirectoryReleaseOptions = {}): void {
     for (const subscription of [
       this.agentSubscription,
-      this.workspaceSubscription,
+      ...(input.preserveWorkspaces ? [] : [this.workspaceSubscription]),
       this.eventSubscription,
     ]) {
       void subscription?.release().catch(() => undefined);
     }
     this.agentSubscription = null;
-    this.workspaceSubscription = null;
+    if (!input.preserveWorkspaces) {
+      this.workspaceSubscription = null;
+      this.workspaceSnapshotSource = null;
+      this.workspaceRefresh = null;
+    }
+    this.projectSnapshotSource = null;
     this.eventSubscription = null;
     this.satisfiedDemandSource = null;
     if (!this.wantsScriptStatus()) this.releaseScriptStatusEvents();
@@ -369,16 +489,17 @@ export class DirectorySync {
     ) {
       return Promise.resolve();
     }
-    const refresh =
-      this.fullDemandSources.size > 0
-        ? this.refreshAll()
-        : Promise.all([
-            this.refreshAgentsInternal({ subscribe: {} }, false),
-            this.refreshWorkspacesInternal({ subscribe: true }, false),
-          ]).then(() => undefined);
+    const refresh = this.refreshDemandDirectories({ force });
     this.demandRefresh = refresh
       .then(() => {
-        this.satisfiedDemandSource = source;
+        const connection = this.getOnlineConnection();
+        if (
+          connection &&
+          this.hasDemand() &&
+          this.agentSubscription &&
+          this.isCurrent(connection.client, source)
+        )
+          this.satisfiedDemandSource = source;
         return undefined;
       })
       .finally(() => {
@@ -393,6 +514,33 @@ export class DirectorySync {
         }
       });
     return this.demandRefresh;
+  }
+
+  /** UI demand may join a receipt-owned workspace producer without starting another bootstrap. */
+  private async refreshDemandDirectories(input: DemandRefreshInput): Promise<void> {
+    const fullDirectory = this.fullDemandSources.size > 0;
+    if (fullDirectory) {
+      this.primeAgentTransactionForCacheLoad();
+      await this.loadCachedDirectory();
+    }
+    if (!this.hasDemand()) return;
+    await Promise.all([
+      this.refreshAgentsInternal({ subscribe: {} }, false),
+      this.refreshWorkspacesInternal({
+        subscription: { subscribe: true },
+        loadDirectoryCache: false,
+        includeProjects: true,
+        reuse: !input.force,
+      }),
+    ]);
+    if (fullDirectory) {
+      this.checkpoints?.replaceDirectoryBaseline?.(this.serverId, {
+        agents: this.agents.snapshot(),
+        ...this.workspaces.snapshot(),
+        checkpoint: this.cursors,
+      });
+      if (this.getOnlineConnection()) await this.connectWorkspaceLabels();
+    }
   }
 
   refreshDemand(): Promise<void> {
@@ -432,17 +580,58 @@ export class DirectorySync {
     this.workspaces.commitCachedWorkspace(cached.workspace, cached.project);
   }
 
+  private readCachedDirectory(checkpoints: DirectoryCheckpointStorage): Promise<CachedDirectory> {
+    this.cacheRead ??= checkpoints.readDirectory(this.serverId);
+    return this.cacheRead;
+  }
+
+  /** Select only workspace rows; other cached cursors remain metadata until their replicas are selected. */
+  private loadCachedWorkspaces(): Promise<void> {
+    if (this.cacheLoad) return this.cacheLoad;
+    const checkpoints = this.checkpoints;
+    if (!checkpoints) return Promise.resolve();
+    this.workspaceCacheLoad ??= (async () => {
+      const revision = this.workspaceRevision;
+      const cached = await this.readCachedDirectory(checkpoints);
+      if (!useSessionStore.getState().sessions[this.serverId]) return;
+      this.unselectedCacheCursors = { ...cached.checkpoint };
+      delete this.unselectedCacheCursors.workspaces;
+      if (!this.workspaceBaselineAccepted) {
+        this.workspaces.commitCached({
+          workspaces: cached.workspaces,
+          projects: this.workspaces.snapshot().projects,
+        });
+        if (this.workspaceRevision === revision) {
+          delete this.cursors.workspaces;
+          if (cached.checkpoint?.workspaces) this.cursors.workspaces = cached.checkpoint.workspaces;
+        }
+      }
+    })();
+    return this.workspaceCacheLoad;
+  }
+
   private loadCachedDirectory(): Promise<void> {
     const checkpoints = this.checkpoints;
     if (!checkpoints) return Promise.resolve();
     this.cacheLoad ??= (async () => {
       const revision = this.revision;
-      const cached = await checkpoints.readDirectory(this.serverId);
+      const cached = await this.readCachedDirectory(checkpoints);
       if (this.cacheAccepted) return;
       if (!useSessionStore.getState().sessions[this.serverId]) return;
       this.agents.commitCached(cached.agents);
-      this.workspaces.commitCached(cached);
-      if (this.revision === revision) this.cursors = cached.checkpoint ?? {};
+      // A receipt-only network baseline may precede the UI's broad cache read.
+      // Do not resurrect removed workspaces or replace its live workspace cursor.
+      const workspaceCursor = this.cursors.workspaces;
+      const workspaces = this.workspaceBaselineAccepted ? new Map() : cached.workspaces;
+      this.workspaces.commitCached({ ...cached, workspaces });
+      if (this.revision === revision) {
+        this.cursors = { ...cached.checkpoint };
+        if (this.workspaceBaselineAccepted) {
+          delete this.cursors.workspaces;
+          if (workspaceCursor) this.cursors.workspaces = workspaceCursor;
+        }
+      }
+      this.unselectedCacheCursors = {};
       this.cacheAccepted = true;
     })();
     return this.cacheLoad;
@@ -532,30 +721,66 @@ export class DirectorySync {
     }
   }
 
-  async refreshWorkspaces(input?: { subscribe?: boolean }): Promise<void> {
-    return this.refreshWorkspacesInternal(input, true);
+  async refreshWorkspaces(input?: RefreshWorkspaceDirectoryInput): Promise<void> {
+    return this.refreshWorkspacesInternal({
+      subscription: input,
+      loadDirectoryCache: true,
+      includeProjects: true,
+      reuse: false,
+    });
   }
 
-  private async refreshWorkspacesInternal(
-    input: { subscribe?: boolean } | undefined,
-    loadDirectoryCache: boolean,
+  private async refreshWorkspacesInternal(input: WorkspaceRefreshRequest): Promise<void> {
+    if (input.loadDirectoryCache) await this.loadCachedDirectory();
+    else if (!input.includeProjects) await this.loadCachedWorkspaces();
+    const connection = this.getOnlineConnection();
+    if (!connection) return;
+    const pending = this.workspaceRefresh;
+    if (pending && this.isCurrent(pending.client, pending.source)) {
+      await pending.promise;
+      return this.refreshWorkspacesInternal({ ...input, loadDirectoryCache: false });
+    }
+    const includesWorkspaces = !input.reuse || !this.hasCurrentWorkspaceSnapshot();
+    const includesProjects =
+      input.includeProjects &&
+      (!input.reuse || this.hasDemand()) &&
+      (!input.reuse ||
+        !this.projectSnapshotSource ||
+        !this.isCurrent(connection.client, this.projectSnapshotSource));
+    if (!includesWorkspaces && !includesProjects) return;
+    if (input.reuse && !this.hasDemand() && this.workspaceObservers.size === 0) return;
+    const promise = this.fetchWorkspaceDirectory(input.subscription, {
+      includesWorkspaces,
+      includesProjects,
+    });
+    const operation = { ...connection, promise };
+    this.workspaceRefresh = operation;
+    try {
+      await promise;
+    } finally {
+      if (this.workspaceRefresh === operation) this.workspaceRefresh = null;
+    }
+  }
+
+  private async fetchWorkspaceDirectory(
+    input: RefreshWorkspaceDirectoryInput | undefined,
+    scope: WorkspaceRefreshScope,
   ): Promise<void> {
-    if (loadDirectoryCache) await this.loadCachedDirectory();
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) return;
     const { client, source } = onlineConnection;
     const transaction = this.workspaceTransactions.begin(source, () => {
       const baseline = this.workspaces.snapshot();
       return {
+        ...scope,
         workspaces: new Map(baseline.workspaces),
         projects: new Map(baseline.projects),
-        // Cache hydration can advance the live replica while these requests await responses.
-        // Every page must use the cursors belonging to the maps captured here.
+        // Every page uses the cursors belonging to these captured maps.
         requestCursors: { ...this.cursors },
         syncCursors: {},
-        syncModes: {},
-        touchedWorkspaceIds: new Set(),
-        touchedProjectIds: new Set(),
+        syncModes: scope.includesWorkspaces ? {} : { workspaces: "changes" as const },
+        touchedWorkspaceIds: new Set<string>(),
+        touchedProjectIds: new Set<string>(),
       };
     });
     try {
@@ -563,17 +788,22 @@ export class DirectorySync {
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
       const supportsProjectList = serverInfo?.features?.projectList === true;
       const supportsDirectorySync = serverInfo?.features?.directorySync === true;
-      if (supportsProjectList) {
-        await this.fetchProjectSnapshot(client, source, transaction, supportsDirectorySync);
-      }
-      await this.fetchWorkspaceSnapshot(
-        client,
-        source,
-        transaction,
-        input?.subscribe === true,
-        supportsDirectorySync,
-      );
-      if (!supportsProjectList) {
+      const projectsReady =
+        scope.includesProjects && supportsProjectList
+          ? this.fetchProjectSnapshot(client, source, transaction, supportsDirectorySync)
+          : Promise.resolve();
+      const workspacesReady = scope.includesWorkspaces
+        ? this.fetchWorkspaceSnapshot(
+            client,
+            source,
+            transaction,
+            input?.subscribe === true,
+            supportsDirectorySync,
+            projectsReady,
+          )
+        : Promise.resolve();
+      await Promise.all([projectsReady, workspacesReady]);
+      if (scope.includesProjects && !supportsProjectList) {
         this.buildLegacyProjectSnapshot(transaction.snapshot);
         (transaction.snapshot.syncModes ??= {}).projects =
           transaction.snapshot.syncModes?.workspaces;
@@ -592,6 +822,7 @@ export class DirectorySync {
     transaction: DirectoryTransaction<WorkspaceRefreshSnapshot, WorkspaceDirectoryDelta>,
     initialSubscribe: boolean,
     supportsDirectorySync: boolean,
+    projectsReady: Promise<void>,
   ): Promise<void> {
     let cursor: string | null = null;
     let subscribe = initialSubscribe;
@@ -618,8 +849,14 @@ export class DirectorySync {
         });
         payload = await subscription.ready;
       } else payload = await client.fetchWorkspaces(query);
+      // Fetch both directories together, but apply the project baseline before the
+      // workspace page's empty-project overlays, regardless of response order.
+      await projectsReady;
       this.assertWorkspaceTransactionCurrent(client, source, transaction);
-      applyWorkspaceSnapshotPage(transaction.snapshot, payload, cursor === null);
+      const accepted = transaction.snapshot.includesProjects
+        ? payload
+        : { ...payload, emptyProjects: [] };
+      applyWorkspaceSnapshotPage(transaction.snapshot, accepted, cursor === null);
       if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) return;
       cursor = payload.pageInfo.nextCursor;
       subscribe = false;
@@ -669,6 +906,7 @@ export class DirectorySync {
     }
     const mutations = this.workspaces.acceptWorkspaces(workspaces);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+    this.publishWorkspaceUpserts(mutations);
   }
 
   archiveAgent(agentId: string, archivedAt: string): void {
@@ -852,33 +1090,62 @@ export class DirectorySync {
     this.workspaceRevision += 1;
     const previous = this.readWorkspaceState();
     const deltaMutations = this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
+    this.persistCompletedWorkspaceRows(completion.snapshot, deltaMutations, previous);
+    this.persistWorkspaceCursors(completion.snapshot, completion.deltas);
+    this.persistCheckpoint({
+      workspaceBaseline:
+        completion.snapshot.includesWorkspaces &&
+        completion.snapshot.syncModes?.workspaces === "snapshot",
+    });
+    if (completion.snapshot.includesWorkspaces) {
+      this.workspaceSnapshotSource = source;
+      this.workspaceBaselineAccepted = true;
+    }
+    if (completion.snapshot.includesProjects) this.projectSnapshotSource = source;
+    this.publishWorkspaceSnapshot();
+  }
+
+  /** Persist the snapshot and buffered-delta row changes before publishing their checkpoint. */
+  private persistCompletedWorkspaceRows(
+    snapshot: WorkspaceRefreshSnapshot,
+    deltaMutations: readonly DirectoryReplicaMutation[],
+    previous: WorkspaceDirectorySnapshot,
+  ): void {
     const next = this.workspaces.snapshot();
     const workspaceIds =
-      completion.snapshot.syncModes?.workspaces === "changes"
-        ? new Set(completion.snapshot.touchedWorkspaceIds)
+      snapshot.syncModes?.workspaces === "changes"
+        ? new Set(snapshot.touchedWorkspaceIds)
         : new Set([...previous.workspaces.keys(), ...next.workspaces.keys()]);
     const projectIds =
-      completion.snapshot.syncModes?.projects === "changes"
-        ? new Set(completion.snapshot.touchedProjectIds)
+      snapshot.syncModes?.projects === "changes"
+        ? new Set(snapshot.touchedProjectIds)
         : new Set([...previous.projects.keys(), ...next.projects.keys()]);
     for (const mutation of deltaMutations) {
       if (mutation.kind === "workspace") workspaceIds.add(mutation.id);
       if (mutation.kind === "project") projectIds.add(mutation.id);
     }
     this.persistWorkspaceChanges(previous, workspaceIds, projectIds);
-    for (const [entity, cursor] of Object.entries(completion.snapshot.syncCursors ?? {})) {
+  }
+
+  /** Advance the captured snapshot cursors, then the buffered live changes in their original order. */
+  private persistWorkspaceCursors(
+    snapshot: WorkspaceRefreshSnapshot,
+    deltas: readonly WorkspaceDirectoryDelta[],
+  ): void {
+    for (const [entity, cursor] of Object.entries(snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
-    for (const delta of completion.deltas) {
+    for (const delta of deltas) {
       if (delta.kind === "script_status" || delta.kind === "accepted_workspace") continue;
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
       this.noteLiveCursor(entity, delta);
     }
-    this.persistCheckpoint();
   }
 
-  private persistCheckpoint(): void {
-    this.checkpoints?.commitDirectoryMutations(this.serverId, [], this.cursors);
+  private persistCheckpoint(coverage: DirectoryCheckpointCommitOptions = {}): void {
+    // Workspace-only cache selection must not erase unselected agent/project checkpoints.
+    const cursors = { ...this.unselectedCacheCursors, ...this.cursors };
+    this.checkpoints?.commitDirectoryMutations(this.serverId, [], cursors, coverage);
   }
 
   private readWorkspaceState(): WorkspaceDirectorySnapshot {
@@ -888,6 +1155,7 @@ export class DirectorySync {
   private applyWorkspaceDelta(delta: WorkspaceDirectoryDelta): void {
     const mutations = this.workspaces.applyDelta(delta);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+    this.publishWorkspaceUpserts(mutations);
   }
 
   private persistWorkspaceChanges(

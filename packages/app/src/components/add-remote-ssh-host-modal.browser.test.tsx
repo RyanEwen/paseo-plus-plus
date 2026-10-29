@@ -81,6 +81,12 @@ function mount() {
 describe("Android SSH key import form", () => {
   it("requires fingerprint approval before connecting and clears credentials after success", async () => {
     const onSaved = mount();
+    const password = within(document.body).getByLabelText("Daemon password");
+    expect(password).toHaveProperty("type", "password");
+    await click("Show password");
+    expect(password).toHaveProperty("type", "text");
+    await click("Hide password");
+    expect(password).toHaveProperty("type", "password");
     typeTarget("ssh://deploy@example.com");
     await click("Import private key");
     await click("Connect");

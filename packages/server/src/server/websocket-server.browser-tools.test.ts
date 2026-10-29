@@ -281,6 +281,9 @@ function createVoiceAssistantWebSocketServer(params: {
   const { httpServer, broker } = params;
   const agentManager = {
     setAgentAttentionCallback() {},
+    setAttentionHost() {},
+    setAttentionPresentationEnabled() {},
+    agentAwareAttentionEnabled: true,
     subscribe: () => () => {},
     getMetricsSnapshot: () => ({
       total: 0,
@@ -290,6 +293,7 @@ function createVoiceAssistantWebSocketServer(params: {
     }),
   };
   const daemonConfigStore = {
+    get: () => ({ notifications: { agentAwareAttention: true } }),
     onApply: () => () => {},
     onChange: () => () => {},
   };

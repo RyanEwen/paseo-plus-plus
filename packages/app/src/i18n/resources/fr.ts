@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Onglets avec icônes seules",
+    iconOnlyHint:
+      "Faites un clic droit sur un onglet de l’Explorateur ou sur la zone vide de la barre, puis choisissez Onglets avec icônes seules. Les noms restent disponibles dans les infobulles.",
+  },
   settingsSync: {
     title: "Synchronisation des paramètres",
     hint: "Synchronisez les préférences et la visibilité des éléments de la barre latérale avec un hôte choisi. Les filtres d’hôte/projet, l’ordre des espaces et les groupes repliés restent locaux. Changer d’hôte charge ses paramètres avant toute modification.",
@@ -37,6 +42,21 @@ export const fr: TranslationResources = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "Couleur d’accent",
+      hint: "Utilisée pour les commandes principales et vos messages",
+      updateHost: "Mettez à jour l’hôte de paramètres sélectionné pour changer la couleur d’accent",
+      preview: "Voici l’apparence de vos messages",
+      options: {
+        default: "Par défaut",
+        blue: "Bleu",
+        green: "Vert",
+        purple: "Violet",
+        rose: "Rose",
+        orange: "Orange",
+        teal: "Sarcelle",
+      },
+    },
     workspaceLimit: {
       save: "Enregistrer",
       title: "Limites des espaces de travail",
@@ -71,8 +91,8 @@ export const fr: TranslationResources = {
     saveFailed: "Échec de l’enregistrement. Réessayez.",
     features: {
       workspaceChatLinks: {
-        label: "Ouvrir les liens de discussion dans Paseo",
-        hint: "Sur ordinateur, ouvrir les liens web des discussions dans le navigateur de leur espace. Désactivez pour utiliser votre navigateur externe. Ouvrir dans Paseo reste disponible dans le menu du lien.",
+        label: "Liens de l’espace de travail",
+        hint: "Ouvrir les liens web de l’espace de travail dans de nouveaux onglets de son navigateur sur ordinateur, y compris le terminal, le chat et Git. Désactivez pour les ouvrir dans le navigateur externe. Les choix explicites restent disponibles dans les menus.",
       },
       sidebarHostUpdates: {
         label: "Mises à jour des hôtes dans la barre latérale",
@@ -84,7 +104,11 @@ export const fr: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Onglets des espaces sur mobile",
-        hint: "Afficher une barre d’onglets défilante dans les espaces compacts. Désactivez pour retrouver le sélecteur précédent sans changer l’onglet actif.",
+        hint: "Afficher des onglets de même largeur sur les écrans compacts, avec défilement uniquement si nécessaire. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
+      },
+      widerWorkspaceTabs: {
+        label: "Onglets d’espace de travail plus larges",
+        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Sur téléphone, les onglets de l’espace de travail se partagent toujours la largeur disponible à parts égales.",
       },
 
       descriptiveToolCalls: {
@@ -92,13 +116,9 @@ export const fr: TranslationResources = {
         hint: "Décrit les opérations connues et conserve les commandes et sorties exactes dans les détails. Désactivez pour rétablir les libellés classiques.",
       },
 
-      sidebarProjectSelector: {
-        label: "Projet sélectionné dans l’en-tête",
-        hint: "Affiche le nom du projet sélectionné dans l’en-tête des espaces de travail. Sinon, l’en-tête indique Espaces de travail ; les choix d’hôtes et de projets restent disponibles.",
-      },
       stickyUserPrompts: {
         label: "Garder les messages en vue",
-        hint: "Affiche le message courant au-dessus du chat avec développement et navigation",
+        hint: "Épingle un message compact avec développement et navigation précédent/suivant. Les messages ordinaires restent déployés et le chargement ne masque jamais un message disponible.",
       },
       previousAgents: {
         label: "Agents précédents",
@@ -154,7 +174,7 @@ export const fr: TranslationResources = {
       },
       mobile: {
         label: "Navigation mobile",
-        hint: "Cibles tactiles plus grandes, retour Android plus sûr et notifications de développement séparées",
+        hint: "Retour Android plus sûr et notifications de développement séparées",
       },
       pickers: {
         label: "Sélecteurs et état des espaces",
@@ -583,6 +603,7 @@ export const fr: TranslationResources = {
       details: "Détails",
     },
     dictation: {
+      paused: "Microphone interrompu. En attente de reprise…",
       start: "Démarrer la dictée vocale",
       cancel: "Annuler la dictée",
       retry: "Relancer la dictée",
@@ -776,6 +797,8 @@ export const fr: TranslationResources = {
       },
     },
     setup: {
+      updateHost:
+        "Mettez à jour l’hôte pour afficher les détails de configuration de l’espace de travail",
       descriptor: {
         label: "Configuration",
         completed: "Configuration terminée",
@@ -812,12 +835,15 @@ export const fr: TranslationResources = {
     browser: {
       openInPaseo: "Ouvrir dans le navigateur Paseo",
       openExternally: "Ouvrir dans un navigateur externe",
+      copyLink: "Copier le lien",
       unavailable: {
         title: "Le navigateur est réservé à l’app de bureau",
         subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
       },
       session: "Session de navigateur {{browserId}}",
       controls: {
+        pageZoom: "Zoom de la page",
+        zoomFailed: "Impossible de modifier le zoom de la page",
         back: "Retour",
         forward: "Suivant",
         stopLoading: "Arrêter le chargement",
@@ -839,6 +865,17 @@ export const fr: TranslationResources = {
         placeholder: "Message à l’agent à propos de cet élément…",
         submit: "Joindre",
         cancel: "Annuler",
+      },
+      extensions: {
+        label: "Extensions",
+        empty: "Aucune extension activée.",
+        noPopup: "Aucune fenêtre fournie",
+        loading: "Chargement des extensions...",
+        manage: "Gérer les extensions",
+        openFailed: "Impossible d’ouvrir l’extension",
+        pin: "Épingler {{name}}",
+        unpin: "Désépingler {{name}}",
+        pinFailed: "Impossible d’enregistrer l’épingle de l’extension",
       },
       devices: {
         label: "Taille de l’appareil",
@@ -1182,6 +1219,7 @@ export const fr: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "Mettez cet hôte à jour pour ouvrir le diff d’un seul fichier.",
         openChangesTab: "Ouvrir l’onglet Modifications",
         openDiffTab: "Ouvrir l’onglet Diff",
         closeChangesTab: "Fermer l’onglet Modifications",
@@ -1215,6 +1253,7 @@ export const fr: TranslationResources = {
         checkingRepository: "Vérification du dépôt…",
         notRepository: "Ce n’est pas un dépôt git",
         diffMode: "Mode de diff",
+        all: "Toutes les modifications",
         uncommitted: "Non commité",
         committed: "Commité",
         branchUnknown: "Inconnue",
@@ -1424,6 +1463,16 @@ export const fr: TranslationResources = {
       multipleWorkspaces_other: "Espaces de {{count}} projets",
       title: "Projets",
     },
+    workspaceTree: {
+      expand: "Développer les espaces de travail enfants de {{name}}",
+      collapse: "Replier les espaces de travail enfants de {{name}}",
+      activeChild: "Contient l’espace de travail actif.",
+      summary_one: "{{count}} espace de travail enfant : {{status}}",
+      summary_other: "{{count}} espaces de travail enfants : {{status}}",
+      humanAttention_one: "{{count}} espace de travail enfant nécessite votre attention",
+      humanAttention_other: "{{count}} espaces de travail enfants nécessitent votre attention",
+      unknownStatus: "État indisponible",
+    },
     statusGroupAccessibility: "Groupe {{label}}",
     statusBucket: {
       workingCount: "{{count}} en cours",
@@ -1454,9 +1503,9 @@ export const fr: TranslationResources = {
         fiveDays: "5 jours",
         week: "1 semaine",
         twoWeeks: "2 semaines",
-        month: "1 mois",
-        twoMonths: "2 mois",
-        threeMonths: "3 mois",
+        month: "1 mois (30 jours)",
+        twoMonths: "2 mois (60 jours)",
+        threeMonths: "3 mois (90 jours)",
       },
       expandAll: "Tout déplier",
       collapseAll: "Tout replier",
@@ -1569,6 +1618,44 @@ export const fr: TranslationResources = {
       openProjectSettings: "Ouvrir les paramètres du projet",
     },
     project: {
+      archive: {
+        action: "Tout archiver",
+        title: "Archiver les espaces de travail du projet ?",
+        message:
+          "Projet : « {{projectName}} »\nEspaces de travail : {{workspaceCount}}\nAgents : {{agentCount}} (en cours : {{runningAgentCount}})\nHôtes : {{hostCount}}\n\nLes agents en cours et les tâches des espaces de travail seront arrêtés. Les arbres de travail gérés par Paseo pourront être supprimés. Le projet sera conservé.",
+        includeBackground: "Archiver aussi les espaces de travail en arrière-plan ({{count}})",
+        backgroundWarning:
+          "Inclure les espaces de travail en arrière-plan arrête aussi leurs agents et leurs tâches.",
+        discovering: "Comptage des espaces de travail et des agents...",
+        progress: "Archivage des espaces de travail : {{completed}} sur {{total}}",
+        completed: "Espaces de travail archivés : {{count}}",
+        failed:
+          "{{completed}} espaces de travail archivés. Opération arrêtée sur « {{workspace}} » sur {{host}} : {{error}}. Non tentés : {{unprocessed}}. Résolvez le problème, puis réessayez Tout archiver.",
+        empty: "Aucun espace de travail actif dans ce projet",
+        projectChanged:
+          "Le projet a changé pendant la confirmation. Vérifiez les nombres, puis réessayez Tout archiver.",
+        hostDisconnected:
+          "L’hôte {{host}} est déconnecté. Connectez tous les hôtes du projet, puis réessayez.",
+        updateRequired:
+          "Mettez l’hôte {{host}} à jour pour archiver les espaces de travail du projet en toute sécurité.",
+        alreadyArchiving:
+          "L’espace de travail « {{workspace}} » est déjà en cours d’archivage. Attendez la fin, puis réessayez.",
+        incompleteDiscovery:
+          "Impossible de compter tous les espaces de travail et agents du projet. Réessayez Tout archiver.",
+        verificationFailed:
+          "Impossible de vérifier que l’espace de travail « {{workspace}} » est archivé. Ouvrez Historique pour vérifier son état avant de réessayer.",
+        agentsRemaining:
+          "L’espace de travail « {{workspace}} » contient encore des agents actifs. Ouvrez Historique pour examiner l’archivage incomplet.",
+        agentNotArchived:
+          "Impossible de vérifier que l’agent {{agent}} est archivé et arrêté. Ouvrez Historique pour vérifier son état.",
+      },
+      restore: {
+        title: "Restaurer un espace de travail archivé",
+        search: "Rechercher des espaces de travail archivés",
+        empty: "Aucun espace de travail archivé dans ce projet",
+        updateRequired: "Mettez à jour votre hôte pour parcourir les espaces de travail archivés",
+        loadFailed: "Impossible de charger les espaces de travail archivés",
+      },
       actions: {
         menu: "Actions du projet",
         openSettings: "Ouvrir les paramètres du projet",
@@ -1663,8 +1750,9 @@ export const fr: TranslationResources = {
     },
     fields: {
       project: "Projet",
-      base: "Base",
+      branch: "Branche",
       baseNotApplicable: "Non applicable",
+      host: "Hôte",
     },
     titlePlaceholder: "Titre (facultatif)",
     errors: {
@@ -2272,12 +2360,32 @@ export const fr: TranslationResources = {
       creatingAgent: "Création de l’agent",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: "Ouvrir les fichiers .{{extension}} avec",
+        pickerTitleFilename: "Ouvrir {{filename}} avec",
+        dontAskAgain: "Ne plus demander",
+        use: "Utiliser",
+        openWith: "Ouvrir avec…",
+        alwaysUseExtension: "Toujours utiliser pour .{{extension}}",
+        alwaysUseFilename: "Toujours utiliser pour {{filename}}",
+        option: "{{title}} — {{owner}}",
+        actions: "Actions du fichier",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "Image",
+          source: "Source",
+        },
+      },
       directoryMissing: "Répertoire de l’espace de travail introuvable.",
       loading: "Chargement du fichier…",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu indisponible pour un fichier binaire",
       tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
+      documentUnsupported: "Les fichiers {{type}} ne peuvent pas être affichés sur cet appareil",
       failedToLoad: "Impossible de charger le fichier",
+      notFound: "Fichier introuvable",
       failedToLoadPreview: "Impossible de charger l’aperçu du fichier",
       editor: {
         fileSize: "Taille du fichier : {{size}}",
@@ -2289,10 +2397,7 @@ export const fr: TranslationResources = {
         changedOnDisk: "Modifié sur le disque",
         vimMode: "Mode Vim {{mode}}",
         cursor: "Ligne {{line}}, colonne {{column}}",
-        preview: "Aperçu",
-        source: "Source",
         deletedTitle: "Fichier supprimé du disque",
-        checkFailedTitle: "Impossible de vérifier le fichier sur le disque",
         preservedDescription: "La copie ouverte est conservée.",
         conflictDescription: "Le contenu local a été conservé. Choisissez la version à garder.",
         overwrite: "Écraser",
@@ -2472,6 +2577,70 @@ export const fr: TranslationResources = {
       saveAccessibility: "Enregistrer le commentaire de revue",
     },
   },
+  providerUsage: {
+    options: "Paramètres",
+    refreshFailed: "Impossible d’actualiser l’utilisation",
+    noHosts: "Aucun hôte connecté",
+    agentError: "Impossible de charger l’utilisation : {{reason}}",
+    pin: "Épingler",
+    unpin: "Désépingler",
+    displayAs: "Pourcentages",
+    displayUsed: "Utilisé",
+    displayRemaining: "Restant",
+    showInSidebar: "Résumé dans la barre latérale",
+    showInSidebarHint: "Les périodes épinglées apparaissent en bas de la barre latérale",
+    runToRefresh: "Exécutez {{command}} pour actualiser.",
+    signInAgain: "Reconnectez-vous.",
+    loginRejected: "Connexion refusée (HTTP {{status}}). {{remedy}}",
+    loginExpired: "Connexion expirée {{relativeTime}}. {{remedy}}",
+    title: "Utilisation du forfait",
+    refresh: "Actualiser",
+    refreshAll: "Tout actualiser",
+    refreshing: "Actualisation...",
+    loading: "Chargement de l’utilisation...",
+    empty: "Aucune donnée d’utilisation",
+    errorTitle: "Impossible de charger l’utilisation",
+    hostUnavailable: "Connectez-vous à {{host}} pour voir l’utilisation du fournisseur",
+    hostUpgradeRequired: "Mettez à jour {{host}} pour voir l’utilisation du fournisseur",
+    clientUnavailable: "La connexion à l’hôte n’est pas prête",
+    retry: "Réessayer",
+    tooltipLoading: "Chargement de l’utilisation du forfait...",
+    status: {
+      error: "Erreur",
+      unavailable: "Indisponible",
+    },
+    values: {
+      used: "Utilisé : {{percentage}}",
+      remaining: "Il reste {{amount}}",
+    },
+    labels: {
+      session: "Session",
+      weekly: "Hebdomadaire",
+      monthly: "Mensuel",
+      codeReview: "Révision de code",
+      credits: "Crédits",
+      monthlyCredits: "Crédits mensuels",
+    },
+    duration: {
+      days: "{{value}} j",
+      hours: "{{value}} h",
+      minutes: "{{value}} min",
+    },
+    timing: {
+      lastUpdated: "Dernière mise à jour {{relativeTime}}",
+      noSuccessfulUpdate: "Aucune mise à jour réussie",
+      resetTimePassed: "Heure de réinitialisation dépassée",
+      resettingNow: "réinitialisation en cours",
+      resetsIn: "se réinitialise dans {{duration}}",
+      runsOutNow: "s’épuise maintenant",
+      runsOutIn: "s’épuise dans {{duration}}",
+      justNow: "à l’instant",
+      daysAgo: "il y a {{value}} j",
+      hoursAgo: "il y a {{value}} h",
+      minutesAgo: "il y a {{value}} min",
+      updated: "Mis à jour {{relativeTime}}",
+    },
+  },
   settings: {
     title: "Paramètres",
     loading: "Chargement des paramètres…",
@@ -2500,6 +2669,7 @@ export const fr: TranslationResources = {
       terminal: "Terminal",
       browser: "Navigateur",
       editor: "Éditeur",
+      files: "Fichiers",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
       notifications: "Notifications",
@@ -2542,8 +2712,29 @@ export const fr: TranslationResources = {
       vimKeybindings: "Raccourcis Vim",
       vimHint: "S’applique aux fichiers source dans l’app web et l’app de bureau.",
     },
+    files: {
+      title: "Fichiers",
+      askEveryTime: "Toujours demander",
+      askAgain: "Redemander",
+      askAgainFor: "Redemander pour {{label}}",
+      unavailable: "Absent des hôtes connectés",
+      empty: "Les panneaux de fichier apparaissent ici quand un plugin en ajoute un",
+    },
     notifications: {
       title: "Notifications",
+      chooseHost:
+        "Choisissez un hôte de réglages pour configurer les alertes sur tous ses appareils.",
+      hostTitle: "Notifications sur {{host}}",
+      agentAware: "Alertes adaptées aux agents",
+      agentAwareHint:
+        "Gardez silencieux les résultats courants entre agents et affichez le badge « À relire » quand vous devez intervenir. Ce réglage s’applique à tous les appareils connectés à {{host}}. Les demandes d’intervention humaine et les alertes de sécurité restent disponibles quand il est désactivé.",
+      updateHost: "Mettez cet hôte à jour pour modifier les alertes adaptées aux agents.",
+      readOnly: "Vous devez pouvoir administrer cet hôte pour modifier ce réglage.",
+      unavailable:
+        "Connectez-vous à un hôte compatible avec les droits d’administration avant d’enregistrer.",
+      notSaved: "L’hôte n’a pas enregistré cette préférence d’alertes. Réessayez.",
+      loadFailed: "Impossible de charger la préférence de notifications de l’hôte.",
+      saving: "Enregistrement...",
       permission: "Autorisation des notifications",
       refreshAccessibility: "Actualiser l’autorisation des notifications",
       playSound: "Émettre un son",
@@ -2587,6 +2778,27 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      browserExtensions: {
+        title: "Extensions",
+        compatibility:
+          "Certaines fonctionnalités des extensions Chrome ne sont pas prises en charge. Les extensions ne sont pas mises à jour automatiquement.",
+        store: "Chrome Web Store",
+        openStore: "Ouvrir le Web Store",
+        refresh: "Actualiser",
+        enable: "Activer",
+        disable: "Désactiver",
+        retry: "Réessayer",
+        remove: "Supprimer",
+        removeTitle: "Supprimer {{name}} ?",
+        removeMessage:
+          "Cette action supprime l’extension de Paseo. Les dossiers sources non empaquetés sont conservés.",
+        loading: "Chargement des extensions...",
+        empty: "Aucune extension installée.",
+        unpackedHint: "Chargez une extension depuis un dossier contenant manifest.json.",
+        loadUnpacked: "Charger un dossier",
+        unavailable:
+          "Les extensions ne sont pas disponibles. Mettez à jour l’application de bureau.",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
@@ -2812,6 +3024,7 @@ export const fr: TranslationResources = {
       searchPlaceholder: "Rechercher des raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur l’app de bureau",
       capturePrompt: "Appuyez sur le raccourci…",
+      captureIndexPrompt: "Terminez par un chiffre de 1 à 9.",
       unassigned: "Non attribué",
       actions: {
         menu: "Actions pour {{name}}",
