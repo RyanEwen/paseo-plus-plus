@@ -1124,6 +1124,68 @@ test("orders a concurrent replacement after a pending accepted steer", async () 
   }
 });
 
+test("delivers an unavailable steer after its original foreground turn finishes", async () => {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  session.steerResult = "unavailable";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-finished-steer-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession() {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    beforeSteerUnavailableFallback: async () => {
+      entered.resolve();
+      await release.promise;
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial", { clientMessageId: "initial-client" });
+    const consume = (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+    const send = startAgentRun(manager, agent.id, "callback", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      runOptions: { clientMessageId: "callback-client" },
+    });
+    const result = send.then(
+      (value) => ({ status: "fulfilled", value }),
+      (error: unknown) => ({ status: "rejected", error }),
+    );
+    await entered.promise;
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await consume;
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    release.resolve();
+    expect(await result).toEqual({ status: "fulfilled", value: { disposition: "turn_started" } });
+    await manager.waitForAgentRunStart(agent.id);
+    expect(session.startPrompts).toEqual(["initial", "callback"]);
+    expect(session.interruptCount).toBe(0);
+    expect(
+      manager.getTimeline(agent.id).filter((item) => item.type === "user_message"),
+    ).toMatchObject([
+      { text: "initial" },
+      { text: "callback", clientMessageId: "callback-client" },
+    ]);
+  } finally {
+    release.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("does not replace a newer foreground turn after unavailable steer fallback is admitted", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();

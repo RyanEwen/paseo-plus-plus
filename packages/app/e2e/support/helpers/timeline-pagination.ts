@@ -410,7 +410,13 @@ export async function holdOlderHistoryPages(
     // A source probe can lead to several independently released canonical cache pages.
     for (let used = 1; used < 8 && gate.getReadAccounting().contextChainActive; used += 1) {
       await expect.poll(() => gate.getReadAccounting().pendingContext).toBe(0);
-      await expect.poll(() => gate.flushContentReads()).toBeGreaterThan(0);
+      try {
+        await expect.poll(() => gate.flushContentReads()).toBeGreaterThan(0);
+      } catch (error) {
+        throw new Error(`Context read accounting: ${JSON.stringify(gate.getReadAccounting())}`, {
+          cause: error,
+        });
+      }
       assertReadAccounting();
     }
     const prompts = gate.getCertifiedPrompts();

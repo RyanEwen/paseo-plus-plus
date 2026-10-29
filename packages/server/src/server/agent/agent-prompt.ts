@@ -78,6 +78,7 @@ async function steerOrReplaceActiveRun(
   | { disposition: "steered" }
   | {
       disposition: "turn_started";
+      replaced: boolean;
       iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
     }
   | null
@@ -92,8 +93,12 @@ async function steerOrReplaceActiveRun(
   if (result.status === "steered") {
     return { disposition: "steered" };
   }
-  if (result.status === "replaced") {
-    return { disposition: "turn_started", iterator: result.iterator };
+  if (result.status === "replaced" || result.status === "started") {
+    return {
+      disposition: "turn_started",
+      replaced: result.status === "replaced",
+      iterator: result.iterator,
+    };
   }
   return null;
 }
@@ -175,7 +180,7 @@ async function startAgentRunInner(
     return steered;
   }
   const { iterator, replaced } = steered
-    ? { iterator: steered.iterator, replaced: true }
+    ? { iterator: steered.iterator, replaced: steered.replaced }
     : await startOrReplaceRun(agentManager, agentId, prompt, options);
   logger.trace(
     {

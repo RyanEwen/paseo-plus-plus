@@ -507,38 +507,23 @@ for (const width of [1440, 390]) {
       await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-reenabled.png`) });
       await page.keyboard.press("Escape");
       await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-      const selectorSwitch = section.getByRole("switch", {
-        name: "Selected project in heading",
-        exact: true,
-      });
-      await expect(selectorSwitch).toBeChecked();
-      await selectorSwitch.click();
-      await expect(selectorSwitch).not.toBeChecked();
+      await expect(
+        section.getByRole("switch", { name: "Selected project in heading", exact: true }),
+      ).toHaveCount(0);
       await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
       if (width === 390) {
         await openMobileAgentSidebar(page);
         await expectMobileAgentSidebarVisible(page);
       }
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("Workspaces");
-      // Turning off the rich heading keeps the essential chooser available.
-      await page.getByTestId("sidebar-project-selector").click();
+      const projectSelector = page.getByTestId("sidebar-project-selector");
+      await expect(projectSelector).toHaveText("All Workspaces");
+      await projectSelector.click();
       await expect(page.getByTestId("sidebar-project-selector-all")).toBeVisible();
       await closeSidebarDisplayPreferences(page);
-      await expect(
-        page.getByText("Workspaces", { exact: true }).filter({ visible: true }).first(),
-      ).toBeVisible();
-      await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-selector-off.png`) });
-      if (width === 390) await closeMobileAgentSidebar(page);
-      await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-      await selectorSwitch.click();
-      await expect(selectorSwitch).toBeChecked();
-      await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
-      if (width === 390) {
-        await openMobileAgentSidebar(page);
-        await expectMobileAgentSidebarVisible(page);
-      }
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("All Workspaces");
-      await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-selector-on.png`) });
+      await expect(projectSelector).toHaveText("All Workspaces");
+      await page.screenshot({
+        path: resolve(evidenceDir, `settings-${width}-selector-always-available.png`),
+      });
       if (width === 390) await closeMobileAgentSidebar(page);
       // Fail a genuine cold settings read, then recover through the page's shared Retry.
       await page.addInitScript(() => {

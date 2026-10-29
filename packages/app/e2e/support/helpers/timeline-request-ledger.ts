@@ -13,6 +13,8 @@ export type TimelineReadPurpose = "window" | "content" | "context";
 interface ContentTarget {
   epoch: string;
   seq: number;
+  projection: "projected" | "canonical";
+  contextChainKey?: string;
 }
 
 /** Account for every before request, with independent capability-validated cache reads.
@@ -59,6 +61,7 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     key: string;
     terminal: boolean;
     source: FetchAgentTimelineResponseMessage["payload"]["entries"][number];
+    indexedPromptSeq?: number;
   }
   const contextChains = new Map<string, ContextChain>();
   let currentChainKey: string | null = null;
@@ -151,14 +154,16 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     return "context";
   };
 
-  /** Indexed cache reads require a capability and one uncached canonical USER target. */
+  /** A fresh indexed predecessor belongs to its probed source; outline-only reads
+   * still require one uncached canonical USER target per epoch.
+   */
   const classifyIndexedContent = (
     request: Record<string, unknown>,
     id: string,
     cursor: { epoch: string; seq: number },
   ): TimelineReadPurpose | undefined => {
     if (
-      request.projection !== "projected" ||
+      (request.projection !== "projected" && request.projection !== "canonical") ||
       request.limit !== 1 ||
       request.mergeWindow === true ||
       !indexed ||
@@ -168,11 +173,29 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     }
     const seq = cursor.seq! - 1;
     const key = `${cursor.epoch}:${seq}`;
-    if (!promptSeqs.has(seq) || loaded.has(key) || requestedContent.has(key)) {
+    const chain = [...contextChains.values()].find(
+      (candidate) =>
+        !candidate.terminal &&
+        candidate.pendingRequestId === null &&
+        candidate.epoch === cursor.epoch &&
+        candidate.indexedPromptSeq === seq,
+    );
+    if (!promptSeqs.has(seq)) return reject("Content must target an indexed canonical prompt");
+    if (!chain && (loaded.has(key) || requestedContent.has(key))) {
       return reject("Content read must target one uncached canonical indexed prompt per epoch");
     }
     requestedContent.add(key);
-    content.set(id, { epoch: cursor.epoch, seq });
+    if (chain) {
+      chain.used += 1;
+      chain.pendingRequestId = id;
+      if (chain.used > 8) return reject("Indexed context exceeded its total read budget");
+    }
+    content.set(id, {
+      epoch: cursor.epoch,
+      seq,
+      projection: request.projection,
+      contextChainKey: chain?.key,
+    });
     purposes.set(id, "content");
     return "content";
   };
@@ -196,6 +219,16 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       if (!indexed || result.data.error) return;
       indexEpoch = result.data.epoch;
       promptSeqs = new Set(result.data.prompts.map((prompt) => prompt.seq));
+      for (const chain of contextChains.values()) {
+        // Only an index observed after the completed source proof can end this chain.
+        if (chain.terminal || chain.pendingRequestId !== null || chain.used !== 1) continue;
+        if (chain.epoch !== indexEpoch) continue;
+        chain.used += 1;
+        const predecessors = [...promptSeqs].filter((seq) => seq < chain.cursor);
+        const predecessor = predecessors.length ? Math.max(...predecessors) : undefined;
+        if (predecessor === undefined) chain.terminal = true;
+        else chain.indexedPromptSeq = predecessor;
+      }
     },
 
     /** Unknown shapes, repeated IDs and redundant cache reads fail the all-request contract. */
@@ -222,6 +255,8 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       }
       // Reading an assistant source can require canonical context even on indexed hosts.
       // Distinguish that observed non-user source from indexed prompt-content reads.
+      if (request.projection === "canonical" && request.limit === 1)
+        return classifyIndexedContent(request, id, { epoch: cursor.epoch, seq: cursor.seq! });
       if (
         request.projection === "canonical" ||
         (request.limit === 1 && sources.has(`${cursor.epoch}:${cursor.seq! - 1}`))
@@ -264,7 +299,16 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
         reject("Invalid or repeated canonical prompt-content response");
         return;
       }
-      certifyNearestPrompt(page.entries);
+      const chain = target.contextChainKey ? contextChains.get(target.contextChainKey) : undefined;
+      if (chain) {
+        if (chain.terminal || chain.pendingRequestId !== id) {
+          reject("Indexed content does not own its canonical context chain");
+          return;
+        }
+        chain.terminal = true;
+        chain.pendingRequestId = null;
+      }
+      certifyNearestPrompt(page.entries, target.contextChainKey);
       completedContent.add(id);
     },
 
@@ -389,7 +433,7 @@ function matchesContentTarget(
     page.agentId !== agentId ||
     page.direction !== "before" ||
     page.epoch !== target.epoch ||
-    page.projection !== "projected"
+    (page.projection !== "projected" && page.projection !== target.projection)
   )
     return false;
   if (page.error || page.reset || page.staleCursor || page.gap || page.mergeWindow === true)

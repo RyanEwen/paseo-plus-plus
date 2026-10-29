@@ -373,9 +373,46 @@ test("indexes a new agent's prompts only once the agent exists", async ({ page }
   }
 });
 
-/** Reveal desktop actions through their existing hover owner before clicking. */
+/** Pinned bodies retain their full natural box. Hover its visible clip without
+ * scrollIntoView moving the timeline and changing the arrow's owning row.
+ */
 async function clickMessageNavigation(message: Locator, testID: string) {
-  await message.getByTestId("user-message-bubble").hover();
+  const hover = await message.evaluate((node) => {
+    const row = node.closest<HTMLElement>("[data-actual-prompt-row]");
+    if (row?.dataset.promptPinned !== "true") return null;
+    const bubble = node.querySelector('[data-testid="user-message-bubble"]')!;
+    const clip = node.querySelector('[data-testid="user-message-body-scroll"]')!;
+    const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
+    const bounds = [bubble, clip, viewport].map((element) => element.getBoundingClientRect());
+    const left = Math.max(...bounds.map((rect) => rect.left));
+    const right = Math.min(...bounds.map((rect) => rect.right));
+    const top = Math.max(...bounds.map((rect) => rect.top));
+    const bottom = Math.min(...bounds.map((rect) => rect.bottom));
+    const x = (left + right) / 2;
+    const y = (top + bottom) / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      x,
+      y,
+      width: right - left,
+      height: bottom - top,
+      owned: hit?.closest("[data-actual-prompt-row]") === row,
+      id: row.dataset.historyRowId,
+    };
+  });
+  if (hover) {
+    expect(hover.width).toBeGreaterThan(0);
+    expect(hover.height).toBeGreaterThan(0);
+    expect(hover.owned).toBe(true);
+    await message.page().mouse.move(hover.x, hover.y);
+    expect(
+      await message.evaluate(
+        (node) => node.closest<HTMLElement>("[data-actual-prompt-row]")?.dataset.historyRowId,
+      ),
+    ).toBe(hover.id);
+  } else {
+    await message.getByTestId("user-message-bubble").hover();
+  }
   await message.getByTestId(testID).click();
 }
 
@@ -406,16 +443,44 @@ function pinnedActualRow(page: Page) {
     .locator('[data-actual-prompt-row][data-prompt-pinned="true"]');
 }
 
-/** The disclosure reserves its own column inside the bubble, without covering text. */
-async function expectInlinePromptDisclosure(message: Locator) {
+/** The approved right overlay has an opaque backing and stays inside the painted bubble. */
+async function expectInBubblePromptDisclosure(message: Locator) {
   const text = await message.locator("[data-message-text=true]").boundingBox();
   const disclosure = await message.getByTestId("user-message-disclosure").boundingBox();
+  const clip = await message.getByTestId("user-message-body-scroll").boundingBox();
   expect(text).not.toBeNull();
   expect(disclosure).not.toBeNull();
-  expect(text!.x + text!.width).toBeLessThanOrEqual(disclosure!.x);
-  const bubble = (await message.getByTestId("user-message-bubble").boundingBox())!;
-  expect(disclosure!.y).toBeGreaterThanOrEqual(bubble.y);
-  expect(disclosure!.y + disclosure!.height).toBeLessThanOrEqual(bubble.y + bubble.height);
+  expect(clip).not.toBeNull();
+  expect(disclosure!.x).toBeGreaterThanOrEqual(clip!.x);
+  expect(disclosure!.x + disclosure!.width).toBeLessThanOrEqual(clip!.x + clip!.width);
+  expect(disclosure!.y).toBeGreaterThanOrEqual(clip!.y);
+  expect(disclosure!.y + disclosure!.height).toBeLessThanOrEqual(clip!.y + clip!.height);
+  const backing = await message
+    .locator('[data-user-message-compact-occlusion="controls"]')
+    .evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        bounds: node.getBoundingClientRect().toJSON(),
+        allocation: node.parentElement!.getBoundingClientRect().toJSON(),
+        color: style.backgroundColor,
+        opacity: style.opacity,
+        corners: [
+          style.borderTopLeftRadius,
+          style.borderTopRightRadius,
+          style.borderBottomRightRadius,
+          style.borderBottomLeftRadius,
+        ],
+      };
+    });
+  expect(backing.bounds).toEqual(backing.allocation);
+  expect(backing.opacity).toBe("1");
+  expect(backing.corners).toEqual(["0px", "0px", "0px", "0px"]);
+  expect(backing.color).toMatch(/^rgb\(/);
+  expect(backing.color).toBe(
+    await message
+      .getByTestId("user-message-bubble")
+      .evaluate((node) => getComputedStyle(node).backgroundColor),
+  );
 }
 
 /** Keep pointer observation and original-message landing identical across destination geometries. */
@@ -745,7 +810,12 @@ test("actual user row preserves node identity while pinning and restores disclos
     expect(wrapper).not.toBeNull();
     expect(text).not.toBeNull();
     await expectActualExpandedGeometry(row);
-    await expectSinglePaintedPromptHandoff(page, prompt, WIDE_VIEWPORT.width);
+    await expectSinglePaintedPromptHandoff({
+      page,
+      prompt,
+      width: WIDE_VIEWPORT.width,
+      disclosure: "more",
+    });
     await scrollActualRowPastTop(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
     expect(await row.evaluate((node, prior) => node === prior, wrapper!)).toBe(true);
@@ -923,7 +993,12 @@ for (const viewport of [
       const timeline = page.getByTestId("agent-chat-scroll");
       const original = timeline.getByTestId("user-message").filter({ hasText: prompts[0]! });
       const realHeight = (await original.getByTestId("user-message-bubble").boundingBox())!.height;
-      await expectSinglePaintedPromptHandoff(page, prompts[0]!, viewport.width);
+      await expectSinglePaintedPromptHandoff({
+        page,
+        prompt: prompts[0]!,
+        width: viewport.width,
+        disclosure: "none",
+      });
       await scrollTimelinePastPrompt(page, prompts[0]!);
       const sticky = pinnedActualRow(page);
       const shortRow = actualUserRow(page, prompts[0]!);
@@ -960,7 +1035,7 @@ for (const viewport of [
         const selected = actualUserRow(page, prompts[index]!);
         const disclosure = selected.getByTestId("user-message-disclosure");
         await expect(disclosure).toHaveText("more…");
-        await expectInlinePromptDisclosure(selected);
+        await expectInBubblePromptDisclosure(selected);
         const longGeometry = await expectSingleLineStickyGeometry(selected);
         expect(longGeometry.height).toBeCloseTo(shortGeometry.height, 0);
         expect(longGeometry.controlsOffset).toBeCloseTo(shortGeometry.controlsOffset, 0);
@@ -1563,7 +1638,17 @@ for (const indexed of [true, false]) {
  */
 /** Capture only currently painted text pixels without element screenshot auto-scrolling. */
 /** Compare painted bubble pixels at fine forward/reverse offsets around the pin threshold. */
-async function expectSinglePaintedPromptHandoff(page: Page, prompt: string, width: number) {
+async function expectSinglePaintedPromptHandoff({
+  page,
+  prompt,
+  width,
+  disclosure,
+}: {
+  page: Page;
+  prompt: string;
+  width: number;
+  disclosure: "none" | "more";
+}) {
   const timeline = page.getByTestId("agent-chat-scroll");
   const row = actualUserRow(page, prompt);
   await expect(row).toHaveCount(1);
@@ -1604,9 +1689,12 @@ async function expectSinglePaintedPromptHandoff(page: Page, prompt: string, widt
     expect(textBounds.y - bounds.y).toBeCloseTo(originalTextBox.y - sourceBox.y, 3);
     expect(textBounds.width).toBeCloseTo(originalTextBox.width, 3);
     expect(textBounds.height).toBeCloseTo(originalTextBox.height, 3);
+    await expect(row.getByTestId("user-message-disclosure")).toHaveCount(
+      disclosure === "more" ? 1 : 0,
+    );
     await expectMatchingPromptInk(page, originalPixels, originalText, {
       firstLineOnly: true,
-      allowCompactOverlay: true,
+      allowCompactOverlay: disclosure === "more",
     });
     await page.screenshot({
       path: `../../docs/qa-evidence/sticky-user-message/single-copy-${width}-${offset}.png`,
