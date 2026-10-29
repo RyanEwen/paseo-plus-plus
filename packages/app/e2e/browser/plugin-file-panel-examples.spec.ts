@@ -89,6 +89,9 @@ async function chooseRichMarkdown(page: Page) {
   await page.getByRole("radio", { name: "Rich Markdown — markdown-panel", exact: true }).click();
   await page.getByRole("checkbox", { name: "Don't ask me again", exact: true }).click();
   await page.getByRole("button", { name: "Use", exact: true }).click();
+  // The closing modal retains its focus scope through the exit animation.
+  // Visible editor content behind it does not yet own keyboard input.
+  await expect(page.getByTestId("file-panel-picker")).toHaveCount(0);
 }
 
 async function replaceMarkdown(page: Page, text: string) {
