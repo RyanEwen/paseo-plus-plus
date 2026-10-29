@@ -77,19 +77,9 @@ Native sticky rows retain their full ordinary transcript height even while their
 
 Android uses one UI-owned presentation for the full-row exit boundary, motion, clipping, disclosure and hidden-control access. React's reading selection cannot compact the body. A reverse handoff resets the held inner More viewport before restoring ordinary paint; a queued disclosure request must still own its binding and handoff token. The iOS keyboard/sticky owner remains separate and retains its existing trigger. Do not substitute an independently timed keyboard value or broaden this Android contract to iOS without migrating its actual physical owner.
 
-The viewport owns original row measurements, pinning, reading anchors and explicit prompt
-landings. It must not use a translated bubble as its original scroll target. Manual scrolling
-selects the prompt for the response at the reading edge. Arrow navigation retains its selected
-prompt through the smooth scroll, including landings clamped by the end of the conversation.
-Bottom-following intent starts at the latest prompt and resumes when you send or use Jump to
-bottom. Incoming messages do not move an older reading selection. Retained panes keep their own
-selection; session and epoch changes isolate it.
+The viewport owns original row measurements, pinning, reading anchors and explicit prompt landings. It must not use a translated bubble as its original scroll target. Manual scrolling selects the prompt for the response at the reading edge. Arrow navigation retains its selected prompt through the smooth scroll, including landings clamped by the end of the conversation. Bottom-following intent keeps latest-prompt navigation and resumes when you send or use Jump to bottom. The published reading edge still owns physical prompt context, including on initial opening; latest context is only the fallback before that edge is available. Incoming messages do not move an older reading selection. Retained panes keep their own selection; session and epoch changes isolate it.
 
-An assistant-only tail may need a separate canonical context read to recover its preceding
-user row. Keep that isolated coverage separate from the viewed window, and pass the row through
-the same presentation as ordinary history. A retained context row does not prove that the gap
-before it is loaded. Original reveal and arrow navigation must materialize the target through
-the ordinary history owner before claiming a landing.
+An assistant-only tail may need a separate canonical context read to recover its preceding user row. Cached history may paint before synchronization finishes. Keep its locally proven prompt visible, and admit remote prompt lookup only after authoritative history acceptance. Keep that isolated coverage separate from the viewed window, and pass the row through the same presentation as ordinary history. A retained context row does not prove that the gap before it is loaded, even when its canonical revision is cached but remains outside the current local presentation window. Keep isolated display context out of ordinary reading-anchor geometry, so filling that gap preserves the actual window's reader instead of the recovered prompt. Original reveal and arrow navigation must materialize the target through the ordinary history owner before claiming a landing.
 
 Index-free discovery checks projected display-anchor progress and stops with usable feedback on exhaustion, failure, cancellation, or its work budget. A projected row can have later updates beyond the backward cursor; its first source position owns pagination. Passive context reads keep an available prompt visible. When no prompt is available, the sticky rail shows a muted system placeholder and owns any actionable retry. Explicit navigation failures retain their own feedback and retry. An explicit retry can continue past the
 budget; streamed cursor advances cannot restart that budget. A transcript change during an

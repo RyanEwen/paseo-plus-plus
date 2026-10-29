@@ -4,7 +4,8 @@ import {
   expectMatchingPromptInk,
   expectActualTextIdentity,
   expectSingleLineStickyGeometry,
-  expectInlineStickyAttachmentCount,
+  expectCompactStickyAttachments,
+  expectNoCompactAttachmentCount,
 } from "../support/helpers/sticky-preview-geometry";
 import { chatOutlineRail } from "../support/helpers/chat-outline";
 import { expect, test } from "../support/fixtures";
@@ -379,7 +380,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
     expect(textIdentity).not.toBeNull();
     const originalInk = await captureVisibleActualPrompt(page, originalText, true);
     await scrollTimelinePastPrompt(page, prompt);
-    await expect(attachmentRow).toContainText("2 attachments");
+    await expectNoCompactAttachmentCount(attachmentRow);
     await expectActualTextIdentity(original, textIdentity!, prompt);
     // Compare the same natural first line outside only the declared opaque
     // right-side controls. The real Text owner and its wrapping remain unchanged.
@@ -391,8 +392,8 @@ test("sticky user message preserves uploaded image and file attachments", async 
       path: "../../docs/qa-evidence/sticky-user-message/attachment-single-copy.png",
     });
     await scrollTimelinePastPrompt(page, prompt);
-    await expect(attachmentRow).toContainText("2 attachments");
-    await expectInlineStickyAttachmentCount(attachmentRow, "2 attachments", prompt, testInfo);
+    await expectNoCompactAttachmentCount(attachmentRow);
+    await expectCompactStickyAttachments(attachmentRow, prompt, testInfo);
     const attachmentTextGeometry = await expectSingleLineStickyGeometry(attachmentRow);
     await attachmentRow.getByRole("button", { name: "Expand user message", exact: true }).click();
     await expect(attachmentRow.getByTestId("user-message")).toContainText(prompt);
@@ -402,7 +403,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
       attachmentRow.getByRole("button", { name: "Open image attachment", exact: true }),
     ).toBeVisible();
     await attachmentRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
-    await expect(attachmentRow).toContainText("2 attachments");
+    await expectNoCompactAttachmentCount(attachmentRow);
     expect((await expectSingleLineStickyGeometry(attachmentRow)).height).toBeCloseTo(
       attachmentTextGeometry.height,
       0,
@@ -497,13 +498,17 @@ test("sticky user message preserves uploaded image and file attachments", async 
     await expect(
       timeline.locator('[data-actual-prompt-row][data-prompt-pinned="true"]'),
     ).toHaveAttribute("data-history-row-id", attachmentOnlyRowId!);
-    await expect(attachmentOnlyRow).toContainText("2 attachments");
+    await expectNoCompactAttachmentCount(attachmentOnlyRow);
     await expect(attachmentOnlyRow.getByTestId("user-message-text")).toHaveCount(0);
-    await expectInlineStickyAttachmentCount(attachmentOnlyRow, "2 attachments", "", testInfo);
+    await expectCompactStickyAttachments(attachmentOnlyRow, "", testInfo);
     const attachmentOnlyBubble = attachmentOnlyRow.getByTestId("user-message-bubble");
+    const attachmentOnlyMore = attachmentOnlyRow.getByRole("button", {
+      name: "Expand user message",
+      exact: true,
+    });
     await expect
       .poll(async () => (await attachmentOnlyBubble.boundingBox())!.height)
-      .toBeCloseTo(attachmentTextGeometry.height, 0);
+      .toBeCloseTo((await attachmentOnlyMore.boundingBox())!.height, 0);
     await attachmentOnlyRow
       .getByRole("button", { name: "Expand user message", exact: true })
       .click();
@@ -516,7 +521,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
       .click();
     await expect
       .poll(async () => (await attachmentOnlyBubble.boundingBox())!.height)
-      .toBeCloseTo(attachmentTextGeometry.height, 0);
+      .toBeCloseTo((await attachmentOnlyMore.boundingBox())!.height, 0);
   } catch (error) {
     // Capture the still-owned conversation before agent cleanup can remove its route.
     try {

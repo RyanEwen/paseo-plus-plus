@@ -4,7 +4,11 @@ import {
   type CanonicalPromptContextProgress,
   type CanonicalPromptContext,
 } from "./canonical-prompt-model";
-import type { FetchAgentTimelineResponseMessage } from "@getpaseo/protocol/messages";
+import {
+  AgentTimelineListPromptsResponseMessageSchema,
+  type AgentTimelineListPromptsResponseMessage,
+  type FetchAgentTimelineResponseMessage,
+} from "@getpaseo/protocol/messages";
 import type { StreamItem } from "@/types/stream";
 import { hydratePromptEntry } from "./hydrate-prompt-entry";
 import { TIMELINE_FETCH_PAGE_SIZE, PROMPT_DISCOVERY_PAGE_BUDGET } from "./timeline-fetch-policy";
@@ -24,6 +28,24 @@ export type ContextPageReader = (
   signal?: AbortSignal,
 ) => Promise<ContextPage>;
 export type ContextEntry = ContextPage["entries"][number];
+
+export interface ContextPromptIndexRequest {
+  epoch: string;
+  sourceStart: number;
+}
+
+/** Starts one complete index request after source proof, never a cached outline read. */
+export type ContextPromptIndexReader = (
+  request: ContextPromptIndexRequest,
+  signal: AbortSignal,
+) => Promise<AgentTimelineListPromptsResponseMessage["payload"]>;
+
+export interface ContextPromptIndexLookup {
+  agentId: string;
+  readPromptIndex: ContextPromptIndexReader;
+  /** Checks the owning channel, source and USER generation at every read boundary. */
+  assertCurrent: () => void;
+}
 
 /** A source occurrence is its canonical position and kind, never messageId alone. */
 export function contextSourceKey(source: StreamItem): string {
@@ -51,12 +73,15 @@ export async function fetchCanonicalPromptContext(
   progress?: CanonicalPromptContextProgress,
   resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined,
   observeSourceStart?: (sourceStart: number) => void,
+  indexedLookup?: ContextPromptIndexLookup,
 ): Promise<CanonicalPromptContext | undefined> {
   const position = source.timelineCursor;
   if (!position) throw new Error("Reading source has no canonical position");
   const read = async (cursor: number, limit: number, projection: "projected" | "canonical") => {
     if (signal.aborted) throw new Error("Reading context was cancelled");
+    indexedLookup?.assertCurrent();
     const page = await reader({ epoch: position.epoch, cursor, limit, projection }, signal);
+    indexedLookup?.assertCurrent();
     if (signal.aborted) throw new Error("Reading context was cancelled");
     if (page.epoch !== position.epoch || page.error || page.reset || page.staleCursor || page.gap)
       throw new Error("Reading context changed or is unavailable");
@@ -65,9 +90,9 @@ export async function fetchCanonicalPromptContext(
   };
   const sourceKey = contextSourceKey(source);
   validateContextContinuation(progress, sourceKey, position.seq);
-  const probe = progress ? undefined : await probeContextSource(source, read);
-  const sourceStart = progress?.sourceStart ?? probe!.entry.seqStart;
-  let used = probe?.used ?? 0;
+  const acquired = await acquireContextSource(source, read, progress, indexedLookup !== undefined);
+  const { probe, sourceStart } = acquired;
+  let used = acquired.used;
   // Report only after the probe or continuation has passed the existing validator,
   // including exhausted reads which never produce a prompt context.
   observeSourceStart?.(sourceStart);
@@ -81,6 +106,34 @@ export async function fetchCanonicalPromptContext(
       prompt: hydratePromptEntry(probe.prompt, position.epoch),
     };
   let cursor = progress?.cursor ?? sourceStart;
+  if (indexedLookup) {
+    const reserveRead = () => {
+      if (used >= PROMPT_DISCOVERY_PAGE_BUDGET)
+        throw new CanonicalPromptContextBudgetError({
+          sourceKey,
+          sourceStart,
+          sourceEnd: position.seq,
+          cursor,
+        });
+      used += 1;
+    };
+    const prompt = await readIndexedPredecessor({
+      lookup: indexedLookup,
+      request: { epoch: position.epoch, sourceStart },
+      signal,
+      read,
+      projection: backwardProjection,
+      reserveRead,
+    });
+    return prompt
+      ? {
+          sourceKey,
+          sourceStart,
+          sourceEnd: position.seq,
+          prompt: hydratePromptEntry(prompt, position.epoch),
+        }
+      : undefined;
+  }
   for (; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
     const page = await read(cursor, TIMELINE_FETCH_PAGE_SIZE, backwardProjection);
     const entries = page.entries;
@@ -104,6 +157,89 @@ export async function fetchCanonicalPromptContext(
     sourceEnd: position.seq,
     cursor,
   });
+}
+
+interface IndexedPredecessorRead {
+  lookup: ContextPromptIndexLookup;
+  request: ContextPromptIndexRequest;
+  signal: AbortSignal;
+  read: ReadContextPage;
+  projection: "projected" | "canonical";
+  reserveRead: () => void;
+}
+
+/** Validate the complete, current index before treating an empty predecessor set as exhaustion. */
+function indexedPredecessor(
+  payload: AgentTimelineListPromptsResponseMessage["payload"],
+  agentId: string,
+  request: ContextPromptIndexRequest,
+): number | undefined {
+  const parsed = AgentTimelineListPromptsResponseMessageSchema.shape.payload.safeParse(payload);
+  if (
+    !parsed.success ||
+    parsed.data.agentId !== agentId ||
+    parsed.data.epoch !== request.epoch ||
+    parsed.data.error !== null
+  )
+    throw new Error("Reading prompt index changed or is unavailable");
+  const seen = new Set<number>();
+  let preceding: number | undefined;
+  for (const prompt of parsed.data.prompts) {
+    if (seen.has(prompt.seq)) throw new Error("Reading prompt index is ambiguous");
+    seen.add(prompt.seq);
+    if (prompt.seq < request.sourceStart && (preceding === undefined || prompt.seq > preceding))
+      preceding = prompt.seq;
+  }
+  return preceding;
+}
+
+/** The index locates a USER, but only its exact canonical content proves a retained prompt. */
+async function readIndexedPredecessor({
+  lookup,
+  request,
+  signal,
+  read,
+  projection,
+  reserveRead,
+}: IndexedPredecessorRead): Promise<ContextEntry | undefined> {
+  lookup.assertCurrent();
+  reserveRead();
+  const payload = await lookup.readPromptIndex(request, signal);
+  lookup.assertCurrent();
+  const seq = indexedPredecessor(payload, lookup.agentId, request);
+  if (seq === undefined) return undefined;
+  reserveRead();
+  const page = await read(seq + 1, 1, projection);
+  const prompt = page.entries[0];
+  if (
+    page.entries.length !== 1 ||
+    !prompt ||
+    prompt.item.type !== "user_message" ||
+    prompt.seqStart !== seq ||
+    prompt.seqEnd !== seq
+  )
+    throw new Error("Indexed prompt content changed or is unavailable");
+  return prompt;
+}
+
+interface ContextSourceRead {
+  probe: ProbedContextSource | undefined;
+  sourceStart: number;
+  used: number;
+}
+
+/** Indexed Retry reproves the source; raw fallback preserves its validated continuation. */
+async function acquireContextSource(
+  source: StreamItem,
+  read: ReadContextPage,
+  progress: CanonicalPromptContextProgress | undefined,
+  indexed: boolean,
+): Promise<ContextSourceRead> {
+  const probe = progress && !indexed ? undefined : await probeContextSource(source, read);
+  const sourceStart = probe?.entry.seqStart ?? progress!.sourceStart;
+  if (progress && probe && progress.sourceStart !== sourceStart)
+    throw new Error("Reading context source changed");
+  return { probe, sourceStart, used: probe?.used ?? 0 };
 }
 
 interface ProbedContextSource {

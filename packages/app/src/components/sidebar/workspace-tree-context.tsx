@@ -1,6 +1,47 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode, type ReactElement } from "react";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { EMPTY_WORKSPACE_TREE, type WorkspaceTreeNode } from "./workspace-tree";
+
+export const SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT = 20;
+
+/** Row-only presentation, relative to each Project, Status or Pinned row's established rail. */
+export interface SidebarWorkspaceFamilyPresentation {
+  /** Cumulative child indentation in pixels; never applied to a row's highlight or drag cell. */
+  contentIndent: number;
+  disclosure: ReactElement | null;
+  collapsedSummary: {
+    id: string;
+    description: string;
+    content: ReactNode;
+  } | null;
+}
+
+const emptyFamilyPresentation: SidebarWorkspaceFamilyPresentation = {
+  contentIndent: 0,
+  disclosure: null,
+  collapsedSummary: null,
+};
+const WorkspaceFamilyPresentationContext = createContext(emptyFamilyPresentation);
+
+/** Scope presentation to this row only; child branches each supply their own depth and summary. */
+export function SidebarWorkspaceFamilyPresentationProvider({
+  value,
+  children,
+}: {
+  value: SidebarWorkspaceFamilyPresentation;
+  children: ReactNode;
+}) {
+  return (
+    <WorkspaceFamilyPresentationContext.Provider value={value}>
+      {children}
+    </WorkspaceFamilyPresentationContext.Provider>
+  );
+}
+
+/** Read layout inputs without another session, settings or tree subscription in each row. */
+export function useSidebarWorkspaceFamilyPresentation(): SidebarWorkspaceFamilyPresentation {
+  return useContext(WorkspaceFamilyPresentationContext);
+}
 
 export interface WorkspaceFamilyDragAuthority {
   renderedGeneration: number;

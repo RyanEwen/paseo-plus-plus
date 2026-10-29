@@ -296,10 +296,10 @@ export function resolvePromptGeometry(
   };
 }
 
-/** Follow/latest presentation owns the newest loaded canonical USER only when
- * ordinary coverage reaches the followed tail without holes. An optimistic row
- * has no canonical cursor; sparse windows still need the bounded context reader.
- * Manual reading always resolves its actual source, including interleaved turns. */
+/** Published reading geometry owns physical context even while following output.
+ * Before the viewport publishes an edge, use the latest canonical source, or its
+ * loaded USER when ordinary coverage reaches the tail without holes. Semantic
+ * latest navigation is independent of this source selection. */
 export function resolveRetainedContextSource(
   items: readonly StreamItem[],
   epoch: string | null,
@@ -307,8 +307,7 @@ export function resolveRetainedContextSource(
   coverage: readonly CanonicalTimelineCoverage[],
 ): StreamItem | undefined {
   if (reading.navigating) return undefined;
-  if (!reading.following && reading.rowId !== null)
-    return resolveContextSource(items, epoch, reading.rowId, reading.seq);
+  if (reading.rowId !== null) return resolveContextSource(items, epoch, reading.rowId, reading.seq);
 
   let latest: StreamItem | undefined;
   for (let index = items.length - 1; index >= 0; index -= 1) {

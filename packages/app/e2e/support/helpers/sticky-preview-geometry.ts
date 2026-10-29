@@ -6,16 +6,22 @@ export async function expectSingleLineStickyGeometry(row: Locator) {
   return expectActualSingleLineGeometry(row);
 }
 
-/** Record usable allocation and painted prompt prefix, including attachment-only copies. */
-export async function expectInlineStickyAttachmentCount(
+/** Compact previews omit counts; More retains the real attachment disclosure. */
+export async function expectNoCompactAttachmentCount(row: Locator) {
+  await expect(row.getByTestId("user-message-attachments-summary")).toHaveCount(0);
+}
+
+/** Record usable disclosure allocation and painted prefix without count chrome. */
+export async function expectCompactStickyAttachments(
   sticky: Locator,
-  count: string,
   prompt: string,
   testInfo: TestInfo,
 ) {
-  const summary = sticky.getByText(count, { exact: true });
-  await expect(summary).toBeVisible();
-  const geometry = await measureInlineAttachmentAllocation(sticky, count, prompt);
+  await expectNoCompactAttachmentCount(sticky);
+  await expect(
+    sticky.getByRole("button", { name: "Expand user message", exact: true }),
+  ).toBeVisible();
+  const geometry = await measureCompactAttachmentAllocation(sticky, prompt);
   const label = prompt ? "text-and-attachments" : "attachment-only";
   await testInfo.attach(`compact-allocation-${label}`, {
     body: JSON.stringify(geometry, null, 2),
@@ -37,15 +43,14 @@ export async function expectInlineStickyAttachmentCount(
     clip: capture,
     animations: "disabled",
   });
-  expect(await measureInlineAttachmentAllocation(sticky, count, prompt)).toEqual(geometry);
+  expect(await measureCompactAttachmentAllocation(sticky, prompt)).toEqual(geometry);
   await expect(sticky).toHaveAttribute("data-prompt-pinned", "true");
-  expect(geometry.count!.bounds.width).toBeGreaterThan(0);
+  expect(geometry.disclosure!.bounds.width).toBeGreaterThan(0);
+  expect(geometry.disclosure!.bounds.height).toBeGreaterThanOrEqual(44);
+  expect(geometry.disclosure!.bounds.left).toBeGreaterThanOrEqual(geometry.viewport!.bounds.left);
+  expect(geometry.disclosure!.bounds.right).toBeLessThanOrEqual(geometry.viewport!.bounds.right);
   if (!prompt) {
     expect(geometry.text).toBeNull();
-    // A truncated count can use the whole cell instead of reserving an empty text half.
-    if (geometry.count!.scrollWidth > geometry.count!.clientWidth) {
-      expect(geometry.count!.bounds.width).toBeCloseTo(geometry.cell!.bounds.width, 0);
-    }
     return;
   }
   expect(geometry.text!.textContent).toBe(prompt);
@@ -54,12 +59,10 @@ export async function expectInlineStickyAttachmentCount(
   expect(geometry.prefixBounds!.left).toBeGreaterThanOrEqual(geometry.text!.bounds.left);
   expect(geometry.prefixBounds!.top).toBeGreaterThanOrEqual(geometry.text!.bounds.top);
   expect(geometry.prefixBounds!.bottom).toBeLessThanOrEqual(geometry.text!.bounds.bottom);
-  expect(geometry.cell!.bounds.right).toBeLessThanOrEqual(geometry.disclosure!.bounds.left);
-  expect(geometry.cell!.bounds.left).toBeGreaterThanOrEqual(geometry.viewport!.bounds.left);
   expect(
     Math.abs(
-      geometry.count!.bounds.y +
-        geometry.count!.bounds.height / 2 -
+      geometry.disclosure!.bounds.y +
+        geometry.disclosure!.bounds.height / 2 -
         geometry.textClip!.bounds.y -
         geometry.textClip!.bounds.height / 2,
     ),
@@ -90,62 +93,50 @@ export async function expectInlineStickyAttachmentCount(
 }
 
 /** Snapshot actual compact allocation before any assertions can end the case. */
-async function measureInlineAttachmentAllocation(
-  sticky: Locator,
-  countLabel: string,
-  promptText: string,
-) {
-  return await sticky.evaluate(
-    (node, { count, prompt }) => {
-      function rectangle(bounds: DOMRect) {
-        const { x, y, width, height, top, right, bottom, left } = bounds;
-        return { x, y, width, height, top, right, bottom, left };
-      }
-      function describe(element: Element | null) {
-        if (!element) return null;
-        const style = getComputedStyle(element);
-        return {
-          bounds: rectangle(element.getBoundingClientRect()),
-          clientWidth: element.clientWidth,
-          scrollWidth: element.scrollWidth,
-          textContent: element.textContent,
-          overflow: style.overflow,
-          whiteSpace: style.whiteSpace,
-          lineClamp: style.webkitLineClamp,
-        };
-      }
-      const countNode = Array.from(node.querySelectorAll('[role="link"]')).find(
-        (element) => element.textContent === count,
-      )!;
-      const text = node.querySelector("[data-message-text=true]");
-      const prefix = Array.from(prompt)[0] ?? "";
-      let prefixBounds: ReturnType<typeof rectangle> | null = null;
-      if (text && prefix) {
-        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
-        const first = walker.nextNode()!;
-        const range = document.createRange();
-        range.setStart(first, 0);
-        range.setEnd(first, prefix.length);
-        prefixBounds = rectangle(range.getBoundingClientRect());
-      }
-      const disclosure = node.querySelector('[data-testid="user-message-disclosure"]');
+async function measureCompactAttachmentAllocation(sticky: Locator, promptText: string) {
+  return await sticky.evaluate((node, prompt) => {
+    function rectangle(bounds: DOMRect) {
+      const { x, y, width, height, top, right, bottom, left } = bounds;
+      return { x, y, width, height, top, right, bottom, left };
+    }
+    function describe(element: Element | null) {
+      if (!element) return null;
+      const style = getComputedStyle(element);
       return {
-        bubble: describe(node.querySelector('[data-testid="user-message-bubble"]')),
-        viewport: describe(node.closest('[data-testid="agent-chat-scroll"]')),
-        count: describe(countNode),
-        cell: describe(countNode.parentElement),
-        text: describe(text),
-        // TextPreview preserves the full natural text node and clips its first line.
-        // Compare the visible cell, rather than the offscreen continuation's height.
-        textClip: describe(text?.closest('[data-testid="text-preview-clip"]') ?? null),
-        disclosure: describe(disclosure),
-        touchParent: describe(disclosure?.parentElement ?? null),
-        prefix,
-        prefixBounds,
+        bounds: rectangle(element.getBoundingClientRect()),
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        textContent: element.textContent,
+        overflow: style.overflow,
+        whiteSpace: style.whiteSpace,
+        lineClamp: style.webkitLineClamp,
       };
-    },
-    { count: countLabel, prompt: promptText },
-  );
+    }
+    const text = node.querySelector("[data-message-text=true]");
+    const prefix = Array.from(prompt)[0] ?? "";
+    let prefixBounds: ReturnType<typeof rectangle> | null = null;
+    if (text && prefix) {
+      const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+      const first = walker.nextNode()!;
+      const range = document.createRange();
+      range.setStart(first, 0);
+      range.setEnd(first, prefix.length);
+      prefixBounds = rectangle(range.getBoundingClientRect());
+    }
+    const disclosure = node.querySelector('[data-testid="user-message-disclosure"]');
+    return {
+      bubble: describe(node.querySelector('[data-testid="user-message-bubble"]')),
+      viewport: describe(node.closest('[data-testid="agent-chat-scroll"]')),
+      text: describe(text),
+      // TextPreview preserves the full natural text node and clips its first line.
+      // Compare the visible cell, rather than the offscreen continuation's height.
+      textClip: describe(text?.closest('[data-testid="text-preview-clip"]') ?? null),
+      disclosure: describe(disclosure),
+      touchParent: describe(disclosure?.parentElement ?? null),
+      prefix,
+      prefixBounds,
+    };
+  }, promptText);
 }
 
 /** Count foreground in the first character's painted region, rather than trusting DOM text. */

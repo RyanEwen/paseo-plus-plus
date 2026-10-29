@@ -23,7 +23,6 @@ const OPTIONAL_FEATURES: readonly PaseoPlusPlusFeature[] = [
   "descriptiveToolCalls",
   "stickyUserPrompts",
   "previousAgents",
-  "sidebarProjectSelector",
   "sidebarActivityChips",
   "sidebarProjectEmphasis",
   "sidebarBulkActions",

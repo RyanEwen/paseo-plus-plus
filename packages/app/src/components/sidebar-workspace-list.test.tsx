@@ -21,16 +21,25 @@ import type { ProjectArchiveWorkspace } from "@/workspace/project-workspace-arch
 import type { AdaptiveModalSheetProps } from "@/components/adaptive-modal-sheet";
 
 // Keep the owning domain's confirmation and controls real; native sheet placement is a separate check.
-vi.mock("@/components/adaptive-modal-sheet", () => ({
-  AdaptiveModalSheet: ({ header, children, footer, onClose, testID }: AdaptiveModalSheetProps) => (
-    <div role="dialog" aria-label={header.title} data-testid={testID}>
-      {children}
-      {footer}
-      <button type="button" data-testid="project-archive-dismiss" onClick={onClose}>
-        Close
-      </button>
-    </div>
-  ),
+vi.mock("@/components/adaptive-modal-sheet", async () => ({
+  ...(await import("@/components/adaptive-text-input")),
+  AdaptiveModalSheet: ({
+    visible,
+    header,
+    children,
+    footer,
+    onClose,
+    testID,
+  }: AdaptiveModalSheetProps) =>
+    visible ? (
+      <div role="dialog" aria-label={header.title} data-testid={testID}>
+        {children}
+        {footer}
+        <button type="button" data-testid="project-archive-dismiss" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    ) : null,
 }));
 
 // Preserve real animation builders imported by shared menus; only fixture animations are immediate.
@@ -50,6 +59,29 @@ vi.mock("react-native-reanimated", async (importOriginal) => {
     withTiming: (value: unknown) => value,
   };
 });
+
+// Row-layout cases never open a native-positioned popover. Follow the host-picker
+// unit boundary and fail if these cases begin to exercise positioning.
+vi.mock("@floating-ui/react-native", () => {
+  function unexpectedPopoverPositioning(): never {
+    throw new Error("Workspace row layout tests must not invoke native popover positioning");
+  }
+  return {
+    flip: unexpectedPopoverPositioning,
+    offset: unexpectedPopoverPositioning,
+    shift: unexpectedPopoverPositioning,
+    size: unexpectedPopoverPositioning,
+    useFloating: unexpectedPopoverPositioning,
+  };
+});
+
+// Native nested scrolling is not mounted in these web row cases. A call is a
+// fixture/platform-boundary error, not a substitute for native gesture acceptance.
+vi.mock("react-native-draggable-flatlist", () => ({
+  NestableScrollContainer: () => {
+    throw new Error("Workspace row layout tests must not mount native nested scrolling");
+  },
+}));
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -91,6 +123,7 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
 import {
   SidebarWorkspaceTreeProvider,
   useSidebarWorkspaceTree,
+  useSidebarWorkspaceFamilyPresentation,
   type SidebarWorkspaceTreeModel,
   type WorkspaceFamilyDragAuthority,
 } from "./sidebar/workspace-tree-context";
@@ -104,6 +137,9 @@ import {
   type WorkspaceTreeNode,
 } from "./sidebar/workspace-tree";
 import { WorkspaceTreeBranch } from "./sidebar/workspace-tree-branch";
+import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { KeyboardActionDispatcherProvider } from "@/keyboard/keyboard-action-dispatcher-context";
+import { ToastProvider } from "@/contexts/toast-context";
 import { SidebarModelProvider, useSidebarModel } from "./sidebar/sidebar-model";
 import { workspaceFamilyRoots } from "./sidebar/workspace-tree";
 import { resolveSidebarWorkspacePrimaryLabel } from "./sidebar/sidebar-workspace-title";
@@ -119,6 +155,7 @@ import {
   navigateToWorkspace,
   getLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings";
 import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
 import { resolveProjectWorkspaceReorder } from "@/utils/sidebar-reorder";
@@ -1045,13 +1082,18 @@ function renderFamilyDisclosureRow(row: DraggableRenderItemInfo<SidebarWorkspace
 
 /** Use the same owning primary-label resolver as the production workspace row content. */
 function FamilyDisclosureRow({ workspaceKey }: { workspaceKey: string }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const { entries } = useSidebarWorkspaceTree();
   const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const entry = entries.get(workspaceKey)!;
   return (
-    <span data-testid={`family-disclosure-row-${workspaceKey}`}>
-      {resolveSidebarWorkspacePrimaryLabel({ workspace: entry, workspaceTitleSource })}
-    </span>
+    <>
+      <span data-testid={`family-disclosure-row-${workspaceKey}`}>
+        {resolveSidebarWorkspacePrimaryLabel({ workspace: entry, workspaceTitleSource })}
+      </span>
+      {family.collapsedSummary?.content}
+      {family.disclosure}
+    </>
   );
 }
 
@@ -1268,7 +1310,13 @@ function seedFamilyTransitions(serverId: string): void {
 }
 
 /** The production provider supplies filtering, parent proof, pin partitions, shortcuts and attention. */
-function FamilyTransitionSurface({ probe }: { probe: FamilyTransitionProbe }) {
+function FamilyTransitionSurface({
+  probe,
+  actualRows = false,
+}: {
+  probe: FamilyTransitionProbe;
+  actualRows?: boolean;
+}) {
   const model = useSidebarModel();
   const tree = useSidebarWorkspaceTree();
   probe.model = model;
@@ -1285,6 +1333,23 @@ function FamilyTransitionSurface({ probe }: { probe: FamilyTransitionProbe }) {
     ),
     [probe],
   );
+  if (actualRows) {
+    return (
+      <SidebarWorkspaceList
+        workspaceGroups={model.workspaceGroups}
+        projectIconTargets={model.projectIconTargets}
+        pinnedGroups={model.pinnedGroups}
+        projects={model.projects}
+        hasProjectsBeforeFilter={model.hasProjectsBeforeFilter}
+        hasActiveProjectFilter={model.resolvedProjectFilters.length > 0}
+        workspaceEntriesByKey={model.workspaceEntriesByKey}
+        collapsedProjectKeys={model.collapsedProjectKeys}
+        onToggleProjectCollapsed={model.toggleProjectCollapsed}
+        shortcutIndexByWorkspaceKey={model.shortcutModel.shortcutIndexByWorkspaceKey}
+        groupMode={model.groupMode}
+      />
+    );
+  }
   return (
     <>
       <div data-testid="transition-pinned-roots">
@@ -1446,12 +1511,16 @@ describe("workspace family store transitions", () => {
     vi.unstubAllGlobals();
   });
 
-  function render() {
+  function render(actualRows = false) {
     root.render(
       <QueryClientProvider client={client}>
-        <SidebarModelProvider active>
-          <FamilyTransitionSurface probe={probe} />
-        </SidebarModelProvider>
+        <KeyboardActionDispatcherProvider>
+          <ToastProvider>
+            <SidebarModelProvider active>
+              <FamilyTransitionSurface probe={probe} actualRows={actualRows} />
+            </SidebarModelProvider>
+          </ToastProvider>
+        </KeyboardActionDispatcherProvider>
       </QueryClientProvider>,
     );
   }
@@ -1603,6 +1672,191 @@ describe("workspace family store transitions", () => {
       requiresAttention: true,
     });
   }
+
+  /** Mount the actual list renderers, with relationships still supplied by the production model. */
+  function renderLayout(mode: "project" | "status" | "pinned") {
+    const store = useSessionStore.getState();
+    const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
+    const agents = new Map(store.sessions[SERVER_ID].agents);
+    const parent = workspaces.get("parent");
+    if (!parent) throw new Error("Missing layout parent");
+    workspaces.set("parent", { ...parent, projectPinnedAt: "2026-10-27T12:00:00.000Z" });
+    workspaces.set(
+      "grandchild",
+      workspace({
+        id: "grandchild",
+        projectId: TRANSITION_PROJECT,
+        projectDisplayName: "Transitions",
+        name: "Grandchild task",
+      }),
+    );
+    agents.set("grandchild", {
+      ...familyDragAgent("grandchild", "a"),
+      serverId: SERVER_ID,
+      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: "a" }),
+    });
+    if (mode === "pinned") {
+      for (const id of ["parent", "a", "b", "grandchild", "outside"]) {
+        const entry = workspaces.get(id);
+        if (!entry) throw new Error(`Missing layout workspace ${id}`);
+        workspaces.set(id, { ...entry, pinnedAt: "2026-10-27T12:00:00.000Z" });
+      }
+    }
+    store.setWorkspaces(SERVER_ID, workspaces);
+    store.setAgents(SERVER_ID, agents);
+    useSidebarViewStore.setState({ groupMode: mode === "status" ? "status" : "project" });
+    render(true);
+  }
+
+  function layoutElement(prefix: string, id: string): HTMLElement {
+    const element = container.querySelector(`[data-testid="${prefix}-${transitionKey(id)}"]`);
+    if (!(element instanceof HTMLElement)) throw new Error(`Missing ${prefix} for ${id}`);
+    return element;
+  }
+
+  it.each(["project", "status", "pinned"] as const)(
+    "T53 family row layout restores roots and indents only content (%s)",
+    (mode) => {
+      act(() => renderLayout(mode));
+      const parentRow = layoutElement("sidebar-workspace-row", "parent");
+      const disclosure = layoutElement("sidebar-workspace-children-toggle", "parent");
+      // Both selectors predate this change: the original disclosure precedes navigation.
+      expect(
+        parentRow.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).not.toBe(0);
+      const rails = [
+        ["parent", 0],
+        ["outside", 0],
+        ["a", 12],
+        ["grandchild", 24],
+      ] as const;
+      for (const [id, indent] of rails) {
+        const content = layoutElement("sidebar-workspace-content", id);
+        const row = layoutElement("sidebar-workspace-row", id);
+        const surface = layoutElement("sidebar-workspace-surface", id);
+        expect(getComputedStyle(content).paddingLeft).toBe(`${indent}px`);
+        expect(row.contains(content)).toBe(true);
+        expect(surface.contains(row)).toBe(true);
+        // A child's navigation/highlight surface stays flush; only its content gains a rail.
+        expect(getComputedStyle(surface).marginLeft).not.toBe("12px");
+        expect(getComputedStyle(row).marginLeft).not.toBe("12px");
+        expect(getComputedStyle(row).paddingLeft).toBe(mode === "status" ? "16px" : "8px");
+      }
+      const row = layoutElement("sidebar-workspace-row", "parent");
+      const toggle = layoutElement("sidebar-workspace-children-toggle", "parent");
+      const surface = layoutElement("sidebar-workspace-surface", "parent");
+      expect(surface.contains(toggle)).toBe(true);
+      expect(toggle.parentElement).not.toBe(null);
+      if (!toggle.parentElement) throw new Error("Disclosure slot missing");
+      expect(getComputedStyle(toggle.parentElement).right).toBe("12px");
+      expect(row.contains(toggle)).toBe(false);
+      expect(toggle.closest("[data-testid^='sidebar-workspace-row-']")).toBe(null);
+      expect(row.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+      expect(row.getAttribute("role")).toBe("button");
+      expect(toggle.getAttribute("role")).toBe("button");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(
+        row.querySelector(`[data-testid="sidebar-project-pin-icon-${transitionKey("parent")}"]`),
+      ).not.toBe(null);
+      expect(
+        container.querySelector(
+          `[data-testid="sidebar-workspace-children-toggle-${transitionKey("grandchild")}"]`,
+        ),
+      ).toBe(null);
+      if (mode !== "project") {
+        expect(
+          container.querySelector(
+            `[data-testid="sidebar-row-project-icon-${transitionKey("parent")}"]`,
+          ),
+        ).not.toBe(null);
+      }
+      expect(currentTree().tree.get(transitionKey("grandchild"))?.parentKey).toBe(
+        transitionKey("a"),
+      );
+      expect(
+        container.querySelectorAll(`[data-testid="sidebar-workspace-row-${transitionKey("a")}"]`),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(["project", "status"] as const)(
+    "T53 family row layout contains and describes its collapsed summary (%s)",
+    (mode) => {
+      const store = useSessionStore.getState();
+      const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
+      const child = workspaces.get("a");
+      if (!child) throw new Error("Missing attention child");
+      workspaces.set("a", { ...child, status: "needs_input", humanAttentionRequired: true });
+      store.setWorkspaces(SERVER_ID, workspaces);
+      collapse("parent");
+      act(() => renderLayout(mode));
+      const row = layoutElement("sidebar-workspace-row", "parent");
+      const summaryElement = layoutElement("sidebar-workspace-children-summary", "parent");
+      expect(row.contains(summaryElement)).toBe(true);
+      const content = layoutElement("sidebar-workspace-content", "parent");
+      expect(content.contains(summaryElement)).toBe(true);
+      expect(row.getAttribute("aria-describedby")).toBe(summaryElement.id);
+      expect(summaryElement.textContent).toBe(
+        "3 child workspaces: Needs input1 child workspace needs your attention",
+      );
+      expect(
+        container.querySelector(`[data-testid="sidebar-workspace-row-${transitionKey("a")}"]`),
+      ).toBe(null);
+      expect(currentModel().workspaceEntriesByKey.get(transitionKey("parent"))?.statusBucket).toBe(
+        "done",
+      );
+      const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
+      const outside = layoutElement("sidebar-workspace-row", "outside");
+      expect(outside.getAttribute("aria-describedby")).toBe(null);
+      const toggle = layoutElement("sidebar-workspace-children-toggle", "parent");
+      const selectionBefore = getLastWorkspaceSelection();
+      act(() => toggle.click());
+      expect(getLastWorkspaceSelection()).toEqual(selectionBefore);
+      expect(row.getAttribute("aria-describedby")).toBe(null);
+      expect(
+        container.querySelector(
+          `[data-testid="sidebar-workspace-children-summary-${transitionKey("parent")}"]`,
+        ),
+      ).toBe(null);
+      expect(layoutElement("sidebar-workspace-row", "a")).not.toBe(null);
+      expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).not.toBe(
+        saved,
+      );
+    },
+  );
+
+  it("T53 family row layout reveals active descendants and restores the parent summary", () => {
+    collapse("parent");
+    act(() => renderLayout("project"));
+    const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
+    act(() => {
+      // Navigation is real; publish the returned route through this suite's Expo adapter.
+      pathnameState.value = navigateToWorkspace({ serverId: SERVER_ID, workspaceId: "a" });
+      render(true);
+    });
+    expect(layoutElement("sidebar-workspace-row", "a").getAttribute("aria-selected")).toBe("true");
+    expect(
+      layoutElement("sidebar-workspace-children-toggle", "parent").getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
+    act(() => layoutElement("sidebar-workspace-row", "outside").click());
+    expect(getLastWorkspaceSelection()).toEqual({ serverId: SERVER_ID, workspaceId: "outside" });
+    act(() => {
+      const selection = getLastWorkspaceSelection();
+      if (!selection) throw new Error("Row navigation did not publish its workspace selection");
+      pathnameState.value = buildHostWorkspaceRoute(selection.serverId, selection.workspaceId);
+      render(true);
+    });
+    expect(
+      layoutElement("sidebar-workspace-row", "parent").contains(
+        layoutElement("sidebar-workspace-children-summary", "parent"),
+      ),
+    ).toBe(true);
+    expect(
+      container.querySelector(`[data-testid="sidebar-workspace-row-${transitionKey("a")}"]`),
+    ).toBe(null);
+    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
+  });
 
   it("T53 relationship removal transition preserves collapse and unrelated children", () => {
     collapse("parent");

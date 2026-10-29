@@ -37,6 +37,8 @@ interface CanonicalPromptContextInput {
   epoch: string | null;
   source: StreamItem | undefined;
   enabled: boolean;
+  /** Accepted history admits remote reads; pending authority keeps local preview and leases. */
+  lookupReady?: boolean;
   ordinaryItems?: readonly StreamItem[];
   coverage?: readonly CanonicalTimelineCoverage[];
   sourceMetadata?: readonly CanonicalSourceMetadata[];
@@ -75,13 +77,15 @@ function resolveCanonicalPromptPreview({
  * timeline owner; changing response text cannot restart a held occurrence read.
  */
 export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
+  const lookupReady = input.lookupReady ?? true;
   const channel = useMemo(
     () => ({ owner: input.owner, agentId: input.agentId, epoch: input.epoch }),
     [input.owner, input.agentId, input.epoch],
   );
   const requestScope = useMemo(
-    () => ({ channel, enabled: input.enabled }),
-    [channel, input.enabled],
+    // Admission phases retire attempts without replacing the channel's retained lease.
+    () => ({ channel, enabled: input.enabled, lookupReady }),
+    [channel, input.enabled, lookupReady],
   );
   const contexts = useSyncExternalStore(
     input.owner?.subscribe ?? noopSubscribe,
@@ -102,7 +106,9 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
   const [attempt, setAttempt] = useState(0);
   const previousAttempt = useRef<{ scope: object; plan: CanonicalReadingAttempt } | null>(null);
   const previous =
-    previousAttempt.current?.scope === requestScope ? previousAttempt.current.plan : undefined;
+    lookupReady && previousAttempt.current?.scope === requestScope
+      ? previousAttempt.current.plan
+      : undefined;
   const plan = planCanonicalReadingAttempt(
     previous,
     input.source,
@@ -113,7 +119,8 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
   const source = plan.blocked ? plan.latest : currentCanonicalReadingSource(plan);
   const sourceKey = source ? canonicalPromptSourceKey(source) : null;
   useLayoutEffect(() => {
-    previousAttempt.current = { scope: requestScope, plan };
+    // Painted, unaccepted cursor advances cannot establish a remote attempt baseline.
+    previousAttempt.current = lookupReady ? { scope: requestScope, plan } : null;
   });
   const suppressed = useRef<{ scope: object; key: string | null } | null>(null);
   const isSuppressed =
@@ -153,7 +160,16 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
       active.current?.abort();
       input.owner?.cancel(channel);
     },
-    [input.owner, channel, requestScope, sourceKey, knownKey, plan.blocked, input.lookup],
+    [
+      input.owner,
+      channel,
+      requestScope,
+      sourceKey,
+      knownKey,
+      plan.blocked,
+      input.lookup,
+      lookupReady,
+    ],
   );
   useLayoutEffect(() => () => input.owner?.release(channel), [input.owner, channel]);
   useEffect(() => {
@@ -162,6 +178,7 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     const local = currentKnown();
     if (
       !input.enabled ||
+      !lookupReady ||
       (plan.blocked && !local) ||
       !requestedSource ||
       requestedSource.kind === "user_message" ||
@@ -233,6 +250,7 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     };
   }, [
     input.enabled,
+    lookupReady,
     input.owner,
     input.agentId,
     input.epoch,
@@ -292,10 +310,12 @@ function resolveCanonicalContextStatus(
   state: CanonicalPromptContextState,
   suppressed: { scope: object; key: string | null } | null,
 ) {
-  const current = state.scope === requestScope && state.key === sourceKey && input.enabled;
+  const lookupReady = input.lookupReady ?? true;
+  const current =
+    state.scope === requestScope && state.key === sourceKey && input.enabled && lookupReady;
   return {
     loading: current && !plan.blocked && state.loading,
-    error: (input.enabled && plan.blocked) || (current && state.error),
+    error: (input.enabled && lookupReady && plan.blocked) || (current && state.error),
     exhausted: current && state.exhausted,
     limited: current && state.limited,
     cancelled:

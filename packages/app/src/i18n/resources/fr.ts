@@ -104,7 +104,7 @@ export const fr: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Onglets des espaces sur mobile",
-        hint: "Afficher une barre d’onglets défilante sous le titre de l’espace de travail en mode compact. Désactivez pour retrouver le sélecteur précédent sans changer l’onglet actif.",
+        hint: "Afficher des onglets de même largeur sur les écrans compacts, avec défilement uniquement si nécessaire. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
       },
       widerWorkspaceTabs: {
         label: "Onglets d’espace de travail plus larges",
@@ -116,10 +116,6 @@ export const fr: TranslationResources = {
         hint: "Décrit les opérations connues et conserve les commandes et sorties exactes dans les détails. Désactivez pour rétablir les libellés classiques.",
       },
 
-      sidebarProjectSelector: {
-        label: "Projet sélectionné dans l’en-tête",
-        hint: "Affiche le nom du projet sélectionné dans l’en-tête des espaces de travail. Sinon, l’en-tête indique Espaces de travail ; les choix d’hôtes et de projets restent disponibles.",
-      },
       stickyUserPrompts: {
         label: "Garder les messages en vue",
         hint: "Épingle un message compact avec développement et navigation précédent/suivant. Les messages ordinaires restent déployés et le chargement ne masque jamais un message disponible.",

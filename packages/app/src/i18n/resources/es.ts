@@ -104,7 +104,7 @@ export const es: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Pestañas de espacios en móvil",
-        hint: "Mostrar una barra de pestañas desplazable debajo del título del espacio de trabajo en el diseño compacto. Desactiva para usar el selector anterior sin cambiar la pestaña seleccionada.",
+        hint: "Mostrar pestañas del mismo ancho en pantallas compactas, con desplazamiento solo cuando sea necesario. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
       },
       widerWorkspaceTabs: {
         label: "Pestañas de espacio de trabajo más anchas",
@@ -116,10 +116,6 @@ export const es: TranslationResources = {
         hint: "Describe operaciones conocidas y conserva comandos y resultados exactos en los detalles. Desactiva para restaurar las etiquetas clásicas.",
       },
 
-      sidebarProjectSelector: {
-        label: "Proyecto seleccionado en el encabezado",
-        hint: "Muestra el nombre del proyecto seleccionado en el encabezado de espacios de trabajo. Al desactivarlo se muestra Espacios de trabajo; las opciones de host y proyecto siguen disponibles.",
-      },
       stickyUserPrompts: {
         label: "Mantener mensajes visibles",
         hint: "Fija un mensaje compacto que puedes expandir, con navegación anterior/siguiente. Los mensajes normales permanecen expandidos y la carga nunca tapa un mensaje disponible.",

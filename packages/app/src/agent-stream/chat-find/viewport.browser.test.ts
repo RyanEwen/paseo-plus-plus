@@ -13,6 +13,7 @@ import { revealFindOccurrence } from "./body-reveal.web";
 import { findMessageMatches } from "./ranges.web";
 import type { ChatFindProps } from "./types";
 import type { StreamViewportHandle } from "../strategy";
+import { HISTORY_START_THRESHOLD_PX } from "../history-start-pagination";
 import { Text as NativeText, View, type ViewStyle } from "react-native";
 import { QuestionFormCard } from "@/components/question-form-card";
 import { deleteAttachments, persistAttachmentFromDataUrl } from "@/attachments/service";
@@ -128,13 +129,24 @@ function actualPrompt(
   text: string,
   options: Pick<
     React.ComponentProps<typeof ActualPromptTestFixture>,
-    "successorText" | "images" | "historyPlacement" | "promptAvailable" | "disableOuterSpacing"
-  > & { hostWidth?: number } = {},
+    | "successorText"
+    | "images"
+    | "historyPlacement"
+    | "promptAvailable"
+    | "contextOnlyPrompt"
+    | "olderHistory"
+    | "onNearHistoryStart"
+    | "localHistory"
+    | "onReadingPositionChange"
+    | "disableOuterSpacing"
+    | "holdActionsVisible"
+    | "onNavigate"
+  > & { hostWidth?: number; hostHeight?: number } = {},
 ) {
   void i18n;
-  const { hostWidth = 300, ...fixtureOptions } = options;
+  const { hostWidth = 300, hostHeight = 320, ...fixtureOptions } = options;
   const host = document.createElement("div");
-  Object.assign(host.style, { width: `${hostWidth}px`, height: "320px" });
+  Object.assign(host.style, { width: `${hostWidth}px`, height: `${hostHeight}px` });
   document.body.append(host);
   const ref = createRef<StreamViewportHandle>();
   actualRoot = createRoot(host);
@@ -142,12 +154,14 @@ function actualPrompt(
     enabled = true,
     nextText = text,
     promptAvailable = fixtureOptions.promptAvailable,
+    olderHistory = fixtureOptions.olderHistory,
   ) {
     act(() =>
       actualRoot!.render(
         React.createElement(ActualPromptTestFixture, {
           ...fixtureOptions,
           promptAvailable,
+          olderHistory,
           text: nextText,
           enabled,
           viewportRef: ref,
@@ -805,9 +819,7 @@ it("preserves Attached sample glyph allocation beside real attachment and disclo
     readAt(fixture.host, ordinaryFlow.promptTop + 24);
     await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
     await expect.poll(() => disclosure()).not.toBeNull();
-    await expect
-      .poll(() => row.querySelector('[data-testid="user-message-attachments-summary"]'))
-      .not.toBeNull();
+    expect(row.querySelector('[data-testid="user-message-attachments-summary"]')).toBeNull();
     await expect.poll(() => naturalPromptFlow(fixture.host)).toEqual(ordinaryFlow);
     expect(row.querySelector('[data-testid="user-message-text"]') === text).toBe(true);
     expect(
@@ -873,6 +885,119 @@ it("preserves Attached sample glyph allocation beside real attachment and disclo
     await deleteAttachments([image]);
   }
 });
+
+it.each(["normal", "virtual"] as const)(
+  "preserves the ordinary reading anchor when older history fills a gap after an installed isolated prompt in %s history",
+  async (historyPlacement) => {
+    const prompt = "Already retained context.";
+    const requestOlder = vi.fn(() => true);
+    const fixture = actualPrompt(prompt, {
+      historyPlacement,
+      contextOnlyPrompt: true,
+      onNearHistoryStart: requestOlder,
+      disableOuterSpacing: false,
+      hostWidth: 390,
+    });
+    await document.fonts.ready;
+    const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const rowsHost = fixture.host.querySelector<HTMLElement>("[data-stream-rows-host]")!;
+    await expect
+      .poll(() => rowsHost.querySelectorAll('[data-history-row-id="answer"]').length)
+      .toBe(1);
+    const answer = rowsHost.querySelector<HTMLElement>('[data-history-row-id="answer"]')!;
+    const row = rowsHost.querySelector<HTMLElement>(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`)!;
+    const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+    const text = answer.querySelector<HTMLElement>('[data-testid="assistant-surrounding-text"]')!;
+    const textNode = text.firstChild!;
+    const ordinaryText = text.textContent;
+    const promptNode = exactTextNodes(row, prompt)[0]!;
+    // The virtual path must commit actual row sizes before capturing the reader.
+    // Adjacent original row coordinates expose the real allocation, without estimates.
+    await expect
+      .poll(() =>
+        Math.abs(
+          rowsHost.getBoundingClientRect().height -
+            (answer.getBoundingClientRect().bottom - row.getBoundingClientRect().top),
+        ),
+      )
+      .toBeLessThanOrEqual(1);
+    readAt(fixture.host, 0);
+    await expect.poll(() => scroll.scrollTop).toBe(0);
+    await expect.poll(() => requestOlder.mock.calls.length).toBe(1);
+    const anchorTop = () => answer.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    const before = {
+      anchorTop: anchorTop(),
+      scrollTop: scroll.scrollTop,
+      scrollHeight: scroll.scrollHeight,
+      clientHeight: scroll.clientHeight,
+      flowHeight: Number(body.dataset.promptFlowHeight),
+    };
+    expect(before.anchorTop).toBeGreaterThanOrEqual(0);
+    expect(before.anchorTop).toBeLessThan(before.clientHeight);
+    expect(before.flowHeight).toBeGreaterThan(0);
+    expect(
+      Array.from(
+        rowsHost.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (item) => item.dataset.historyRowId,
+      ),
+    ).toEqual([ACTUAL_PROMPT_ID, "answer"]);
+    const olderHistory: React.ComponentProps<typeof ActualPromptTestFixture>["olderHistory"] = [
+      {
+        kind: "assistant_message",
+        id: "older-answer-1",
+        text: "Earlier answer one",
+        timestamp: new Date(0),
+      },
+      {
+        kind: "assistant_message",
+        id: "older-answer-2",
+        text: "Earlier answer two",
+        timestamp: new Date(0),
+      },
+      {
+        kind: "assistant_message",
+        id: "older-answer-3",
+        text: "Earlier answer three",
+        timestamp: new Date(0),
+      },
+    ];
+    fixture.render(true, prompt, true, olderHistory);
+
+    // First behavioral guard: new rows belong before the same ordinary answer,
+    // not before the context-only USER, whose natural top remains unchanged.
+    await expect.poll(() => Math.abs(anchorTop() - before.anchorTop)).toBeLessThanOrEqual(1);
+    const growth = scroll.scrollHeight - before.scrollHeight;
+    expect(growth).toBeGreaterThan(before.clientHeight);
+    expect(Math.abs(scroll.scrollTop - before.scrollTop - growth)).toBeLessThanOrEqual(1);
+    expect(scroll.clientHeight).toBe(before.clientHeight);
+    // The ordinary anchor now clears the threshold. No new user input or second
+    // main-page request is needed to terminate the original fill operation.
+    await expect
+      .poll(() => fixture.host.querySelector('[data-testid="load-older-history-spinner"]'))
+      .toBeNull();
+    expect(requestOlder).toHaveBeenCalledTimes(1);
+    expect(fixture.host.querySelector('[data-testid="sticky-prompt-system-feedback"]')).toBeNull();
+    expect(rowsHost.querySelector('[data-history-row-id="answer"]') === answer).toBe(true);
+    expect(text.firstChild === textNode).toBe(true);
+    expect(text.textContent).toBe(ordinaryText);
+    expect(rowsHost.querySelector(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`) === row).toBe(
+      true,
+    );
+    expect(exactTextNodes(row, prompt)).toHaveLength(1);
+    expect(exactTextNodes(row, prompt)[0] === promptNode).toBe(true);
+    expect(Number(body.dataset.promptFlowHeight)).toBe(before.flowHeight);
+    const expectedIds = [ACTUAL_PROMPT_ID, ...olderHistory.map((item) => item.id), "answer"];
+    expect(
+      Array.from(
+        rowsHost.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (item) => item.dataset.historyRowId,
+      ),
+    ).toEqual(expectedIds);
+    for (const id of expectedIds) {
+      expect(rowsHost.querySelectorAll(`[data-history-row-id="${id}"]`)).toHaveLength(1);
+    }
+  },
+);
 
 it.each(["normal", "virtual"] as const)(
   "preserves the visible assistant when a retained prompt arrives in %s history",
@@ -1138,7 +1263,7 @@ it("preserves the absolute three-line bubble and first-line glyph frame through 
   }
 });
 
-it("centers the actual attachment count within one pixel of the compact text clip", async () => {
+it("omits compact attachment count while centering More within one pixel of the text clip", async () => {
   const canvas = document.createElement("canvas");
   canvas.width = 2;
   canvas.height = 2;
@@ -1180,21 +1305,18 @@ it("centers the actual attachment count within one pixel of the compact text cli
       .poll(() => row.querySelector('[data-testid="user-message-disclosure"]'))
       .not.toBeNull();
     await expectCurrentPromptGeometry(fixture.host);
-    const count = row.querySelector<HTMLElement>(
-      '[data-testid="user-message-attachments-summary"]',
-    )!;
+    expect(row.querySelector('[data-testid="user-message-attachments-summary"]')).toBeNull();
     const clip = text.closest<HTMLElement>('[data-testid="text-preview-clip"]')!;
-    expect(count.textContent).toBe(i18n.t("stickyPrompt.attachments", { count: 1 }));
-    const countBounds = count.getBoundingClientRect();
+    const more = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+    const moreBounds = more.getBoundingClientRect();
     const clipBounds = clip.getBoundingClientRect();
-    expect(countBounds.width).toBeGreaterThan(0);
+    expect(moreBounds.width).toBeGreaterThan(0);
+    expect(moreBounds.height).toBeGreaterThanOrEqual(44);
     expect(clipBounds.width).toBeGreaterThan(0);
     expect(
-      Math.abs(countBounds.top + countBounds.height / 2 - clipBounds.top - clipBounds.height / 2),
+      Math.abs(moreBounds.top + moreBounds.height / 2 - clipBounds.top - clipBounds.height / 2),
     ).toBeLessThanOrEqual(1);
-    const more = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
-    const summaryAllocation = count.parentElement!.getBoundingClientRect();
-    expect(summaryAllocation.right).toBeLessThanOrEqual(more.getBoundingClientRect().left);
+    expectOpaqueControlBacking(row, moreBounds);
     expect(text.getBoundingClientRect().x).toBeCloseTo(originalFrame.x, 3);
     expect(text.getBoundingClientRect().width).toBeCloseTo(originalFrame.width, 3);
     expect(text.getBoundingClientRect().height).toBeCloseTo(originalFrame.height, 3);
@@ -1471,3 +1593,414 @@ it("keeps a narrow wrapped first line stationary beneath the real right-side Mor
   await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
   expect(naturalPromptText(text, node)).toEqual(naturalText);
 });
+
+it("keeps ordinary prompt actions hittable across the real hover gap and pinned outsets", async () => {
+  const prompt = "Hover this real message\nCross its ordinary gap\nThen click its trailing arrow";
+  const navigate = vi.fn();
+  const fixture = actualPrompt(prompt, {
+    successorText: "Following hover target",
+    hostWidth: 820,
+    holdActionsVisible: false,
+    onNavigate: navigate,
+  });
+  await document.fonts.ready;
+  await expectCurrentPromptGeometry(fixture.host);
+  const flow = naturalPromptFlow(fixture.host);
+  readAt(fixture.host, flow.promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  const bubble = row.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')!;
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const node = exactTextNodes(row, prompt)[0]!;
+  const naturalText = naturalPromptText(text, node);
+  const actions = row.querySelector<HTMLElement>('[data-testid="user-message-trailing-row"]')!;
+  const next = row.querySelector<HTMLElement>('[data-testid="user-message-next"]')!;
+  await userEvent.hover(scroll, { position: { x: 4, y: scroll.clientHeight - 4 } });
+  await expect.poll(() => getComputedStyle(actions).opacity).toBe("0");
+  await userEvent.hover(bubble);
+  await expect.poll(() => getComputedStyle(actions).opacity).toBe("1");
+
+  const bubbleBounds = bubble.getBoundingClientRect();
+  const actionBounds = actions.getBoundingClientRect();
+  const nextBounds = next.getBoundingClientRect();
+  const scrollBounds = scroll.getBoundingClientRect();
+  const gap = {
+    x: nextBounds.left + nextBounds.width / 2,
+    y: (bubbleBounds.bottom + actionBounds.top) / 2,
+  };
+  expect(actionBounds.top).toBeGreaterThan(bubbleBounds.bottom);
+  expect(gap.x).toBeGreaterThan(bubbleBounds.left);
+  expect(gap.x).toBeLessThan(bubbleBounds.right);
+  await userEvent.hover(scroll, {
+    position: { x: gap.x - scrollBounds.left, y: gap.y - scrollBounds.top },
+  });
+  await expect.poll(() => getComputedStyle(actions).opacity).toBe("1");
+  expect(row.contains(document.elementFromPoint(gap.x, gap.y))).toBe(true);
+  await userEvent.hover(next);
+  expect(getComputedStyle(actions).opacity).toBe("1");
+  const hit = next.getBoundingClientRect();
+  expect(
+    next.contains(document.elementFromPoint(hit.left + hit.width / 2, hit.top + hit.height / 2)),
+  ).toBe(true);
+  await userEvent.click(next);
+  expect(navigate).toHaveBeenCalledTimes(1);
+  expect(navigate).toHaveBeenCalledWith(ACTUAL_PROMPT_ID, 1);
+  expect(naturalPromptFlow(fixture.host)).toEqual(flow);
+  expect(naturalPromptText(text, node)).toEqual(naturalText);
+
+  await userEvent.hover(scroll, { position: { x: 4, y: scroll.clientHeight - 4 } });
+  await expect.poll(() => getComputedStyle(actions).opacity).toBe("0");
+  readAt(fixture.host, flow.promptTop + 24);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  await userEvent.hover(bubble);
+  await expect.poll(() => getComputedStyle(actions).opacity).toBe("1");
+  await userEvent.hover(next);
+  expect(getComputedStyle(actions).opacity).toBe("1");
+  const pinnedHit = next.getBoundingClientRect();
+  expect(
+    next.contains(
+      document.elementFromPoint(
+        pinnedHit.left + pinnedHit.width / 2,
+        pinnedHit.top + pinnedHit.height / 2,
+      ),
+    ),
+  ).toBe(true);
+  await userEvent.click(next);
+  expect(navigate).toHaveBeenCalledTimes(2);
+  expect(naturalPromptFlow(fixture.host)).toEqual(flow);
+  expect(row.querySelector('[data-testid="user-message-text"]')).toBe(text);
+  expect(exactTextNodes(row, prompt)).toEqual([node]);
+});
+
+it("keeps visible Less inside the actual expanded bubble without moving its natural text", async () => {
+  const prompt = Array.from(
+    { length: 80 },
+    (_, index) => `Line ${index + 1}: retain this ordinary width and wrapping.`,
+  ).join("\n");
+  const fixture = actualPrompt(prompt, {
+    successorText: "Following expanded prompt",
+    hostWidth: 390,
+  });
+  await document.fonts.ready;
+  await expectCurrentPromptGeometry(fixture.host);
+  const flow = naturalPromptFlow(fixture.host);
+  readAt(fixture.host, flow.promptTop + 24);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const node = exactTextNodes(row, prompt)[0]!;
+  const naturalText = naturalPromptText(text, node);
+  const horizontal = {
+    x: text.getBoundingClientRect().x,
+    width: text.getBoundingClientRect().width,
+  };
+  const control = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+  await userEvent.click(control);
+  await expect.poll(() => control.getAttribute("aria-expanded")).toBe("true");
+  await expectCurrentPromptGeometry(fixture.host);
+  const body = row.querySelector<HTMLElement>('[data-testid="user-message-body-scroll"]')!;
+  const bubble = row.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')!;
+  const controlBounds = control.getBoundingClientRect();
+  const bodyBounds = body.getBoundingClientRect();
+  const bubbleBounds = bubble.getBoundingClientRect();
+  expect(controlBounds.top).toBeGreaterThanOrEqual(bodyBounds.top);
+  expect(controlBounds.bottom).toBeLessThanOrEqual(bodyBounds.bottom);
+  expect(controlBounds.left).toBeGreaterThanOrEqual(bubbleBounds.left);
+  expect(controlBounds.right).toBeLessThanOrEqual(bubbleBounds.right);
+  expect(controlBounds.width).toBeGreaterThanOrEqual(44);
+  expect(controlBounds.height).toBeGreaterThanOrEqual(44);
+  const label = control.lastElementChild!;
+  expect(label.textContent).toBe(i18n.t("stickyPrompt.less"));
+  expect(getComputedStyle(label).color).toBe(getComputedStyle(text).color);
+  expect(getComputedStyle(control).opacity).toBe("1");
+  const backing = control.parentElement!.querySelector<HTMLElement>(
+    '[data-user-message-compact-occlusion="controls"]',
+  )!;
+  expect(backing).not.toBeNull();
+  expect(getComputedStyle(backing).opacity).toBe("1");
+  expect(getComputedStyle(backing).backgroundColor).toBe(getComputedStyle(bubble).backgroundColor);
+  const labelBounds = label.getBoundingClientRect();
+  expect(
+    control.contains(
+      document.elementFromPoint(
+        labelBounds.left + labelBounds.width / 2,
+        labelBounds.top + labelBounds.height / 2,
+      ),
+    ),
+  ).toBe(true);
+  expect(body.scrollHeight).toBeGreaterThan(body.clientHeight);
+  expect({ x: text.getBoundingClientRect().x, width: text.getBoundingClientRect().width }).toEqual(
+    horizontal,
+  );
+  expect(naturalPromptText(text, node)).toEqual(naturalText);
+  expect(naturalPromptFlow(fixture.host)).toEqual(flow);
+  await userEvent.click(control);
+  await expect.poll(() => control.getAttribute("aria-expanded")).toBe("false");
+  expect(naturalPromptFlow(fixture.host)).toEqual(flow);
+  readAt(fixture.host, flow.promptTop - 8);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([]);
+  expect(row.querySelector('[data-testid="user-message-text"]')).toBe(text);
+  expect(exactTextNodes(row, prompt)).toEqual([node]);
+  expect(naturalPromptText(text, node)).toEqual(naturalText);
+});
+
+it.each(["normal", "virtual"] as const)(
+  "stops local history fill after one PageUp reveals a full middle group in an underfilled %s viewport",
+  async (placement) => {
+    vi.stubGlobal("__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", 2);
+    vi.stubGlobal(
+      "__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD",
+      placement === "virtual" ? 2 : 100,
+    );
+    const prompt = "Current ordinary prompt.";
+    const items: import("@/types/stream").StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "oldest-user",
+        text: "Oldest cached prompt.",
+        timestamp: new Date(0),
+      },
+      {
+        kind: "assistant_message",
+        id: "oldest-answer",
+        text: "Oldest cached answer",
+        timestamp: new Date(1),
+      },
+      {
+        kind: "user_message",
+        id: "middle-user",
+        text: "Middle ordinary prompt.",
+        timestamp: new Date(2),
+      },
+      ...[1, 2, 3, 4].map((index): import("@/types/stream").StreamItem => ({
+        kind: "assistant_message",
+        id: `middle-answer-${index}`,
+        text: `Middle answer ${index}`,
+        timestamp: new Date(index + 2),
+      })),
+      { kind: "user_message", id: ACTUAL_PROMPT_ID, text: prompt, timestamp: new Date(7) },
+      { kind: "assistant_message", id: "answer", text: "Current answer", timestamp: new Date(8) },
+    ];
+    let allowReveal = false;
+    const acceptedReveal = vi.fn();
+    const fixture = actualPrompt(prompt, {
+      hostWidth: 390,
+      hostHeight: 1600,
+      disableOuterSpacing: false,
+      localHistory: { items, allowReveal: () => allowReveal, onReveal: acceptedReveal },
+    });
+    await document.fonts.ready;
+    const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const rows = fixture.host.querySelector<HTMLElement>("[data-stream-rows-host]")!;
+    const answer = rows.querySelector<HTMLElement>('[data-history-row-id="answer"]')!;
+    const row = rows.querySelector<HTMLElement>(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`)!;
+    const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+    const answerText = answer.querySelector<HTMLElement>(
+      '[data-testid="assistant-surrounding-text"]',
+    )!;
+    const answerNode = answerText.firstChild;
+    const promptNode = exactTextNodes(row, prompt)[0];
+    await expect.poll(() => Number(body.dataset.promptFlowHeight)).toBeGreaterThan(0);
+    await expect.poll(() => scroll.scrollHeight).toBe(scroll.clientHeight);
+    expect(scroll.scrollTop).toBe(0);
+    expect(acceptedReveal).not.toHaveBeenCalled();
+    expect(
+      Array.from(
+        rows.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (element) => element.dataset.historyRowId,
+      ),
+    ).toEqual([ACTUAL_PROMPT_ID, "answer"]);
+    const before = {
+      answerTop: answer.getBoundingClientRect().top - scroll.getBoundingClientRect().top,
+      scrollHeight: scroll.scrollHeight,
+      clientHeight: scroll.clientHeight,
+      flowHeight: Number(body.dataset.promptFlowHeight),
+      text: answerText.textContent,
+    };
+    expect(before.answerTop).toBeGreaterThanOrEqual(0);
+    expect(before.answerTop).toBeLessThan(before.clientHeight);
+    // Mount-time fill was denied above. This actual input admits the real local
+    // hook synchronously; no readAt, scroll write or default prevention primes it.
+    scroll.focus();
+    expect(document.activeElement).toBe(scroll);
+    allowReveal = true;
+    await userEvent.keyboard("{PageUp}");
+    await expect.poll(() => acceptedReveal.mock.calls.length).toBe(1);
+
+    // PageUp may intentionally scroll the newly filled range. Test finite fill,
+    // not an impossible fixed answer position across the initial underfill blank.
+    await expect.poll(() => scroll.scrollTop).toBeGreaterThan(HISTORY_START_THRESHOLD_PX);
+    await expect
+      .poll(() => fixture.host.querySelector('[data-testid="load-older-history-spinner"]'))
+      .toBeNull();
+    expect(acceptedReveal).toHaveBeenCalledTimes(1);
+    expect(scroll.scrollHeight).toBeGreaterThan(before.scrollHeight);
+    expect(scroll.scrollHeight).toBeGreaterThan(before.clientHeight);
+    expect(scroll.clientHeight).toBe(before.clientHeight);
+    expect(rows.querySelector('[data-history-row-id="answer"]')).toBe(answer);
+    expect(answerText.firstChild).toBe(answerNode);
+    expect(answerText.textContent).toBe(before.text);
+    expect(rows.querySelector(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`)).toBe(row);
+    expect(exactTextNodes(row, prompt)).toEqual([promptNode]);
+    expect(Number(body.dataset.promptFlowHeight)).toBe(before.flowHeight);
+    // The real local window has revealed the middle USER group, not exhausted
+    // the source: both oldest cached rows remain available and unrendered.
+    const visibleIds = [
+      "middle-user",
+      ...[1, 2, 3, 4].map((index) => `middle-answer-${index}`),
+      ACTUAL_PROMPT_ID,
+      "answer",
+    ];
+    expect(
+      Array.from(
+        rows.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (element) => element.dataset.historyRowId,
+      ),
+    ).toEqual(visibleIds);
+    for (const id of visibleIds)
+      expect(rows.querySelectorAll(`[data-history-row-id="${id}"]`)).toHaveLength(1);
+    for (const id of ["oldest-user", "oldest-answer"])
+      expect(rows.querySelector(`[data-history-row-id="${id}"]`)).toBeNull();
+    expect(fixture.host.querySelector('[data-testid="sticky-prompt-system-feedback"]')).toBeNull();
+  },
+);
+
+it.each(["normal", "virtual"] as const)(
+  "preserves the ordinary answer when cached retained USER precedes the local %s window",
+  async (placement) => {
+    vi.stubGlobal("__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", 2);
+    vi.stubGlobal(
+      "__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD",
+      placement === "virtual" ? 2 : 100,
+    );
+    const prompt = "Cached retained prompt.";
+    const retainedPrompt: Extract<import("@/types/stream").StreamItem, { kind: "user_message" }> = {
+      kind: "user_message",
+      id: ACTUAL_PROMPT_ID,
+      text: prompt,
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "local-epoch", seq: 1 },
+    };
+    const items: import("@/types/stream").StreamItem[] = [
+      retainedPrompt,
+      ...[1, 2, 3].map((index): import("@/types/stream").StreamItem => ({
+        kind: "assistant_message",
+        id: `cached-answer-${index}`,
+        text: `Cached answer ${index}`,
+        timestamp: new Date(index),
+        timelineCursor: { epoch: "local-epoch", seq: index + 1 },
+      })),
+      {
+        kind: "user_message",
+        id: ACTUAL_SUCCESSOR_ID,
+        text: "Current ordinary prompt.",
+        timestamp: new Date(4),
+        timelineCursor: { epoch: "local-epoch", seq: 5 },
+      },
+      {
+        kind: "assistant_message",
+        id: "answer",
+        text: "Current answer",
+        timestamp: new Date(5),
+        timelineCursor: { epoch: "local-epoch", seq: 6 },
+      },
+    ];
+    let allowReveal = false;
+    const acceptedReveal = vi.fn();
+    const readingPosition = vi.fn();
+    const fixture = actualPrompt(prompt, {
+      hostWidth: 390,
+      disableOuterSpacing: false,
+      onReadingPositionChange: readingPosition,
+      localHistory: {
+        items,
+        contexts: [
+          { sourceKey: "local-source", sourceStart: 5, sourceEnd: 6, prompt: retainedPrompt },
+        ],
+        allowReveal: () => allowReveal,
+        onReveal: acceptedReveal,
+      },
+    });
+    await document.fonts.ready;
+    const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const rows = fixture.host.querySelector<HTMLElement>("[data-stream-rows-host]")!;
+    const answer = rows.querySelector<HTMLElement>('[data-history-row-id="answer"]')!;
+    const row = rows.querySelector<HTMLElement>(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`)!;
+    const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+    const answerText = answer.querySelector<HTMLElement>(
+      '[data-testid="assistant-surrounding-text"]',
+    )!;
+    const answerNode = answerText.firstChild;
+    const promptNode = exactTextNodes(row, prompt)[0];
+    await expect.poll(() => Number(body.dataset.promptFlowHeight)).toBeGreaterThan(0);
+    // Let the actual virtual lane publish committed sizes before holding the reader.
+    await expect
+      .poll(() =>
+        Math.abs(
+          rows.getBoundingClientRect().height -
+            (answer.getBoundingClientRect().bottom - row.getBoundingClientRect().top),
+        ),
+      )
+      .toBeLessThanOrEqual(1);
+    expect(
+      Array.from(
+        rows.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (element) => element.dataset.historyRowId,
+      ),
+    ).toEqual([ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID, "answer"]);
+    readAt(fixture.host, 0);
+    await expect.poll(() => scroll.scrollTop).toBe(0);
+    expect(acceptedReveal).not.toHaveBeenCalled();
+    const anchorTop = () => answer.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    const before = {
+      anchorTop: anchorTop(),
+      scrollHeight: scroll.scrollHeight,
+      scrollTop: scroll.scrollTop,
+      clientHeight: scroll.clientHeight,
+      flowHeight: Number(body.dataset.promptFlowHeight),
+      text: answerText.textContent,
+    };
+    expect(before.anchorTop).toBeGreaterThanOrEqual(0);
+    expect(before.anchorTop).toBeLessThan(before.clientHeight);
+    // Unlike the independent zero-delta case, readAt above already captured a reader.
+    // The only uncovered boundary is the real model's retained-only local projection.
+    allowReveal = true;
+    // Admit the reveal at the same committed reading position. Dedicated PageUp
+    // cases cover the browser's deliberate default scrolling separately.
+    readAt(fixture.host, 0);
+    await expect.poll(() => acceptedReveal.mock.calls.length).toBe(1);
+
+    await expect.poll(() => Math.abs(anchorTop() - before.anchorTop)).toBeLessThanOrEqual(1);
+    const growth = scroll.scrollHeight - before.scrollHeight;
+    expect(growth).toBeGreaterThan(before.clientHeight);
+    expect(Math.abs(scroll.scrollTop - before.scrollTop - growth)).toBeLessThanOrEqual(1);
+    await expect
+      .poll(() => fixture.host.querySelector('[data-testid="load-older-history-spinner"]'))
+      .toBeNull();
+    expect(acceptedReveal).toHaveBeenCalledTimes(1);
+    expect(rows.querySelector('[data-history-row-id="answer"]')).toBe(answer);
+    expect(answerText.firstChild).toBe(answerNode);
+    expect(answerText.textContent).toBe(before.text);
+    expect(rows.querySelector(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`)).toBe(row);
+    expect(exactTextNodes(row, prompt)).toEqual([promptNode]);
+    expect(Number(body.dataset.promptFlowHeight)).toBe(before.flowHeight);
+    const ids = items.map((item) => item.id);
+    expect(
+      Array.from(
+        rows.querySelectorAll<HTMLElement>("[data-history-row-id]"),
+        (element) => element.dataset.historyRowId,
+      ),
+    ).toEqual(ids);
+    for (const id of ids)
+      expect(rows.querySelectorAll(`[data-history-row-id="${id}"]`)).toHaveLength(1);
+    // Once its original local window is included, the genuine USER is eligible again.
+    readAt(fixture.host, 0);
+    await expect.poll(() => readingPosition.mock.lastCall?.[0]?.rowId).toBe(ACTUAL_PROMPT_ID);
+    expect(acceptedReveal).toHaveBeenCalledTimes(1);
+  },
+);

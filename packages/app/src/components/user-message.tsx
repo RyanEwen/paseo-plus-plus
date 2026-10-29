@@ -1,7 +1,7 @@
 import { useTextLink } from "@/hooks/use-text-link";
 import { TextPreview } from "@/components/ui/text-preview";
 import { UserMessagePreviewContent } from "./user-message-preview-content";
-import { UserMessageAttachments, UserMessageAttachmentSummary } from "./user-message-attachments";
+import { UserMessageAttachments } from "./user-message-attachments";
 import {
   NaturalMessageBubble,
   NaturalMessageFlowContext,
@@ -530,8 +530,6 @@ export const UserMessage = memo(function UserMessage({
   const attachmentContent = useMemo(
     () => (
       <UserMessageAttachments
-        onContentPress={onContentPress}
-        contentAccessibilityLabel={contentAccessibilityLabel}
         images={images}
         attachments={attachments}
         compact={compactPreview}
@@ -539,7 +537,7 @@ export const UserMessage = memo(function UserMessage({
         onOpen={setLightboxMetadata}
       />
     ),
-    [onContentPress, contentAccessibilityLabel, images, attachments, compactPreview, hasText],
+    [images, attachments, compactPreview, hasText],
   );
   const flowRevision = useMemo(
     () => ({ message, images, attachments, isPending, hasTrailingRow }),
@@ -657,24 +655,13 @@ export const UserMessage = memo(function UserMessage({
       navigationActions,
     ],
   );
-  const attachmentSummary = useMemo(
-    () => (
-      <UserMessageAttachmentSummary
-        count={images.length + attachments.length}
-        hasText={false}
-        onContentPress={onContentPress}
-        contentAccessibilityLabel={contentAccessibilityLabel}
-      />
-    ),
-    [images.length, attachments.length, onContentPress, contentAccessibilityLabel],
-  );
   const Flow = flowConfiguration.Flow;
   const content = onNaturalFlowGeometry ? (
     <Flow
       driver={nativeDriver}
       trailing={trailingContent}
       controls={inlineContentAction}
-      summary={attachmentSummary}
+      summary={null}
       revision={flowRevision}
       message={message}
       compact={compactPreview}

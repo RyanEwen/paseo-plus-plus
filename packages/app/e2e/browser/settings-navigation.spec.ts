@@ -358,6 +358,7 @@ for (const width of [1440, 390]) {
       await expect(section.getByTestId("paseo-plus-plus-androidAutomaticUpdateChecks")).toHaveCount(
         0,
       );
+      await expect(section.getByTestId("paseo-plus-plus-sidebarProjectSelector")).toHaveCount(0);
       for (const [feature, defaultEnabled] of features) {
         expect(defaultEnabled, `${feature} must default on`).toBe(true);
         await expect(featureSwitch(feature)).toBeChecked();

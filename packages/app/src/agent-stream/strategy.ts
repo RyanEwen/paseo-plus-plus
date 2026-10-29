@@ -85,6 +85,8 @@ export interface StreamRenderInput {
   nativeViewportPlacement?: "docked" | "standalone";
   agentId: string;
   segments: StreamRenderSegments;
+  /** Isolated display context stays mounted but cannot own ordinary reading geometry. */
+  contextOnlyIds?: ReadonlySet<string>;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
   boundary: StreamHistoryBoundary;

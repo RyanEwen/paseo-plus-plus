@@ -20,7 +20,11 @@ import {
   hasSidebarWorkspaceTrailing,
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
-import { densityIconBox } from "@/styles/density";
+import { density, densityIconBox } from "@/styles/density";
+import {
+  SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT as TITLE_LINE_HEIGHT,
+  useSidebarWorkspaceFamilyPresentation,
+} from "./workspace-tree-context";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -56,6 +60,7 @@ export function SidebarWorkspaceRowFrame({
     hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const openInPaseo = useWorkspaceBrowserOpening(workspace.serverId, workspace.workspaceId);
   const [isHovered, setIsHovered] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -80,12 +85,21 @@ export function SidebarWorkspaceRowFrame({
         isDragging={isDragging}
         disabled={contextMenuOpen}
       >
-        {children({
-          isHovered: isHovered && !contextMenuOpen && !isDragging,
-          contextMenuOpen,
-          onContextMenuOpenChange: handleContextMenuOpenChange,
-          hoverHandlers,
-        })}
+        <View
+          {...hoverHandlers}
+          style={styles.workspaceSurface}
+          testID={`sidebar-workspace-surface-${workspace.workspaceKey}`}
+        >
+          {children({
+            isHovered: isHovered && !contextMenuOpen && !isDragging,
+            contextMenuOpen,
+            onContextMenuOpenChange: handleContextMenuOpenChange,
+            hoverHandlers,
+          })}
+          {family.disclosure ? (
+            <View style={styles.familyDisclosure}>{family.disclosure}</View>
+          ) : null}
+        </View>
       </WorkspaceHoverCard>
     </WorkspaceBrowserOpeningProvider>
   );
@@ -123,6 +137,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
 }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
+  const contentIndentStyle = useMemo(
+    () => ({ paddingLeft: family.contentIndent }),
+    [family.contentIndent],
+  );
   const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
@@ -138,7 +157,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   );
 
   return (
-    <View style={styles.workspaceRowContent}>
+    <View
+      style={[styles.workspaceRowContent, contentIndentStyle]}
+      testID={`sidebar-workspace-content-${workspace.workspaceKey}`}
+    >
       <View style={styles.workspaceRowMain}>
         {leadingProjectName ? (
           <ProjectStatusIndicator
@@ -168,6 +190,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
               {workspaceLabel}
             </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
+            {family.disclosure ? <View style={styles.familyDisclosureSpace} /> : null}
           </View>
           <WorkspaceMetaRow
             currentBranch={workspace.currentBranch}
@@ -177,6 +200,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             serviceSummary={serviceSummary}
             labels={labels}
           />
+          {family.collapsedSummary?.content}
         </View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
@@ -308,6 +332,8 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
   rowIndented: {
     paddingLeft: theme.spacing[2] + theme.spacing[2],
   },
+  // Parent disclosure glyphs align with a fixed first title line, including multi-line summaries.
+  familyParentRow: { justifyContent: "flex-start" },
   rowRight: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -467,8 +493,6 @@ export function SidebarWorkspaceTrailingStatusActions({
 }
 
 // The status dot centres on the title's first line, so both share its line height.
-const TITLE_LINE_HEIGHT = 20;
-
 const styles = StyleSheet.create((theme) => ({
   // Hidden actions consume no width. HoverRevealActions expands the row only while
   // its controls are visible, keeping idle titles beside their metadata and status.
@@ -482,6 +506,14 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  workspaceSurface: { position: "relative", minWidth: 0 },
+  familyDisclosure: {
+    position: "absolute",
+    top: 0,
+    right: theme.spacing[3],
+    height: density.rowHeight,
+  },
+  familyDisclosureSpace: { width: density.iconButton, height: TITLE_LINE_HEIGHT, flexShrink: 0 },
   workspaceRowContent: {
     position: "relative",
   },

@@ -7,7 +7,16 @@ import { ActualPromptRowsProvider } from "../actual-prompt-rows";
 import { PromptNavigationContext } from "../prompt-navigation-actions";
 import { PromptUserMessage } from "../prompt-user-message";
 import { createWebStreamStrategy } from "../strategy-web";
-import type { StreamSegmentRenderers, StreamViewportHandle } from "../strategy";
+import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "../strategy";
+import type { PromptNavigationControls } from "../use-prompt-navigation-controls";
+import { buildAgentStreamRenderModel } from "../model";
+import { createStreamPresentation } from "../presentation";
+import {
+  mergeRetainedPrompts,
+  retainedCanonicalPositions,
+  type CanonicalPromptContext,
+} from "@/timeline/canonical-prompt-context";
+import { useStreamHistoryWindow } from "../use-stream-history-window";
 
 export const ACTUAL_PROMPT_ID = "message-1";
 export const ACTUAL_SUCCESSOR_ID = "message-2";
@@ -75,6 +84,17 @@ const renderers: StreamSegmentRenderers = {
 };
 const nearBottom = vi.fn();
 const loadOlder = vi.fn(() => false);
+const EMPTY_OLDER_HISTORY: readonly StreamItem[] = [];
+const EMPTY_LOCAL_HISTORY: StreamItem[] = [];
+const EMPTY_CONTEXTS: readonly CanonicalPromptContext[] = [];
+
+interface LocalHistoryFixture {
+  items: StreamItem[];
+  contexts?: readonly CanonicalPromptContext[];
+  /** Deny mount-time fill, then admit an actual upward input without delaying its reveal. */
+  allowReveal: () => boolean;
+  onReveal: () => void;
+}
 
 interface Props {
   text: string;
@@ -88,7 +108,87 @@ interface Props {
   /** Materialize one retained prompt in an existing normal or virtual history lane. */
   historyPlacement?: "normal" | "virtual";
   promptAvailable?: boolean;
+  /** The displayed prompt is an isolated canonical point, outside the ordinary window. */
+  contextOnlyPrompt?: boolean;
+  /** Ordinary source rows accepted between the isolated prompt and the existing answer. */
+  olderHistory?: readonly StreamItem[];
+  onNearHistoryStart?: StreamRenderInput["onNearHistoryStart"];
+  /** Exercise the production local window and render model rather than manually choosing rows. */
+  localHistory?: LocalHistoryFixture;
+  onReadingPositionChange?: StreamRenderInput["onReadingPositionChange"];
   disableOuterSpacing?: boolean;
+  /** Hover regressions must not inherit explicit navigation's visibility hold. */
+  holdActionsVisible?: boolean;
+  onNavigate?: PromptNavigationControls["activate"];
+}
+
+/** Reuse canonical presentation, local reveal ordering and the real render model. */
+function useLocalHistoryFixture(localHistory: LocalHistoryFixture | undefined) {
+  const items = localHistory?.items ?? EMPTY_LOCAL_HISTORY;
+  const contexts = localHistory?.contexts ?? EMPTY_CONTEXTS;
+  const canonical = useMemo(() => mergeRetainedPrompts(items, contexts), [items, contexts]);
+  const present = useMemo(createStreamPresentation, []);
+  const presentation = useMemo(
+    () =>
+      present({
+        tail: canonical,
+        head: EMPTY_LOCAL_HISTORY,
+        transform: undefined,
+        level: "overview",
+        isTurnActive: false,
+      }),
+    [canonical, present],
+  );
+  const retainedPositions = useMemo(
+    () => retainedCanonicalPositions(canonical, contexts),
+    [canonical, contexts],
+  );
+  const {
+    start,
+    hasLocalHistory,
+    loadOlder: localLoadOlder,
+  } = useStreamHistoryWindow({
+    agentId: "agent",
+    items: presentation.tail,
+    loadRemoteOlder: loadOlder,
+  });
+  const model = useMemo(
+    () =>
+      buildAgentStreamRenderModel({
+        isTurnActive: false,
+        activeTurnStartedAt: null,
+        tail: presentation.tail,
+        head: presentation.head,
+        platform: "web",
+        isMobileBreakpoint: false,
+        historyStart: start,
+        retainedPositions,
+      }),
+    [presentation.tail, presentation.head, start, retainedPositions],
+  );
+  const contextOnlyIds = useMemo(
+    () =>
+      new Set([
+        ...mergeRetainedPrompts([], contexts, items).map((item) => item.id),
+        ...model.retainedOnlyIds,
+      ]),
+    [contexts, items, model.retainedOnlyIds],
+  );
+  const revealLocalHistory = useCallback(() => {
+    if (!localHistory?.allowReveal()) return false;
+    localHistory.onReveal();
+    // Call directly: the real hook publishes its local reveal before its first await.
+    return localLoadOlder();
+  }, [localHistory, localLoadOlder]);
+  if (!localHistory) return {};
+  return {
+    segments: model.segments,
+    boundary: model.boundary,
+    contextOnlyIds,
+    onNearHistoryStart: revealLocalHistory,
+    hasOlderHistory: hasLocalHistory,
+    olderHistoryProgressKey: `local:${start}`,
+  };
 }
 
 /** Real user renderer and real outer scroll owner; only daemon-independent fixture data. */
@@ -103,7 +203,14 @@ function ActualPromptStream({
   wrapRow,
   historyPlacement,
   promptAvailable = true,
+  contextOnlyPrompt = false,
+  olderHistory = EMPTY_OLDER_HISTORY,
+  onNearHistoryStart,
+  localHistory,
+  onReadingPositionChange,
   disableOuterSpacing = true,
+  holdActionsVisible = true,
+  onNavigate,
 }: Props) {
   const strategy = useMemo(() => createWebStreamStrategy({ isMobileBreakpoint: false }), []);
   const streamRenderers = useMemo<StreamSegmentRenderers>(() => {
@@ -143,8 +250,15 @@ function ActualPromptStream({
           ],
     [prompt, successorText],
   );
+  const contextOnlyIds = useMemo(
+    () => new Set(contextOnlyPrompt ? [prompt.id] : []),
+    [contextOnlyPrompt, prompt.id],
+  );
   const segments = useMemo(() => {
-    const rows = promptAvailable ? liveHead : liveHead.filter((item) => item.id !== prompt.id);
+    const history = liveHead.flatMap((item) =>
+      item.id === answer.id ? [...olderHistory, item] : [item],
+    );
+    const rows = promptAvailable ? history : history.filter((item) => item.id !== prompt.id);
     if (historyPlacement === "virtual") {
       return { historyVirtualized: rows, historyMounted: [], liveHead: [] };
     }
@@ -152,14 +266,20 @@ function ActualPromptStream({
       return { historyVirtualized: [], historyMounted: rows, liveHead: [] };
     }
     return { historyVirtualized: [], historyMounted: [], liveHead: rows };
-  }, [liveHead, promptAvailable, prompt.id, historyPlacement]);
-  const navigation = useMemo(
-    () =>
+  }, [liveHead, promptAvailable, prompt.id, historyPlacement, olderHistory]);
+  const localHistoryInput = useLocalHistoryFixture(localHistory);
+  const navigation = useMemo(() => {
+    const current =
       successorText === undefined
         ? controls
-        : { ...controls, targetIds: [ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID] },
-    [successorText],
-  );
+        : { ...controls, targetIds: [ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID] };
+    if (holdActionsVisible && !onNavigate) return current;
+    return {
+      ...current,
+      actionVisibleMessageId: holdActionsVisible ? ACTUAL_PROMPT_ID : undefined,
+      activate: onNavigate ?? current.activate,
+    };
+  }, [successorText, holdActionsVisible, onNavigate]);
   return (
     <div data-chat-find-root="true" style={STREAM_STYLE}>
       <ActualPromptRowsProvider enabled={enabled} scope={scope} availableHeight={320}>
@@ -167,6 +287,7 @@ function ActualPromptStream({
           {strategy.render({
             agentId: "agent",
             segments,
+            contextOnlyIds,
             boundary: {
               hasVirtualizedHistory: segments.historyVirtualized.length > 0,
               hasMountedHistory: segments.historyMounted.length > 0,
@@ -178,15 +299,17 @@ function ActualPromptStream({
             routeBottomAnchorRequest: null,
             isAuthoritativeHistoryReady: true,
             onNearBottomChange: nearBottom,
-            onNearHistoryStart: loadOlder,
+            onReadingPositionChange,
+            onNearHistoryStart: onNearHistoryStart ?? loadOlder,
             isLoadingOlderHistory: false,
-            hasOlderHistory: false,
-            olderHistoryProgressKey: null,
+            hasOlderHistory: onNearHistoryStart !== undefined,
+            olderHistoryProgressKey: onNearHistoryStart ? `fixture:${olderHistory.length}` : null,
             scrollEnabled: true,
             listStyle: null,
             baseListContentContainerStyle: null,
             forwardListContentContainerStyle: null,
             contentMaxWidth: 820,
+            ...localHistoryInput,
           })}
         </PromptNavigationContext.Provider>
       </ActualPromptRowsProvider>

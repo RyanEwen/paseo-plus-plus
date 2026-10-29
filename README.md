@@ -14,7 +14,6 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Readable tool activity](docs/fork-features/readable-tool-activity.md)
 
 - [Previous agents](docs/fork-features/previous-agents.md)
-- [Project selector](docs/fork-features/project-selector.md)
 
 - [Project activity chips](docs/fork-features/project-activity-chips.md)
 - [Bold project names](docs/fork-features/bold-project-names.md)
@@ -43,6 +42,7 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 
 ## Other additions
 
+- [Project selector](docs/fork-features/project-selector.md)
 - [Desktop browser and extensions](docs/fork-features/desktop-browser-and-extensions.md)
 - [Automatic usage refresh](docs/fork-features/automatic-usage-refresh.md)
 

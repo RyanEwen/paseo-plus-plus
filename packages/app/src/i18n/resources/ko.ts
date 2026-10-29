@@ -102,7 +102,7 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 작업 공간 제목 아래에 스크롤 가능한 탭 막대를 표시합니다. 끄면 선택한 탭을 유지하며 이전 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 같은 너비의 탭을 표시하고 필요한 경우에만 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
       },
       widerWorkspaceTabs: {
         label: "더 넓은 작업 공간 탭",
@@ -114,10 +114,6 @@ export const ko: TranslationResources = {
         hint: "알려진 작업을 설명하고 정확한 명령과 출력은 세부 정보에 보존합니다. 끄면 기존 레이블로 돌아갑니다.",
       },
 
-      sidebarProjectSelector: {
-        label: "제목에 선택한 프로젝트 표시",
-        hint: "워크스페이스 제목에 선택한 프로젝트 이름을 표시합니다. 끄면 워크스페이스로 표시되며 호스트와 프로젝트 선택은 계속 사용할 수 있습니다.",
-      },
       stickyUserPrompts: {
         label: "사용자 메시지 계속 표시",
         hint: "현재 메시지를 간단히 고정하고 펼치거나 이전/다음으로 이동할 수 있습니다. 일반 메시지는 항상 펼쳐져 있으며 로딩 표시가 기존 메시지를 가리지 않습니다.",

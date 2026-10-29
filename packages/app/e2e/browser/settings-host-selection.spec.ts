@@ -133,9 +133,9 @@ test("explicit settings host sync shares preferences across independent clients 
     await expect(
       second.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch"),
     ).not.toBeChecked();
-    await second.getByTestId("paseo-plus-plus-sidebarProjectSelector").getByRole("switch").click();
+    await second.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch").click();
     await expect(
-      page.getByTestId("paseo-plus-plus-sidebarProjectSelector").getByRole("switch"),
+      page.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch"),
     ).not.toBeChecked();
     // Keep B on the ordinary sidebar before toggling A, so visibility proves a live update.
     await second.goto(new URL("/", page.url()).href);

@@ -16,6 +16,7 @@ import {
 import {
   fetchCanonicalPromptContext,
   type ContextPageReader,
+  type ContextPromptIndexReader,
 } from "./read-canonical-prompt-context";
 import {
   canonicalPromptSourceKey,
@@ -92,6 +93,8 @@ export interface CanonicalPromptLookup {
   agentId: string;
   readPage: ContextPageReader;
   projection: "projected" | "canonical";
+  /** Optional root capability. Starts a fresh complete index read after source proof. */
+  readPromptIndex?: ContextPromptIndexReader;
 }
 export interface CanonicalPromptRequest {
   agentId: string;
@@ -468,8 +471,18 @@ export function createCanonicalPromptContexts(
     const ordinary = ordinaryFor(input.agentId);
     if (hasInterveningUser(proof, ordinary.items))
       return blockChanged(reader, key, input.retryToken);
-    // This proof came only from the owner's validated raw-page lookup.
+    // The index is only a locator; the proof still requires validated canonical content.
     return admit(input.agentId, reader, input.source, { context: proof, parent: undefined });
+  }
+  /** Reject obsolete indexed reads before they can acquire content or publish a proof. */
+  function assertLookupCurrent(operation: Operation, sourceStart: number | undefined): void {
+    if (!isCurrent(operation)) throw new Error("Prompt context request is no longer current");
+    refreshObservation(operation);
+    if (
+      operation.scope.userGeneration !== operation.userGeneration ||
+      (sourceStart !== undefined && sourceStartConflict(operation.input, sourceStart))
+    )
+      throw new CanonicalPromptContextChangedError();
   }
   async function readLookup(
     operation: Operation,
@@ -500,6 +513,13 @@ export function createCanonicalPromptContexts(
           if (sourceStartConflict(input, sourceStart))
             throw new CanonicalPromptContextChangedError();
         },
+        lookup.readPromptIndex
+          ? {
+              agentId: lookup.agentId,
+              readPromptIndex: lookup.readPromptIndex,
+              assertCurrent: () => assertLookupCurrent(operation, validatedStart),
+            }
+          : undefined,
       );
     } catch (error) {
       if (!isCurrent(operation))

@@ -2,7 +2,10 @@ import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source"
 import { useSyncExternalStore } from "react";
 import { resolveRetainedContextSource } from "./sticky-prompt-model";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
-import { normalContextPageReader } from "./fetch-reading-prompt-context";
+import {
+  normalContextPageReader,
+  normalContextPromptIndexReader,
+} from "./fetch-reading-prompt-context";
 import {
   mergeRetainedPrompts,
   retainedCanonicalPositions,
@@ -360,7 +363,9 @@ interface RetainedCanonicalTranscriptInput {
   effectiveStreamItems: StreamItem[];
   effectiveStreamHead: StreamItem[] | undefined;
   stickyEnabled: boolean;
+  canIndexPrompts: boolean;
   isActive: boolean;
+  isAuthoritativeHistoryReady: boolean;
 }
 
 /** Admit canonical sources before the single presentation pass, without extending window coverage. */
@@ -375,7 +380,9 @@ function useRetainedCanonicalTranscript({
   effectiveStreamItems,
   effectiveStreamHead,
   stickyEnabled,
+  canIndexPrompts,
   isActive,
+  isAuthoritativeHistoryReady,
 }: RetainedCanonicalTranscriptInput) {
   const timelineOwner = useSessionStore(
     (state) => state.sessions[resolvedServerId]?.viewedTimelineSync ?? null,
@@ -415,10 +422,14 @@ function useRetainedCanonicalTranscript({
         ? {
             agentId,
             readPage: contextReader,
+            readPromptIndex:
+              !childTranscript && canIndexPrompts && client
+                ? normalContextPromptIndexReader(client, agentId)
+                : undefined,
             projection: childTranscript ? ("projected" as const) : ("canonical" as const),
           }
         : undefined,
-    [contextReader, childTranscript, agentId],
+    [contextReader, childTranscript, agentId, canIndexPrompts, client],
   );
   const retainedContext = useCanonicalPromptContext({
     owner: contextOwner,
@@ -429,6 +440,7 @@ function useRetainedCanonicalTranscript({
     coverage: contextCoverage,
     sourceMetadata: historyPagination?.sourceMetadata,
     enabled: stickyEnabled && isActive,
+    lookupReady: isAuthoritativeHistoryReady,
     lookup: contextLookup,
   });
   const canonicalTail = useMemo(
@@ -672,7 +684,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         effectiveStreamItems,
         effectiveStreamHead,
         stickyEnabled,
+        canIndexPrompts,
         isActive,
+        isAuthoritativeHistoryReady,
       });
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
@@ -727,6 +741,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       historyWindowStart,
       retainedPositions,
     ]);
+    // Cached canonical membership does not make a retained point part of this
+    // ordinary local window. Only geometric anchoring excludes the copied rows.
+    const viewportContextOnlyIds = useMemo(() => {
+      if (!isWeb || baseRenderModel.retainedOnlyIds.size === 0) return contextOnlyIds;
+      return new Set([...contextOnlyIds, ...baseRenderModel.retainedOnlyIds]);
+    }, [contextOnlyIds, baseRenderModel.retainedOnlyIds]);
     const streamLayout = useMemo(
       () =>
         layoutStream({
@@ -1324,6 +1344,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   agentId,
                   nativeViewportPlacement,
                   segments: renderModel.segments,
+                  contextOnlyIds: viewportContextOnlyIds,
                   historyRowRevision,
                   liveHeadRowRevision: expandedToolCallGroupIds,
                   boundary,

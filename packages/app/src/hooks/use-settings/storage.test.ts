@@ -153,7 +153,6 @@ describe("loadAppSettingsFromStorage", () => {
       descriptiveToolCalls: true,
       stickyUserPrompts: true,
       previousAgents: true,
-      sidebarProjectSelector: true,
       sidebarActivityChips: true,
       sidebarProjectEmphasis: true,
       sidebarBulkActions: true,
@@ -168,6 +167,7 @@ describe("loadAppSettingsFromStorage", () => {
             previousAgents: false,
             sidebarBulkActions: "invalid",
             futureFeature: false,
+            sidebarProjectSelector: false,
           },
         }),
       }),
@@ -177,6 +177,8 @@ describe("loadAppSettingsFromStorage", () => {
     expect(restored.paseoPlusPlus.sidebarBulkActions).toBe(true);
     expect(restored.paseoPlusPlus.stickyUserPrompts).toBe(true);
     expect(restored.paseoPlusPlus.futureFeature).toBe(false);
+    // Retired label preferences remain harmless stored data, like unknown future keys.
+    expect(restored.paseoPlusPlus.sidebarProjectSelector).toBe(false);
     await saveAppSettings({ queryClient: new QueryClient(), deps, updates: { language: "fr" } });
     expect((await loadAppSettingsFromStorage(deps)).paseoPlusPlus.futureFeature).toBe(false);
   });

@@ -415,6 +415,7 @@ function useFindRowOwnership(
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
     segments: inputSegments,
+    contextOnlyIds,
     historyRowRevision,
     liveHeadRowRevision,
     boundary,
@@ -521,8 +522,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const rowVirtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(null);
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
+      const anchorRowId = readingAnchor.getRowId();
       const anchorIndex = segments.historyVirtualized.findIndex(
-        (row) => row.id === readingAnchor.getRowId(),
+        (row) => row.id === anchorRowId && !contextOnlyIds?.has(row.id),
       );
       const container = scrollContainerRef.current;
       // TanStack has computed the new measurements before calling the extractor.
@@ -567,6 +569,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     [
       actualRows,
       chatFindRowIndexes,
+      contextOnlyIds,
       readingAnchor,
       segments.historyVirtualized,
       virtualUserIndices,
@@ -971,6 +974,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const viewportTop = container.getBoundingClientRect().top;
     const scrollTop = container.scrollTop;
     const width = content.getBoundingClientRect().width;
+    // Measure every mounted row, including the isolated prompt's full reservation.
+    // Only ordinary window rows may own a prepend correction across an unloaded gap.
     const rows = Array.from(
       content.querySelectorAll<HTMLElement>("[data-history-row-id]"),
       (element) => {
@@ -985,7 +990,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
           preserveFollowingOnShrink: !!element.querySelector('[data-paseo-markdown-tag="img"]'),
         };
       },
-    );
+    ).filter((row) => !contextOnlyIds?.has(row.id));
+    const anchorRowId = readingAnchor.getRowId();
+    if (anchorRowId !== null && contextOnlyIds?.has(anchorRowId)) readingAnchor.reset();
     const shouldAnchor = !followOutputRef.current && !isJumpSettling();
     if (!shouldAnchor) readingAnchor.reset();
     const correctedTop = readingAnchor.reconcile(
@@ -1035,6 +1042,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     originalFindMessageId,
     actualRows,
     contentWidth,
+    contextOnlyIds,
     isActive,
     segments,
     virtualRows,
@@ -1061,6 +1069,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       // must relinquish bottom ownership before either can run in this frame.
       followOutputRef.current = false;
       setFollowOutput(false);
+    }
+    const container = scrollContainerRef.current;
+    if (container && isScrollContainerMeasurable(container) && !isJumpSettling()) {
+      // Rearming may synchronously reveal local rows. Capture the committed reader
+      // first, including PageUp at an underfilled top where no scroll event follows.
+      readingAnchor.scroll(container.scrollTop, container.clientHeight);
     }
     rearmHistoryStartFromUserIntent();
   });

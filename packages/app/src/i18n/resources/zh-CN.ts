@@ -97,7 +97,7 @@ export const zhCN: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "移动端工作区标签页",
-        hint: "在紧凑布局中，在工作区标题下方显示可滚动的标签栏。关闭后使用原来的标签选择器，并保留当前选中的标签。",
+        hint: "在紧凑屏幕上显示等宽标签页，仅在放不下时滚动。关闭后使用标签选择器，并保留当前选中的标签。",
       },
       widerWorkspaceTabs: {
         label: "更宽的工作区标签页",
@@ -109,10 +109,6 @@ export const zhCN: TranslationResources = {
         hint: "描述已知操作，并在详情中保留准确命令和输出。关闭后恢复经典标签。",
       },
 
-      sidebarProjectSelector: {
-        label: "标题中的所选项目",
-        hint: "在工作区标题中显示所选项目名称。关闭后使用“工作区”；主机和项目选项仍可使用。",
-      },
       stickyUserPrompts: {
         label: "保持用户消息可见",
         hint: "固定当前消息的简洁预览，支持展开和前后导航。普通消息始终完整展开，加载提示不会遮挡已有消息。",

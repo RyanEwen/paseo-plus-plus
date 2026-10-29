@@ -18,8 +18,10 @@ import {
 import {
   createCanonicalPromptContexts,
   canonicalPromptSourceKey,
+  CanonicalPromptContextBudgetError,
 } from "@/timeline/canonical-prompt-context";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
+import type { ContextPromptIndexReader } from "@/timeline/read-canonical-prompt-context";
 import { useNativeReadingRefresh } from "../native-sticky-viewport";
 import {
   createNativeMeasuredHeaderIndex,
@@ -44,13 +46,17 @@ import { createPromptReadingPublisher } from "../prompt-reading-position";
 import { usePromptNavigationControls } from "../use-prompt-navigation-controls";
 import * as protocolSchemas from "@getpaseo/protocol/messages";
 import { createTimelineRequestLedger } from "../../../e2e/support/helpers/timeline-request-ledger";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type {
+  AgentTimelinePromptIndexPayload,
+  DaemonClient,
+} from "@getpaseo/client/internal/daemon-client";
 import {
   fetchReadingPromptContext,
   childContextPageReader,
   normalContextPageReader,
   type ContextPage,
   type ContextEntry,
+  type ContextPageReader,
 } from "../fetch-reading-prompt-context";
 import {
   resolveRetainedContextSource,
@@ -1979,6 +1985,307 @@ describe("index-free cache-only context", () => {
     expect(result.current.error).toBe(false);
     unmount();
     owner.dispose();
+  });
+
+  it("uses a fresh complete USER index after source proof instead of scanning a long predecessor gap", async () => {
+    const owner = createCanonicalPromptContexts();
+    const controller = new AbortController();
+    const order: string[] = [];
+    const ordinary = [source];
+    const probedSource: ContextEntry = {
+      ...entry(246, 256),
+      sourceSeqRanges: [
+        { startSeq: 246, endSeq: 249 },
+        { startSeq: 251, endSeq: 256 },
+      ],
+    };
+    const originalText = "Original\n  formatting retained";
+    const promptEntry: ContextEntry = {
+      ...entry(64, 64, "user_message"),
+      item: {
+        type: "user_message",
+        text: originalText,
+        messageId: "human-64",
+        clientMessageId: "client-64",
+      },
+    };
+    const readPage = vi.fn<ContextPageReader>(async (request) => {
+      if (request.cursor === 257 && request.limit === 1) {
+        order.push("source-probe");
+        return page([probedSource]);
+      }
+      if (request.cursor === 65 && request.limit === 1) {
+        order.push("exact-prompt");
+        return page([promptEntry]);
+      }
+      // The supported fallback progresses through assistant-only history, but
+      // cannot reach USER 64 within the existing eight-read admission.
+      order.push("raw-predecessor-page");
+      return page([entry(request.cursor - 1, request.cursor - 1)]);
+    });
+    const readPromptIndex = vi.fn(
+      async (
+        _request: { epoch: string; sourceStart: number },
+        _signal: AbortSignal,
+      ): Promise<AgentTimelinePromptIndexPayload> => {
+        order.push("fresh-index");
+        return {
+          requestId: "fresh-context-index",
+          agentId: "agent",
+          epoch: "epoch",
+          prompts: [
+            { seq: 64, timestamp: new Date(0).toISOString(), preview: "display preview only" },
+            { seq: 250, timestamp: new Date(0).toISOString(), preview: "later USER" },
+          ],
+          error: null,
+        };
+      },
+    );
+    owner.prepareSources("agent", {
+      ...certifiedReadingRows(ordinary, new Map([[source.id, 246]])),
+      cursor: { epoch: "epoch", startSeq: 246, endSeq: 256 },
+      entries: [probedSource],
+    });
+    try {
+      let result: { status: "resolved"; prompt: UserPrompt | undefined } | { status: "limited" };
+      try {
+        const prompt = await owner.request({
+          agentId: "agent",
+          source,
+          channel: {},
+          signal: controller.signal,
+          lookup: {
+            agentId: "agent",
+            readPage,
+            projection: "canonical",
+            readPromptIndex,
+          },
+          lookupAllowed: true,
+          retryToken: 0,
+        });
+        result = { status: "resolved", prompt };
+      } catch (error) {
+        if (!(error instanceof CanonicalPromptContextBudgetError)) throw error;
+        result = { status: "limited" };
+      }
+      expect(result).toEqual({
+        status: "resolved",
+        prompt: expect.objectContaining({
+          text: originalText,
+          messageId: "human-64",
+          clientMessageId: "client-64",
+          timelineCursor: { epoch: "epoch", seq: 64 },
+        }),
+      });
+      expect(order).toEqual(["source-probe", "fresh-index", "exact-prompt"]);
+      expect(readPromptIndex).toHaveBeenCalledExactlyOnceWith(
+        { epoch: "epoch", sourceStart: 246 },
+        controller.signal,
+      );
+      expect(readPage.mock.calls).toEqual([
+        [{ epoch: "epoch", cursor: 257, limit: 1, projection: "projected" }, controller.signal],
+        [{ epoch: "epoch", cursor: 65, limit: 1, projection: "canonical" }, controller.signal],
+      ]);
+      expect(owner.read("agent", "epoch")).toEqual([
+        expect.objectContaining({ sourceStart: 246, sourceEnd: 256 }),
+      ]);
+      expect(owner.snapshot("agent")?.ranges).toEqual([{ startSeq: 64, endSeq: 64 }]);
+      expect(ordinary).toEqual([source]);
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  const completeIndex: AgentTimelinePromptIndexPayload = {
+    requestId: "context-index",
+    agentId: "agent",
+    epoch: "epoch",
+    prompts: [{ seq: 64, timestamp: new Date(0).toISOString(), preview: "preview only" }],
+    error: null,
+  };
+
+  /** Exercise the real context owner; only journal/index I/O are fixture boundaries. */
+  function requestIndexedContext({
+    owner,
+    readPage,
+    readPromptIndex,
+    controller = new AbortController(),
+    channel = {},
+  }: {
+    owner: ReturnType<typeof createCanonicalPromptContexts>;
+    readPage: ContextPageReader;
+    readPromptIndex: ContextPromptIndexReader;
+    controller?: AbortController;
+    channel?: object;
+  }) {
+    return owner.request({
+      agentId: "agent",
+      source,
+      channel,
+      signal: controller.signal,
+      lookup: { agentId: "agent", readPage, projection: "canonical", readPromptIndex },
+      lookupAllowed: true,
+      retryToken: 0,
+    });
+  }
+
+  it.each([
+    { name: "another agent", payload: { ...completeIndex, agentId: "other" } },
+    { name: "another epoch", payload: { ...completeIndex, epoch: "other" } },
+    { name: "failed empty", payload: { ...completeIndex, prompts: [], error: "unavailable" } },
+    { name: "malformed empty", payload: { ...completeIndex, prompts: undefined } },
+    {
+      name: "ambiguous",
+      payload: {
+        ...completeIndex,
+        prompts: [completeIndex.prompts[0]!, completeIndex.prompts[0]!],
+      },
+    },
+  ])(
+    "rejects $name index data without declaring exhaustion or fetching content",
+    async ({ payload }) => {
+      const owner = createCanonicalPromptContexts();
+      const readPage = vi.fn<ContextPageReader>(async () => page([entry(246, 256)]));
+      const readPromptIndex = vi.fn().mockResolvedValue(payload);
+      try {
+        await expect(requestIndexedContext({ owner, readPage, readPromptIndex })).rejects.toThrow();
+        expect(readPage).toHaveBeenCalledTimes(1);
+        expect(readPromptIndex).toHaveBeenCalledTimes(1);
+        expect(owner.read("agent", "epoch")).toEqual([]);
+      } finally {
+        owner.dispose();
+      }
+    },
+  );
+
+  it("accepts a fresh complete empty index without scanning raw history", async () => {
+    const owner = createCanonicalPromptContexts();
+    const readPage = vi.fn<ContextPageReader>(async () => page([entry(246, 256)]));
+    const readPromptIndex = vi.fn().mockResolvedValue({ ...completeIndex, prompts: [] });
+    try {
+      expect(await requestIndexedContext({ owner, readPage, readPromptIndex })).toBeUndefined();
+      expect(readPage).toHaveBeenCalledTimes(1);
+      expect(readPromptIndex).toHaveBeenCalledTimes(1);
+      expect(owner.read("agent", "epoch")).toEqual([]);
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it.each(["index", "content"] as const)(
+    "cancels held %s acquisition without admitting a prompt",
+    async (stage) => {
+      const owner = createCanonicalPromptContexts();
+      const controller = new AbortController();
+      const heldIndex = deferred<AgentTimelinePromptIndexPayload>();
+      const heldContent = deferred<ContextPage>();
+      const readPromptIndex = vi.fn<ContextPromptIndexReader>(() =>
+        stage === "index" ? heldIndex.promise : Promise.resolve(completeIndex),
+      );
+      const readPage = vi.fn<ContextPageReader>(async (request) => {
+        if (request.cursor === 257) return page([entry(246, 256)]);
+        return heldContent.promise;
+      });
+      try {
+        const pending = requestIndexedContext({ owner, readPage, readPromptIndex, controller });
+        await waitFor(() => expect(readPage).toHaveBeenCalledTimes(stage === "index" ? 1 : 2));
+        await waitFor(() => expect(readPromptIndex).toHaveBeenCalledTimes(1));
+        controller.abort();
+        heldIndex.resolve(completeIndex);
+        heldContent.resolve(page([entry(64, 64, "user_message")]));
+        await expect(pending).rejects.toThrow();
+        expect(readPage).toHaveBeenCalledTimes(stage === "index" ? 1 : 2);
+        expect(owner.read("agent", "epoch")).toEqual([]);
+      } finally {
+        owner.dispose();
+      }
+    },
+  );
+
+  it.each(["channel", "epoch", "USER generation", "source start"] as const)(
+    "rejects %s replacement before acquiring indexed content",
+    async (changed) => {
+      let acceptsEpoch = true;
+      const owner = createCanonicalPromptContexts(() => acceptsEpoch);
+      const channel = {};
+      const accepted = {
+        ...certifiedReadingRows([source], new Map([[source.id, 246]])),
+        cursor: { epoch: "epoch", startSeq: 246, endSeq: 256 },
+      };
+      owner.prepareSources("agent", accepted);
+      const held = deferred<AgentTimelinePromptIndexPayload>();
+      const readPromptIndex = vi.fn<ContextPromptIndexReader>(() => held.promise);
+      const readPage = vi.fn<ContextPageReader>(async () => page([entry(246, 256)]));
+      try {
+        const pending = requestIndexedContext({ owner, readPage, readPromptIndex, channel });
+        await waitFor(() => expect(readPromptIndex).toHaveBeenCalledTimes(1));
+        if (changed === "channel") owner.cancel(channel);
+        if (changed === "epoch") acceptsEpoch = false;
+        if (changed === "USER generation") {
+          owner.prepareSources("agent", {
+            ...accepted,
+            tail: [stickyUser("new-user", 200, "epoch"), source],
+          });
+        }
+        if (changed === "source start") {
+          owner.prepareSources("agent", {
+            ...accepted,
+            entries: certifiedReadingRows([source], new Map([[source.id, 245]])).entries,
+          });
+        }
+        held.resolve(completeIndex);
+        await expect(pending).rejects.toThrow();
+        expect(readPage).toHaveBeenCalledTimes(1);
+        expect(owner.read("agent", "epoch")).toEqual([]);
+      } finally {
+        owner.dispose();
+      }
+    },
+  );
+
+  it("counts the fresh index inside the same eight-read admission", async () => {
+    const owner = createCanonicalPromptContexts();
+    let calls = 0;
+    const readPage = vi.fn<ContextPageReader>(async (request) => {
+      calls += 1;
+      if (calls === 7) return page([entry(246, 256)]);
+      return page([
+        {
+          ...entry(request.cursor - 1, request.cursor - 1),
+          item: { type: "assistant_message", messageId: "other", text: "other answer" },
+        },
+      ]);
+    });
+    const readPromptIndex = vi.fn().mockResolvedValue(completeIndex);
+    try {
+      await expect(
+        requestIndexedContext({ owner, readPage, readPromptIndex }),
+      ).rejects.toBeInstanceOf(CanonicalPromptContextBudgetError);
+      expect(readPage).toHaveBeenCalledTimes(7);
+      expect(readPromptIndex).toHaveBeenCalledTimes(1);
+      expect(owner.read("agent", "epoch")).toEqual([]);
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it.each([
+    { name: "missing", entries: [] },
+    { name: "wrong position", entries: [entry(63, 63, "user_message")] },
+    { name: "non-USER", entries: [entry(64, 64)] },
+  ])("rejects $name indexed content instead of trusting the preview", async ({ entries }) => {
+    const owner = createCanonicalPromptContexts();
+    const readPage = vi.fn<ContextPageReader>(async (request) =>
+      request.cursor === 257 ? page([entry(246, 256)]) : page(entries),
+    );
+    const readPromptIndex = vi.fn().mockResolvedValue(completeIndex);
+    try {
+      await expect(requestIndexedContext({ owner, readPage, readPromptIndex })).rejects.toThrow();
+      expect(readPage).toHaveBeenCalledTimes(2);
+      expect(owner.read("agent", "epoch")).toEqual([]);
+    } finally {
+      owner.dispose();
+    }
   });
 
   it("continues a bounded canonical predecessor read only on explicit retry", async () => {
@@ -4899,14 +5206,12 @@ describe("latest sticky context source", () => {
   const following = { following: true, navigating: false, rowId: answer.id, seq: 50 };
   const coverage = [{ epoch, startSeq: 4, endSeq: 100 }];
 
-  it("does not request or promote Loading for covered latest output, but still reads on a manual transition", async () => {
+  it("does not request or promote Loading for a certified covered edge, including a manual transition", async () => {
     const owner = createCanonicalPromptContexts();
-    const held = deferred<
-      import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
-    >();
-    const fetchContext = vi.fn(() => held.promise);
+    const fetchContext = vi.fn();
     const loading: boolean[] = [];
     const initialItems: StreamItem[] = [prompt, answer];
+    owner.prepareSources("agent", certifiedReadingRows(initialItems));
     const fixture = renderHook(
       ({ items, manual }: { items: StreamItem[]; manual: boolean }) => {
         const latest = items.at(-1)!;
@@ -4936,6 +5241,12 @@ describe("latest sticky context source", () => {
     );
     const updates = arrivals.map((_, index) => initialItems.concat(arrivals.slice(0, index + 1)));
     for (const items of updates) {
+      // These rows are accepted ordinary history, including their real source
+      // ranges. Coverage alone cannot certify an expanded response's source start.
+      act(() => {
+        owner.prepareSources("agent", certifiedReadingRows(items));
+        owner.publishSources();
+      });
       fixture.rerender({ items, manual: false });
       expect(fixture.result.current.loading).toBe(false);
     }
@@ -4943,6 +5254,41 @@ describe("latest sticky context source", () => {
     expect(loading.length).toBeGreaterThan(0);
     expect(loading.every((value) => value === false)).toBe(true);
     fixture.rerender({ items: updates.at(-1)!, manual: true });
+    expect(fetchContext).toHaveBeenCalledTimes(0);
+    expect(fixture.result.current.loading).toBe(false);
+    expect(fixture.result.current.contexts.at(-1)?.prompt.timelineCursor?.seq).toBe(4);
+    fixture.unmount();
+    owner.dispose();
+  });
+
+  it("keeps an unproved older manual edge lookup held and cancellation-owned", async () => {
+    const owner = createCanonicalPromptContexts();
+    const held = deferred<
+      import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
+    >();
+    const fetchContext = vi.fn(() => held.promise);
+    const older: typeof answer = {
+      ...answer,
+      id: "unproved-older-answer",
+      messageId: "unproved-older-answer",
+      timelineCursor: { epoch, seq: 2 },
+    };
+    const items: StreamItem[] = [older];
+    const reading = { ...following, following: false, rowId: older.id, seq: 2 };
+    const fixture = renderHook(() =>
+      useCanonicalPromptContext({
+        owner,
+        agentId: "agent",
+        epoch,
+        source: resolveRetainedContextSource(items, epoch, reading, []),
+        ordinaryItems: items,
+        coverage: [],
+        enabled: true,
+        lookup: rawPromptLookup(older, fetchContext),
+      }),
+    );
+    // The original held-read/cancel assertions now exercise a genuinely unproved
+    // older occurrence, rather than rereading the same certified latest source.
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
     expect(fixture.result.current.loading).toBe(true);
     act(() => fixture.result.current.cancel());
@@ -5030,9 +5376,9 @@ describe("latest sticky context source", () => {
       },
     };
     expect(resolveRetainedContextSource([...items, lateTool], epoch, following, coverage)?.id).toBe(
-      prompt.id,
+      answer.id,
     );
-    expect(resolveRetainedContextSource(items, epoch, following, coverage)?.id).toBe(prompt.id);
+    expect(resolveRetainedContextSource(items, epoch, following, coverage)?.id).toBe(answer.id);
     expect(resolveRetainedContextSource([answer, optimistic], epoch, following, coverage)?.id).toBe(
       answer.id,
     );
@@ -5107,4 +5453,511 @@ describe("sticky context feedback ownership", () => {
     expect(pending.busy).toBe(true);
     expect(idle.message).toBe(prompt);
   });
+});
+
+describe("published reading edge while following latest output", () => {
+  const epoch = "epoch";
+  const prior = stickyUser("edge-predecessor", 4, epoch);
+  const later = stickyUser("later-loaded-user", 60, epoch);
+  const edge: Extract<StreamItem, { kind: "assistant_message" }> = {
+    kind: "assistant_message",
+    id: "older-visible-answer",
+    messageId: "older-visible-answer",
+    text: "The response at the initial reading edge",
+    timestamp: new Date(0),
+    timelineCursor: { epoch, seq: 40 },
+  };
+  const tail: Extract<StreamItem, { kind: "assistant_message" }> = {
+    ...edge,
+    id: "latest-tail-answer",
+    messageId: "latest-tail-answer",
+    text: "The response after the later USER",
+    timelineCursor: { epoch, seq: 80 },
+  };
+  const items: StreamItem[] = [edge, later, tail];
+  const coverage = [{ epoch, startSeq: 40, endSeq: 80 }];
+  const following = { following: true, navigating: false, rowId: edge.id, seq: 40 };
+
+  /** Keeps edge context materialization separate from latest semantic navigation. */
+  function useManagedEdgeNavigation(
+    contexts: ReturnType<typeof useCanonicalPromptContext>["contexts"],
+    reading: ReturnType<typeof createPromptReadingPublisher>,
+    input: ReturnType<typeof stickyInput>,
+  ) {
+    const navigationItems = React.useMemo(
+      () => [...contexts.map((value) => value.prompt), ...items],
+      [contexts],
+    );
+    const contextOnlyIds = React.useMemo(
+      () => new Set(contexts.map((value) => value.prompt.id)),
+      [contexts],
+    );
+    const navigation = useStickyPrompt({
+      ...input,
+      items: navigationItems,
+      reading,
+      contextManaged: true,
+      contextOnlyIds,
+    });
+    return navigation;
+  }
+
+  it("recovers the published older edge predecessor while latest semantic navigation remains newer", async () => {
+    const owner = createCanonicalPromptContexts();
+    owner.prepareSources("agent", {
+      ...certifiedReadingRows(items),
+      cursor: coverage[0],
+    });
+    const fetchContext = vi.fn(async () => ({
+      sourceKey: canonicalPromptSourceKey(edge),
+      sourceStart: 40,
+      sourceEnd: 40,
+      prompt: prior,
+    }));
+    const lookup = rawPromptLookup(edge, fetchContext);
+    const reading = createPromptReadingPublisher();
+    reading.publish(edge.id, [later.id], false, true, false, 40);
+    const input = { ...stickyInput(items, stickyOutline([4, 60])), epoch };
+    const fixture = renderHook(() => {
+      const source = resolveRetainedContextSource(items, epoch, reading.getSnapshot(), coverage);
+      const context = useCanonicalPromptContext({
+        owner,
+        agentId: "agent",
+        epoch,
+        source,
+        ordinaryItems: items,
+        coverage,
+        enabled: true,
+        lookup,
+      });
+      const navigation = useManagedEdgeNavigation(context.contexts, reading, input);
+      return { source, context, navigation };
+    });
+    try {
+      // First behavioral guard: the newer loaded USER cannot replace the actual
+      // edge's missing predecessor merely because bottom-follow remains active.
+      await waitFor(() =>
+        expect(fixture.result.current.context.contexts.at(-1)?.prompt.timelineCursor?.seq).toBe(4),
+      );
+      expect(fixture.result.current.source).toBe(edge);
+      expect(fixture.result.current.context.contexts.at(-1)?.prompt.text).toBe(prior.text);
+      expect(fetchContext).toHaveBeenCalledTimes(1);
+      expect(fixture.result.current.context.error).toBe(false);
+      expect(fixture.result.current.context.loading).toBe(false);
+      expect(reading.getSnapshot()).toMatchObject({
+        following: true,
+        manual: false,
+        rowId: edge.id,
+      });
+      expect(fixture.result.current.navigation.message).toBe(later);
+      expect(fixture.result.current.navigation.targets.at(-1)).toMatchObject({
+        seq: 60,
+        item: later,
+      });
+      expect(fixture.result.current.navigation.nextDisabled).toBe(true);
+      expect(input.loadOlder).not.toHaveBeenCalled();
+      expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
+      expect(input.jumpToLoaded).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      owner.dispose();
+    }
+  });
+
+  it("uses latest only before an edge is published and suppresses navigation or stale edge identity", () => {
+    expect(
+      resolveRetainedContextSource(
+        items,
+        epoch,
+        { ...following, rowId: null, seq: null },
+        coverage,
+      ),
+    ).toBe(later);
+    expect(
+      resolveRetainedContextSource(items, epoch, { ...following, seq: 999 }, coverage),
+    ).toBeUndefined();
+    expect(
+      resolveRetainedContextSource(items, epoch, { ...following, navigating: true }, coverage),
+    ).toBeUndefined();
+    expect(resolveRetainedContextSource(items, "other-epoch", following, coverage)).toBeUndefined();
+  });
+
+  it("retires held edge acquisition when the published source changes while following remains true", async () => {
+    const nextEdge: typeof edge = {
+      ...edge,
+      id: "next-visible-answer",
+      messageId: "next-visible-answer",
+      text: "Another response at the reading edge",
+      timelineCursor: { epoch, seq: 50 },
+    };
+    const ordinary: StreamItem[] = [edge, nextEdge, later, tail];
+    const nextPrior = stickyUser("next-edge-predecessor", 20, epoch);
+    const firstProof = {
+      sourceKey: canonicalPromptSourceKey(edge),
+      sourceStart: 40,
+      sourceEnd: 40,
+      prompt: prior,
+    };
+    const secondProof = {
+      sourceKey: canonicalPromptSourceKey(nextEdge),
+      sourceStart: 50,
+      sourceEnd: 50,
+      prompt: nextPrior,
+    };
+    const first = deferred<typeof firstProof>();
+    const second = deferred<typeof secondProof>();
+    const fetchContext = vi.fn((current: StreamItem, _signal: AbortSignal) =>
+      current.id === edge.id ? first.promise : second.promise,
+    );
+    const owner = createCanonicalPromptContexts();
+    owner.prepareSources("agent", {
+      ...certifiedReadingRows(ordinary),
+      cursor: coverage[0],
+    });
+    const fixture = renderHook(
+      ({ row }: { row: typeof edge }) => {
+        const reading = { ...following, rowId: row.id, seq: row.timelineCursor!.seq };
+        return useCanonicalPromptContext({
+          owner,
+          agentId: "agent",
+          epoch,
+          source: resolveRetainedContextSource(ordinary, epoch, reading, coverage),
+          ordinaryItems: ordinary,
+          coverage,
+          enabled: true,
+          lookup: rawPromptLookup(row, fetchContext),
+        });
+      },
+      { initialProps: { row: edge } },
+    );
+    try {
+      await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+      expect(fetchContext.mock.calls[0]?.[1].aborted).toBe(false);
+      fixture.rerender({ row: nextEdge });
+      expect(fetchContext.mock.calls[0]?.[1].aborted).toBe(true);
+      await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(2));
+      await act(async () => second.resolve(secondProof));
+      await waitFor(() =>
+        expect(fixture.result.current.contexts.at(-1)?.prompt.timelineCursor?.seq).toBe(20),
+      );
+      await act(async () => first.resolve(firstProof));
+      expect(
+        fixture.result.current.contexts.some((value) => value.prompt.timelineCursor?.seq === 4),
+      ).toBe(false);
+      expect(fixture.result.current.contexts.at(-1)?.prompt.timelineCursor?.seq).toBe(20);
+      expect(fixture.result.current.error).toBe(false);
+      expect(fetchContext).toHaveBeenCalledTimes(2);
+    } finally {
+      fixture.unmount();
+      owner.dispose();
+    }
+  });
+
+  it("keeps an unloaded latest index target distinct from the retained edge USER until explicit navigation", () => {
+    const ordinary: StreamItem[] = [edge, tail];
+    expect(resolveRetainedContextSource(ordinary, epoch, following, coverage)).toBe(edge);
+    const reading = createPromptReadingPublisher();
+    reading.publish(edge.id, [], false, true, false, 40);
+    // This guard starts after the preceding owner-acquisition case's boundary:
+    // edge content is retained, while the later index locator has no loaded body.
+    const input = {
+      ...stickyInput([prior, ...ordinary], stickyOutline([4, 60])),
+      epoch,
+      reading,
+      contextManaged: true,
+      contextOnlyIds: new Set([prior.id]),
+    };
+    const fixture = renderHook(useStickyPrompt, { initialProps: input });
+    try {
+      expect(fixture.result.current.targets.at(-1)).toMatchObject({ seq: 60 });
+      expect(fixture.result.current.targets.at(-1)?.item).toBeUndefined();
+      expect(fixture.result.current.message).toBeUndefined();
+      expect(input.loadOlder).not.toHaveBeenCalled();
+      expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
+      expect(input.jumpToLoaded).not.toHaveBeenCalled();
+      act(() => fixture.result.current.activate(prior.id, 1));
+      expect(input.outline.jumpToPrompt).toHaveBeenCalledExactlyOnceWith(60, {
+        scroll: true,
+        source: "sticky",
+        placement: "pinned",
+      });
+      expect(input.loadOlder).not.toHaveBeenCalled();
+      expect(input.jumpToLoaded).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+});
+
+it("defers remote context reads for painted history until authority accepts a fresh empty lookup", async () => {
+  const epoch = "epoch";
+  const cached: Extract<StreamItem, { kind: "assistant_message" }> = {
+    kind: "assistant_message",
+    id: "painted-response",
+    messageId: "painted-response",
+    text: "Cached response",
+    timestamp: new Date(0),
+    timelineCursor: { epoch, seq: 50 },
+  };
+  const fresh: typeof cached = {
+    ...cached,
+    text: "Cached response with accepted continuation",
+    timelineCursor: { epoch, seq: 55 },
+  };
+  const owner = createCanonicalPromptContexts();
+  owner.prepareSources("agent", {
+    ...certifiedReadingRows([cached]),
+    cursor: { epoch, startSeq: 50, endSeq: 50 },
+  });
+  const readPage = vi.fn<ContextPageReader>(async (request) => {
+    let current = cached;
+    if (request.cursor === 56) current = fresh;
+    else if (request.cursor !== 51) throw new Error("Unexpected context source probe");
+    return {
+      epoch,
+      entries: [
+        {
+          provider: "mock",
+          timestamp: current.timestamp.toISOString(),
+          seqStart: 50,
+          seqEnd: current.timelineCursor!.seq,
+          sourceSeqRanges: [{ startSeq: 50, endSeq: current.timelineCursor!.seq }],
+          collapsed: [],
+          item: { type: "assistant_message", messageId: current.messageId, text: current.text },
+        },
+      ],
+      hasOlder: true,
+      error: null,
+      reset: false,
+      staleCursor: false,
+      gap: false,
+    };
+  });
+  const readPromptIndex = vi.fn<ContextPromptIndexReader>(async () => ({
+    requestId: "authority-empty-index",
+    agentId: "agent",
+    epoch,
+    prompts: [],
+    error: null,
+  }));
+  const input = {
+    owner,
+    agentId: "agent",
+    epoch,
+    source: cached,
+    ordinaryItems: [cached],
+    coverage: [{ epoch, startSeq: 50, endSeq: 50 }],
+    enabled: true,
+    // Additive owning admission input. Old production ignores it, so the RED is
+    // an actual premature remote read, not a missing method or fixture failure.
+    lookupReady: false,
+    lookup: { agentId: "agent", readPage, readPromptIndex, projection: "canonical" as const },
+  };
+  const fixture = renderHook((current: typeof input) => useCanonicalPromptContext(current), {
+    initialProps: input,
+  });
+  try {
+    // First behavioral guard: cached painting is not remote lookup authority.
+    expect(readPage).not.toHaveBeenCalled();
+    expect(readPromptIndex).not.toHaveBeenCalled();
+    expect(fixture.result.current.error).toBe(false);
+    expect(fixture.result.current.loading).toBe(false);
+    expect(fixture.result.current.exhausted).toBe(false);
+    fixture.rerender({ ...input, source: fresh, ordinaryItems: [fresh], coverage: [] });
+    expect(readPage).not.toHaveBeenCalled();
+    expect(fixture.result.current.error).toBe(false);
+    // The unproved same-row cursor advance happened before acceptance. It must
+    // not become a blocked attempt baseline for the newly authoritative source.
+    act(() => {
+      owner.prepareSources("agent", {
+        ...certifiedReadingRows([fresh], new Map([[fresh.id, 50]])),
+        cursor: { epoch, startSeq: 50, endSeq: 55 },
+      });
+      owner.publishSources();
+    });
+    expect(readPage).not.toHaveBeenCalled();
+    fixture.rerender({
+      ...input,
+      source: fresh,
+      ordinaryItems: [fresh],
+      coverage: [{ epoch, startSeq: 50, endSeq: 55 }],
+      lookupReady: true,
+    });
+    await waitFor(() => expect(fixture.result.current.exhausted).toBe(true));
+    expect(fixture.result.current.loading).toBe(false);
+    expect(fixture.result.current.error).toBe(false);
+    expect(fixture.result.current.contexts).toEqual([]);
+    expect(readPage).toHaveBeenCalledExactlyOnceWith(
+      { epoch, cursor: 56, limit: 1, projection: "projected" },
+      expect.any(AbortSignal),
+    );
+    expect(readPromptIndex).toHaveBeenCalledExactlyOnceWith(
+      { epoch, sourceStart: 50 },
+      expect.any(AbortSignal),
+    );
+  } finally {
+    fixture.unmount();
+    owner.dispose();
+  }
+});
+
+describe("canonical context remote admission controls", () => {
+  const epoch = "epoch";
+  const source: Extract<StreamItem, { kind: "assistant_message" }> = {
+    kind: "assistant_message",
+    id: "readiness-source",
+    messageId: "readiness-source",
+    text: "Cached accepted answer",
+    timestamp: new Date(0),
+    timelineCursor: { epoch, seq: 50 },
+  };
+
+  /** Observe public cancellation during commit, before passive cleanup could repair it. */
+  function useAdmissionCommitObservation(
+    ready: boolean,
+    readSignal: () => AbortSignal | undefined,
+    observations: boolean[],
+  ) {
+    React.useLayoutEffect(() => {
+      if (!ready) observations.push(readSignal()?.aborted === true);
+    }, [ready, readSignal, observations]);
+  }
+
+  it("preserves certified local preview and the admitted context lease while remote authority is pending", async () => {
+    const prior = stickyUser("certified-before-readiness-loss", 4, epoch);
+    const ordinary: StreamItem[] = [prior, source];
+    const owner = createCanonicalPromptContexts();
+    owner.prepareSources("agent", {
+      ...certifiedReadingRows(ordinary, new Map([[source.id, 40]])),
+      cursor: { epoch, startSeq: 4, endSeq: 50 },
+    });
+    const readPage = vi
+      .fn<ContextPageReader>()
+      .mockRejectedValue(new Error("Local proof must not read remotely"));
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch,
+      source,
+      ordinaryItems: ordinary,
+      coverage: [{ epoch, startSeq: 4, endSeq: 50 }],
+      enabled: true,
+      lookupReady: true,
+      lookup: { agentId: "agent", readPage, projection: "canonical" as const },
+    };
+    const fixture = renderHook((current: typeof input) => useCanonicalPromptContext(current), {
+      initialProps: input,
+    });
+    try {
+      await waitFor(() =>
+        expect(owner.read("agent", epoch).at(-1)?.prompt.timelineCursor?.seq).toBe(4),
+      );
+      const retainedPrompt = fixture.result.current.contexts.at(-1)?.prompt;
+      expect(retainedPrompt).toBe(prior);
+      fixture.rerender({ ...input, lookupReady: false });
+      expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(retainedPrompt);
+      expect(fixture.result.current.loading).toBe(false);
+      expect(fixture.result.current.error).toBe(false);
+      const pending: typeof source = {
+        ...source,
+        text: "A painted but not yet accepted continuation",
+        timelineCursor: { epoch, seq: 55 },
+      };
+      fixture.rerender({
+        ...input,
+        lookupReady: false,
+        source: pending,
+        ordinaryItems: [prior, pending],
+        coverage: [],
+      });
+      expect(fixture.result.current.contexts.at(-1)?.prompt).toBe(retainedPrompt);
+      expect(owner.read("agent", epoch).at(-1)?.prompt).toBe(retainedPrompt);
+      expect(fixture.result.current.error).toBe(false);
+      expect(fixture.result.current.loading).toBe(false);
+      expect(fixture.result.current.exhausted).toBe(false);
+      expect(readPage).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      owner.dispose();
+    }
+  });
+
+  it("aborts a held context read at the readiness-loss commit and rejects its late completion", async () => {
+    const owner = createCanonicalPromptContexts();
+    const held = deferred<
+      import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
+    >();
+    const fetchContext = vi.fn((_source: StreamItem, _signal: AbortSignal) => held.promise);
+    const input = {
+      owner,
+      agentId: "agent",
+      epoch,
+      source,
+      ordinaryItems: [source],
+      enabled: true,
+      lookupReady: true,
+      lookup: rawPromptLookup(source, fetchContext),
+    };
+    const observations: boolean[] = [];
+    const readSignal = () => fetchContext.mock.calls[0]?.[1];
+    const fixture = renderHook(
+      (current: typeof input) => {
+        const result = useCanonicalPromptContext(current);
+        useAdmissionCommitObservation(current.lookupReady, readSignal, observations);
+        return result;
+      },
+      { initialProps: input },
+    );
+    try {
+      await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+      expect(readSignal()?.aborted).toBe(false);
+      fixture.rerender({ ...input, lookupReady: false });
+      expect(observations).toEqual([true]);
+      expect(readSignal()?.aborted).toBe(true);
+      expect(fixture.result.current.loading).toBe(false);
+      expect(fixture.result.current.error).toBe(false);
+      await act(async () => held.resolve(undefined));
+      expect(fixture.result.current.contexts).toEqual([]);
+      expect(fixture.result.current.exhausted).toBe(false);
+      expect(fixture.result.current.loading).toBe(false);
+      expect(fixture.result.current.error).toBe(false);
+      expect(fetchContext).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.unmount();
+      owner.dispose();
+    }
+  });
+
+  it.each([undefined, true])(
+    "keeps a real remote error actionable with lookupReady=%s",
+    async (lookupReady) => {
+      const owner = createCanonicalPromptContexts();
+      const readPage = vi
+        .fn<ContextPageReader>()
+        .mockRejectedValue(new Error("Actual source request failed"));
+      const input = {
+        owner,
+        agentId: "agent",
+        epoch,
+        source,
+        ordinaryItems: [source],
+        enabled: true,
+        lookupReady,
+        lookup: { agentId: "agent", readPage, projection: "canonical" as const },
+      };
+      const fixture = renderHook((current: typeof input) => useCanonicalPromptContext(current), {
+        initialProps: input,
+      });
+      try {
+        await waitFor(() => expect(fixture.result.current.error).toBe(true));
+        expect(readPage).toHaveBeenCalledTimes(1);
+        expect(fixture.result.current.loading).toBe(false);
+        expect(fixture.result.current.limited).toBe(false);
+        expect(fixture.result.current.exhausted).toBe(false);
+      } finally {
+        fixture.unmount();
+        owner.dispose();
+      }
+    },
+  );
 });

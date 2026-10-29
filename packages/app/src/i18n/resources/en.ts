@@ -99,7 +99,7 @@ export const en = {
       },
       mobileWorkspaceTabs: {
         label: "Mobile workspace tabs",
-        hint: "Show a scrolling tab strip beneath the workspace title in compact workspaces. Turn off to use the earlier tab chooser without changing the selected tab.",
+        hint: "Show equal-width tabs on compact screens, scrolling only when needed. Turn off to use the tab chooser without changing the selected tab.",
       },
       widerWorkspaceTabs: {
         label: "Wider workspace tabs",
@@ -111,10 +111,6 @@ export const en = {
         hint: "Describe known operations while keeping exact commands and output in details. Turn off to restore classic labels.",
       },
 
-      sidebarProjectSelector: {
-        label: "Selected project in heading",
-        hint: "Show the selected project name in the workspace heading. Off uses Workspaces; host and project choices remain available.",
-      },
       stickyUserPrompts: {
         label: "Keep user prompts in view",
         hint: "Pin a compact prompt with expansion and previous/next navigation. Ordinary messages stay expanded, and loading never covers an available prompt.",

@@ -67,7 +67,10 @@ import {
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useWorkspaceFamilyWindow } from "./use-workspace-family-window";
-import { useSidebarWorkspaceTree } from "./workspace-tree-context";
+import {
+  useSidebarWorkspaceTree,
+  useSidebarWorkspaceFamilyPresentation,
+} from "./workspace-tree-context";
 import { WorkspaceTreeBranch } from "./workspace-tree-branch";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
@@ -887,6 +890,7 @@ function StatusWorkspaceRowInnerContent({
 }: StatusWorkspaceRowInnerProps & {
   dragInteraction?: ReturnType<typeof useLongPressDragInteraction>;
 }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
@@ -927,7 +931,7 @@ function StatusWorkspaceRowInnerContent({
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
+      {({ isHovered, contextMenuOpen, onContextMenuOpenChange }) => {
         const showShortcut = showShortcutBadge && shortcutNumber !== null;
         const {
           trailingPresentation,
@@ -948,6 +952,7 @@ function StatusWorkspaceRowInnerContent({
           isHovered,
           inStatusGroup,
           isDragging,
+          hasFamilyDisclosure: family.disclosure !== null,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -956,7 +961,6 @@ function StatusWorkspaceRowInnerContent({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
-            {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
@@ -984,6 +988,8 @@ function StatusWorkspaceRowInnerContent({
               disabled={isArchiving}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
+              aria-describedby={family.collapsedSummary?.id}
+              accessibilityHint={family.collapsedSummary?.description}
               style={workspaceRowStyle}
               highlightStyle={styles.workspaceRowPressed}
               onPressIn={handlePressIn}
@@ -1119,16 +1125,19 @@ function getStatusWorkspaceRowStyle({
   isHovered,
   inStatusGroup,
   isDragging,
+  hasFamilyDisclosure,
 }: {
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
   inStatusGroup: boolean;
   isDragging: boolean;
+  hasFamilyDisclosure: boolean;
 }) {
   return [
     styles.workspaceRow,
     inStatusGroup && sidebarWorkspaceRowStyles.rowIndented,
+    hasFamilyDisclosure && sidebarWorkspaceRowStyles.familyParentRow,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,

@@ -103,7 +103,7 @@ async function captureProjectSelectorFocus(page: Page, testInfo: TestInfo): Prom
 
 test.describe("Sidebar project filter", () => {
   test.describe.configure({ timeout: 180_000 });
-  // Heading opt-out keeps the essential chooser available; richer labels are covered below.
+  // Retired label preferences must not disable the chooser or its active filter label.
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       const key = "@paseo:app-settings";
@@ -205,7 +205,9 @@ test.describe("Sidebar project filter", () => {
       await expect(alphaRow).toBeVisible();
       await expect(betaRow).toHaveCount(0, { timeout: 10_000 });
 
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("Workspaces");
+      await expect(page.getByTestId("sidebar-project-selector")).toHaveText(
+        `${alpha.projectDisplayName} Workspaces`,
+      );
       await selectSidebarStatusGrouping(page);
       await expect(alphaRow).toBeVisible({ timeout: 15_000 });
       await expect(betaRow).toBeVisible();
@@ -282,7 +284,7 @@ test.describe("Sidebar project filter", () => {
     }
   });
 
-  test("keeps the essential chooser with one project and heading opt-out", async ({ page }) => {
+  test("keeps the chooser and active labels with a retired label preference", async ({ page }) => {
     const only = await seedWorkspace({ repoPrefix: "project-filter-solo-", title: "Solo work" });
     const serverId = getServerId();
 
@@ -296,7 +298,7 @@ test.describe("Sidebar project filter", () => {
       await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible();
       await expect(page.getByTestId("sidebar-display-project-filter")).toHaveCount(0);
       await closeSidebarDisplayPreferences(page);
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("Workspaces");
+      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("All Workspaces");
       await openSidebarProjectFilter(page);
       await expect(page.getByTestId("sidebar-chooser-hosts")).toHaveCount(0);
       await expect(
@@ -837,7 +839,7 @@ test.describe("Sidebar project selector", () => {
     }
   });
 
-  test("keeps saved multi-project and offline keys through the feature opt-out", async ({
+  test("keeps saved multi-project and offline keys through a retired label preference", async ({
     page,
   }) => {
     const alpha = await seedWorkspace({ repoPrefix: "selector-saved-alpha-" });
@@ -877,7 +879,7 @@ test.describe("Sidebar project selector", () => {
         );
       });
       await page.reload();
-      await expect(trigger).toHaveText("Workspaces");
+      await expect(trigger).toHaveText("2 Projects’ Workspaces");
       await openSidebarProjectFilter(page);
       await expect(
         page.getByTestId(`sidebar-project-selector-root-${alpha.projectKey}-checkbox`),

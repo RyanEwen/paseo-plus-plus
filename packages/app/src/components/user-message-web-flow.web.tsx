@@ -110,8 +110,8 @@ function webMessageWidths(g: WebMessageGeometry, compact: boolean, bounded: bool
   };
 }
 
-/** Less and the actual trailing action allocation are subtracted from the same
- * old total cap. Web's compact control is beside the padded line, not padded twice.
+/** Disclosure overlays the bubble; the body and trailing actions share the
+ * existing total cap without adding a separate footer to the natural body.
  */
 function webMessageHeights(
   g: WebMessageGeometry,
@@ -124,8 +124,7 @@ function webMessageHeights(
     Math.max(g.prefixHeight, g.summaryHeight) + bubbleChrome,
     g.controlsHeight,
   );
-  const footerHeight = bounded && !compact ? g.controlsHeight : 0;
-  const cap = Math.max(0, (maximumHeight ?? Infinity) - g.trailingHeight - footerHeight);
+  const cap = Math.max(0, (maximumHeight ?? Infinity) - g.trailingHeight);
   return {
     cap,
     bodyHeight: bounded
@@ -136,7 +135,7 @@ function webMessageHeights(
 }
 
 /** Paint the exact opaque control rectangle; the original bubble keeps its own corners. */
-function CompactControlBacking({
+function MessageControlBacking({
   visible,
   style,
   region,
@@ -174,7 +173,7 @@ function CompactControlBacking({
 
 /** The existing web body remains one ordinary-width layout. Its outer row owns
  * the natural reservation; this child owns only the bounded CSS-sticky paint.
- * Less lives below the body and consumes part of the same total height cap.
+ * More and Less overlay the bubble without changing natural Text layout.
  */
 export function WebUserMessageFlow(props: UserMessageFlowProps) {
   const { onGeometry, onHoverChange } = props;
@@ -331,10 +330,9 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
   );
   const controlsStyle = useMemo<CSSProperties>(
     () => ({
-      position: expanded ? "relative" : "absolute",
-      top: compact ? ((bodyHeight ?? 0) - controlsHeight) / 2 : undefined,
-      right: expanded ? undefined : padding,
-      marginRight: expanded ? padding : undefined,
+      position: "absolute",
+      top: compact ? ((bodyHeight ?? 0) - controlsHeight) / 2 : 0,
+      right: padding,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -345,10 +343,16 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
       visibility: bounded ? "visible" : "hidden",
       pointerEvents: bounded ? "auto" : "none",
     }),
-    [expanded, compact, bodyHeight, controlsHeight, padding, width, bounded, props.controls],
+    [compact, bodyHeight, controlsHeight, padding, width, bounded, props.controls],
   );
-  const onHoverIn = useCallback(() => onHoverChange?.(true), [onHoverChange]);
-  const onHoverOut = useCallback(() => onHoverChange?.(false), [onHoverChange]);
+  // Ordinary flow owns this entire allocation, including the gap to its actions.
+  // Bounded paint must still let later chat receive input outside its real content.
+  const hoverStyle = useMemo<CSSProperties>(
+    () => ({ ...columnStyle, pointerEvents: bounded ? "none" : "auto" }),
+    [bounded],
+  );
+  const handlePointerEnter = useCallback(() => onHoverChange?.(true), [onHoverChange]);
+  const handlePointerLeave = useCallback(() => onHoverChange?.(false), [onHoverChange]);
   const backdropStyle = useMemo(
     () => [StyleSheet.absoluteFill, props.backdropStyle],
     [props.backdropStyle],
@@ -358,9 +362,9 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
     <NaturalMessageFlowContext.Provider value={context}>
       <div
         ref={measured.rail}
-        style={columnStyle}
-        onMouseEnter={onHoverIn}
-        onMouseLeave={onHoverOut}
+        style={hoverStyle}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
       >
         <div style={clipStyle}>
           {bounded ? (
@@ -383,7 +387,7 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
           </ScrollView>
         </div>
         <div ref={measured.summary} style={summaryStyle} aria-hidden={!compact}>
-          <CompactControlBacking
+          <MessageControlBacking
             visible={compact}
             style={props.backdropStyle}
             region="summary"
@@ -392,13 +396,12 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
           {props.summary}
         </div>
         <div ref={measured.registerControls} style={controlsStyle} aria-hidden={!bounded}>
-          <CompactControlBacking
-            visible={compact}
+          <MessageControlBacking
+            visible={bounded}
             style={props.backdropStyle}
             region="controls"
             height={controlsHeight}
           />
-          {expanded ? props.visualBackdrop : null}
           {props.controls}
         </div>
         <div ref={measured.trailing} style={trailingStyle}>

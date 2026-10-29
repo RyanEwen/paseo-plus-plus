@@ -105,7 +105,7 @@ export const ptBR: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Abas de espaços no celular",
-        hint: "Mostrar uma barra de abas rolável abaixo do título do espaço de trabalho no layout compacto. Desative para usar o seletor anterior sem mudar a aba selecionada.",
+        hint: "Mostrar abas com a mesma largura em telas compactas, com rolagem apenas quando necessário. Desative para usar o seletor de abas sem mudar a aba selecionada.",
       },
       widerWorkspaceTabs: {
         label: "Abas do espaço de trabalho mais largas",
@@ -117,10 +117,6 @@ export const ptBR: TranslationResources = {
         hint: "Descreve operações conhecidas e mantém comandos e saídas exatos nos detalhes. Desative para restaurar os rótulos clássicos.",
       },
 
-      sidebarProjectSelector: {
-        label: "Projeto selecionado no título",
-        hint: "Mostre o nome do projeto selecionado no título dos espaços de trabalho. Ao desativar, aparece Espaços de trabalho; as opções de host e projeto continuam disponíveis.",
-      },
       stickyUserPrompts: {
         label: "Manter mensagens visíveis",
         hint: "Fixa uma mensagem compacta com expansão e navegação anterior/próxima. As mensagens normais ficam expandidas, e o carregamento nunca cobre uma mensagem disponível.",
