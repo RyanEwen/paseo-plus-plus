@@ -2113,7 +2113,9 @@ describe("index-free cache-only context", () => {
       entries: [probedSource],
     });
     try {
-      let result: { status: "resolved"; prompt: UserPrompt | undefined } | { status: "limited" };
+      let result:
+        | { status: "resolved"; prompt: UserPrompt | null | undefined }
+        | { status: "limited" };
       try {
         const prompt = await owner.request({
           agentId: "agent",
@@ -2217,6 +2219,87 @@ describe("index-free cache-only context", () => {
         await expect(requestIndexedContext({ owner, readPage, readPromptIndex })).rejects.toThrow();
         expect(readPage).toHaveBeenCalledTimes(1);
         expect(readPromptIndex).toHaveBeenCalledTimes(1);
+        expect(owner.read("agent", "epoch")).toEqual([]);
+      } finally {
+        owner.dispose();
+      }
+    },
+  );
+
+  it.each(["", " \r\n "])(
+    "keeps an indexed non-displayable USER boundary neutral instead of failing or showing an older prompt (%j)",
+    async (text) => {
+      const owner = createCanonicalPromptContexts();
+      const readPage = vi.fn<ContextPageReader>(async (request) =>
+        request.cursor === 257
+          ? page([entry(246, 256)])
+          : page([{ ...entry(64, 64, "user_message"), item: { type: "user_message", text } }]),
+      );
+      const readPromptIndex = vi.fn<ContextPromptIndexReader>(async () => ({
+        ...completeIndex,
+        prompts: [
+          { seq: 4, timestamp: new Date(0).toISOString(), preview: "Older unrelated USER" },
+          { seq: 64, timestamp: new Date(0).toISOString(), preview: "" },
+        ],
+      }));
+      const lookup = {
+        agentId: "agent",
+        readPage,
+        projection: "canonical" as const,
+        readPromptIndex,
+      };
+      const { result, unmount } = renderHook(() =>
+        useCanonicalPromptContext({
+          owner,
+          agentId: "agent",
+          epoch: "epoch",
+          source,
+          enabled: true,
+          lookup,
+        }),
+      );
+      try {
+        await waitFor(() => expect(readPage).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(result.current.loading).toBe(false));
+        expect(result.current.error).toBe(false);
+        expect(result.current.exhausted).toBe(false);
+        expect(result.current.limited).toBe(false);
+        expect(result.current.contexts).toEqual([]);
+        expect(owner.read("agent", "epoch")).toEqual([]);
+        expect(readPage.mock.calls.map(([request]) => request.cursor)).toEqual([257, 65]);
+        expect(readPromptIndex).toHaveBeenCalledTimes(1);
+      } finally {
+        unmount();
+        owner.dispose();
+      }
+    },
+  );
+
+  it.each(["canonical", "projected"] as const)(
+    "stops %s raw discovery at a non-displayable USER instead of crossing its boundary",
+    async (projection) => {
+      const owner = createCanonicalPromptContexts();
+      const readPage = vi.fn<ContextPageReader>(async (request) =>
+        request.cursor === 257
+          ? page([entry(246, 256)])
+          : page([
+              entry(4, 4, "user_message"),
+              { ...entry(64, 64, "user_message"), item: { type: "user_message", text: "" } },
+            ]),
+      );
+      try {
+        expect(
+          await owner.request({
+            agentId: "agent",
+            source,
+            channel: {},
+            signal: new AbortController().signal,
+            lookup: { agentId: "agent", readPage, projection },
+            lookupAllowed: true,
+            retryToken: 0,
+          }),
+        ).toBeNull();
+        expect(readPage).toHaveBeenCalledTimes(2);
         expect(owner.read("agent", "epoch")).toEqual([]);
       } finally {
         owner.dispose();

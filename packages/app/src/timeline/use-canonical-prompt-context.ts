@@ -226,7 +226,7 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
               loading: false,
               error: false,
               limited: false,
-              exhausted: !prompt,
+              exhausted: prompt === undefined,
             });
           return null;
         },

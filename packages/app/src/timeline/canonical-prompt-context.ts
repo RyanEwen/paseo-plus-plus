@@ -458,16 +458,16 @@ export function createCanonicalPromptContexts(
   }
   function acceptLookup(
     operation: Operation,
-    proof: CanonicalPromptContext | undefined,
+    proof: CanonicalPromptContext | null | undefined,
     sourceStart: number,
-  ): Prompt | undefined {
+  ): Prompt | null | undefined {
     const { input, reader, scope, key, userGeneration } = operation;
     if (!isCurrent(operation)) throw new Error("Prompt context request is no longer current");
     refreshObservation(operation);
     if (scope.userGeneration !== userGeneration || sourceStartConflict(input, sourceStart))
       return settleChanged(operation);
     reader.continuations.delete(key);
-    if (!proof) return undefined;
+    if (!proof) return proof;
     const ordinary = ordinaryFor(input.agentId);
     if (hasInterveningUser(proof, ordinary.items))
       return blockChanged(reader, key, input.retryToken);
@@ -488,9 +488,9 @@ export function createCanonicalPromptContexts(
     operation: Operation,
     lookup: CanonicalPromptLookup,
     progress: CanonicalPromptContextProgress | undefined,
-  ): Promise<Prompt | undefined> {
+  ): Promise<Prompt | null | undefined> {
     const { input, reader, key, scope, userGeneration } = operation;
-    let proof: CanonicalPromptContext | undefined;
+    let proof: CanonicalPromptContext | null | undefined;
     let validatedStart: number | undefined;
     try {
       proof = await fetchCanonicalPromptContext(
@@ -546,7 +546,7 @@ export function createCanonicalPromptContexts(
     if (validatedStart === undefined) return settleChanged(operation);
     return acceptLookup(operation, proof, validatedStart);
   }
-  async function request(input: CanonicalPromptRequest): Promise<Prompt | undefined> {
+  async function request(input: CanonicalPromptRequest): Promise<Prompt | null | undefined> {
     const operation = beginRequest(input);
     const { reader, key } = operation;
     const local = settleCurrent(input, reader);

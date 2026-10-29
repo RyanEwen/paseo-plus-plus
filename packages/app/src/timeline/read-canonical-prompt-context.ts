@@ -10,7 +10,7 @@ import {
   type FetchAgentTimelineResponseMessage,
 } from "@getpaseo/protocol/messages";
 import type { StreamItem } from "@/types/stream";
-import { hydratePromptEntry } from "./hydrate-prompt-entry";
+import { decodePromptEntry } from "./hydrate-prompt-entry";
 import { TIMELINE_FETCH_PAGE_SIZE, PROMPT_DISCOVERY_PAGE_BUDGET } from "./timeline-fetch-policy";
 type UserPrompt = Extract<StreamItem, { kind: "user_message" }>;
 
@@ -74,7 +74,7 @@ export async function fetchCanonicalPromptContext(
   resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined,
   observeSourceStart?: (sourceStart: number) => void,
   indexedLookup?: ContextPromptIndexLookup,
-): Promise<CanonicalPromptContext | undefined> {
+): Promise<CanonicalPromptContext | null | undefined> {
   const position = source.timelineCursor;
   if (!position) throw new Error("Reading source has no canonical position");
   const read = async (cursor: number, limit: number, projection: "projected" | "canonical") => {
@@ -98,13 +98,7 @@ export async function fetchCanonicalPromptContext(
   observeSourceStart?.(sourceStart);
   const ordinary = resolveOrdinary?.(sourceStart);
   if (ordinary) return { sourceKey, sourceStart, sourceEnd: position.seq, prompt: ordinary };
-  if (probe?.prompt)
-    return {
-      sourceKey,
-      sourceStart,
-      sourceEnd: position.seq,
-      prompt: hydratePromptEntry(probe.prompt, position.epoch),
-    };
+  if (probe?.prompt) return decodeContext(probe.prompt, sourceKey, sourceStart, position);
   let cursor = progress?.cursor ?? sourceStart;
   if (indexedLookup) {
     const reserveRead = () => {
@@ -125,27 +119,14 @@ export async function fetchCanonicalPromptContext(
       projection: backwardProjection,
       reserveRead,
     });
-    return prompt
-      ? {
-          sourceKey,
-          sourceStart,
-          sourceEnd: position.seq,
-          prompt: hydratePromptEntry(prompt, position.epoch),
-        }
-      : undefined;
+    return prompt ? decodeContext(prompt, sourceKey, sourceStart, position) : undefined;
   }
   for (; used < PROMPT_DISCOVERY_PAGE_BUDGET; used += 1) {
     const page = await read(cursor, TIMELINE_FETCH_PAGE_SIZE, backwardProjection);
     const entries = page.entries;
     validateBackwardEntries(entries, cursor);
     const prompt = nearestPrecedingPrompt(entries, sourceStart);
-    if (prompt)
-      return {
-        sourceKey: contextSourceKey(source),
-        sourceStart,
-        sourceEnd: position.seq,
-        prompt: hydratePromptEntry(prompt, position.epoch),
-      };
+    if (prompt) return decodeContext(prompt, sourceKey, sourceStart, position);
     if (!page.hasOlder) return undefined;
     const next = entries.length ? Math.min(...entries.map((entry) => entry.seqStart)) : cursor;
     if (next >= cursor) throw new Error("Reading context made no progress");
@@ -157,6 +138,18 @@ export async function fetchCanonicalPromptContext(
     sourceEnd: position.seq,
     cursor,
   });
+}
+
+/** null is a proven USER boundary without an ordinary body, not global exhaustion.
+ * Stop here rather than assigning an older USER to this response. */
+function decodeContext(
+  entry: ContextEntry,
+  sourceKey: string,
+  sourceStart: number,
+  position: { epoch: string; seq: number },
+): CanonicalPromptContext | null {
+  const prompt = decodePromptEntry(entry, position.epoch);
+  return prompt ? { sourceKey, sourceStart, sourceEnd: position.seq, prompt } : null;
 }
 
 interface IndexedPredecessorRead {
