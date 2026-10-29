@@ -1277,6 +1277,10 @@ for (const viewport of [
             await expect(sticky).toContainText(agent.prompts[index + 1]!);
             await page.mouse.wheel(0, -70);
             await expect(sticky).toContainText(agent.prompts[index]!);
+            // Collision can leave this row's body fully above the clip while its
+            // trailing edge still owns the pin. Restore a painted body before
+            // the next iteration asks a real pointer to enter that row.
+            await scrollTimelinePastPrompt(page, agent.prompts[index]!);
           }
         }
       }

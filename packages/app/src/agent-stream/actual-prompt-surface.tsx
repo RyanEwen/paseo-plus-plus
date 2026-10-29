@@ -77,8 +77,14 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
   const controls = usePromptNavigationControls(navigation);
   const feedback = resolvePromptFeedback(navigation, retainedContext);
   const retryContext = useStableEvent(() => {
-    if (feedback.retryContext) retainedContext?.retry();
-    else navigation.retry();
+    // Both owners can fail during bootstrap. One Retry must restart each failed
+    // owner; recovering the index alone leaves the physical edge's error held.
+    if (
+      !navigation.message &&
+      (retainedContext?.error || retainedContext?.cancelled || retainedContext?.limited)
+    )
+      retainedContext.retry();
+    if (!feedback.retryContext) navigation.retry();
   });
   const cancelContext = useStableEvent(() => {
     retainedContext?.cancel();
