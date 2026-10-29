@@ -111,6 +111,22 @@ function workspaceRecord(overrides?: Partial<PersistedWorkspaceRecord>): Persist
 function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): WorkspaceRegistry {
   return createStub<WorkspaceRegistry>({
     list: vi.fn(async () => records),
+    update: vi.fn(
+      async (
+        workspaceId: string,
+        updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+      ) => {
+        const index = records.findIndex((record) => record.workspaceId === workspaceId);
+        if (index < 0) return null;
+        const updated = updater(records[index]);
+        records[index] = updated;
+        return updated;
+      },
+    ),
+    get: vi.fn(
+      async (workspaceId: string) =>
+        records.find((record) => record.workspaceId === workspaceId) ?? null,
+    ),
   });
 }
 
@@ -118,6 +134,9 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
+    setAttentionHost: vi.fn(),
+    setAttentionPresentationEnabled: vi.fn(),
+    agentAwareAttentionEnabled: true,
     subscribe: vi.fn(() => () => {}),
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),
@@ -132,6 +151,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     })),
   };
   const daemonConfigStore = {
+    get: () => ({ notifications: { agentAwareAttention: true } }),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
@@ -493,7 +513,8 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
     await flushAsync();
 
     expect(pushNotifications.sent).toHaveLength(1);
-    expect(pushNotifications.sent[0]?.title).toBe("Terminal finished");
+    expect(pushNotifications.sent[0]?.title).toBe("Project");
+    expect(pushNotifications.sent[0]?.body).toContain("Terminal finished");
     expect(pushNotifications.sent[0]?.data).toMatchObject({
       serverId: "srv-test",
       terminalId: "term-1",

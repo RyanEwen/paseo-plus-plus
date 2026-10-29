@@ -21,6 +21,7 @@ import type {
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -32,7 +33,7 @@ export interface ArchiveDependencies {
   // Base directory that may hold worktrees across repositories.
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
-  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "invalidateWorktrees">;
   agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
   agentStorage: Pick<AgentStorage, "listByWorkspace">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
@@ -147,11 +148,11 @@ async function archiveByScopeWithPriority(
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
 
-    const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
-      dependencies,
-      targetWorkspaceIds,
-      request.requestId,
-    );
+    const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(dependencies, {
+      workspaceIds: targetWorkspaceIds,
+      requestId: request.requestId,
+      failurePolicy: request.scope.kind === "workspace" ? "require-complete" : "best-effort",
+    });
 
     if (target.backing?.mainRepoRoot) {
       try {
@@ -316,15 +317,20 @@ async function resolveBackingDirectory(
 
 async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
-  targetWorkspaceIds: string[],
-  requestId: string,
+  input: {
+    workspaceIds: string[];
+    requestId: string;
+    failurePolicy: ArchiveContentsFailurePolicy;
+  },
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
 
   const results = await Promise.allSettled(
-    targetWorkspaceIds.map(async (workspaceId) => {
-      const agents = await archiveWorkspaceContents(dependencies, workspaceId);
+    input.workspaceIds.map(async (workspaceId) => {
+      const agents = await archiveWorkspaceContents(dependencies, workspaceId, {
+        failurePolicy: input.failurePolicy,
+      });
       await dependencies.archiveWorkspaceRecord(workspaceId);
       return { workspaceId, agents };
     }),
@@ -337,8 +343,11 @@ async function archiveTargetRecords(
         archivedAgents.add(agentId);
       }
     } else {
+      if (input.failurePolicy === "require-complete") {
+        throw result.reason;
+      }
       dependencies.sessionLogger?.warn(
-        { err: result.reason, requestId },
+        { err: result.reason, requestId: input.requestId },
         "archiveByScope workspace teardown failed; continuing",
       );
     }
@@ -408,6 +417,7 @@ async function maybeRemoveDirectory(
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
     });
+    dependencies.workspaceGitService.invalidateWorktrees();
     dependencies.github.invalidate({ cwd: backing.path });
     return true;
   } catch (error) {
@@ -455,13 +465,18 @@ export type ArchiveWorkspaceContentsDependencies = Pick<
   "agentManager" | "agentStorage" | "killTerminalsForWorkspace" | "sessionLogger"
 >;
 
+type ArchiveContentsFailurePolicy = "best-effort" | "require-complete";
+
 // Tears down everything OWNED by a single workspace record: its live agents,
 // its persisted-but-not-running agent snapshots, and its terminals. Scoped by
 // workspaceId so a sibling workspace sharing the same directory is untouched.
-// Returns the set of archived agent ids.
+// Returns the set of archived agent ids. Single-workspace orchestration requires
+// complete teardown before archiving the record. Project removal and worktree-wide
+// cleanup retain their existing best-effort policy.
 export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  options: { failurePolicy: ArchiveContentsFailurePolicy } = { failurePolicy: "best-effort" },
 ): Promise<Set<string>> {
   const archivedAgents = new Set<string>();
 
@@ -476,6 +491,9 @@ export async function archiveWorkspaceContents(
   try {
     storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
   } catch (error) {
+    if (options.failurePolicy === "require-complete") {
+      throw error;
+    }
     dependencies.sessionLogger?.warn(
       { err: error, workspaceId },
       "Failed to list stored agents during workspace archive; continuing",
@@ -500,13 +518,19 @@ export async function archiveWorkspaceContents(
     dependencies.killTerminalsForWorkspace(workspaceId),
   ]);
 
+  const failures: unknown[] = [];
   for (const result of archiveResults) {
     if (result.status === "rejected") {
+      failures.push(result.reason);
       dependencies.sessionLogger?.warn(
         { err: result.reason, workspaceId },
         "Workspace archive teardown step failed; continuing",
       );
     }
+  }
+
+  if (failures.length > 0 && options.failurePolicy === "require-complete") {
+    throw new AggregateError(failures, failures.map(getErrorMessage).join("; "));
   }
 
   return archivedAgents;

@@ -1,3 +1,10 @@
+import { useWorkspaceFamilyDrag } from "@/components/sidebar/use-workspace-family-drag";
+import { RestoreProjectWorkspaceDialog } from "@/components/restore-project-workspace-dialog";
+import {
+  ProjectExpansionAnchorContext,
+  useProjectExpansionAnchor,
+} from "./sidebar/project-expansion-anchor";
+import { useProjectExpansionScroll } from "./sidebar/use-project-expansion-scroll";
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
@@ -5,6 +12,7 @@ import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import { useSessionStore } from "@/stores/session-store";
 import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
@@ -44,16 +52,29 @@ import {
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { density, densityIconBox } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import {
+  Archive,
+  ArchiveRestore,
+  ExternalLink,
+  Settings,
+  MoreVertical,
+  Plus,
+  Trash2,
+} from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHosts,
+  useHostRuntimeConnectionStatus,
+} from "@/runtime/host-runtime";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import {
   useSidebarWorkspacePinController,
@@ -109,11 +130,14 @@ import {
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
-import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import { useWorkspaceFamilyWindow } from "@/components/sidebar/use-workspace-family-window";
+import { WorkspaceTreeBranch } from "@/components/sidebar/workspace-tree-branch";
+import { useSidebarWorkspaceFamilyPresentation } from "@/components/sidebar/workspace-tree-context";
 import {
   SidebarWorkspaceRowFrame,
+  sidebarWorkspaceRowStyles,
   SidebarWorkspaceRowContent,
   SidebarWorkspaceShortcutBadge,
   resolveTrailingActionVisibility,
@@ -131,6 +155,7 @@ import {
   SidebarWorkspaceTrailingContent,
   useSidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -147,8 +172,8 @@ import {
   resolveSidebarProjectLeadingStatus,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
+import { useProjectArchive } from "@/workspace/use-project-archive";
 import {
   getCurrentProjectRemoveReadiness,
   removeProjectFromHosts,
@@ -181,6 +206,8 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedArchive = withUnistyles(Archive);
+const ThemedArchiveRestore = withUnistyles(ArchiveRestore);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -313,6 +340,7 @@ interface WorkspaceRowInnerProps {
 }
 
 export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewStyle> }) {
+  const { openPrimary } = useWorkspaceLinkOpeningContext();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
 
@@ -323,9 +351,9 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
-      void openExternalUrl(hint.url);
+      void openPrimary(hint.url);
     },
-    [hint.url],
+    [hint.url, openPrimary],
   );
 
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
@@ -387,14 +415,17 @@ function getProjectWorkspaceRowStyle({
   isPressed,
   selected,
   isHovered,
+  hasFamilyDisclosure,
 }: {
   isDragging: boolean;
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
+  hasFamilyDisclosure: boolean;
 }) {
   return [
     styles.workspaceRow,
+    hasFamilyDisclosure && sidebarWorkspaceRowStyles.familyParentRow,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
@@ -428,6 +459,8 @@ const PROJECT_ACTION_SIZE = 24;
 const PROJECT_ACTION_GAP = 2;
 const PROJECT_ACTION_OPTICAL_OFFSET = 6;
 
+type ProjectArchiveMenuAction = Omit<ReturnType<typeof useProjectArchive>, "confirmation">;
+
 function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
@@ -438,8 +471,10 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint,
   isProjectActive,
   onBeginWorkspaceSetup,
+  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
+  archiveAction,
 }: {
   projectViewKey: string;
   displayName: string;
@@ -450,8 +485,10 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
   onBeginWorkspaceSetup: () => void;
+  onRestoreProject: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  archiveAction: ProjectArchiveMenuAction;
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
   const controlCount = Number(Boolean(worktreeTarget)) + Number(Boolean(onRemoveProject));
@@ -484,8 +521,10 @@ function ProjectRowTrailingActions({
               projectViewKey={projectViewKey}
               settingsTarget={settingsTarget}
               projectPath={projectPath}
+              onRestoreProject={onRestoreProject}
               onRemoveProject={onRemoveProject}
               removeProjectStatus={removeProjectStatus}
+              archiveAction={archiveAction}
             />
           </View>
         ) : null}
@@ -496,6 +535,10 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
+const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
+const restoreLeadingIcon = (
+  <ThemedArchiveRestore size={14} uniProps={foregroundMutedColorMapping} />
+);
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -513,14 +556,18 @@ function ProjectKebabMenu({
   projectViewKey,
   settingsTarget,
   projectPath,
+  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
+  archiveAction,
 }: {
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  archiveAction: ProjectArchiveMenuAction;
 }) {
   const { t } = useTranslation();
   return (
@@ -540,8 +587,10 @@ function ProjectKebabMenu({
           projectViewKey={projectViewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          onRestoreProject={onRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
+          archiveAction={archiveAction}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -568,15 +617,19 @@ function ProjectMenuItems({
   projectViewKey,
   settingsTarget,
   projectPath,
+  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
+  archiveAction,
 }: {
   surface: ProjectMenuSurface;
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  archiveAction: ProjectArchiveMenuAction;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -608,6 +661,16 @@ function ProjectMenuItems({
           {t("sidebar.project.actions.openSettings")}
         </ProjectMenuItem>
       ) : null}
+      {settingsTarget ? (
+        <ProjectMenuItem
+          surface={surface}
+          testID={`sidebar-project-menu-restore-${projectViewKey}`}
+          leading={restoreLeadingIcon}
+          onSelect={onRestoreProject}
+        >
+          {t("sidebar.project.restore.title")}
+        </ProjectMenuItem>
+      ) : null}
       {canOpenInNewWindow ? (
         <ProjectMenuItem
           surface={surface}
@@ -625,11 +688,23 @@ function ProjectMenuItems({
       />
       <ProjectMenuItem
         surface={surface}
+        testID={`sidebar-project-menu-archive-all-${projectViewKey}`}
+        leading={archiveLeadingIcon}
+        status={archiveAction.pending ? "pending" : "idle"}
+        pendingLabel={archiveAction.pendingLabel}
+        disabled={removeProjectStatus !== "idle"}
+        onSelect={archiveAction.archive}
+      >
+        {t("sidebar.project.archive.action")}
+      </ProjectMenuItem>
+      <ProjectMenuItem
+        surface={surface}
         testID={`sidebar-project-menu-remove-${projectViewKey}`}
         leading={trash2LeadingIcon}
         status={removeProjectStatus}
         pendingLabel={t("sidebar.project.actions.removing")}
         onSelect={onRemoveProject}
+        disabled={archiveAction.pending}
       >
         {t("sidebar.project.actions.remove")}
       </ProjectMenuItem>
@@ -864,9 +939,10 @@ function NewWorkspaceGhostRow({
       {({ hovered, pressed }) => (
         <>
           <View style={styles.newWorkspaceGhostIconSlot}>
-            <ThemedPlus
-              size={14}
-              uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
+            <DensityIcon
+              icon={Plus}
+              size="sm"
+              color={hovered || pressed ? "foreground" : "foregroundMuted"}
             />
           </View>
           <Text
@@ -913,10 +989,14 @@ function ProjectHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [restoreProjectOpen, setRestoreProjectOpen] = useState(false);
+  const openRestoreProject = useCallback(() => setRestoreProjectOpen(true), []);
+  const closeRestoreProject = useCallback(() => setRestoreProjectOpen(false), []);
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
+  const archiveAction = useProjectArchive({ projectName: displayName, hosts: project.hosts });
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
@@ -1031,8 +1111,10 @@ function ProjectHeaderRow({
         isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
+        onRestoreProject={openRestoreProject}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
+        archiveAction={archiveAction}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1100,10 +1182,19 @@ function ProjectHeaderRow({
           projectViewKey={project.viewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          onRestoreProject={openRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
+          archiveAction={archiveAction}
         />
       </ContextMenuContent>
+      <RestoreProjectWorkspaceDialog
+        visible={restoreProjectOpen}
+        target={settingsTarget}
+        onClose={closeRestoreProject}
+        onWorkspacePress={onWorkspacePress}
+      />
+      {archiveAction.confirmation}
     </ContextMenu>
   );
 }
@@ -1139,6 +1230,7 @@ function WorkspaceRowInner({
   onToggleProjectPin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
@@ -1176,7 +1268,7 @@ function WorkspaceRowInner({
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
+      {({ isHovered, contextMenuOpen, onContextMenuOpenChange }) => {
         const isDesktop = !isTouchPlatform;
         const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
         const workspaceRowStyle = getProjectWorkspaceRowStyle({
@@ -1184,6 +1276,7 @@ function WorkspaceRowInner({
           isPressed,
           selected,
           isHovered,
+          hasFamilyDisclosure: family.disclosure !== null,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -1192,7 +1285,6 @@ function WorkspaceRowInner({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
-            {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
@@ -1218,6 +1310,8 @@ function WorkspaceRowInner({
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
+              aria-describedby={family.collapsedSummary?.id}
+              accessibilityHint={family.collapsedSummary?.description}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
@@ -1675,18 +1769,23 @@ function ProjectBlock({
   );
   const {
     visibleItems: visibleWorkspaces,
+    itemsByKey: familyItemsByKey,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(project.workspaces, getStatusEnteredAt);
+  const activeServerId = activeWorkspaceSelection?.serverId ?? null;
+  const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
+  const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
         project,
         collapsed,
         supportsMultiplicityByServerId,
+        preferredServerId,
       }),
-    [collapsed, project, supportsMultiplicityByServerId],
+    [collapsed, preferredServerId, project, supportsMultiplicityByServerId],
   );
 
   const active = isProjectSelectedByRoute({
@@ -1739,23 +1838,7 @@ function ProjectBlock({
     ],
   );
 
-  const renderWorkspace = useCallback(
-    ({
-      item,
-      drag: workspaceDrag,
-      isActive,
-      dragHandleProps: workspaceDragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return renderWorkspaceRow(item, {
-        drag: workspaceDrag,
-        isDragging: isActive,
-        dragHandleProps: workspaceDragHandleProps,
-      });
-    },
-    [renderWorkspaceRow],
-  );
-
-  const workspaceDrag = useSidebarReorderGuard("workspace");
+  const workspaceDrag = useWorkspaceFamilyDrag();
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
   const projectPinning = useAppSettings().settings.paseoPlusPlus.projectPinning;
   const workspaceDragGroup = useCallback(
@@ -1769,6 +1852,43 @@ function ProjectBlock({
     },
     [projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
   );
+  const renderFamilyRow = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) =>
+      renderWorkspaceRow(row.item, {
+        drag: row.drag,
+        isDragging: row.isActive,
+        dragHandleProps: row.dragHandleProps,
+      }),
+    [renderWorkspaceRow],
+  );
+  const reorderFamilySiblings = useCallback(
+    (rows: SidebarWorkspacePlacement[]) => onWorkspaceReorder(project.viewKey, rows),
+    [onWorkspaceReorder, project.viewKey],
+  );
+  const renderWorkspace = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return (
+        <WorkspaceTreeBranch
+          row={row}
+          itemsByKey={familyItemsByKey}
+          renderRow={renderFamilyRow}
+          onSiblingReorder={reorderFamilySiblings}
+          getDragGroupKey={workspaceDragGroup}
+          parentGestureRef={parentGestureRef}
+          dragGestureHostActive={dragGestureHostActive}
+        />
+      );
+    },
+    [
+      familyItemsByKey,
+      renderFamilyRow,
+      reorderFamilySiblings,
+      workspaceDragGroup,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
+  );
+
   const handleWorkspaceDragEnd = useCallback(
     (workspaces: SidebarWorkspacePlacement[], move?: DragReorderMove) => {
       if (!move) return;
@@ -1854,9 +1974,21 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, displayName, t, toast, project.hosts]);
 
+  const { ref: projectAnchorRef, anchor: anchorExpansion } = useProjectExpansionAnchor();
   const handleToggleCollapsed = useCallback(() => {
-    onToggleCollapsed(project.viewKey);
-  }, [onToggleCollapsed, project.viewKey]);
+    const toggle = () => onToggleCollapsed(project.viewKey);
+    const view = useSidebarViewStore.getState();
+    if (
+      collapsed &&
+      view.groupMode === "project" &&
+      view.oneProjectAtATime &&
+      projectAnchorRef.current
+    ) {
+      anchorExpansion(projectAnchorRef.current, toggle);
+    } else {
+      toggle();
+    }
+  }, [anchorExpansion, collapsed, onToggleCollapsed, project.viewKey, projectAnchorRef]);
 
   let projectChildren = null;
   if (!collapsed) {
@@ -1906,6 +2038,8 @@ function ProjectBlock({
 
   return (
     <View
+      ref={projectAnchorRef}
+      collapsable={false}
       role="group"
       accessibilityLabel={displayName}
       style={projectChildren ? styles.projectBlockExpanded : undefined}
@@ -1969,6 +2103,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.useNestable === next.useNestable &&
     previous.dragGestureHostActive === next.dragGestureHostActive &&
     previous.creatingWorkspaceIds === next.creatingWorkspaceIds &&
+    previous.activeWorkspaceSelection?.serverId === next.activeWorkspaceSelection?.serverId &&
     areProjectBlockSelectionsEqual(previous, next)
   );
 }
@@ -2320,9 +2455,11 @@ function ProjectModeList({
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
+  const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
   const projectStatusBuckets = useSidebarProjectActivity(projects, workspaceEntriesByKey);
   const { settings } = useAppSettings();
   const projectPinningEnabled = settings.paseoPlusPlus.projectPinning;
+  const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -2353,10 +2490,11 @@ function ProjectModeList({
   );
   const {
     visibleItems: visiblePinnedChats,
+    itemsByKey: pinnedFamilyItemsByKey,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(pinnedChats, getStatusEnteredAt);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2584,7 +2722,7 @@ function ProjectModeList({
     [renderProjectBlock],
   );
 
-  const renderPinnedChat = useCallback(
+  const renderPinnedChatRow = useCallback(
     ({
       item: workspace,
       drag,
@@ -2630,6 +2768,27 @@ function ProjectModeList({
     ],
   );
 
+  const renderPinnedChat = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => (
+      <WorkspaceTreeBranch
+        row={row}
+        itemsByKey={pinnedFamilyItemsByKey}
+        renderRow={renderPinnedChatRow}
+        onSiblingReorder={onPinnedWorkspaceReorder}
+        manualPins
+        parentGestureRef={parentGestureRef}
+        dragGestureHostActive={dragGestureHostActive}
+      />
+    ),
+    [
+      pinnedFamilyItemsByKey,
+      renderPinnedChatRow,
+      onPinnedWorkspaceReorder,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
+  );
+
   const projectLayoutRevision = useMemo(
     () => [collapsedProjectKeys, pinnedCollapsed, visiblePinnedChats],
     [collapsedProjectKeys, pinnedCollapsed, visiblePinnedChats],
@@ -2663,7 +2822,12 @@ function ProjectModeList({
     <>
       {pinnedChats.length > 0 ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
+          <SidebarSectionHeader
+            title={t("sidebar.pinned.title")}
+            collapsed={pinnedCollapsed}
+            onToggle={togglePinnedCollapsed}
+            testID="sidebar-pinned-section-header"
+          />
           {pinnedCollapsed ? null : (
             <>
               <SidebarPinnedList
@@ -2716,28 +2880,34 @@ function ProjectModeList({
   if (bodyOnly) return content;
 
   return (
-    <View style={styles.container}>
-      {platformIsNative ? (
-        <NestableScrollContainer
-          {...nativeScrollGestureProps}
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={true}
-          testID="sidebar-project-workspace-list-scroll"
-        >
-          {content}
-        </NestableScrollContainer>
-      ) : (
-        <ScrollView
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={true}
-          testID="sidebar-project-workspace-list-scroll"
-        >
-          {content}
-        </ScrollView>
-      )}
-    </View>
+    <ProjectExpansionAnchorContext value={expansionScroll.anchor}>
+      <View style={styles.container}>
+        {platformIsNative ? (
+          <NestableScrollContainer
+            ref={expansionScroll.ref}
+            onScrollBeginDrag={expansionScroll.cancel}
+            onTouchStart={expansionScroll.cancel}
+            {...nativeScrollGestureProps}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={true}
+            testID="sidebar-project-workspace-list-scroll"
+          >
+            {content}
+          </NestableScrollContainer>
+        ) : (
+          <ScrollView
+            ref={expansionScroll.ref}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={true}
+            testID="sidebar-project-workspace-list-scroll"
+          >
+            {content}
+          </ScrollView>
+        )}
+      </View>
+    </ProjectExpansionAnchorContext>
   );
 }
 
@@ -2779,7 +2949,7 @@ const styles = StyleSheet.create((theme) => ({
   // the step in reads as belonging to that project. Padding rather than margin, so the hover and
   // pressed fills stay the same box as every other row in the sidebar.
   newWorkspaceGhostRow: {
-    minHeight: 36,
+    minHeight: density.rowHeight,
     marginBottom: theme.spacing[0.5],
     paddingVertical: theme.spacing[2],
     paddingLeft: theme.spacing[4],
@@ -2799,8 +2969,8 @@ const styles = StyleSheet.create((theme) => ({
   // The width of a workspace row's status slot, so the label lands on the same rail as the
   // titles above it.
   newWorkspaceGhostIconSlot: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
+    width: densityIconBox("md"),
+    height: densityIconBox("md"),
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -2819,7 +2989,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectRow: {
     position: "relative",
-    minHeight: 36,
+    minHeight: density.rowHeight,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
@@ -2944,7 +3114,7 @@ const styles = StyleSheet.create((theme) => ({
     right: theme.spacing[2],
   },
   workspaceRow: {
-    minHeight: 36,
+    minHeight: density.rowHeight,
     marginBottom: theme.spacing[0.5],
     paddingVertical: theme.spacing[2],
     paddingLeft: theme.spacing[2],
@@ -3006,7 +3176,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   workspaceArchivingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: theme.borderRadius.lg,
     backgroundColor: `${theme.colors.surface0}cc`,
     alignItems: "center",

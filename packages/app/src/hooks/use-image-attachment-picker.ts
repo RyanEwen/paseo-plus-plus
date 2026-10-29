@@ -9,6 +9,10 @@ import {
   type PickedImageAttachmentInput,
 } from "@/hooks/image-attachment-picker";
 import { isWeb } from "@/constants/platform";
+import {
+  getImageAttachmentPickerFailure,
+  type ImageAttachmentPickerStage,
+} from "@/hooks/image-attachment-picker-error";
 
 interface UseImageAttachmentPickerResult {
   pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
@@ -48,9 +52,11 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
     }
 
     isPickingRef.current = true;
+    let stage: ImageAttachmentPickerStage = "permission";
 
     try {
       if (isWeb && isElectronRuntime()) {
+        stage = "desktop-dialog";
         const selectedImages = await pickImagesWithDesktopDialog(getDesktopHost()?.dialog);
         if (selectedImages.length === 0) {
           return null;
@@ -63,11 +69,14 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
         return null;
       }
 
+      stage = "pending-result";
       const pendingResult = await ImagePicker.getPendingResultAsync();
       if (pendingResult && "canceled" in pendingResult && !pendingResult.canceled) {
+        stage = "pending-normalization";
         return await normalizePickedImageAssets(pendingResult.assets);
       }
 
+      stage = "library-launch";
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"] as ImagePicker.MediaType[],
         allowsMultipleSelection: true,
@@ -78,9 +87,13 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
         return null;
       }
 
+      stage = "selection-normalization";
       return await normalizePickedImageAssets(result.assets);
     } catch (error) {
-      console.error("[ImageAttachmentPicker] Failed to pick image:", error);
+      console.error(
+        "[ImageAttachmentPicker] Failed to pick image:",
+        getImageAttachmentPickerFailure(stage, error),
+      );
       Alert.alert(t("imageAttachmentPicker.errorTitle"), t("imageAttachmentPicker.failedToSelect"));
       return null;
     } finally {

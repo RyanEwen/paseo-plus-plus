@@ -2,6 +2,11 @@ import { defineConfig, configDefaults } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";
 import path from "path";
 import fs from "fs";
+import { transformSync } from "@babel/core";
+import { build } from "esbuild";
+
+// Set this before Vite resolves dependencies and Vitest starts its workers.
+Object.assign(process.env, { NODE_ENV: "test" });
 
 const appNodeModules = path.resolve(__dirname, "node_modules");
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
@@ -12,7 +17,61 @@ const resolvePackageEntry = (packageName: string) => {
     : path.resolve(rootNodeModules, packageName);
 };
 
+// Keep browser dependency prebundling on the same platform files as served modules.
+const webResolveExtensions = [
+  ".web.mjs",
+  ".web.js",
+  ".web.mts",
+  ".web.ts",
+  ".web.jsx",
+  ".web.tsx",
+  ".mjs",
+  ".js",
+  ".mts",
+  ".ts",
+  ".jsx",
+  ".tsx",
+  ".json",
+];
+
 export default defineConfig({
+  plugins: [
+    {
+      name: "compile-usage-components",
+      enforce: "pre",
+      transform(source, id) {
+        // These labels must react to time and language in the compiled app too.
+        if (!id.includes("/src/usage/") || !id.endsWith(".tsx") || id.includes(".test.")) return;
+        const result = transformSync(source, {
+          filename: id,
+          babelrc: false,
+          configFile: false,
+          parserOpts: { plugins: ["typescript", "jsx"] },
+          plugins: [["babel-plugin-react-compiler", { target: "19" }]],
+          sourceMaps: true,
+        });
+        if (result?.code) return { code: result.code, map: result.map };
+      },
+    },
+    {
+      name: "bundle-i18n-resources",
+      // Metro resolves literal requires lazily. Vite's TS transform leaves them
+      // to Node, which cannot resolve the resource modules. Bundle this boundary
+      // so unit and browser consumers exercise the same deferred module loading.
+      async transform(_source, id) {
+        if (path.resolve(id) !== path.resolve(__dirname, "src/i18n/i18next.ts")) return;
+        const result = await build({
+          entryPoints: [id],
+          bundle: true,
+          format: "esm",
+          platform: "neutral",
+          external: ["i18next", "react-i18next"],
+          write: false,
+        });
+        return { code: result.outputFiles[0].text, map: null };
+      },
+    },
+  ],
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -21,14 +80,31 @@ export default defineConfig({
         extends: true,
         test: {
           name: "unit",
+          // The generated validator is already executable JS. Transforming its 10 MB body
+          // exhausts Vite's heap; execute the real compiled module directly in Node.
+          server: {
+            deps: {
+              external: [
+                /[/\\]packages[/\\]protocol[/\\]dist[/\\]generated[/\\]validation[/\\]ws-outbound\.aot\.js$/,
+              ],
+            },
+          },
           environment: "node",
-          include: ["src/**/*.{test,spec}.{ts,tsx}", "native-release-version.test.ts"],
+          include: [
+            "src/**/*.{test,spec}.{ts,tsx}",
+            "native-release-version.test.ts",
+            "app.config.test.ts",
+            "vitest-environment.test.ts",
+          ],
           setupFiles: [path.resolve(__dirname, "vitest.setup.ts")],
           exclude: [...configDefaults.exclude, "e2e/**", "src/**/*.browser.{test,spec}.{ts,tsx}"],
         },
       },
       {
         extends: true,
+        // Vitest adds every browser test to the optimizer scan before mock transforms.
+        // Leave runtime discovery enabled, but keep raw test imports out of that scan.
+        optimizeDeps: { entries: ["!**/*.browser.{test,spec}.{ts,tsx}"] },
         test: {
           name: "browser",
           fileParallelism: false,
@@ -57,23 +133,100 @@ export default defineConfig({
       deps: {
         fallbackCJS: true,
         inline: [
+          "react-native-enriched-markdown",
           "zustand",
+          "@floating-ui/react-native",
           "@tanstack/react-query",
           "react-native-web",
+          "react-native-reanimated",
+          "react-native-worklets",
           "react-native-gesture-handler",
           "react-native-keyboard-controller",
+          // Exercise shipped modal/portal scheduling in Vite: their ESM builds
+          // use Metro-style directory imports that Node cannot load directly.
+          "@gorhom/bottom-sheet",
+          "@gorhom/portal",
         ],
       },
     },
   },
-  // Reanimated and gesture-handler pick platform files by extension
-  // (e.g. `GestureHandlerRootView.web.js`). Vite's optimizer does not apply `resolve.extensions`,
-  // so it scans the native files and dies on imports react-native-web has no answer for.
-  // Unbundled, the same imports go through the resolver below and land on the web files.
+  // Browser dependencies and served app modules must select the same Metro web files.
   optimizeDeps: {
+    esbuildOptions: { resolveExtensions: webResolveExtensions },
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
+      "react-native",
       "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+      // These are real browser imports; prebundle them before the first test executes.
+      "react",
+      "react-dom/client",
+      "react-dom",
+      // These viewport imports otherwise trigger a reload during cold browser tests.
+      "react-native-worklets",
+      "react-native-enriched-markdown",
+      "micromark-extension-gfm-table",
+      "mdast-util-gfm-table",
+      "micromark-util-decode-string",
+      "mdast-util-from-markdown",
+      "htmlparser2",
+      "expo-clipboard",
+      "@floating-ui/react-native",
+      "@tanstack/react-query",
+      "@tanstack/react-virtual",
+      "react-i18next",
+      "@testing-library/dom",
+      "@xterm/xterm",
+      "@xterm/addon-webgl",
+      "@xterm/addon-clipboard",
+      "@xterm/addon-fit",
+      "@xterm/addon-image",
+      "@xterm/addon-search",
+      "@xterm/addon-unicode11",
+      "@xterm/addon-web-links",
+      "fast-deep-equal",
+      "fast-deep-equal/es6",
+      "zustand/middleware",
+      "zustand/vanilla",
+      "zustand/shallow",
+      "expo-constants",
+      "expo-modules-core",
+      "mnemonic-id",
+      "@gorhom/portal",
+      "tweetnacl",
+      "base64-js",
+      "buffer",
+      "tiny-invariant",
+      "semver/functions/parse.js",
+      "semver/ranges/valid.js",
+      "semver/functions/satisfies.js",
+      "use-sync-external-store/shim/with-selector",
+      // Prebundle late-loaded editor and settings imports before browser mocks run.
+      "i18next",
+      "zustand",
+      "zod",
+      "@codemirror/language",
+      "@codemirror/legacy-modes/mode/clike",
+      "@codemirror/legacy-modes/mode/swift",
+      "@lezer/javascript",
+      "@lezer/json",
+      "@lezer/css",
+      "@lezer/cpp",
+      "@lezer/go",
+      "@lezer/html",
+      "@lezer/java",
+      "@lezer/python",
+      "@lezer/markdown",
+      "@lezer/php",
+      "@lezer/rust",
+      "@lezer/xml",
+      "@lezer/yaml",
+      "lezer-elixir",
+      "@lezer/highlight",
+      "@lezer/common",
+      "@lezer/lr",
+
+      "react/compiler-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
@@ -91,22 +244,9 @@ export default defineConfig({
     global: "globalThis",
   },
   resolve: {
-    extensions: [
-      ".web.mjs",
-      ".web.js",
-      ".web.mts",
-      ".web.ts",
-      ".web.jsx",
-      ".web.tsx",
-      ".mjs",
-      ".js",
-      ".mts",
-      ".ts",
-      ".jsx",
-      ".tsx",
-      ".json",
-    ],
+    extensions: webResolveExtensions,
     alias: [
+      { find: /^expo-router$/, replacement: path.resolve(__dirname, "test-stubs/expo-router.tsx") },
       {
         find: /^@getpaseo\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),

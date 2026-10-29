@@ -71,19 +71,21 @@ window, and a loaded row may sit outside the mounted presentation window. Resolv
 rows to authoritative timeline positions before selecting prompts; Markdown blocks and plugin
 cards do not share the canonical row IDs. Child transcripts use their own history pagination.
 
-Keep the original user bubble in the transcript. Its compact copy appears after the bubble leaves
-the viewport, within the same content rail. The copy overlays the viewport so its visibility does
-not shift the reading position. Manual scrolling selects the prompt for the response at the
-reading edge. Arrow navigation retains its selected prompt through the smooth scroll, including
-landings clamped by the end of the conversation. Bottom-following intent starts at the latest
-prompt and resumes when you send or use Jump to bottom. Incoming messages do not move an older
-reading selection. Retained panes keep their own selection; session and epoch changes isolate it.
+For message display and disclosure behavior, see [Keep user prompts in view](fork-features/keep-user-prompts-in-view.md). Pinning keeps the same message identity and component ancestry; disclosure changes only the pinned presentation. Virtualization retains the preceding user row, and compact previews yield to the next user row. Disclosure state is scoped to canonical identity and epoch. Expanded sticky bodies stay in one bounded scrollable body, with disclosure and navigation outside that body.
 
-A content-only read can recover the indexed prompt for an already-visible response without
-applying a transcript window. Index-free history may begin with several pages containing no user
-prompt. Discovery must use the pagination owner, check cursor progress, and stop with usable
-feedback on exhaustion, failure, cancellation, or its work budget. An explicit retry can continue
-past the budget.
+Native sticky rows retain their full ordinary transcript height even while their visible body collapses. Measure the one natural body at ordinary width, including attachment pills, padding and ordinary actions. Keep the compact summary and disclosure outside that measurement. Width, font and content changes require current measurements before compact presentation resumes. The full flow extent owns list layout and original intersections; compact collision uses the whole visible extent, including sticky actions. The Android expansion policy in the feature guide is an explicit collision exception, while retaining the same flow reservation and viewport position. Visual-only disclosure must not report a transcript resize to VirtualizedList. Transparent reserved flow must not capture touches over later rows, and hidden attachment controls must leave the accessibility tree. The viewport remains the owner of measurements and anchor reconciliation.
+
+Android uses one UI-owned presentation for the full-row exit boundary, motion, clipping, disclosure and hidden-control access. React's reading selection cannot compact the body. A reverse handoff resets the held inner More viewport before restoring ordinary paint; a queued disclosure request must still own its binding and handoff token. The iOS keyboard/sticky owner remains separate and retains its existing trigger. Do not substitute an independently timed keyboard value or broaden this Android contract to iOS without migrating its actual physical owner.
+
+The viewport owns original row measurements, pinning, reading anchors and explicit prompt landings. It must not use a translated bubble as its original scroll target. Manual scrolling selects the prompt for the response at the reading edge. Arrow navigation retains its selected prompt through the smooth scroll, including landings clamped by the end of the conversation. Bottom-following intent keeps latest-prompt navigation and resumes when you send or use Jump to bottom. The published reading edge still owns physical prompt context, including on initial opening; latest context is only the fallback before that edge is available. Incoming messages do not move an older reading selection. Retained panes keep their own selection; session and epoch changes isolate it.
+
+An assistant-only tail may need a separate canonical context read to recover its preceding user row. Cached history may paint before synchronization finishes. Keep its locally proven prompt visible, and admit remote prompt lookup only after authoritative history acceptance. Keep that isolated coverage separate from the viewed window, and pass the row through the same presentation as ordinary history. A retained context row does not prove that the gap before it is loaded, even when its canonical revision is cached but remains outside the current local presentation window. Keep isolated display context out of ordinary reading-anchor geometry, so filling that gap preserves the actual window's reader instead of the recovered prompt. Original reveal and arrow navigation must materialize the target through the ordinary history owner before claiming a landing.
+
+Index-free discovery checks projected display-anchor progress and stops with usable feedback on exhaustion, failure, cancellation, or its work budget. A projected row can have later updates beyond the backward cursor; its first source position owns pagination. Passive context reads keep an available prompt visible. A validated USER boundary with no ordinary rendered body stays neutral; do not report a load failure, claim the whole conversation is prompt-free, or cross it to display an older prompt. When no prompt is available, the sticky rail shows a muted system placeholder and owns any actionable retry. Explicit navigation failures retain their own feedback and retry. An explicit retry can continue past the
+budget; streamed cursor advances cannot restart that budget. A transcript change during an
+isolated read can also require an explicit retry. Scrolling through already proven context
+reuses its user row. Split panes retain their own reading context, including while hidden or
+with pinning disabled.
 
 Cancel obsolete navigation at the window-acceptance boundary as well as the scroll boundary.
 Returning to bottom, sending, or starting manual reading must invalidate delayed page application,
@@ -279,7 +281,8 @@ do not imply local ownership or authorization. Capture the sender title at deliv
 removed senders must remain understandable without a live directory lookup.
 
 The optional `agentMessage` payload carries event, sender, and delivered text. Shared client
-presentation (`protocol/agent-message-display`) owns its heading and expanded details. The daemon
+presentation (`protocol/paseo-tool-presentation`) owns its heading and expanded details, next to the
+labels for every Paseo MCP tool. The daemon
 must not construct UI labels or prepend sender labels to the semantic message body. The existing
 `tool_call` / `plain_text` envelope is a compatibility adapter: older clients still parse the row and
 expand its body. New clients use the typed payload, never infer the event from a tool name or parse

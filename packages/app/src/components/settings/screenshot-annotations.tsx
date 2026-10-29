@@ -34,7 +34,7 @@ export function ScreenshotAnnotations({
       pointerEvents="none"
       accessible={false}
       aria-hidden
-      style={StyleSheet.absoluteFillObject}
+      style={StyleSheet.absoluteFill}
     >
       {outlines.map((outline) => (
         <G key={`${outline.left}:${outline.top}`} fill="none">

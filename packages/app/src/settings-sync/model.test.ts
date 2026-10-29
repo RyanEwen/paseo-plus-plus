@@ -1,3 +1,12 @@
+import { readPreviousAgentsAvailability } from "@/hooks/previous-agents-availability";
+import { createPreviousAgentLaunchAction } from "@/hooks/previous-agents";
+import {
+  getSettingsReadAvailable,
+  subscribeSettingsReadAvailable,
+  installSettingsSyncSaveHandler,
+  getSettingsEditingBlocked,
+  setSettingsEditingBlocked,
+} from "./save-handler";
 import { bindSettingsHost } from "./binding";
 import { createSettingsHostTransport } from "./transport";
 import { normalizeRemoteSidebarModes } from "./sidebar-values";
@@ -1198,5 +1207,320 @@ describe("live settings authority", () => {
     await model.retry();
     expect(reads).toBe(2);
     expect(model.getState()).toMatchObject({ status: "local", canWrite: true, error: null });
+  });
+});
+
+// New read-availability bridge; the SettingsSyncModel and transports are the existing ports.
+describe("successful settings read availability", () => {
+  it("waits for selected-host adoption and permits readable authority without writes", async () => {
+    const { model } = setup();
+    const registration = installSettingsSyncSaveHandler(async () => false);
+    const publish = () =>
+      registration.updateReadAvailability({
+        hydrated: true,
+        generation: model.getGeneration(),
+        status: model.getState().status,
+      });
+    const stop = model.subscribe(publish);
+    try {
+      expect(getSettingsReadAvailable()).toBe(false);
+      await model.load();
+      expect(getSettingsReadAvailable()).toBe(true);
+      await model.selectHost("A");
+      const read = deferred<AppSettingsSnapshot>();
+      const a = host(snapshot("dark"));
+      const connecting = model.connect("A", {
+        ...a.transport,
+        writable: false,
+        read: () => read.promise,
+      });
+      expect(getSettingsReadAvailable()).toBe(false);
+      read.resolve({
+        ...snapshot("dark"),
+        values: { app: { theme: "dark", paseoPlusPlus: { previousAgents: false } } },
+      });
+      await connecting;
+      expect(model.getState().status).toBe("readonly");
+      expect(getSettingsReadAvailable()).toBe(true);
+      expect(
+        normalizeAppSettings(model.getSnapshot().values.app).paseoPlusPlus.previousAgents,
+      ).toBe(false);
+      expect(a.writes).toEqual([]);
+      await model.connect("A", null);
+      expect(getSettingsReadAvailable()).toBe(true);
+      await model.selectHost("B");
+      await model.connect("B", {
+        ...a.transport,
+        read: async () => {
+          throw new Error("read failed");
+        },
+      });
+      expect(model.getState().status).toBe("error");
+      expect(getSettingsReadAvailable()).toBe(false);
+    } finally {
+      stop();
+      registration();
+    }
+  });
+
+  it("does not turn a failed initial local read or empty host into a readable default", async () => {
+    const { model } = setup();
+    const registration = installSettingsSyncSaveHandler(async () => false);
+    try {
+      registration.updateReadAvailability({ hydrated: false, generation: 0, status: "local" });
+      expect(getSettingsReadAvailable()).toBe(false);
+      const failed = new SettingsSyncModel({
+        readLocal: async () => {
+          throw new Error("saved authority cannot be read");
+        },
+        writeLocal: async () => {},
+        getDeviceValues: async () => ({}),
+        applyValues: async () => {},
+      });
+      await failed.load();
+      expect(failed.getState().status).toBe("error");
+      registration.updateReadAvailability({
+        hydrated: true,
+        generation: failed.getGeneration(),
+        status: failed.getState().status,
+      });
+      expect(getSettingsReadAvailable()).toBe(false);
+      await model.load();
+      await model.selectHost("empty");
+      await model.connect("empty", host(snapshot(null)).transport);
+      registration.updateReadAvailability({
+        hydrated: true,
+        generation: model.getGeneration(),
+        status: model.getState().status,
+      });
+      expect(getSettingsReadAvailable()).toBe(false);
+    } finally {
+      registration();
+    }
+  });
+
+  it("invalidates held reads at a generation change and rejects stale publication and teardown", () => {
+    const first = installSettingsSyncSaveHandler(async () => false);
+    const seen: boolean[] = [];
+    const stop = subscribeSettingsReadAvailable(() => seen.push(getSettingsReadAvailable()));
+    try {
+      first.updateReadAvailability({ hydrated: true, generation: 1, status: "ready" });
+      expect(getSettingsReadAvailable()).toBe(true);
+      first.updateReadAvailability({ hydrated: true, generation: 1, status: "error" });
+      expect(getSettingsReadAvailable()).toBe(true);
+      first.updateReadAvailability({ hydrated: true, generation: 2, status: "error" });
+      expect(getSettingsReadAvailable()).toBe(false);
+      first.updateReadAvailability({ hydrated: true, generation: 1, status: "ready" });
+      expect(getSettingsReadAvailable()).toBe(false);
+      const second = installSettingsSyncSaveHandler(async () => false);
+      try {
+        first.updateReadAvailability({ hydrated: true, generation: 3, status: "ready" });
+        expect(getSettingsReadAvailable()).toBe(false);
+        second.updateReadAvailability({ hydrated: true, generation: 4, status: "readonly" });
+        first();
+        expect(first.isCurrent()).toBe(false);
+        expect(second.isCurrent()).toBe(true);
+        expect(getSettingsReadAvailable()).toBe(true);
+      } finally {
+        second();
+      }
+      expect(getSettingsReadAvailable()).toBe(false);
+      expect(seen).toEqual([true, false, true, false]);
+    } finally {
+      stop();
+      first();
+    }
+  });
+});
+
+// New production-reader contract. These cases invoke retained actions synchronously after
+// cache/readiness transitions, without rendering a provider or replacing the callback.
+describe("previous agents activation-time authority", () => {
+  it("reads a committed Off before rerender and does not replay the rejected activation on reenable", () => {
+    const client = new QueryClient();
+    const registration = installSettingsSyncSaveHandler(async () => false);
+    const identity = { serverId: "host-a", workspaceId: "workspace-a" };
+    const opened: { serverId: string; workspaceId: string }[] = [];
+    const readAvailability = () =>
+      readPreviousAgentsAvailability({ queryClient: client, identity });
+    const launch = createPreviousAgentLaunchAction({
+      identity,
+      readAvailability,
+      open: (value) => opened.push(value),
+    });
+    try {
+      registration.updateReadAvailability({ hydrated: true, generation: 1, status: "ready" });
+      client.setQueryData(APP_SETTINGS_QUERY_KEY, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, previousAgents: true },
+      });
+      const lastRender = readAvailability();
+      expect(lastRender).toEqual({ ...identity, readReady: true, enabled: true });
+      client.setQueryData(APP_SETTINGS_QUERY_KEY, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, previousAgents: false },
+      });
+      launch();
+      expect(opened).toEqual([]);
+      expect(lastRender.enabled).toBe(true);
+      expect(readAvailability()).toEqual({ ...identity, readReady: true, enabled: false });
+      client.setQueryData(APP_SETTINGS_QUERY_KEY, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, previousAgents: true },
+      });
+      expect(opened).toEqual([]);
+      launch();
+      expect(opened).toEqual([identity]);
+    } finally {
+      registration();
+      client.clear();
+    }
+  });
+
+  it("observes synchronous readiness revocation before rerender without queuing an invocation", () => {
+    const client = new QueryClient();
+    const registration = installSettingsSyncSaveHandler(async () => false);
+    const identity = { serverId: "host-a", workspaceId: "workspace-a" };
+    const opened: { serverId: string; workspaceId: string }[] = [];
+    const readAvailability = () =>
+      readPreviousAgentsAvailability({ queryClient: client, identity });
+    const launch = createPreviousAgentLaunchAction({
+      identity,
+      readAvailability,
+      open: (value) => opened.push(value),
+    });
+    try {
+      registration.updateReadAvailability({ hydrated: true, generation: 1, status: "ready" });
+      client.setQueryData(APP_SETTINGS_QUERY_KEY, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, previousAgents: true },
+      });
+      const lastRender = readAvailability();
+      registration.updateReadAvailability({ hydrated: true, generation: 2, status: "reading" });
+      launch();
+      expect(opened).toEqual([]);
+      expect(lastRender.readReady).toBe(true);
+      expect(readAvailability()).toEqual({ ...identity, readReady: false, enabled: false });
+      registration.updateReadAvailability({ hydrated: true, generation: 2, status: "readonly" });
+      expect(opened).toEqual([]);
+      launch();
+      expect(opened).toEqual([identity]);
+    } finally {
+      registration();
+      client.clear();
+    }
+  });
+
+  it("blocks absent, pending, failed and removed cache data without a last-known fallback", async () => {
+    const client = new QueryClient();
+    const registration = installSettingsSyncSaveHandler(async () => false);
+    const identity = { serverId: "host-a", workspaceId: "workspace-a" };
+    const opened: { serverId: string; workspaceId: string }[] = [];
+    const readAvailability = () =>
+      readPreviousAgentsAvailability({ queryClient: client, identity });
+    const launch = createPreviousAgentLaunchAction({
+      identity,
+      readAvailability,
+      open: (value) => opened.push(value),
+    });
+    try {
+      registration.updateReadAvailability({ hydrated: true, generation: 1, status: "ready" });
+      expect(readAvailability()).toEqual({ ...identity, readReady: false, enabled: false });
+      launch();
+      const held = deferred<AppSettings>();
+      const pending = client.fetchQuery({
+        queryKey: APP_SETTINGS_QUERY_KEY,
+        queryFn: () => held.promise,
+        retry: false,
+      });
+      expect(client.getQueryState(APP_SETTINGS_QUERY_KEY)?.status).toBe("pending");
+      launch();
+      const rejected = expect(pending).rejects.toThrow("initial read failed");
+      held.reject(new Error("initial read failed"));
+      await rejected;
+      launch();
+      expect(opened).toEqual([]);
+      client.setQueryData(APP_SETTINGS_QUERY_KEY, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, previousAgents: true },
+      });
+      await expect(
+        client.fetchQuery({
+          queryKey: APP_SETTINGS_QUERY_KEY,
+          staleTime: 0,
+          retry: false,
+          queryFn: async () => {
+            throw new Error("refresh failed");
+          },
+        }),
+      ).rejects.toThrow("refresh failed");
+      expect(
+        client.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)?.paseoPlusPlus.previousAgents,
+      ).toBe(true);
+      expect(client.getQueryState(APP_SETTINGS_QUERY_KEY)?.status).toBe("error");
+      launch();
+      client.removeQueries({ queryKey: APP_SETTINGS_QUERY_KEY, exact: true });
+      launch();
+      expect(opened).toEqual([]);
+      client.setQueryData(APP_SETTINGS_QUERY_KEY, {
+        ...DEFAULT_CLIENT_SETTINGS,
+        paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, previousAgents: true },
+      });
+      expect(opened).toEqual([]);
+      launch();
+      expect(opened).toEqual([identity]);
+    } finally {
+      registration();
+      client.clear();
+    }
+  });
+
+  it("uses readable readonly authority and keeps the offered workspace identity", async () => {
+    const client = new QueryClient();
+    const registration = installSettingsSyncSaveHandler(async () => false);
+    const { model } = setup();
+    const identity = { serverId: "host-a", workspaceId: "workspace-a" };
+    let currentIdentity = identity;
+    const opened: { serverId: string; workspaceId: string }[] = [];
+    const publish = () =>
+      registration.updateReadAvailability({
+        hydrated: true,
+        generation: model.getGeneration(),
+        status: model.getState().status,
+      });
+    const stop = model.subscribe(publish);
+    const readAvailability = () =>
+      readPreviousAgentsAvailability({ queryClient: client, identity: currentIdentity });
+    const launch = createPreviousAgentLaunchAction({
+      identity,
+      readAvailability,
+      open: (value) => opened.push(value),
+    });
+    try {
+      setSettingsEditingBlocked(true);
+      await model.load();
+      await model.selectHost("settings-host");
+      await model.connect("settings-host", {
+        ...host(snapshot("dark")).transport,
+        writable: false,
+      });
+      client.setQueryData(
+        APP_SETTINGS_QUERY_KEY,
+        normalizeAppSettings(model.getSnapshot().values.app),
+      );
+      expect(model.getState().status).toBe("readonly");
+      expect(model.getState().canWrite).toBe(false);
+      expect(getSettingsEditingBlocked()).toBe(true);
+      expect(readAvailability()).toEqual({ ...identity, readReady: true, enabled: true });
+      launch();
+      expect(opened).toEqual([identity]);
+      currentIdentity = { serverId: "host-b", workspaceId: "workspace-b" };
+      launch();
+      expect(opened).toEqual([identity]);
+    } finally {
+      stop();
+      registration();
+      client.clear();
+    }
   });
 });

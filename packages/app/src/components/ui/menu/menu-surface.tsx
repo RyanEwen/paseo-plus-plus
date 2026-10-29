@@ -126,8 +126,14 @@ export interface MenuSurfaceProps {
  * popover (plus one flyout per open submenu) or a bottom sheet showing one page at a time.
  */
 export function MenuSurface(props: MenuSurfaceProps): ReactElement | null {
-  const { presentation } = useMenuContext("MenuSurface");
+  const { presentation, open, setOpen } = useMenuContext("MenuSurface");
   const active = useRetainedPanelActive();
+  // A menu belongs to the panel that opened it. When that panel leaves the screen the menu closes
+  // for good, rather than waiting hidden to reappear with the panel: a row that opened a sheet
+  // and promoted it to a tab, say, would otherwise bring the list back on the next tab switch.
+  useEffect(() => {
+    if (!active && open) setOpen(false);
+  }, [active, open, setOpen]);
   // Portals escape the hidden panel. Remove the surface in its inactive commit,
   // before freezing can suspend an async menu action's closing update.
   if (!active) return null;
@@ -396,6 +402,7 @@ function MenuSheetSurface({
   return (
     <ThemedBottomSheetModal
       ref={sheetRef}
+      nativeBrowserOverlap
       contextBridge={contextBridge}
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.

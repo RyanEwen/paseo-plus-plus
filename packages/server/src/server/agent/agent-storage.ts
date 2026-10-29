@@ -1,3 +1,4 @@
+import { clearStoredAttentionEvent } from "./attention/stored-read.js";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -9,6 +10,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { StoredAttentionObjectivesSchema } from "./attention/objectives.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -72,6 +74,9 @@ const STORED_AGENT_SCHEMA = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  attentionObjectives: StoredAttentionObjectivesSchema.optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
@@ -92,6 +97,20 @@ export type SerializableAgentConfig = Pick<
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
+}
+
+/** Optional ownership hooks run inside the existing writer, without changing ordinary snapshots. */
+export interface AgentSnapshotOperation {
+  /** Resolve the current view when its queue entry runs; null skips this write and its callback. */
+  resolveSnapshot(): ManagedAgent | null;
+  /** Runs after persistence and cache update, before the next write; must be synchronous and not throw. */
+  onCommitted?(): void;
+}
+
+export interface AgentSnapshotOptions {
+  title?: string | null;
+  internal?: boolean;
+  operation?: AgentSnapshotOperation;
 }
 
 export class AgentStorage {
@@ -155,13 +174,49 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  /** Clear only the observed attention event inside the existing per-agent write queue. */
+  async clearAttentionIfUnchanged(
+    agentId: string,
+    timestamp: string | null | undefined,
+  ): Promise<StoredAgentRecord | null> {
+    await this.load();
+    let changed: StoredAgentRecord | null = null;
+    await this.queueRecordMutation(agentId, (current) => {
+      if (!current) throw new Error(`Agent not found: ${agentId}`);
+      if (
+        !current.requiresAttention ||
+        current.attentionTimestamp !== timestamp ||
+        current.attentionReason === "permission" ||
+        current.archivedAt ||
+        current.internal
+      )
+        return current;
+      changed = clearStoredAttentionEvent(current);
+      return changed;
+    });
+    return changed;
+  }
+
+  /** Apply a domain mutation to the current record inside its existing write queue. */
+  async update(
+    agentId: string,
+    mutate: (record: StoredAgentRecord) => StoredAgentRecord,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return mutate(existing);
+    });
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     return this.queueRecordMutation(record.id, () => record);
   }
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
+    onCommitted?: () => void,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -170,7 +225,9 @@ export class AgentStorage {
       }
 
       const record = mutate(this.cache.get(agentId) ?? null);
+      if (!record) return undefined;
       await this.writeRecord(record);
+      onCommitted?.();
       return undefined;
     });
 
@@ -237,30 +294,36 @@ export class AgentStorage {
     this.pathsById.delete(agentId);
   }
 
-  async applySnapshot(
-    agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent, options?: AgentSnapshotOptions): Promise<void> {
     await this.load();
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    await this.queueRecordMutation(agent.id, (existing) => {
-      const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
+    await this.queueRecordMutation(
+      agent.id,
+      (existing) => {
+        const current = options?.operation ? options.operation.resolveSnapshot() : agent;
+        if (!current) return null;
+        if (current.id !== agent.id) throw new Error("Snapshot resolver changed agent identity");
+        const record = toStoredAgentRecord(current, {
+          title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+          createdAt: existing?.createdAt,
+          internal: hasInternalOverride
+            ? options?.internal
+            : (current.internal ?? existing?.internal),
+        });
 
-      // Preserve soft-delete/archive status across snapshot flushes. The
-      // projection runs inside the per-agent write queue so it cannot commit a
-      // stale pre-archive record after the archive mutation.
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
-      return record;
-    });
+        // Preserve soft-delete/archive status across snapshot flushes. The
+        // projection runs inside the per-agent write queue so it cannot commit a
+        // stale pre-archive record after the archive mutation.
+        if (existing && existing.archivedAt !== undefined) {
+          record.archivedAt = existing.archivedAt;
+        }
+        return record;
+      },
+      options?.operation?.onCommitted,
+    );
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {

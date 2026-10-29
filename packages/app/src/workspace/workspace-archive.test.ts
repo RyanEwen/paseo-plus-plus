@@ -1,4 +1,9 @@
 import { seedSessionHosts } from "@/test/seed-session";
+import { seedRuntimeWorkspaces } from "@/test/seed-session";
+import {
+  archiveProjectWorkspaces,
+  type ProjectArchiveWorkspace,
+} from "./project-workspace-archive";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -151,6 +156,58 @@ describe("archiveWorkspaceOptimistically", () => {
 });
 
 describe("archiveWorkspacesOptimistically", () => {
+  it("retains the project and restores failed targets while a project batch leaves later targets untouched", async () => {
+    const records = [
+      workspace(),
+      workspace({ id: "workspace-2" }),
+      workspace({ id: "workspace-3" }),
+    ];
+    seedRuntimeWorkspaces(SERVER_ID, new Map(records.map((record) => [record.id, record])));
+    const plan: ProjectArchiveWorkspace[] = records.map((record) => ({
+      serverId: SERVER_ID,
+      workspaceId: record.id,
+      workspaceKind: record.workspaceKind,
+      name: record.name,
+      background: false,
+      agentIds: [],
+      runningAgentCount: 0,
+      archiveHasUncommittedChanges: null,
+      archiveUnpushedCommitCount: null,
+      diffStat: null,
+    }));
+    const request = vi.fn(async (workspaceId: string) =>
+      archivePayload({
+        workspaceId,
+        error: workspaceId === "workspace-2" ? "archive rejected" : null,
+      }),
+    );
+    const client = createClient(request);
+    const outcome = await archiveProjectWorkspaces({
+      workspaces: plan,
+      confirm: async () => false,
+      refresh: async () => plan,
+      archive: async (entry) => archiveWorkspaceOptimistically({ client, workspace: entry }),
+      onProgress: () => {},
+    });
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      archivedCount: 1,
+      failed: { workspaceId: "workspace-2" },
+      unprocessedCount: 1,
+    });
+    expect(request.mock.calls.map(([id]) => id)).toEqual(["workspace-1", "workspace-2"]);
+    expect(storedWorkspace("workspace-1")).toBeUndefined();
+    expect(storedWorkspace("workspace-2")).toEqual(records[1]);
+    expect(storedWorkspace("workspace-3")).toEqual(records[2]);
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.projects.has("project-1")).toBe(true);
+    expect(isWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-2" })).toBe(
+      false,
+    );
+    expect(isWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-3" })).toBe(
+      false,
+    );
+  });
+
   it("returns failures and restores only the workspaces whose archive failed", async () => {
     const first = workspace({ id: "workspace-1" });
     const second = workspace({

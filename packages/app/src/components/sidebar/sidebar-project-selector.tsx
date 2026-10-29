@@ -34,7 +34,7 @@ import { resolveSidebarProjectLabels } from "./sidebar-project-filter";
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-/** The essential chooser remains available when its richer heading is disabled. */
+/** Filter workspace rows by project and host, with the active filter visible in the heading. */
 export function SidebarProjectSelector(): ReactElement {
   const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
@@ -108,8 +108,6 @@ export function SidebarProjectSelector(): ReactElement {
     label = t("sidebar.projectSelector.multipleWorkspaces", {
       count: resolvedProjectFilters.length,
     });
-  if (!settings.paseoPlusPlus.sidebarProjectSelector)
-    label = t("sidebar.projectSelector.workspaces");
   const triggerStyle = useCallback(
     ({ hovered, pressed, open: active }: MenuTriggerState) => [
       styles.trigger,

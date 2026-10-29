@@ -1,5 +1,12 @@
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { resolve as resolvePath } from "node:path";
+import { PassThrough } from "node:stream";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runInNewContext } from "node:vm";
+import { CdpPipe } from "../browser-engine/cdp-pipe.js";
+import { ChromiumProcess } from "../browser-engine/process.js";
 
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -12,12 +19,116 @@ import { waitForActionableTarget } from "./actionability.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import type { BrowserRegistry, TabContents, TabImage, DialogCaptureOperation } from "./service.js";
 import { executeAutomationCommand } from "./service.js";
+import {
+  CAPTURE_MAX_AXIS,
+  CAPTURE_MAX_PIXELS,
+  CAPTURE_MAX_BYTES,
+  CAPTURE_MAX_PENDING,
+  CAPTURE_TIMEOUT_MS,
+} from "./capture-admission.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 const BROWSER_A = "11111111-1111-4111-8111-111111111111";
 const BROWSER_B = "22222222-2222-4222-8222-222222222222";
 const WORKSPACE_A = "workspace-a";
 const WORKSPACE_B = "workspace-b";
+
+describe("Chromium private command transport", () => {
+  test("releases a failed process launch without deleting existing profile data", async () => {
+    const profile = await mkdtemp(join(tmpdir(), "paseo-chromium-failed-launch-"));
+    try {
+      await writeFile(join(profile, "retained-data"), "existing cookies and site data");
+      await expect(
+        ChromiumProcess.launch({
+          executablePath: join(profile, "missing-browser"),
+          profilePath: profile,
+          headless: true,
+        }),
+      ).rejects.toThrow("ENOENT");
+      await expect(stat(join(profile, ".paseo-owner"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(join(profile, "retained-data"), "utf8")).toBe(
+        "existing cookies and site data",
+      );
+    } finally {
+      await rm(profile, { recursive: true, force: true });
+    }
+  });
+
+  test("routes overlapping session replies and preserves split UTF-8 events", async () => {
+    const commands = new PassThrough();
+    const replies = new PassThrough();
+    const pipe = new CdpPipe(commands, replies);
+    const published: string[] = [];
+    commands.on("data", (bytes) => published.push(bytes.toString()));
+    const events: unknown[] = [];
+    pipe.on("event", (event) => events.push(event));
+    try {
+      const first = pipe.send("Runtime.evaluate", {}, { sessionId: "tab-a" });
+      const second = pipe.send("Page.captureScreenshot", {}, { sessionId: "tab-b" });
+      expect(published.map((value) => JSON.parse(value.slice(0, -1)))).toEqual([
+        { id: 1, method: "Runtime.evaluate", params: {}, sessionId: "tab-a" },
+        { id: 2, method: "Page.captureScreenshot", params: {}, sessionId: "tab-b" },
+      ]);
+      const message = Buffer.from(
+        JSON.stringify({ method: "Page.title", params: { title: "café" }, sessionId: "tab-b" }) +
+          '\0{"id":2,"result":{"data":"pixels"}}\0{"id":1,"result":{"value":7}}\0',
+      );
+      const split = message.indexOf(Buffer.from("é")) + 1;
+      replies.write(message.subarray(0, split));
+      replies.write(message.subarray(split));
+      expect(await first).toEqual({ value: 7 });
+      expect(await second).toEqual({ data: "pixels" });
+      expect(events).toEqual([
+        { method: "Page.title", params: { title: "café" }, sessionId: "tab-b" },
+      ]);
+    } finally {
+      pipe.close();
+    }
+  });
+
+  test("does not publish pre-cancelled input or replay input after cancellation", async () => {
+    const commands = new PassThrough();
+    const replies = new PassThrough();
+    const pipe = new CdpPipe(commands, replies);
+    const published: string[] = [];
+    commands.on("data", (bytes) => published.push(bytes.toString()));
+    const before = AbortSignal.abort(new Error("cancelled before publish"));
+    try {
+      await expect(
+        pipe.send("Input.insertText", { text: "no" }, { signal: before }),
+      ).rejects.toThrow("cancelled before publish");
+      expect(published).toEqual([]);
+      const controller = new AbortController();
+      const input = pipe.send("Input.insertText", { text: "once" }, { signal: controller.signal });
+      const rejected = expect(input).rejects.toThrow("cancelled after publish");
+      controller.abort(new Error("cancelled after publish"));
+      await rejected;
+      replies.write('{"id":1,"result":{}}\0');
+      expect(published).toHaveLength(1);
+      const read = pipe.send("Browser.getVersion");
+      replies.write('{"id":2,"result":{"product":"Chromium"}}\0');
+      expect(await read).toEqual({ product: "Chromium" });
+    } finally {
+      pipe.close();
+    }
+  });
+
+  test("rejects outstanding commands on broken framing and releases listeners", async () => {
+    const commands = new PassThrough();
+    const replies = new PassThrough();
+    const pipe = new CdpPipe(commands, replies);
+    const waiting = pipe.send("Page.captureScreenshot");
+    const rejected = expect(waiting).rejects.toThrow();
+    replies.write("broken-json\0");
+    await rejected;
+    await expect(pipe.send("Browser.getVersion")).rejects.toThrow();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(replies.listenerCount("data")).toBe(0);
+    expect(replies.listenerCount("end")).toBe(0);
+    expect(commands.listenerCount("error")).toBe(0);
+    pipe.close();
+  });
+});
 
 class FakeImage implements TabImage {
   public constructor(
@@ -85,6 +196,12 @@ class FakeTab implements TabContents {
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
   public deferCaptures = false;
+  public captureScaleFactor = 1;
+  public viewportImage: TabImage = new FakeImage();
+  public getCaptureScaleFactor(): number {
+    return this.captureScaleFactor;
+  }
+  public fullPageCaptureWait: Promise<void> | null = null;
   public fullPageScreenshotThrows = false;
   public fullPageScreenshotErrorMessage = "UnknownVizError";
   public fullPageCaptureFailuresBeforeSuccess = 0;
@@ -97,7 +214,7 @@ class FakeTab implements TabContents {
   public queriedNodeId = 2;
   public canNavigateBack = true;
   public canNavigateForward = false;
-  public keypressTargetEditable = false;
+  public focusFixture: GuestFocusFixture | null = null;
 
   public constructor(
     public readonly id: number,
@@ -152,8 +269,9 @@ class FakeTab implements TabContents {
     if (code.includes("window.innerWidth") && code.includes("window.innerHeight")) {
       return { x: 640, y: 400 };
     }
-    if (code.includes("element.focus({ preventScroll: true })")) {
-      return { editable: this.keypressTargetEditable };
+    if (code.includes("editingHost.focus({ preventScroll: true })")) {
+      if (this.focusFixture) return this.focusFixture.execute(code);
+      return { focused: true };
     }
     if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
       if (this.evaluateScriptThrows) {
@@ -188,14 +306,16 @@ class FakeTab implements TabContents {
       throw new Error(this.captureErrorMessage);
     }
     if (this.captureNeverPaints) {
-      return new Promise<never>(() => {});
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
     }
     if (this.deferCaptures) {
       return new Promise<TabImage>((resolve) => {
         this.deferredCaptures.push(resolve);
       });
     }
-    return new FakeImage();
+    return this.viewportImage;
   }
 
   public invalidate(): void {
@@ -218,10 +338,16 @@ class FakeTab implements TabContents {
   ): Promise<unknown> {
     this.actions.push(`debug:${command}`);
     this.debugCommands.push({ command, ...(params ? { params } : {}) });
+    if (command === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
+      if (this.focusFixture) {
+        this.focusFixture.document.activeElement = this.focusFixture.target;
+      }
+    }
     if (command === "Page.getLayoutMetrics") {
       return this.layoutMetrics;
     }
     if (command === "Page.captureScreenshot") {
+      if (this.fullPageCaptureWait) await this.fullPageCaptureWait;
       if (this.fullPageCaptureFailuresBeforeSuccess > 0) {
         this.fullPageCaptureFailuresBeforeSuccess -= 1;
         throw new Error(this.fullPageScreenshotErrorMessage);
@@ -246,6 +372,7 @@ class FakeTab implements TabContents {
 
   public async insertText(text: string): Promise<void> {
     this.insertedText.push(text);
+    this.focusFixture?.insertText(text);
   }
 
   public waitForCaptureStart(count: number): Promise<void> {
@@ -273,6 +400,216 @@ class FakeTab implements TabContents {
     for (const waiter of this.captureStartWaiters.splice(0)) {
       waiter();
     }
+  }
+}
+
+interface GuestFocusRange {
+  startContainer: object | null;
+  startOffset: number;
+  endContainer: object | null;
+  endOffset: number;
+  selectNodeContents(node: object): void;
+  collapse(toStart: boolean): void;
+}
+
+interface GuestFocusSelection {
+  rangeCount: number;
+  anchorNode: object | null;
+  anchorOffset: number;
+  focusNode: object | null;
+  focusOffset: number;
+  setBaseAndExtent(anchor: object, anchorOffset: number, focus: object, focusOffset: number): void;
+  removeAllRanges(): void;
+  addRange(range: GuestFocusRange): void;
+}
+
+/** Execute the real ref-focus script against one guest document, preserving native-input selection. */
+class GuestFocusFixture {
+  public readonly document = {
+    activeElement: {},
+    getSelection: () => this.selection,
+    createRange: () => this.createRange(),
+  };
+  public readonly selection: GuestFocusSelection = {
+    rangeCount: 1,
+    anchorNode: {},
+    anchorOffset: 0,
+    focusNode: {},
+    focusOffset: 0,
+    setBaseAndExtent: (anchor, anchorOffset, focus, focusOffset) => {
+      Object.assign(this.selection, {
+        rangeCount: 1,
+        anchorNode: anchor,
+        anchorOffset,
+        focusNode: focus,
+        focusOffset,
+      });
+    },
+    removeAllRanges: () => {
+      Object.assign(this.selection, { rangeCount: 0, anchorNode: null, focusNode: null });
+    },
+    addRange: (range) => {
+      if (range.startContainer === null || range.endContainer === null) {
+        throw new Error("Fixture range has no containers");
+      }
+      this.selection.setBaseAndExtent(
+        range.startContainer,
+        range.startOffset,
+        range.endContainer,
+        range.endOffset,
+      );
+    },
+  };
+  private readonly targetChildren: object[] = [];
+  public readonly target = {
+    tagName: "INPUT",
+    isConnected: true,
+    isContentEditable: false,
+    readOnly: false,
+    disabled: false,
+    ownerDocument: this.document,
+    parentElement: null,
+    childNodes: this.targetChildren,
+    value: "seedTEXTtail",
+    selectionStart: 4,
+    selectionEnd: 8,
+    getAttribute: (_name: string) => null,
+    closest: (_selector: string) => null,
+    getRootNode: () => this.document,
+    contains: (node: unknown): boolean =>
+      node === this.target || this.targetChildren.some((child) => child === node),
+    focus: (options: { preventScroll: boolean }) => {
+      expect(options).toEqual({ preventScroll: true });
+      this.document.activeElement = this.target;
+      this.afterFocus?.();
+    },
+  };
+  public resolved: object | null = this.target;
+  public afterFocus: (() => void) | null = null;
+  public readonly resolutions: Array<{ ref: string; fingerprint: unknown }> = [];
+  public readonly childText = { data: "seedTEXTtail", parentElement: this.target };
+  public readonly editingHost = {
+    isContentEditable: true,
+    isConnected: true,
+    parentElement: null,
+    ownerDocument: this.document,
+    getRootNode: () => this.document,
+    focus: (options: { preventScroll: boolean }) => {
+      expect(options).toEqual({ preventScroll: true });
+      this.document.activeElement = this.editingHost;
+      this.selection.setBaseAndExtent(this.editingHost, 0, this.editingHost, 0);
+      this.afterFocus?.();
+    },
+  };
+  public readonly siblingText = { data: "parent-only", parentElement: this.editingHost };
+  public readonly nativeSelections: Array<{
+    anchorNode: object | null;
+    anchorOffset: number;
+    focusNode: object | null;
+    focusOffset: number;
+  }> = [];
+  private inheritedEditable = false;
+
+  /** A non-focusable SPAN inherits editability, while another input owns initial focus. */
+  public useInheritedEditable(selectionInside: boolean): void {
+    this.inheritedEditable = true;
+    this.target.tagName = "SPAN";
+    this.target.isContentEditable = true;
+    this.targetChildren.push(this.childText);
+    Object.defineProperty(this.target, "parentElement", {
+      value: this.editingHost,
+      configurable: true,
+    });
+    this.target.focus = () => {};
+    this.document.activeElement = { tagName: "INPUT", value: "other-input" };
+    if (selectionInside) {
+      // Preserve a backward range as well as its exact child text nodes.
+      this.selection.setBaseAndExtent(this.childText, 8, this.childText, 4);
+    } else {
+      this.selection.setBaseAndExtent(this.siblingText, 0, this.siblingText, 6);
+    }
+  }
+
+  /** Element-container offsets surround child content; text-container offsets index its data. */
+  private textOffset(node: object | null, offset: number): number {
+    if (node === this.childText) return offset;
+    return offset === 0 ? 0 : this.childText.data.length;
+  }
+
+  private createRange(): GuestFocusRange {
+    const range: GuestFocusRange = {
+      startContainer: null,
+      startOffset: 0,
+      endContainer: null,
+      endOffset: 0,
+      selectNodeContents: (node) => {
+        expect(node).toBe(this.target);
+        Object.assign(range, {
+          startContainer: node,
+          startOffset: 0,
+          endContainer: node,
+          endOffset: this.target.childNodes.length,
+        });
+      },
+      collapse: (toStart) => {
+        if (toStart) {
+          range.endContainer = range.startContainer;
+          range.endOffset = range.startOffset;
+        } else {
+          range.startContainer = range.endContainer;
+          range.startOffset = range.endOffset;
+        }
+      },
+    };
+    return range;
+  }
+
+  public execute(code: string): unknown {
+    return runInNewContext(code, {
+      document: this.document,
+      window: {
+        __PASEO_BROWSER_AUTOMATION__: {
+          resolve: (ref: string, fingerprint: unknown) => {
+            this.resolutions.push({ ref, fingerprint });
+            return { ok: true, element: this.resolved };
+          },
+        },
+      },
+    });
+  }
+
+  public insertText(text: string): void {
+    if (this.inheritedEditable) {
+      expect(this.document.activeElement).toBe(this.editingHost);
+      const selection = this.selection;
+      expect(this.target.contains(selection.anchorNode)).toBe(true);
+      expect(this.target.contains(selection.focusNode)).toBe(true);
+      this.nativeSelections.push({
+        anchorNode: selection.anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focusNode: selection.focusNode,
+        focusOffset: selection.focusOffset,
+      });
+      const anchor = this.textOffset(selection.anchorNode, selection.anchorOffset);
+      const focus = this.textOffset(selection.focusNode, selection.focusOffset);
+      const start = Math.min(anchor, focus);
+      const end = Math.max(anchor, focus);
+      this.childText.data =
+        this.childText.data.slice(0, start) + text + this.childText.data.slice(end);
+      this.selection.setBaseAndExtent(
+        this.childText,
+        start + text.length,
+        this.childText,
+        start + text.length,
+      );
+      return;
+    }
+    expect(this.document.activeElement).toBe(this.target);
+    const { target } = this;
+    target.value =
+      target.value.slice(0, target.selectionStart) + text + target.value.slice(target.selectionEnd);
+    target.selectionStart += text.length;
+    target.selectionEnd = target.selectionStart;
   }
 }
 
@@ -323,10 +660,11 @@ class BrowserAutomationHarness {
 
   public async execute(
     command: BrowserAutomationCommand,
-    input: { requestId?: string; workspaceId?: string; cwd?: string } = {},
+    input: { requestId?: string; workspaceId?: string; cwd?: string; signal?: AbortSignal } = {},
   ) {
     return executeAutomationCommand(automationRequest(command, input), this.registry, {
       snapshotEngine: this.snapshotEngine,
+      signal: input.signal,
     });
   }
 
@@ -1120,9 +1458,11 @@ describe("executeAutomationCommand", () => {
     });
   });
 
-  test("type writes trusted text into a ref", async () => {
+  test("type focuses the exact ref without pointer input and preserves its selected range", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
 
     requireSnapshotRefs(await browser.snapshot());
     const action = await browser.execute({
@@ -1136,11 +1476,15 @@ describe("executeAutomationCommand", () => {
       result: { command: "type", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
     expect(browser.tab.insertedText).toEqual(["Ada"]);
-    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-    ]);
+    expect(focus.target.value).toBe("seedAdatail");
+    expect([focus.target.selectionStart, focus.target.selectionEnd]).toEqual([7, 7]);
+    expect(browser.tab.debugCommands).toEqual([]);
+    expect(focus.resolutions).toHaveLength(2);
+    expect(focus.resolutions[0]).toMatchObject({
+      ref: "@e1",
+      fingerprint: { role: "textbox", tagName: "input" },
+    });
+    expect(focus.resolutions[1]).toEqual(focus.resolutions[0]);
   });
 
   test("type inserts text through the tab, not the window-wide debugger input", async () => {
@@ -1192,6 +1536,9 @@ describe("executeAutomationCommand", () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
     browser.tab.rejectEditableActionability = true;
+    const focus = new GuestFocusFixture();
+    focus.target.tagName = "BUTTON";
+    browser.tab.focusFixture = focus;
 
     requireSnapshotRefs(await browser.snapshot());
     const action = await browser.execute({
@@ -1204,7 +1551,8 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "keypress", browserId: BROWSER_A, key: "Enter", ref: "@e4", x: 40, y: 30 },
     });
-    expect(containsScript(browser.tab, "element.focus({ preventScroll: true })")).toBe(true);
+    expect(containsScript(browser.tab, "editingHost.focus({ preventScroll: true })")).toBe(true);
+    expect(focus.document.activeElement).toBe(focus.target);
     expect(browser.tab.inputEvents).toEqual([
       {
         type: "keyDown",
@@ -1220,10 +1568,11 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.debugCommands).toEqual([]);
   });
 
-  test("keypress reports unsupported when focusing an editable ref requires unavailable CDP", async () => {
+  test("keypress focuses an editable ref without pointer input or CDP", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
-    browser.tab.keypressTargetEditable = true;
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
 
     requireSnapshotRefs(await browser.snapshot());
     Object.defineProperty(browser.tab, "sendDebugCommand", { value: undefined });
@@ -1235,14 +1584,201 @@ describe("executeAutomationCommand", () => {
       }),
     ).resolves.toEqual({
       requestId: "req-keypress",
-      ok: false,
-      error: {
-        code: "browser_unsupported",
-        message: "browser_keypress requires trusted browser input",
-        retryable: false,
-      },
+      ok: true,
+      result: { command: "keypress", browserId: BROWSER_A, ref: "@e1", key: "Enter", x: 40, y: 30 },
     });
+    expect(focus.document.activeElement).toBe(focus.target);
+    expect([focus.target.selectionStart, focus.target.selectionEnd]).toEqual([4, 8]);
+    expect(browser.tab.debugCommands).toEqual([]);
+    expect(browser.tab.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+      { type: "keyUp", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+  });
+
+  test.each(["redirect", "remove", "clone", "document", "root", "disable", "readonly"])(
+    "type refuses input when a synchronous focus handler changes the target: %s",
+    async (change) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      const focus = new GuestFocusFixture();
+      browser.tab.focusFixture = focus;
+      focus.afterFocus = () => {
+        if (change === "redirect") focus.document.activeElement = {};
+        if (change === "remove") focus.target.isConnected = false;
+        if (change === "clone") focus.resolved = { ...focus.target };
+        if (change === "document") focus.target.ownerDocument = { ...focus.document };
+        if (change === "root") focus.target.getRootNode = () => ({ ...focus.document });
+        if (change === "disable") focus.target.disabled = true;
+        if (change === "readonly") focus.target.readOnly = true;
+      };
+      requireSnapshotRefs(await browser.snapshot());
+
+      const result = await browser.execute({
+        command: "type",
+        args: { browserId: BROWSER_A, ref: "@e1", text: "must not arrive" },
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: ["remove", "clone", "document", "root"].includes(change)
+            ? "browser_stale_ref"
+            : "browser_unsupported",
+        },
+      });
+      expect(browser.tab.insertedText).toEqual([]);
+      expect(browser.tab.debugCommands).toEqual([]);
+      expect(focus.target.value).toBe("seedTEXTtail");
+      expect(browser.tab.frameProductionScopes).toBe(0);
+    },
+  );
+
+  test("keypress refuses a redirected editable target without sending a key", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
+    focus.afterFocus = () => {
+      focus.document.activeElement = {};
+    };
+    requireSnapshotRefs(await browser.snapshot());
+
+    await expect(
+      browser.execute({
+        command: "keypress",
+        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "browser_unsupported" } });
+
     expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test.each([true, false])(
+    "inherited contenteditable ref focuses its host and targets only the child (existing selection: %s)",
+    async (selectionInside) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = [
+        { role: "textbox", name: "Child editor", tagName: "span", ref: "@e1" },
+      ];
+      const focus = new GuestFocusFixture();
+      focus.useInheritedEditable(selectionInside);
+      browser.tab.focusFixture = focus;
+      await expect(browser.snapshot()).resolves.toMatchObject({
+        ok: true,
+        result: { snapshot: expect.stringContaining('textbox "Child editor" [ref=@e1]') },
+      });
+
+      await expect(
+        browser.execute({
+          command: "type",
+          args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+
+      expect(focus.childText.data).toBe(selectionInside ? "seedAdatail" : "seedTEXTtailAda");
+      expect(focus.siblingText.data).toBe("parent-only");
+      expect(browser.tab.debugCommands).toEqual([]);
+      expect(focus.nativeSelections).toEqual([
+        {
+          anchorNode: selectionInside ? focus.childText : focus.target,
+          anchorOffset: selectionInside ? 8 : 1,
+          focusNode: selectionInside ? focus.childText : focus.target,
+          focusOffset: selectionInside ? 4 : 1,
+        },
+      ]);
+    },
+  );
+
+  test.each(["removed host", "replaced host", "foreign host document"])(
+    "inherited contenteditable ref revalidates its original host after focus: %s",
+    async (change) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = [
+        { role: "textbox", name: "Child editor", tagName: "span", ref: "@e1" },
+      ];
+      const focus = new GuestFocusFixture();
+      focus.useInheritedEditable(false);
+      browser.tab.focusFixture = focus;
+      focus.afterFocus = () => {
+        if (change === "removed host") focus.editingHost.isConnected = false;
+        if (change === "replaced host") {
+          Object.defineProperty(focus.target, "parentElement", { value: { ...focus.editingHost } });
+        }
+        if (change === "foreign host document")
+          focus.editingHost.ownerDocument = { ...focus.document };
+      };
+      await browser.snapshot();
+
+      await expect(
+        browser.execute({
+          command: "type",
+          args: { browserId: BROWSER_A, ref: "@e1", text: "must not arrive" },
+        }),
+      ).resolves.toMatchObject({ ok: false, error: { code: "browser_stale_ref" } });
+
+      expect(browser.tab.insertedText).toEqual([]);
+      expect(browser.tab.debugCommands).toEqual([]);
+      expect(focus.childText.data).toBe("seedTEXTtail");
+    },
+  );
+
+  test("inherited contenteditable keypress focuses the host with a caret inside the exact child", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = [
+      { role: "textbox", name: "Child editor", tagName: "span", ref: "@e1" },
+    ];
+    const focus = new GuestFocusFixture();
+    focus.useInheritedEditable(false);
+    browser.tab.focusFixture = focus;
+    await browser.snapshot();
+
+    await expect(
+      browser.execute({
+        command: "keypress",
+        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(focus.document.activeElement).toBe(focus.editingHost);
+    expect(focus.selection.anchorNode).toBe(focus.target);
+    expect(focus.selection.focusNode).toBe(focus.target);
+    expect([focus.selection.anchorOffset, focus.selection.focusOffset]).toEqual([1, 1]);
+    expect(browser.tab.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+      { type: "keyUp", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test("a thrown focus handler preserves its failure and releases the input scope", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
+    const failure = new Error("fixture focus failure");
+    focus.afterFocus = () => {
+      throw failure;
+    };
+    requireSnapshotRefs(await browser.snapshot());
+
+    await expect(
+      browser.execute({
+        command: "type",
+        args: { browserId: BROWSER_A, ref: "@e1", text: "must not arrive" },
+      }),
+    ).rejects.toBe(failure);
+
+    expect(browser.tab.insertedText).toEqual([]);
+    expect(browser.tab.frameProductionScopes).toBe(0);
+    focus.afterFocus = null;
+    await expect(
+      browser.execute({
+        command: "type",
+        args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+      }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   test("navigate loads the requested HTTP URL in the explicit tab", async () => {
@@ -1584,6 +2120,153 @@ describe("executeAutomationCommand", () => {
     expect(containsScript(browser.tab, "resultJson.slice(0, 79000)")).toBe(true);
   });
 
+  test.each([
+    ["axis", CAPTURE_MAX_AXIS + 1, 1, 1],
+    ["area", 4000, Math.floor(CAPTURE_MAX_PIXELS / 4000) + 1, 1],
+    ["device scale", 2000, 2000, 2],
+    ["zero", 0, 100, 1],
+    ["negative", -1, 100, 1],
+    ["non-finite", Infinity, 100, 1],
+    ["NaN", NaN, 100, 1],
+    ["invalid scale", 100, 100, NaN],
+  ])(
+    "rejects %s preflight geometry before viewport or full-page dispatch",
+    async (_name, width, height, scale) => {
+      for (const fullPage of [false, true]) {
+        const browser = new BrowserAutomationHarness();
+        browser.tab.layoutMetrics = {
+          cssLayoutViewport: { clientWidth: width, clientHeight: height },
+          cssContentSize: { width, height },
+        };
+        browser.tab.captureScaleFactor = scale;
+        const result = await browser.execute({
+          command: "screenshot",
+          args: { browserId: BROWSER_A, fullPage },
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          error: { code: "browser_unsupported", retryable: false },
+        });
+        expect(browser.tab.capturedViewports).toHaveLength(0);
+        expect(
+          browser.tab.debugCommands.some((entry) => entry.command === "Page.captureScreenshot"),
+        ).toBe(false);
+      }
+    },
+  );
+
+  test("rejects oversized returned viewport dimensions before PNG encoding", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.viewportImage = {
+      getSize: () => ({ width: CAPTURE_MAX_AXIS + 1, height: 1 }),
+      toPNG() {
+        throw new Error("Unadmitted image must not be encoded");
+      },
+    };
+    await expect(
+      browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "browser_unsupported" } });
+  });
+
+  test("rejects oversized PNG output before base64 encoding", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.viewportImage = new FakeImage(new Uint8Array(CAPTURE_MAX_BYTES + 1));
+    await expect(
+      browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "browser_unsupported" } });
+  });
+
+  test("bounds the host queue and removes canceled waiters without capturing", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.deferCaptures = true;
+    const capture = (signal?: AbortSignal) =>
+      browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } }, { signal });
+    const first = capture();
+    await browser.tab.waitForCaptureStart(1);
+    const controllers = Array.from({ length: CAPTURE_MAX_PENDING }, () => new AbortController());
+    const waiting = controllers.map((controller) => capture(controller.signal));
+    await expect(capture()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_timeout", retryable: true },
+    });
+    for (const controller of controllers) controller.abort();
+    await Promise.all(waiting);
+    expect(browser.tab.capturedViewports).toHaveLength(1);
+    const next = capture();
+    browser.tab.finishNextCapture();
+    await browser.tab.waitForCaptureStart(2);
+    browser.tab.finishNextCapture();
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(next).resolves.toMatchObject({ ok: true });
+    expect(browser.tab.capturedViewports).toHaveLength(2);
+  });
+
+  test("expired queued captures do not dispatch before abort timers run", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.deferCaptures = true;
+      const capture = () =>
+        browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } });
+      const first = capture();
+      await browser.tab.waitForCaptureStart(1);
+      const queued = capture();
+      await Promise.resolve();
+      vi.setSystemTime(Date.now() + CAPTURE_TIMEOUT_MS + 1);
+      expect(browser.tab.capturedViewports[0].aborted).toBe(false);
+      browser.tab.finishNextCapture();
+      await expect(first).resolves.toMatchObject({
+        ok: false,
+        error: { code: "screenshot_no_frame" },
+      });
+      await expect(queued).resolves.toMatchObject({
+        ok: false,
+        error: { code: "screenshot_no_frame" },
+      });
+      expect(browser.tab.capturedViewports).toHaveLength(1);
+    } finally {
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(["timeout", "cancel"])(
+    "%s retains an unacknowledged CDP capture reservation",
+    async (mode) => {
+      vi.useFakeTimers();
+      let finishCapture = () => {};
+      try {
+        const browser = new BrowserAutomationHarness();
+        browser.tab.fullPageCaptureWait = new Promise<void>((resolve) => {
+          finishCapture = resolve;
+        });
+        const controller = new AbortController();
+        const first = browser.execute(
+          { command: "screenshot", args: { browserId: BROWSER_A, fullPage: true } },
+          { signal: controller.signal },
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(
+          browser.tab.debugCommands.some((entry) => entry.command === "Page.captureScreenshot"),
+        ).toBe(true);
+        if (mode === "timeout") await vi.advanceTimersByTimeAsync(CAPTURE_TIMEOUT_MS);
+        else controller.abort();
+        await expect(first).resolves.toMatchObject({ ok: false });
+        const next = browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(browser.tab.capturedViewports).toHaveLength(0);
+        finishCapture();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(next).resolves.toMatchObject({ ok: true });
+        expect(browser.tab.capturedViewports).toHaveLength(1);
+      } finally {
+        finishCapture();
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   test("screenshot captures the painted viewport", async () => {
     const browser = new BrowserAutomationHarness();
 
@@ -1606,7 +2289,7 @@ describe("executeAutomationCommand", () => {
     });
     expect(browser.tab.capturedViewports).toHaveLength(1);
     expect(browser.tab.capturedViewports[0].aborted).toBe(true);
-    expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
   });
 
   test("screenshot returns no-frame when the viewport never paints", async () => {
@@ -1630,7 +2313,7 @@ describe("executeAutomationCommand", () => {
           retryable: true,
         },
       });
-      expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+      expect(browser.tab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
       expect(browser.tab.capturedViewports[0].aborted).toBe(true);
     } finally {
       vi.useRealTimers();
@@ -1673,7 +2356,7 @@ describe("executeAutomationCommand", () => {
       }),
     ).rejects.toThrow("capture failed");
 
-    expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
   });
 
   test("overlapping screenshots serialize through the shared capture queue", async () => {
@@ -1695,17 +2378,31 @@ describe("executeAutomationCommand", () => {
     );
     await Promise.resolve();
 
-    expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
 
     browser.tab.finishNextCapture();
     await browser.tab.waitForCaptureStart(2);
 
-    expect(browser.tab.actions).toEqual(["invalidate", "capture", "invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual([
+      "debug:Page.getLayoutMetrics",
+      "invalidate",
+      "capture",
+      "debug:Page.getLayoutMetrics",
+      "invalidate",
+      "capture",
+    ]);
 
     browser.tab.finishNextCapture();
     await expect(first).resolves.toMatchObject({ requestId: "req-screenshot", ok: true });
     await expect(second).resolves.toMatchObject({ requestId: "req-screenshot-2", ok: true });
-    expect(browser.tab.actions).toEqual(["invalidate", "capture", "invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual([
+      "debug:Page.getLayoutMetrics",
+      "invalidate",
+      "capture",
+      "debug:Page.getLayoutMetrics",
+      "invalidate",
+      "capture",
+    ]);
   });
 
   test("overlapping screenshots across browser tabs serialize through the shared capture queue", async () => {
@@ -1738,19 +2435,19 @@ describe("executeAutomationCommand", () => {
     );
     await Promise.resolve();
 
-    expect(firstTab.actions).toEqual(["invalidate", "capture"]);
+    expect(firstTab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
     expect(secondTab.actions).toEqual([]);
 
     firstTab.finishNextCapture();
     await secondTab.waitForCaptureStart(1);
 
-    expect(firstTab.actions).toEqual(["invalidate", "capture"]);
-    expect(secondTab.actions).toEqual(["invalidate", "capture"]);
+    expect(firstTab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
+    expect(secondTab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
 
     secondTab.finishNextCapture();
     await expect(first).resolves.toMatchObject({ requestId: "req-screenshot", ok: true });
     await expect(second).resolves.toMatchObject({ requestId: "req-screenshot-2", ok: true });
-    expect(secondTab.actions).toEqual(["invalidate", "capture"]);
+    expect(secondTab.actions).toEqual(["debug:Page.getLayoutMetrics", "invalidate", "capture"]);
   });
 
   test("screenshot with fullPage captures the page content area through CDP", async () => {

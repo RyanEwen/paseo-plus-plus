@@ -20,6 +20,30 @@ export interface Size {
   height: number;
 }
 
+/** Keep a long trigger's adjacent edge while placing its popup near the opening pointer. */
+export function getPointerAnchorRect(
+  rect: Rect,
+  point: { x: number; y: number } | null,
+  placement: Placement,
+): Rect {
+  if (!point) return rect;
+  if (placement === "left" || placement === "right") {
+    return { ...rect, y: Math.max(rect.y, Math.min(rect.y + rect.height, point.y)), height: 0 };
+  }
+  return { ...rect, x: Math.max(rect.x, Math.min(rect.x + rect.width, point.x)), width: 0 };
+}
+
+/** Anchor a surface to the pointer point, clamped to the measured trigger bounds. */
+export function getCursorAnchorRect(rect: Rect, point: { x: number; y: number } | null): Rect {
+  if (!point) return rect;
+  return {
+    x: Math.max(rect.x, Math.min(rect.x + rect.width, point.x)),
+    y: Math.max(rect.y, Math.min(rect.y + rect.height, point.y)),
+    width: 0,
+    height: 0,
+  };
+}
+
 /** Gap kept between the surface and the edge of the display area. */
 const EDGE_PADDING = 8;
 

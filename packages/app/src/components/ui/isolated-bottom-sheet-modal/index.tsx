@@ -1,11 +1,23 @@
+import { isWeb } from "@/constants/platform";
+import { View, StyleSheet } from "react-native";
+import { useWebOverlayPresentationLifetime } from "@/lib/overlay-presentation-lifetime";
 import {
   BottomSheetModal as GorhomBottomSheetModal,
   type BottomSheetModalProps,
   type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
 import React from "react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import type { ElementRef, ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  useLayoutEffect,
+} from "react";
+import type { ElementRef, ReactNode, RefObject } from "react";
 import { systemBackPress } from "./back-press";
 import {
   type BottomSheetController,
@@ -41,6 +53,13 @@ type IsolatedBottomSheetModalProps = Omit<
   "enableDismissOnClose" | "stackBehavior" | "children" | "backdropComponent"
 > & {
   /**
+   * Whether closing (drag, backdrop, Back) also dismisses, which unmounts the content. Default
+   * true: the owner hears `onDismiss` and drops its state. Pass `false` for a sheet whose close the
+   * owner may veto: it parks at index -1 with its content mounted, the owner hears `onChange(-1)`,
+   * and either snaps it back or unmounts it, which dismisses it from the stack.
+   */
+  enableDismissOnClose?: boolean;
+  /**
    * Nodes only. Gorhom also accepts a render function, but nothing here uses it and a bridge
    * would have to reach around it.
    */
@@ -48,6 +67,8 @@ type IsolatedBottomSheetModalProps = Omit<
   presentation?: "push" | "replace";
   /** Show a dismissible backdrop. Its interaction belongs to the modal stack. */
   backdropOpacity?: number;
+  /** Explicit blocking web sheet opt-in; native/plain web have no installed guard. */
+  nativeBrowserOverlap?: boolean;
   /**
    * Required, and `null` is a real answer: a sheet that needs nothing from its call site should
    * have to say so. The failure it prevents is invisible until someone adds a `useContext` deep
@@ -58,6 +79,143 @@ type IsolatedBottomSheetModalProps = Omit<
 
 export type IsolatedBottomSheetModalRef = GorhomBottomSheetModalMethods;
 
+interface SheetPresentationRequest {
+  args: Parameters<GorhomBottomSheetModalMethods["present"]>;
+  forwarded: boolean;
+  committed: boolean;
+}
+
+/** Acquire before public present(): INITIAL Gorhom has no inner ref to close.
+ * Once forwarded, normal framework dismissal owns its real portal/animation. */
+function useWebSheetPresentation(
+  modalRef: RefObject<GorhomBottomSheetModalMethods | null>,
+  optionsRef: RefObject<IsolatedBottomSheetModalProps>,
+) {
+  const current = useRef<SheetPresentationRequest | null>(null);
+  const [request, setRequest] = useState<SheetPresentationRequest | null>(null);
+  const finishRequest = useCallback((finished: SheetPresentationRequest) => {
+    if (current.current !== finished) return;
+    current.current = null;
+    setRequest(null);
+  }, []);
+  const dismiss = useCallback(
+    (...args: Parameters<GorhomBottomSheetModalMethods["dismiss"]>) => {
+      if (!isWeb || !optionsRef.current.nativeBrowserOverlap) {
+        modalRef.current?.dismiss(...args);
+        return;
+      }
+      const pending = current.current;
+      if (!pending) return;
+      if (pending.forwarded) {
+        modalRef.current?.dismiss(...args);
+        return;
+      }
+      // No framework present/RAF/provider entry exists yet. Cancel synchronously
+      // before notifying the existing visibility tracker, which owns onClose.
+      finishRequest(pending);
+      optionsRef.current.onDismiss?.();
+    },
+    [finishRequest, modalRef, optionsRef],
+  );
+  const { ready, retainNode } = useWebOverlayPresentationLifetime({
+    active: isWeb && Boolean(optionsRef.current.nativeBrowserOverlap) && request !== null,
+    nativeBrowserOverlap: true,
+    identity: request,
+    onAdmissionFailed: dismiss,
+  });
+  const retain = useRef(retainNode);
+  retain.current = retainNode;
+  const retainContainerNode = useCallback((node: unknown) => retain.current(node), []);
+  const AdmissionContainer = useMemo(
+    () =>
+      function SheetPresentationContainer({ children }: React.PropsWithChildren) {
+        const owner = current.current;
+        useLayoutEffect(() => {
+          if (owner) owner.committed = true;
+          return () => {
+            if (owner) {
+              owner.committed = false;
+              finishRequest(owner);
+            }
+          };
+        }, [owner]);
+        const ParentContainer = optionsRef.current.containerComponent;
+        // Do not unmount an admitted BottomSheet on a later guard change: it must
+        // retain its ref and real dismiss/exit path. This is the same lease's DOM.
+        return (
+          <View
+            ref={retainContainerNode}
+            collapsable={false}
+            pointerEvents="box-none"
+            style={StyleSheet.absoluteFill}
+          >
+            {ParentContainer ? <ParentContainer>{children}</ParentContainer> : children}
+          </View>
+        );
+      },
+    [finishRequest, optionsRef, retainContainerNode],
+  );
+  useLayoutEffect(() => {
+    if (!request || current.current !== request || request.forwarded || !ready) return;
+    request.forwarded = true;
+    modalRef.current?.present(...request.args);
+  }, [modalRef, ready, request]);
+  const present = useCallback(
+    (...args: Parameters<GorhomBottomSheetModalMethods["present"]>) => {
+      if (!isWeb || !optionsRef.current.nativeBrowserOverlap) {
+        modalRef.current?.present(...args);
+        return;
+      }
+      const pending = current.current;
+      if (pending) {
+        if (pending.forwarded) modalRef.current?.present(...args);
+        else pending.args = args;
+        return;
+      }
+      const next = { args, forwarded: false, committed: false };
+      current.current = next;
+      setRequest(next);
+    },
+    [modalRef, optionsRef],
+  );
+  const close = useCallback(
+    (...args: Parameters<GorhomBottomSheetModalMethods["close"]>) => {
+      if (
+        isWeb &&
+        optionsRef.current.nativeBrowserOverlap &&
+        current.current &&
+        !current.current.committed
+      )
+        dismiss();
+      else modalRef.current?.close(...args);
+    },
+    [dismiss, modalRef, optionsRef],
+  );
+  const forceClose = useCallback(
+    (...args: Parameters<GorhomBottomSheetModalMethods["forceClose"]>) => {
+      if (
+        isWeb &&
+        optionsRef.current.nativeBrowserOverlap &&
+        current.current &&
+        !current.current.committed
+      )
+        dismiss();
+      else modalRef.current?.forceClose(...args);
+    },
+    [dismiss, modalRef, optionsRef],
+  );
+  const onDismiss = useCallback(() => {
+    // Bind the callback to the request rendered into this framework generation.
+    // Retirement precedes caller code, which may immediately present again.
+    if (isWeb && optionsRef.current.nativeBrowserOverlap) {
+      if (!request || current.current !== request) return;
+      finishRequest(request);
+    }
+    optionsRef.current.onDismiss?.();
+  }, [finishRequest, optionsRef, request]);
+  return { present, dismiss, close, forceClose, onDismiss, AdmissionContainer };
+}
+
 export const IsolatedBottomSheetModal = forwardRef<
   IsolatedBottomSheetModalRef,
   IsolatedBottomSheetModalProps
@@ -65,38 +223,51 @@ export const IsolatedBottomSheetModal = forwardRef<
   // Gorhom puts this ref into its provider queue and reads `.current` for stack operations.
   // A callback ref accepts the handle but leaves that queue unable to dismiss or restore it.
   const modalRef = useRef<GorhomBottomSheetModalMethods>(null);
+  const optionsRef = useRef(props);
+  optionsRef.current = props;
+  const { present, dismiss, close, forceClose, onDismiss, AdmissionContainer } =
+    useWebSheetPresentation(modalRef, optionsRef);
   useImperativeHandle(
     ref,
     () => ({
-      present: (...args) => modalRef.current?.present(...args),
-      dismiss: (...args) => modalRef.current?.dismiss(...args),
+      present,
+      dismiss,
       snapToIndex: (...args) => modalRef.current?.snapToIndex(...args),
       snapToPosition: (...args) => modalRef.current?.snapToPosition(...args),
       expand: (...args) => modalRef.current?.expand(...args),
       collapse: (...args) => modalRef.current?.collapse(...args),
-      close: (...args) => modalRef.current?.close(...args),
-      forceClose: (...args) => modalRef.current?.forceClose(...args),
+      close,
+      forceClose,
     }),
-    [],
+    [present, dismiss, close, forceClose],
   );
   const {
     children,
     presentation = "push",
     contextBridge,
     backdropOpacity,
+    nativeBrowserOverlap = false,
+    containerComponent,
+    enableDismissOnClose = true,
     ...bottomSheetProps
   } = props;
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
-      <SheetBackdrop {...backdropProps} opacity={backdropOpacity} />
+      <SheetBackdrop
+        {...backdropProps}
+        opacity={backdropOpacity}
+        pressBehavior={enableDismissOnClose ? "dismiss" : "close"}
+      />
     ),
-    [backdropOpacity],
+    [backdropOpacity, enableDismissOnClose],
   );
   const modal = (
     <GorhomBottomSheetModal
       {...bottomSheetProps}
+      containerComponent={nativeBrowserOverlap && isWeb ? AdmissionContainer : containerComponent}
       ref={modalRef}
-      enableDismissOnClose
+      onDismiss={onDismiss}
+      enableDismissOnClose={enableDismissOnClose}
       stackBehavior={presentation}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
     >
@@ -152,3 +323,7 @@ export function useIsolatedBottomSheetVisibility({
     handleSheetDismiss,
   };
 }
+
+export { SheetVisibleFrame } from "./visible-frame";
+export { systemBackPress } from "./back-press";
+export { SheetHostScope } from "./host-scope";

@@ -13,6 +13,7 @@ function row(
 ): PaseoSubagentRow {
   return {
     kind: "paseo",
+    address: overrides.address ?? { serverId: "server-1", agentId: overrides.id },
     id: overrides.id,
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,
@@ -25,6 +26,10 @@ function row(
         ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
         : { phase: "idle", cancellationRequestId: null }),
     requiresAttention: overrides.requiresAttention ?? false,
+    humanAttentionRequired: overrides.humanAttentionRequired,
+    attentionReason: overrides.attentionReason,
+    attentionMessage: overrides.attentionMessage,
+    pendingPermissionCount: overrides.pendingPermissionCount,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };
 }
@@ -296,4 +301,27 @@ describe("provider-owned row subtitles", () => {
       ).subtitle,
     ).toBe("");
   });
+});
+
+it("shows explicit managed-child review and keeps its blocking status primary", () => {
+  const child = row({
+    id: "child",
+    status: "running",
+    humanAttentionRequired: true,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionMessage: "Choose an account",
+  });
+  expect(buildSubagentRowPresentationData(child).statusBucket).toBe("attention");
+  expect(
+    buildSubagentRowPresentationData({ ...child, pendingPermissionCount: 1 }).statusBucket,
+  ).toBe("needs_input");
+  expect(
+    buildSubagentRowPresentationData({
+      ...child,
+      humanAttentionRequired: false,
+      requiresAttention: false,
+      attentionMessage: null,
+    }).statusBucket,
+  ).toBe("running");
 });

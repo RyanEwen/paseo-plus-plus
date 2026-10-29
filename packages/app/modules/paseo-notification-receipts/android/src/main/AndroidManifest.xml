@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <meta-data android:name="expo.modules.notifications.native_presentation" android:value="true" />
+    <meta-data android:name="expo.modules.notifications.delete_intent_receiver" android:value="sh.paseo.notifications.NotificationDismissedReceiver" />
+    <receiver android:name="sh.paseo.notifications.NotificationDismissedReceiver" android:exported="false" />
+  </application>
+</manifest>

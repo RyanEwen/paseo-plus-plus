@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "علامات تبويب بالأيقونات فقط",
+    iconOnlyHint:
+      "انقر بزر الماوس الأيمن على علامة تبويب للمستكشف أو المساحة الفارغة في شريط علامات التبويب واختر علامات تبويب بالأيقونات فقط. تظل الأسماء متاحة في تلميحات الأدوات.",
+  },
   settingsSync: {
     title: "مزامنة الإعدادات",
     hint: "زامن تفضيلات التطبيق وظهور عناصر الشريط الجانبي عبر مضيف تختاره. تبقى مرشحات المضيف والمشروع وترتيب مساحات العمل والمجموعات المطوية محلية. تُحمّل الإعدادات قبل تحريرها عند التبديل.",
@@ -34,6 +39,21 @@ export const ar: TranslationResources = {
     },
   },
   paseoPlusPlus: {
+    accent: {
+      title: "لون التمييز",
+      hint: "يُستخدم لعناصر التحكم الرئيسية ورسائلك",
+      updateHost: "حدّث مضيف الإعدادات المحدد لتغيير لون التمييز",
+      preview: "هكذا ستظهر رسائلك",
+      options: {
+        default: "الافتراضي",
+        blue: "أزرق",
+        green: "أخضر",
+        purple: "بنفسجي",
+        rose: "وردي",
+        orange: "برتقالي",
+        teal: "فيروزي",
+      },
+    },
     workspaceLimit: {
       save: "حفظ",
       title: "حدود مساحات العمل",
@@ -66,8 +86,8 @@ export const ar: TranslationResources = {
     saveFailed: "تعذر الحفظ. حاول مرة أخرى.",
     features: {
       workspaceChatLinks: {
-        label: "فتح روابط المحادثة في Paseo",
-        hint: "على سطح المكتب، افتح روابط الويب من المحادثة في متصفح مساحة العمل نفسها. عطّل الخيار لاستخدام المتصفح الخارجي. يبقى خيار الفتح في Paseo متاحًا في قائمة الرابط.",
+        label: "روابط مساحة العمل",
+        hint: "افتح روابط الويب الخاصة بمساحة العمل في علامات تبويب جديدة بمتصفحها على سطح المكتب، بما فيها الطرفية والدردشة وGit. عطّل الخيار لفتحها خارجيًا. تبقى إجراءات المتصفح الصريحة متاحة في القوائم.",
       },
       sidebarHostUpdates: {
         label: "تحديثات المضيف في الشريط الجانبي",
@@ -79,7 +99,11 @@ export const ar: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "علامات تبويب مساحات العمل على الهاتف",
-        hint: "اعرض شريط علامات تبويب قابلًا للتمرير في التخطيط المضغوط. عطّل الخيار لاستخدام المحدد السابق مع الاحتفاظ بعلامة التبويب المحددة.",
+        hint: "اعرض علامات تبويب متساوية العرض على الشاشات الصغيرة، مع التمرير عند الحاجة فقط. عطّل الخيار لاستخدام محدد علامات التبويب دون تغيير علامة التبويب المحددة.",
+      },
+      widerWorkspaceTabs: {
+        label: "علامات تبويب أوسع لمساحة العمل",
+        hint: "اسمح لعناوين علامات التبويب الطويلة بعرض أكبر بنسبة تصل إلى 50٪. تتقاسم علامات تبويب مساحة العمل على الهاتف العرض المتاح بالتساوي دائمًا.",
       },
 
       descriptiveToolCalls: {
@@ -87,13 +111,9 @@ export const ar: TranslationResources = {
         hint: "يصف العمليات المعروفة ويحفظ الأوامر والمخرجات الدقيقة في التفاصيل. أوقفه لاستعادة التسميات السابقة.",
       },
 
-      sidebarProjectSelector: {
-        label: "المشروع المحدد في العنوان",
-        hint: "اعرض اسم المشروع المحدد في عنوان مساحات العمل. عند الإيقاف يظهر عنوان مساحات العمل؛ وتبقى خيارات المضيف والمشروع متاحة.",
-      },
       stickyUserPrompts: {
         label: "إبقاء رسائل المستخدم ظاهرة",
-        hint: "يعرض الرسالة الحالية أعلى المحادثة مع التوسيع والتنقل إلى السابقة والتالية",
+        hint: "ثبّت رسالة مختصرة مع إمكانية توسيعها والتنقل إلى السابقة والتالية. تبقى الرسائل العادية موسّعة، ولا يغطي مؤشر التحميل رسالة متاحة.",
       },
       previousAgents: {
         label: "الوكلاء السابقون",
@@ -149,7 +169,7 @@ export const ar: TranslationResources = {
       },
       mobile: {
         label: "التنقل على الهاتف",
-        hint: "مساحات لمس أكبر ورجوع أكثر أمانًا على Android وإشعارات تطوير منفصلة",
+        hint: "رجوع أكثر أمانًا على Android وإشعارات تطوير منفصلة",
       },
       pickers: {
         label: "اختيار المساحات وحالتها",
@@ -221,6 +241,7 @@ export const ar: TranslationResources = {
     back: "خلف",
     loading: "تحميل...",
     actions: {
+      save: "حفظ",
       back: "خلف",
       cancel: "يلغي",
       close: "يغلق",
@@ -314,6 +335,8 @@ export const ar: TranslationResources = {
     input: {
       accessibilityLabel: "وكيل الرسائل...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "ملء الشاشة",
+      exitFullscreen: "الخروج من ملء الشاشة",
       focusHint: "{{shortcut}}للتركيز",
       addAttachment: "إضافة مرفق",
       interruptAgent: "عامل المقاطعة",
@@ -569,6 +592,7 @@ export const ar: TranslationResources = {
       details: "تفاصيل",
     },
     dictation: {
+      paused: "تمت مقاطعة الميكروفون. في انتظار الاستئناف…",
       start: "بدء الإملاء الصوتي",
       cancel: "إلغاء الإملاء",
       retry: "أعد محاولة الإملاء",
@@ -578,6 +602,7 @@ export const ar: TranslationResources = {
       failedRetry: "فشل الإملاء. اضغط على إعادة المحاولة.",
     },
     question: {
+      responseFailed: "تعذر إرسال ردك. حاول مرة أخرى.",
       submit: "يُقدِّم",
       next: "التالي",
       answerPlaceholder: "اكتب إجابتك...",
@@ -761,6 +786,7 @@ export const ar: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "حدّث المضيف لعرض تفاصيل إعداد مساحة العمل",
       descriptor: {
         label: "يثبت",
         completed: "اكتمل الإعداد",
@@ -797,12 +823,15 @@ export const ar: TranslationResources = {
     browser: {
       openInPaseo: "فتح في متصفح Paseo",
       openExternally: "فتح في متصفح خارجي",
+      copyLink: "نسخ الرابط",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
       },
       session: "جلسة المتصفح{{browserId}}",
       controls: {
+        pageZoom: "تكبير الصفحة",
+        zoomFailed: "تعذر تغيير تكبير الصفحة",
         back: "خلف",
         forward: "إلى الأمام",
         stopLoading: "توقف عن التحميل",
@@ -825,6 +854,17 @@ export const ar: TranslationResources = {
         submit: "إرفاق",
         cancel: "إلغاء",
       },
+      extensions: {
+        label: "الإضافات",
+        empty: "لا توجد إضافات مفعّلة.",
+        noPopup: "لا تتوفر نافذة منبثقة",
+        loading: "جارٍ تحميل الإضافات...",
+        manage: "إدارة الإضافات",
+        openFailed: "تعذر فتح الإضافة",
+        pin: "تثبيت {{name}} في شريط الأدوات",
+        unpin: "إلغاء تثبيت {{name}} من شريط الأدوات",
+        pinFailed: "تعذر حفظ تثبيت الإضافة",
+      },
       devices: {
         label: "حجم الجهاز",
         responsive: "متجاوب",
@@ -839,6 +879,9 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
+    },
+    sheet: {
+      openAsTab: "فتح كعلامة تبويب",
     },
     tabs: {
       loading: "تحميل...",
@@ -855,7 +898,7 @@ export const ar: TranslationResources = {
       },
       switcher: {
         trigger: "تبديل علامات التبويب (فتح{{count}})",
-        title: "علامة التبويب التبديل",
+        title: "علامات تبويب الـ Workspace",
         searchPlaceholder: "علامات تبويب البحث",
       },
       menu: {
@@ -953,6 +996,7 @@ export const ar: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "إجراءات Workspace",
+        workspaceActionsUnhealthy: "إجراءات Workspace، توجد خدمة غير سليمة",
         newAgent: "وكيل جديد",
         newTerminal: "محطة جديدة",
         newBrowser: "علامة تبويب متصفح جديدة",
@@ -1000,6 +1044,8 @@ export const ar: TranslationResources = {
         exitCode: "الخروج من{{code}}",
         startFailed: "فشل بدء تشغيل{{scriptName}}",
         stopFailed: "فشل إيقاف{{scriptName}}",
+        running: "قيد التشغيل",
+        runningCount: "{{count}} قيد التشغيل",
       },
     },
     tree: {
@@ -1141,6 +1187,7 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "حدّث هذا المضيف لفتح مقارنة ملف واحد.",
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
@@ -1174,6 +1221,7 @@ export const ar: TranslationResources = {
         checkingRepository: "فحص المستودع...",
         notRepository: "ليس مستودع جيت",
         diffMode: "وضع الفرق",
+        all: "كل التغييرات",
         uncommitted: "غير ملتزم",
         committed: "ملتزم",
         branchUnknown: "مجهول",
@@ -1380,6 +1428,16 @@ export const ar: TranslationResources = {
       multipleWorkspaces_other: "مساحات عمل {{count}} مشاريع",
       title: "المشاريع",
     },
+    workspaceTree: {
+      expand: "إظهار مساحات العمل الفرعية لـ {{name}}",
+      collapse: "طي مساحات العمل الفرعية لـ {{name}}",
+      activeChild: "تحتوي على مساحة العمل النشطة.",
+      summary_one: "مساحة عمل فرعية ({{count}}): {{status}}",
+      summary_other: "مساحات العمل الفرعية ({{count}}): {{status}}",
+      humanAttention_one: "مساحة عمل فرعية تحتاج إلى انتباهك ({{count}})",
+      humanAttention_other: "مساحات عمل فرعية تحتاج إلى انتباهك ({{count}})",
+      unknownStatus: "الحالة غير متاحة",
+    },
     statusGroupAccessibility: "مجموعة {{label}}",
     statusBucket: {
       workingCount: "{{count}} قيد العمل",
@@ -1410,9 +1468,9 @@ export const ar: TranslationResources = {
         fiveDays: "5 أيام",
         week: "أسبوع واحد",
         twoWeeks: "أسبوعين",
-        month: "شهر واحد",
-        twoMonths: "شهرين",
-        threeMonths: "3 أشهر",
+        month: "شهر واحد (30 يومًا)",
+        twoMonths: "شهران (60 يومًا)",
+        threeMonths: "3 أشهر (90 يومًا)",
       },
       expandAll: "توسيع الكل",
       collapseAll: "طي الكل",
@@ -1524,6 +1582,38 @@ export const ar: TranslationResources = {
       openProjectSettings: "افتح إعدادات المشروع",
     },
     project: {
+      archive: {
+        action: "أرشفة الكل",
+        title: "هل تريد أرشفة مساحات عمل المشروع؟",
+        message:
+          'المشروع: "{{projectName}}"\nمساحات العمل: {{workspaceCount}}\nالوكلاء: {{agentCount}} (قيد التشغيل: {{runningAgentCount}})\nالمضيفون: {{hostCount}}\n\nسيتوقف الوكلاء قيد التشغيل ومهام مساحات العمل. قد تُزال أشجار العمل التي يديرها Paseo. سيبقى المشروع.',
+        includeBackground: "أرشفة مساحات العمل في الخلفية أيضًا ({{count}})",
+        backgroundWarning: "يؤدي تضمين مساحات العمل في الخلفية إلى إيقاف وكلائها ومهامها أيضًا.",
+        discovering: "جارٍ حساب مساحات العمل والوكلاء...",
+        progress: "أرشفة مساحات العمل: {{completed}} من {{total}}",
+        completed: "مساحات العمل المؤرشفة: {{count}}",
+        failed:
+          'تمت أرشفة {{completed}} من مساحات العمل. توقفت العملية عند "{{workspace}}" على {{host}}: {{error}}. لم تتم محاولة أرشفة: {{unprocessed}}. عالج المشكلة ثم أعد محاولة أرشفة الكل.',
+        empty: "لا توجد مساحات عمل نشطة في هذا المشروع",
+        projectChanged: "تغيّر المشروع أثناء التأكيد. راجع الأعداد ثم أعد محاولة أرشفة الكل.",
+        hostDisconnected: "المضيف {{host}} غير متصل. اتصل بجميع مضيفي المشروع ثم أعد المحاولة.",
+        updateRequired: "حدّث المضيف {{host}} لأرشفة مساحات عمل المشروع بأمان.",
+        alreadyArchiving:
+          'تجري أرشفة مساحة العمل "{{workspace}}" بالفعل. انتظر حتى تنتهي ثم أعد المحاولة.',
+        incompleteDiscovery: "تعذّر حساب جميع مساحات عمل المشروع ووكلائه. أعد محاولة أرشفة الكل.",
+        verificationFailed:
+          'تعذّر التحقق من أرشفة مساحة العمل "{{workspace}}". افتح السجل لفحص حالتها قبل إعادة المحاولة.',
+        agentsRemaining:
+          'لا يزال لدى مساحة العمل "{{workspace}}" وكلاء نشطون. افتح السجل لفحص الأرشفة غير المكتملة.',
+        agentNotArchived: "تعذّر التحقق من أرشفة الوكيل {{agent}} وإيقافه. افتح السجل لفحص حالته.",
+      },
+      restore: {
+        title: "استعادة مساحة عمل مؤرشفة",
+        search: "البحث في مساحات العمل المؤرشفة",
+        empty: "لا توجد مساحات عمل مؤرشفة في هذا المشروع",
+        updateRequired: "حدّث المضيف لاستعراض مساحات العمل المؤرشفة",
+        loadFailed: "تعذّر تحميل مساحات العمل المؤرشفة",
+      },
       actions: {
         menu: "إجراءات المشروع",
         openSettings: "افتح إعدادات المشروع",
@@ -1617,8 +1707,9 @@ export const ar: TranslationResources = {
     },
     fields: {
       project: "المشروع",
-      base: "الأساس",
+      branch: "الفرع",
       baseNotApplicable: "غير قابل للتطبيق",
+      host: "المضيف",
     },
     titlePlaceholder: "العنوان (اختياري)",
     errors: {
@@ -1947,13 +2038,18 @@ export const ar: TranslationResources = {
     title: "إضافة مزود",
     search: "مقدمي البحث",
     noProviders: "لم يتم العثور على مقدمي الخدمات",
+    clearSearch: "مسح البحث",
     actions: {
       add: "يضيف",
+      addProvider: "إضافة {{provider}}",
       adding: "إضافة",
       installed: "تم التثبيت",
       cancel: "يلغي",
       installInstructions: "تعليمات التثبيت",
       installInstructionsFor: "تعليمات تثبيت{{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "غير قادر على تثبيت الموفر",
@@ -2205,12 +2301,32 @@ export const ar: TranslationResources = {
       creatingAgent: "وكيل الخلق",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: "فتح ملفات .{{extension}} باستخدام",
+        pickerTitleFilename: "فتح {{filename}} باستخدام",
+        dontAskAgain: "لا تسألني مرة أخرى",
+        use: "استخدام",
+        openWith: "فتح باستخدام…",
+        alwaysUseExtension: "استخدام دائمًا لـ .{{extension}}",
+        alwaysUseFilename: "استخدام دائمًا لـ {{filename}}",
+        option: "{{title}} — {{owner}}",
+        actions: "إجراءات الملف",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "صورة",
+          source: "المصدر",
+        },
+      },
       directoryMissing: "لم يتم العثور على دليل Workspace.",
       loading: "جارٍ تحميل الملف...",
       noPreview: "لا تتوفر معاينة",
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       tooLargeToDisplay: "هذا الملف كبير جدًا بحيث لا يمكن عرضه",
+      documentUnsupported: "لا يمكن عرض ملفات {{type}} على هذا الجهاز",
       failedToLoad: "فشل تحميل الملف",
+      notFound: "الملف غير موجود",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
       editor: {
         fileSize: "حجم الملف {{size}}",
@@ -2222,10 +2338,7 @@ export const ar: TranslationResources = {
         changedOnDisk: "تغيّر على القرص",
         vimMode: "وضع Vim ‏{{mode}}",
         cursor: "السطر {{line}}، العمود {{column}}",
-        preview: "معاينة",
-        source: "المصدر",
         deletedTitle: "تم حذف الملف من القرص",
-        checkFailedTitle: "تعذّر التحقق من الملف على القرص",
         preservedDescription: "تم الاحتفاظ بالنسخة المفتوحة.",
         conflictDescription: "تم الاحتفاظ بالمحتوى المحلي. اختر الإصدار الذي تريد إبقاءه.",
         overwrite: "استبدال",
@@ -2373,6 +2486,17 @@ export const ar: TranslationResources = {
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
   },
   review: {
+    feedback: {
+      send: "إرسال الملاحظات ({{count}})",
+      sending: "جارٍ إرسال الملاحظات ({{count}})",
+      chooseAgent: "اختر وكيلاً",
+      sent: "تم إرسال الملاحظات إلى {{recipient}}",
+      "no-agents": "افتح علامة تبويب وكيل في مساحة العمل هذه لإرسال الملاحظات.",
+      disconnected: "اتصل بالمضيف لإرسال الملاحظات.",
+      "no-context": "لم تعد التعليقات المحفوظة تتطابق مع هذا الفرق.",
+      failed: "تعذر إرسال الملاحظات. حاول مرة أخرى.",
+      prompt: "يرجى معالجة مراجعة الكود هذه.",
+    },
     comment: {
       add: "إضافة تعليق المراجعة",
       edit: "تحرير تعليق المراجعة",
@@ -2383,6 +2507,106 @@ export const ar: TranslationResources = {
       cancelAccessibility: "إلغاء تعليق المراجعة",
       save: "تعليق",
       saveAccessibility: "حفظ تعليق المراجعة",
+    },
+  },
+  providerUsage: {
+    options: "الإعدادات",
+    refreshFailed: "تعذّر تحديث الاستخدام",
+    noHosts: "لا توجد مضيفات متصلة",
+    agentError: "تعذّر تحميل الاستخدام: {{reason}}",
+    pin: "تثبيت",
+    unpin: "إلغاء التثبيت",
+    displayAs: "النسب المئوية",
+    displayUsed: "المستخدم",
+    displayRemaining: "المتبقي",
+    showInSidebar: "ملخص في الشريط الجانبي",
+    showInSidebarHint: "تظهر الفترات المثبتة في أسفل الشريط الجانبي",
+    runToRefresh: "شغّل {{command}} للتحديث.",
+    signInAgain: "سجّل الدخول مجددًا.",
+    loginRejected: "تم رفض تسجيل الدخول (HTTP {{status}}). {{remedy}}",
+    loginExpired: "انتهت صلاحية تسجيل الدخول {{relativeTime}}. {{remedy}}",
+    title: "استخدام الخطة",
+    refresh: "تحديث",
+    refreshAll: "تحديث الكل",
+    refreshing: "جارٍ التحديث...",
+    loading: "جارٍ تحميل بيانات الاستخدام...",
+    empty: "لا توجد بيانات استخدام",
+    errorTitle: "تعذّر تحميل بيانات الاستخدام",
+    hostUnavailable: "اتصل بـ{{host}} لعرض استخدام المزوّد",
+    hostUpgradeRequired: "حدّث {{host}} لعرض استخدام المزوّد",
+    clientUnavailable: "اتصال المضيف غير جاهز",
+    retry: "حاول مرة أخرى",
+    tooltipLoading: "جارٍ تحميل استخدام الخطة...",
+    status: {
+      error: "خطأ",
+      unavailable: "غير متاح",
+    },
+    values: {
+      used: "تم استخدام {{percentage}}",
+      remaining: "متبقٍ {{amount}}",
+    },
+    labels: {
+      session: "الجلسة",
+      weekly: "أسبوعي",
+      monthly: "شهري",
+      codeReview: "مراجعة التعليمات البرمجية",
+      credits: "الأرصدة",
+      monthlyCredits: "أرصدة شهرية",
+    },
+    duration: {
+      days: "{{value}} يوم",
+      days_zero: "{{value}} يوم",
+      days_one: "يوم واحد",
+      days_two: "يومين",
+      days_few: "{{value}} أيام",
+      days_many: "{{value}} يومًا",
+      days_other: "{{value}} يوم",
+      hours: "{{value}} ساعة",
+      hours_zero: "{{value}} ساعة",
+      hours_one: "ساعة واحدة",
+      hours_two: "ساعتين",
+      hours_few: "{{value}} ساعات",
+      hours_many: "{{value}} ساعة",
+      hours_other: "{{value}} ساعة",
+      minutes: "{{value}} دقيقة",
+      minutes_zero: "{{value}} دقيقة",
+      minutes_one: "دقيقة واحدة",
+      minutes_two: "دقيقتين",
+      minutes_few: "{{value}} دقائق",
+      minutes_many: "{{value}} دقيقة",
+      minutes_other: "{{value}} دقيقة",
+    },
+    timing: {
+      lastUpdated: "آخر تحديث {{relativeTime}}",
+      noSuccessfulUpdate: "لا يوجد تحديث ناجح",
+      resetTimePassed: "مضى وقت إعادة التعيين",
+      resettingNow: "تتم إعادة التعيين الآن",
+      resetsIn: "تتم إعادة التعيين خلال {{duration}}",
+      runsOutNow: "ينفد الآن",
+      runsOutIn: "ينفد خلال {{duration}}",
+      justNow: "الآن",
+      daysAgo: "قبل {{value}} يومًا",
+      daysAgo_zero: "قبل {{value}} يوم",
+      daysAgo_one: "قبل يوم واحد",
+      daysAgo_two: "قبل يومين",
+      daysAgo_few: "قبل {{value}} أيام",
+      daysAgo_many: "قبل {{value}} يومًا",
+      daysAgo_other: "قبل {{value}} يوم",
+      hoursAgo: "قبل {{value}} ساعة",
+      hoursAgo_zero: "قبل {{value}} ساعة",
+      hoursAgo_one: "قبل ساعة واحدة",
+      hoursAgo_two: "قبل ساعتين",
+      hoursAgo_few: "قبل {{value}} ساعات",
+      hoursAgo_many: "قبل {{value}} ساعة",
+      hoursAgo_other: "قبل {{value}} ساعة",
+      minutesAgo: "قبل {{value}} دقيقة",
+      minutesAgo_zero: "قبل {{value}} دقيقة",
+      minutesAgo_one: "قبل دقيقة واحدة",
+      minutesAgo_two: "قبل دقيقتين",
+      minutesAgo_few: "قبل {{value}} دقائق",
+      minutesAgo_many: "قبل {{value}} دقيقة",
+      minutesAgo_other: "قبل {{value}} دقيقة",
+      updated: "تم التحديث {{relativeTime}}",
     },
   },
   settings: {
@@ -2413,6 +2637,7 @@ export const ar: TranslationResources = {
       terminal: "الطرفية",
       browser: "المتصفح",
       editor: "المحرر",
+      files: "الملفات",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
       notifications: "الإشعارات",
@@ -2451,8 +2676,27 @@ export const ar: TranslationResources = {
       vimKeybindings: "اختصارات Vim",
       vimHint: "تنطبق على ملفات المصدر في الويب وسطح المكتب.",
     },
+    files: {
+      title: "الملفات",
+      askEveryTime: "اسأل في كل مرة",
+      askAgain: "اسأل مجددًا",
+      askAgainFor: "اسأل مجددًا عن {{label}}",
+      unavailable: "غير موجود على مضيف متصل",
+      empty: "تظهر لوحات الملفات هنا عندما تضيف إحدى الإضافات لوحة",
+    },
     notifications: {
       title: "الإشعارات",
+      chooseHost: "اختر مضيف الإعدادات لضبط التنبيهات على جميع أجهزته.",
+      hostTitle: "الإشعارات على {{host}}",
+      agentAware: "تنبيهات تراعي عمل الوكلاء",
+      agentAwareHint:
+        "أبقِ النتائج المعتادة بين الوكلاء صامتة، وأظهر شارات «جاهزة للمراجعة» عندما تحتاج إلى التدخل. يسري هذا على كل جهاز متصل بـ {{host}}. تظل طلبات التدخل البشري وتنبيهات الأمان متاحة عند تعطيل هذا الخيار.",
+      updateHost: "حدّث هذا المضيف لتغيير التنبيهات التي تراعي عمل الوكلاء.",
+      readOnly: "يلزم إذن إدارة هذا المضيف لتغيير هذا الإعداد.",
+      unavailable: "اتصل بمضيف مدعوم مع إذن الإدارة قبل الحفظ.",
+      notSaved: "لم يحفظ المضيف تفضيل التنبيهات هذا. حاول مجددًا.",
+      loadFailed: "تعذّر تحميل تفضيل إشعارات المضيف.",
+      saving: "جارٍ الحفظ...",
       permission: "إذن الإشعارات",
       refreshAccessibility: "تحديث إذن الإشعارات",
       playSound: "تشغيل صوت",
@@ -2496,6 +2740,25 @@ export const ar: TranslationResources = {
     general: {
       title: "عام",
       sending: "الإرسال",
+      browserExtensions: {
+        title: "الإضافات",
+        compatibility: "بعض ميزات إضافات Chrome غير مدعومة. لا يتم تحديث الإضافات تلقائيًا.",
+        store: "Chrome Web Store",
+        openStore: "فتح المتجر",
+        refresh: "تحديث",
+        enable: "تفعيل",
+        disable: "تعطيل",
+        retry: "إعادة المحاولة",
+        remove: "إزالة",
+        removeTitle: "إزالة {{name}}؟",
+        removeMessage:
+          "سيؤدي هذا إلى إزالة الإضافة من Paseo. يتم الاحتفاظ بمجلدات المصدر غير المضغوطة.",
+        loading: "جارٍ تحميل الإضافات...",
+        empty: "لا توجد إضافات مثبتة.",
+        unpackedHint: "حمّل إضافة من مجلد يحتوي على manifest.json.",
+        loadUnpacked: "تحميل إضافة غير مضغوطة",
+        unavailable: "الإضافات غير متاحة. حدّث تطبيق سطح المكتب.",
+      },
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
@@ -2713,6 +2976,7 @@ export const ar: TranslationResources = {
       searchPlaceholder: "البحث في الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",
       capturePrompt: "اضغط على الاختصار...",
+      captureIndexPrompt: "اختم برقم من 1 إلى 9.",
       unassigned: "غير معين",
       actions: {
         menu: "إجراءات {{name}}",

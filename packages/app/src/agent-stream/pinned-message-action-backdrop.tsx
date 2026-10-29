@@ -8,7 +8,7 @@ export function PinnedMessageActionBackdrop() {
 
 const styles = StyleSheet.create((theme) => ({
   actions: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: theme.colors.surface0,
     borderRadius: theme.borderRadius.lg,
   },

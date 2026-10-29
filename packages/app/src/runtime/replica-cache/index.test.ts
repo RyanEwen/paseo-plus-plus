@@ -1,15 +1,27 @@
+import { REPLICA_SINGLETON_ROW_ID } from "./row-store-schema";
 import { describe, expect, it } from "vitest";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import {
+  AgentSnapshotPayloadSchema,
+  WorkspaceDescriptorPayloadSchema,
+  type WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   type Agent,
 } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { ReplicaCache } from ".";
 import type { DirectoryCheckpoint } from "@/runtime/replica-cache";
-import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
+import type {
+  ReplicaHostRows,
+  ReplicaRow,
+  ReplicaRowChanges,
+  ReplicaRowExpectation,
+  ReplicaRowStore,
+} from "./row-store";
 
 const SERVER_ID = "cached-host";
 
@@ -29,6 +41,9 @@ class MemoryStorage implements ReplicaRowStore {
     kinds: readonly ReplicaRow["kind"][];
     ids?: readonly string[];
   }> = [];
+  beforeConditionalApply: (() => void | Promise<void>) | null = null;
+  beforeApply: (() => void | Promise<void>) | null = null;
+  reverseReadResults = false;
   writes = 0;
   cleanups = 0;
   nextWriteFailure: Error | null = null;
@@ -59,12 +74,13 @@ class MemoryStorage implements ReplicaRowStore {
     await this.readGate;
     const acceptedKinds = new Set(kinds);
     const acceptedIds = ids ? new Set(ids) : null;
-    return [...this.rows.values()].filter(
+    const result = [...this.rows.values()].filter(
       (row) =>
         row.serverId === serverId &&
         acceptedKinds.has(row.kind) &&
         (!acceptedIds || acceptedIds.has(row.id)),
     );
+    return this.reverseReadResults ? result.toReversed() : result;
   }
 
   async readAll(): Promise<ReplicaHostRows[]> {
@@ -78,6 +94,9 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async apply(changes: ReplicaRowChanges): Promise<void> {
+    const before = this.beforeApply;
+    this.beforeApply = null;
+    if (before) await before();
     this.writes += 1;
     if (this.persistentWriteFailure) throw this.persistentWriteFailure;
     if (this.nextWriteFailure) {
@@ -88,6 +107,26 @@ class MemoryStorage implements ReplicaRowStore {
     this.changes.push(changes);
     for (const key of changes.deletes) this.rows.delete(this.key(key));
     for (const row of changes.upserts) this.rows.set(this.key(row), row);
+  }
+
+  async applyIfUnchanged(
+    changes: ReplicaRowChanges,
+    expected: readonly ReplicaRowExpectation[],
+  ): Promise<boolean> {
+    const before = this.beforeConditionalApply;
+    this.beforeConditionalApply = null;
+    await before?.();
+    for (const condition of expected) {
+      const current = this.rows.get(this.key(condition));
+      if (
+        condition.payload === null
+          ? current !== undefined
+          : current === undefined || current.payload !== condition.payload
+      )
+        return false;
+    }
+    await this.apply(changes);
+    return true;
   }
 
   async deleteHost(serverId: string): Promise<void> {
@@ -255,7 +294,644 @@ function deleteDirectory(cache: ReplicaCache, serverId: string): void {
   ]);
 }
 
+async function cacheWithCorruptCurrentBackground() {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const checkpoint = {
+    agents: { generation: "g", afterSeq: 12 },
+    projects: { generation: "g", afterSeq: 4 },
+    workspaces: { generation: "g", afterSeq: 8 },
+  };
+  const baseline = directory(checkpoint);
+  commitDirectory(writer, SERVER_ID, baseline);
+  writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+  await writer.flush();
+  const key = `${SERVER_ID}:workspace:workspace-1`;
+  const row = storage.rows.get(key)!;
+  const payload = JSON.parse(row.payload) as Record<string, unknown>;
+  delete payload.background;
+  storage.rows.set(key, { ...row, payload: JSON.stringify(payload) });
+
+  return { storage, baseline, reader: createCache(storage) };
+}
+
+async function expectCurrentWorkspaceRefresh({
+  storage,
+  baseline,
+  reader,
+}: Awaited<ReturnType<typeof cacheWithCorruptCurrentBackground>>): Promise<void> {
+  const restored = await reader.readDirectory(SERVER_ID);
+  expect(restored.workspaces.size).toBe(0);
+  expect(restored.checkpoint).toEqual({
+    agents: baseline.checkpoint.agents,
+    projects: baseline.checkpoint.projects,
+  });
+  expect(restored.agents).toEqual(baseline.agents);
+  expect(restored.projects).toEqual(baseline.projects);
+  expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+  expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+    restored.checkpoint,
+  );
+
+  baseline.workspaces.set(
+    "workspace-1",
+    normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+  );
+  reader.replaceDirectoryBaseline(SERVER_ID, baseline);
+  await reader.flush();
+  const refreshed = await createCache(storage).readDirectory(SERVER_ID);
+  expect(refreshed.workspaces.get("workspace-1")?.background).toBe(true);
+  expect(refreshed.checkpoint).toEqual(baseline.checkpoint);
+}
+
 describe("ReplicaCache", () => {
+  it.each([
+    {
+      label: "project pin",
+      projectPinnedAt: "2026-10-26T12:00:00.000Z",
+      pinnedAt: null,
+      storedPinPresent: true,
+      restoredPin: "2026-10-26T12:00:00.000Z",
+    },
+    {
+      label: "global pin",
+      projectPinnedAt: null,
+      pinnedAt: "2026-10-25T12:00:00.000Z",
+      storedPinPresent: true,
+      restoredPin: null,
+    },
+    {
+      label: "older row without project pin metadata",
+      projectPinnedAt: undefined,
+      pinnedAt: null,
+      storedPinPresent: false,
+      restoredPin: null,
+    },
+  ])(
+    "retains $label through persisted workspace cache hydration without read-repair writes",
+    async ({ projectPinnedAt, pinnedAt, storedPinPresent, restoredPin }) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const checkpoint = {
+        projects: { generation: "project-generation", afterSeq: 7 },
+        workspaces: { generation: "workspace-generation", afterSeq: 17 },
+        agents: { generation: "agent-generation", afterSeq: 29 },
+      };
+      const baseline = directory(checkpoint);
+      const cachedWorkspace = {
+        ...normalizeWorkspaceDescriptor({
+          ...workspacePayload(),
+          title: "Cached pin metadata",
+          labels: ["triage"],
+          pinnedAt,
+          humanAttentionRequired: true,
+        }),
+        projectPinnedAt,
+      };
+      baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
+      writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+      writer.commitTimeline(SERVER_ID, "agent-1", timeline("Preserved sibling timeline"));
+      await writer.flush();
+      const storedWorkspace = storage.rows.get(`${SERVER_ID}:workspace:workspace-1`);
+      if (!storedWorkspace)
+        throw new Error("Expected the real writer to persist its workspace row");
+      expect(storedWorkspace.payload.includes('"projectPinnedAt"')).toBe(storedPinPresent);
+      const rowsBeforeRead = Array.from(storage.rows.values(), (row) => Object.assign({}, row));
+      const writesBeforeRead = storage.writes;
+      const reader = createCache(storage);
+      const restored = await reader.readDirectory(SERVER_ID);
+      expect(restored.workspaces.get("workspace-1")).toMatchObject({
+        projectPinnedAt: restoredPin,
+        pinnedAt,
+        title: "Cached pin metadata",
+        labels: ["triage"],
+        humanAttentionRequired: true,
+      });
+      expect(restored.checkpoint).toEqual(checkpoint);
+      expect(restored.agents).toEqual(baseline.agents);
+      expect(restored.projects).toEqual(baseline.projects);
+      expect((await reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace).toMatchObject({
+        projectPinnedAt: restoredPin,
+        pinnedAt,
+      });
+      expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(
+        timeline("Preserved sibling timeline"),
+      );
+      await reader.flush();
+      expect(storage.writes).toBe(writesBeforeRead);
+      expect([...storage.rows.values()]).toEqual(rowsBeforeRead);
+    },
+  );
+  it("reads a healthy sibling during agent checkpoint streams after workspace repair", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    cached.reader.commitDirectoryMutations(SERVER_ID, [
+      {
+        kind: "workspace",
+        type: "upsert",
+        id: "sibling",
+        value: normalizeWorkspaceDescriptor({
+          ...workspacePayload(),
+          id: "sibling",
+          background: true,
+        }),
+      },
+    ]);
+    await cached.reader.flush();
+    await cached.reader.readDirectory(SERVER_ID);
+    cached.storage.reads.length = 0;
+    const writes = cached.storage.writes;
+    let chunks = 0;
+    cached.storage.onRead = () => {
+      chunks += 1;
+      cached.reader.commitDirectoryMutations(
+        SERVER_ID,
+        [{ kind: "agent", type: "upsert", id: "agent-2", value: agent("agent-2") }],
+        { ...cached.baseline.checkpoint, agents: { generation: "stream", afterSeq: chunks } },
+      );
+    };
+    expect((await cached.reader.readWorkspace(SERVER_ID, "sibling"))?.workspace.background).toBe(
+      true,
+    );
+    expect(chunks).toBe(2);
+    expect(cached.storage.reads).toHaveLength(2);
+    expect(cached.storage.writes - writes).toBe(1);
+    cached.storage.onRead = null;
+    await cached.reader.flush();
+  });
+
+  it("retains repair invalidation when another host merges into its namespace", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const renamed = SERVER_ID;
+    cached.reader.setHosts([SERVER_ID, "alias-host"]);
+    const checkpoint = {
+      ...cached.baseline.checkpoint,
+      agents: { generation: "renamed-agent", afterSeq: 77 },
+    };
+    cached.storage.beforeConditionalApply = () => {
+      cached.reader.commitDirectoryMutations(SERVER_ID, [], checkpoint);
+      cached.reader.reconcileServerId("alias-host", renamed);
+    };
+    await cached.reader.readDirectory(SERVER_ID);
+    await cached.reader.flush();
+    const reopened = new ReplicaCache(cached.storage, noLegacyCleanup);
+    reopened.setHosts([renamed]);
+    const restored = await reopened.readDirectory(renamed);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({
+      agents: checkpoint.agents,
+      projects: checkpoint.projects,
+    });
+    expect(await cached.storage.read("alias-host", ["workspace", "checkpoint"])).toEqual([]);
+    cached.baseline.workspaces.set(
+      "workspace-1",
+      normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+    );
+    cached.reader.replaceDirectoryBaseline(renamed, cached.baseline);
+    await cached.reader.flush();
+    expect((await reopened.readDirectory(renamed)).workspaces.get("workspace-1")?.background).toBe(
+      true,
+    );
+    expect((await reopened.readDirectory(renamed)).checkpoint).toEqual(cached.baseline.checkpoint);
+  });
+
+  it.each(["insert", "remove", "change"] as const)(
+    "revalidates workspace checkpoint authority on %s",
+    async (change) => {
+      const storage = new MemoryStorage();
+      const initial = directory({
+        agents: { generation: "a", afterSeq: 1 },
+        ...(change === "insert" ? {} : { workspaces: { generation: "w", afterSeq: 1 } }),
+      });
+      const cache = createCache(storage);
+      cache.replaceDirectoryBaseline(SERVER_ID, initial);
+      await cache.flush();
+      const updated = {
+        agents: initial.checkpoint.agents,
+        ...(change === "remove"
+          ? {}
+          : { workspaces: { generation: "new-workspace", afterSeq: 2 } }),
+      };
+      storage.reads.length = 0;
+      storage.onRead = () => {
+        storage.onRead = null;
+        cache.commitDirectoryMutations(SERVER_ID, [], updated);
+      };
+      expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.id).toBe(
+        "workspace-1",
+      );
+      expect(storage.reads).toHaveLength(3);
+      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(updated);
+    },
+  );
+
+  it("carries repair cursor invalidation through a rename accepted during CAS", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const renamed = "renamed-host";
+    const checkpoint = {
+      ...cached.baseline.checkpoint,
+      agents: { generation: "renamed-agent", afterSeq: 77 },
+    };
+    cached.storage.beforeConditionalApply = () => {
+      cached.reader.commitDirectoryMutations(SERVER_ID, [], checkpoint);
+      cached.reader.reconcileServerId(SERVER_ID, renamed);
+    };
+    await cached.reader.readDirectory(SERVER_ID);
+    await cached.reader.flush();
+    const reopened = new ReplicaCache(cached.storage, noLegacyCleanup);
+    reopened.setHosts([renamed]);
+    const restored = await reopened.readDirectory(renamed);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({
+      agents: checkpoint.agents,
+      projects: checkpoint.projects,
+    });
+    expect(await cached.storage.read(SERVER_ID, ["workspace", "checkpoint"])).toEqual([]);
+    cached.baseline.workspaces.set(
+      "workspace-1",
+      normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+    );
+    cached.reader.replaceDirectoryBaseline(renamed, cached.baseline);
+    await cached.reader.flush();
+    expect((await reopened.readDirectory(renamed)).workspaces.get("workspace-1")?.background).toBe(
+      true,
+    );
+    expect((await reopened.readDirectory(renamed)).checkpoint).toEqual(cached.baseline.checkpoint);
+  });
+
+  it.each(["insert", "remove", "change"] as const)(
+    "revalidates workspace checkpoint authority on %s",
+    async (change) => {
+      const storage = new MemoryStorage();
+      const initial = directory({
+        agents: { generation: "a", afterSeq: 1 },
+        ...(change === "insert" ? {} : { workspaces: { generation: "w", afterSeq: 1 } }),
+      });
+      const cache = createCache(storage);
+      cache.replaceDirectoryBaseline(SERVER_ID, initial);
+      await cache.flush();
+      const updated = {
+        agents: initial.checkpoint.agents,
+        ...(change === "remove"
+          ? {}
+          : { workspaces: { generation: "new-workspace", afterSeq: 2 } }),
+      };
+      storage.reads.length = 0;
+      storage.onRead = () => {
+        storage.onRead = null;
+        cache.commitDirectoryMutations(SERVER_ID, [], updated);
+      };
+      expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.id).toBe(
+        "workspace-1",
+      );
+      expect(storage.reads).toHaveLength(3);
+      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(updated);
+    },
+  );
+
+  it("does not invalidate workspace reads for unrelated workspace and project IDs", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    cache.replaceDirectoryBaseline(SERVER_ID, directory());
+    await cache.flush();
+    storage.reads.length = 0;
+    let changes = 0;
+    storage.onRead = () => {
+      changes += 1;
+      cache.commitDirectoryMutations(SERVER_ID, [
+        {
+          kind: "workspace",
+          type: "upsert",
+          id: "other-workspace",
+          value: normalizeWorkspaceDescriptor({ ...workspacePayload(), id: "other-workspace" }),
+        },
+        {
+          kind: "project",
+          type: "upsert",
+          id: "other-project",
+          value: normalizeProjectDescriptor({
+            projectId: "other-project",
+            projectDisplayName: "Other",
+            projectRootPath: "/other",
+            projectKind: "git",
+          }),
+        },
+      ]);
+    };
+    const writes = storage.writes;
+    expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.project?.projectId).toBe(
+      "project-1",
+    );
+    expect(changes).toBe(2);
+    expect(storage.reads).toHaveLength(2);
+    expect(storage.writes - writes).toBe(1);
+    storage.onRead = null;
+    await cache.flush();
+  });
+
+  it("keeps repaired workspace cursors invalid across concurrent and later stale checkpoints", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const newer = {
+      ...cached.baseline.checkpoint,
+      agents: { generation: "new-agent", afterSeq: 99 },
+    };
+    cached.storage.beforeConditionalApply = () =>
+      cached.reader.commitDirectoryMutations(
+        SERVER_ID,
+        [{ kind: "agent", type: "upsert", id: "agent-1", value: agent() }],
+        newer,
+      );
+    await cached.reader.readDirectory(SERVER_ID);
+    await cached.reader.flush();
+    let restored = await createCache(cached.storage).readDirectory(SERVER_ID);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({ agents: newer.agents, projects: newer.projects });
+    cached.reader.commitDirectoryMutations(SERVER_ID, [], newer);
+    await cached.reader.flush();
+    restored = await createCache(cached.storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual({ agents: newer.agents, projects: newer.projects });
+    expect(await cached.reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+  });
+
+  it("allows a complete baseline with the same cursor accepted during repair", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    cached.baseline.workspaces.set(
+      "workspace-1",
+      normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+    );
+    cached.storage.beforeConditionalApply = () =>
+      cached.reader.replaceDirectoryBaseline(SERVER_ID, cached.baseline);
+    await cached.reader.readDirectory(SERVER_ID);
+    await cached.reader.flush();
+    const restored = await createCache(cached.storage).readDirectory(SERVER_ID);
+    expect(restored.workspaces.get("workspace-1")?.background).toBe(true);
+    expect(restored.checkpoint).toEqual(cached.baseline.checkpoint);
+    cached.reader.commitDirectoryMutations(SERVER_ID, [], cached.baseline.checkpoint);
+    await cached.reader.flush();
+    expect((await createCache(cached.storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+      cached.baseline.checkpoint,
+    );
+  });
+
+  it.each(["mismatch", "error"] as const)("creates no cursor fence on CAS %s", async (outcome) => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const workspace = normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true });
+    cached.baseline.workspaces.set("workspace-1", workspace);
+    if (outcome === "error") cached.storage.nextWriteFailure = new Error("repair failed");
+    else
+      cached.storage.beforeConditionalApply = async () => {
+        const peer = createCache(cached.storage);
+        peer.replaceDirectoryBaseline(SERVER_ID, cached.baseline);
+        await peer.flush();
+      };
+    await cached.reader.readDirectory(SERVER_ID);
+    cached.reader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "workspace", type: "upsert", id: "workspace-1", value: workspace }],
+      cached.baseline.checkpoint,
+    );
+    await cached.reader.flush();
+    expect((await createCache(cached.storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+      cached.baseline.checkpoint,
+    );
+  });
+
+  it("rebuilds budget accounting after committed repair invalidates read publication", async () => {
+    const other = "other-host";
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage, noLegacyCleanup);
+    writer.setHosts([SERVER_ID, other]);
+    commitDirectory(writer, SERVER_ID, directory());
+    commitDirectory(writer, other, directory());
+    await writer.flush();
+    storage.rows.set(`${SERVER_ID}:agent:agent-1`, {
+      serverId: SERVER_ID,
+      kind: "agent",
+      id: "agent-1",
+      payload: `{${"x".repeat(5000)}`,
+    });
+    const bytes = [...storage.rows.values()].reduce(
+      (sum, row) => sum + Buffer.byteLength(row.payload),
+      0,
+    );
+    const cache = new ReplicaCache(storage, { ...noLegacyCleanup, maxBytes: bytes + 100 });
+    cache.setHosts([SERVER_ID, other]);
+    commitDirectory(cache, other, directory());
+    await cache.flush();
+    storage.beforeConditionalApply = () =>
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline("x".repeat(1000)));
+    expect(await cache.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    await cache.flush();
+    expect(storage.rows.has(`${SERVER_ID}:agent:agent-1`)).toBe(false);
+    expect(storage.rows.has(`${other}:agent:agent-1`)).toBe(true);
+    expect((await createCache(storage).readTimeline(SERVER_ID, "agent-1"))?.items).toEqual(
+      timeline("x".repeat(1000)).items,
+    );
+  });
+
+  it.each([null, undefined, 42])(
+    "returns a bounded miss for non-string checkpoint payload %s",
+    async (payload) => {
+      const cached = await cacheWithCorruptCurrentBackground();
+      const key = `${SERVER_ID}:checkpoint:singleton`;
+      const row = cached.storage.rows.get(key)!;
+      cached.storage.rows.set(key, { ...row, payload: payload as unknown as string });
+      const before = await cached.storage.readAll();
+      cached.storage.readLimit = 4;
+      expect((await cached.reader.readDirectory(SERVER_ID)).checkpoint).toBeUndefined();
+      expect(await cached.reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+      expect(await cached.storage.readAll()).toEqual(before);
+      expect(cached.storage.reads.length).toBeLessThanOrEqual(4);
+    },
+  );
+
+  it.each(["directory", "workspace"] as const)(
+    "repairs current-cache missing background with %s-first reads",
+    async (first) => {
+      const cached = await cacheWithCorruptCurrentBackground();
+      if (first === "workspace")
+        expect(await cached.reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+      await expectCurrentWorkspaceRefresh(cached);
+    },
+  );
+
+  it.each([false, true])(
+    "validates current checkpoint authority independently of row order (%s)",
+    async (reverse) => {
+      const cached = await cacheWithCorruptCurrentBackground();
+      cached.storage.reverseReadResults = reverse;
+      await expectCurrentWorkspaceRefresh(cached);
+    },
+  );
+
+  it.each(["directory", "workspace"] as const)(
+    "retains provisional legacy rows and timelines with %s-first reads",
+    async (first) => {
+      const cached = await cacheWithCorruptCurrentBackground();
+      const key = `${SERVER_ID}:checkpoint:singleton`;
+      const checkpoint = cached.storage.rows.get(key)!;
+      cached.storage.rows.set(key, {
+        ...checkpoint,
+        payload: JSON.stringify({ version: 1, cursors: cached.baseline.checkpoint }),
+      });
+      if (first === "workspace")
+        expect((await cached.reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.id).toBe(
+          "workspace-1",
+        );
+      const restored = await cached.reader.readDirectory(SERVER_ID);
+      expect(restored.workspaces.has("workspace-1")).toBe(true);
+      expect(restored.checkpoint).toBeUndefined();
+      expect(await cached.reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+      expect(await cached.storage.read(SERVER_ID, ["checkpoint"])).toEqual([]);
+      expect(
+        JSON.parse(cached.storage.rows.get(`${SERVER_ID}:workspace:workspace-1`)!.payload),
+      ).not.toHaveProperty("background");
+      const reopened = createCache(cached.storage);
+      reopened.commitDirectoryMutations(SERVER_ID, [], {
+        agents: cached.baseline.checkpoint.agents,
+      });
+      await reopened.flush();
+      const provisional = await createCache(cached.storage).readDirectory(SERVER_ID);
+      expect(provisional.workspaces.has("workspace-1")).toBe(true);
+      expect(provisional.checkpoint).toEqual({ agents: cached.baseline.checkpoint.agents });
+    },
+  );
+
+  it("preserves valid siblings when repairing one current workspace", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const peer = createCache(cached.storage);
+    peer.commitDirectoryMutations(SERVER_ID, [
+      {
+        kind: "workspace",
+        type: "upsert",
+        id: "sibling",
+        value: normalizeWorkspaceDescriptor({
+          ...workspacePayload(),
+          id: "sibling",
+          background: true,
+        }),
+      },
+    ]);
+    await peer.flush();
+    const restored = await cached.reader.readDirectory(SERVER_ID);
+    expect([...restored.workspaces.keys()]).toEqual(["sibling"]);
+    expect(restored.workspaces.get("sibling")?.background).toBe(true);
+    expect(restored.agents).toEqual(cached.baseline.agents);
+    expect(restored.projects).toEqual(cached.baseline.projects);
+    expect(restored.checkpoint).toEqual({
+      agents: cached.baseline.checkpoint.agents,
+      projects: cached.baseline.checkpoint.projects,
+    });
+  });
+
+  it.each(["directory", "workspace"] as const)(
+    "rereads a replacement baseline instead of applying stale %s repair",
+    async (first) => {
+      const cached = await cacheWithCorruptCurrentBackground();
+      const baseline = directory({
+        ...cached.baseline.checkpoint,
+        workspaces: { generation: "new", afterSeq: 99 },
+      });
+      baseline.workspaces.set(
+        "workspace-1",
+        normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+      );
+      cached.storage.beforeConditionalApply = async () => {
+        const peer = createCache(cached.storage);
+        peer.replaceDirectoryBaseline(SERVER_ID, baseline);
+        await peer.flush();
+      };
+      if (first === "workspace")
+        expect(
+          (await cached.reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.background,
+        ).toBe(true);
+      const restored = await cached.reader.readDirectory(SERVER_ID);
+      expect(restored.workspaces.get("workspace-1")?.background).toBe(true);
+      expect(restored.checkpoint).toEqual(baseline.checkpoint);
+      expect((await createCache(cached.storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+        baseline.checkpoint,
+      );
+    },
+  );
+
+  it("rereads locally accepted pending replacement instead of publishing a stale repair", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const baseline = directory({
+      ...cached.baseline.checkpoint,
+      workspaces: { generation: "new", afterSeq: 99 },
+    });
+    baseline.workspaces.set(
+      "workspace-1",
+      normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+    );
+    cached.storage.beforeConditionalApply = () =>
+      cached.reader.replaceDirectoryBaseline(SERVER_ID, baseline);
+    const restored = await cached.reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.get("workspace-1")?.background).toBe(true);
+    expect(restored.checkpoint).toEqual(baseline.checkpoint);
+  });
+
+  it("does not resurrect rows after host removal and re-addition during repair", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    cached.storage.beforeConditionalApply = () => {
+      cached.reader.setHosts([]);
+      cached.reader.setHosts([SERVER_ID]);
+    };
+    const restored = await cached.reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toBeUndefined();
+    expect(await cached.storage.readAll()).toEqual([]);
+  });
+
+  it("fails closed on conditional storage failure without spinning or altering durable rows", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    const before = await cached.storage.readAll();
+    cached.storage.nextWriteFailure = new Error("conditional repair failed");
+    cached.storage.readLimit = 8;
+    const restored = await cached.reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toBeUndefined();
+    expect(await cached.storage.readAll()).toEqual(before);
+    expect(cached.storage.reads.length).toBeLessThanOrEqual(8);
+    cached.storage.readLimit = null;
+    await expectCurrentWorkspaceRefresh(cached);
+  });
+
+  it.each([true, false, undefined])(
+    "preserves background visibility (%s) when reopening a cached workspace",
+    async (background) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const baseline = directory();
+      baseline.workspaces.set(
+        "workspace-1",
+        normalizeWorkspaceDescriptor({ ...workspacePayload(), background }),
+      );
+      commitDirectory(writer, SERVER_ID, baseline);
+      await writer.flush();
+
+      const reader = createCache(storage);
+      expect(
+        (await reader.readDirectory(SERVER_ID)).workspaces.get("workspace-1")?.background,
+      ).toBe(background ?? false);
+      expect((await reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.background).toBe(
+        background ?? false,
+      );
+    },
+  );
+
+  it("refetches workspaces cached without background visibility after a directory read", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+
+    await expectCurrentWorkspaceRefresh(cached);
+  });
+
+  it("refetches workspaces cached without background visibility after a workspace read", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+
+    expect(await cached.reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    await expectCurrentWorkspaceRefresh(cached);
+  });
+
   it("rejects pre-baseline-fix checkpoints without discarding cached rows or timelines", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -372,6 +1048,90 @@ describe("ReplicaCache", () => {
     expect(restoredDirectory.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 12 } });
     expect(restoredTimeline).toEqual(timeline());
   });
+
+  it.each([
+    { label: "agent false, workspace true", agentAttention: false, workspaceAttention: true },
+    { label: "agent true, workspace absent", agentAttention: true, workspaceAttention: undefined },
+    {
+      label: "agent absent, workspace false",
+      agentAttention: undefined,
+      workspaceAttention: false,
+    },
+  ])(
+    "T53 attention metadata cache roundtrip preserves $label",
+    async ({ agentAttention, workspaceAttention }) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const baseline = directory({
+        agents: { generation: "agents-current", afterSeq: 12 },
+        workspaces: { generation: "workspaces-current", afterSeq: 24 },
+      });
+      // JSON omission models older wire/cache rows without replacing absence with false.
+      const agentWire = JSON.parse(
+        JSON.stringify({
+          ...projectAgentSnapshot(agent()),
+          status: "error",
+          requiresAttention: true,
+          humanAttentionRequired: agentAttention,
+        }),
+      );
+      const normalizedAgent = normalizeAgentSnapshot(
+        AgentSnapshotPayloadSchema.parse(agentWire),
+        SERVER_ID,
+      );
+      const workspaceWire = JSON.parse(
+        JSON.stringify({
+          ...workspacePayload(),
+          id: " workspace-1 ",
+          background: false,
+          status: "needs_input",
+          humanAttentionRequired: workspaceAttention,
+        }),
+      );
+      const normalizedWorkspace = normalizeWorkspaceDescriptor(
+        WorkspaceDescriptorPayloadSchema.parse(workspaceWire),
+      );
+      expect(normalizedAgent.humanAttentionRequired).toBe(agentAttention);
+      expect(normalizedWorkspace.humanAttentionRequired).toBe(workspaceAttention);
+      expect(normalizedWorkspace.id).toBe("workspace-1");
+      baseline.agents.set(normalizedAgent.id, normalizedAgent);
+      baseline.workspaces.set(normalizedWorkspace.id, normalizedWorkspace);
+      commitDirectory(writer, SERVER_ID, baseline);
+      await writer.flush();
+      const writes = storage.writes;
+
+      // A new reader must recover persisted metadata rather than the writer's in-memory objects.
+      const reader = createCache(storage);
+      const restored = await reader.readDirectory(SERVER_ID);
+      expect([...restored.agents.keys()]).toEqual(["agent-1"]);
+      expect([...restored.workspaces.keys()]).toEqual(["workspace-1"]);
+      const workspaceKey = resolveWorkspaceMapKeyByIdentity({
+        workspaces: restored.workspaces,
+        workspaceId: normalizedAgent.workspaceId,
+      });
+      expect(workspaceKey).toBe("workspace-1");
+      const restoredWorkspace = workspaceKey ? restored.workspaces.get(workspaceKey) : undefined;
+      expect(restored.agents.get("agent-1")).toMatchObject({
+        id: "agent-1",
+        workspaceId: "workspace-1",
+        status: "error",
+        requiresAttention: true,
+      });
+      expect(restored.agents.get("agent-1")?.humanAttentionRequired).toBe(agentAttention);
+      expect(restoredWorkspace).toMatchObject({ id: "workspace-1", status: "needs_input" });
+      expect(restoredWorkspace?.humanAttentionRequired).toBe(workspaceAttention);
+      expect(restored.checkpoint).toEqual(baseline.checkpoint);
+
+      const directReader = createCache(storage);
+      const directAgent = await directReader.readAgent(SERVER_ID, "agent-1");
+      const directWorkspace = await directReader.readWorkspace(SERVER_ID, "workspace-1");
+      expect(directAgent?.id).toBe("agent-1");
+      expect(directAgent?.humanAttentionRequired).toBe(agentAttention);
+      expect(directWorkspace?.workspace.id).toBe("workspace-1");
+      expect(directWorkspace?.workspace.humanAttentionRequired).toBe(workspaceAttention);
+      expect(storage.writes).toBe(writes);
+    },
+  );
 
   it("preserves pending timeline updates across directory baseline replacement", async () => {
     const storage = new MemoryStorage();
@@ -518,6 +1278,19 @@ describe("ReplicaCache", () => {
     expect((await cache.readDirectory(SERVER_ID)).projects.size).toBe(0);
   });
 
+  it("does not return an accepted agent that storage rejected", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.persistentWriteFailure = new Error("disk unavailable");
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+
+    const result = await cache.readAgent(SERVER_ID, "agent-1");
+
+    expect(storage.rows.size).toBe(0);
+    expect(result).toBeUndefined();
+  });
+
   it("fails closed when an accepted deletion cannot be persisted before a read", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -558,6 +1331,25 @@ describe("ReplicaCache", () => {
     expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.id).toBe("workspace-1");
   });
 
+  it("discards an in-flight read across host removal and reactivation", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    const started = deferred();
+    const release = deferred();
+    storage.onRead = started.resolve;
+    storage.readGate = release.promise;
+
+    const reading = cache.readAgent(SERVER_ID, "agent-1");
+    await started.promise;
+    cache.setHosts([]);
+    cache.setHosts([SERVER_ID]);
+    release.resolve();
+
+    expect(await reading).toBeUndefined();
+  });
+
   it("discards a durable read when the host changes while it is in flight", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -574,6 +1366,36 @@ describe("ReplicaCache", () => {
     release.resolve();
 
     expect(await reading).toBeUndefined();
+  });
+
+  it("retries a timeline read when that same timeline changes in flight", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Old"));
+    await cache.flush();
+    storage.onRead = () => {
+      storage.onRead = null;
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline("New"));
+    };
+
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
+    expect(storage.reads).toHaveLength(2);
+  });
+
+  it("discards a requested row removed by a directory baseline replacement in flight", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    const replacement = directory();
+    replacement.agents.clear();
+    storage.onRead = () => {
+      storage.onRead = null;
+      cache.replaceDirectoryBaseline(SERVER_ID, replacement);
+    };
+
+    expect(await cache.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    expect(storage.reads).toHaveLength(2);
   });
 
   it("never reads a timeline older than an accepted deferred replacement", async () => {
@@ -688,7 +1510,11 @@ describe("ReplicaCache", () => {
     expect(restored?.workspace.id).toBe("workspace-1");
     expect(restored?.project?.projectId).toBe("project-1");
     expect(storage.reads).toEqual([
-      { serverId: SERVER_ID, kinds: ["workspace"], ids: ["workspace-1"] },
+      {
+        serverId: SERVER_ID,
+        kinds: ["workspace", "checkpoint"],
+        ids: ["workspace-1", REPLICA_SINGLETON_ROW_ID],
+      },
       { serverId: SERVER_ID, kinds: ["project"], ids: ["project-1"] },
     ]);
   });
@@ -850,7 +1676,7 @@ describe("ReplicaCache", () => {
     ]);
   });
 
-  it("retries a timeline read invalidated by a concurrent directory commit", async () => {
+  it("reads a persisted timeline across a concurrent directory commit", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
     cache.commitTimeline(SERVER_ID, "agent-1", timeline("Persisted timeline"));
@@ -912,6 +1738,90 @@ describe("ReplicaCache", () => {
 
     expect(storage.cleanups).toBe(1);
   });
+
+  describe.each(["timeline", "directory"] as const)(
+    "while another agent streams %s updates",
+    (kind) => {
+      async function streamingCache() {
+        const storage = new MemoryStorage();
+        const cache = createCache(storage);
+        commitDirectory(cache, SERVER_ID, directory());
+        cache.commitTimeline(SERVER_ID, "agent-1", timeline());
+        await cache.flush();
+        const readsBefore = storage.reads.length;
+        const writesBefore = storage.writes;
+        let chunks = 0;
+        storage.onRead = () => {
+          if (chunks >= 200) return;
+          chunks += 1;
+          if (kind === "timeline") {
+            cache.commitTimeline(SERVER_ID, "agent-2", {
+              ...timeline(`chunk ${chunks}`),
+              agentId: "agent-2",
+            });
+          } else {
+            cache.commitDirectoryMutations(
+              SERVER_ID,
+              [{ type: "upsert", kind: "agent", id: "agent-2", value: agent("agent-2") }],
+              { agents: { generation: "g", afterSeq: 12 + chunks } },
+            );
+          }
+        };
+        return {
+          cache,
+          expectReads: (count: number, writes = 0) => {
+            expect(storage.reads.length - readsBefore).toBe(count);
+            expect(storage.writes - writesBefore).toBe(writes);
+            expect(chunks).toBe(count);
+          },
+        };
+      }
+
+      it("reads another cached agent without waiting for the stream to stop", async () => {
+        const { cache, expectReads } = await streamingCache();
+
+        expect((await cache.readAgent(SERVER_ID, "agent-1"))?.title).toBe("Cached agent");
+        expectReads(1);
+        await cache.flush();
+      });
+
+      it("reads another cached workspace without waiting for the stream to stop", async () => {
+        const { cache, expectReads } = await streamingCache();
+
+        expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.name).toBe("main");
+        expectReads(2, 1);
+        await cache.flush();
+      });
+
+      it("reads another cached timeline without waiting for the stream to stop", async () => {
+        const { cache, expectReads } = await streamingCache();
+
+        expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+        expectReads(1);
+        await cache.flush();
+      });
+    },
+  );
+
+  it("reads the directory after persisting a pending baseline replacement", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await cache.flush();
+    const replacement = directory({ agents: { generation: "g2", afterSeq: 1 } });
+    replacement.projects.clear();
+    replacement.agents.set("agent-2", agent("agent-2"));
+    cache.replaceDirectoryBaseline(SERVER_ID, replacement);
+
+    const read = await cache.readDirectory(SERVER_ID);
+
+    expect([...read.agents.keys()].sort()).toEqual(["agent-1", "agent-2"]);
+    expect(read.projects.size).toBe(0);
+    expect(read.checkpoint).toEqual({ agents: { generation: "g2", afterSeq: 1 } });
+    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+    expect(storage.writes).toBe(2);
+  });
 });
 
 it("retains semantic agent messages across disk-cache reconstruction", async () => {
@@ -945,4 +1855,562 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   writer.commitTimeline(SERVER_ID, "agent-1", value);
   await writer.flush();
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+});
+
+it("retains the audience decision across offline agent and workspace restoration", async () => {
+  const storage = new MemoryStorage();
+  const cache = createCache(storage);
+  const baseline = directory();
+  const cachedAgent = agent();
+  cachedAgent.humanAttentionRequired = false;
+  cachedAgent.attentionMessage = "Intervention reason";
+  baseline.agents.set(cachedAgent.id, cachedAgent);
+  const cachedWorkspace = normalizeWorkspaceDescriptor({
+    ...workspacePayload(),
+    status: "failed",
+    humanAttentionRequired: false,
+  });
+  baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
+  commitDirectory(cache, SERVER_ID, baseline);
+  await cache.flush();
+  const restored = await createCache(storage).readDirectory(SERVER_ID);
+  expect(restored.agents.get(cachedAgent.id)).toMatchObject({
+    humanAttentionRequired: false,
+    attentionMessage: "Intervention reason",
+  });
+  expect(restored.workspaces.get(cachedWorkspace.id)).toMatchObject({
+    status: "failed",
+    humanAttentionRequired: false,
+  });
+});
+
+describe("Workspace receipt cache coverage", () => {
+  const receiptState = {
+    latestSequence: 4,
+    acknowledgedThrough: 2,
+    dismissedSequences: [4],
+    lastWorkspaceReadId: "read-elsewhere",
+    attentionEvents: { "agent-1": { sequence: 3, timestamp: "2026-10-27T10:00:00.000Z" } },
+  };
+
+  it("retains the complete receipt projection alongside a current cursor across both directory and targeted reads", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      projects: { generation: "g", afterSeq: 6 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    const baseline = directory(cursors);
+    baseline.workspaces.get("workspace-1")!.notificationReceipts = receiptState;
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await writer.flush();
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.get("workspace-1")?.notificationReceipts).toEqual(receiptState);
+    expect(restored.checkpoint).toEqual(cursors);
+    expect(
+      (await reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.notificationReceipts,
+    ).toEqual(receiptState);
+  });
+
+  it("records known legacy absence explicitly without manufacturing receipts or invalidating a complete cursor", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 7 } });
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await writer.flush();
+    const rows = await storage.read(SERVER_ID, ["workspace"], ["workspace-1"]);
+    expect(JSON.parse(rows[0]!.payload).notificationReceipts).toBeNull();
+    const reader = createCache(storage);
+    expect(
+      (await reader.readDirectory(SERVER_ID)).workspaces.get("workspace-1")?.notificationReceipts,
+    ).toBeUndefined();
+    expect(
+      (await reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.notificationReceipts,
+    ).toBeUndefined();
+    expect((await reader.readDirectory(SERVER_ID)).checkpoint).toEqual(baseline.checkpoint);
+  });
+
+  it("repairs an older directory's incomplete receipt coverage by clearing only its workspace cursor and retaining every row", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      projects: { generation: "g", afterSeq: 6 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    const baseline = directory(cursors);
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    const row = (await storage.read(SERVER_ID, ["workspace"], ["workspace-1"]))[0]!;
+    const payload = JSON.parse(row.payload);
+    delete payload.notificationReceipts;
+    const legacyRow = { ...row, payload: JSON.stringify(payload) };
+    await storage.apply({ deletes: [], upserts: [legacyRow] });
+    const before = await storage.read(SERVER_ID, ["agent", "workspace", "project", "timeline"]);
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual({ agents: cursors.agents, projects: cursors.projects });
+    expect([...restored.workspaces.keys()]).toEqual(["workspace-1"]);
+    expect(restored.workspaces.get("workspace-1")?.notificationReceipts).toBeUndefined();
+    expect([...restored.agents.keys()]).toEqual([...baseline.agents.keys()]);
+    expect([...restored.projects.keys()]).toEqual([...baseline.projects.keys()]);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+    expect(await storage.read(SERVER_ID, ["agent", "workspace", "project", "timeline"])).toEqual(
+      before,
+    );
+    const checkpoint = (await storage.read(SERVER_ID, ["checkpoint"]))[0]!;
+    expect(JSON.parse(checkpoint.payload)).toEqual({
+      version: 2,
+      workspaceReceiptCoverage: true,
+      cursors: { agents: cursors.agents, projects: cursors.projects },
+    });
+  });
+
+  it("performs the same receipt coverage repair on a targeted workspace read without deleting its legacy row", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    writer.replaceDirectoryBaseline(SERVER_ID, directory(cursors));
+    await writer.flush();
+    const row = (await storage.read(SERVER_ID, ["workspace"], ["workspace-1"]))[0]!;
+    const payload = JSON.parse(row.payload);
+    delete payload.notificationReceipts;
+    const legacyRow = { ...row, payload: JSON.stringify(payload) };
+    await storage.apply({ deletes: [], upserts: [legacyRow] });
+    const reader = createCache(storage);
+    const restored = await reader.readWorkspace(SERVER_ID, "workspace-1");
+    expect(restored?.workspace.id).toBe("workspace-1");
+    expect(restored?.workspace.notificationReceipts).toBeUndefined();
+    expect(await storage.read(SERVER_ID, ["workspace"], ["workspace-1"])).toEqual([legacyRow]);
+    expect((await reader.readDirectory(SERVER_ID)).checkpoint).toEqual({ agents: cursors.agents });
+  });
+
+  it("does not let a held coverage repair overwrite a newer receipt row or checkpoint", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    writer.replaceDirectoryBaseline(SERVER_ID, directory(cursors));
+    await writer.flush();
+    const row = (await storage.read(SERVER_ID, ["workspace"], ["workspace-1"]))[0]!;
+    const payload = JSON.parse(row.payload);
+    delete payload.notificationReceipts;
+    await storage.apply({ deletes: [], upserts: [{ ...row, payload: JSON.stringify(payload) }] });
+    const newerRow = {
+      ...row,
+      payload: JSON.stringify({ ...payload, notificationReceipts: receiptState }),
+    };
+    const newerCheckpoint = {
+      serverId: SERVER_ID,
+      kind: "checkpoint" as const,
+      id: REPLICA_SINGLETON_ROW_ID,
+      payload: JSON.stringify({
+        version: 2,
+        workspaceReceiptCoverage: true,
+        cursors: { ...cursors, workspaces: { generation: "g", afterSeq: 8 } },
+      }),
+    };
+    storage.beforeConditionalApply = async () => {
+      await storage.apply({ deletes: [], upserts: [newerRow, newerCheckpoint] });
+    };
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.get("workspace-1")?.notificationReceipts).toEqual(receiptState);
+    expect(restored.checkpoint).toEqual({
+      ...cursors,
+      workspaces: { generation: "g", afterSeq: 8 },
+    });
+    expect(await storage.read(SERVER_ID, ["workspace"], ["workspace-1"])).toEqual([newerRow]);
+    expect(await storage.read(SERVER_ID, ["checkpoint"])).toEqual([newerCheckpoint]);
+  });
+  it("repairs an unmarked old workspace checkpoint once even when its cached workspace set is empty", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      projects: { generation: "g", afterSeq: 6 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    const baseline = directory(cursors);
+    baseline.workspaces.clear();
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    const checkpoint = (await storage.read(SERVER_ID, ["checkpoint"]))[0]!;
+    await storage.apply({
+      deletes: [],
+      upserts: [{ ...checkpoint, payload: JSON.stringify({ version: 2, cursors }) }],
+    });
+    const rowsBefore = await storage.read(SERVER_ID, ["agent", "project", "timeline"]);
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({ agents: cursors.agents, projects: cursors.projects });
+    expect(await storage.read(SERVER_ID, ["agent", "project", "timeline"])).toEqual(rowsBefore);
+    const afterRepairWrites = storage.writes;
+    expect((await reader.readDirectory(SERVER_ID)).checkpoint).toEqual(restored.checkpoint);
+    expect(storage.writes).toBe(afterRepairWrites);
+    expect(JSON.parse((await storage.read(SERVER_ID, ["checkpoint"]))[0]!.payload)).toEqual({
+      version: 2,
+      workspaceReceiptCoverage: true,
+      cursors: { agents: cursors.agents, projects: cursors.projects },
+    });
+  });
+});
+
+describe("Workspace receipt coverage fence", () => {
+  async function repairedEmptyCoverage() {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      projects: { generation: "g", afterSeq: 6 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    const baseline = directory(cursors);
+    baseline.workspaces.clear();
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await writer.flush();
+    const checkpoint = (await storage.read(SERVER_ID, ["checkpoint"]))[0]!;
+    await storage.apply({
+      deletes: [],
+      upserts: [{ ...checkpoint, payload: JSON.stringify({ version: 2, cursors }) }],
+    });
+    const reader = createCache(storage);
+    expect((await reader.readDirectory(SERVER_ID)).checkpoint).toEqual({
+      agents: cursors.agents,
+      projects: cursors.projects,
+    });
+    return { storage, reader, cursors };
+  }
+
+  it("keeps repaired receipt coverage fenced against later stale workspace checkpoint writes", async () => {
+    const { storage, reader, cursors } = await repairedEmptyCoverage();
+    const newer = { ...cursors, agents: { generation: "g", afterSeq: 99 } };
+    reader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "agent", type: "upsert", id: "agent-1", value: agent() }],
+      newer,
+    );
+    await reader.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+      agents: newer.agents,
+      projects: newer.projects,
+    });
+    reader.commitDirectoryMutations(SERVER_ID, [], newer);
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual({ agents: newer.agents, projects: newer.projects });
+    expect(restored.workspaces.size).toBe(0);
+    expect([...restored.agents.keys()]).toEqual(["agent-1"]);
+  });
+
+  it("retires receipt coverage only after a durable complete workspace baseline and retains a failed batch for retry", async () => {
+    const { storage, reader, cursors } = await repairedEmptyCoverage();
+    const receiptState = {
+      latestSequence: 2,
+      acknowledgedThrough: 1,
+      dismissedSequences: [],
+      lastWorkspaceReadId: "current-read",
+    };
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      notificationReceipts: receiptState,
+    });
+    const current = { ...cursors, workspaces: { generation: "g", afterSeq: 8 } };
+    const checkpointBefore = await storage.read(SERVER_ID, ["checkpoint"]);
+    const otherRowsBefore = await storage.read(SERVER_ID, ["agent", "project"]);
+    reader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "workspace", type: "upsert", id: workspace.id, value: workspace }],
+      current,
+      { workspaceBaseline: true },
+    );
+    storage.persistentWriteFailure = new Error("Workspace baseline persistence failed");
+    await reader.flush();
+    expect(await storage.read(SERVER_ID, ["checkpoint"])).toEqual(checkpointBefore);
+    expect(await storage.read(SERVER_ID, ["workspace"])).toEqual([]);
+    expect(await storage.read(SERVER_ID, ["agent", "project"])).toEqual(otherRowsBefore);
+    storage.persistentWriteFailure = null;
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual(current);
+    expect(restored.workspaces.get(workspace.id)?.notificationReceipts).toEqual(receiptState);
+    expect(await storage.read(SERVER_ID, ["agent", "project"])).toEqual(otherRowsBefore);
+    reader.commitDirectoryMutations(SERVER_ID, [], current);
+    await reader.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(current);
+  });
+
+  it.each(["queued", "failed-restored"] as const)(
+    "does not let a different workspace checkpoint borrow a %s complete baseline declaration",
+    async (phase) => {
+      const { storage, reader, cursors } = await repairedEmptyCoverage();
+      const receipts = {
+        latestSequence: 3,
+        acknowledgedThrough: 1,
+        dismissedSequences: [],
+        lastWorkspaceReadId: "complete-baseline",
+      };
+      const workspace = normalizeWorkspaceDescriptor({
+        ...workspacePayload(),
+        notificationReceipts: receipts,
+      });
+      const complete = { ...cursors, workspaces: { generation: "g", afterSeq: 8 } };
+      const before = [...storage.rows.values()];
+      reader.commitDirectoryMutations(
+        SERVER_ID,
+        [{ kind: "workspace", type: "upsert", id: workspace.id, value: workspace }],
+        complete,
+        { workspaceBaseline: true },
+      );
+      if (phase === "failed-restored") {
+        storage.persistentWriteFailure = new Error("complete baseline write failed");
+        await reader.flush();
+        expect([...storage.rows.values()]).toEqual(before);
+      }
+      const replacement = {
+        ...cursors,
+        agents: { generation: "g", afterSeq: 50 },
+        projects: { generation: "g", afterSeq: 60 },
+      };
+      reader.commitDirectoryMutations(SERVER_ID, [], replacement);
+      storage.persistentWriteFailure = null;
+      await reader.flush();
+      const restored = await createCache(storage).readDirectory(SERVER_ID);
+      expect(restored.workspaces.get(workspace.id)?.notificationReceipts).toEqual(receipts);
+      expect(restored.checkpoint).toEqual({
+        agents: replacement.agents,
+        projects: replacement.projects,
+      });
+      expect([...restored.agents.keys()]).toEqual(["agent-1"]);
+      expect([...restored.projects.keys()]).toEqual(["project-1"]);
+      const rowsAfterMismatch = await storage.read(SERVER_ID, ["agent", "project", "workspace"]);
+      reader.commitDirectoryMutations(SERVER_ID, [], {
+        ...replacement,
+        workspaces: complete.workspaces,
+      });
+      await reader.flush();
+      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+        agents: replacement.agents,
+        projects: replacement.projects,
+      });
+      expect(await storage.read(SERVER_ID, ["agent", "project", "workspace"])).toEqual(
+        rowsAfterMismatch,
+      );
+      const accepted = { ...replacement, workspaces: { generation: "g", afterSeq: 9 } };
+      reader.commitDirectoryMutations(SERVER_ID, [], accepted, { workspaceBaseline: true });
+      await reader.flush();
+      reader.commitDirectoryMutations(SERVER_ID, [], accepted);
+      await reader.flush();
+      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(accepted);
+    },
+  );
+
+  it("does not restore a queued stale workspace cursor after a held complete-baseline write succeeds", async () => {
+    const { storage, reader, cursors } = await repairedEmptyCoverage();
+    const receipts = {
+      latestSequence: 3,
+      acknowledgedThrough: 1,
+      dismissedSequences: [],
+      lastWorkspaceReadId: "held-complete-baseline",
+    };
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      notificationReceipts: receipts,
+    });
+    const complete = { ...cursors, workspaces: { generation: "g", afterSeq: 8 } };
+    const entered = deferred();
+    const release = deferred();
+    storage.beforeApply = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    reader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "workspace", type: "upsert", id: workspace.id, value: workspace }],
+      complete,
+      { workspaceBaseline: true },
+    );
+    const firstFlush = reader.flush();
+    const replacement = {
+      ...cursors,
+      agents: { generation: "g", afterSeq: 50 },
+      projects: { generation: "g", afterSeq: 60 },
+    };
+    const addedAgent = agent("agent-2");
+    const updatedProject = {
+      ...directory().projects.get("project-1")!,
+      projectDisplayName: "Unrelated project update",
+    };
+    try {
+      await entered.promise;
+      // W1 has drained from the shared pending batch, but its real storage write is still held.
+      reader.commitDirectoryMutations(
+        SERVER_ID,
+        [
+          { kind: "agent", type: "upsert", id: addedAgent.id, value: addedAgent },
+          { kind: "project", type: "upsert", id: updatedProject.projectId, value: updatedProject },
+        ],
+        replacement,
+      );
+    } finally {
+      release.resolve();
+    }
+    await firstFlush;
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.workspaces).toEqual(new Map([[workspace.id, workspace]]));
+    expect(restored.agents).toEqual(
+      new Map([
+        ["agent-1", agent()],
+        [addedAgent.id, addedAgent],
+      ]),
+    );
+    expect(restored.projects).toEqual(new Map([[updatedProject.projectId, updatedProject]]));
+    expect(restored.checkpoint?.agents).toEqual(replacement.agents);
+    expect(restored.checkpoint?.projects).toEqual(replacement.projects);
+    // Retaining W1 or requiring a fresh baseline is safe; W0 cannot regain complete authority.
+    expect([undefined, complete.workspaces]).toContainEqual(restored.checkpoint?.workspaces);
+  });
+
+  it("keeps an exact complete workspace declaration while unrelated agent and project cursors merge", async () => {
+    const { storage, reader, cursors } = await repairedEmptyCoverage();
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      notificationReceipts: {
+        latestSequence: 1,
+        acknowledgedThrough: 0,
+        dismissedSequences: [],
+      },
+    });
+    const complete = { ...cursors, workspaces: { generation: "g", afterSeq: 8 } };
+    reader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "workspace", type: "upsert", id: workspace.id, value: workspace }],
+      complete,
+      { workspaceBaseline: true },
+    );
+    const merged = {
+      ...complete,
+      agents: { generation: "g", afterSeq: 50 },
+      projects: { generation: "g", afterSeq: 60 },
+    };
+    reader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "agent", type: "upsert", id: "agent-2", value: agent("agent-2") }],
+      merged,
+    );
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual(merged);
+    expect(restored.workspaces.get(workspace.id)?.notificationReceipts).toEqual(
+      workspace.notificationReceipts,
+    );
+    expect([...restored.agents.keys()]).toEqual(["agent-1", "agent-2"]);
+    reader.commitDirectoryMutations(SERVER_ID, [], merged);
+    await reader.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(merged);
+  });
+});
+
+describe("Workspace receipt coverage through targeted agent repair", () => {
+  async function corruptAgentWithUnmarkedWorkspaceCoverage() {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const cursors = {
+      agents: { generation: "g", afterSeq: 5 },
+      projects: { generation: "g", afterSeq: 6 },
+      workspaces: { generation: "g", afterSeq: 7 },
+    };
+    const baseline = directory(cursors);
+    baseline.workspaces.clear();
+    baseline.agents.set("agent-2", agent("agent-2"));
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    const checkpoint = (await storage.read(SERVER_ID, ["checkpoint"]))[0]!;
+    const corruptAgent = {
+      serverId: SERVER_ID,
+      kind: "agent" as const,
+      id: "agent-1",
+      payload: "{invalid-agent",
+    };
+    await storage.apply({
+      deletes: [],
+      upserts: [{ ...checkpoint, payload: JSON.stringify({ version: 2, cursors }) }, corruptAgent],
+    });
+    const siblings = await storage.read(SERVER_ID, ["agent", "project", "timeline"]);
+    const preserved = siblings.filter((row) => row.kind !== "agent" || row.id !== "agent-1");
+    return { storage, reader: createCache(storage), baseline, cursors, preserved };
+  }
+
+  it("keeps workspace coverage fenced when a corrupt-agent repair rewrites an unmarked checkpoint", async () => {
+    const { storage, reader, cursors, preserved } =
+      await corruptAgentWithUnmarkedWorkspaceCoverage();
+    expect(await reader.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    const writesAfterRepair = storage.writes;
+    expect(await reader.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    expect(storage.writes).toBe(writesAfterRepair);
+    const repaired = await createCache(storage).readDirectory(SERVER_ID);
+    expect(repaired.checkpoint).toEqual({ projects: cursors.projects });
+    expect(repaired.workspaces.size).toBe(0);
+    expect([...repaired.agents.keys()]).toEqual(["agent-2"]);
+    reader.commitDirectoryMutations(SERVER_ID, [], cursors);
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual({ projects: cursors.projects });
+    expect(restored.workspaces.size).toBe(0);
+    expect([...restored.agents.keys()]).toEqual(["agent-2"]);
+    expect(await storage.read(SERVER_ID, ["agent", "project", "timeline"])).toEqual(preserved);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+  });
+
+  it("does not install a workspace fence when the targeted repair loses its raw checkpoint CAS", async () => {
+    const { storage, reader, baseline } = await corruptAgentWithUnmarkedWorkspaceCoverage();
+    const current = {
+      agents: { generation: "new", afterSeq: 15 },
+      projects: { generation: "new", afterSeq: 16 },
+      workspaces: { generation: "new", afterSeq: 17 },
+    };
+    storage.beforeConditionalApply = async () => {
+      const peer = createCache(storage);
+      peer.replaceDirectoryBaseline(SERVER_ID, { ...baseline, checkpoint: current });
+      await peer.flush();
+    };
+    expect(await reader.readAgent(SERVER_ID, "agent-1")).toEqual(agent());
+    reader.commitDirectoryMutations(SERVER_ID, [], current);
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual(current);
+    expect(restored.workspaces.size).toBe(0);
+    expect([...restored.agents.keys()]).toEqual(["agent-1", "agent-2"]);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+  });
+
+  it("leaves failed targeted repair bytes intact and can establish the coverage fence on a later successful repair", async () => {
+    const { storage, reader, cursors, preserved } =
+      await corruptAgentWithUnmarkedWorkspaceCoverage();
+    const before = [...storage.rows.values()];
+    storage.persistentWriteFailure = new Error("targeted coverage repair failed");
+    expect(await reader.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    expect([...storage.rows.values()]).toEqual(before);
+    storage.persistentWriteFailure = null;
+    expect(await reader.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    reader.commitDirectoryMutations(SERVER_ID, [], cursors);
+    await reader.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual({ projects: cursors.projects });
+    expect(restored.workspaces.size).toBe(0);
+    expect(await storage.read(SERVER_ID, ["agent", "project", "timeline"])).toEqual(preserved);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+  });
 });

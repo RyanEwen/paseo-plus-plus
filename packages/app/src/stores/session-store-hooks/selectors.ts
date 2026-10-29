@@ -313,7 +313,10 @@ export function selectWorkspaceStatusesForBadges(
   const statuses: DesktopBadgeWorkspaceStatus[] = [];
   for (const session of Object.values(state.sessions)) {
     for (const workspace of session.workspaces.values()) {
-      statuses.push(workspace.status);
+      // Status remains visible even when an agent, rather than the user, owns the blocker.
+      if (workspace.humanAttentionRequired !== false) {
+        statuses.push(workspace.status);
+      }
     }
   }
   return statuses;

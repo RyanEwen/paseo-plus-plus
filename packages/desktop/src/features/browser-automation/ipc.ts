@@ -1,4 +1,5 @@
-import { ipcMain } from "electron";
+import { getNativeBrowserSurface } from "../browser-views/surfaces.js";
+import { ipcMain, screen } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
@@ -8,6 +9,7 @@ import type { TabContents, BrowserRegistry, TabImage, DialogCaptureOperation } f
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { waitForInput } from "./input-lifetime.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
+import { getGuestCdpTransport, type GuestCdpTransport } from "./cdp-transport.js";
 import {
   dialogAcceptValue,
   handledDialogEvent,
@@ -28,7 +30,6 @@ import {
 
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
-const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const inputQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const dialogMonitorsByContentsId = new Map<number, DialogMonitor>();
 const observedContentsIds = new Set<number>();
@@ -102,6 +103,7 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   canGoForward(): boolean;
   isLoading(): boolean;
   isDestroyed(): boolean;
+  getZoomFactor(): number;
   executeJavaScript(code: string): Promise<unknown>;
   loadURL(url: string): Promise<void>;
   goBack(): void;
@@ -116,11 +118,27 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   insertText(text: string): Promise<void>;
 }
 
-export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
+interface CaptureDisplay {
+  getScaleFactor(): number;
+}
+
+const captureDisplay: CaptureDisplay = {
+  getScaleFactor() {
+    // A guest can move across displays while capture is queued. Reserve for the
+    // largest connected display, and never trust page-overridable devicePixelRatio.
+    const displays = screen.getAllDisplays();
+    return Math.max(1, ...displays.map((display) => display.scaleFactor));
+  },
+};
+
+export function adaptWebContents(
+  contents: BrowserAutomationWebContents,
+  display: CaptureDisplay = captureDisplay,
+): TabContents {
   const contentsId = contents.id;
   observeConsoleMessages(contents, contentsId);
-  const cdpQueue = getCdpQueue(contentsId);
-  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpQueue);
+  const cdpTransport = getGuestCdpTransport(contents);
+  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpTransport);
   return {
     id: contentsId,
     getURL: () => contents.getURL(),
@@ -134,22 +152,21 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    captureFrame: (signal) => captureViewportFrame(contents, signal),
+    captureFrame: (signal) => {
+      const nativeSurface = getNativeBrowserSurface(contentsId);
+      return nativeSurface ? nativeSurface.capture(signal) : captureViewportFrame(contents, signal);
+    },
+    getCaptureScaleFactor: () => display.getScaleFactor() * Math.max(1, contents.getZoomFactor()),
     invalidate: () => contents.invalidate(),
     runInput: (task, signal) =>
       getCommandQueue(contentsId, inputQueuesByContentsId).run(task, signal),
-    withFrameProduction: (capture) => withGuestFrameProduction(contents, capture),
+    withFrameProduction: (capture) =>
+      getNativeBrowserSurface(contentsId) ? capture() : withGuestFrameProduction(contents, capture),
     sendInputEvent: (event) => contents.sendInputEvent(event),
     insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (operation) => dialogMonitor.capture(operation),
     sendDebugCommand: (command: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
-      const send = async () => {
-        if (!contents.debugger.isAttached()) {
-          contents.debugger.attach("1.3");
-        }
-        return contents.debugger.sendCommand(command, params ?? {});
-      };
       // Like dialog responses, cancellation cleanup must unblock a possibly
       // delivered press even when its acknowledgment still owns the queue.
       if (
@@ -157,9 +174,9 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         command === "Input.dispatchMouseEvent" &&
         params?.type === "mouseReleased"
       ) {
-        return send();
+        return cdpTransport.sendImmediate(command, params);
       }
-      return cdpQueue.run(send, signal);
+      return cdpTransport.send(command, params, signal);
     },
   };
 }
@@ -199,10 +216,6 @@ function captureViewportFrame(
   });
 }
 
-function getCdpQueue(contentsId: number): CdpSessionQueue {
-  return getCommandQueue(contentsId, cdpQueuesByContentsId);
-}
-
 /** Keep input gestures atomic while still allowing screenshot activity to overlap. */
 function getCommandQueue(
   contentsId: number,
@@ -231,7 +244,6 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
   contents.once("destroyed", () => {
     observedContentsIds.delete(contentsId);
     consoleMessagesByContentsId.delete(contentsId);
-    cdpQueuesByContentsId.delete(contentsId);
     inputQueuesByContentsId.delete(contentsId);
     dialogMonitorsByContentsId.delete(contentsId);
   });
@@ -240,13 +252,13 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
 function getDialogMonitor(
   contents: BrowserAutomationWebContents,
   contentsId: number,
-  cdpQueue: CdpSessionQueue,
+  cdpTransport: GuestCdpTransport,
 ): DialogMonitor {
   const existing = dialogMonitorsByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
-  const monitor = new DialogMonitor(contents, contentsId, cdpQueue);
+  const monitor = new DialogMonitor(contents, contentsId, cdpTransport);
   dialogMonitorsByContentsId.set(contentsId, monitor);
   return monitor;
 }
@@ -260,7 +272,7 @@ class DialogMonitor {
   public constructor(
     private readonly contents: BrowserAutomationWebContents,
     private readonly contentsId: number,
-    private readonly cdpQueue: CdpSessionQueue,
+    private readonly cdpTransport: GuestCdpTransport,
   ) {}
 
   /** Release dialog ownership on cancellation even if an input acknowledgment
@@ -415,13 +427,7 @@ class DialogMonitor {
     signal,
     onDispatch,
   }: DialogDebugCommand): Promise<unknown> {
-    return this.cdpQueue.run(async () => {
-      if (!this.contents.debugger.isAttached()) {
-        this.contents.debugger.attach("1.3");
-      }
-      onDispatch?.();
-      return this.contents.debugger.sendCommand(command, params ?? {});
-    }, signal);
+    return this.cdpTransport.send(command, params, signal, onDispatch);
   }
 
   private async sendDialogCleanupCommand(
@@ -430,10 +436,7 @@ class DialogMonitor {
   ): Promise<unknown> {
     // A dialog or timed-out input can retain a protocol queue barrier. Responses
     // and prompt restoration must bypass it to release page interception.
-    if (!this.contents.debugger.isAttached()) {
-      this.contents.debugger.attach("1.3");
-    }
-    return this.contents.debugger.sendCommand(command, params ?? {});
+    return this.cdpTransport.sendImmediate(command, params);
   }
 }
 

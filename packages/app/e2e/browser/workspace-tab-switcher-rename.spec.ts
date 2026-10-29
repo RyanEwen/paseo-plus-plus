@@ -1,16 +1,30 @@
+import type { Page, TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { test, expect, type Page } from "../support/fixtures";
+import { test, expect } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { renameModalInput, renameModalSubmit } from "../support/helpers/rename";
 import type { SeedDaemonClient } from "../support/helpers/seed-client";
-import { buildSettingsSectionRoute } from "@/utils/host-routes";
-import { WorkspaceLayoutPersistedStateSchema } from "@/stores/workspace-layout-storage";
-import { collectAllTabs, findPaneById } from "@/stores/workspace-layout-actions";
-import { getServerId } from "../support/helpers/server-id";
+import {
+  openSettingsSection,
+  openCompactSettings,
+  goBackInSettings,
+  closeCompactSettings,
+} from "../support/helpers/settings";
+import {
+  mainWorkspaceTabRow,
+  chooserTabLabel,
+  readWorkspaceTabSnapshot,
+} from "../support/helpers/workspace-tabs";
 import { composerLocator } from "../support/helpers/composer";
 import { clickSessionRow, expectSessionRowVisible } from "../support/helpers/archive-tab";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
+
+test.use({ viewport: MOBILE_VIEWPORT, deviceScaleFactor: 2 });
+
+async function captureScreen(page: Page, testInfo: TestInfo, name: string) {
+  await page.screenshot({ path: testInfo.outputPath(name + ".png") });
+}
 
 async function fetchAgentTitle(client: SeedDaemonClient, agentId: string): Promise<string | null> {
   const result = await client.fetchAgents({ scope: "active" });
@@ -28,7 +42,10 @@ async function toggleWorkspaceFeature(
   feature: "mobileWorkspaceTabs" | "previousAgents",
 ) {
   const workspacePath = new URL(page.url()).pathname;
-  await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+  // Compact layouts intentionally disable desktop shortcuts. Use the real
+  // Settings navigation so the retained draft survives without a page reload.
+  await openCompactSettings(page, workspacePath);
+  await openSettingsSection(page, "paseo-plus-plus");
   const control = page.getByTestId(`paseo-plus-plus-${feature}`).getByRole("switch");
   await expect(control).toBeVisible();
   const wasEnabled = await control.isChecked();
@@ -39,26 +56,19 @@ async function toggleWorkspaceFeature(
     await expect(control).toBeChecked();
   }
   await expect(control).toBeEnabled();
-  await page.goto(workspacePath);
-}
-
-/** Read persisted identities and focused tab using the owning layout schema, without changing state. */
-async function readWorkspaceTabSnapshot(page: Page, workspaceId: string) {
-  const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
-  if (!raw) throw new Error("Expected the workspace layout to be persisted");
-  const persisted = WorkspaceLayoutPersistedStateSchema.parse(JSON.parse(raw).state);
-  const layout = persisted.layoutByWorkspace[`${getServerId()}:${workspaceId}`];
-  if (!layout) throw new Error("Expected the active workspace layout");
-  const pane = findPaneById(layout.root, layout.focusedPaneId);
-  return {
-    focusedTabId: pane?.focusedTabId,
-    tabs: collectAllTabs(layout.root).map((tab) => ({ tabId: tab.tabId, target: tab.target })),
-  };
+  await goBackInSettings(page);
+  await closeCompactSettings(page);
+  await expect(page).toHaveURL(workspacePath);
 }
 
 /** Return tab identities without placing a nested array callback inside a polling assertion. */
 async function readWorkspaceTabIds(page: Page, workspaceId: string) {
   return (await readWorkspaceTabSnapshot(page, workspaceId)).tabs.map((tab) => tab.tabId);
+}
+
+/** Read selection independently of the chooser's count-only trigger. */
+async function readFocusedWorkspaceTabId(page: Page, workspaceId: string) {
+  return (await readWorkspaceTabSnapshot(page, workspaceId)).focusedTabId;
 }
 
 /** Wait for all compact overlays to dismiss before a product example capture. */
@@ -82,16 +92,16 @@ test.describe("Workspace session rename (compact tabs)", () => {
 
     try {
       await openAgentRoute(page, session);
-      const tab = page.getByTestId(`workspace-tab-agent_${session.agentId}`);
+      const row = mainWorkspaceTabRow({ page, agentId: session.agentId });
+      const tab = row.getByTestId(`workspace-tab-agent_${session.agentId}`);
       await expect(tab).toBeVisible({ timeout: 30_000 });
       await expect(tab).toHaveAttribute("aria-selected", "true");
-      await expect(page.getByTestId("workspace-tabs-scroll")).toBeVisible();
-      await expect(page.getByTestId("workspace-new-tab-button")).toBeVisible();
+      await expect(row.getByTestId("workspace-tabs-scroll")).toBeVisible();
+      await expect(row.getByTestId("workspace-new-tab-button")).toBeVisible();
 
       const menuBase = `workspace-tab-menu-agent_${session.agentId}`;
-      const actionsTrigger = page.getByTestId(`${menuBase}-trigger`);
-      await expect(actionsTrigger).toBeVisible({ timeout: 15_000 });
-      await actionsTrigger.click();
+      // Compact tabs use the same long-press/context menu, with no redundant ellipsis.
+      await tab.click({ button: "right" });
 
       const renameItem = page.getByTestId(`${menuBase}-rename`);
       await expect(renameItem).toBeVisible({ timeout: 10_000 });
@@ -110,6 +120,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expect(tab).toContainText(renamed, {
         timeout: 15_000,
       });
+      await expect(row.getByTestId("workspace-tabs-scroll").getByRole("tab")).toHaveCount(1);
       await expect.poll(() => fetchAgentTitle(session.client, session.agentId)).toBe(renamed);
       await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
       await expect(
@@ -131,7 +142,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
     });
     try {
       await openAgentRoute(page, session);
-      const row = page.getByTestId("workspace-tabs-row");
+      const row = mainWorkspaceTabRow({ page, agentId: session.agentId });
       const first = row.getByTestId(`workspace-tab-agent_${session.agentId}`);
       await expect(first).toBeVisible({ timeout: 30_000 });
       const newTabs = row.locator('[data-testid^="workspace-tab-draft_"]');
@@ -187,42 +198,57 @@ test.describe("Workspace session rename (compact tabs)", () => {
     });
     try {
       await openAgentRoute(page, session);
-      await page.getByTestId("workspace-new-tab-button").click();
+      const row = mainWorkspaceTabRow({ page, agentId: session.agentId });
+      await row.getByTestId("workspace-new-tab-button").click();
       await page.getByTestId("workspace-new-tab-menu-agent").filter({ visible: true }).click();
       const draftText = "Keep this draft while changing workspace tab navigation";
       await composerLocator(page).fill(draftText);
       const before = await readWorkspaceTabSnapshot(page, session.workspaceId);
+      const draftTab = before.tabs.find((tab) => tab.tabId === before.focusedTabId);
+      if (!draftTab || draftTab.target.kind !== "draft") {
+        throw new Error("Expected the selected draft before changing tab navigation");
+      }
       await expectCompactOverlaysClosed(page);
       await page.screenshot({ path: testInfo.outputPath("mobileWorkspaceTabs-on.png") });
 
       await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
       const switcher = page.getByTestId("workspace-tab-switcher-trigger");
       await expect(switcher).toBeVisible();
-      await expect(page.getByTestId("workspace-tabs-scroll")).toHaveCount(0);
+      await expect(mainWorkspaceTabRow({ page }).getByTestId("workspace-tabs-scroll")).toHaveCount(
+        0,
+      );
       await expect(composerLocator(page)).toHaveValue(draftText);
       expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
-      await expect(switcher).toContainText("New Agent");
+      await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
       await page.screenshot({ path: testInfo.outputPath("mobileWorkspaceTabs-off.png") });
       await switcher.click();
-      await expect(page.getByText("Release checklist", { exact: true })).toBeVisible();
+      await expect(
+        chooserTabLabel(page, `agent_${session.agentId}`, "Release checklist"),
+      ).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("mobileWorkspaceTabs-off-chooser.png") });
-      await page.getByText("Release checklist", { exact: true }).click();
-      await expect(switcher).toContainText("Release checklist");
+      await chooserTabLabel(page, `agent_${session.agentId}`, "Release checklist").click();
+      await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
+      await expect
+        .poll(() => readFocusedWorkspaceTabId(page, session.workspaceId))
+        .toBe(`agent_${session.agentId}`);
 
       await page.setViewportSize({ width: 1440, height: 900 });
       await expect(switcher).toHaveCount(0);
       await expect(
-        page.getByTestId("workspace-tabs-scroll").filter({ visible: true }),
+        row.getByTestId("workspace-tabs-scroll").filter({ visible: true }),
       ).toBeVisible();
       await page.setViewportSize(MOBILE_VIEWPORT);
-      await expect(switcher).toContainText("Release checklist");
+      await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
+      await expect
+        .poll(() => readFocusedWorkspaceTabId(page, session.workspaceId))
+        .toBe(`agent_${session.agentId}`);
 
       // Restore the original draft selection before comparing presentation-only changes.
       await switcher.click();
-      await page.getByText("New Agent", { exact: true }).click();
+      await chooserTabLabel(page, draftTab.tabId, "New Agent").click();
       await expect(composerLocator(page)).toHaveValue(draftText);
       await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
-      await expect(page.getByTestId("workspace-tabs-scroll")).toBeVisible();
+      await expect(row.getByTestId("workspace-tabs-scroll")).toBeVisible();
       await expect(switcher).toHaveCount(0);
       expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
       await expect(composerLocator(page)).toHaveValue(draftText);
@@ -241,33 +267,71 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await renameModalSubmit(page, prefix).click();
       await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
       // The nested rename sheet closes back to the existing chooser.
-      await expect(page.getByText("Renamed through legacy chooser", { exact: true })).toBeVisible();
+      await expect(
+        chooserTabLabel(page, original.tabId, "Renamed through legacy chooser"),
+      ).toBeVisible();
       await page.getByTestId(`${menuBase}-trigger`).click();
       await page.getByTestId(`${menuBase}-close`).click();
       await expect
         .poll(() => readWorkspaceTabIds(page, session.workspaceId))
         .not.toContain(original.tabId);
-      // Closing a row can leave the chooser itself open. Dismiss it through its real backdrop.
-      await page
-        .getByRole("button", { name: "Bottom sheet backdrop" })
-        .filter({ visible: true })
-        .first()
-        .click({ position: { x: 12, y: 12 } });
+      // The full-height chooser has no exposed backdrop. Select the remaining draft instead.
+      await chooserTabLabel(page, draftTab.tabId, "New Agent").click();
       await expectCompactOverlaysClosed(page);
       await page.getByTestId("workspace-header-menu-trigger").click();
       await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
       await expectSessionRowVisible(page, "Renamed through legacy chooser");
       await clickSessionRow(page, "Renamed through legacy chooser");
-      await expect(switcher).toContainText("Renamed through legacy chooser");
+      await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
+      await expect
+        .poll(() => readFocusedWorkspaceTabId(page, session.workspaceId))
+        .toBe(original.tabId);
 
       await toggleWorkspaceFeature(page, "previousAgents");
       await expect(switcher).toBeVisible();
       await page.getByTestId("workspace-header-menu-trigger").click();
       await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);
       await expect(page.getByTestId("workspace-header-new-agent")).toBeVisible();
-      await expect(page.getByTestId("workspace-header-new-terminal")).toBeVisible();
+      await expect(page.getByText("Terminal profiles", { exact: true })).toBeVisible();
+      await expect(page.getByTestId("workspace-header-edit-terminal-profiles")).toBeVisible();
     } finally {
       await session.cleanup();
     }
   });
+});
+
+test("compact tab bar creates tabs and returns to the existing chat", async ({
+  page,
+}, testInfo) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "compact-header-actions-",
+    title: "Existing chat",
+  });
+  try {
+    await openAgentRoute(page, session);
+    const row = mainWorkspaceTabRow({ page, agentId: session.agentId });
+    const tabs = row.getByTestId("workspace-tabs-scroll").getByRole("tab");
+    await expect(tabs).toHaveCount(1);
+
+    await row.getByTestId("workspace-new-tab-button").click();
+    await page.getByTestId("workspace-new-tab-menu-terminal").filter({ visible: true }).click();
+    await expect(tabs).toHaveCount(2);
+    await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toHaveCount(1);
+    await captureScreen(page, testInfo, "compact-terminal-header");
+
+    await row.getByTestId("workspace-new-tab-button").click();
+    await page.getByTestId("workspace-new-tab-menu-agent").filter({ visible: true }).click();
+    await expect(tabs).toHaveCount(3);
+    await expect(composerLocator(page)).toBeVisible();
+    await captureScreen(page, testInfo, "compact-draft-header");
+
+    const existing = row.getByTestId(`workspace-tab-agent_${session.agentId}`);
+    await existing.click();
+    await expect(existing).toHaveAttribute("aria-selected", "true");
+    await expect(tabs).toHaveCount(3);
+    await expect(composerLocator(page)).toBeVisible();
+    await captureScreen(page, testInfo, "returned-chat-header");
+  } finally {
+    await session.cleanup();
+  }
 });

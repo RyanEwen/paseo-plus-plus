@@ -1,5 +1,7 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 import { useMemo } from "react";
 import { useWindowDimensions } from "react-native";
+import { useSettings } from "@/hooks/use-settings";
 import {
   computeWorkspaceTabLayout,
   type WorkspaceTabLayoutMetrics,
@@ -10,7 +12,10 @@ interface UseWorkspaceTabLayoutInput {
   tabLabelWidths: number[];
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
-  preserveNaturalWidths?: boolean;
+  compact: boolean;
+  fillAvailableWidth?: boolean;
+  host?: PaneHost;
+  iconOnlyTabWidth?: number;
 }
 
 interface UseWorkspaceTabLayoutResult {
@@ -21,10 +26,15 @@ export function useWorkspaceTabLayout(
   input: UseWorkspaceTabLayoutInput,
 ): UseWorkspaceTabLayoutResult {
   const { width: viewportWidth } = useWindowDimensions();
+  const { settings } = useSettings();
+  const widerTabs = settings.paseoPlusPlus.widerWorkspaceTabs;
+  const iconOnly = input.host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
+  // Fill only from the tab track's own geometry, never from a guessed window width.
+  const fallbackViewportWidth = input.fillAvailableWidth ? 0 : viewportWidth;
   const resolvedViewportWidth =
     typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
       ? input.viewportWidthOverride
-      : viewportWidth;
+      : fallbackViewportWidth;
 
   const layout = useMemo(
     () =>
@@ -32,9 +42,22 @@ export function useWorkspaceTabLayout(
         viewportWidth: resolvedViewportWidth,
         tabLabelWidths: input.tabLabelWidths,
         metrics: input.metrics,
-        preserveNaturalWidths: input.preserveNaturalWidths,
+        compact: input.compact,
+        fillAvailableWidth: input.fillAvailableWidth,
+        widerTabs,
+        iconOnly,
+        iconOnlyTabWidth: input.iconOnlyTabWidth,
       }),
-    [input.metrics, input.tabLabelWidths, input.preserveNaturalWidths, resolvedViewportWidth],
+    [
+      input.metrics,
+      input.tabLabelWidths,
+      input.compact,
+      input.fillAvailableWidth,
+      resolvedViewportWidth,
+      widerTabs,
+      iconOnly,
+      input.iconOnlyTabWidth,
+    ],
   );
 
   return {

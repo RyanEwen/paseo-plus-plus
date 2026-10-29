@@ -1,4 +1,7 @@
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { floatingActionsClearance } from "@/components/ui/floating-action-button";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -32,7 +35,8 @@ import {
 import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
-import { useDiffFileScope } from "@/git/diff-scope";
+import { resolveDiffFilePath, useDiffFileScope } from "@/git/diff-scope";
+import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
 import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
@@ -96,7 +100,6 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import type { PullRequestOpenLocation } from "@/hooks/use-settings";
 
@@ -132,7 +135,7 @@ function useDiscardChangesAction({
 }: {
   serverId: string;
   cwd: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
 }): ((path: string, oldPath?: string) => void) | undefined {
   const { t } = useTranslation();
   const toast = useToast();
@@ -281,11 +284,12 @@ export function DiffLayoutToggle({
 }
 
 interface DiffModeMenuProps {
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   committedDescription?: string;
   testIDPrefix?: string;
   onSelectUncommitted: () => void;
   onSelectBase: () => void;
+  onSelectAll: () => void;
 }
 
 export function DiffModeMenu({
@@ -294,10 +298,12 @@ export function DiffModeMenu({
   testIDPrefix = "changes-diff",
   onSelectUncommitted,
   onSelectBase,
+  onSelectAll,
 }: DiffModeMenuProps) {
   const { t } = useTranslation();
   const uncommittedLabel = t("workspace.git.diff.uncommitted");
   const committedLabel = t("workspace.git.diff.committed");
+  const allLabel = t("workspace.git.diff.all");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -311,7 +317,7 @@ export function DiffModeMenu({
           return (
             <>
               <Text style={toolbarLabelTriggerTextStyle(highlighted)} numberOfLines={1}>
-                {diffMode === "uncommitted" ? uncommittedLabel : committedLabel}
+                {{ all: allLabel, uncommitted: uncommittedLabel, base: committedLabel }[diffMode]}
               </Text>
               <ToolbarLabelTriggerIcon>
                 <ThemedChevronDown size={12} uniProps={extraMutedIconColorMapping} />
@@ -321,6 +327,14 @@ export function DiffModeMenu({
         }}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" width={260} testID={`${testIDPrefix}-status-menu`}>
+        <DropdownMenuItem
+          testID={`${testIDPrefix}-mode-all`}
+          selected={diffMode === "all"}
+          onSelect={onSelectAll}
+        >
+          {allLabel}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           testID={`${testIDPrefix}-mode-uncommitted`}
           selected={diffMode === "uncommitted"}
@@ -469,10 +483,11 @@ interface ChangesRepositoryToolbarModel {
 
 interface ChangesComparisonToolbarModel {
   committedDescription?: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   mode: ChangesToolbarMode;
   selectedDiffStat: { additions: number; deletions: number } | null;
   onSelectBase: () => void;
+  onSelectAll: () => void;
   onSelectUncommitted: () => void;
 }
 
@@ -488,11 +503,12 @@ interface BuildChangesHeaderModelInput {
   committedDescription?: string;
   compact: boolean;
   cwd: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   gitActions: GitActions;
   mode: ChangesToolbarMode;
   onOpenPullRequest: () => void;
   onSelectBase: () => void;
+  onSelectAll: () => void;
   onSelectUncommitted: () => void;
   pullRequest: PrHint | null;
   selectedDiffStat: { additions: number; deletions: number } | null;
@@ -521,6 +537,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       mode: input.mode,
       selectedDiffStat: input.selectedDiffStat,
       onSelectBase: input.onSelectBase,
+      onSelectAll: input.onSelectAll,
       onSelectUncommitted: input.onSelectUncommitted,
     },
   };
@@ -693,12 +710,13 @@ function ChangesPullRequestExternalLink({
   compact: boolean;
   model: ChangesPullRequestLinkModel;
 }) {
+  const { openPrimary } = useWorkspaceLinkOpeningContext();
   const { t } = useTranslation();
   const presentation = getForgePresentation(model.forge);
   const label = t("workspace.git.pr.actions.openOn", { brand: presentation.brandLabel });
   const handlePress = useCallback(() => {
-    void openExternalUrl(model.url);
-  }, [model.url]);
+    void openPrimary(model.url);
+  }, [model.url, openPrimary]);
   return (
     <WorkspaceHttpLinkMenu url={model.url}>
       <ToolbarButton
@@ -739,6 +757,7 @@ function ChangesComparisonToolbar({
           committedDescription={model.committedDescription}
           onSelectUncommitted={model.onSelectUncommitted}
           onSelectBase={model.onSelectBase}
+          onSelectAll={model.onSelectAll}
         />
         {model.selectedDiffStat ? (
           <DiffStat
@@ -1157,7 +1176,7 @@ interface ChangesEmptyAction {
 
 function computeChangesEmptyAction(input: {
   hideWhitespace: boolean;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   status: CheckoutStatusPayload | null;
   seeUncommittedLabel: string;
   seeCommittedLabel: string;
@@ -1429,14 +1448,67 @@ function useDiffTabNavigation({
     openWorkspacePullRequest({
       isCompact: isMobile,
       workspaceKey: persistenceKey,
-      checkout: { serverId, cwd, isGit: true },
       destination: pullRequestOpenLocation,
     });
-  }, [cwd, isMobile, persistenceKey, pullRequestOpenLocation, serverId]);
+  }, [isMobile, persistenceKey, pullRequestOpenLocation]);
   return {
     openDiff,
     openCommit,
     openPullRequest,
+  };
+}
+
+function useChangesDocumentScope({
+  focusPath,
+  focusRequestId,
+  presentation,
+  onSelectDiffFile,
+  filePath,
+  scope,
+  isCompact,
+}: Pick<
+  ChangesSurfaceProps,
+  "focusPath" | "focusRequestId" | "presentation" | "onSelectDiffFile" | "filePath"
+> &
+  Pick<Parameters<typeof resolveDiffFilePath>[0], "scope" | "isCompact">) {
+  const [localFocusRequest, setLocalFocusRequest] = useState<{
+    path: string;
+    revision: number;
+  } | null>(null);
+  const externalFocusRequest = useMemo(
+    () => (focusPath ? { path: focusPath, revision: focusRequestId ?? 0 } : null),
+    [focusPath, focusRequestId],
+  );
+  const documentFocusRequest =
+    localFocusRequest &&
+    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
+      ? localFocusRequest
+      : externalFocusRequest;
+  const handleSelectTreeFile = useCallback(
+    (path: string) => {
+      if (presentation === "tree" && onSelectDiffFile) {
+        onSelectDiffFile(path);
+        return;
+      }
+      setLocalFocusRequest((current) => ({
+        path,
+        revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
+      }));
+    },
+    [onSelectDiffFile, presentation],
+  );
+  const acquisitionPath = resolveDiffFilePath({
+    filePath,
+    selectedPath: documentFocusRequest?.path,
+    presentation: presentation ?? "combined",
+    scope,
+    isCompact,
+  });
+  return {
+    documentFocusRequest,
+    handleSelectTreeFile,
+    acquisitionPath,
+    includeFileOverview: presentation === "combined" || (isCompact && !filePath),
   };
 }
 
@@ -1537,6 +1609,16 @@ export function ChangesSurface({
     });
   }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
 
+  const { documentFocusRequest, handleSelectTreeFile, acquisitionPath, includeFileOverview } =
+    useChangesDocumentScope({
+      focusPath,
+      focusRequestId,
+      presentation,
+      onSelectDiffFile,
+      filePath,
+      scope: appSettings.explorerDiffScope,
+      isCompact: isMobile,
+    });
   const {
     status,
     isStatusLoading,
@@ -1548,17 +1630,23 @@ export function ChangesSurface({
     diffMode,
     selectUncommitted: handleSelectUncommitted,
     selectBase: handleSelectBase,
-    files: allFiles,
+    selectAll: handleSelectAll,
+    files: documentFiles,
+    overviewFiles: allFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading,
     reviewActions,
     reviewAttachment,
+    reviewFeedback,
   } = useWorkingDiff({
+    presentation,
     serverId,
     workspaceId: workspaceId ?? undefined,
     cwd,
     ignoreWhitespace: preferences.hideWhitespace,
+    filePath: acquisitionPath,
+    includeFileOverview,
     enabled: enabled !== false,
   });
   usePublishWorkingDiffAttachment({
@@ -1671,39 +1759,15 @@ export function ChangesSurface({
     [client, cwd, t, toast],
   );
   const onRevertPath = useDiscardChangesAction({ serverId, cwd, diffMode });
-  const [localFocusRequest, setLocalFocusRequest] = useState<{
-    path: string;
-    revision: number;
-  } | null>(null);
-  const externalFocusRequest = useMemo(
-    () => (focusPath ? { path: focusPath, revision: focusRequestId ?? 0 } : null),
-    [focusPath, focusRequestId],
-  );
-  const documentFocusRequest =
-    localFocusRequest &&
-    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
-      ? localFocusRequest
-      : externalFocusRequest;
-  const handleSelectTreeFile = useCallback(
-    (path: string) => {
-      if (presentation === "tree" && onSelectDiffFile) {
-        onSelectDiffFile(path);
-        return;
-      }
-      setLocalFocusRequest((current) => ({
-        path,
-        revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
-      }));
-    },
-    [onSelectDiffFile, presentation],
-  );
-  const { files, treeFiles } = useDiffFileScope({
+  const { files: overviewScopedFiles, treeFiles } = useDiffFileScope({
     allFiles,
     filePath,
     focusRequest: documentFocusRequest,
     presentation,
     scope: appSettings.explorerDiffScope,
+    isCompact: isMobile,
   });
+  const files = acquisitionPath !== undefined ? documentFiles : overviewScopedFiles;
   const workingMode = useMemo(
     () => ({
       kind: "working" as const,
@@ -1742,6 +1806,7 @@ export function ChangesSurface({
     ],
   );
 
+  const { bottom: bottomInset } = useSafeAreaInsets();
   const hasChanges = files.length > 0;
   const jumpToFileInset = jumpToFileClearance({
     isCompact: isMobile,
@@ -1791,27 +1856,41 @@ export function ChangesSurface({
   });
 
   const diffContent: ReactElement = (
-    <DiffBodyContent
-      isStatusLoading={isStatusLoading}
-      statusErrorMessage={statusErrorMessage}
-      notGit={notGit}
-      isDiffLoading={isDiffLoading}
-      diffErrorMessage={diffErrorMessage}
-      diffTooLarge={diffTooLarge}
-      hasChanges={hasChanges}
-      emptyMessage={emptyMessage}
-      emptyAction={emptyAction}
-      checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
-      notRepositoryLabel={t("workspace.git.diff.notRepository")}
-    >
-      <DiffDocument
-        files={files}
-        contentInsetBottom={jumpToFileInset}
-        collapseState={collapseState}
-        displayPreferences={sharedDisplayPreferences}
-        mode={workingMode}
+    <View style={styles.diffContainer}>
+      <DiffBodyContent
+        isStatusLoading={isStatusLoading}
+        statusErrorMessage={statusErrorMessage}
+        notGit={notGit}
+        isDiffLoading={isDiffLoading}
+        diffErrorMessage={diffErrorMessage}
+        diffTooLarge={diffTooLarge}
+        hasChanges={hasChanges}
+        emptyMessage={emptyMessage}
+        emptyAction={emptyAction}
+        checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
+        notRepositoryLabel={t("workspace.git.diff.notRepository")}
+      >
+        <DiffDocument
+          files={files}
+          contentInsetBottom={floatingActionsClearance(
+            [jumpToFileInset, reviewFeedback.clearance],
+            bottomInset,
+          )}
+          collapseState={collapseState}
+          displayPreferences={sharedDisplayPreferences}
+          mode={workingMode}
+        />
+      </DiffBodyContent>
+      <ReviewFeedbackAction
+        bottomOffset={jumpToFileInset}
+        enabled={enabled}
+        hasDiff={presentation !== "tree"}
+        model={reviewFeedback.model}
+        state={reviewFeedback.state}
+        serverId={serverId}
+        workspaceId={workspaceId}
       />
-    </DiffBodyContent>
+    </View>
   );
   const bodyContent = (
     <ChangesBody
@@ -1891,6 +1970,7 @@ export function ChangesSurface({
         mode: toolbarMode,
         onOpenPullRequest: handleOpenPullRequest,
         onSelectBase: handleSelectBase,
+        onSelectAll: handleSelectAll,
         onSelectUncommitted: handleSelectUncommitted,
         pullRequest: selectPrHintFromStatus(pullRequestStatus, forge),
         selectedDiffStat,
@@ -1905,6 +1985,7 @@ export function ChangesSurface({
       gitActions,
       handleOpenPullRequest,
       handleSelectBase,
+      handleSelectAll,
       handleSelectUncommitted,
       isMobile,
       forge,
@@ -1946,6 +2027,13 @@ export function ChangesSurface({
           <JumpToFile files={treeFiles} mode={workingMode} onSelectFile={handleSelectTreeFile} />
         ) : null}
       </View>
+
+      <ReviewCommentSheet
+        enabled={enabled}
+        editor={reviewActions.sheetEditor}
+        reviewActions={reviewActions}
+        onChangeBody={reviewActions.onChangeEditorBody}
+      />
 
       <ChangesCommits
         presentation={presentation}

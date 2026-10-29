@@ -1,4 +1,19 @@
+import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
+import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
+import type { AttachmentStore } from "./attachments/store.js";
 import { AppSettingsStore } from "./app-settings/index.js";
+import {
+  createAgentMessageDelivery,
+  type AgentMessageDelivery,
+} from "./agent/agent-messages/index.js";
+import {
+  sendPreparedPromptToAgent,
+  waitForAgentRunStartWithTimeout,
+} from "./agent/agent-prompt.js";
+import { createToolHosts } from "./agent/host-operations/index.js";
+import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
+import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
+import { ConnectedHosts } from "./connected-hosts/index.js";
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
@@ -14,7 +29,12 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
-import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import {
+  resolveProjectDisplayName,
+  resolveWorkspaceDisplayName,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
@@ -23,7 +43,6 @@ import {
   type ServerInfoStatusPayload,
   type ScriptStatusUpdateMessage,
   type SessionOutboundMessage,
-  type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
   WSInboundMessageSchema,
@@ -34,6 +53,7 @@ import {
 } from "./messages.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import {
@@ -43,6 +63,7 @@ import {
   type SessionRuntimeMetrics,
 } from "./session.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
+import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
@@ -76,6 +97,7 @@ import {
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
+  withNotificationWorkspaceContext,
 } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -117,6 +139,7 @@ import {
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
 export interface ExternalSocketMetadata {
+  acknowledgedBinary?: boolean;
   transport: "relay" | "hub";
   externalSessionKey?: string;
   relayConnectionId?: string;
@@ -247,6 +270,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     suggestBranchesForCwd: async () => [],
     listStashes: async () => [],
     listWorktrees: async () => [],
+    invalidateWorktrees: () => {},
     getProjectSlug: async (cwd: string) => {
       const snapshot = createFallbackWorkspaceGitSnapshot(cwd);
       return deriveProjectSlug(cwd, snapshot.git.isGit ? snapshot.git.remoteUrl : null);
@@ -436,6 +460,8 @@ export interface WebSocketLike {
 }
 
 interface SessionConnectionBase {
+  hubExecutionAgents?: HubExecutionAgents;
+  permissionCeiling?: readonly DaemonPermission[];
   session: Session;
   principalId: string;
   sessionKey: string;
@@ -459,13 +485,14 @@ interface PluginSessionConnection extends SessionConnectionBase {
 type SessionConnection = ReconnectableSessionConnection | PluginSessionConnection;
 
 interface SocketSessionOptions {
+  sourceId?: string;
   clientId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
   permissions: readonly DaemonPermission[];
   connectionLogger: pino.Logger;
   onMessage: (message: SessionOutboundMessage) => void;
-  onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
+  onMessageToSource?: (source: object, message: SessionOutboundMessage) => void | Promise<void>;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: (source?: object) => number | null;
@@ -524,8 +551,11 @@ function requireWebSocketServices(params: {
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
 export class VoiceAssistantWebSocketServer {
+  private readonly attachmentStore: AttachmentStore | undefined;
+  private readonly acknowledgedBinarySockets = new WeakSet<object>();
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
+  private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
@@ -538,9 +568,11 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly messageReceipts: MessageReceipts;
+  readonly agentMessages: AgentMessageDelivery;
   private readonly creationService: CreationService;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly notificationReceipts: WorkspaceNotificationReceipts;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
@@ -549,6 +581,11 @@ export class VoiceAssistantWebSocketServer {
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
+  private readonly connectedHosts: ConnectedHosts;
+
+  toolHosts() {
+    return createToolHosts(this.connectedHosts);
+  }
   private readonly passwordHash: string | undefined;
   private readonly credentialSource: DaemonAuthConfig | undefined;
   private readonly worktreesRoot: string | undefined;
@@ -570,7 +607,7 @@ export class VoiceAssistantWebSocketServer {
   } | null;
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
-  private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
+  private readonly workspaceSetupObservation = new WorkspaceSetupObservation();
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
@@ -661,7 +698,9 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    attachmentStore?: AttachmentStore,
   ) {
+    this.attachmentStore = attachmentStore;
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
@@ -680,6 +719,40 @@ export class VoiceAssistantWebSocketServer {
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.agentMessages = createAgentMessageDelivery({
+      dispatch: async (batch) => {
+        try {
+          const { disposition } = await sendPreparedPromptToAgent({
+            agentManager,
+            agentStorage,
+            agentId: batch.recipientId,
+            prompt: batch.prompt,
+            activeTurnBehavior: batch.activeTurnBehavior,
+            sessionMode: batch.sessionMode,
+            clearPendingPermissions: batch.clearPendingPermissions,
+            unarchive: batch.unarchive,
+            runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
+            onDispatch: batch.onDispatch,
+            logger: this.logger,
+          });
+          if (disposition === "turn_started")
+            await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
+          return disposition;
+        } catch (error) {
+          await agentManager.recordAttentionRejection({
+            agentId: batch.recipientId,
+            admissions: batch.attention,
+            error: error instanceof Error ? error.message : "Agent request dispatch failed",
+          });
+          throw error;
+        }
+      },
+      onError: (err, batch) =>
+        this.logger.error(
+          { err, agentId: batch.recipientId, messageIds: batch.messageIds },
+          "Agent message batch dispatch failed",
+        ),
+    });
     this.messageReceipts = new MessageReceipts(join(paseoHome, "agent-requests"));
     this.creationService = new CreationService(
       join(paseoHome, "creations"),
@@ -689,6 +762,24 @@ export class VoiceAssistantWebSocketServer {
     );
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.notificationReceipts = new WorkspaceNotificationReceipts(
+      this.workspaceRegistry,
+      async (workspaceId) => {
+        await Promise.all(
+          this.listSessions().map(async (session) => {
+            try {
+              await session.emitWorkspaceUpdatesForExternalWorkspaceIds([workspaceId]);
+            } catch (error) {
+              // The receipt is already durable. A failed subscriber catches up from its next snapshot.
+              this.logger.warn(
+                { error, workspaceId },
+                "Could not publish notification receipts to a session",
+              );
+            }
+          }),
+        );
+      },
+    );
     this.workspaceLabelService = workspaceLabelService ?? null;
     const requiredServices = requireWebSocketServices({
       scheduleService,
@@ -701,6 +792,22 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
+    this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
+    this.agentManager.setAttentionHost({
+      serverId,
+      resolveRemoteRequester: async (peer) => {
+        if (!peer.serverId) return "unknown";
+        try {
+          return await this.toolHosts().use(peer.serverId, async (client) => {
+            const result = await client.fetchAgent(peer.agentId);
+            return !result || result.agent.archivedAt ? "missing" : "available";
+          });
+        } catch {
+          // A transport or authority failure cannot prove that a requester is gone.
+          return "unknown";
+        }
+      },
+    });
     this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
@@ -735,11 +842,30 @@ export class VoiceAssistantWebSocketServer {
       providerSnapshotManager: this.providerSnapshotManager,
       updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
     });
+    this.agentManager.setAttentionPresentationEnabled(
+      isAgentAwareAttentionEnabled(this.daemonConfigStore.get()),
+    );
+    const unsubscribeAttention = this.daemonConfigStore.onApply((config, previous) => {
+      this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(config));
+      return () =>
+        this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(previous));
+    });
+    let publishedAttentionMode = this.agentManager.agentAwareAttentionEnabled;
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
+      const nextMode = this.agentManager.agentAwareAttentionEnabled;
+      if (nextMode === publishedAttentionMode) return;
+      publishedAttentionMode = nextMode;
+      // Config ownership is committed. Reprojection never replays provider events or notifications.
+      const sessions = new Set([...this.sessions.values()].map((connection) => connection.session));
+      for (const session of sessions)
+        void session.refreshAttentionPresentation().catch((error) => {
+          this.logger.warn({ err: error }, "Failed to refresh attention presentation");
+        });
     });
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();
+      unsubscribeAttention();
       unsubscribeChange();
     };
 
@@ -824,6 +950,7 @@ export class VoiceAssistantWebSocketServer {
     const wss = new WebSocketServer({
       server,
       path: "/ws",
+      maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
         this.verifyWsUpgrade(
@@ -955,6 +1082,13 @@ export class VoiceAssistantWebSocketServer {
   }
 
   public broadcast(message: WSOutboundMessage): void {
+    // External setup producers (MCP and schedules) publish once, including when no
+    // clients are connected. Session-owned observers perform the source routing.
+    if (message.type === "session" && message.message.type === "workspace_setup_progress") {
+      const { workspaceId, subscriptionId: _subscriptionId, ...snapshot } = message.message.payload;
+      this.workspaceSetupObservation.publish(workspaceId, snapshot);
+      return;
+    }
     if (message.type === "session") {
       for (const connection of new Set(this.sessions.values())) {
         connection.session.publish(message.message);
@@ -1040,6 +1174,12 @@ export class VoiceAssistantWebSocketServer {
     principalId: string,
     permissions: readonly DaemonPermission[],
   ): void {
+    for (const [socket, link] of this.hostLinks) {
+      if (this.sessions.get(socket)?.principalId === principalId) {
+        link.close("permission_denied");
+        this.hostLinks.delete(socket);
+      }
+    }
     for (const pending of this.pendingConnections.values()) {
       if (pending.admission?.principalId === principalId) {
         pending.admission = { ...pending.admission, permissions };
@@ -1047,7 +1187,11 @@ export class VoiceAssistantWebSocketServer {
     }
     for (const connection of new Set(this.externalSessionsByKey.values())) {
       if (connection.principalId === principalId) {
-        connection.session.setPermissions(permissions);
+        connection.session.setPermissions(
+          connection.permissionCeiling
+            ? permissions.filter((permission) => connection.permissionCeiling!.includes(permission))
+            : permissions,
+        );
       }
     }
   }
@@ -1064,6 +1208,8 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    await this.agentMessages.close();
+    await this.connectedHosts.close();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
@@ -1152,6 +1298,20 @@ export class VoiceAssistantWebSocketServer {
     message: WSOutboundMessage,
     reportRejection = false,
   ): void {
+    const prepared = this.prepareJsonDelivery(sockets, message, reportRejection);
+    if (!prepared) return;
+    for (const ws of prepared.sockets) {
+      this.sendFrameToClient(ws, prepared.payload, prepared.bytes, () => {
+        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+      });
+    }
+  }
+
+  private prepareJsonDelivery(
+    sockets: Iterable<WebSocketLike>,
+    message: WSOutboundMessage,
+    reportRejection: boolean,
+  ): { sockets: WebSocketLike[]; payload: string; bytes: number } | null {
     const writableSockets = [...sockets].filter((ws) => {
       if (
         message.type === "session" &&
@@ -1173,7 +1333,7 @@ export class VoiceAssistantWebSocketServer {
       return this.ensureOutboundCapacity(ws, 0);
     });
     if (writableSockets.length === 0) {
-      return;
+      return null;
     }
 
     let payload: string;
@@ -1181,14 +1341,30 @@ export class VoiceAssistantWebSocketServer {
       payload = JSON.stringify(message);
     } catch (err) {
       this.logger.warn({ err }, "ws_serialize_failed");
-      return;
+      return null;
     }
 
-    const payloadBytes = outboundFrameByteLength(payload);
-    for (const ws of writableSockets) {
-      this.sendFrameToClient(ws, payload, payloadBytes, () => {
-        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+    return { sockets: writableSockets, payload, bytes: outboundFrameByteLength(payload) };
+  }
+
+  private async sendMessageToClientAndWait(
+    ws: WebSocketLike,
+    message: WSOutboundMessage,
+  ): Promise<void> {
+    const prepared = this.prepareJsonDelivery([ws], message, true);
+    if (!prepared) throw new Error("Source message delivery unavailable");
+    try {
+      const sent = await sendBoundedPhysicalFrameAndWait({
+        socket: ws,
+        frame: prepared.payload,
+        frameBytes: prepared.bytes,
+        onHighWater: () => this.closeAtOutboundHighWater(ws),
       });
+      if (!sent) throw new Error("Source is closed");
+      this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+    } catch (err) {
+      this.logger.warn({ err }, "ws_send_failed");
+      throw err;
     }
   }
 
@@ -1208,7 +1384,7 @@ export class VoiceAssistantWebSocketServer {
     if (!this.sessions.get(ws)?.session.delivery.permitsBinary(ws, frame)) {
       this.incrementRuntimeCounter("applicationBinaryRejected");
       this.logger.warn({ bytes: frame.byteLength }, "ws_application_binary_delivery_denied");
-      return;
+      throw new Error("Binary transfer delivery is unauthorized");
     }
     try {
       const sent = await sendBoundedPhysicalFrameAndWait({
@@ -1324,6 +1500,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    if (request || metadata?.acknowledgedBinary === true) this.acknowledgedBinarySockets.add(ws);
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
@@ -1387,6 +1564,10 @@ export class VoiceAssistantWebSocketServer {
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
+      sourceId:
+        lifecycle.kind === "ephemeral-plugin"
+          ? `plugin:${lifecycle.pluginId}`
+          : admission.principalId,
       connectionLogger,
       onMessage: (msg) => {
         if (!connection) {
@@ -1394,11 +1575,11 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendToConnection(connection, wrapSessionMessage(msg));
       },
-      onMessageToSource: (source, msg) => {
+      onMessageToSource: async (source, msg) => {
         if (!connection || !connection.sockets.has(source as WebSocketLike)) {
           return;
         }
-        this.sendToClient(source as WebSocketLike, wrapSessionMessage(msg));
+        await this.sendMessageToClientAndWait(source as WebSocketLike, wrapSessionMessage(msg));
       },
       onBinaryMessage: (frame) => {
         if (!connection) {
@@ -1439,6 +1620,7 @@ export class VoiceAssistantWebSocketServer {
     const base: SessionConnectionBase = {
       session,
       principalId: admission.principalId,
+      hubExecutionAgents: admission.hubExecutionAgents,
       sessionKey: sessionConnectionKey(admission.principalId, clientId),
       clientId,
       appVersion,
@@ -1456,7 +1638,21 @@ export class VoiceAssistantWebSocketServer {
 
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
+      connectedHosts: this.connectedHosts,
+      getConnectedHostBufferedAmount: () => {
+        let total = 0;
+        for (const socket of this.sessions.keys()) {
+          if (socket instanceof VirtualHostSocket) continue;
+          if (typeof socket.bufferedAmount !== "number") return null;
+          total += socket.bufferedAmount;
+        }
+        return total;
+      },
+      sourceId: options.sourceId,
       browserToolsBroker: this.browserToolsBroker,
+      attachmentStore: this.attachmentStore,
+      supportsAttachmentOriginals: (source) =>
+        this.acknowledgedBinarySockets.has(source) && this.sessions.has(source as WebSocketLike),
       clientId: options.clientId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
@@ -1476,6 +1672,20 @@ export class VoiceAssistantWebSocketServer {
         );
       },
       publishScriptStatusUpdate: (message) => this.publishScriptStatusUpdate(message),
+      publishStoredAgentAttentionCleared: async (record, workspaceId) => {
+        await Promise.all(
+          this.listSessions().map(async (session) => {
+            try {
+              await session.forwardStoredAgentAttentionCleared(record, workspaceId);
+            } catch (error) {
+              this.logger.warn(
+                { error, workspaceId },
+                "Could not publish stored attention clear to a session",
+              );
+            }
+          }),
+        );
+      },
       downloadTokenStore: this.downloadTokenStore,
       pushNotifications: this.pushNotifications,
       paseoHome: this.paseoHome,
@@ -1483,6 +1693,7 @@ export class VoiceAssistantWebSocketServer {
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       messageReceipts: this.messageReceipts,
+      agentMessages: this.agentMessages,
       creationService: this.creationService,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
@@ -1495,6 +1706,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
       appSettingsStore: this.appSettingsStore,
+      notificationReceipts: this.notificationReceipts,
       pluginRuntime: this.pluginRuntime,
       orchestrationSkills: this.orchestrationSkills,
       mcpBaseUrl: this.mcpBaseUrl,
@@ -1507,7 +1719,7 @@ export class VoiceAssistantWebSocketServer {
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
-      workspaceSetupSnapshots: this.workspaceSetupSnapshots,
+      workspaceSetupObservation: this.workspaceSetupObservation,
       workspaceSetupRuntime: this.workspaceSetupRuntime,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,
@@ -1610,8 +1822,16 @@ export class VoiceAssistantWebSocketServer {
     }
 
     this.clearPendingConnection(ws);
-    const admitted = pending.admission;
+    let admitted = pending.admission;
     if (!admitted) throw new Error("Admitted hello has no session admission");
+    if (message.sessionPermissions)
+      admitted = {
+        ...admitted,
+        permissions: admitted.permissions.filter((permission) =>
+          message.sessionPermissions!.includes(permission),
+        ),
+      };
+    pending.admission = admitted;
     pending.identity.clientId = clientId;
     if (message.appVersion) {
       pending.identity.appVersion = message.appVersion;
@@ -1634,12 +1854,15 @@ export class VoiceAssistantWebSocketServer {
       lifecycle: pluginId ? { kind: "ephemeral-plugin", pluginId } : { kind: "reconnectable" },
       admission: admitted,
     });
+    connection.permissionCeiling = message.sessionPermissions;
+    connection.session.setRouted(message.routed === true);
+    this.assignHostSource(connection, message, admitted.principalId, pluginId);
     this.sessions.set(ws, connection);
     if (connection.lifecycle === "reconnectable") {
       this.externalSessionsByKey.set(sessionKey, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.sendToClient(ws, this.createServerInfoMessage(connection.session));
+    this.sendToClient(ws, this.createServerInfoMessage(connection.session, ws));
     connection.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1749,6 +1972,14 @@ export class VoiceAssistantWebSocketServer {
       clearTimeout(existing.externalDisconnectCleanupTimeout);
       existing.externalDisconnectCleanupTimeout = null;
     }
+    for (const socket of existing.sockets) {
+      this.hostLinks.get(socket)?.close("permission_denied");
+      this.hostLinks.delete(socket);
+    }
+    existing.permissionCeiling = message.sessionPermissions;
+    existing.session.setPermissions(pending.admission!.permissions);
+    existing.session.setRouted(message.routed === true);
+    this.assignHostSource(existing, message, pending.admission!.principalId);
     const newAppVersion = message.appVersion ?? null;
     if (newAppVersion && newAppVersion !== existing.appVersion) {
       existing.appVersion = newAppVersion;
@@ -1768,7 +1999,7 @@ export class VoiceAssistantWebSocketServer {
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.sendToClient(ws, this.createServerInfoMessage(existing.session));
+    this.sendToClient(ws, this.createServerInfoMessage(existing.session, ws));
     pending.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1779,21 +2010,53 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
+  private assignHostSource(
+    connection: SessionConnection,
+    hello: WSHelloMessage,
+    principalId: string,
+    pluginId?: string,
+  ): void {
+    if (pluginId) return;
+    const producer = hello.producer;
+    const sourceId =
+      hello.routed && producer
+        ? `route:${[principalId, producer.serverId, producer.sourceId].map(encodeURIComponent).join(":")}`
+        : principalId;
+    connection.session.setHostSource(sourceId);
+  }
+
+  private buildServerInfoStatusPayload(
+    session: Session,
+    source: WebSocketLike,
+  ): ServerInfoStatusPayload {
     return {
       status: "server_info",
       protocolVersion: WS_PROTOCOL_VERSION,
       serverId: this.serverId,
       hostname: getHostName(),
       version: this.daemonVersion,
+      sourceId: session.getHostSourceId(),
       permissions: session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
+      ...(this.attachmentStore
+        ? {
+            attachmentStorage: {
+              writable: this.attachmentStore.writable,
+              originalReads: this.acknowledgedBinarySockets.has(source),
+              writeError: this.attachmentStore.writeError,
+            },
+          }
+        : {}),
       features: {
+        ...(this.attachmentStore ? { durableAttachments: true } : {}),
         appSettingsSync: true,
-        appSettingsSidebarModeProfiles: true,
         appSettingsAccentColor: true,
+        appSettingsSidebarModeProfiles: true,
+        checkoutFileDiff: true,
+        connectedHosts: true,
+        hostMultiplexing: true,
         usageSources: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
@@ -1807,6 +2070,7 @@ export class VoiceAssistantWebSocketServer {
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
+        workspaceSetupObservation: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1881,8 +2145,12 @@ export class VoiceAssistantWebSocketServer {
         worktreeRestore: true,
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: true,
+        workspaceArchiveComplete: true,
+        projectArchivedWorkspaces: true,
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: true,
+        // COMPAT(fileByteWrites): added in v0.13.0, remove gate after 2027-04-20.
+        fileByteWrites: true,
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -1907,6 +2175,8 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: true,
         projectWorkspacePinning: true,
+        // COMPAT(workspaceNotificationReceipts): added after v0.12.0-beta.3; retain advertisement after removing the client gate.
+        workspaceNotificationReceipts: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: true,
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -1923,6 +2193,7 @@ export class VoiceAssistantWebSocketServer {
         commitBaseClassification: true,
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: true,
+        hopliteProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("hoplite"),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -1936,6 +2207,9 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
+        agentMessageBatching: true,
+        agentAudienceAttention: true,
+        agentAudienceAttentionSettings: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
@@ -1948,6 +2222,7 @@ export class VoiceAssistantWebSocketServer {
         fsEntryDuplicate: true,
         // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
         checkoutDiscardChanges: true,
+        checkoutDiffAll: true,
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
@@ -1956,12 +2231,12 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
-  private createServerInfoMessage(session: Session): WSOutboundMessage {
+  private createServerInfoMessage(session: Session, ws: WebSocketLike): WSOutboundMessage {
     return {
       type: "session",
       message: {
         type: "status",
-        payload: this.buildServerInfoStatusPayload(session),
+        payload: this.buildServerInfoStatusPayload(session, ws),
       },
     };
   }
@@ -1978,16 +2253,13 @@ export class VoiceAssistantWebSocketServer {
 
   private broadcastCapabilitiesUpdate(): void {
     for (const connection of new Set(this.sessions.values())) {
-      if (
-        ![...connection.sockets].some((socket) =>
-          connection.session.wantsSourceEvent(socket, "status.server_info"),
-        )
-      )
-        continue;
-      connection.session.publish({
-        type: "status",
-        payload: this.buildServerInfoStatusPayload(connection.session),
-      });
+      for (const socket of connection.sockets) {
+        if (!connection.session.wantsSourceEvent(socket, "status.server_info")) continue;
+        connection.session.publishToSource(socket, {
+          type: "status",
+          payload: this.buildServerInfoStatusPayload(connection.session, socket),
+        });
+      }
     }
   }
 
@@ -2037,6 +2309,9 @@ export class VoiceAssistantWebSocketServer {
       error?: Error;
     },
   ): Promise<void> {
+    this.hostLinks.get(ws)?.close();
+    this.hostLinks.delete(ws);
+
     this.applicationSocketLease.release(ws);
     const identity = this.socketIdentities.get(ws);
     const identityFields = identity ? toConnectionLogFields(identity) : {};
@@ -2083,6 +2358,10 @@ export class VoiceAssistantWebSocketServer {
         this.pluginSocketIds.delete(ws);
         await this.cleanupConnection(connection, "Plugin session disconnected");
         this.finishPluginSocketCleanup(ws);
+        return;
+      }
+      if (connection.session.isRouted()) {
+        await this.cleanupConnection(connection, "Routed session disconnected");
         return;
       }
       this.incrementRuntimeCounter("sessionDisconnectedWaitingReconnect");
@@ -2227,6 +2506,12 @@ export class VoiceAssistantWebSocketServer {
       return false;
     }
     const decodedFrame = decodeBinaryFrame(asBytes);
+    if (asBytes[0] === HOST_ROUTE_OPCODE && !decodedFrame) {
+      ws.close(1008, "Invalid host routing frame");
+      return true;
+    }
+    if (decodedFrame?.kind === "host_route" && this.hostLinks.get(ws)?.binary(decodedFrame.frame))
+      return true;
     if (!decodedFrame) {
       return false;
     }
@@ -2381,11 +2666,38 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private hostLink(ws: WebSocketLike, connection: SessionConnection): DaemonLinkEndpoint {
+    let link = this.hostLinks.get(ws);
+    if (!link) {
+      link = new DaemonLinkEndpoint({
+        identity: JSON.stringify([connection.principalId, connection.clientId]),
+        permissions: () => connection.session.getPermissions(),
+        routed: () => connection.session.isRouted(),
+        bufferedAmount: () => ws.bufferedAmount ?? null,
+        delivery: connection.session.delivery,
+        admit: (socket, permissions) =>
+          this.attachSocket(socket, undefined, undefined, false, {
+            principalId: connection.principalId,
+            permissions,
+          }),
+      });
+      this.hostLinks.set(ws, link);
+    }
+    return link;
+  }
+
   private async dispatchSessionMessage(
     ws: WebSocketLike,
     activeConnection: SessionConnection,
     message: Extract<WSInboundMessage, { type: "session" }>,
   ): Promise<void> {
+    const link = this.hostLink(ws, activeConnection);
+    if (link.handles(message.message)) {
+      await activeConnection.session.delivery.request(ws, message.message, () =>
+        link.dispatch(message.message),
+      );
+      return;
+    }
     this.recordInboundSessionRequestType(message.message.type);
     const controlRpc = getControlRpcLogInfo(message.message);
     if (controlRpc) {
@@ -2585,11 +2897,20 @@ export class VoiceAssistantWebSocketServer {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    message?: string;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
       return;
     }
+    const observedAttention = agent.attention.requiresAttention
+      ? { agentId: agent.id, timestamp: agent.attention.attentionTimestamp.toISOString() }
+      : undefined;
+    // Reserve in callback order before message preparation can let a later event overtake this one.
+    const notificationSequence = await this.notificationReceipts.issue(
+      agent.workspaceId,
+      observedAttention,
+    );
     const clientEntries: Array<{
       ws: WebSocketLike;
       state: ClientPresenceState;
@@ -2614,14 +2935,22 @@ export class VoiceAssistantWebSocketServer {
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
     const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
+    const context = await this.resolveNotificationWorkspaceContext(agent.workspaceId);
     const notification = buildAgentAttentionNotificationPayload({
+      ...context,
       reason: params.reason,
       serverId: this.serverId,
       workspaceId: agent.workspaceId,
       agentId: params.agentId,
       assistantMessage,
+      attentionMessage: params.message,
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
+
+    if (notificationSequence !== undefined) {
+      notification.data.notificationSequence = notificationSequence;
+      if (observedAttention) notification.data.attentionTimestamp = observedAttention.timestamp;
+    }
 
     const plan = computeNotificationPlan({
       allStates,
@@ -2679,6 +3008,19 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  /** Read identity from the registry relation, never from an agent's working directory. */
+  private async resolveNotificationWorkspaceContext(workspaceId: string | undefined) {
+    const workspace = workspaceId ? await this.workspaceRegistry.get(workspaceId) : null;
+    if (!workspace) {
+      return { workspaceName: null, projectName: null };
+    }
+    const project = await this.projectRegistry.get(workspace.projectId);
+    return {
+      workspaceName: resolveWorkspaceDisplayName(workspace),
+      projectName: project ? resolveProjectDisplayName(project) : null,
+    };
+  }
+
   private async broadcastTerminalAttention(params: {
     terminalId: string;
     cwd: string;
@@ -2717,6 +3059,9 @@ export class VoiceAssistantWebSocketServer {
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
     const workspaceId = params.workspaceId;
+    const notificationSequence = workspaceId
+      ? await this.notificationReceipts.issue(workspaceId)
+      : undefined;
 
     const plan = computeNotificationPlan({
       allStates,
@@ -2725,8 +3070,14 @@ export class VoiceAssistantWebSocketServer {
       nowMs,
     });
 
-    const title = terminalAttentionTitle(params.reason);
-    const body = params.terminalName;
+    const context = await this.resolveNotificationWorkspaceContext(workspaceId);
+    const { title, body } = withNotificationWorkspaceContext(
+      {
+        title: terminalAttentionTitle(params.reason),
+        body: params.terminalName,
+      },
+      context,
+    );
 
     if (plan.shouldPush) {
       void this.pushNotificationSender
@@ -2736,6 +3087,7 @@ export class VoiceAssistantWebSocketServer {
           data: {
             serverId: this.serverId,
             terminalId: params.terminalId,
+            ...(notificationSequence !== undefined ? { notificationSequence } : {}),
             cwd: params.cwd,
             ...(workspaceId ? { workspaceId } : {}),
           },
@@ -2757,6 +3109,7 @@ export class VoiceAssistantWebSocketServer {
         payload: {
           serverId: this.serverId,
           terminalId: params.terminalId,
+          ...(notificationSequence !== undefined ? { notificationSequence } : {}),
           cwd: params.cwd,
           ...(workspaceId ? { workspaceId } : {}),
           reason: params.reason,

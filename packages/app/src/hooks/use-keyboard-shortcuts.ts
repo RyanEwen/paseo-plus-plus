@@ -13,7 +13,7 @@ import {
   buildEffectiveBindings,
   getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
-import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
+import { isKeyboardControlTarget, resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
   buildBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
@@ -40,7 +40,7 @@ import {
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
+import { dispatchTopWebOverlayKeyDown, keyBelongsToDomPopover } from "@/lib/overlay-root";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -259,6 +259,9 @@ export function useKeyboardShortcuts({
         isDesktop: isDesktopApp,
         focusScope: input.focusScope,
         commandCenterOpen: store.commandCenterOpen,
+        interactiveControlFocused: input.domEvent
+          ? isKeyboardControlTarget(input.domEvent.target)
+          : false,
       },
       chordState: chordStateRef.current,
       onChordReset: () => {
@@ -318,6 +321,10 @@ export function useKeyboardShortcuts({
     }
 
     if (dispatchTopWebOverlayKeyDown(event)) {
+      return;
+    }
+
+    if (keyBelongsToDomPopover(event)) {
       return;
     }
 

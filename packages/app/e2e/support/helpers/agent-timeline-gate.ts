@@ -21,6 +21,8 @@ export interface AgentTimelineResponseGate {
 export interface OlderTimelinePagesGate {
   getRequestCount(): number;
   getReadAccounting(): ReturnType<ReturnType<typeof createTimelineRequestLedger>["summary"]>;
+  getCertifiedPrompts(): Array<{ id: string; text: string }>;
+  getMountingPrompt(): { id: string; text: string } | null;
   flushContentReads(): number;
   getRepeatedEntryCount(): number;
   getOwnedEntryCountContaining(text: string): number;
@@ -445,6 +447,8 @@ export async function holdAgentOlderTimelinePages(
   return {
     getRequestCount: () => requestCount,
     getReadAccounting: ledger.summary,
+    getCertifiedPrompts: ledger.certifiedPrompts,
+    getMountingPrompt: ledger.mountingPrompt,
     flushContentReads() {
       const forwards = contentForwards.splice(0);
       for (const forward of forwards) forward();
@@ -616,20 +620,25 @@ export async function holdAssistantStream(page: Page, agentId: string) {
     });
   });
 
+  const forwardUntil = async (done: (text: string) => boolean): Promise<void> => {
+    while (!done(forwardedText)) {
+      const frame = pending.shift();
+      if (!frame) {
+        await new Promise<void>((resolve) => {
+          notifyFrame = resolve;
+        });
+        continue;
+      }
+      forwardedText += frame.text;
+      frame.forward();
+    }
+  };
+
   return {
     waitForInitialTimeline: () => initialTimeline,
+    showUntil: (text: string) => forwardUntil((forwarded) => forwarded.includes(text)),
     async showThrough(prefix: string): Promise<void> {
-      while (forwardedText.length < prefix.length) {
-        const frame = pending.shift();
-        if (!frame) {
-          await new Promise<void>((resolve) => {
-            notifyFrame = resolve;
-          });
-          continue;
-        }
-        forwardedText += frame.text;
-        frame.forward();
-      }
+      await forwardUntil((text) => text.length >= prefix.length);
       if (forwardedText !== prefix) {
         throw new Error(
           `Stream did not stop at ${JSON.stringify(prefix)}: ${JSON.stringify(forwardedText)}`,

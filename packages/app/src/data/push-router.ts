@@ -33,7 +33,8 @@ type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionI
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
 interface CheckoutDiffCompare {
-  mode: "uncommitted" | "base";
+  filePath?: string;
+  mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
 }
@@ -494,6 +495,14 @@ function getActiveServerDataRoute(
   if (query.getObserversCount() === 0) {
     return null;
   }
+  // Query metadata belongs to the last observer that updated its options. A
+  // retained hidden panel must not cancel demand from another visible panel.
+  const observerRoutes = query.observers
+    .map((observer) => getServerDataRoute({ meta: observer.options.meta }))
+    .filter((route): route is ServerDataRoute => route !== null);
+  if (observerRoutes.length > 0) {
+    return observerRoutes.find((route) => route.enabled && route.serverId === serverId) ?? null;
+  }
   const route = getServerDataRoute(query);
   if (route) {
     return route.enabled && route.serverId === serverId ? route : null;
@@ -590,7 +599,7 @@ function canEventChangeDesiredSubscriptions(type: QueryCacheNotifyEvent["type"])
   );
 }
 
-function getServerDataRoute(query: Query): ServerDataRoute | null {
+function getServerDataRoute(query: Pick<Query, "meta">): ServerDataRoute | null {
   const meta = query.meta;
   if (!isRecord(meta) || !isRecord(meta.serverData)) {
     return null;
@@ -645,9 +654,11 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
     return null;
   }
   const mode = value.mode;
+  const filePath = value.filePath;
+  if (filePath !== undefined && typeof filePath !== "string") return null;
   const baseRef = value.baseRef;
   const ignoreWhitespace = value.ignoreWhitespace;
-  if (mode !== "uncommitted" && mode !== "base") {
+  if (mode !== "uncommitted" && mode !== "base" && mode !== "all") {
     return null;
   }
   if (baseRef !== undefined && typeof baseRef !== "string") {
@@ -660,6 +671,7 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
     mode,
     ...(baseRef ? { baseRef } : {}),
     ...(ignoreWhitespace !== undefined ? { ignoreWhitespace } : {}),
+    ...(filePath !== undefined ? { filePath } : {}),
   };
 }
 
@@ -673,7 +685,8 @@ function areCheckoutDiffRoutesEqual(
     left.cwd === right.cwd &&
     left.compare.mode === right.compare.mode &&
     left.compare.baseRef === right.compare.baseRef &&
-    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace
+    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace &&
+    left.compare.filePath === right.compare.filePath
   );
 }
 
@@ -684,7 +697,8 @@ function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffR
     queryKey[2] === route.cwd &&
     queryKey[3] === route.compare.mode &&
     queryKey[4] === (route.compare.baseRef ?? "") &&
-    queryKey[5] === (route.compare.ignoreWhitespace === true)
+    queryKey[5] === (route.compare.ignoreWhitespace === true) &&
+    (queryKey[6] === "file" ? queryKey[7] : undefined) === route.compare.filePath
   );
 }
 

@@ -1,3 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { readPreviousAgentsAvailability } from "@/hooks/previous-agents-availability";
+import {
+  createPreviousAgentLaunchAction,
+  isPreviousAgentsAvailable,
+} from "@/hooks/previous-agents";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import type { SplitSide } from "@/components/split-layout-presets";
 import {
   createContext,
@@ -5,7 +12,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ComponentType,
   type ReactNode,
@@ -16,8 +22,9 @@ import { useTranslation } from "react-i18next";
 import { Globe, History, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { resolvePluginIcon } from "@/plugins/icons";
+import { pluginIconComponent } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
@@ -87,19 +94,42 @@ export function NewTabLauncherProvider({
   value: NewTabLauncher;
   children: ReactNode;
 }) {
-  const { settings } = useAppSettings();
-  const previousAgentsEnabled = settings.paseoPlusPlus.previousAgents;
-  const [reopenVisible, setReopenVisible] = useState(false);
-  const previousAgentsEnabledRef = useRef(previousAgentsEnabled);
-  // Disable dismisses this transient surface without changing sessions or cached history.
+  const { settings, isReadReady } = useAppSettings();
+  const queryClient = useQueryClient();
+  const availability = {
+    serverId: value.serverId,
+    workspaceId: value.workspaceId,
+    readReady: isReadReady,
+    enabled: settings.paseoPlusPlus.previousAgents,
+  };
+  const previousAgentsEnabled = isPreviousAgentsAvailable(availability);
+  const [reopenIdentity, setReopenIdentity] = useState<{
+    serverId: string;
+    workspaceId: string;
+  } | null>(null);
+  const readAvailability = useStableEvent(() =>
+    readPreviousAgentsAvailability({
+      queryClient,
+      identity: { serverId: value.serverId, workspaceId: value.workspaceId },
+    }),
+  );
+  const reopenClosedAgent = useMemo(
+    () =>
+      createPreviousAgentLaunchAction({
+        identity: { serverId: value.serverId, workspaceId: value.workspaceId },
+        readAvailability,
+        open: setReopenIdentity,
+      }),
+    [readAvailability, value.serverId, value.workspaceId],
+  );
+  const closeReopenDialog = useCallback(() => setReopenIdentity(null), []);
+  const sameWorkspace =
+    reopenIdentity?.serverId === value.serverId &&
+    reopenIdentity?.workspaceId === value.workspaceId;
+  // Hide synchronously; clear the invocation so re-enabling never remounts an old dialog.
   useEffect(() => {
-    previousAgentsEnabledRef.current = previousAgentsEnabled;
-    if (!previousAgentsEnabled) setReopenVisible(false);
-  }, [previousAgentsEnabled]);
-  const reopenClosedAgent = useCallback(() => {
-    if (previousAgentsEnabledRef.current) setReopenVisible(true);
-  }, []);
-  const closeReopenDialog = useCallback(() => setReopenVisible(false), []);
+    if (!previousAgentsEnabled || !sameWorkspace) setReopenIdentity(null);
+  }, [previousAgentsEnabled, sameWorkspace]);
   const context = useMemo(
     () => ({ ...value, previousAgentsEnabled, reopenClosedAgent }),
     [value, previousAgentsEnabled, reopenClosedAgent],
@@ -107,10 +137,10 @@ export function NewTabLauncherProvider({
   return (
     <NewTabLauncherContext.Provider value={context}>
       {children}
-      {previousAgentsEnabled && reopenVisible ? (
+      {previousAgentsEnabled && sameWorkspace && reopenIdentity ? (
         <ReopenClosedAgentDialog
-          serverId={value.serverId}
-          workspaceId={value.workspaceId}
+          serverId={reopenIdentity.serverId}
+          workspaceId={reopenIdentity.workspaceId}
           onClose={closeReopenDialog}
         />
       ) : null}
@@ -153,6 +183,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
   const plugins = useInstalledPlugins();
+  const isCompact = useIsCompactFormFactor();
   ensurePanelsRegistered();
 
   const launchSelection = useCallback(
@@ -179,7 +210,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-agent",
         disabled: false,
         panelKind: "draft",
-        hidden: isExplorerMenu,
         launch: launchSelection(BUILT_IN_SELECTIONS.agent),
       },
       terminal: {
@@ -207,7 +237,8 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-changes",
         disabled: false,
         panelKind: "working_diff",
-        hidden: !launcher.showChanges,
+        // Compact Changes shows each file's diff inline, so a separate Diff panel is redundant.
+        hidden: !launcher.showChanges || isCompact,
         launch: launchSelection(BUILT_IN_SELECTIONS.diff),
       },
       files: {
@@ -268,8 +299,8 @@ export function useWorkspaceTabLaunchCatalog(input: {
         };
         pluginItems.push({
           id: `plugin:${plugin.id}:${panel.id}`,
-          label: panel.title,
-          Icon: resolvePluginIcon(panel.icon),
+          label: plugin.i18n.resolve(panel.title, plugin.locale),
+          Icon: pluginIconComponent(panel.icon),
           disabled: false,
           panelKind: "plugin",
           launch: launchSelection(selection),
@@ -282,7 +313,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     if (pluginItems.length > 0) {
       groups.push({ id: "plugin-panels", label: null, items: pluginItems });
     }
-    if (!isExplorerMenu && profiles.length > 0) {
+    if (profiles.length > 0) {
       groups.push({
         id: "terminal-profiles",
         label: t("workspace.tabs.actions.terminalProfilesMenu"),
@@ -311,6 +342,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   }, [
     config?.terminalProfiles,
     editTerminalProfiles,
+    isCompact,
     launchSelection,
     launcher,
     plugins,

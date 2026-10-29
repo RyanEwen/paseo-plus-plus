@@ -9,7 +9,7 @@ import {
   REGISTERED_THEMES,
 } from "./theme";
 
-import { ACCENT_OPTIONS, resolveAccentColors } from "./accent";
+import { ACCENT_OPTIONS, ACCENT_PALETTE, resolveAccentColors } from "./accent";
 
 describe("Typography scale", () => {
   it("names 14px as the default interface tier", () => {
@@ -71,9 +71,9 @@ describe("Pure black theme", () => {
 });
 
 describe("Sidebar interaction surfaces", () => {
-  it("keeps Light selection distinct from the sidebar surface", () => {
-    expect(lightTheme.colors.surfaceSidebarHover).toBe(lightTheme.colors.surface1);
-    expect(lightTheme.colors.surfaceSidebarSelected).toBe(lightTheme.colors.surface3);
+  it("keeps Light hover and selection darker than the sidebar surface", () => {
+    expect(lightTheme.colors.surfaceSidebarHover).toBe(lightTheme.colors.surface3);
+    expect(lightTheme.colors.surfaceSidebarSelected).toBe(lightTheme.colors.surface4);
     expect(lightTheme.colors.surfaceSidebarSelected).not.toBe(lightTheme.colors.surfaceSidebar);
   });
 
@@ -127,6 +127,19 @@ function blend(foreground: string, background: string, alpha: number): string {
 }
 
 describe("Accent colors", () => {
+  it("keeps optional accent fills muted in both color schemes", () => {
+    for (const pair of Object.values(ACCENT_PALETTE)) {
+      for (const hex of Object.values(pair)) {
+        const channels = [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255);
+        const maximum = Math.max(...channels);
+        const minimum = Math.min(...channels);
+        const lightness = (maximum + minimum) / 2;
+        const saturation =
+          maximum === minimum ? 0 : (maximum - minimum) / (1 - Math.abs(2 * lightness - 1));
+        expect(saturation).toBeLessThanOrEqual(0.35);
+      }
+    }
+  });
   it.each(Object.entries(REGISTERED_THEMES))(
     "restores authored Default colors for %s",
     (_name, base) => {
