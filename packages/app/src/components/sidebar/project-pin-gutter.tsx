@@ -9,8 +9,8 @@ const ProjectPinGutterContext = createContext(false);
 export const ProjectPinGutterProvider = ProjectPinGutterContext.Provider;
 const PinIcon = withUnistyles(Pin);
 const pinMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-  size: theme.iconSize.sm,
+  color: theme.colors.foregroundExtraMuted,
+  size: theme.iconSize.xs,
 });
 
 /** Paint inside the existing leading gutter without participating in row layout. */

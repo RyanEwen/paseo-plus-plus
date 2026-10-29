@@ -17,11 +17,27 @@ test("project and workspace kebabs open action sheets on compact layouts", async
   page,
 }, testInfo) => {
   const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-sheet-" });
+  const secondProject = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-filter-" });
 
   try {
     await gotoAppShell(page);
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
     await waitForSidebarHydration(page);
+
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByRole("menuitem")).toHaveText([
+      "Expand all",
+      "Collapse all",
+      "Expand one project at a time",
+      "Workspace limits",
+      /^Sort projects/,
+      /^Sort workspaces/,
+      /^Empty projects/,
+      /^Title/,
+      "Show",
+      "Show background workspaces",
+    ]);
+    await closeMenuSheet(page);
 
     await page
       .getByTestId(`sidebar-project-kebab-${projectEquivalenceViewKey(seeded.projectKey)}`)
@@ -72,6 +88,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
       .toBe(true);
     await page.screenshot({ path: testInfo.outputPath("project-pin-compact-menu.png") });
   } finally {
+    await secondProject.cleanup();
     await seeded.cleanup();
   }
 });

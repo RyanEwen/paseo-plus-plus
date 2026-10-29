@@ -403,6 +403,57 @@ describe("shared sidebar workspace model", () => {
     expect(model.projectNamesByViewKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
   });
 
+  it("preserves the collection when a retained sidebar reconnects to unchanged entries", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
+    });
+    const one = workspace({
+      id: "one",
+      name: "one",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const two = workspace({
+      id: "two",
+      name: "two",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const sessions = [
+      {
+        serverId: "srv",
+        workspaceAgentActivity: new Map(),
+        workspaces: new Map([
+          ["one", one],
+          ["two", two],
+        ]),
+      },
+    ];
+    const previousEntries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions,
+    });
+    expect(
+      buildSidebarWorkspaceEntries({
+        placements: model.workspaces,
+        sessions,
+        previousEntries,
+      }),
+    ).toBe(previousEntries);
+    const reordered = buildSidebarWorkspaceEntries({
+      placements: model.workspaces.toReversed(),
+      sessions,
+      previousEntries,
+    });
+    expect([...reordered.keys()]).toEqual(["srv:two", "srv:one"]);
+    const removed = buildSidebarWorkspaceEntries({
+      placements: model.workspaces.slice(0, 1),
+      sessions,
+      previousEntries,
+    });
+    expect([...removed.keys()]).toEqual(["srv:one"]);
+  });
+
   it("preserves unchanged row identities when another workspace updates", () => {
     const model = buildSidebarWorkspacePlacementModel({
       projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
@@ -788,7 +839,7 @@ describe("deriveProjectStatusBucket", () => {
     ).toBe("needs_input");
   });
 
-  it("keeps a working project on running when a finished workspace also awaits review", () => {
+  it("surfaces ready work while another workspace is running", () => {
     expect(
       deriveProjectStatusBucket({
         workspaces: [
@@ -804,7 +855,7 @@ describe("deriveProjectStatusBucket", () => {
           }),
         },
       }),
-    ).toBe("running");
+    ).toBe("attention");
   });
 
   it("surfaces needs_input over a concurrently running workspace", () => {

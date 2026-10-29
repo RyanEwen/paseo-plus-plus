@@ -1,3 +1,4 @@
+import { createExtensionActionBadges } from "./action-badges.js";
 import path from "node:path";
 import log from "electron-log";
 import { createExtensionWindows } from "./windows.js";
@@ -7,6 +8,7 @@ import { getBrowserExtensionSource } from "./catalog.js";
 import { createBrowserTabProjection } from "./tab-projection.js";
 import { registerExtensionTabs } from "./tabs.js";
 import { describeVisibleExtensionTab } from "./tab-access.js";
+import { registerExtensionStorageObservers } from "./storage-observers.js";
 import { createExtensionEventDelivery } from "./events.js";
 import {
   BrowserWindow,
@@ -54,6 +56,11 @@ const EventSubscriptionSchema = z.strictObject({
     "notifications.onClosed",
     "permissions.onAdded",
     "permissions.onRemoved",
+    "storage.onChanged",
+    "storage.local.onChanged",
+    "storage.session.onChanged",
+    "storage.sync.onChanged",
+    "storage.managed.onChanged",
   ]),
   subscribed: z.boolean(),
 });
@@ -74,7 +81,14 @@ const QuerySchema = z.strictObject({
 });
 
 /** Add browser-owned extension APIs and normal MV3 worker wake-up behavior. Native supported APIs remain Chromium-owned. */
-export function registerBrowserExtensionCompatibility(profile: Session) {
+export function registerBrowserExtensionCompatibility(
+  profile: Session,
+  options: {
+    onStorageFailure?(id: string, error: Error): void;
+    onStorageReady?(id: string): void;
+    onActionChanged?(): void;
+  } = {},
+) {
   registerBrowserExtensionWorkerActivity(profile);
   const popupOwners = new Map<number, number>();
   // Lazy worker subscriptions survive normal sleep, but never extension unload/replacement.
@@ -90,7 +104,14 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
   const deliverEvent = createExtensionEventDelivery({
     profile,
     emit,
-    hasWorkerListener: (id, name) => workerListeners.get(id)?.has(name) ?? false,
+    hasWorkerListener(id, name, ...args) {
+      const names = workerListeners.get(id);
+      return (
+        (names?.has(name) ?? false) ||
+        (name === "storage.onChanged" &&
+          (names?.has(`storage.${String(args[1])}.onChanged`) ?? false))
+      );
+    },
     async waitForWorkerReady(versionId) {
       const ready = readyWorkers.get(versionId);
       if (!ready) {
@@ -103,6 +124,15 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
         showContextMenuError(error);
       }
     },
+  });
+  const storageObservers = registerExtensionStorageObservers(profile, {
+    changed: (id, changes, area) => deliverEvent(id, "storage.onChanged", changes, area),
+    failed(id, error) {
+      options.onStorageFailure?.(id, error);
+      // Observer messages are fixed host-owned failure labels. Do not serialize Error stacks or native/preload payloads.
+      log.error("Extension storage observation failed", error.message);
+    },
+    ready: options.onStorageReady,
   });
   const notifications = createExtensionNotifications(deliverEvent);
   profile.extensions.on("extension-unloaded", (_event, extension) =>
@@ -171,7 +201,7 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
 
   /** Deliver only to extension contexts in the browser profile, never app or remote-page preloads. */
   function emit(id: string, name: string, ...args: unknown[]): void {
-    for (const contents of webContents.getAllWebContents()) {
+    for (const contents of name === "storage.onChanged" ? [] : webContents.getAllWebContents()) {
       if (
         contents.session === profile &&
         contents.getURL().startsWith(`chrome-extension://${id}/`)
@@ -180,13 +210,51 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
       }
     }
     for (const worker of trackedWorkers.values()) {
-      if (worker.scope.startsWith(`chrome-extension://${id}/`) && !worker.isDestroyed()) {
+      if (!worker.isDestroyed() && worker.scope === `chrome-extension://${id}/`) {
+        if (name === "storage.onChanged") {
+          // Frames already receive native events. Match Chromium's area-before-global worker order.
+          worker.send(EVENTS, `storage.${String(args[1])}.onChanged`, [args[0]]);
+        }
         worker.send(EVENTS, name, args);
       }
     }
   }
 
   const { list: tabs, describe: tab } = createBrowserTabProjection(profile);
+
+  const actionBadges = createExtensionActionBadges({
+    hasTab: (id) => tabs().some((contents) => contents.id === id && !contents.isDestroyed()),
+    changed: () => options.onActionChanged?.(),
+  });
+  const badgeTabObservers = new Map<number, () => void>();
+  /** A committed top-frame navigation resets per-tab action state before tab update delivery. */
+  function observeBadgeTab(contents: WebContents): void {
+    badgeTabObservers.get(contents.id)?.();
+    const reset = () => actionBadges.forgetTab(contents.id);
+    contents.on("did-navigate", reset);
+    badgeTabObservers.set(contents.id, () => contents.removeListener("did-navigate", reset));
+  }
+  for (const contents of tabs()) observeBadgeTab(contents);
+  registry.subscribe((event) => {
+    if (event.type === "unregistered") {
+      badgeTabObservers.get(event.webContentsId)?.();
+      badgeTabObservers.delete(event.webContentsId);
+      actionBadges.forgetTab(event.webContentsId);
+    } else if (event.type === "registered") {
+      const contents = webContents.fromId(event.webContentsId);
+      if (contents && contents.session === profile) {
+        observeBadgeTab(contents);
+        // A replacement guest keeps browserId but needs a snapshot for its new native tab ID.
+        options.onActionChanged?.();
+      }
+    }
+  });
+  profile.extensions.on("extension-unloaded", (_event, extension) =>
+    actionBadges.forgetExtension(extension.id),
+  );
+  profile.extensions.on("extension-loaded", (_event, extension) =>
+    actionBadges.forgetExtension(extension.id),
+  );
 
   function ownerWindow(senderId: number | null) {
     if (senderId === null) {
@@ -322,6 +390,10 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
     const extension = extensionForUrl(url);
     const manifest = ManifestSchema.parse(extension.manifest);
     const { method, args } = RequestSchema.parse(input);
+    if (/^(action|browserAction)\./.test(method)) {
+      if (args.length !== 1) throw new Error("Invalid extension action arguments.");
+      return actionBadges.request(extension.id, method, args[0]);
+    }
     if (method === "permissions.contains") {
       const requested = PermissionSchema.parse(args[0]);
       return (
@@ -407,6 +479,7 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
       return;
     }
     trackedWorkers.set(details.versionId, worker);
+    storageObservers.trackWorker(worker);
     workerReadinessResolvers.get(details.versionId)?.(false);
     const ready = new Promise<boolean>((resolve) =>
       workerReadinessResolvers.set(details.versionId, resolve),
@@ -435,6 +508,10 @@ export function registerBrowserExtensionCompatibility(profile: Session) {
   profile.registerPreloadScript({ type: "frame", filePath: preload });
   profile.registerPreloadScript({ type: "service-worker", filePath: preload });
   return {
+    getActionBadge: actionBadges.snapshot,
+    waitUntilReady: storageObservers.waitUntilReady,
+    isExtensionReady: storageObservers.isReady,
+    disposeStorageObservers: storageObservers.dispose,
     forgetExtensionContextMenus: contextMenus.forgetExtension,
     forgetExtensionAlarms: alarms.forgetExtension,
     /** Associate popup API calls with the app window that owns the selected browser guest. */

@@ -9,7 +9,7 @@ const BackgroundSchema = z.object({
 interface ExtensionEventDeliveryOptions {
   profile: Session;
   emit(id: string, name: string, ...args: unknown[]): void;
-  hasWorkerListener(id: string, name: string): boolean;
+  hasWorkerListener(id: string, name: string, ...args: unknown[]): boolean;
   waitForWorkerReady(versionId: number): Promise<boolean>;
   onError?(failure: ExtensionEventDeliveryFailure): void;
 }
@@ -44,7 +44,7 @@ export function createExtensionEventDelivery(options: ExtensionEventDeliveryOpti
           return;
         }
         const { background } = BackgroundSchema.parse(extension.manifest);
-        if (background?.service_worker && options.hasWorkerListener(id, name)) {
+        if (background?.service_worker && options.hasWorkerListener(id, name, ...args)) {
           const scope = `chrome-extension://${id}/`;
           const running = Object.entries(options.profile.serviceWorkers.getAllRunning()).find(
             (entry) => entry[1].scope.startsWith(scope),

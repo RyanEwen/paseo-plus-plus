@@ -22,6 +22,14 @@ import {
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import {
+  closeSidebarDisplayPreferences,
+  openSidebarDisplayPage,
+  pinWorkspaceFromSidebar,
+  selectSidebarProjectGrouping,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
+import type { Page } from "@playwright/test";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -83,6 +91,71 @@ const test = base.extend<{ twoHostSidebar: TwoHostSidebar }>({
 });
 
 test.describe.configure({ timeout: 180_000 });
+
+/** Change the active mode's Host switch through the same menu as a user. */
+async function toggleSidebarHost(page: Page): Promise<void> {
+  await openSidebarDisplayPage(page, "sidebar-display-show");
+  await page.getByTestId("sidebar-row-item-host").click();
+  await closeSidebarDisplayPreferences(page);
+}
+
+test("honors each mode's Host switch for pinned and grouped rows without losing host appearance", async ({
+  page,
+  twoHostSidebar,
+}) => {
+  const primary = {
+    serverId: twoHostSidebar.primaryServerId,
+    workspaceId: twoHostSidebar.primaryWorkspaceId,
+    hostName: PRIMARY_HOST_LABEL,
+  };
+  const secondary = {
+    serverId: twoHostSidebar.secondaryServerId,
+    workspaceId: twoHostSidebar.secondaryWorkspaceId,
+    hostName: SECONDARY_HOST_LABEL,
+  };
+  const primaryRowId = `sidebar-workspace-row-${primary.serverId}:${primary.workspaceId}`;
+  const secondaryRowId = `sidebar-workspace-row-${secondary.serverId}:${secondary.workspaceId}`;
+  const pinnedPrimary = page.getByTestId("sidebar-pinned-section").getByTestId(primaryRowId);
+  const groupedRows = page.locator('[data-testid^="sidebar-status-group-rows-"]');
+  const expectStatusMembership = async () => {
+    await expect(pinnedPrimary).toBeVisible();
+    await expect(page.getByTestId(primaryRowId)).toHaveCount(1);
+    await expect(groupedRows.getByTestId(primaryRowId)).toHaveCount(0);
+    await expect(groupedRows.getByTestId(secondaryRowId)).toBeVisible();
+  };
+  await openHostAppearanceSettings(page, secondary.serverId);
+  await chooseHostBadgeDisplay(page, "Icon only");
+  await leaveHostAppearanceSettings(page);
+  await pinWorkspaceFromSidebar(page, primary.workspaceId);
+  await expect(pinnedPrimary).toBeVisible();
+  await selectSidebarStatusGrouping(page);
+  await expectStatusMembership();
+  await expectHostBadgeName(page, primary);
+  await expectHostBadgeIconOnly(page, secondary);
+
+  await toggleSidebarHost(page);
+  await expectNoHostBadge(page, primary);
+  await expectNoHostBadge(page, secondary);
+  await expect(
+    page.getByTestId(`sidebar-row-project-icon-${secondary.serverId}:${secondary.workspaceId}`),
+  ).toBeVisible();
+  await expectStatusMembership();
+
+  // Project mode retains its own Host choice; returning to Status restores its hidden choice.
+  await selectSidebarProjectGrouping(page);
+  await expect(pinnedPrimary).toBeVisible();
+  await expectHostBadgeName(page, primary);
+  await expectHostBadgeIconOnly(page, secondary);
+  await selectSidebarStatusGrouping(page);
+  await expectStatusMembership();
+  await expectNoHostBadge(page, primary);
+  await expectNoHostBadge(page, secondary);
+
+  await toggleSidebarHost(page);
+  await expectStatusMembership();
+  await expectHostBadgeName(page, primary);
+  await expectHostBadgeIconOnly(page, secondary);
+});
 
 test("customizes a host badge and preserves its appearance after reload", async ({
   page,

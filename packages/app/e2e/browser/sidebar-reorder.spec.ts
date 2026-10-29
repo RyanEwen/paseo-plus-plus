@@ -415,10 +415,13 @@ for (const viewport of [
       // Visibility starts during the compact drawer's entrance. Wait for real actionability
       // before measuring the independent row transition, without clicking or changing focus.
       await row.click({ trial: true });
+      await expect(page.getByTestId("sidebar-status-group-count-done")).toHaveText("2");
       await row.focus();
       await page.screenshot({ path: testInfo.outputPath("motion-before.png") });
       await startSidebarMotionProbe({ page, rowTestId, freeze: true });
       await subject.client.markWorkspaceUnread(subject.workspaceId);
+      await expect(page.getByTestId("sidebar-status-group-count-done")).toHaveText("1");
+      await expect(page.getByTestId("sidebar-status-group-count-attention")).toHaveText("1");
       await expectSidebarMotionPaused(page);
       await page.screenshot({ path: testInfo.outputPath("motion-middle.png") });
       await expect(row).toBeFocused();
@@ -446,6 +449,8 @@ for (const viewport of [
       const input = page.getByTestId(`sidebar-workspace-rename-modal-${key}-input`);
       await input.fill("Unsaved rename survives movement");
       await subject.client.clearWorkspaceAttention(subject.workspaceId);
+      await expect(page.getByTestId("sidebar-status-group-count-done")).toHaveText("2");
+      await expect(page.getByTestId("sidebar-status-group-count-attention")).toHaveCount(0);
       await expect(
         page.getByTestId("sidebar-status-group-rows-done").getByTestId(rowTestId),
       ).toBeVisible();

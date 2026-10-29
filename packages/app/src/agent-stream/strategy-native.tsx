@@ -1,33 +1,70 @@
+import { useLayoutEffect } from "react";
+import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
+import { useContext } from "react";
+import { useAnimatedRef, useScrollOffset } from "react-native-reanimated";
+import { useDockReservation } from "@/keyboard/shift/internal/dock-reservation";
+import { ActualPromptRowsContext, ActualPinnedRowContext } from "./actual-prompt-rows";
+import { ActualStickyHeader, NativeActualMotionBoundary } from "./actual-sticky-header";
+import {
+  NativeStickyViewportProvider,
+  useNativeReadingRefresh,
+  useNativeMeasurementContext,
+} from "./native-sticky-viewport";
+import {
+  nativeBottomDistance,
+  publishMeasuredNativeNearBottom,
+  nativeOriginalTop,
+  nativeChronologicalRows,
+  createNativeMeasuredHeaderIndex,
+  createNativeViewportLifetime,
+  createNativeViewportMetrics,
+  isCurrentNativeReading,
+  resolveActualNativeReading,
+  resolveNativeMeasurementOwner,
+  resolveNativeStickyHeights,
+  type ActualNativeRowGeometry,
+  type NativeViewportLifetime,
+  type NativeViewportAttachment,
+  type NativeViewportRefEffects,
+  type NativeViewportRefOwner,
+} from "./native-actual-row-model";
 import type { PromptJumpPlacement } from "./prompt-jump-placement";
-import { PromptBubbleGeometryContext, type PromptBubbleNode } from "./prompt-bubble-geometry";
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactElement,
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FlatList,
   Platform,
   View,
+  type FlatListProps,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ViewStyle,
-  type ViewToken,
 } from "react-native";
 import { useReducedMotion } from "react-native-reanimated";
 import { withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
-import {
-  resolveNativeReadingPosition,
-  resolveNativeLivePromptOffset,
-} from "./native-reading-position";
-import { createNativePromptHandoffPair } from "./native-prompt-handoff";
-import { type PromptHandoff } from "./prompt-handoff";
 import { createNativePromptJumpController } from "./native-prompt-jump";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useKeyboardStreamInset } from "@/keyboard/shift";
+import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
-import { useBottomAnchorController } from "./bottom-anchor-controller";
+import {
+  useBottomAnchorController,
+  type PaintedNativeTailBinding,
+  type PaintedNativeTailRow,
+  type PaintedNativeTailEvidence,
+  type BottomAnchorUserScroll,
+} from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type {
   StreamRenderInput,
@@ -50,6 +87,7 @@ import {
   type HistoryStartPaginationInput,
   type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import { useStreamTopOverlayInset } from "./top-overlay";
 import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
@@ -67,28 +105,201 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const historyStartSlotStyle: ViewStyle = {
   alignItems: "center",
   justifyContent: "center",
-  height: 32,
+  minHeight: 32,
+  flexGrow: 1,
   flexShrink: 0,
 };
+const leadingSlotStyle: ViewStyle = { flexGrow: 1 };
+const HELD_READING_POSITION = Object.freeze({ minIndexForVisible: 1 });
 const HISTORY_START_SETTLE_FRAMES = 2;
+const NATIVE_STREAM_WINDOW_SIZE = 10;
 
-/** Record live-header row offsets without creating handlers during the parent's render. */
-function MeasuredLiveRow({
-  id,
-  onMeasure,
-  children,
-}: {
-  id: string;
-  onMeasure: (id: string, offset: number, height: number) => void;
-  children: React.ReactNode;
-}) {
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      onMeasure(id, event.nativeEvent.layout.y, event.nativeEvent.layout.height);
-    },
-    [id, onMeasure],
+const NativePaintedTailBindingContext = createContext<PaintedNativeTailBinding | null>(null);
+
+interface NativeViewportHandlers {
+  refEffects: NativeViewportRefEffects<FlatList<StreamItem>>;
+  onLayout(origin: NativeViewportLifetime, event: LayoutChangeEvent): void;
+  onContentSizeChange(origin: NativeViewportLifetime, width: number, height: number): void;
+  onScroll(origin: NativeViewportLifetime, event: NativeSyntheticEvent<NativeScrollEvent>): void;
+  onScrollBeginDrag(
+    origin: NativeViewportLifetime,
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+  ): void;
+  onScrollEndDrag(
+    origin: NativeViewportLifetime,
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+  ): void;
+  onMomentumScrollBegin(origin: NativeViewportLifetime): void;
+  onMomentumScrollEnd(
+    origin: NativeViewportLifetime,
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+  ): void;
+}
+
+interface NativeViewportListProps extends Omit<
+  FlatListProps<StreamItem>,
+  keyof NativeViewportHandlers
+> {
+  viewportHandlers: NativeViewportHandlers;
+}
+
+interface NativeViewportGesture {
+  origin: NativeViewportLifetime;
+  scroll: BottomAnchorUserScroll;
+}
+
+/** This component always owns the same unkeyed FlatList child. A replacement
+ * component creates new callbacks with a new origin; delayed callbacks retain
+ * the old one. There is no additional native View or forced remount.
+ */
+function NativeViewportList({ viewportHandlers, ...props }: NativeViewportListProps) {
+  const originRef = useRef<NativeViewportRefOwner<FlatList<StreamItem>> | null>(null);
+  if (!originRef.current) originRef.current = createNativeViewportLifetime<FlatList<StreamItem>>();
+  const origin = originRef.current;
+  useLayoutEffect(
+    () => origin.activate(viewportHandlers.refEffects),
+    [origin, viewportHandlers.refEffects],
   );
-  return <View onLayout={handleLayout}>{children}</View>;
+  const attach = useCallback(
+    (viewport: FlatList<StreamItem> | null) =>
+      origin.bindRef(viewport, viewportHandlers.refEffects),
+    [origin, viewportHandlers],
+  );
+  const events = useMemo<
+    Pick<
+      FlatListProps<StreamItem>,
+      | "onLayout"
+      | "onContentSizeChange"
+      | "onScroll"
+      | "onScrollBeginDrag"
+      | "onScrollEndDrag"
+      | "onMomentumScrollBegin"
+      | "onMomentumScrollEnd"
+    >
+  >(
+    () => ({
+      onLayout: (event) => viewportHandlers.onLayout(origin, event),
+      onContentSizeChange: (width, height) =>
+        viewportHandlers.onContentSizeChange(origin, width, height),
+      onScroll: (event) => viewportHandlers.onScroll(origin, event),
+      onScrollBeginDrag: (event) => viewportHandlers.onScrollBeginDrag(origin, event),
+      onScrollEndDrag: (event) => viewportHandlers.onScrollEndDrag(origin, event),
+      onMomentumScrollBegin: () => viewportHandlers.onMomentumScrollBegin(origin),
+      onMomentumScrollEnd: (event) => viewportHandlers.onMomentumScrollEnd(origin, event),
+    }),
+    [origin, viewportHandlers],
+  );
+  return <FlatList {...props} {...events} ref={attach} />;
+}
+
+interface PaintedNativeRowMeasurement {
+  binding: PaintedNativeTailBinding;
+  item: StreamItem;
+  index: number;
+  height: number;
+}
+
+interface ActualCellCallbacks {
+  record(id: string, geometry: ActualNativeRowGeometry): void;
+  mount(id: string, mounted: boolean): void;
+  recordPainted(measurement: PaintedNativeRowMeasurement): void;
+}
+
+/** Cell type is stable across current-turn completion and history prepends. RN's
+ * sticky wrapper forwards this onLayout once; children never own absolute L. */
+function createActualCellRenderer({ record, mount, recordPainted }: ActualCellCallbacks) {
+  return function ActualCell({
+    item,
+    index,
+    onLayout,
+    children,
+    style,
+    onFocusCapture,
+  }: import("react-native").CellRendererProps<StreamItem>) {
+    const sticky = useContext(NativeStickyLayoutContext);
+    const actualRowsEnabled = useContext(ActualPromptRowsContext) !== null;
+    const paintedBinding = useContext(NativePaintedTailBindingContext);
+    const latestLayout = useRef<LayoutChangeEvent | null>(null);
+    const layoutPosition = useRef<{ id: string; index: number } | null>(null);
+    const paintedReport = useRef<((event: LayoutChangeEvent) => void) | null>(null);
+    useLayoutEffect(() => {
+      mount(item.id, true);
+      return () => mount(item.id, false);
+    }, [item.id]);
+    useLayoutEffect(() => {
+      const report = (event: LayoutChangeEvent) => {
+        if (!paintedBinding) return;
+        recordPainted({
+          binding: paintedBinding,
+          item,
+          index,
+          height: event.nativeEvent.layout.height,
+        });
+      };
+      paintedReport.current = report;
+      // A committed update may retain this same physical cell without another
+      // native layout event. Rebind only its held frame at the same ID/index.
+      const samePosition =
+        layoutPosition.current?.id === item.id && layoutPosition.current.index === index;
+      if (samePosition && latestLayout.current) report(latestLayout.current);
+      return () => {
+        paintedReport.current = null;
+      };
+    }, [paintedBinding, item, index]);
+    const recordCurrent = useCallback(() => {
+      const layout = latestLayout.current?.nativeEvent.layout;
+      if (!layout) return;
+      const heights = resolveNativeStickyHeights({
+        layoutHeight: layout.height,
+        body: sticky?.readBody() ?? null,
+      });
+      record(item.id, {
+        index,
+        y: layout.y,
+        height: layout.height,
+        pinnedHeight: heights?.pinnedHeight ?? layout.height,
+        fullRowReady:
+          sticky?.position?.handoff === "full-row"
+            ? heights !== null && sticky.readBody() !== null
+            : undefined,
+      });
+    }, [item.id, index, sticky]);
+    const measure = useCallback(
+      (event: LayoutChangeEvent) => {
+        event.persist();
+        latestLayout.current = event;
+        layoutPosition.current = { id: item.id, index };
+        recordCurrent();
+        paintedReport.current?.(event);
+        onLayout?.(event);
+      },
+      [recordCurrent, onLayout, item.id, index],
+    );
+    useLayoutEffect(() => {
+      latestLayout.current = null;
+      const stopLayout = sticky?.subscribe(measure);
+      // Visual-only disclosure must update collision without reporting a fake
+      // flow resize to VirtualizedList or maintainVisibleContentPosition.
+      const stopBody = sticky?.subscribeBody(recordCurrent);
+      return () => {
+        stopLayout?.();
+        stopBody?.();
+      };
+    }, [sticky, measure, recordCurrent]);
+    // RN forwards this capture callback, but its public ViewProps omits the field.
+    const focusProps = useMemo(() => ({ onFocusCapture }), [onFocusCapture]);
+    return (
+      <View
+        {...focusProps}
+        onLayout={sticky ? undefined : measure}
+        collapsable={false}
+        pointerEvents={sticky && actualRowsEnabled ? "box-none" : undefined}
+        style={[style, { overflow: "visible" }]}
+      >
+        {children}
+      </View>
+    );
+  };
 }
 
 function keyExtractor(item: { id: string }): string {
@@ -96,12 +307,18 @@ function keyExtractor(item: { id: string }): string {
 }
 
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
+  return (
+    <NativeActualMotionBoundary allowStandalone={props.nativeViewportPlacement === "standalone"}>
+      <NativeActualViewport {...props} />
+    </NativeActualMotionBoundary>
+  );
+}
+function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
   const {
     agentId,
     segments,
     historyRowRevision,
     liveHeadRowRevision,
-    boundary,
     renderers,
     listEmptyComponent,
     viewportRef,
@@ -118,28 +335,119 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     strategy,
   } = props;
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
+  const nativeOwnerAlive = useRef(true);
+  useLayoutEffect(() => {
+    nativeOwnerAlive.current = true;
+    return () => {
+      nativeOwnerAlive.current = false;
+    };
+  }, []);
   const reducedMotion = useReducedMotion();
-  const flatListRef = useRef<FlatList<StreamItem>>(null);
-  const liveHeaderHeightRef = useRef<number | null>(null);
-  const livePromptOffsetsRef = useRef(new Map<string, number>());
-  const liveGeometryRef = useRef(new Map<string, { y: number; height: number }>());
-  const visibleHistoryRef = useRef<ViewToken<StreamItem>[]>([]);
+  const [viewportIdentity, setViewportIdentity] = useState<FlatList<StreamItem> | null>(null);
+  const currentViewportLifetime = useRef<NativeViewportLifetime | null>(null);
+  const lastAttachedViewport = useRef<NativeViewportAttachment<FlatList<StreamItem>> | null>(null);
+  const flatListRef = useAnimatedRef<FlatList<StreamItem>>();
+  const resetViewportMeasurements = useStableEvent(() => {
+    streamViewportMetricsRef.current = createNativeViewportMetrics();
+    scrollOffsetYRef.current = 0;
+    measuredViewportIdentity.current = null;
+    measuredContentIdentity.current = null;
+    programmaticScrollEventBudgetRef.current = 0;
+  });
+  const retireViewportGesture = useStableEvent((origin: NativeViewportLifetime) => {
+    const gesture = viewportGesture.current;
+    if (!gesture || gesture.origin !== origin) return;
+    viewportGesture.current = null;
+    clearPendingUserScrollEnd();
+    isUserScrollActiveRef.current = false;
+    gesture.scroll.retire();
+  });
+  const getHeldViewport = useStableEvent(() => flatListRef.current);
+  const getGestureOrigin = useStableEvent(() => viewportGesture.current?.origin ?? null);
+  const setAnimatedViewport = useStableEvent((viewport: FlatList<StreamItem> | null) => {
+    // An animated ref returns a shadow node, never React's cleanup function.
+    flatListRef(viewport);
+  });
+  const clearPaintedRows = useStableEvent(() => {
+    paintedRows.current.clear();
+  });
+  const invalidatePendingViewportReads = useStableEvent(() => {
+    readingRequest.current += 1;
+  });
+  const viewportRefEffects = useMemo<NativeViewportRefEffects<FlatList<StreamItem>>>(
+    () => ({
+      lastAttachment: lastAttachedViewport,
+      currentLifetime: currentViewportLifetime,
+      getHeldViewport,
+      getGestureOrigin,
+      setAnimatedRef: setAnimatedViewport,
+      setViewportIdentity,
+      invalidatePendingReads: invalidatePendingViewportReads,
+      resetMeasurements: resetViewportMeasurements,
+      clearPaintedRows,
+      retireGesture: retireViewportGesture,
+    }),
+    [
+      getHeldViewport,
+      getGestureOrigin,
+      setAnimatedViewport,
+      resetViewportMeasurements,
+      clearPaintedRows,
+      retireViewportGesture,
+      invalidatePendingViewportReads,
+    ],
+  );
+  const isCurrentViewport = useStableEvent(
+    (origin: NativeViewportLifetime) =>
+      nativeOwnerAlive.current &&
+      origin.isCurrent(currentViewportLifetime.current, flatListRef.current),
+  );
+  const getCurrentViewport = useStableEvent(() => {
+    const origin = currentViewportLifetime.current;
+    return origin && isCurrentViewport(origin) ? flatListRef.current : null;
+  });
+  const getViewportMeasurements = useStableEvent(() => {
+    const origin = currentViewportLifetime.current;
+    if (!nativeOwnerAlive.current || !origin) return createNativeViewportMetrics();
+    return origin.readMeasurements({
+      current: origin,
+      held: flatListRef.current,
+      measurements: streamViewportMetricsRef.current,
+    });
+  });
+  const nativeY = useScrollOffset(flatListRef);
+  const nativeStickyViewport = useMemo(() => ({ y: nativeY }), [nativeY]);
+  const reservationSnapshot = useDockReservation();
+  const reservation = reservationSnapshot.extent;
+  const topOverlayInset = useStreamTopOverlayInset();
+  const measurementContext = useNativeMeasurementContext();
+  const getMeasurementOwner = useStableEvent(() => {
+    const viewport = getCurrentViewport()?.getNativeScrollRef();
+    if (!viewport || !("measureInWindow" in viewport)) return null;
+    return resolveNativeMeasurementOwner<
+      Pick<import("react-native").NativeMethods, "measureInWindow">
+    >(measurementContext.mode, viewport, measurementContext.stationaryViewportRef?.current ?? null);
+  });
+  const actualRows = useContext(ActualPromptRowsContext);
+  const [pinnedId, setPinnedId] = useState<string | null>(null);
+  const mountedRows = useRef(new Set<string>());
+  const actualGeometry = useRef(new Map<string, ActualNativeRowGeometry>());
+  const paintedRows = useRef(new Map<string, PaintedNativeTailRow>());
+  const measuredViewportIdentity = useRef<object | null>(null);
+  const measuredContentIdentity = useRef<object | null>(null);
+  const [geometryRevision, setGeometryRevision] = useState(0);
+  const expandActual = actualRows?.expand;
+  const registerActualViewport = actualRows?.registerViewport;
+  const reportActualHeight = actualRows?.reportViewportHeight;
   const navigatingPromptRef = useRef(false);
   const promptSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const streamViewportMetricsRef = useRef({
-    containerKey: "native-virtualized",
-    contentHeight: 0,
-    viewportWidth: 0,
-    viewportHeight: 0,
-    offsetY: 0,
-    viewportMeasuredForKey: null as string | null,
-    contentMeasuredForKey: null as string | null,
-  });
+  const streamViewportMetricsRef = useRef(createNativeViewportMetrics());
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
-  const scrollKeyboardDismiss = useScrollKeyboardDismiss();
-  const streamKeyboardInset = useKeyboardStreamInset();
+  const viewportGesture = useRef<NativeViewportGesture | null>(null);
+  const scrollKeyboardDismiss = useScrollKeyboardDismiss(strategy.getFlatListInverted());
+
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const isNativeViewportSettlingRef = useRef(false);
@@ -151,20 +459,49 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const historyStartPaginationStateRef = useRef(historyStartPaginationState);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
 
-  const historyItems = useMemo(() => {
-    if (segments.historyVirtualized.length === 0) {
-      return segments.historyMounted;
-    }
-    return [...segments.historyVirtualized, ...segments.historyMounted];
-  }, [segments.historyMounted, segments.historyVirtualized]);
+  const historyItems = useMemo(() => nativeChronologicalRows(segments), [segments]);
   const historyRows = useRevisedHistoryRows(historyItems, historyRowRevision);
+  const promptScope = actualRows?.scope;
+  const readingBinding = useMemo(
+    () => ({
+      agentId,
+      scope: promptScope,
+      headers: createNativeMeasuredHeaderIndex({
+        items: historyItems,
+        geometry: actualGeometry.current,
+      }),
+    }),
+    [agentId, promptScope, historyItems],
+  );
+  const measuredHeaders = readingBinding.headers;
+  const paintedBinding = useMemo<PaintedNativeTailBinding | null>(() => {
+    if (
+      !viewportIdentity ||
+      !routeBottomAnchorRequest ||
+      routeBottomAnchorRequest.agentId !== agentId
+    )
+      return null;
+    return {
+      agentId,
+      requestKey: routeBottomAnchorRequest.requestKey,
+      containerKey: "native-virtualized",
+      items: historyRows,
+      scopeIdentity: readingBinding,
+      viewportIdentity,
+    };
+  }, [agentId, routeBottomAnchorRequest, viewportIdentity, historyRows, readingBinding]);
+  const committedPaintedBinding = useRef<PaintedNativeTailBinding | null>(null);
+  const committedHeaders = useRef(measuredHeaders);
+  useLayoutEffect(() => {
+    committedHeaders.current = measuredHeaders;
+  }, [measuredHeaders]);
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
-    const metrics = streamViewportMetricsRef.current;
+    const metrics = getViewportMeasurements();
     const hasMeasuredViewport =
       metrics.viewportMeasuredForKey === metrics.containerKey &&
       metrics.contentMeasuredForKey === metrics.containerKey;
     return {
-      distanceFromHistoryStart: metrics.contentHeight - metrics.viewportHeight - metrics.offsetY,
+      distanceFromHistoryStart: metrics.offsetY,
       hasOlderHistory,
       isLoadingOlderHistory,
       isReady: historyStartReadyRef.current && hasMeasuredViewport,
@@ -267,31 +604,63 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     [strategy],
   );
 
-  const scrollToBottom = useCallback(
-    (animated: boolean) => {
-      programmaticScrollEventBudgetRef.current = 3;
-      flatListRef.current?.scrollToOffset({
-        offset: 0,
-        animated,
-      });
-      scrollOffsetYRef.current = 0;
-      streamViewportMetricsRef.current = {
-        ...streamViewportMetricsRef.current,
-        offsetY: 0,
-      };
-      onNearBottomChange(true);
-    },
-    [onNearBottomChange],
-  );
+  const scrollToBottom = useStableEvent((animated: boolean) => {
+    const list = getCurrentViewport();
+    if (!list) return;
+    programmaticScrollEventBudgetRef.current = 3;
+    const offset = Math.max(
+      0,
+      streamViewportMetricsRef.current.contentHeight -
+        streamViewportMetricsRef.current.viewportHeight,
+    );
+    list.scrollToOffset({
+      offset,
+      animated:
+        animated &&
+        shouldAnimateNativeScrollToBottom({
+          offsetY: Math.abs(offset - scrollOffsetYRef.current),
+          viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+          windowSize: NATIVE_STREAM_WINDOW_SIZE,
+        }),
+    });
+    // A target is not a native observation. Only handleScroll may publish the
+    // actual offset/near-bottom result, including when no movement was possible.
+  });
+
+  /** Current rows and both measurements must belong to this committed native view. */
+  const getPaintedNativeTailEvidence = useStableEvent((): PaintedNativeTailEvidence | null => {
+    if (!paintedBinding || committedPaintedBinding.current !== paintedBinding) return null;
+    const origin = currentViewportLifetime.current;
+    if (!origin || !isCurrentViewport(origin)) return null;
+    const viewport = flatListRef.current;
+    const currentViewport =
+      viewport === paintedBinding.viewportIdentity &&
+      measuredViewportIdentity.current === viewport &&
+      measuredContentIdentity.current === viewport;
+    if (!nativeOwnerAlive.current || !currentViewport) return null;
+    for (const id of mountedRows.current) {
+      const row = paintedRows.current.get(id);
+      if (
+        row?.binding === paintedBinding &&
+        row.height > 0 &&
+        paintedBinding.items[row.index]?.id === id
+      ) {
+        return { current: paintedBinding, row };
+      }
+    }
+    return null;
+  });
 
   const bottomAnchorController = useBottomAnchorController({
     agentId,
     routeRequest: routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
-    renderStrategy: "inverted-stream",
+    renderStrategy: "chronological-native-stream",
     getTransportBehavior: getBottomAnchorTransportBehavior,
-    getMeasurementState: () => streamViewportMetricsRef.current,
+    getMeasurementState: getViewportMeasurements,
+    getPaintedNativeTailEvidence,
     isNearBottom: () => {
+      if (!getCurrentViewport()) return false;
       const metrics = streamViewportMetricsRef.current;
       return isNearBottomForStreamRenderStrategy({
         strategy,
@@ -303,44 +672,44 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
     scrollToBottom,
   });
-  // Android's maintainVisibleContentPosition ignores the list inversion transform and
-  // fights the controller's offset-zero correction while the live header grows.
+  useLayoutEffect(() => {
+    committedPaintedBinding.current = paintedBinding;
+    bottomAnchorController.notifyPaintedNativeTailMaybeChanged();
+  }, [paintedBinding, bottomAnchorController]);
+  // Only RN preserves the held reading cell on prepends. The existing bottom
+  // controller owns follow corrections; disable competing RN auto-follow.
   const maintainVisibleContentPosition =
-    Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
-      ? undefined
-      : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
+    bottomAnchorController.mode === "sticky-bottom" ? undefined : HELD_READING_POSITION;
+  const leadingReservation = reservation + topOverlayInset;
+  const lastReservation = useRef(leadingReservation);
+  useLayoutEffect(() => {
+    if (lastReservation.current === leadingReservation) return;
+    lastReservation.current = leadingReservation;
+    bottomAnchorController.prepareForStickyViewportChange();
+  }, [leadingReservation, bottomAnchorController]);
+
   const listContentContainerStyle = useMemo(
-    () => [
-      baseListContentContainerStyle,
-      { paddingBottom: streamKeyboardInset.contentContainerPaddingBottom },
-    ],
-    [baseListContentContainerStyle, streamKeyboardInset.contentContainerPaddingBottom],
+    // This branch is chronological: visual-top clearance belongs to paddingTop.
+    () => [baseListContentContainerStyle, { paddingTop: leadingReservation }],
+    [baseListContentContainerStyle, leadingReservation],
   );
-  const listInsetProps = useMemo(
+  const listInsetProps = {
+    automaticallyAdjustContentInsets: false,
+    automaticallyAdjustsScrollIndicatorInsets: false,
+    contentInsetAdjustmentBehavior: "never" as const,
+  };
+  useEffect(
     () =>
-      streamKeyboardInset.contentInset
-        ? {
-            automaticallyAdjustContentInsets: false,
-            automaticallyAdjustsScrollIndicatorInsets: false,
-            contentInsetAdjustmentBehavior: "never" as const,
-            contentInset: streamKeyboardInset.contentInset,
-            scrollIndicatorInsets: streamKeyboardInset.contentInset,
-          }
-        : {},
-    [streamKeyboardInset.contentInset],
+      registerActualViewport?.(() => {
+        bottomAnchorController.prepareForStickyContentChange();
+      }),
+    [registerActualViewport, bottomAnchorController],
   );
 
   useEffect(() => {
-    streamViewportMetricsRef.current = {
-      containerKey: "native-virtualized",
-      contentHeight: 0,
-      viewportWidth: 0,
-      viewportHeight: 0,
-      offsetY: 0,
-      viewportMeasuredForKey: null,
-      contentMeasuredForKey: null,
-    };
-    scrollOffsetYRef.current = 0;
+    resetViewportMeasurements();
+    const departingGesture = viewportGesture.current;
+    if (departingGesture) retireViewportGesture(departingGesture.origin);
     isUserScrollActiveRef.current = false;
     clearPendingUserScrollEnd();
     clearNativeViewportSettling();
@@ -359,7 +728,14 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       historyStartSettleSchedulerRef.current?.cancel();
       historyStartSettleSchedulerRef.current = null;
     };
-  }, [agentId, clearNativeViewportSettling, clearPendingUserScrollEnd, evaluateHistoryStart]);
+  }, [
+    agentId,
+    clearNativeViewportSettling,
+    clearPendingUserScrollEnd,
+    evaluateHistoryStart,
+    resetViewportMeasurements,
+    retireViewportGesture,
+  ]);
 
   useEffect(() => () => clearNativeViewportSettling(), [clearNativeViewportSettling]);
 
@@ -370,50 +746,64 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const findHistoryPromptIndex = useStableEvent((id: string) =>
     historyItems.findIndex((item) => item.id === id),
   );
+  const getLeadingExtent = useStableEvent(() => {
+    const first = historyItems[0];
+    return first ? (actualGeometry.current.get(first.id)?.y ?? null) : null;
+  });
   const reportPromptFailure = useStableEvent(() => props.onMessageNavigationError?.());
-  const promptNodes = useRef(new Map<string, PromptBubbleNode>());
   const promptJumpController = useMemo(
     () =>
       createNativePromptJumpController({
+        direction: "chronological",
         viewport: {
           findHistoryIndex: findHistoryPromptIndex,
-          findLiveOffset: (id) => {
-            const y = livePromptOffsetsRef.current.get(id);
-            const header = liveHeaderHeightRef.current;
-            if (y === undefined || header === null) return undefined;
-            return resolveNativeLivePromptOffset(
-              header,
-              streamViewportMetricsRef.current.viewportHeight,
-              y,
-            );
-          },
-          getLiveHeaderHeight: () => liveHeaderHeightRef.current,
+          findLiveOffset: () => undefined,
+          getLiveHeaderHeight: getLeadingExtent,
           measureTarget: (id, callback) => {
-            const prompt = promptNodes.current.get(id);
-            const viewport = flatListRef.current?.getNativeScrollRef();
-            if (!prompt || !viewport || !("measureInWindow" in viewport)) {
+            const row = actualGeometry.current.get(id);
+            const owner = getMeasurementOwner();
+            const viewport = owner?.viewport;
+            const clip = owner?.clip;
+            if (
+              !row ||
+              !mountedRows.current.has(id) ||
+              row.index !== findHistoryPromptIndex(id) ||
+              !viewport ||
+              !("measureInWindow" in viewport) ||
+              !clip
+            ) {
               callback(null);
               return;
             }
-            viewport.measureInWindow((_x, viewportY) => {
-              prompt.measureInWindow((_promptX, promptY) => {
+            clip.measureInWindow((_clipX, clipY) =>
+              viewport.measureInWindow((_x, listY) => {
                 const metrics = streamViewportMetricsRef.current;
+                if (
+                  !mountedRows.current.has(id) ||
+                  actualGeometry.current.get(id) !== row ||
+                  getMeasurementOwner()?.viewport !== viewport ||
+                  getMeasurementOwner()?.clip !== clip ||
+                  row.index !== findHistoryPromptIndex(id)
+                ) {
+                  callback(null);
+                  return;
+                }
                 callback({
-                  top: promptY - viewportY,
+                  top: nativeOriginalTop(row.y, metrics.offsetY, listY, clipY + topOverlayInset),
                   offset: metrics.offsetY,
                   maxOffset: Math.max(0, metrics.contentHeight - metrics.viewportHeight),
                 });
-              });
-            });
+              }),
+            );
           },
           scrollToIndex: (index) =>
-            flatListRef.current?.scrollToIndex({
+            getCurrentViewport()?.scrollToIndex({
               index,
               animated: !reducedMotion,
-              viewPosition: 1,
+              viewPosition: 0,
             }),
           scrollToOffset: (offset, animated) =>
-            flatListRef.current?.scrollToOffset({ offset, animated: animated && !reducedMotion }),
+            getCurrentViewport()?.scrollToOffset({ offset, animated: animated && !reducedMotion }),
         },
         scheduleRetry: (callback) => {
           const timer = setTimeout(callback, 100);
@@ -422,117 +812,79 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         now: () => performance.now(),
         onFailure: reportPromptFailure,
       }),
-    [findHistoryPromptIndex, reportPromptFailure, reducedMotion],
+    [
+      findHistoryPromptIndex,
+      reportPromptFailure,
+      reducedMotion,
+      getLeadingExtent,
+      getMeasurementOwner,
+      getCurrentViewport,
+      topOverlayInset,
+    ],
   );
-  const textPrefixRef = useRef(
-    new Map<string, { prefixHeightOne: number; prefixHeightTwo: number }>(),
-  );
-  const viewportWidthRef = useRef(0);
-  const measuredHandoff = useRef(new Map<string, PromptHandoff>());
+  useEffect(() => () => promptJumpController.cancel(), [promptJumpController]);
+  const readingRequest = useRef(0);
   const reportReadingPosition = useStableEvent(() => {
-    const metrics = streamViewportMetricsRef.current;
-    const { rowId, visibleUserIds } = resolveNativeReadingPosition({
-      visibleHistory: visibleHistoryRef.current,
-      liveHead: segments.liveHead,
-      liveGeometry: liveGeometryRef.current,
-      headerHeight: liveHeaderHeightRef.current,
-      viewportHeight: metrics.viewportHeight,
-      offsetY: metrics.offsetY,
-    });
-    const userHandoffs: PromptHandoff[] = [];
-    for (const handoff of measuredHandoff.current.values()) {
-      if (visibleUserIds.includes(handoff.id)) userHandoffs.push(handoff);
-    }
-    props.onReadingPositionChange?.({
-      viewportWidth: viewportWidthRef.current,
-      userHandoffs,
-      rowId,
-      visibleUserIds,
-      navigating: navigatingPromptRef.current,
-      following: bottomAnchorController.mode === "sticky-bottom",
-      manual: isUserScrollActiveRef.current,
-    });
-  });
-  const handoffSampler = useMemo(
-    () =>
-      createNativePromptHandoffPair({
-        measureViewport(callback) {
-          const node = flatListRef.current?.getNativeScrollRef();
-          if (node && "measureInWindow" in node)
-            node.measureInWindow((x, y, width, height) => callback({ x, y, width, height }));
-          else callback(null);
-        },
-        measurePrompt(id, callback) {
-          const node = promptNodes.current.get(id);
-          if (node)
-            node.measureInWindow((x, y, width, height) =>
-              callback({ x, y, width, height, ...textPrefixRef.current.get(id) }),
-            );
-          else callback(null);
-        },
-        onMeasured(frame) {
-          measuredHandoff.current.set(frame.id, frame);
-          reportReadingPosition();
-        },
+    if (!nativeOwnerAlive.current) return;
+    const owner = getMeasurementOwner();
+    if (!owner) return;
+    const { viewport, clip } = owner;
+    const request = ++readingRequest.current;
+    clip.measureInWindow((_clipX, clipY) =>
+      viewport.measureInWindow((_x, listY) => {
+        if (
+          !nativeOwnerAlive.current ||
+          !isCurrentNativeReading({
+            request,
+            latestRequest: readingRequest.current,
+            headers: measuredHeaders,
+            currentHeaders: committedHeaders.current,
+          }) ||
+          getMeasurementOwner()?.viewport !== viewport ||
+          getMeasurementOwner()?.clip !== clip
+        )
+          return;
+        const m = streamViewportMetricsRef.current;
+        const clippedLeading = Math.max(0, clipY + topOverlayInset - listY);
+        reportActualHeight?.(
+          Math.max(0, Math.min(m.viewportHeight - reservation, m.viewportHeight - clippedLeading)),
+        );
+        const { pinnedId: readingPinnedId, ...position } = resolveActualNativeReading({
+          items: historyItems,
+          geometry: actualGeometry.current,
+          mounted: mountedRows.current,
+          headers: measuredHeaders,
+          offset: m.offsetY,
+          viewportHeight: m.viewportHeight,
+          clippedLeading,
+          stickyEnabled: actualRows !== null,
+          handoff: Platform.OS === "android" ? "full-row" : undefined,
+        });
+        setPinnedId(readingPinnedId);
+        props.onReadingPositionChange?.({
+          ...position,
+          viewportWidth: m.viewportWidth,
+          userHandoffs: [],
+          navigating: navigatingPromptRef.current,
+          following: bottomAnchorController.mode === "sticky-bottom",
+          manual: isUserScrollActiveRef.current,
+        });
       }),
-    [reportReadingPosition],
-  );
-  const samplePromptHandoff = useStableEvent(() => {
-    if (props.trackPromptHandoff === false) {
-      handoffSampler.cancel();
-      measuredHandoff.current.clear();
-      return;
-    }
-    const metrics = streamViewportMetricsRef.current;
-    const { visibleUserIds } = resolveNativeReadingPosition({
-      visibleHistory: visibleHistoryRef.current,
-      liveHead: segments.liveHead,
-      liveGeometry: liveGeometryRef.current,
-      headerHeight: liveHeaderHeightRef.current,
-      viewportHeight: metrics.viewportHeight,
-      offsetY: metrics.offsetY,
-    });
-    const ids = [...new Set(visibleUserIds)].slice(0, 2);
-    for (const id of measuredHandoff.current.keys()) {
-      if (!ids.includes(id)) measuredHandoff.current.delete(id);
-    }
-    handoffSampler.sample(ids);
+    );
   });
-  const registerPromptBubble = useStableEvent((id: string, node: PromptBubbleNode | null) => {
-    if (node) promptNodes.current.set(id, node);
-    else {
-      promptNodes.current.delete(id);
-      textPrefixRef.current.delete(id);
-      measuredHandoff.current.delete(id);
-    }
+  const invalidateReading = useStableEvent(() => {
+    readingRequest.current += 1;
   });
-  const recordPromptTextLayout = useStableEvent(
-    (id: string, lines: readonly { y: number; height: number }[]) => {
-      const first = lines[0];
-      const second = lines[1] ?? first;
-      textPrefixRef.current.set(id, {
-        prefixHeightOne: first ? first.y + first.height : 0,
-        prefixHeightTwo: second ? second.y + second.height : 0,
-      });
-      samplePromptHandoff();
-    },
-  );
-  const bubbleGeometryOwner = useMemo(
-    () =>
-      props.trackPromptHandoff === false
-        ? null
-        : {
-            register: registerPromptBubble,
-            onLayout: samplePromptHandoff,
-            onTextLayout: recordPromptTextLayout,
-          },
-    [props.trackPromptHandoff, registerPromptBubble, samplePromptHandoff, recordPromptTextLayout],
+  useNativeReadingRefresh(
+    reservationSnapshot,
+    reportReadingPosition,
+    invalidateReading,
+    measurementContext,
   );
   useEffect(() => {
-    measuredHandoff.current.clear();
-    handoffSampler.cancel();
-    return () => handoffSampler.cancel();
-  }, [agentId, handoffSampler, props.trackPromptHandoff]);
+    reportReadingPosition();
+    return invalidateReading;
+  }, [topOverlayInset, reportReadingPosition, invalidateReading]);
   const finishPromptAnimation = useStableEvent(() => {
     if (promptSettleTimerRef.current !== null) clearTimeout(promptSettleTimerRef.current);
     promptSettleTimerRef.current = null;
@@ -550,13 +902,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     promptJumpController.cancel();
     finishPromptAnimation();
   });
-  const handleViewableItemsChanged = useStableEvent(
-    ({ viewableItems }: { viewableItems: ViewToken<StreamItem>[] }) => {
-      visibleHistoryRef.current = viewableItems;
-      samplePromptHandoff();
-      reportReadingPosition();
-    },
-  );
+  const handleViewableItemsChanged = useStableEvent(() => {
+    reportReadingPosition();
+  });
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 0 }), []);
 
   /** Detach once for a new intent; controller retries preserve the same target and budget. */
@@ -575,12 +923,15 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   useEffect(() => {
     cancelPromptJump();
-    livePromptOffsetsRef.current.clear();
-    liveGeometryRef.current.clear();
-    visibleHistoryRef.current = [];
-    liveHeaderHeightRef.current = null;
+    actualGeometry.current.clear();
+    committedHeaders.current.clear();
+    setPinnedId(null);
     return cancelPromptJump;
   }, [agentId, cancelPromptJump]);
+
+  useEffect(() => {
+    cancelPromptJump();
+  }, [actualRows?.scope, cancelPromptJump]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
@@ -590,6 +941,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
           agentId,
           reason,
         });
+      },
+      expandMessageForFind: (id, signal) => {
+        if (!signal.aborted) expandActual?.(id);
       },
       scrollToMessage: scrollToPrompt,
       cancelMessageScroll: cancelPromptJump,
@@ -606,6 +960,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [
     agentId,
+    expandActual,
     bottomAnchorController,
     cancelPromptJump,
     markNativeViewportSettling,
@@ -626,80 +981,103 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
   );
 
-  const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const previousOffsetY = scrollOffsetYRef.current;
-    scrollOffsetYRef.current = contentOffset.y;
-    scrollKeyboardDismiss.onScroll(event);
+  const handleScroll = useStableEvent(
+    (origin: NativeViewportLifetime, event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!isCurrentViewport(origin)) return;
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const previousOffsetY = scrollOffsetYRef.current;
+      scrollOffsetYRef.current = contentOffset.y;
+      measuredViewportIdentity.current = flatListRef.current;
+      measuredContentIdentity.current = flatListRef.current;
+      scrollKeyboardDismiss.onScroll(event);
 
-    streamViewportMetricsRef.current = {
-      contentHeight: Math.max(0, contentSize.height),
-      viewportWidth: Math.max(0, layoutMeasurement.width),
-      viewportHeight: Math.max(0, layoutMeasurement.height),
-      containerKey: "native-virtualized",
-      offsetY: contentOffset.y,
-      viewportMeasuredForKey: "native-virtualized",
-      contentMeasuredForKey: "native-virtualized",
-    };
+      streamViewportMetricsRef.current = {
+        contentHeight: Math.max(0, contentSize.height),
+        viewportWidth: Math.max(0, layoutMeasurement.width),
+        viewportHeight: Math.max(0, layoutMeasurement.height),
+        containerKey: "native-virtualized",
+        offsetY: contentOffset.y,
+        viewportMeasuredForKey: "native-virtualized",
+        contentMeasuredForKey: "native-virtualized",
+      };
 
-    samplePromptHandoff();
-    reportReadingPosition();
-    if (navigatingPromptRef.current) schedulePromptSettle(120);
-    const nearBottom = isScrollEventNearBottom(event);
-    onNearBottomChange(nearBottom);
+      reportReadingPosition();
+      if (navigatingPromptRef.current) schedulePromptSettle(120);
+      const nearBottom = isScrollEventNearBottom(event);
+      onNearBottomChange(nearBottom);
 
-    evaluateHistoryStart();
-
-    if (
-      !isUserScrollActiveRef.current &&
-      programmaticScrollEventBudgetRef.current > 0 &&
-      contentOffset.y <= 8
-    ) {
-      programmaticScrollEventBudgetRef.current -= 1;
-    } else {
-      programmaticScrollEventBudgetRef.current = 0;
-      bottomAnchorController.handleScrollNearBottomChange({
-        nextIsNearBottom: nearBottom,
-        scrollDelta: contentOffset.y - previousOffsetY,
-      });
-    }
-  });
-
-  const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    cancelPromptJump();
-    clearPendingUserScrollEnd();
-    isUserScrollActiveRef.current = true;
-    reportReadingPosition();
-    scrollKeyboardDismiss.onScrollBeginDrag(event);
-    bottomAnchorController.beginUserScroll();
-    const rearmed = rearmHistoryStartPagination(historyStartPaginationStateRef.current);
-    if (rearmed !== historyStartPaginationStateRef.current) {
-      historyStartPaginationStateRef.current = rearmed;
-      setHistoryStartPaginationState(rearmed);
       evaluateHistoryStart();
-    }
-  });
+
+      if (
+        !isUserScrollActiveRef.current &&
+        programmaticScrollEventBudgetRef.current > 0 &&
+        nearBottom
+      ) {
+        programmaticScrollEventBudgetRef.current -= 1;
+        // A late real observation can finish a provisional painted landing even
+        // after its bounded verification frames expired; it cannot issue debt loops.
+        bottomAnchorController.notifyPaintedNativeTailMaybeChanged();
+      } else {
+        programmaticScrollEventBudgetRef.current = 0;
+        bottomAnchorController.handleScrollNearBottomChange({
+          nextIsNearBottom: nearBottom,
+          scrollDelta: contentOffset.y - previousOffsetY,
+        });
+      }
+    },
+  );
+
+  const handleScrollBeginDrag = useStableEvent(
+    (origin: NativeViewportLifetime, event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!isCurrentViewport(origin)) return;
+      cancelPromptJump();
+      clearPendingUserScrollEnd();
+      const scroll = bottomAnchorController.beginUserScroll();
+      if (!scroll) return;
+      viewportGesture.current = { origin, scroll };
+      isUserScrollActiveRef.current = true;
+      reportReadingPosition();
+      scrollKeyboardDismiss.onScrollBeginDrag(event);
+      const rearmed = rearmHistoryStartPagination(historyStartPaginationStateRef.current);
+      if (rearmed !== historyStartPaginationStateRef.current) {
+        historyStartPaginationStateRef.current = rearmed;
+        setHistoryStartPaginationState(rearmed);
+        evaluateHistoryStart();
+      }
+    },
+  );
 
   // Defer drag end so momentum can take ownership, but capture the terminal
   // gesture position now because layout may move the viewport in the meantime.
-  const handleScrollEndDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const isNearBottom = isScrollEventNearBottom(event);
-    scrollKeyboardDismiss.onScrollEndDrag(event);
+  const handleScrollEndDrag = useStableEvent(
+    (origin: NativeViewportLifetime, event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!isCurrentViewport(origin)) return;
+      const gesture = viewportGesture.current;
+      if (!gesture || gesture.origin !== origin) return;
+      const isNearBottom = isScrollEventNearBottom(event);
+      scrollKeyboardDismiss.onScrollEndDrag(event);
 
-    clearPendingUserScrollEnd();
-    userScrollEndFrameIdRef.current = requestAnimationFrame(() => {
-      userScrollEndFrameIdRef.current = null;
-      isUserScrollActiveRef.current = false;
-      bottomAnchorController.endUserScroll({ isNearBottom });
-    });
-  });
+      clearPendingUserScrollEnd();
+      userScrollEndFrameIdRef.current = requestAnimationFrame(() => {
+        if (!isCurrentViewport(origin) || viewportGesture.current !== gesture) return;
+        userScrollEndFrameIdRef.current = null;
+        viewportGesture.current = null;
+        isUserScrollActiveRef.current = false;
+        gesture.scroll.finish({ isNearBottom });
+      });
+    },
+  );
 
-  const handleMomentumScrollBegin = useStableEvent(() => {
+  const handleMomentumScrollBegin = useStableEvent((origin: NativeViewportLifetime) => {
+    if (!isCurrentViewport(origin) || viewportGesture.current?.origin !== origin) return;
     clearPendingUserScrollEnd();
   });
 
   const handleMomentumScrollEnd = useStableEvent(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    (origin: NativeViewportLifetime, event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!isCurrentViewport(origin)) return;
+      const gesture = viewportGesture.current;
+      if (!gesture || gesture.origin !== origin) return;
       // Android can emit momentum-end after a programmatic anchor correction.
       // Only momentum that still owns the user gesture may settle scroll intent.
       if (!isUserScrollActiveRef.current) {
@@ -707,58 +1085,100 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       }
       const isNearBottom = isScrollEventNearBottom(event);
       clearPendingUserScrollEnd();
+      viewportGesture.current = null;
       isUserScrollActiveRef.current = false;
-      bottomAnchorController.endUserScroll({ isNearBottom });
+      gesture.scroll.finish({ isNearBottom });
     },
   );
 
-  const handleListLayout = useStableEvent((event: LayoutChangeEvent) => {
-    if (event.nativeEvent.layout.width > 0)
-      viewportWidthRef.current = event.nativeEvent.layout.width;
-    const previousViewportWidth = streamViewportMetricsRef.current.viewportWidth;
-    const previousViewportHeight = streamViewportMetricsRef.current.viewportHeight;
-    const viewportWidth = Math.max(0, event.nativeEvent.layout.width);
-    const viewportHeight = Math.max(0, event.nativeEvent.layout.height);
-    const viewportChanged =
-      (previousViewportWidth > 0 && previousViewportWidth !== viewportWidth) ||
-      (previousViewportHeight > 0 && previousViewportHeight !== viewportHeight);
-    streamViewportMetricsRef.current = {
-      ...streamViewportMetricsRef.current,
-      containerKey: "native-virtualized",
-      viewportWidth,
-      viewportHeight,
-      viewportMeasuredForKey: "native-virtualized",
-    };
-    if (viewportChanged) {
-      markNativeViewportSettling();
-    }
-    bottomAnchorController.handleViewportMetricsChange({
-      previousViewportWidth,
-      viewportWidth,
-      previousViewportHeight,
-      viewportHeight,
+  const publishMeasuredNearBottom = useStableEvent(() => {
+    publishMeasuredNativeNearBottom({
+      metrics: streamViewportMetricsRef.current,
+      threshold: 32,
+      publish: onNearBottomChange,
     });
-    evaluateHistoryStart();
   });
 
-  const handleContentSizeChange = useStableEvent((_width: number, height: number) => {
-    const previousContentHeight = streamViewportMetricsRef.current.contentHeight;
-    const nextContentHeight = Math.max(0, height);
-    streamViewportMetricsRef.current = {
-      ...streamViewportMetricsRef.current,
-      containerKey: "native-virtualized",
-      contentHeight: nextContentHeight,
-      contentMeasuredForKey: "native-virtualized",
-    };
-    bottomAnchorController.handleContentSizeChange({
-      previousContentHeight,
-      contentHeight: nextContentHeight,
-    });
-    evaluateHistoryStart();
-    if (historyStartPaginationStateRef.current.status === "settling") {
-      scheduleHistoryStartSettle();
-    }
-  });
+  const handleListLayout = useStableEvent(
+    (origin: NativeViewportLifetime, event: LayoutChangeEvent) => {
+      if (!isCurrentViewport(origin)) return;
+      measuredViewportIdentity.current = flatListRef.current;
+      const previousViewportWidth = streamViewportMetricsRef.current.viewportWidth;
+      const previousViewportHeight = streamViewportMetricsRef.current.viewportHeight;
+      const viewportWidth = Math.max(0, event.nativeEvent.layout.width);
+      const viewportHeight = Math.max(0, event.nativeEvent.layout.height);
+      const viewportChanged =
+        (previousViewportWidth > 0 && previousViewportWidth !== viewportWidth) ||
+        (previousViewportHeight > 0 && previousViewportHeight !== viewportHeight);
+      streamViewportMetricsRef.current = {
+        ...streamViewportMetricsRef.current,
+        containerKey: "native-virtualized",
+        viewportWidth,
+        viewportHeight,
+        viewportMeasuredForKey: "native-virtualized",
+      };
+      // Initial layout can reveal an off-bottom viewport before any native scroll.
+      publishMeasuredNearBottom();
+      if (viewportChanged) {
+        markNativeViewportSettling();
+      }
+      bottomAnchorController.handleViewportMetricsChange({
+        previousViewportWidth,
+        viewportWidth,
+        previousViewportHeight,
+        viewportHeight,
+      });
+      reportReadingPosition();
+      evaluateHistoryStart();
+    },
+  );
+
+  const handleContentSizeChange = useStableEvent(
+    (origin: NativeViewportLifetime, _width: number, height: number) => {
+      if (!isCurrentViewport(origin)) return;
+      measuredContentIdentity.current = flatListRef.current;
+      const previousContentHeight = streamViewportMetricsRef.current.contentHeight;
+      const nextContentHeight = Math.max(0, height);
+      streamViewportMetricsRef.current = {
+        ...streamViewportMetricsRef.current,
+        containerKey: "native-virtualized",
+        contentHeight: nextContentHeight,
+        contentMeasuredForKey: "native-virtualized",
+      };
+      publishMeasuredNearBottom();
+      bottomAnchorController.handleContentSizeChange({
+        previousContentHeight,
+        contentHeight: nextContentHeight,
+      });
+      evaluateHistoryStart();
+      if (historyStartPaginationStateRef.current.status === "settling") {
+        scheduleHistoryStartSettle();
+      }
+    },
+  );
+
+  const viewportHandlers = useMemo<NativeViewportHandlers>(
+    () => ({
+      refEffects: viewportRefEffects,
+      onLayout: handleListLayout,
+      onContentSizeChange: handleContentSizeChange,
+      onScroll: handleScroll,
+      onScrollBeginDrag: handleScrollBeginDrag,
+      onScrollEndDrag: handleScrollEndDrag,
+      onMomentumScrollBegin: handleMomentumScrollBegin,
+      onMomentumScrollEnd: handleMomentumScrollEnd,
+    }),
+    [
+      viewportRefEffects,
+      handleListLayout,
+      handleContentSizeChange,
+      handleScroll,
+      handleScrollBeginDrag,
+      handleScrollEndDrag,
+      handleMomentumScrollBegin,
+      handleMomentumScrollEnd,
+    ],
+  );
 
   useEffect(() => {
     evaluateHistoryStart();
@@ -775,67 +1195,77 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const handleScrollToIndexFailed = promptJumpController.handleIndexFailure;
 
-  const renderItem = useStableEvent(
-    ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
-      const rendered = renderHistoryMountedRow(item, index, historyItems);
-      return (rendered ?? null) as ReactElement | null;
-    },
-  );
-
-  const recordLivePromptOffset = useStableEvent((id: string, offset: number, height: number) => {
-    livePromptOffsetsRef.current.set(id, offset);
-    liveGeometryRef.current.set(id, { y: offset, height });
-    reportReadingPosition();
-  });
-  useEffect(() => {
-    const liveIds = new Set(segments.liveHead.map((item) => item.id));
-    for (const id of livePromptOffsetsRef.current.keys()) {
-      if (!liveIds.has(id)) {
-        livePromptOffsetsRef.current.delete(id);
-        liveGeometryRef.current.delete(id);
-      }
-    }
-  }, [segments.liveHead]);
-
-  const recordLiveHeaderHeight = useStableEvent((event: LayoutChangeEvent) => {
-    liveHeaderHeightRef.current = event.nativeEvent.layout.height;
-    reportReadingPosition();
-  });
-  const liveHeaderContent = useMemo(() => {
-    // Stable render events read the latest expansion state; this revision makes
-    // the memo invoke them again when that state changes.
-    void liveHeadRowRevision;
-    const liveHeadRows = segments.liveHead.map((item, index) => (
-      <MeasuredLiveRow key={item.id} id={item.id} onMeasure={recordLivePromptOffset}>
-        {renderLiveHeadRow(item, index, segments.liveHead)}
-      </MeasuredLiveRow>
-    ));
-    const liveAuxiliary = renderLiveAuxiliary();
+  const recordRow = useStableEvent((id: string, geometry: ActualNativeRowGeometry) => {
+    if (historyItems[geometry.index]?.id !== id) return;
+    const previous = actualGeometry.current.get(id);
     if (
-      liveHeadRows.length === 0 &&
-      !liveAuxiliary &&
-      !boundary.hasMountedHistory &&
-      !boundary.hasVirtualizedHistory
-    ) {
-      return (listEmptyComponent ?? null) as ReactElement | null;
+      previous?.y === geometry.y &&
+      previous.height === geometry.height &&
+      previous.index === geometry.index &&
+      previous.pinnedHeight === geometry.pinnedHeight
+    )
+      return;
+    actualGeometry.current.set(id, geometry);
+    measuredHeaders.record(id, geometry);
+    setGeometryRevision((value) => value + 1);
+    reportReadingPosition();
+  });
+  const renderItem = useStableEvent(
+    ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => (
+      <ActualPinnedRowContext.Provider value={pinnedId === item.id}>
+        {segments.liveHead.some((live) => live.id === item.id)
+          ? renderLiveHeadRow(item, index, historyItems)
+          : renderHistoryMountedRow(item, index, historyItems)}
+      </ActualPinnedRowContext.Provider>
+    ),
+  );
+  const markRowMounted = useStableEvent((id: string, mounted: boolean) => {
+    if (mounted) mountedRows.current.add(id);
+    else {
+      mountedRows.current.delete(id);
+      paintedRows.current.delete(id);
     }
-    return (
-      <View onLayout={recordLiveHeaderHeight}>
-        {liveHeadRows}
-        {liveAuxiliary}
-      </View>
-    );
-  }, [
-    boundary,
-    listEmptyComponent,
-    liveHeadRowRevision,
-    renderLiveAuxiliary,
-    renderLiveHeadRow,
-    segments.liveHead,
-    recordLivePromptOffset,
-    recordLiveHeaderHeight,
-  ]);
-
+  });
+  const recordPaintedRow = useStableEvent((measurement: PaintedNativeRowMeasurement) => {
+    const { binding, item, index, height } = measurement;
+    if (binding.items[index] !== item) return;
+    if (!(height > 0) || !Number.isFinite(height)) {
+      // A later zero frame invalidates this binding's earlier positive frame.
+      if (paintedRows.current.get(item.id)?.binding === binding)
+        paintedRows.current.delete(item.id);
+      return;
+    }
+    paintedRows.current.set(item.id, { binding, id: item.id, index, height, mounted: true });
+    bottomAnchorController.notifyPaintedNativeTailMaybeChanged();
+  });
+  const CellRendererComponent = useMemo(
+    () =>
+      createActualCellRenderer({
+        record: recordRow,
+        mount: markRowMounted,
+        recordPainted: recordPaintedRow,
+      }),
+    [recordRow, markRowMounted, recordPaintedRow],
+  );
+  const stickyHeaderIndices = useMemo(
+    () => historyItems.flatMap((item, index) => (item.kind === "user_message" ? [index + 1] : [])),
+    [historyItems],
+  );
+  const listExtraData = useMemo(
+    () => ({
+      historyRowRevision,
+      liveHeadRowRevision,
+      pinnedId,
+      expanded: actualRows?.expandedIds,
+      geometryRevision,
+    }),
+    [historyRowRevision, liveHeadRowRevision, pinnedId, actualRows?.expandedIds, geometryRevision],
+  );
+  useEffect(() => {
+    const ids = new Set(historyItems.map((item) => item.id));
+    for (const id of actualGeometry.current.keys())
+      if (!ids.has(id)) actualGeometry.current.delete(id);
+  }, [historyItems]);
   const historyFooterContent = useMemo(() => {
     const isLoadingOperation = isHistoryStartLoadingOperation(historyStartPaginationState);
     return (
@@ -849,58 +1279,62 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     );
   }, [historyStartPaginationState]);
 
-  // RN's FlatList strictMode keeps its internal renderItem wrapper stable when
-  // data or the live header changes, preserving the row identities above.
+  const footerContent = useMemo(() => <View>{renderLiveAuxiliary()}</View>, [renderLiveAuxiliary]);
+  const emptyContent = useMemo(() => <View>{listEmptyComponent}</View>, [listEmptyComponent]);
+  // One stable cell type and key cover both history and live revisions. RN retains
+  // the closest preceding sticky cell in its own render mask (loader offset1).
   return (
-    <PromptBubbleGeometryContext.Provider value={bubbleGeometryOwner}>
-      <FlatList
-        {...listInsetProps}
-        ref={flatListRef}
-        data={historyRows}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        strictMode
-        testID="agent-chat-scroll"
-        nativeID="agent-chat-scroll-native-virtualized"
-        ListHeaderComponent={liveHeaderContent ?? undefined}
-        ListFooterComponent={historyFooterContent ?? undefined}
-        contentContainerStyle={listContentContainerStyle}
-        style={listStyle}
-        onLayout={handleListLayout}
-        onScroll={handleScroll}
-        onScrollBeginDrag={handleScrollBeginDrag}
-        onScrollEndDrag={handleScrollEndDrag}
-        onMomentumScrollBegin={handleMomentumScrollBegin}
-        onMomentumScrollEnd={handleMomentumScrollEnd}
-        scrollEventThrottle={16}
-        onContentSizeChange={handleContentSizeChange}
-        maintainVisibleContentPosition={maintainVisibleContentPosition}
-        onScrollToIndexFailed={handleScrollToIndexFailed}
-        onViewableItemsChanged={handleViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        initialNumToRender={12}
-        windowSize={10}
-        removeClippedSubviews={false}
-        scrollEnabled={scrollEnabled}
-        showsVerticalScrollIndicator
-        inverted
-      />
-    </PromptBubbleGeometryContext.Provider>
+    <NativeStickyViewportProvider value={nativeStickyViewport}>
+      <NativePaintedTailBindingContext.Provider value={paintedBinding}>
+        <NativeViewportList
+          {...listInsetProps}
+          viewportHandlers={viewportHandlers}
+          data={historyRows}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          strictMode
+          testID="agent-chat-scroll"
+          nativeID="agent-chat-scroll-native-virtualized"
+          CellRendererComponent={CellRendererComponent}
+          extraData={listExtraData}
+          stickyHeaderIndices={stickyHeaderIndices}
+          StickyHeaderComponent={ActualStickyHeader}
+          ListHeaderComponent={historyFooterContent}
+          ListHeaderComponentStyle={leadingSlotStyle}
+          ListFooterComponent={footerContent}
+          ListEmptyComponent={emptyContent}
+          contentContainerStyle={listContentContainerStyle}
+          style={listStyle}
+          scrollEventThrottle={16}
+          maintainVisibleContentPosition={maintainVisibleContentPosition}
+          onScrollToIndexFailed={handleScrollToIndexFailed}
+          onViewableItemsChanged={handleViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          // Tall Markdown rows need larger refill batches during native flings.
+          initialNumToRender={2}
+          maxToRenderPerBatch={10}
+          windowSize={NATIVE_STREAM_WINDOW_SIZE}
+          removeClippedSubviews={false}
+          scrollEnabled={scrollEnabled}
+          showsVerticalScrollIndicator
+        />
+      </NativePaintedTailBindingContext.Provider>
+    </NativeStickyViewportProvider>
   );
 }
 
 export function createNativeStreamStrategy(): StreamStrategy {
   const strategy = createStreamStrategy({
     render: (renderInput) => <NativeStreamViewport {...renderInput} strategy={strategy} />,
-    orderTailReverse: true,
-    orderHeadReverse: true,
-    assistantTurnTraversalStep: 1,
-    edgeSlot: "header",
-    historyLiveBoundaryEdge: "first",
-    liveHeadHistoryBoundaryEdge: "last",
-    frameChildOrder: "footer-then-content",
-    flatListInverted: true,
-    overlayScrollbarInverted: true,
+    orderTailReverse: false,
+    orderHeadReverse: false,
+    assistantTurnTraversalStep: -1,
+    edgeSlot: "footer",
+    historyLiveBoundaryEdge: "last",
+    liveHeadHistoryBoundaryEdge: "first",
+    frameChildOrder: "content-then-footer",
+    flatListInverted: false,
+    overlayScrollbarInverted: false,
     maintainVisibleContentPosition: DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION,
     bottomAnchorTransportBehavior: {
       verificationDelayFrames: 2,
@@ -910,8 +1344,10 @@ export function createNativeStreamStrategy(): StreamStrategy {
     anchorBottomOnContentSizeChange: false,
     animateManualScrollToBottom: true,
     useVirtualizedList: true,
-    isNearBottom: (input) => input.offsetY <= input.threshold,
-    getBottomOffset: () => 0,
+    isNearBottom: (input) =>
+      nativeBottomDistance(input.contentHeight, 0, input.viewportHeight, input.offsetY) <=
+      input.threshold,
+    getBottomOffset: (input) => Math.max(0, input.contentHeight - input.viewportHeight),
   });
   return strategy;
 }

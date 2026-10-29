@@ -10,35 +10,61 @@ import { registerBrowserExtensionActions } from "./actions.js";
 import { registerBrowserExtensionCompatibility } from "./compatibility.js";
 
 const ExtensionIdSchema = z.string().regex(/^[a-p]{32}$/);
+const PinInputSchema = z.object({ id: ExtensionIdSchema, pinned: z.boolean() });
 const EnableInputSchema = z.object({ id: ExtensionIdSchema, enabled: z.boolean() });
 const STORE_URL = "https://chromewebstore.google.com/";
 
 /** Install the Store only in the browser session, before any browser guest can navigate. */
 export async function registerBrowserExtensions(): Promise<void> {
   const profile = session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
-  // Workers can start during restore, before the first browser pane or popup exists.
-  const compatibility = registerBrowserExtensionCompatibility(profile);
   const extensionsPath = path.join(app.getPath("userData"), "browser-extensions");
   const managedLoads = new Set<string>();
   let storeWindow: BrowserWindow | null = null;
 
-  const catalog = new BrowserExtensionCatalog(
+  const notifyChanged = () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (
+        !window.isDestroyed() &&
+        !window.webContents.isDestroyed() &&
+        window.webContents.session === session.defaultSession
+      ) {
+        window.webContents.send("paseo:browser:extensions:changed");
+      }
+    }
+  };
+
+  // The callback runs only after catalog construction, when restore/install starts loading extensions.
+  let catalog: BrowserExtensionCatalog;
+  const compatibility = registerBrowserExtensionCompatibility(profile, {
+    onStorageFailure: (id, error) => catalog.recordRuntimeFailure(id, error),
+    onStorageReady: notifyChanged,
+    onActionChanged: notifyChanged,
+  });
+  /** A native load is not usable until its authoritative storage listener is ready. */
+  async function loadReadyExtension(extensionPath: string): Promise<Electron.Extension> {
+    managedLoads.add(extensionPath);
+    try {
+      const extension = await profile.extensions.loadExtension(extensionPath);
+      await compatibility.waitUntilReady(extension);
+      return extension;
+    } finally {
+      managedLoads.delete(extensionPath);
+    }
+  }
+  catalog = new BrowserExtensionCatalog(
     path.join(app.getPath("userData"), "browser-extensions.json"),
     extensionsPath,
     {
-      isLoaded: (id) => Boolean(profile.extensions.getExtension(id)),
-      async load(extensionPath) {
-        managedLoads.add(extensionPath);
-        try {
-          return await profile.extensions.loadExtension(extensionPath);
-        } finally {
-          managedLoads.delete(extensionPath);
-        }
-      },
+      isLoaded: compatibility.isExtensionReady,
+      load: loadReadyExtension,
       unload: (id) => profile.extensions.removeExtension(id),
       uninstall: (id) => uninstallExtension(id, { session: profile, extensionsPath }),
     },
+    notifyChanged,
   );
+  app.once("before-quit", () => catalog.dispose());
+  profile.extensions.on("extension-loaded", notifyChanged);
+  profile.extensions.on("extension-unloaded", notifyChanged);
   let startupError: unknown;
   try {
     await catalog.restore();
@@ -52,7 +78,11 @@ export async function registerBrowserExtensions(): Promise<void> {
     if (managedLoads.has(extension.path)) {
       return;
     }
-    void catalog.remember(extension).catch((error) => {
+    async function rememberReady(): Promise<void> {
+      await compatibility.waitUntilReady(extension);
+      await catalog.remember(extension);
+    }
+    void rememberReady().catch((error) => {
       profile.extensions.removeExtension(extension.id);
       log.error("[browser-extensions] could not save installed extension", error);
       dialog.showErrorBox("Extension could not be saved", String(error));
@@ -118,13 +148,22 @@ export async function registerBrowserExtensions(): Promise<void> {
 
   registerBrowserExtensionActions({
     profile,
+    catalog,
     assertAppSender,
     onPopupCreated: (guest, popup) => compatibility.registerPopup(popup, guest),
+    waitUntilReady: compatibility.waitUntilReady,
+    isExtensionReady: compatibility.isExtensionReady,
+    getBadge: compatibility.getActionBadge,
   });
 
   ipcMain.handle("paseo:browser:extensions:list", (event) => {
     assertAppSender(event);
     return catalog.list();
+  });
+  ipcMain.handle("paseo:browser:extensions:set-pinned", (event, input: unknown) => {
+    assertAppSender(event);
+    const { id, pinned } = PinInputSchema.parse(input);
+    return catalog.setPinned(id, pinned);
   });
   ipcMain.handle("paseo:browser:extensions:set-enabled", (event, input: unknown) => {
     assertAppSender(event);
@@ -153,7 +192,7 @@ export async function registerBrowserExtensions(): Promise<void> {
     const extensionPath = result.filePaths[0];
     managedLoads.add(extensionPath);
     try {
-      const extension = await profile.extensions.loadExtension(extensionPath);
+      const extension = await loadReadyExtension(extensionPath);
       try {
         await catalog.remember(extension);
       } catch (error) {

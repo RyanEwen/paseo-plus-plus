@@ -1,4 +1,4 @@
-import { useAppSettings } from "@/hooks/use-settings";
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
 import {
   createContext,
   useCallback,
@@ -15,6 +15,7 @@ import type { InlinePathTarget } from "./parse";
 import type { AssistantFileLinkContext, GetDirectorySuggestions } from "./resolver";
 
 export interface AssistantFileLinkDaemonClient {
+  readFile?: import("@getpaseo/client/internal/daemon-client").DaemonClient["readFile"];
   getDirectorySuggestions: GetDirectorySuggestions;
 }
 
@@ -22,6 +23,7 @@ export interface AssistantFileLinkResolverConfig {
   client?: AssistantFileLinkDaemonClient | null;
   serverId?: string;
   workspaceRoot?: string;
+  relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
   onOpenHttpUrl?: (url: string) => void | Promise<void>;
@@ -47,20 +49,20 @@ export function AssistantFileLinkResolverProvider({
   client,
   serverId,
   workspaceRoot,
+  relativePathBase,
   onOpenWorkspaceFile,
   onOpenHttpUrl,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
-  const { settings } = useAppSettings();
-  const openHttpLinksInPaseo = settings.paseoPlusPlus.workspaceChatLinks;
-  const openHttpLinksInPaseoRef = useRef(openHttpLinksInPaseo);
-  openHttpLinksInPaseoRef.current = openHttpLinksInPaseo;
+  const { enabledRef: openHttpLinksInPaseoRef, defaultDestination: httpLinkDestination } =
+    useWorkspaceLinkOpeningContext();
 
   const configRef = useRef<AssistantFileLinkResolverConfig>({
     client,
     serverId,
     workspaceRoot,
+    relativePathBase,
     onOpenWorkspaceFile,
     onOpenHttpUrl,
     toast,
@@ -69,6 +71,7 @@ export function AssistantFileLinkResolverProvider({
     client,
     serverId,
     workspaceRoot,
+    relativePathBase,
     onOpenWorkspaceFile,
     onOpenHttpUrl,
     toast,
@@ -89,9 +92,9 @@ export function AssistantFileLinkResolverProvider({
       configRef,
       getDirectorySuggestions,
       openHttpLinksInPaseoRef,
-      httpLinkDestination: openHttpLinksInPaseo ? "paseo" : "external",
+      httpLinkDestination,
     }),
-    [getDirectorySuggestions, openHttpLinksInPaseo],
+    [getDirectorySuggestions, openHttpLinksInPaseoRef, httpLinkDestination],
   );
 
   return (
@@ -103,10 +106,18 @@ export function AssistantFileLinkResolverProvider({
 
 export function useAssistantFileLinkResolverContext(): AssistantFileLinkResolverContextValue {
   const context = useContext(AssistantFileLinkResolverContext);
-  if (!context) {
-    throw new Error("AssistantFileLinkResolverProvider is required for assistant file links.");
-  }
-  return context;
+  return context ?? EMPTY_CONTEXT;
 }
 
 export type { AssistantFileLinkContext };
+
+const EMPTY_CONTEXT: AssistantFileLinkResolverContextValue = {
+  configRef: { current: {} },
+  openHttpLinksInPaseoRef: { current: false },
+  httpLinkDestination: "external",
+  getDirectorySuggestions: async () => ({ entries: [], error: null }),
+};
+
+export function useAssistantFileLinkEnvironment() {
+  return useAssistantFileLinkResolverContext().configRef.current;
+}

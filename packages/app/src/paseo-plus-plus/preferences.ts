@@ -2,14 +2,16 @@ import { z } from "zod";
 
 /** App preference opt-outs for optional fork UI. Disabling never deletes feature data. */
 const preferencesObject = z.looseObject({
+  // Retain the released key so existing chat-link opt-outs also apply to all workspace links.
   workspaceChatLinks: z.boolean().catch(true),
   sidebarHostUpdates: z.boolean().catch(true),
   mobileWorkspaceTabs: z.boolean().catch(true),
+  widerWorkspaceTabs: z.boolean().catch(true),
+  explorerIconOnlyTabs: z.boolean().catch(false),
   splitLayoutPresets: z.boolean().catch(true),
   descriptiveToolCalls: z.boolean().catch(true),
   stickyUserPrompts: z.boolean().catch(true),
   previousAgents: z.boolean().catch(true),
-  sidebarProjectSelector: z.boolean().catch(true),
   sidebarActivityChips: z.boolean().catch(true),
   sidebarProjectEmphasis: z.boolean().catch(true),
   sidebarBulkActions: z.boolean().catch(true),

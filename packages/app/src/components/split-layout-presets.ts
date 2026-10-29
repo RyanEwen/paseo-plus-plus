@@ -3,11 +3,13 @@ import { computeResizeHandleSizes } from "./resize-handle-sizes";
 
 /** Ratios read left-to-right for columns and top-to-bottom for rows. */
 export const SPLIT_LAYOUT_PRESETS = [
-  { label: "50/50", fraction: 0.5 },
-  { label: "60/40", fraction: 0.6 },
-  { label: "40/60", fraction: 0.4 },
+  { label: "80/20", fraction: 0.8 },
   { label: "70/30", fraction: 0.7 },
+  { label: "60/40", fraction: 0.6 },
+  { label: "50/50", fraction: 0.5 },
+  { label: "40/60", fraction: 0.4 },
   { label: "30/70", fraction: 0.3 },
+  { label: "20/80", fraction: 0.2 },
 ] as const;
 
 export type SplitSide = "left" | "right" | "top" | "bottom";

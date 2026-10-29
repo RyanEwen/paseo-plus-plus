@@ -265,8 +265,10 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
 
   expect(Object.keys(paseo).sort()).toEqual([
     "agents",
+    "attachments",
     "config",
     "dispose",
+    "hosts",
     "observeEvents",
     "projects",
     "providers",
@@ -276,6 +278,18 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("connect" in paseo).toBe(false);
   expect("close" in paseo).toBe(false);
   expect("skills" in paseo.agents).toBe(false);
+});
+
+test("createPaseoApi resolves attachment methods only when invoked", () => {
+  const driver = {} as DaemonClient;
+  const api = createPaseoApi(driver);
+  const list = vi.fn(() => {
+    throw new Error("forwarded attachment request");
+  });
+  Object.assign(driver, { listAttachments: list });
+  expect(() => api.attachments.list("agent", { limit: 2 })).toThrow("forwarded attachment request");
+  expect(list).toHaveBeenCalledWith("agent", { limit: 2 });
+  expect(list.mock.contexts[0]).toBe(driver);
 });
 
 test("agent handles send permission responses for their agent", async () => {
@@ -1679,6 +1693,7 @@ test("agent config requires provider/model syntax", async () => {
 test("canceled timeline handles and captured state are collectible while their API stays alive", async () => {
   const source = `
     import assert from "node:assert/strict";
+    import { writeSync } from "node:fs";
     import { createPaseoApi } from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
     import { DaemonClient } from ${JSON.stringify(new URL("./daemon-client.ts", import.meta.url).href)};
     const drivers = [], apis = [];
@@ -1723,14 +1738,90 @@ test("canceled timeline handles and captured state are collectible while their A
     assert.deepEqual(live.active, { handles: 100, states: 100 }, "active ownership is retained");
     assert.equal(errors, 100, "client shutdown reports failure; explicit cancellation does not");
     for (const result of Object.values(disposed)) assert.deepEqual(result, { handles: 0, states: 0 });
+    writeSync(2, "paseo:timeline-gc:assertions-complete\\n");
   `;
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !/^(PASEO_|EXPO_|E2E_|AGENT_BROWSER_)/.test(key)),
   );
-  const result = await promisify(execFile)(
+  const execution = promisify(execFile)(
     process.execPath,
     ["--expose-gc", "--import", "tsx", "--input-type=module", "-e", source],
     { env, timeout: 15000 },
   );
-  expect(result.stdout).toContain('"phase":"API alive"');
+  const childEvents: Array<{
+    event: string;
+    pid: number | undefined;
+    at: number;
+    code?: number | null;
+    signal?: string | null;
+  }> = [];
+  execution.child.once("spawn", () =>
+    childEvents.push({ event: "spawn", pid: execution.child.pid, at: Date.now() }),
+  );
+  execution.child.once("close", (code, signal) =>
+    childEvents.push({ event: "close", pid: execution.child.pid, at: Date.now(), code, signal }),
+  );
+  const diagnostics = (stdout: string, stderr: string) =>
+    JSON.stringify({
+      exitCode: execution.child.exitCode,
+      signal: execution.child.signalCode,
+      node: process.version,
+      childEvents,
+      stdoutBytes: Buffer.byteLength(stdout),
+      stderrBytes: Buffer.byteLength(stderr),
+      stdout: stdout.slice(0, 2048),
+      stderr: stderr.slice(0, 2048),
+    });
+  const result = await execution.catch((error: unknown) => {
+    const stdout =
+      error instanceof Error && "stdout" in error && typeof error.stdout === "string"
+        ? error.stdout
+        : "";
+    const stderr =
+      error instanceof Error && "stderr" in error && typeof error.stderr === "string"
+        ? error.stderr
+        : "";
+    throw new Error(`GC fixture child failed: ${diagnostics(stdout, stderr)}`, { cause: error });
+  });
+  const context = diagnostics(result.stdout, result.stderr);
+  console.info("gc_fixture_child_result", context);
+  const completionLines = result.stderr
+    .split("\n")
+    .filter((line) => line === "paseo:timeline-gc:assertions-complete");
+  expect(completionLines, context).toHaveLength(1);
 }, 20000);
+
+test("qualified parents preserve foreign identity without resolving an equal local agent ID", async () => {
+  const { client, ws } = await connectClient();
+  const localParent = client.agents.ref("same-parent");
+  expect(localParent.address).toEqual({ serverId: "srv_sdk_test", agentId: "same-parent" });
+  const creating = client.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    cwd: "/repo/sdk",
+    parent: { serverId: "srv_parent_elsewhere", agentId: "same-parent" },
+    labels: { task: "preserved" },
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).not.toHaveProperty("callerAgentId");
+  expect(request).toMatchObject({
+    labels: {
+      task: "preserved",
+      "paseo.parent-agent-id": "same-parent",
+      "paseo.parent-server-id": "srv_parent_elsewhere",
+    },
+  });
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: createAgent(),
+      },
+    }),
+  );
+  await creating;
+  await client.close();
+  expect(localParent.address).toEqual({ serverId: "srv_sdk_test", agentId: "same-parent" });
+});

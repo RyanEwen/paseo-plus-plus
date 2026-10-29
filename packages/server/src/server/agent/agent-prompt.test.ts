@@ -1,10 +1,16 @@
+import { AgentAttentionObjectives, AttentionObjectiveError } from "./attention/objectives.js";
+import { toAgentPayload } from "./agent-projections.js";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
+import { createTestAgentMessages } from "../test-utils/agent-messages.js";
 import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   parseAgentMessage,
+  parseAgentMessages,
   formatAgentMessage,
   prepareAgentMessage,
-  projectAgentMessage,
+  projectAgentMessages,
 } from "./agent-messages/index.js";
 import { expect, it, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
@@ -14,9 +20,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager } from "./agent-manager.js";
+import { AgentManager, AgentRunCancellationError } from "./agent-manager.js";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentStorage } from "./agent-storage.js";
-import { setupFinishNotification, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import {
+  setupFinishNotification,
+  setupFinishWait,
+  waitForAgentRunStartWithTimeout,
+} from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
   AgentClient,
@@ -143,6 +154,11 @@ function createFinishNotificationScenario(
   return {
     startWatchingChild() {
       setupFinishNotification({
+        agentMessages: createTestAgentMessages({
+          agentManager,
+          agentStorage,
+          logger: options?.logger ?? createTestLogger(),
+        }),
         agentManager,
         agentStorage,
         childAgentId: "child-agent",
@@ -221,6 +237,11 @@ function createFinishNotificationScenario(
       subscriber?.({
         type: "agent_state",
         agent: childAgent,
+      });
+      subscriber?.({
+        type: "agent_stream",
+        agentId: "child-agent",
+        event: { type: "turn_completed", provider: "codex" },
       });
     },
     async finishChildAndReadParentPrompt() {
@@ -389,22 +410,25 @@ test("finish notifications report every concurrently pending permission", async 
   scenario.requestChildPermission("permission-1");
   scenario.requestChildPermission("permission-2");
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
   expect(
-    scenario.parentPrompts().map((prompt) => {
-      const payload = parseAgentMessage(prompt)!.text.match(
-        /<permission-request>\n([\s\S]+?)\n<\/permission-request>/,
-      )?.[1];
-      return JSON.parse(payload!).requestId;
-    }),
+    scenario
+      .parentPrompts()
+      .flatMap((prompt) => parseAgentMessages(prompt)!)
+      .map((message) => {
+        const payload = message.text.match(
+          /<permission-request>\n([\s\S]+?)\n<\/permission-request>/,
+        )?.[1];
+        return JSON.parse(payload!).requestId;
+      }),
   ).toEqual(["permission-1", "permission-2"]);
 
   scenario.resolveChildPermission("permission-1");
   scenario.resolveChildPermission("permission-2");
   scenario.finishChild();
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
-  expect(scenario.parentPrompts()[2]).toContain("finished.");
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  expect(scenario.parentPrompts()[1]).toContain("finished.");
 });
 
 test("finish notifications survive repeated permission cycles", async () => {
@@ -459,10 +483,9 @@ test("finish notifications log a rejected parent prompt without an unhandled rej
 
   expect(captured.records).toEqual([
     expect.objectContaining({
-      msg: "Failed to notify caller agent",
-      childAgentId: "child-agent",
-      callerAgentId: "caller-agent",
-      reason: "finished",
+      msg: "Agent message batch dispatch failed",
+      agentId: "caller-agent",
+      messageIds: [expect.any(String)],
       err: expect.objectContaining({ message: "parent provider rejected replacement" }),
     }),
   ]);
@@ -520,6 +543,11 @@ it("does not notify archived callers", async () => {
   Reflect.set(agentStorage, "get", agentStorageGetSpy);
 
   setupFinishNotification({
+    agentMessages: createTestAgentMessages({
+      agentManager,
+      agentStorage,
+      logger: createTestLogger(),
+    }),
     agentManager,
     agentStorage,
     childAgentId: "child-agent",
@@ -539,6 +567,11 @@ it("does not notify archived callers", async () => {
   subscriber?.({
     type: "agent_state",
     agent: childAgent,
+  });
+  subscriber?.({
+    type: "agent_stream",
+    agentId: "child-agent",
+    event: { type: "turn_completed", provider: "codex" },
   });
 
   await vi.waitFor(() => {
@@ -798,6 +831,36 @@ test("agent envelopes round-trip opaque sender IDs and XML-sensitive messages", 
   expect(parseAgentMessage(encoded.replace('version="1"', 'version="1" version="1"'))).toBeNull();
 });
 
+test("a delivered batch projects each message and completion separately in order", () => {
+  const entries = [
+    {
+      id: "report",
+      source: { kind: "agent-message" as const, agentId: "remote::worker", title: "Worker" },
+      text: "Result <ready>",
+    },
+    {
+      id: "finished",
+      source: {
+        kind: "agent-notification" as const,
+        agentId: "remote::worker",
+        event: "finished" as const,
+      },
+      text: "Finished & ready",
+    },
+  ];
+  const text = entries.map(formatAgentMessage).join("\n\n");
+  expect(projectAgentMessages({ type: "user_message", text })).toEqual(
+    entries.flatMap((entry) =>
+      projectAgentMessages({ type: "user_message", text: formatAgentMessage(entry) }),
+    ),
+  );
+  // Human submissions containing the same envelopes must survive replay as human text.
+  const pasted = prepareAgentMessage(text, undefined, "human-batch");
+  expect(projectAgentMessages({ type: "user_message", text: String(pasted.prompt) })).toEqual([
+    { type: "user_message", text, clientMessageId: "human-batch" },
+  ]);
+});
+
 test("agent envelope includes rendered attachment context and preserves images", () => {
   const image = { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" };
   const attachment = {
@@ -839,15 +902,493 @@ test("a human pasting an agent envelope stays a human message through provider r
   });
   const delivery = prepareAgentMessage(pasted, undefined, "human-submission");
   expect(
-    projectAgentMessage({
+    projectAgentMessages({
       type: "user_message",
       text: String(delivery.prompt),
       messageId: "provider-echo",
-    }),
+    })[0],
   ).toEqual({
     type: "user_message",
     text: pasted,
     messageId: "provider-echo",
     clientMessageId: "human-submission",
   });
+});
+
+it.each([
+  {
+    mode: "parented",
+    name: "keeps two exact routed request watches so later work cannot discard an earlier result",
+  },
+  {
+    mode: "independent",
+    name: "independent routed recipient returns exact outcomes despite parent mismatch",
+  },
+  {
+    mode: "legacy",
+    name: "independent routed recipient without correlation retains parent rejection and cannot dispatch",
+  },
+  {
+    mode: "invalid-token",
+    name: "independent routed recipient with invalid correlation cannot dispatch",
+  },
+  {
+    mode: "no-outcome",
+    name: "independent routed recipient without exact outcome evidence cannot dispatch",
+  },
+])("$name", async ({ mode }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "attention-watch-membership-"));
+  const logger = createTestLogger();
+  const warnings = vi.spyOn(logger, "warn");
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const parentPrompts: string[] = [];
+  const manager = new AgentManager({
+    registry: storage,
+    logger,
+    clients: createTestAgentClients({
+      onStartTurn: (prompt, config) => {
+        if (config.title === "Caller")
+          parentPrompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+      },
+    }),
+  });
+  manager.setAttentionHost({ serverId: "origin", resolveRemoteRequester: async () => "unknown" });
+  const source = new AgentAttentionObjectives(undefined, "origin");
+  source.admit({
+    inputs: [
+      { kind: "human", requestId: "human-A" },
+      { kind: "human", requestId: "human-B" },
+    ],
+  });
+  source.declare("human-A", "waiting");
+  source.declare("human-B", "waiting");
+  const callerId = randomUUID();
+  const childId = randomUUID();
+  const peer = { agentId: childId, serverId: "target" };
+  const links = ["human-A", "human-B"].map(
+    (objectiveId) => source.outgoing({ recipient: peer, objectiveId })?.requesterObjective,
+  );
+  await manager.createAgent({ provider: "claude", cwd: workdir, title: "Caller" }, callerId, {
+    workspaceId: undefined,
+    attentionObjectives: source.snapshot(),
+  });
+  const child = await manager.createAgent(
+    { provider: "claude", cwd: workdir, title: "Child" },
+    childId,
+    {
+      workspaceId: undefined,
+      labels:
+        mode === "parented"
+          ? {
+              "paseo.parent-agent-id": callerId,
+              "paseo.parent-server-id": "origin",
+            }
+          : undefined,
+    },
+  );
+  const final = toAgentPayload(child, { title: "Child" });
+  const delivery = createTestAgentMessages({
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  const outcomes = [
+    Promise.withResolvers<WaitForFinishResult>(),
+    Promise.withResolvers<WaitForFinishResult>(),
+  ];
+  const enqueue = vi.spyOn(delivery, "enqueue");
+  const reservations = vi.spyOn(manager, "reserveAttentionCallback");
+  const signals: AbortSignal[] = [];
+  const acknowledgements: string[] = [];
+  const stops: Array<() => void> = [];
+
+  /** Report fixed failure categories without leaking error payloads, paths, or endpoint details. */
+  function callbackErrorKind(error: unknown): string {
+    if (error instanceof AttentionObjectiveError) return "attention-objective-refused";
+    if (error instanceof AgentRunCancellationError) return "run-cancellation-refused";
+    if (!(error instanceof Error)) return "non-error-rejection";
+    if (error.message === "Active turn changed before steering could be delivered")
+      return "active-turn-changed-before-dispatch";
+    if (error.message === "A foreground turn is already active")
+      return "provider-foreground-already-active";
+    if (error.name === "AbortError") return "aborted";
+    return "unclassified-error";
+  }
+
+  try {
+    for (const [index, link] of links.entries()) {
+      if (!link) throw new Error("Expected exact request link");
+      let first = true;
+      stops.push(
+        setupFinishWait({
+          agentManager: manager,
+          agentStorage: storage,
+          agentMessages: delivery,
+          originServerId: "origin",
+          childServerId: "target",
+          childAgentId: childId,
+          callerAgentId: callerId,
+          attention:
+            mode === "legacy"
+              ? undefined
+              : {
+                  continuation:
+                    mode === "invalid-token" ? { ...link, token: "invalid-token" } : link,
+                },
+          logger,
+          wait: async (signal, query) => {
+            if (query?.acknowledgeOutcomeId) acknowledgements.push(query.acknowledgeOutcomeId);
+            if (first) {
+              first = false;
+              signals.push(signal);
+              return outcomes[index].promise;
+            }
+            return {
+              status: "idle",
+              final,
+              error: null,
+              lastMessage: null,
+              attentionOutcome: null,
+            };
+          },
+          afterPermission: async () => {},
+        }),
+      );
+    }
+    for (const index of [1, 0]) {
+      const link = links[index];
+      if (!link) throw new Error("Expected request link");
+      outcomes[index].resolve({
+        status: "idle",
+        final,
+        error: null,
+        lastMessage: "Untrusted current message",
+        attentionOutcome:
+          mode === "no-outcome"
+            ? null
+            : {
+                id: randomUUID(),
+                requestId: link.requestId,
+                requester: { agentId: callerId, serverId: "origin" },
+                acceptedTurnId: `target-${index}`,
+                kind: "finished",
+                lastMessage: `EXACT_RESULT_${index}`,
+                error: null,
+              },
+      });
+    }
+    // Abort also follows a failed watch. Inspect delivery evidence before checking prompt bodies.
+    await expect
+      .poll(() => signals.length === 2 && signals.every((signal) => signal.aborted))
+      .toBe(true);
+    // Observe real public receipts only after both watch paths have settled, without wrapping dispatch.
+    const dispatched = enqueue.mock.results.flatMap((result) => {
+      if (result.type === "return") return [result.value.dispatched];
+      return [];
+    });
+    const settlements = await Promise.allSettled(dispatched);
+    const dispatches = settlements.map((result) => {
+      if (result.status === "fulfilled")
+        return { status: result.status, disposition: result.value };
+      return { status: result.status, rejection: callbackErrorKind(result.reason) };
+    });
+    const watchFailures = warnings.mock.calls.flatMap(([detail, message]) => {
+      if (message !== "Child finish wait stopped") return [];
+      const context: unknown = detail;
+      if (typeof context === "object" && context !== null && "err" in context)
+        return [callbackErrorKind(context.err)];
+      return ["unclassified-watch-warning"];
+    });
+    const diagnostic = `Exact routed callback evidence: ${JSON.stringify({ watchFailures, dispatches })}`;
+    if (mode === "parented" || mode === "independent") {
+      expect(reservations, diagnostic).toHaveBeenCalledTimes(2);
+      expect(enqueue, diagnostic).toHaveBeenCalledTimes(2);
+      expect(acknowledgements, diagnostic).toHaveLength(2);
+      const stored = (await storage.get(callerId))?.attentionObjectives;
+      expect(
+        stored?.delegations.map((entry) => entry.deliveries?.map((item) => item.status)),
+        diagnostic,
+      ).toEqual([["consumed"], ["consumed"]]);
+      expect(parentPrompts.join("\n"), diagnostic).toContain("EXACT_RESULT_0");
+      expect(parentPrompts.join("\n"), diagnostic).toContain("EXACT_RESULT_1");
+      expect(parentPrompts.join("\n"), diagnostic).not.toContain("Untrusted current message");
+    } else {
+      expect(parentPrompts).toEqual([]);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(acknowledgements).toEqual([]);
+      expect(
+        (await storage.get(callerId))?.attentionObjectives?.delegations.every(
+          (entry) => !entry.deliveries?.length,
+        ),
+      ).toBe(true);
+    }
+  } finally {
+    warnings.mockRestore();
+    for (const stop of stops) stop();
+    await delivery.close();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  {
+    mode: "failed-write",
+    name: "thrown callback reservation snapshot prevents enqueue and acknowledgement and permits retry",
+  },
+  {
+    mode: "restored",
+    name: "fresh manager recovers an exact unconsumed callback reservation and delivers once",
+  },
+  {
+    mode: "competing",
+    name: "competing live callback watchers cannot both dispatch the same outcome",
+  },
+  {
+    mode: "await-retirement",
+    name: "callback watcher retired during the supersession await cannot enqueue or acknowledge and exact retry succeeds",
+  },
+])("$name", async ({ mode }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "attention-callback-recovery-"));
+  const logger = createTestLogger();
+  const warnings = vi.spyOn(logger, "warn");
+  class ReservationStorage extends AgentStorage {
+    failNextReservationWrite = false;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: Parameters<AgentStorage["applySnapshot"]>[1],
+    ): Promise<void> {
+      const hasReservation = agent.attentionObjectives
+        ?.snapshot()
+        .delegations.some((entry) =>
+          entry.deliveries?.some((delivery) => delivery.status === "reserved"),
+        );
+      if (this.failNextReservationWrite && hasReservation) {
+        this.failNextReservationWrite = false;
+        // A failed persistence call may already have written the reservation to disk.
+        await super.applySnapshot(agent, options);
+        throw new Error("Reservation snapshot failed");
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+  let storage = new ReservationStorage(join(workdir, "agents"), logger);
+  const prompts: string[] = [];
+  const clients = createTestAgentClients({
+    onStartTurn: (prompt) => {
+      // This fixture prompts only the caller. Its display title is absent from provider resume overrides.
+      prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+    },
+  });
+  let manager = new AgentManager({ registry: storage, logger, clients });
+  manager.setAttentionHost({ serverId: "origin", resolveRemoteRequester: async () => "unknown" });
+  const managers = [manager];
+  const callerId = randomUUID();
+  const childId = randomUUID();
+  const peer = { agentId: childId, serverId: "target" };
+  const source = new AgentAttentionObjectives(undefined, "origin");
+  source.admit({ inputs: [{ kind: "human", requestId: "human-job" }] });
+  source.declare("human-job", "waiting");
+  const link = source.outgoing({ recipient: peer })?.requesterObjective;
+  if (!link) throw new Error("Expected exact request link");
+  await manager.createAgent({ provider: "claude", cwd: workdir, title: "Caller" }, callerId, {
+    workspaceId: undefined,
+    attentionObjectives: source.snapshot(),
+  });
+  const child = await manager.createAgent(
+    { provider: "claude", cwd: workdir, title: "Child" },
+    childId,
+    {
+      workspaceId: undefined,
+      labels: { "paseo.parent-agent-id": callerId, "paseo.parent-server-id": "origin" },
+    },
+  );
+  await manager.flush();
+  const outcome = {
+    id: randomUUID(),
+    requestId: link.requestId,
+    requester: { agentId: callerId, serverId: "origin" },
+    acceptedTurnId: "target-turn",
+    kind: "finished" as const,
+    lastMessage: "EXACT_RECOVERED_RESULT",
+    error: null,
+  };
+  const claim = { agentId: callerId, peer, link, outcome, deliveryId: outcome.id };
+  const result: WaitForFinishResult = {
+    status: "idle",
+    final: toAgentPayload(child, { title: "Child" }),
+    error: null,
+    lastMessage: "Unrelated current content",
+    attentionOutcome: outcome,
+  };
+  const ackIds: string[] = [];
+  const acknowledged = Promise.withResolvers<void>();
+  const reservationEntered = Promise.withResolvers<void>();
+  const returnReservation = Promise.withResolvers<void>();
+  const retiredDuringAwait = Promise.withResolvers<void>();
+  const stops: Array<() => void> = [];
+  const deliveries: Array<ReturnType<typeof createTestAgentMessages>> = [];
+
+  /** Restore the actual persisted source with its full identity and reservation assertions. */
+  async function restoreReservedCaller(): Promise<void> {
+    // Persist before enqueueing, then discard the manager and all of its live ownership.
+    expect((await manager.reserveAttentionCallback(claim)).status).toBe("reserved");
+    expect((await storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries).toEqual([
+      { outcomeId: outcome.id, deliveryId: outcome.id, status: "reserved" },
+    ]);
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    storage = new ReservationStorage(join(workdir, "agents"), logger);
+    manager = new AgentManager({ registry: storage, logger, clients });
+    managers.push(manager);
+    manager.setAttentionHost({
+      serverId: "origin",
+      resolveRemoteRequester: async () => "unknown",
+    });
+    await ensureAgentLoaded(callerId, { agentManager: manager, agentStorage: storage, logger });
+    expect(manager.listAgents().map((agent) => agent.id)).toEqual([callerId]);
+    expect(() =>
+      manager.getAgent(callerId)?.attentionObjectives?.assertAdmissions([
+        {
+          kind: "agent",
+          requestId: outcome.id,
+          requester: peer,
+          attention: {
+            continuation: link,
+            delivery: { outcomeId: outcome.id, deliveryId: outcome.id },
+          },
+        },
+      ]),
+    ).toThrow("Objective");
+    await expect(
+      manager.reserveAttentionCallback({ ...claim, deliveryId: "other-message" }),
+    ).rejects.toThrow("Objective");
+  }
+
+  const retireWatcherDuringAwait = () => {
+    stops[0]();
+    retiredDuringAwait.resolve();
+  };
+  const queueWatcherRetirement = () => queueMicrotask(retireWatcherDuringAwait);
+  try {
+    if (mode === "restored") await restoreReservedCaller();
+    const delivery = createTestAgentMessages({
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    deliveries.push(delivery);
+    const enqueue = vi.spyOn(delivery, "enqueue");
+    const release = vi.spyOn(manager, "releaseAttentionCallback");
+    const reserve = manager.reserveAttentionCallback.bind(manager);
+    if (mode === "failed-write") storage.failNextReservationWrite = true;
+    if (mode === "competing") {
+      vi.spyOn(manager, "reserveAttentionCallback").mockImplementationOnce(async (input) => {
+        const reservation = await reserve(input);
+        reservationEntered.resolve();
+        await returnReservation.promise;
+        return reservation;
+      });
+    }
+    if (mode === "await-retirement") {
+      vi.spyOn(manager, "reserveAttentionCallback").mockImplementationOnce(async (input) => {
+        const reservation = await reserve(input);
+        // The first microtask queues retirement behind the watcher's reservation continuation.
+        // That continuation starts awaiting false, then retirement runs before the await resumes.
+        queueMicrotask(queueWatcherRetirement);
+        return reservation;
+      });
+    }
+    const watch = () => {
+      stops.push(
+        setupFinishWait({
+          agentManager: manager,
+          agentStorage: storage,
+          agentMessages: delivery,
+          originServerId: "origin",
+          childServerId: "target",
+          childAgentId: childId,
+          callerAgentId: callerId,
+          attention: { continuation: link },
+          logger,
+          wait: async (_signal, query) => {
+            if (query?.acknowledgeOutcomeId) {
+              ackIds.push(query.acknowledgeOutcomeId);
+              acknowledged.resolve();
+              return { ...result, attentionOutcome: null };
+            }
+            return result;
+          },
+          afterPermission: async () => {},
+        }),
+      );
+    };
+    watch();
+    if (mode === "competing") {
+      await reservationEntered.promise;
+      // A replacement watcher reaches the same durable reservation while the first still owns it.
+      watch();
+    }
+    if (mode === "await-retirement") {
+      await retiredDuringAwait.promise;
+      await expect.poll(() => release.mock.calls.length).toBe(1);
+      await release.mock.results[0].value;
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(ackIds).toEqual([]);
+      expect(prompts).toEqual([]);
+      watch();
+    } else if (mode !== "restored") {
+      await expect.poll(() => warnings.mock.calls.length).toBe(1);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(ackIds).toEqual([]);
+      if (mode === "failed-write") {
+        // Rollback belongs to reserveAttentionCallback, rather than the caller's enqueue catch.
+        expect(release).not.toHaveBeenCalled();
+        expect(
+          manager.getAgent(callerId)?.attentionObjectives?.snapshot().delegations[0].deliveries,
+        ).toEqual([]);
+        expect(
+          (await storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries,
+        ).toEqual([{ outcomeId: outcome.id, deliveryId: outcome.id, status: "reserved" }]);
+      } else {
+        returnReservation.resolve();
+        await expect.poll(() => release.mock.calls.length).toBe(1);
+        // Await release completion before retrying the abandoned live owner's outcome.
+        await release.mock.results[0].value;
+      }
+      watch();
+    }
+    await acknowledged.promise;
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientId: callerId,
+        messageId: outcome.id,
+      }),
+    );
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("EXACT_RECOVERED_RESULT");
+    expect(prompts[0]).not.toContain("Unrelated current content");
+    expect(ackIds).toEqual([outcome.id]);
+    expect((await storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries).toEqual([
+      { outcomeId: outcome.id, deliveryId: outcome.id, status: "consumed" },
+    ]);
+    // Reobservation acknowledges retained evidence without acquiring another dispatch owner.
+    watch();
+    await expect.poll(() => ackIds.length).toBe(2);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(prompts).toHaveLength(1);
+  } finally {
+    returnReservation.resolve();
+    for (const stop of stops) stop();
+    for (const delivery of deliveries) await delivery.close();
+    for (const current of managers.toReversed()) {
+      await Promise.all(current.listAgents().map((agent) => current.closeAgent(agent.id)));
+      await current.flush();
+    }
+    warnings.mockRestore();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });

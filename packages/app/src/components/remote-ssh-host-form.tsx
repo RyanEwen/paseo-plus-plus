@@ -3,25 +3,15 @@ import { useRemoteSshFormModel } from "@/hosts/ssh/use-remote-ssh-form-model";
 import { SshKeyImportFields } from "./ssh-key-import-fields";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Pressable,
-  Text,
-  View,
-  type PressableStateCallbackType,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Eye, EyeOff, Terminal } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import type { HostMutations } from "@/runtime/host-runtime";
 import { Button } from "@/components/ui/button";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { Field, FormTextInput } from "@/components/ui/form-field";
-import {
-  CONTROL_HEIGHTS,
-  createControlGeometry,
-  resolveControlInteractionStyles,
-} from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
 
@@ -31,7 +21,6 @@ const ThemedEye = withUnistyles(Eye, (theme) => ({ color: theme.colors.foregroun
 const ThemedEyeOff = withUnistyles(EyeOff, (theme) => ({ color: theme.colors.foregroundMuted }));
 
 const styles = StyleSheet.create((theme) => {
-  const geometry = createControlGeometry(theme);
   return {
     helper: {
       color: theme.colors.foregroundMuted,
@@ -49,9 +38,9 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
     },
     // Boxed adornment next to the field: same height and radius as the field
-    // chrome of the active form size, and the shared interaction phases.
+    // chrome of the active form size. ToolbarButton owns interaction feedback.
     iconButtonSm: {
-      minHeight: CONTROL_HEIGHTS.compact,
+      height: CONTROL_HEIGHTS.compact,
       width: CONTROL_HEIGHTS.compact,
       alignItems: "center",
       justifyContent: "center",
@@ -59,24 +48,12 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: theme.colors.surface2,
     },
     iconButtonMd: {
-      minHeight: CONTROL_HEIGHTS.field,
+      height: CONTROL_HEIGHTS.field,
       width: CONTROL_HEIGHTS.field,
       alignItems: "center",
       justifyContent: "center",
       borderRadius: theme.borderRadius.lg,
       backgroundColor: theme.colors.surface2,
-    },
-    controlRest: {
-      ...geometry.controlRest,
-    },
-    controlHover: {
-      ...geometry.controlHover,
-    },
-    controlActive: {
-      ...geometry.controlActive,
-    },
-    controlDisabled: {
-      ...geometry.controlDisabled,
     },
     actions: {
       flexDirection: "row",
@@ -170,28 +147,6 @@ function OpenRemoteSshHostForm({
   const handleImport = useCallback(() => {
     void model.importKey();
   }, [model]);
-  const iconButtonStyle = useCallback(
-    (
-      interaction: PressableStateCallbackType & { hovered?: boolean; focused?: boolean },
-    ): StyleProp<ViewStyle> => [
-      isCompact ? styles.iconButtonMd : styles.iconButtonSm,
-      resolveControlInteractionStyles(
-        {
-          controlRest: styles.controlRest,
-          controlHover: styles.controlHover,
-          controlActive: styles.controlActive,
-          controlDisabled: styles.controlDisabled,
-        },
-        {
-          hovered: interaction.hovered,
-          pressed: interaction.pressed,
-          focused: interaction.focused,
-          disabled: isSaving,
-        },
-      ),
-    ],
-    [isCompact, isSaving],
-  );
   let submitLabel = t("pairing.remoteSsh.actions.connect");
   if (fingerprint) submitLabel = t("pairing.remoteSsh.keyImport.trustAndConnect");
   if (isSaving) submitLabel = t("pairing.remoteSsh.actions.connecting");
@@ -250,12 +205,12 @@ function OpenRemoteSshHostForm({
               onSubmitEditing={handleSubmit}
             />
           </View>
-          <Pressable
-            style={iconButtonStyle}
+          <ToolbarButton
+            style={isCompact ? styles.iconButtonMd : styles.iconButtonSm}
+            compact={isCompact}
             onPress={model.togglePasswordVisibility}
             disabled={isSaving}
-            accessibilityRole="button"
-            accessibilityLabel={
+            label={
               isPasswordVisible
                 ? t("pairing.remoteSsh.passwordVisibility.hide")
                 : t("pairing.remoteSsh.passwordVisibility.show")
@@ -263,7 +218,7 @@ function OpenRemoteSshHostForm({
             testID="remote-ssh-password-visibility-toggle"
           >
             {isPasswordVisible ? <ThemedEyeOff size={18} /> : <ThemedEye size={18} />}
-          </Pressable>
+          </ToolbarButton>
         </View>
       </Field>
       <View style={styles.actions}>

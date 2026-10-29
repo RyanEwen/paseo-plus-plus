@@ -1,4 +1,6 @@
-import { getNativeBrowserSurface } from "./features/browser-views/surfaces.js";
+import { protectConsoleStreams } from "./diagnostics/console-streams.js";
+protectConsoleStreams();
+
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";
@@ -45,6 +47,7 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
+import { showWindowWhenReady } from "./window/show-when-ready.js";
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
@@ -74,6 +77,7 @@ import {
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
+  configurePaseoBrowserIdentity,
   getLegacyPaseoBrowserProfileSession,
   PASEO_BROWSER_PROFILE_PARTITION,
   getPaseoBrowserProfileSession,
@@ -98,12 +102,10 @@ import {
   registerExternalQuitSignals,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
-import { runDesktopStartup } from "./desktop-startup.js";
+import { configureDesktopRendererClient, runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { registerBrowserExtensions } from "./features/browser-extensions/index.js";
 import { buildBrowserExtensionContextMenuItems } from "./features/browser-extensions/context-menus.js";
-import { NativeBrowserViewOwner } from "./features/browser-views/owner.js";
-import { registerNativeBrowserViewIpc } from "./features/browser-views/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
@@ -152,6 +154,17 @@ if (desktopDistribution.isPreview) {
 }
 
 app.setName(APP_NAME);
+const mainWindowUserAgent = configurePaseoBrowserIdentity({
+  app,
+  appName: app.getName(),
+  appVersion: app.getVersion(),
+  electronVersion: process.versions.electron,
+});
+// Bind normal fork toasts to the installed identity before Electron creates its notifier.
+// Leave upstream/debug fallback behavior and Electron's CLSID adoption unchanged.
+if (process.platform === "win32" && app.isPackaged && desktopDistribution.windowsAppUserModelId) {
+  app.setAppUserModelId(desktopDistribution.windowsAppUserModelId);
+}
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
@@ -206,20 +219,6 @@ function readActiveBrowserInput(
 
 const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
 browserKeyboard.registerIpc();
-const nativeBrowserViews = new NativeBrowserViewOwner({
-  profile: () => getPaseoBrowserProfileSession(session),
-  preloadPath: getBrowserKeyboardPreloadPath,
-  prepare(contents, host) {
-    registerBrowserWebviewNavigationGuards(contents);
-    browserKeyboard.attach({ contents, hostContents: host.webContents });
-    installBrowserWindowOpenHandler({ contents, sourceContents: contents, mainWindow: host });
-    contents.on("context-menu", (_event, params) =>
-      showBrowserWebviewContextMenu(host, contents, params),
-    );
-    contents.once("destroyed", () => pendingBrowserWindowOpenRequests.delete(contents.id));
-  },
-});
-registerNativeBrowserViewIpc(nativeBrowserViews);
 
 function showBrowserWebviewContextMenu(
   win: BrowserWindow,
@@ -385,6 +384,12 @@ if (electronFlags) {
   log.info("[electron-flags]", electronFlags);
 }
 
+configureDesktopRendererClient({
+  platform: process.platform,
+  realUserId: process.getuid?.(),
+  commandLine: app.commandLine,
+});
+
 if (process.platform === "linux") {
   // Keep the desktop/dock identity independent of the wrapped Electron filename.
   app.setDesktopName(desktopDistribution.desktopName);
@@ -471,11 +476,7 @@ ipcMain.handle("paseo:browser:unregister-workspace-browser", async (event, brows
       event.sender.id,
       normalizedBrowserId,
     );
-    if (nativeBrowserViews.owns(event.sender.id, normalizedBrowserId)) {
-      nativeBrowserViews.close(event.sender.id, normalizedBrowserId);
-    } else {
-      unregisterPaseoBrowserFromHost(event.sender.id, normalizedBrowserId);
-    }
+    unregisterPaseoBrowserFromHost(event.sender.id, normalizedBrowserId);
     // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
     const legacyProfile = hasOtherHost
       ? null
@@ -511,9 +512,6 @@ ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   const host = BrowserWindow.fromWebContents(event.sender);
   if (!host || host.webContents !== event.sender || !host.isFocused() || host.isMinimized()) {
     return false;
-  }
-  if (nativeBrowserViews.owns(event.sender.id, browserId)) {
-    return nativeBrowserViews.focus(event.sender.id, browserId);
   }
   const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
   if (!contents) {
@@ -584,19 +582,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: (browserId, hostId) => {
-    const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostId);
-    if (!contents) return null;
-    const surface = getNativeBrowserSurface(contents.id);
-    if (!surface) return contents;
-    return {
-      isDestroyed: () => contents.isDestroyed(),
-      getZoomFactor: () => contents.getZoomFactor(),
-      // Main registers this surface from Electron capturePage, which returns NativeImage.
-      capturePage: async (rect) =>
-        (await surface.capture(AbortSignal.timeout(10000), rect)) as Electron.NativeImage,
-    };
-  },
+  findGuest: (browserId, hostId) => getPaseoBrowserWebContentsForHostWindow(browserId, hostId),
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
@@ -774,9 +760,9 @@ async function createWindow(
       webviewTag: true,
     },
   });
+  mainWindow.webContents.setUserAgent(mainWindowUserAgent);
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
-  nativeBrowserViews.registerHost(mainWindow);
   const webContentsId = mainWindow.webContents.id;
   options.onCreated?.(webContentsId);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
@@ -843,8 +829,8 @@ async function createWindow(
     registerBrowserWebviewNavigationGuards(contents);
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
+  showWindowWhenReady(mainWindow, {
+    showOnLoad: process.platform === "linux",
   });
 
   if (!app.isPackaged) {

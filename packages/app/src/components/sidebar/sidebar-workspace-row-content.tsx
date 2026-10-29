@@ -20,6 +20,11 @@ import {
   hasSidebarWorkspaceTrailing,
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
+import { density, densityIconBox } from "@/styles/density";
+import {
+  SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT as TITLE_LINE_HEIGHT,
+  useSidebarWorkspaceFamilyPresentation,
+} from "./workspace-tree-context";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -31,18 +36,15 @@ import {
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
 
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
-const ThemedMonitor = withUnistyles(Monitor);
-const ThemedFolder = withUnistyles(Folder);
-const ThemedFolderGit2 = withUnistyles(FolderGit2);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -58,6 +60,7 @@ export function SidebarWorkspaceRowFrame({
     hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const openInPaseo = useWorkspaceBrowserOpening(workspace.serverId, workspace.workspaceId);
   const [isHovered, setIsHovered] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -82,12 +85,21 @@ export function SidebarWorkspaceRowFrame({
         isDragging={isDragging}
         disabled={contextMenuOpen}
       >
-        {children({
-          isHovered: isHovered && !contextMenuOpen && !isDragging,
-          contextMenuOpen,
-          onContextMenuOpenChange: handleContextMenuOpenChange,
-          hoverHandlers,
-        })}
+        <View
+          {...hoverHandlers}
+          style={styles.workspaceSurface}
+          testID={`sidebar-workspace-surface-${workspace.workspaceKey}`}
+        >
+          {children({
+            isHovered: isHovered && !contextMenuOpen && !isDragging,
+            contextMenuOpen,
+            onContextMenuOpenChange: handleContextMenuOpenChange,
+            hoverHandlers,
+          })}
+          {family.disclosure ? (
+            <View style={styles.familyDisclosure}>{family.disclosure}</View>
+          ) : null}
+        </View>
       </WorkspaceHoverCard>
     </WorkspaceBrowserOpeningProvider>
   );
@@ -125,6 +137,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
 }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
+  const contentIndentStyle = useMemo(
+    () => ({ paddingLeft: family.contentIndent }),
+    [family.contentIndent],
+  );
   const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
@@ -140,7 +157,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   );
 
   return (
-    <View style={styles.workspaceRowContent}>
+    <View
+      style={[styles.workspaceRowContent, contentIndentStyle]}
+      testID={`sidebar-workspace-content-${workspace.workspaceKey}`}
+    >
       <View style={styles.workspaceRowMain}>
         {leadingProjectName ? (
           <ProjectStatusIndicator
@@ -170,6 +190,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
               {workspaceLabel}
             </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
+            {family.disclosure ? <View style={styles.familyDisclosureSpace} /> : null}
           </View>
           <WorkspaceMetaRow
             currentBranch={workspace.currentBranch}
@@ -179,6 +200,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             serviceSummary={serviceSummary}
             labels={labels}
           />
+          {family.collapsedSummary?.content}
         </View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
@@ -265,15 +287,15 @@ function WorkspaceStatusIndicator({
     ) : null;
   }
 
-  let KindIcon: typeof ThemedMonitor;
-  if (workspaceKind === "local_checkout") KindIcon = ThemedMonitor;
-  else if (workspaceKind === "worktree") KindIcon = ThemedFolderGit2;
-  else KindIcon = ThemedFolder;
+  let KindIcon: typeof Monitor;
+  if (workspaceKind === "local_checkout") KindIcon = Monitor;
+  else if (workspaceKind === "worktree") KindIcon = FolderGit2;
+  else KindIcon = Folder;
 
   const dotColorStyle = getStatusDotColorStyle(bucket);
   return (
     <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
-      <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
+      <DensityIcon icon={KindIcon} size="sm" color="foregroundMuted" />
       {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
     </View>
   );
@@ -310,6 +332,8 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
   rowIndented: {
     paddingLeft: theme.spacing[2] + theme.spacing[2],
   },
+  // Parent disclosure glyphs align with a fixed first title line, including multi-line summaries.
+  familyParentRow: { justifyContent: "flex-start" },
   rowRight: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -365,8 +389,7 @@ export type SidebarWorkspaceTrailingPresentation = "visible" | "hidden" | "absen
 
 /**
  * Shared metadata and menu policy for every workspace row renderer.
- * Desktop metadata stays beside the status and revealed actions; touch keeps the menu visible
- * and replaces the metadata. Shortcut hints temporarily conceal metadata without changing width.
+ * Metadata stays beside the status and actions; touch keeps the menu visible alongside it. Shortcut hints temporarily conceal metadata without changing width.
  */
 export function resolveTrailingActionVisibility({
   workspace,
@@ -390,9 +413,8 @@ export function resolveTrailingActionVisibility({
 } {
   const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
   const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
-  // Touch permanently replaces the stats with the menu. Only temporary shortcut hints
-  // conceal content while retaining its width, so desktop rows do not shift.
-  const hasContent = hasTrailing && !(hasArchiveAction && isTouchPlatform);
+  // Only temporary shortcut hints conceal metadata; persistent touch menus share the row.
+  const hasContent = hasTrailing;
   let trailingPresentation: SidebarWorkspaceTrailingPresentation = "absent";
   if (hasContent) trailingPresentation = showShortcut ? "hidden" : "visible";
   return {
@@ -470,6 +492,7 @@ export function SidebarWorkspaceTrailingStatusActions({
   );
 }
 
+// The status dot centres on the title's first line, so both share its line height.
 const styles = StyleSheet.create((theme) => ({
   // Hidden actions consume no width. HoverRevealActions expands the row only while
   // its controls are visible, keeping idle titles beside their metadata and status.
@@ -483,6 +506,14 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  workspaceSurface: { position: "relative", minWidth: 0 },
+  familyDisclosure: {
+    position: "absolute",
+    top: 0,
+    right: theme.spacing[3],
+    height: density.rowHeight,
+  },
+  familyDisclosureSpace: { width: density.iconButton, height: TITLE_LINE_HEIGHT, flexShrink: 0 },
   workspaceRowContent: {
     position: "relative",
   },
@@ -509,8 +540,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceStatusDot: {
     position: "relative",
-    width: theme.iconSize.md,
-    height: 20,
+    width: densityIconBox("md"),
+    height: TITLE_LINE_HEIGHT,
     borderRadius: theme.borderRadius.full,
     flexShrink: 0,
     alignItems: "center",
@@ -544,7 +575,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: "400",
-    lineHeight: 20,
+    lineHeight: TITLE_LINE_HEIGHT,
     opacity: 0.76,
     flex: 1,
     minWidth: 0,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, getTransformOrigin, type Rect } from "./anchor";
+import {
+  computePosition,
+  getCursorAnchorRect,
+  getPointerAnchorRect,
+  getTransformOrigin,
+  type Rect,
+} from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
@@ -95,5 +101,102 @@ describe("getTransformOrigin", () => {
   ] as const)("emits a native-ready origin for %s/%s", (placement, alignment, expected) => {
     // Theme updates may reach Fabric without React Native's JS string preprocessing.
     expect(getTransformOrigin(placement, alignment)).toEqual(expected);
+  });
+});
+
+describe("pointer-anchored divider cards", () => {
+  it("opens beside the pointer halfway down a tall divider instead of its top", () => {
+    expect(
+      position({
+        triggerRect: getPointerAnchorRect(
+          { x: 400, y: 40, width: 10, height: 700 },
+          { x: 405, y: 520 },
+          "right",
+        ),
+        placement: "right",
+        flipHorizontal: true,
+      }),
+    ).toEqual({ x: 414, y: 520, actualPlacement: "right" });
+  });
+  it("centers a horizontal-divider card near the pointer and flips above the bottom edge", () => {
+    expect(
+      position({
+        triggerRect: getPointerAnchorRect(
+          { x: 0, y: 750, width: 1000, height: 10 },
+          { x: 650, y: 755 },
+          "bottom",
+        ),
+        placement: "bottom",
+        alignment: "center",
+      }),
+    ).toEqual({ x: 550, y: 646, actualPlacement: "top" });
+  });
+  it("retains viewport clamping and flips to the left at the right edge", () => {
+    expect(
+      position({
+        triggerRect: getPointerAnchorRect(
+          { x: 950, y: 0, width: 10, height: 800 },
+          { x: 955, y: 790 },
+          "right",
+        ),
+        placement: "right",
+        flipHorizontal: true,
+      }),
+    ).toEqual({ x: 746, y: 692, actualPlacement: "left" });
+  });
+  it("keeps trigger-based positioning when opened without a pointer", () => {
+    expect(getPointerAnchorRect(TRIGGER, null, "right")).toBe(TRIGGER);
+  });
+});
+
+describe("cursor-anchored divider cards", () => {
+  it("opens below the cursor at the midpoint of a tall vertical divider", () => {
+    const cursor = { x: 760, y: 394 };
+    const triggerRect = getCursorAnchorRect({ x: 750, y: 0, width: 20, height: 800 }, cursor);
+
+    expect(
+      position({
+        triggerRect,
+        alignment: "center",
+        offset: 4,
+      }),
+    ).toEqual({ x: 660, y: 398, actualPlacement: "bottom" });
+  });
+
+  it("opens below the cursor at the midpoint of a horizontal divider", () => {
+    const triggerRect = getCursorAnchorRect(
+      { x: 0, y: 390, width: 1600, height: 8 },
+      { x: 760, y: 394 },
+    );
+
+    expect(
+      position({
+        triggerRect,
+        alignment: "center",
+        offset: 4,
+      }),
+    ).toEqual({ x: 660, y: 398, actualPlacement: "bottom" });
+  });
+
+  it("clamps the cursor to the trigger and keeps viewport flip and clamp behavior", () => {
+    expect(
+      getCursorAnchorRect({ x: 100, y: 200, width: 40, height: 20 }, { x: 999, y: 0 }),
+    ).toEqual({ x: 140, y: 200, width: 0, height: 0 });
+
+    const triggerRect = getCursorAnchorRect(
+      { x: 0, y: 0, width: 1000, height: 800 },
+      { x: 995, y: 790 },
+    );
+    expect(
+      position({
+        triggerRect,
+        alignment: "center",
+        offset: 4,
+      }),
+    ).toEqual({ x: 792, y: 686, actualPlacement: "top" });
+  });
+
+  it("keeps trigger-based positioning when opened without a cursor", () => {
+    expect(getCursorAnchorRect(TRIGGER, null)).toBe(TRIGGER);
   });
 });

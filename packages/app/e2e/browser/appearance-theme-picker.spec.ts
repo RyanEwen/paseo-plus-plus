@@ -35,7 +35,7 @@ test("keeps the selected workspace visible in Light", async ({ page }, testInfo)
     await row.click();
 
     await expect(row).toHaveAttribute("aria-selected", "true");
-    await expect(row).toHaveCSS("background-color", "rgb(228, 228, 231)");
+    await expect(row).toHaveCSS("background-color", "rgb(212, 212, 216)");
     await page.screenshot({
       path: testInfo.outputPath("light-selected-workspace.png"),
       fullPage: true,
@@ -108,45 +108,38 @@ test("previews and retains accent colors independently of light and dark themes"
     }
   });
   await page.goto("/settings");
-  await openSettingsSection(page, "appearance");
+  await openSettingsSection(page, "paseo-plus-plus");
   const preview = page.getByTestId("accent-message-preview");
   const bubble = preview.getByTestId("user-message-bubble");
   const text = preview.getByTestId("user-message-text");
+  const blue = page
+    .getByTestId("accent-color-settings")
+    .getByRole("radio", { name: "Blue", exact: true });
   await expect(bubble).toHaveCSS("background-color", "rgb(228, 228, 231)");
-  await page.getByLabel("Accent color: Default", { exact: true }).press("Enter");
-  const blueOption = page.getByRole("menuitem", { name: "Blue", exact: true });
-  await blueOption.focus();
-  await blueOption.press("Enter");
-  await expect(page.getByLabel("Accent color: Blue", { exact: true })).toBeEnabled();
-  await expect(bubble).toHaveCSS("background-color", "rgb(29, 78, 216)");
+  await blue.click();
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
   await expect(text).toHaveCSS("color", "rgb(255, 255, 255)");
   await page.reload();
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
   await openSettingsSection(page, "appearance");
-  await expect(page.getByLabel("Accent color: Blue", { exact: true })).toBeVisible();
-  await page.getByLabel("Accent color: Blue", { exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: "Blue", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(page.getByRole("menuitem", { name: "Default", exact: true })).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
-  await page.keyboard.press("Escape");
-  await expect(bubble).toHaveCSS("background-color", "rgb(29, 78, 216)");
   await page.getByLabel("Theme: Light", { exact: true }).click();
   await page.getByText("Dark", { exact: true }).click();
-  await expect(bubble).toHaveCSS("background-color", "rgb(147, 197, 253)");
-  await expect(text).toHaveCSS("color", "rgb(24, 24, 27)");
   const reset = page.getByRole("button", { name: "Reset content width to default", exact: true });
   const resetText = reset.getByText("Reset", { exact: true });
   await page.mouse.move(2, 2);
   await expect(resetText).toHaveCSS("color", "rgb(161, 165, 164)");
   await reset.hover();
   await expect(resetText).toHaveCSS("color", "rgb(250, 250, 250)");
+  await openSettingsSection(page, "paseo-plus-plus");
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(155, 175, 197)");
+  await expect(text).toHaveCSS("color", "rgb(24, 24, 27)");
   await page.screenshot({ path: testInfo.outputPath("accent-blue-dark.png"), fullPage: true });
-  await page.getByLabel("Accent color: Blue", { exact: true }).click();
-  await page.getByText("Default", { exact: true }).click();
-  await expect(page.getByLabel("Accent color: Default", { exact: true })).toBeEnabled();
-  await expect(bubble).not.toHaveCSS("background-color", "rgb(147, 197, 253)");
+  await page
+    .getByTestId("accent-color-settings")
+    .getByRole("radio", { name: "Default", exact: true })
+    .click();
+  await expect(bubble).not.toHaveCSS("background-color", "rgb(155, 175, 197)");
 });

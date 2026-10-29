@@ -9,6 +9,7 @@ export interface AgentStateBucketInput {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentAttentionReason;
+  attentionMessage?: string | null;
 }
 
 const WORKSPACE_STATE_BUCKET_PRIORITY = {
@@ -25,6 +26,9 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
   }
   if (input.status === "error" || input.attentionReason === "error") {
     return "failed";
+  }
+  if (input.requiresAttention && input.attentionMessage) {
+    return "attention";
   }
   if (input.status === "running") {
     return "running";

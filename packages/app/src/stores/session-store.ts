@@ -1,3 +1,4 @@
+import type { WorkspaceNotificationReceipts } from "@getpaseo/protocol/notification-receipts";
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -15,7 +16,7 @@ import {
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
-  getActiveMessageSubmissions,
+  hasActiveMessageSubmission,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
   type MessageSubmissionRecord,
@@ -94,6 +95,8 @@ export interface Agent {
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
+  humanAttentionRequired?: boolean;
+  attentionMessage?: string | null;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
@@ -103,6 +106,7 @@ export interface Agent {
 }
 
 export interface WorkspaceDescriptor {
+  notificationReceipts?: WorkspaceNotificationReceipts;
   id: string;
   projectId: string;
   projectDisplayName: string;
@@ -111,6 +115,7 @@ export interface WorkspaceDescriptor {
   projectRootPath: string;
   workspaceDirectory: string;
   worktreeSlug?: WorkspaceDescriptorPayload["worktreeSlug"];
+  setupStatus?: WorkspaceDescriptorPayload["setupStatus"];
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   background?: boolean;
@@ -120,6 +125,7 @@ export interface WorkspaceDescriptor {
   projectPinnedAt?: string | null;
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
+  humanAttentionRequired?: boolean;
   statusEnteredAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
@@ -139,6 +145,7 @@ export function normalizeWorkspaceDescriptor(
       ? new Date(statusEnteredAtRaw)
       : null;
   return {
+    notificationReceipts: payload.notificationReceipts,
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
@@ -150,6 +157,8 @@ export function normalizeWorkspaceDescriptor(
     // usable directory" (older daemons may omit it; the wire field is optional).
     workspaceDirectory: normalizeWorkspacePath(payload.workspaceDirectory) ?? "",
     worktreeSlug: payload.worktreeSlug,
+    // COMPAT(workspaceSetupObservation): added in v0.12.0, old hosts omit metadata; remove after 2027-04-19.
+    setupStatus: payload.setupStatus ?? null,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     background: payload.background ?? false,
@@ -160,6 +169,7 @@ export function normalizeWorkspaceDescriptor(
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
     status: payload.status,
+    humanAttentionRequired: payload.humanAttentionRequired,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
@@ -234,8 +244,6 @@ function preserveMapIdentity<Key, Value>(
 }
 
 export type ExplorerEntryKind = "file" | "directory";
-export type ExplorerFileKind = "text" | "image" | "binary";
-export type ExplorerEncoding = "utf-8" | "base64" | "none";
 
 export interface ExplorerEntry {
   name: string;
@@ -245,19 +253,6 @@ export interface ExplorerEntry {
   modifiedAt: string;
 }
 
-export interface ExplorerFile {
-  path: string;
-  kind: ExplorerFileKind;
-  encoding: ExplorerEncoding;
-  content?: string;
-  // TextDecoder removes a leading UTF-8 BOM; retain this bit so file writes can restore it.
-  hasBom: boolean;
-  mimeType?: string;
-  size: number;
-  modifiedAt: string;
-  revision?: string;
-}
-
 export interface ExplorerDirectory {
   path: string;
   entries: ExplorerEntry[];
@@ -265,12 +260,11 @@ export interface ExplorerDirectory {
 
 interface ExplorerRequestState {
   path: string;
-  mode: "list" | "file";
+  mode: "list";
 }
 
 export interface AgentFileExplorerState {
   directories: Map<string, ExplorerDirectory>;
-  files: Map<string, ExplorerFile>;
   isLoading: boolean;
   lastError: string | null;
   pendingRequest: ExplorerRequestState | null;
@@ -286,6 +280,8 @@ export interface DaemonServerInfo {
   version: string | null;
   desktopManaged?: boolean;
   capabilities?: ServerCapabilities;
+  /** Existing authenticated handshake permissions, used only to gate UI; the daemon still authorizes saves. */
+  permissions?: ServerInfoStatusPayload["permissions"];
   features?: ServerInfoStatusPayload["features"];
 }
 
@@ -298,6 +294,7 @@ export function toDaemonServerInfo(serverInfo: ServerInfoStatusPayload): DaemonS
       ? { desktopManaged: serverInfo.desktopManaged }
       : {}),
     ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
+    ...(serverInfo.permissions ? { permissions: [...serverInfo.permissions] } : {}),
     ...(serverInfo.features ? { features: serverInfo.features } : {}),
   };
 }
@@ -350,7 +347,7 @@ export function selectAgentTurnPresentation(
     session?.agents.get(agentId)?.turn ??
       session?.agentDetails.get(agentId)?.turn ??
       TURN_LIVENESS_IDLE,
-    getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)).length > 0,
+    hasActiveMessageSubmission(session?.messageSubmissions.get(agentId)),
   );
 }
 
@@ -693,6 +690,7 @@ function isSessionServerInfoUnchanged(input: {
   nextVersion: string | null;
   nextDesktopManaged: boolean | undefined;
   nextCapabilities: ServerCapabilities | undefined;
+  nextPermissions: ServerInfoStatusPayload["permissions"];
   nextFeatures: ServerInfoStatusPayload["features"] | undefined;
   nextServerId: string;
 }): boolean {
@@ -702,6 +700,7 @@ function isSessionServerInfoUnchanged(input: {
     nextVersion,
     nextDesktopManaged,
     nextCapabilities,
+    nextPermissions,
     nextFeatures,
   } = input;
   const prevHostname = currentServerInfo?.hostname?.trim() || null;
@@ -712,6 +711,8 @@ function isSessionServerInfoUnchanged(input: {
     prevVersion === nextVersion &&
     currentServerInfo?.desktopManaged === nextDesktopManaged &&
     areServerCapabilitiesEqual(currentServerInfo?.capabilities, nextCapabilities) &&
+    JSON.stringify(currentServerInfo?.permissions ?? null) ===
+      JSON.stringify(nextPermissions ?? null) &&
     areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
   );
 }
@@ -849,6 +850,7 @@ export const useSessionStore = create<SessionStore>()(
           const nextVersion = info.version?.trim() || null;
           const nextDesktopManaged = info.desktopManaged;
           const nextCapabilities = info.capabilities;
+          const nextPermissions = info.permissions;
           const nextFeatures = info.features;
 
           if (
@@ -858,6 +860,7 @@ export const useSessionStore = create<SessionStore>()(
               nextVersion,
               nextDesktopManaged,
               nextCapabilities,
+              nextPermissions,
               nextFeatures,
               nextServerId: info.serverId,
             })
@@ -879,6 +882,7 @@ export const useSessionStore = create<SessionStore>()(
                     ? { desktopManaged: nextDesktopManaged }
                     : {}),
                   ...(nextCapabilities ? { capabilities: nextCapabilities } : {}),
+                  ...(nextPermissions ? { permissions: [...nextPermissions] } : {}),
                   ...(nextFeatures ? { features: nextFeatures } : {}),
                 },
               },
@@ -1885,6 +1889,8 @@ export const useSessionStore = create<SessionStore>()(
             provider: agent.provider,
             pendingPermissionCount: agent.pendingPermissions.length,
             requiresAttention: agent.requiresAttention ?? false,
+            humanAttentionRequired: agent.humanAttentionRequired,
+            attentionMessage: agent.attentionMessage,
             attentionReason: agent.attentionReason ?? null,
             attentionTimestamp: agent.attentionTimestamp ?? null,
             createdAt: agent.createdAt,

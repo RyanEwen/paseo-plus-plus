@@ -92,6 +92,8 @@ export function useAggregatedAgents(options?: {
           provider: agent.provider,
           pendingPermissionCount: agent.pendingPermissions.length,
           requiresAttention: agent.requiresAttention,
+          humanAttentionRequired: agent.humanAttentionRequired,
+          attentionMessage: agent.attentionMessage,
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,
           archivedAt: agent.archivedAt,

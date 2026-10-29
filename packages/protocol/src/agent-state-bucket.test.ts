@@ -1,3 +1,4 @@
+import { hasHumanAgentAttention } from "./agent-attention.js";
 import { describe, expect, it } from "vitest";
 import {
   deriveAgentStateBucket,
@@ -89,4 +90,16 @@ describe("getAgentStatusPriority", () => {
       getAgentStatusPriority({ status: "running", pendingPermissionCount: 0 }),
     );
   });
+});
+
+it("keeps passive problems visible while using the daemon decision for human badges", () => {
+  const passiveProblem = {
+    status: "error" as const,
+    pendingPermissionCount: 1,
+    humanAttentionRequired: false,
+  };
+  expect(deriveAgentStateBucket(passiveProblem)).toBe("needs_input");
+  expect(hasHumanAgentAttention(passiveProblem)).toBe(false);
+  expect(hasHumanAgentAttention({ ...passiveProblem, humanAttentionRequired: true })).toBe(true);
+  expect(hasHumanAgentAttention({ requiresAttention: true })).toBe(true);
 });

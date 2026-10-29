@@ -24,7 +24,7 @@ flipping every menu in the app to sheets at once is not a change anyone can revi
 when you have actually looked at it on a phone.
 
 `ContextMenu` is the exception: it defaults to `compactMode="sheet"` and enables native long press.
-Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead.
+Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead. Workspace tabs keep their context menu on the tab itself; compact tabs do not need a separate menu button.
 
 ## When the items differ per form factor
 
@@ -62,6 +62,11 @@ from its own `Pressable`. `MenuItem` is not the only row shape on the engine —
 is another, with its own icons and hover-revealed actions — but both hand the press to the engine
 and take `closeOnSelect` to say whether choosing them ends the surface. A row that owns its press
 outright leaves the surface open behind whatever it opened, and skips the iOS wait.
+
+A row whose result opens a sheet passes `closeOnSelect={false}`: the sheet stacks over the menu
+sheet and uncovers it on close, so the menu is where the user lands next. A row that opens a tab
+closes, because the tab replaces the pane the menu belongs to. The subagents track asks the layout
+store which one a row is (`useSubagentOpensInSheet`), since the answer changes with the layout.
 
 ## Pages
 
@@ -211,6 +216,9 @@ its own.
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
 - **Sheet stacking and backdrop dismissal belong to `IsolatedBottomSheetModal`.** Menus only
   request a backdrop opacity. See [floating-panels.md](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth).
+- **A menu closes when its panel leaves the screen.** `MenuSurface` closes the menu when its
+  retained panel goes inactive. Hiding the surface alone leaves the open state behind, and the
+  menu would reappear with the panel on the next tab switch.
 - **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
   inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
   portal backdrop blocking the destination. On web the chat suspends one commit after it goes

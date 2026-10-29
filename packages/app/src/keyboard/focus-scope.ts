@@ -1,5 +1,36 @@
 import type { KeyboardFocusScope } from "@/keyboard/actions";
 
+// Include ARIA controls because React Native Web pressables are not always native buttons.
+const KEYBOARD_CONTROL_SELECTOR = [
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "a[href]",
+  "summary",
+  "audio[controls]",
+  "video[controls]",
+  "[contenteditable]:not([contenteditable='false'])",
+  "[role='button']",
+  "[role='link']",
+  "[role='checkbox']",
+  "[role='radio']",
+  "[role='switch']",
+  "[role='tab']",
+  "[role='menuitem']",
+  "[role='menuitemcheckbox']",
+  "[role='menuitemradio']",
+  "[role='option']",
+  "[role='combobox']",
+  "[role='listbox']",
+  "[role='slider']",
+  "[role='spinbutton']",
+  "[role='treeitem']",
+  "[role='textbox']",
+  "[role='searchbox']",
+  "[role='scrollbar']",
+].join(", ");
+
 function isElement(value: unknown): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
@@ -26,6 +57,13 @@ function getFocusCandidateElements(target: EventTarget | null): Element[] {
   }
 
   return candidates;
+}
+
+/** Detects controls, their descendants, and focused-control fallback for non-element targets. */
+export function isKeyboardControlTarget(target: EventTarget | null): boolean {
+  return getFocusCandidateElements(target).some((element) =>
+    Boolean(element.closest(KEYBOARD_CONTROL_SELECTOR)),
+  );
 }
 
 export function resolveKeyboardFocusScope(input: {

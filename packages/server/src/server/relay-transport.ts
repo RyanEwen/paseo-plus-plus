@@ -56,7 +56,13 @@ type ControlMessage =
 const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
-const RELAY_WEBSOCKET_OPTIONS = { handshakeTimeout: 10_000, perMessageDeflate: false } as const;
+const RELAY_WEBSOCKET_OPTIONS = {
+  handshakeTimeout: 10_000,
+  perMessageDeflate: false,
+  // Node cancels each non-final address when this expires, even if the next
+  // address is unreachable. Allow high-latency routes time to connect.
+  autoSelectFamilyAttemptTimeout: 5_000,
+} as const;
 
 function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
   return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
@@ -418,7 +424,7 @@ async function attachEncryptedSocket(
   daemonKeyPair: KeyPair,
   logger: pino.Logger,
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
-  metadata?: ExternalSocketMetadata,
+  metadata: ExternalSocketMetadata,
 ): Promise<void> {
   const handshakeTimeout = setTimeout(() => {
     logger.warn("relay_e2ee_handshake_timeout_terminating");
@@ -451,7 +457,7 @@ async function attachEncryptedSocket(
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
     });
-    await attachSocket(encryptedSocket, metadata);
+    await attachSocket(encryptedSocket, { ...metadata, acknowledgedBinary: true });
     attached = true;
     for (const message of pendingMessages) {
       emitter.emit("message", message);

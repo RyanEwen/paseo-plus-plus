@@ -81,9 +81,10 @@ Select the integration ref for the release lane from [release source and CI](#re
   the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
   `next`. Create it fresh when needed again.
 
-**Setup still needed:** CI, Docker, and Nix PR checks do not target `next`,
-and GitHub permits only squash merges. Enable checks and required-check protection
-for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+**Setup still needed:** PR checks run for every base branch, but CI, Docker, and Nix
+push runs target only `main`, and GitHub permits only squash merges. Enable
+required-check protection for `next`, CI on its pushes, and merge commits for the
+integration PR. Handle PR
 base changes (`edited` events) so retargeting runs checks against the new base;
 GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
 
@@ -100,8 +101,9 @@ short-lived hotfix branch, not another maintained release track.
 
 In RyanEwen/paseo-plus-plus, the opening README section owns the list of user-visible differences from
 upstream. Review it when you add or change a feature and when you merge upstream changes. Remove
-an addition from the list once upstream includes it. Describe available behavior; label planned
-distribution separately until builds are published.
+an addition from the list once upstream includes it. Keep each entry to the feature or change name and a link to its guide. Put usage, examples, limits and settings details in the owning guide, not inline in the README. Link to the integrated guide on `main`; the guide can also link to its maintained feature branch. Branch deletion must not break the README.
+
+Review **Settings → Paseo++** in the same pass. Remove inventory rows and redundant controls when upstream provides the same behavior, while preserving saved preferences unless their removal is explicitly part of the change. Update localized help and examples when behavior changes. Describe available behavior; label planned distribution separately until builds are published.
 
 The `fork-overview` check runs on pull requests to `main`, `ryan/dev`, and `ryan/preview`. A code or
 build change must update the marked README section, or check the fork overview review box in the
@@ -149,10 +151,9 @@ exclude preview tags. The preview workflow does not publish npm packages to a re
 
 ### Final prerelease bridge and normal Latest releases
 
-The bridge `v0.11.2-preview.32` is published. Normal publication remains closed pending actual updater qualification and a reviewed receipt.
+The bridge `v0.11.2-preview.32` remains published as a prerelease. Continue shipping preview prereleases with `release_kind=preview` while installed-updater qualification is unfinished. Normal Latest publication remains closed pending that qualification and a reviewed receipt.
 
-Publish one final prerelease containing the Android and standalone-host updater bridge, then use
-normal GitHub releases marked **Latest**. This changes GitHub's release classification. Keep
+The once-only `bridge` release contains the Android and standalone-host updater transition. The `preview` choice continues prereleases without marking another bridge; `latest` switches to normal GitHub releases marked **Latest** only after qualification. Keep
 `v<upstream-version>-preview.<workflow-run-number>`, the `preview` desktop channel and its three
 manifest filenames, package identities, profiles, signing keys, and workflow sequence unchanged.
 Do not assume the next run number: draft, failed and verification runs also consume the sequence.
@@ -180,7 +181,7 @@ switching to `latest.yml`, or clearing that flag would change this update contra
 `releaseType: prerelease` is retained for compatibility; packaging runs with `--publish never`,
 and the reviewed publisher controls GitHub classification.
 
-Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`.
+Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`. Preview publication instead checks the source-controlled public release API inventory and canonical provenance under `docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint and source ancestry. This retention evidence proves availability, not installed updater behavior; it cannot open the Latest gate.
 After the bridge is published and its real updater paths pass qualification, review a source change
 that replaces `null` with its `schemaVersion: 1`, exact `releaseId`, `tag`, full source `commit`,
 `assetFingerprint`, and repository-relative `qualificationEvidence` Markdown path under
@@ -202,7 +203,7 @@ publication. It requires the pinned prerelease and assets to remain public and u
 descended from the bridge, and a higher workflow counter without a lower desktop core version
 than any published fork build.
 It refuses another bridge after one is published. If bridge qualification fails, hold normal
-publication and review the repair plan; do not delete, reclassify or replace published bridge bytes.
+publication and review the repair plan. Keep the bridge classified as a prerelease, and never delete or replace its assets. Restore an accidentally changed classification only with explicit authorization and before/after verification of the unchanged release identity, source, notes and complete asset inventory. Continuing previews retain the original bridge and cannot put its reserved marker in their notes.
 
 ### Standalone fork daemon
 
@@ -213,7 +214,9 @@ Windows uses the daemon bundled with the desktop app. See the
 These packages include the daemon, CLI, web UI, and native runtime dependencies. Linux packages
 require glibc; Alpine/musl hosts are excluded. The `paseo-plus-plus` command uses its own settings
 and host identity in `~/.paseo-plus-plus`, with the default listen address `127.0.0.1:6791`.
-The desktop app keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790. Upstream Paseo,
+The desktop app keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790. Resolve these
+defaults from the enclosing packaged manifest after managed environment scrubbing. Saved listen
+addresses remain authoritative, including profiles initialized at 6767 by older previews. Upstream Paseo,
 the desktop daemon, and the standalone daemon can run side by side with their defaults.
 
 The app's host update action installs the newest published fork build for the host's platform
@@ -276,16 +279,16 @@ Select fork `main` when running it. Wait for push CI on the exact source commit 
 
 ```bash
 gh workflow run preview-release.yml --repo RyanEwen/paseo-plus-plus --ref main \
-  -f release_kind=bridge -f notes="Describe what users can do in this release." -F publish=false
+  -f release_kind=preview -f notes="Describe what users can do in this release." -F publish=false
 ```
 
 The default creates a draft only after every build passes. It validates the complete platform set,
 checks updater hashes against the binaries, merges Windows architecture manifests, and generates
 `SHA256SUMS` plus source provenance. Review the draft's notes and downloads before publishing it.
-Use `release_kind=bridge` for the final prerelease. After the
+Use `release_kind=preview` for continuing prereleases. The once-only `release_kind=bridge` is already published. After the
 [bridge qualification gate](#final-prerelease-bridge-and-normal-latest-releases) opens, use
 `release_kind=latest` for normal releases. Drafts stay prereleases until publication: the final
-publish call sets `prerelease=true, make_latest=false` for the bridge or
+publish call sets `prerelease=true, make_latest=false` for previews and the bridge, or
 `prerelease=false, make_latest=true` for normal releases.
 Use `publish=true` only with authorization to publish that release; publication remains gated on
 every build and asset check. A failed build or upload never makes an update discoverable.
@@ -544,12 +547,14 @@ macOS 13 maps to Darwin 22. The two values use different version domains; do not
 iOS and Android store builds are not in `.github/workflows`. They are triggered by the EAS GitHub app the moment the `v*` tag is pushed:
 
 - **Android (Play Store)** — EAS builds with profile `production` and auto-submits to the Play Store via `eas submit` (EAS-managed credentials, no Fastlane).
-- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads to TestFlight, and a Fastlane lane submits the build for App Store review.
+- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane submits that same build for App Store review.
 - **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
 
 EAS uses the local app version source. `packages/app/app.config.js` derives the native version from the package version. Android `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`. iOS reserves 1,000 build slots per app version: beta `N` uses slot `N`, and stable uses slot `999`. For example, `0.2.6-beta.2` appears in App Store Connect as version `0.2.6` build `2006002`; stable uses build `2006999`. Rebuilding the same tag produces the same native build number; if a store has already accepted a binary and you need a different binary, cut the next beta or patch instead of relying on EAS remote auto-increment.
 
-Beta tags run `Release iOS Beta`. The workflow uploads the build to TestFlight, distributes it to the persistent `Paseo Beta` external group, and submits it for Beta App Review. Testers and the group are managed once in App Store Connect; releases require no dashboard action.
+Stable tags run `Release Mobile`; beta tags run `Release iOS Beta`. Both distribute to the persistent `Paseo Beta` external group and submit for Beta App Review, so testers receive stable releases as well as betas. Testers, the group, and required TestFlight test information are managed once in App Store Connect.
+
+Stable iOS releases use one binary for two Apple review paths: Beta App Review for external TestFlight distribution and App Store review. [Apple says](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers) the first submitted build requires a full TestFlight review; later builds for the same version might not. Do not assume a stable patch skips review.
 
 There is no mobile-release workflow under `.github/workflows`. The EAS GitHub app reads the workflows under `packages/app/.eas/workflows` and handles tag triggering directly.
 
@@ -573,7 +578,7 @@ npx eas build:list --platform android --limit 5 --non-interactive --json
 # Inspect a specific build.
 npx eas build:view <build-id>
 
-# Inspect the full release workflow, including submit_ios, submit_android,
+# Inspect the full release workflow, including distribute_ios, submit_android,
 # and submit_ios_for_review.
 npx eas workflow:view <workflow-run-id> --json
 
@@ -586,17 +591,17 @@ npx eas build:view <build-id> --json | jq '.logFiles[]'
 
 A build's `gitCommitHash` must match the release tag commit. `status` walks through `NEW` → `IN_QUEUE` → `IN_PROGRESS` → `FINISHED` (or `ERRORED`/`CANCELED`). The EAS workflow run's `gitCommitHash` and `trigger` must also match the release tag.
 
-Once a build is `FINISHED`, EAS still has release-critical work to do: Android must submit to the Play Store, and iOS must upload to TestFlight **and** submit the build for App Store review. The release is not done until all platforms are on their way through the stores.
+Once a build is `FINISHED`, EAS still has release-critical work to do: Android must submit to the Play Store, and iOS must distribute to the external TestFlight group with Beta App Review submission **and** submit the same build for App Store review. The release is not done until all platforms are on their way through the stores.
 
 For the `Release Mobile` EAS workflow, these jobs must pass:
 
 - `build_ios` — iOS binary built
-- `submit_ios` — iOS binary uploaded to App Store Connect/TestFlight
+- `distribute_ios` — iOS binary uploaded once, added to `Paseo Beta`, and submitted for Beta App Review
 - `submit_ios_for_review` — iOS build submitted for App Store review via Fastlane
 - `build_android` — Android store binary built
 - `submit_android` — Android binary submitted to the Play Store
 
-Do not treat `build_ios: SUCCESS` or `submit_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
+Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
 
 To confirm the submission landed, inspect the EAS workflow with `npx eas workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
 
@@ -645,8 +650,9 @@ Windows, and Android APK assets are present along with the channel manifests
 (`latest-mac.yml`, `latest-linux.yml`, and `latest.yml` for stable;
 `beta-mac.yml`, `beta-linux.yml`, and `beta.yml` for beta).
 
-For stable releases, also confirm every required mobile build, upload, store
-submission, and review-submission job for the release commit. For betas, confirm
+For stable releases, also confirm every required mobile build, external
+TestFlight distribution, Beta App Review submission, and store submission job
+for the release commit. For betas, confirm
 the beta EAS workflow completed its TestFlight distribution and Beta App Review
 path. Delete the heartbeat only after every applicable checklist item passes,
 then report the release as shipped.
@@ -661,7 +667,7 @@ Pattern:
   "timezone": "UTC",
   "maxRuns": 120,
   "expiresIn": "24h",
-  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; every GitHub Actions run for the release branch and tag; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; and the matching EAS workflow. Completion requires every applicable checklist item. For stable, require build_ios, submit_ios, submit_ios_for_review, build_android, and submit_android to succeed. For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes, delete THIS heartbeat, report shipped, and stop.",
+  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; every GitHub Actions run for the release branch and tag; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; and the matching EAS workflow. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, and submit_android to succeed. For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes, delete THIS heartbeat, report shipped, and stop.",
 }
 ```
 
@@ -800,6 +806,14 @@ This policy governs the upstream `CHANGELOG.md` and stable/beta entries. Fork pr
 - Stable promotion renames the entry to `## 0.1.60 - YYYY-MM-DD` after a final review.
 
 Older prerelease bodies on GitHub keep the notes they were synced with; `Release Notes Sync` only writes the release whose tag matches the top entry.
+
+## Changelog translations
+
+`CHANGELOG.zh-CN.md` holds the Chinese notes for `paseo.sh/zh-CN/changelog`. Only the website reads it; the app's **What's new** sheet, GitHub release bodies and F-Droid read `CHANGELOG.md`.
+
+- Translations never gate a release. Translate a new entry in a follow-up PR, or in the changelog commit when you can.
+- A translated entry uses the English heading unchanged: `## X.Y.Z - YYYY-MM-DD`. The website uses it only while the version and date both match the English entry. Otherwise it shows that release whole in English under a notice, so a beta rewritten in place drops its old translation until the new notes are translated. Delete Chinese entries whose English entry was renamed.
+- Keep the English sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
 
 ## Changelog ownership
 
@@ -953,7 +967,7 @@ These beta/stable checklists apply to upstream publication. Fork previews use th
 - [ ] GitHub `Release Notes Sync` is green and the release body matches the stable changelog entry
 - [ ] EAS `Release Mobile` workflow for the same tag is green
 - [ ] EAS iOS `build_ios` completes for the same tag
-- [ ] EAS iOS `submit_ios` succeeds, uploading the build to App Store Connect/TestFlight
+- [ ] EAS iOS `distribute_ios` succeeds, uploading the binary once, distributing it to `Paseo Beta`, and submitting it for Beta App Review
 - [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review
 - [ ] EAS Android `build_android` completes for the same tag
 - [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track

@@ -7,6 +7,7 @@ import {
   buildReviewDraftKey,
   useInlineReviewController,
   useReviewAttachmentSnapshot,
+  useReviewFeedback,
 } from "@/review";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -19,6 +20,32 @@ interface UseWorkingDiffOptions {
   ignoreWhitespace: boolean;
   enabled: boolean;
   queryScope?: string;
+  filePath?: string;
+  includeFileOverview?: boolean;
+  presentation?: string;
+}
+
+function useWorkingDiffQueries({
+  filePath,
+  includeFileOverview,
+  ...options
+}: Parameters<typeof useCheckoutDiffQuery>[0] & { includeFileOverview: boolean }) {
+  const queryScope = options.queryScope;
+  const overviewQuery = useCheckoutDiffQuery({
+    ...options,
+    enabled: options.enabled && filePath !== undefined && includeFileOverview,
+    queryScope: `${queryScope ?? ""}:working-diff-overview`,
+  });
+  const fileQuery = useCheckoutDiffQuery({
+    ...options,
+    filePath,
+    enabled: options.enabled,
+  });
+  return {
+    ...fileQuery,
+    overviewFiles:
+      filePath !== undefined && includeFileOverview ? overviewQuery.files : fileQuery.files,
+  };
 }
 
 export function useWorkingDiff({
@@ -28,6 +55,9 @@ export function useWorkingDiff({
   ignoreWhitespace,
   enabled,
   queryScope,
+  filePath,
+  includeFileOverview = false,
+  presentation,
 }: UseWorkingDiffOptions) {
   const {
     status,
@@ -58,21 +88,29 @@ export function useWorkingDiff({
     statusReady: status !== null,
   });
   const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
+  const selectAll = useCallback(() => selectComparison("all"), [selectComparison]);
   const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
 
-  const {
-    files,
-    payloadError: diffPayloadError,
-    diffTooLarge,
-    isLoading: isDiffLoading,
-  } = useCheckoutDiffQuery({
+  const queryOptions = {
     serverId,
     cwd,
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
-    enabled: enabled && isGit && !comparisonLoading,
     queryScope,
+  };
+  const queryEnabled = enabled && isGit && !comparisonLoading;
+  const {
+    files,
+    overviewFiles,
+    payloadError: diffPayloadError,
+    diffTooLarge,
+    isLoading: isDiffLoading,
+  } = useWorkingDiffQueries({
+    ...queryOptions,
+    filePath,
+    includeFileOverview,
+    enabled: queryEnabled,
   });
   const reviewDraftKey = useMemo(
     () =>
@@ -86,13 +124,20 @@ export function useWorkingDiff({
       }),
     [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
   );
-  const reviewActions = useInlineReviewController({ reviewDraftKey });
+  const reviewActions = useInlineReviewController({ reviewDraftKey, presentation });
   const reviewAttachment = useReviewAttachmentSnapshot({
     key: reviewDraftKey,
     diffFiles: files,
     cwd,
     mode: diffMode,
     baseRef,
+  });
+
+  const reviewFeedback = useReviewFeedback({
+    serverId,
+    workspaceId,
+    reviewDraftKey,
+    attachment: reviewAttachment,
   });
 
   return {
@@ -106,12 +151,15 @@ export function useWorkingDiff({
     diffMode,
     selectUncommitted,
     selectBase,
+    selectAll,
     files,
+    overviewFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading: isDiffLoading || comparisonLoading,
     reviewActions,
     reviewAttachment,
+    reviewFeedback,
   };
 }
 

@@ -114,3 +114,42 @@ test("active reads survive completed-payload eviction and failed reads can retry
     }),
   ).toEqual({ diff: "retry" });
 });
+
+test("whole-checkout and literal file scopes never share cached or active reads", async () => {
+  const cache = new CheckoutDiffCache(() => 0);
+  const loaded: Array<string | undefined> = [];
+  const readScope = (filePath?: string) =>
+    cache.read({
+      cwd: "repo",
+      compare: { mode: "uncommitted", includeStructured: true, filePath },
+      load: async () => {
+        loaded.push(filePath);
+        return { diff: filePath ?? "whole" };
+      },
+    });
+  expect(
+    await Promise.all([readScope(), readScope("a.css"), readScope(" a.css "), readScope("a.css")]),
+  ).toEqual([{ diff: "whole" }, { diff: "a.css" }, { diff: " a.css " }, { diff: "a.css" }]);
+  expect(loaded).toEqual([undefined, "a.css", " a.css "]);
+  cache.invalidate("repo", "uncommitted");
+  await Promise.all([readScope(), readScope("a.css"), readScope(" a.css ")]);
+  expect(loaded).toEqual([undefined, "a.css", " a.css ", undefined, "a.css", " a.css "]);
+});
+
+test.each(["base", "uncommitted"] as const)(
+  "%s invalidation refreshes All changes without merging base-ref cache entries",
+  async (mode) => {
+    const cache = new CheckoutDiffCache(() => 0);
+    const read = (baseRef: string, value: string) =>
+      cache.read({
+        cwd: "repo",
+        compare: { mode: "all", baseRef },
+        load: async () => ({ diff: value }),
+      });
+    expect(await read("main", "main-before")).toEqual({ diff: "main-before" });
+    expect(await read("next", "next-before")).toEqual({ diff: "next-before" });
+    cache.invalidate("repo", mode);
+    expect(await read("main", "main-after")).toEqual({ diff: "main-after" });
+    expect(await read("next", "next-after")).toEqual({ diff: "next-after" });
+  },
+);

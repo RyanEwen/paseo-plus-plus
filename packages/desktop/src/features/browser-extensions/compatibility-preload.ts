@@ -11,7 +11,7 @@ interface CompatibilityChrome {
   runtime: {
     id?: string;
     lastError?: { message: string };
-    getManifest(): { permissions?: string[] };
+    getManifest(): { permissions?: string[]; action?: unknown; browser_action?: unknown };
   };
   tabs: Record<string, unknown>;
   scripting: {
@@ -26,9 +26,13 @@ interface CompatibilityChrome {
   windows?: Record<string, unknown>;
   contextMenus?: Record<string, unknown>;
   alarms?: Record<string, unknown>;
+  action?: Record<string, unknown>;
+  browserAction?: Record<string, unknown>;
+  storage?: { onChanged: CompatibilityEvent; [area: string]: unknown };
 }
 declare global {
   var chrome: CompatibilityChrome;
+  var paseoExtensionStorageSource: (changes: unknown, area: string) => void;
   var paseoExtensionCompatibility: {
     invoke(method: string, args: unknown[]): Promise<unknown>;
     listen(name: string, callback: (...args: unknown[]) => void): void;
@@ -36,9 +40,16 @@ declare global {
 }
 
 /** Isolated preload exposes a narrow authenticated RPC, only to actual extension pages/workers. */
-const isExtension = contextBridge.executeInMainWorld({
-  func: () => Boolean(globalThis.chrome?.runtime?.id),
+const extensionContext = contextBridge.executeInMainWorld({
+  func: () => ({
+    id: globalThis.chrome?.runtime?.id,
+    href: globalThis.location?.href,
+    storage: typeof globalThis.chrome?.storage?.onChanged?.addListener === "function",
+    storagePermission:
+      globalThis.chrome?.runtime?.getManifest().permissions?.includes("storage") === true,
+  }),
 });
+const isExtension = Boolean(extensionContext.id);
 if (isExtension) {
   const eventListeners = new Map<string, Set<(...args: unknown[]) => void>>();
   // One native subscription handles all namespaces, so extensions can register many API events without listener warnings.
@@ -53,15 +64,50 @@ if (isExtension) {
       eventListeners.set(name, listeners);
     },
   });
-  contextBridge.executeInMainWorld({ func: installCompatibility });
+  contextBridge.executeInMainWorld({
+    func: installCompatibility,
+    args: [process.type === "service-worker"],
+  });
+  if (extensionContext.storage && extensionContext.storagePermission) {
+    if (process.type === "service-worker") {
+      // A synchronous worker-thread gate delays entry; main waits only for the passive frame listener.
+      const ready = ipcRenderer.sendSync("paseo:extension-storage-startup") as { ready?: boolean };
+      if (ready?.ready !== true) throw new Error("Extension storage observation is unavailable.");
+    } else if (
+      extensionContext.href === `chrome-extension://${extensionContext.id}/manifest.json`
+    ) {
+      contextBridge.exposeInMainWorld(
+        "paseoExtensionStorageSource",
+        (changes: unknown, area: string) => {
+          ipcRenderer.send("paseo:extension-storage-observer", { kind: "change", changes, area });
+        },
+      );
+      contextBridge.executeInMainWorld({
+        func: () => {
+          chrome.storage!.onChanged.addListener((changes: unknown, area: unknown) => {
+            globalThis.paseoExtensionStorageSource(changes, String(area));
+          });
+        },
+      });
+      ipcRenderer.send("paseo:extension-storage-observer", { kind: "ready" });
+    }
+  }
 }
 
 /** Install missing browser-owned namespaces while retaining Chromium storage, scripting and messaging. */
-function installCompatibility(): void {
+function installCompatibility(isWorker: boolean): void {
   const bridge = globalThis.paseoExtensionCompatibility;
   /** Keep Chromium's cached API object so a binding refresh preserves the installed compatibility methods. */
   function installNamespace(
-    name: "webNavigation" | "notifications" | "permissions" | "windows" | "contextMenus" | "alarms",
+    name:
+      | "webNavigation"
+      | "notifications"
+      | "permissions"
+      | "windows"
+      | "contextMenus"
+      | "alarms"
+      | "action"
+      | "browserAction",
     implementation: Record<string, unknown>,
   ): void {
     const namespace = chrome[name];
@@ -81,7 +127,12 @@ function installCompatibility(): void {
           listener(...args);
         } catch (error) {
           // Chrome reports one listener's failure without suppressing the remaining listeners.
-          console.error("Extension event listener failed", error);
+          if (name.startsWith("storage.")) {
+            // Extension-thrown errors can contain storage values; never mirror them into host logs.
+            console.error("Extension storage event listener failed.");
+          } else {
+            console.error("Extension event listener failed", error);
+          }
         }
       }
     });
@@ -121,6 +172,22 @@ function installCompatibility(): void {
       },
     };
   }
+  // COMPAT(electronWorkerStorageEvents): added in v0.12.0; review removal after 2027-01-19 (#52451).
+  // Keep every storage method native. Only the broken worker Event objects use the existing facade.
+  if (
+    isWorker &&
+    chrome.storage?.onChanged &&
+    chrome.runtime.getManifest().permissions?.includes("storage")
+  ) {
+    Object.assign(chrome.storage.onChanged, event("storage.onChanged"));
+    for (const area of ["local", "session", "sync", "managed"]) {
+      const storageArea = chrome.storage[area] as { onChanged?: CompatibilityEvent } | undefined;
+      if (storageArea?.onChanged) {
+        Object.assign(storageArea.onChanged, event(`storage.${area}.onChanged`));
+      }
+    }
+  }
+
   function callbackResult(
     result: Promise<unknown>,
     callback: unknown,
@@ -168,6 +235,62 @@ function installCompatibility(): void {
       return callbackResult(result, callback);
     };
   }
+  /** Parse CSS with Chromium's own worker-safe parser; only numeric RGBA crosses the host boundary. */
+  function badgeColor(value: unknown): unknown {
+    if (typeof value !== "string") return value;
+    if (value.length > 256) throw new Error("Invalid badge color.");
+    const context = new OffscreenCanvas(1, 1).getContext("2d");
+    if (!context) throw new Error("Badge color parsing is unavailable.");
+    context.fillStyle = "#010203";
+    context.fillStyle = value;
+    const first = context.fillStyle;
+    context.fillStyle = "#040506";
+    context.fillStyle = value;
+    if (first !== context.fillStyle) throw new Error("Invalid badge color.");
+    // Preserve RGB even at zero alpha, which a premultiplied pixel readback would discard.
+    if (/^#[0-9a-f]{6}$/i.test(first)) {
+      return [1, 3, 5]
+        .map((offset) => Number.parseInt(first.slice(offset, offset + 2), 16))
+        .concat(255);
+    }
+    const rgba = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/.exec(first);
+    if (rgba)
+      return [
+        Number(rgba[1]),
+        Number(rgba[2]),
+        Number(rgba[3]),
+        Math.round(Number(rgba[4] ?? 1) * 255),
+      ];
+    context.fillRect(0, 0, 1, 1);
+    return Array.from(context.getImageData(0, 0, 1, 1).data);
+  }
+  function badgeColorMethod(name: string) {
+    return (details: unknown, callback?: unknown) => {
+      async function invoke(): Promise<unknown> {
+        if (!details || typeof details !== "object" || Array.isArray(details))
+          throw new Error("Invalid badge details.");
+        const input = { ...details } as Record<string, unknown>;
+        input.color = badgeColor(input.color);
+        return bridge.invoke(name, [input]);
+      }
+      return callbackResult(invoke(), callback);
+    };
+  }
+  // COMPAT(electronActionBadges): added in v0.12.0; review after 2027-01-19 when Electron's native action stubs gain a usable host API.
+  // Electron 44.5.1 explicitly no-ops these six methods; leave every other native action method intact.
+  const actionManifest = chrome.runtime.getManifest();
+  for (const namespace of ["action", "browserAction"] as const) {
+    if (namespace === "action" ? !actionManifest.action : !actionManifest.browser_action) continue;
+    installNamespace(namespace, {
+      setBadgeText: method(`${namespace}.setBadgeText`),
+      getBadgeText: method(`${namespace}.getBadgeText`),
+      setBadgeBackgroundColor: badgeColorMethod(`${namespace}.setBadgeBackgroundColor`),
+      getBadgeBackgroundColor: method(`${namespace}.getBadgeBackgroundColor`),
+      setBadgeTextColor: badgeColorMethod(`${namespace}.setBadgeTextColor`),
+      getBadgeTextColor: method(`${namespace}.getBadgeTextColor`),
+    });
+  }
+
   installNamespace("webNavigation", {
     onCommitted: event("webNavigation.onCommitted"),
     onCompleted: event("webNavigation.onCompleted"),

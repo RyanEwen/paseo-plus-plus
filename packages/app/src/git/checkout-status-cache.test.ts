@@ -95,7 +95,7 @@ function checkoutStatusUpdate(
   };
 }
 
-function selectBaseComparison(isDirtyAtSelection: boolean): void {
+function selectBaseComparison(isDirtyAtSelection = false): void {
   selectWorkingDiffComparison({
     serverId,
     cwd,
@@ -109,10 +109,7 @@ function createQueryClient(): QueryClient {
 }
 
 beforeEach(() => {
-  appQueryClient.setQueryData(APP_SETTINGS_QUERY_KEY, {
-    ...DEFAULT_CLIENT_SETTINGS,
-    workingDiffAutoSwitch: true,
-  });
+  appQueryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
   resetWorkingDiffComparisons();
 });
 
@@ -122,6 +119,10 @@ afterEach(() => {
 
 describe("fetchCheckoutStatus", () => {
   it("persists automatic comparison expiry only when a selection actually expires", async () => {
+    appQueryClient.setQueryData(APP_SETTINGS_QUERY_KEY, {
+      ...DEFAULT_CLIENT_SETTINGS,
+      workingDiffAutoSwitch: true,
+    });
     selectBaseComparison(false);
     const saveChoices = vi.mocked(AsyncStorage.setItem);
     saveChoices.mockClear();
@@ -158,14 +159,13 @@ describe("fetchCheckoutStatus", () => {
     expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
   });
 
-  it("expires a manual working-diff comparison when the fetched dirty state flipped", async () => {
+  it("keeps a manual working-diff comparison when the fetched dirty state flips", async () => {
     selectBaseComparison(true);
     const client = { getCheckoutStatus: vi.fn(async () => checkoutStatus({ isDirty: false })) };
 
     await fetchCheckoutStatus({ client, serverId, cwd });
 
     expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("base");
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("uncommitted");
   });
 });
 
@@ -204,6 +204,34 @@ describe("ensureCheckoutStatus", () => {
 });
 
 describe("applyCheckoutStatusUpdateFromEvent", () => {
+  it("expires automatic choices at pushed checkout boundaries without a mounted Changes pane", () => {
+    appQueryClient.setQueryData(APP_SETTINGS_QUERY_KEY, {
+      ...DEFAULT_CLIENT_SETTINGS,
+      workingDiffAutoSwitch: true,
+    });
+    selectBaseComparison(false);
+    const saveChoices = vi.mocked(AsyncStorage.setItem);
+    saveChoices.mockClear();
+    const queryClient = createQueryClient();
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
+    });
+    expect(saveChoices).toHaveBeenCalledOnce();
+    expect(JSON.parse(saveChoices.mock.calls[0]![1]).state.overrides).toEqual({});
+    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("uncommitted");
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: false })),
+    });
+    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("base");
+    expect(saveChoices).toHaveBeenCalledOnce();
+  });
+
   it("writes the checkout status to the cache using the cwd from the payload", () => {
     const queryClient = createQueryClient();
     const pushed = checkoutStatus({ requestId: "push-1", isDirty: true });
@@ -324,31 +352,25 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     ).toBe("unauthenticated");
   });
 
-  it("expires a manual working-diff comparison when the pushed dirty state flipped", () => {
-    const queryClient = createQueryClient();
-    selectBaseComparison(false);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
-    });
-
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("uncommitted");
-  });
-
-  it("keeps a manual working-diff comparison while the pushed dirty state still matches", () => {
-    const queryClient = createQueryClient();
-    selectBaseComparison(true);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
-    });
-
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("base");
-  });
+  it.each(["base", "uncommitted"] as const)(
+    "keeps %s selected across dirty and clean pushes",
+    (comparison) => {
+      const queryClient = createQueryClient();
+      selectWorkingDiffComparison({ serverId, cwd, comparison, isDirty: false });
+      applyCheckoutStatusUpdateFromEvent({
+        queryClient,
+        serverId,
+        message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
+      });
+      expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe(comparison);
+      applyCheckoutStatusUpdateFromEvent({
+        queryClient,
+        serverId,
+        message: checkoutStatusUpdate(checkoutStatus({ isDirty: false })),
+      });
+      expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe(comparison);
+    },
+  );
 
   it("invalidates PR detail queries when the prStatus changes, ignoring the volatile requestId", () => {
     const queryClient = createQueryClient();

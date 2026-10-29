@@ -1,16 +1,32 @@
 import { z } from "zod";
 
+/** Must match the normal fork NSIS appId in electron-builder.preview.yml. */
+export const WINDOWS_FORK_APP_ID = "sh.paseo.plusplus.desktop";
+
 const distributionMetadataSchema = z.object({
   paseoPreview: z.boolean().default(false),
+  paseoDebug: z.boolean().default(false),
 });
 
 /** Resolve packaged identity without changing the renderer's storage origin. */
 export function resolveDesktopDistribution(metadata: unknown) {
-  const { paseoPreview } = distributionMetadataSchema.parse(metadata);
+  const { paseoPreview, paseoDebug } = distributionMetadataSchema.parse(metadata);
+  if (paseoDebug) {
+    return {
+      isPreview: true,
+      appName: "Paseo++ Debug",
+      windowsAppUserModelId: null,
+      userDataName: "Paseo++ Debug",
+      desktopName: "paseo-plus-plus-debug.desktop",
+      daemonHomeName: ".paseo-plus-plus-debug-desktop",
+      daemonListen: "127.0.0.1:6791",
+    } as const;
+  }
   if (paseoPreview) {
     return {
       isPreview: true,
       appName: "Paseo++",
+      windowsAppUserModelId: WINDOWS_FORK_APP_ID,
       // The fork uses a fresh profile independent of upstream and legacy preview installs.
       userDataName: "Paseo++",
       desktopName: "paseo-plus-plus.desktop",
@@ -22,6 +38,7 @@ export function resolveDesktopDistribution(metadata: unknown) {
   return {
     isPreview: false,
     appName: "Paseo",
+    windowsAppUserModelId: null,
     userDataName: "Paseo",
     desktopName: "Paseo.desktop",
     daemonHomeName: null,
@@ -30,7 +47,14 @@ export function resolveDesktopDistribution(metadata: unknown) {
 }
 
 // The same package-relative path works in source, dist, and the packaged asar.
-export const desktopDistribution = resolveDesktopDistribution(require("../package.json"));
+const packageMetadata = require("../package.json");
+export const desktopDistribution = resolveDesktopDistribution(packageMetadata);
+export const desktopDebugBuild = distributionMetadataSchema.parse(packageMetadata).paseoDebug;
+
+/** Test artifacts must not replace themselves with a published build. */
+export function shouldEnableDesktopUpdates(isPackaged: boolean, isDebug: boolean): boolean {
+  return isPackaged && !isDebug;
+}
 
 /** Preview installs always follow the fork's custom channel, regardless of saved settings. */
 export function resolveDesktopUpdateChannel(isPreview: boolean, releaseChannel: "stable" | "beta") {

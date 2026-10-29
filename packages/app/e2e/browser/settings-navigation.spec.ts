@@ -89,7 +89,44 @@ async function openWorkspace(
   await expect(page.getByTestId("menu-button")).toBeVisible();
 }
 
+/** Inspect the rendered swatches without changing the selected preference. */
+function readOptionBackgrounds(buttons: Element[]): string[] {
+  return buttons.map((button) => getComputedStyle(button).backgroundColor);
+}
+
 test.describe("Settings sidebar navigation", () => {
+  test("accent choices are previewed only in Paseo++ settings", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    await expect(page.getByTestId("accent-color-settings")).toHaveCount(0);
+    await openSettingsSection(page, "paseo-plus-plus");
+    const accents = page.getByTestId("accent-color-settings");
+    const original = await accents
+      .getByRole("radio", { checked: true })
+      .getAttribute("data-testid");
+    if (!original) throw new Error("Expected original accent choice");
+    const colors = accents.getByRole("radio");
+    await expect(colors).toHaveCount(7);
+    await expect(accents.getByRole("radio", { name: "Blue", exact: true })).toBeEnabled();
+    const fills = await colors.evaluateAll(readOptionBackgrounds);
+    expect(new Set(fills).size).toBe(7);
+    const evidenceDir = resolve("../../docs/qa-evidence/paseo-plus-plus-settings");
+    mkdirSync(evidenceDir, { recursive: true });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await accents.scrollIntoViewIfNeeded();
+      await expect(colors).toHaveCount(7);
+      await accents.screenshot({ path: resolve(evidenceDir, `accent-options-${width}.png`) });
+    }
+    await accents.getByRole("radio", { name: "Blue", exact: true }).click();
+    await expect(accents.getByRole("radio", { name: "Blue", exact: true })).toBeChecked();
+    await page.reload();
+    await expect(accents.getByRole("radio", { name: "Blue", exact: true })).toBeChecked();
+    await accents.getByTestId(original).click();
+    await expect(accents.getByTestId(original)).toBeChecked();
+  });
+
   test("clicking a sidebar section updates the URL and renders the section", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
@@ -228,6 +265,8 @@ test.describe("Settings — compact master-detail", () => {
     await page.getByTestId("sidebar-hosts-trigger").click();
     await page
       .getByTestId(`sidebar-host-row-${getServerId()}`)
+      // Host selection and settings are sibling controls in the host row.
+      .locator("../..")
       .getByRole("button", { name: "Open localhost settings", exact: true })
       .click();
 
@@ -310,7 +349,8 @@ for (const width of [1440, 390]) {
       });
       const switches = section.getByTestId("paseo-plus-plus-features").getByRole("switch");
       const features = Object.entries(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES).filter(
-        ([feature]) => feature !== "androidAutomaticUpdateChecks",
+        ([feature]) =>
+          feature !== "androidAutomaticUpdateChecks" && feature !== "explorerIconOnlyTabs",
       );
       const featureSwitch = (feature: string) =>
         section.getByTestId(`paseo-plus-plus-${feature}`).getByRole("switch");
@@ -318,6 +358,7 @@ for (const width of [1440, 390]) {
       await expect(section.getByTestId("paseo-plus-plus-androidAutomaticUpdateChecks")).toHaveCount(
         0,
       );
+      await expect(section.getByTestId("paseo-plus-plus-sidebarProjectSelector")).toHaveCount(0);
       for (const [feature, defaultEnabled] of features) {
         expect(defaultEnabled, `${feature} must default on`).toBe(true);
         await expect(featureSwitch(feature)).toBeChecked();
@@ -466,38 +507,23 @@ for (const width of [1440, 390]) {
       await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-reenabled.png`) });
       await page.keyboard.press("Escape");
       await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-      const selectorSwitch = section.getByRole("switch", {
-        name: "Selected project in heading",
-        exact: true,
-      });
-      await expect(selectorSwitch).toBeChecked();
-      await selectorSwitch.click();
-      await expect(selectorSwitch).not.toBeChecked();
+      await expect(
+        section.getByRole("switch", { name: "Selected project in heading", exact: true }),
+      ).toHaveCount(0);
       await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
       if (width === 390) {
         await openMobileAgentSidebar(page);
         await expectMobileAgentSidebarVisible(page);
       }
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("Workspaces");
-      // Turning off the rich heading keeps the essential chooser available.
-      await page.getByTestId("sidebar-project-selector").click();
+      const projectSelector = page.getByTestId("sidebar-project-selector");
+      await expect(projectSelector).toHaveText("All Workspaces");
+      await projectSelector.click();
       await expect(page.getByTestId("sidebar-project-selector-all")).toBeVisible();
       await closeSidebarDisplayPreferences(page);
-      await expect(
-        page.getByText("Workspaces", { exact: true }).filter({ visible: true }).first(),
-      ).toBeVisible();
-      await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-selector-off.png`) });
-      if (width === 390) await closeMobileAgentSidebar(page);
-      await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-      await selectorSwitch.click();
-      await expect(selectorSwitch).toBeChecked();
-      await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
-      if (width === 390) {
-        await openMobileAgentSidebar(page);
-        await expectMobileAgentSidebarVisible(page);
-      }
-      await expect(page.getByTestId("sidebar-project-selector")).toHaveText("All Workspaces");
-      await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-selector-on.png`) });
+      await expect(projectSelector).toHaveText("All Workspaces");
+      await page.screenshot({
+        path: resolve(evidenceDir, `settings-${width}-selector-always-available.png`),
+      });
       if (width === 390) await closeMobileAgentSidebar(page);
       // Fail a genuine cold settings read, then recover through the page's shared Retry.
       await page.addInitScript(() => {
@@ -524,7 +550,11 @@ for (const width of [1440, 390]) {
       });
       await page.evaluate(() => sessionStorage.setItem("fork-settings-fail-read", "yes"));
       await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-      await expect(section.getByRole("alert")).toContainText("Unable to load saved preferences", {
+      await expect(
+        section
+          .getByRole("alert")
+          .filter({ has: page.getByRole("button", { name: "Retry", exact: true }) }),
+      ).toContainText("Unable to load saved preferences", {
         timeout: 30_000,
       });
       await expect(switches).toHaveCount(features.length);
@@ -547,7 +577,11 @@ for (const width of [1440, 390]) {
         return Number(sessionStorage.getItem("fork-settings-read-attempts"));
       });
       expect(settledAttempts).toBe(failedReadAttempts);
-      await expect(section.getByRole("alert")).toContainText("Unable to load saved preferences");
+      await expect(
+        section
+          .getByRole("alert")
+          .filter({ has: page.getByRole("button", { name: "Retry", exact: true }) }),
+      ).toContainText("Unable to load saved preferences");
       await expect(autoOpen).toBeDisabled();
       await page.screenshot({ path: resolve(evidenceDir, `settings-${width}-read-failed.png`) });
       await page.evaluate(() => window.dispatchEvent(new Event("fork-restore-read")));
