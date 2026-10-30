@@ -1865,6 +1865,12 @@ describe("actual web prompt cells", () => {
     source.dataset.actualPromptRow = "";
     const body = document.createElement("div");
     body.dataset.actualPromptContent = "";
+    Object.assign(body.dataset, {
+      promptFlowHeight: "80",
+      promptVisualHeight: "80",
+      promptCompactHeight: "80",
+      promptBounded: "true",
+    });
     const text = document.createElement("span");
     text.textContent = "The same selectable prompt";
     body.appendChild(text);
@@ -1874,6 +1880,12 @@ describe("actual web prompt cells", () => {
     next.dataset.actualPromptRow = "";
     const nextBody = document.createElement("div");
     nextBody.dataset.actualPromptContent = "";
+    Object.assign(nextBody.dataset, {
+      promptFlowHeight: "80",
+      promptVisualHeight: "80",
+      promptCompactHeight: "80",
+      promptBounded: "true",
+    });
     next.appendChild(nextBody);
     content.append(source, next);
     const bounds = (top: number) => ({ top, height: 80, width: 300 });
@@ -1931,6 +1943,12 @@ describe("actual web prompt cells", () => {
     row.style.position = "absolute";
     row.style.top = "80px";
     body.dataset.actualPromptContent = "";
+    Object.assign(body.dataset, {
+      promptFlowHeight: "80",
+      promptVisualHeight: "80",
+      promptCompactHeight: "80",
+      promptBounded: "true",
+    });
     row.append(body);
     content.append(row);
     viewport.append(content);
@@ -1958,12 +1976,15 @@ describe("actual web prompt cells", () => {
     ]);
     expect(row.style.height).toBe("320px");
     viewport.scrollTop = 400;
+    // The successor still ends this lane, but has no mounted body/compact
+    // publication to own physical sticky paint. Never claim an unmounted owner.
+    expect(content.querySelector('[data-history-row-id="unmounted"]')).toBeNull();
     expect(
       syncActualPromptPin(content, viewport, true, [
         { id: "old", top: 80 },
         { id: "unmounted", top: 400 },
       ]),
-    ).toBe("unmounted");
+    ).toBeNull();
     expect(row.dataset.promptPinned).toBe("false");
     expect(row.firstChild).toBe(body);
   });

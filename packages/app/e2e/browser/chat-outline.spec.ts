@@ -421,24 +421,16 @@ async function clickMessageNavigation(message: Locator, testID: string) {
   await message.getByTestId(testID).click();
 }
 
-/** Arrow landings use the original bubble coordinate even while its real body is pinned. */
+/** Arrow landings target the qualified natural-tail handoff, with the existing -2px inset. */
 async function expectPinnedPromptLanding(page: Page, prompt: string) {
   const row = actualUserRow(page, prompt);
   await expect(row).toHaveCount(1);
   await expect(row).toHaveAttribute("data-prompt-pinned", "true");
   await expect
-    .poll(() =>
-      row.evaluate((node) => {
-        const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
-        const bubble = node.querySelector('[data-testid="user-message-bubble"]')!;
-        const originalTop =
-          node.getBoundingClientRect().top +
-          bubble.getBoundingClientRect().top -
-          node.querySelector<HTMLElement>("[data-actual-prompt-content]")!.getBoundingClientRect()
-            .top;
-        return Math.abs(originalTop - viewport.getBoundingClientRect().top + 2);
-      }),
-    )
+    .poll(async () => {
+      const distance = await row.evaluate(actualRowTailHandoffDistance);
+      return distance === null ? Number.POSITIVE_INFINITY : Math.abs(distance + 2);
+    })
     .toBeLessThanOrEqual(2);
 }
 
@@ -928,7 +920,7 @@ test("actual user row find expands each occurrence and preserves its text node",
     await query.fill("deep-actual-needle");
     await expect(panel.getByRole("status", { name: "Find matches" })).toHaveText("1 of 2");
     const disclosure = row.getByTestId("user-message-disclosure");
-    await expect(disclosure).toHaveCount(0);
+    await expectActualExpandedGeometry(row, "prepared-hidden");
     const firstOccurrence = await expectActualFindVisible(
       row,
       prompt.indexOf("deep-actual-needle"),
@@ -936,7 +928,7 @@ test("actual user row find expands each occurrence and preserves its text node",
     await expectActualTextIdentity(row, text!, prompt);
     await query.press("Enter");
     await expect(panel.getByRole("status", { name: "Find matches" })).toHaveText("2 of 2");
-    await expect(disclosure).toHaveCount(0);
+    await expectActualExpandedGeometry(row, "prepared-hidden");
     const secondOccurrence = await expectActualFindVisible(
       row,
       prompt.lastIndexOf("deep-actual-needle"),
@@ -1349,7 +1341,9 @@ for (const viewport of [
         "false",
       );
       await scrollTimelinePastPrompt(page, agent.prompts[1]!);
-      const longPrompt = `Long sticky prompt\n${"  Preserve this line and whitespace.\n".repeat(60)}END OF STICKY PROMPT: emit 85 assistant messages before synthetic user message`;
+      // The pre-echo DEV command bypasses the configured response and leaves
+      // only a short reply after this USER, so it cannot prove this More cohort.
+      const longPrompt = `Long sticky prompt\n${"  Preserve this line and whitespace.\n".repeat(60)}END OF STICKY PROMPT`;
       await agent.client.sendAgentMessage(agent.agentId, longPrompt);
       await agent.client.waitForFinish(agent.agentId, 15_000);
       await expect(sticky).toContainText(agent.prompts[1]);
@@ -1357,6 +1351,13 @@ for (const viewport of [
       await expect(sticky).toContainText("Long sticky prompt");
       await expectNearBottom(page);
       const longRow = actualUserRow(page, longPrompt);
+      const followingResponse = longRow.locator(
+        "xpath=following-sibling::*[@data-history-row-id][1]",
+      );
+      await expect(followingResponse.getByTestId("assistant-message")).toHaveCount(1);
+      await expect(
+        followingResponse.getByText("Response paragraph 39.", { exact: true }),
+      ).toHaveCount(1);
       const readVisibleBodyHeight = () =>
         longRow.getByTestId("user-message-body-scroll").evaluate((body) => {
           const visibleViewport = body
@@ -1651,13 +1652,55 @@ for (const indexed of [true, false]) {
       gate.allowTimelineResponses();
       await sticky.getByRole("button", { name: "Retry", exact: true }).click();
       await expect(sticky).toHaveCount(0);
-      const recovered = actualUserRow(page, prompt);
+      const timeline = page.getByTestId("agent-chat-scroll");
+      // Recovery supplies certified paint outside the ordinary loaded window.
+      // Keep actualUserRow ordinary-only for explicit original/materialization proofs.
+      const recovered = timeline.locator("[data-retained-prompt-row]").filter({ hasText: prompt });
+      const owners = timeline
+        .locator("[data-actual-prompt-row], [data-retained-prompt-row]")
+        .filter({ hasText: prompt });
       await expect(recovered).toHaveCount(1);
+      await expect(owners).toHaveCount(1);
+      await expect(recovered).toHaveAttribute("aria-hidden", "false");
       await expect(recovered).toHaveAttribute("data-prompt-pinned", "true");
-      await expectNearBottom(page);
-      // The pinned prompt itself is the reveal link, including when its outline index failed.
-      await recovered.getByRole("link", { name: prompt, exact: true }).click();
-      await expectTimelinePromptLandedBelowTop(page, prompt);
+      await expect(recovered).toHaveCSS("position", "absolute");
+      await expect(recovered.getByTestId("user-message")).toHaveCount(1);
+      await expect(recovered.getByTestId("user-message-text")).toHaveCount(1);
+      await expect(recovered.getByTestId("user-message-text")).toHaveText(prompt);
+      const recoveredId = await recovered.getAttribute("data-retained-prompt-row");
+      expect(recoveredId).not.toBeNull();
+      await expect(timeline.locator(`[data-history-row-id="${recoveredId}"]`)).toHaveCount(0);
+      const original = await recovered.evaluateHandle((node) => {
+        const text = node.querySelector('[data-testid="user-message-text"]')!;
+        return {
+          body: node.querySelector('[data-testid="user-message"]'),
+          text,
+          node: document.createTreeWalker(text, NodeFilter.SHOW_TEXT).nextNode(),
+        };
+      });
+      try {
+        await expectNearBottom(page);
+        // The pinned prompt itself is the reveal link, including when its outline index failed.
+        await recovered.getByRole("link", { name: prompt, exact: true }).click();
+        await expectTimelinePromptLandedBelowTop(page, prompt);
+        const ordinary = actualUserRow(page, prompt);
+        await expect(ordinary).toHaveCount(1);
+        await expect(ordinary).toHaveAttribute("data-history-row-id", recoveredId!);
+        await expect(owners).toHaveCount(1);
+        expect(
+          await ordinary.evaluate((node, prior) => {
+            const text = node.querySelector('[data-testid="user-message-text"]');
+            return (
+              node.querySelector('[data-testid="user-message"]') === prior.body &&
+              text === prior.text &&
+              prior.node !== null &&
+              text!.contains(prior.node)
+            );
+          }, original),
+        ).toBe(true);
+      } finally {
+        await original.dispose();
+      }
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/discovery-${indexed ? "indexed" : "pagination"}.png`,
       });

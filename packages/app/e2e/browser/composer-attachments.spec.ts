@@ -55,6 +55,7 @@ import {
   openAgentTimeline,
   seedLongMockAgentTimeline,
   scrollTimelinePastPrompt,
+  scrollActualPromptPastHandoff,
   expectTimelinePromptLandedBelowTop,
 } from "../support/helpers/timeline-pagination";
 
@@ -484,7 +485,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
       body: JSON.stringify({ tickId: attachmentOnlyTickId, ...attachmentOnlyLanding }, null, 2),
       contentType: "application/json",
     });
-    await page.mouse.wheel(0, attachmentOnlyLanding.relativeTop + 1);
+    await scrollActualPromptPastHandoff(page, attachmentOnlyRow);
     await expect
       .poll(() =>
         attachmentOnlyRow.evaluate(

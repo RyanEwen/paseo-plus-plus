@@ -825,18 +825,46 @@ export async function captureSpokenTimeline(
   });
 }
 
-/** Move the reading edge below a prompt using the isolated timeline's actual bubble bounds. */
+/** Move beyond the qualified handoff of one actual ordinary prompt. */
 export async function scrollTimelinePastPrompt(page: Page, prompt: string): Promise<void> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const row = timeline.locator("[data-actual-prompt-row]").filter({ hasText: prompt });
+  await scrollActualPromptPastHandoff(page, row);
+}
+
+/** Read current published geometry; setup never manufactures a compact extent. */
+function actualPromptHandoffDelta(node: HTMLElement | SVGElement): number | null {
+  const viewport = node.closest('[data-testid="agent-chat-scroll"]');
+  const body = node.querySelector("[data-actual-prompt-content]");
+  const flow = Number(body?.getAttribute("data-prompt-flow-height"));
+  const compact = Number(body?.getAttribute("data-prompt-compact-height"));
+  if (
+    !viewport ||
+    !body ||
+    !(flow > 0) ||
+    !(compact > 0) ||
+    !Number.isFinite(flow) ||
+    !Number.isFinite(compact)
+  )
+    return null;
+  return (
+    node.getBoundingClientRect().top -
+    viewport.getBoundingClientRect().top +
+    Math.max(0, flow - compact) +
+    1
+  );
+}
+
+/** Attachment-only prompts are identified by their actual row, never ambiguous empty text. */
+export async function scrollActualPromptPastHandoff(page: Page, row: Locator): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await expect(row).toHaveCount(1);
   await waitForTimelineGeometryToSettle(page);
   const rowId = await row.getAttribute("data-history-row-id");
   expect(rowId).not.toBeNull();
-  const delta = await row.evaluate((node) => {
-    const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
-    return node.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 1;
-  });
+  await expect.poll(() => row.evaluate(actualPromptHandoffDelta)).not.toBeNull();
+  const delta = await row.evaluate(actualPromptHandoffDelta);
+  if (delta === null) throw new Error("The actual prompt has no qualified tail handoff geometry");
   await timeline.hover();
   await page.mouse.wheel(0, delta);
   await expect

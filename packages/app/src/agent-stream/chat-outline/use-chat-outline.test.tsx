@@ -3235,7 +3235,18 @@ describe("actual prompt disclosure ownership", () => {
     expect(result.current.presentation.previewLines).toBeUndefined();
     expect(result.current.presentation.previewExpanded).toBe(true);
     expect(result.current.presentation.bodyViewportHeight).toBeUndefined();
-    expect(result.current.presentation.inlineContentAction).toBeNull();
+    // Web prepares this real control for measurement; ordinary clipping and
+    // inaccessible paint are covered through the actual WebUserMessageFlow suite.
+    expect(React.isValidElement(result.current.presentation.inlineContentAction)).toBe(true);
+    expect(result.current.presentation.inlineContentAction).toEqual(
+      expect.objectContaining({
+        props: expect.objectContaining({
+          testID: "user-message-disclosure",
+          "aria-expanded": false,
+        }),
+      }),
+    );
+    expect(result.current.presentation.onPreviewOverflowChange).toEqual(expect.any(Function));
     expect(result.current.rows!.expandedIds.has("original")).toBe(false);
 
     pinned = true;
@@ -3253,7 +3264,15 @@ describe("actual prompt disclosure ownership", () => {
     rerender();
     expect(result.current.presentation.previewLines).toBeUndefined();
     expect(result.current.presentation.bodyViewportHeight).toBeUndefined();
-    expect(result.current.presentation.inlineContentAction).toBeNull();
+    expect(React.isValidElement(result.current.presentation.inlineContentAction)).toBe(true);
+    expect(result.current.presentation.inlineContentAction).toEqual(
+      expect.objectContaining({
+        props: expect.objectContaining({
+          testID: "user-message-disclosure",
+          "aria-expanded": true,
+        }),
+      }),
+    );
     act(() => result.current.rows!.toggleExpanded("original"));
     expect(result.current.rows!.expandedIds.has("original")).toBe(false);
     expect(result.current.presentation.previewExpanded).toBe(true);
