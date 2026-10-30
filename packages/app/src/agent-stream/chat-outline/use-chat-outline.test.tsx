@@ -19,6 +19,8 @@ import {
   createCanonicalPromptContexts,
   canonicalPromptSourceKey,
   CanonicalPromptContextBudgetError,
+  type CanonicalPromptContext,
+  type CanonicalPromptLookup,
 } from "@/timeline/canonical-prompt-context";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import type { ContextPromptIndexReader } from "@/timeline/read-canonical-prompt-context";
@@ -1465,6 +1467,11 @@ function indexedReadLedger() {
     { type: "status" },
     { status: "server_info", features: { agentTimelinePromptIndex: true } },
   );
+  ledger.observeRequest({
+    type: "agent.timeline.list_prompts.request",
+    agentId: "agent",
+    requestId: "index",
+  });
   ledger.observe(
     { type: "agent.timeline.list_prompts.response" },
     {
@@ -1576,6 +1583,13 @@ describe("explicit history-window and indexed-content accounting", () => {
       }),
     ).toBe("context");
     ledger.completeContext(source);
+    // A validated held probe becomes usable source proof only upon real delivery.
+    ledger.deliverContextResponse("probe");
+    ledger.observeRequest({
+      type: "agent.timeline.list_prompts.request",
+      agentId: "agent",
+      requestId: "fresh-index",
+    });
     ledger.observe(
       { type: "agent.timeline.list_prompts.response" },
       {
@@ -1689,6 +1703,11 @@ it.each([
 
 it("rejects a malformed canonical index before trusting its sequence identity", () => {
   const ledger = indexedReadLedger();
+  ledger.observeRequest({
+    type: "agent.timeline.list_prompts.request",
+    agentId: "agent",
+    requestId: "broken",
+  });
   ledger.observe(
     { type: "agent.timeline.list_prompts.response" },
     { requestId: "broken", agentId: "agent", epoch: "epoch", prompts: [null], error: null },
@@ -2779,13 +2798,14 @@ describe("strict source context accounting", () => {
     (olderFirst) => {
       const ledger = oldLedger();
       ledger.classify(probeRequest());
-      const nextProbe = addOverlappingSource(ledger);
-      for (const response of olderFirst
-        ? [probeResponse(), nextProbe]
-        : [nextProbe, probeResponse()]) {
-        ledger.completeContext(response);
-      }
+      ledger.completeContext(probeResponse());
+      ledger.deliverContextResponse("probe");
+      // This request was issued while the older source still owned the reader.
+      // Its response can arrive after supersession, but no new old-source read can.
       expect(ledger.classify(contextRequest())).toBe("context");
+      const nextProbe = addOverlappingSource(ledger);
+      ledger.completeContext(nextProbe);
+      ledger.deliverContextResponse("next-probe");
       expect(
         ledger.classify({
           ...contextRequest(),
@@ -2817,11 +2837,14 @@ describe("strict source context accounting", () => {
     },
   );
 
-  it("rejects a canonical child shared by two eligible source chains", () => {
+  it("rejects an older-source child while the overlapping current probe is still held", () => {
     const ledger = oldLedger();
     ledger.classify(probeRequest());
     const nextProbe = addOverlappingSource(ledger, 246, 356);
     ledger.completeContext(probeResponse());
+    ledger.deliverContextResponse("probe");
+    // Validation is not delivery. The current source remains held, and the
+    // superseded older source cannot grant this new child request authority.
     ledger.completeContext(nextProbe);
     expect(ledger.classify(contextRequest())).toBeUndefined();
     expect(ledger.summary().errors).toHaveLength(1);
@@ -2830,13 +2853,19 @@ describe("strict source context accounting", () => {
   it("keeps the eight-read limit independent for overlapping chains", () => {
     const ledger = oldLedger();
     ledger.classify(probeRequest());
-    const nextProbe = addOverlappingSource(ledger);
     ledger.completeContext(probeResponse());
-    ledger.completeContext(nextProbe);
+    ledger.deliverContextResponse("probe");
     for (const [prefix, start] of [
       ["older", 246],
       ["newer", 146],
     ] as const) {
+      if (prefix === "newer") {
+        // Finish the older attempt's exact eight-read budget before switching
+        // authority. Current-chain validation forbids new reads from an old source.
+        const nextProbe = addOverlappingSource(ledger);
+        ledger.completeContext(nextProbe);
+        ledger.deliverContextResponse("next-probe");
+      }
       for (let n = 0; n < 7; n += 1) {
         const cursor = start - n;
         const requestId = `${prefix}-${n}`;
@@ -2893,6 +2922,7 @@ describe("strict source context accounting", () => {
       expect(ledger.classify({ ...contentReadRequest("window"), limit: 40 })).toBe("window");
       expect(ledger.classify(probeRequest())).toBe("context");
       ledger.completeContext(probeResponse());
+      ledger.deliverContextResponse("probe");
       expect(ledger.classify(contextRequest())).toBe("context");
       ledger.completeContext({
         ...contentReadResponse(),
@@ -2915,6 +2945,7 @@ describe("strict source context accounting", () => {
     const ledger = oldLedger();
     ledger.classify(probeRequest());
     ledger.completeContext(probeResponse());
+    ledger.deliverContextResponse("probe");
     ledger.classify(contextRequest());
     const first = { ...contentReadResponse(), requestId: "context-page" };
     ledger.completeContext(first);
@@ -2940,6 +2971,7 @@ describe("strict source context accounting", () => {
       startCursor: { epoch: "epoch", seq: 156 },
       endCursor: { epoch: "epoch", seq: 156 },
     });
+    ledger.deliverContextResponse("next-probe");
     expect(ledger.mountingPrompt()).toBeNull();
     // A late completion of the previous source cannot restore its mounting obligation.
     ledger.completeContext(first);
@@ -2986,6 +3018,7 @@ describe("strict source context accounting", () => {
     const ledger = oldLedger();
     ledger.classify(probeRequest());
     ledger.completeContext(probeResponse());
+    ledger.deliverContextResponse("probe");
     expect(ledger.classify({ ...probeRequest(), requestId: "duplicate" })).toBeUndefined();
     ledger.completeContext(probeResponse());
     expect(
@@ -2997,6 +3030,7 @@ describe("strict source context accounting", () => {
     const ledger = oldLedger();
     ledger.classify(probeRequest());
     ledger.completeContext(probeResponse());
+    ledger.deliverContextResponse("probe");
     for (let n = 1; n < 8; n += 1) {
       const cursor = 247 - n;
       const id = `page-${n}`;
@@ -6109,4 +6143,190 @@ describe("canonical context remote admission controls", () => {
       }
     },
   );
+});
+
+describe("current certified context paint authority", () => {
+  const epoch = "epoch";
+
+  function makeAuthorityFixture() {
+    const prior = stickyUser("authority-earlier-user", 4, epoch);
+    const later = stickyUser("authority-later-user", 60, epoch);
+    const earlierSource: Extract<StreamItem, { kind: "assistant_message" }> = {
+      kind: "assistant_message",
+      id: "authority-earlier-answer",
+      messageId: "authority-earlier-answer",
+      text: "Earlier response",
+      timestamp: new Date(0),
+      timelineCursor: { epoch, seq: 50 },
+    };
+    const laterSource: typeof earlierSource = {
+      ...earlierSource,
+      id: "authority-later-answer",
+      messageId: "authority-later-answer",
+      text: "Later response",
+      timelineCursor: { epoch, seq: 100 },
+    };
+    const ordinary: StreamItem[] = [prior, earlierSource, later, laterSource];
+    const owner = createCanonicalPromptContexts();
+    owner.prepareSources("agent", {
+      ...certifiedReadingRows(
+        ordinary,
+        new Map([
+          [earlierSource.id, 40],
+          [laterSource.id, 90],
+        ]),
+      ),
+      cursor: { epoch, startSeq: 4, endSeq: 100 },
+    });
+    const readPage = vi
+      .fn<ContextPageReader>()
+      .mockRejectedValue(new Error("Certified local proof must not read"));
+    const lookup: CanonicalPromptLookup = { agentId: "agent", readPage, projection: "canonical" };
+    const input: Parameters<typeof useCanonicalPromptContext>[0] = {
+      owner,
+      agentId: "agent",
+      epoch,
+      source: earlierSource,
+      ordinaryItems: ordinary,
+      coverage: [{ epoch, startSeq: 4, endSeq: 100 }],
+      enabled: true,
+      lookupReady: true,
+      lookup,
+    };
+    return { input, owner, ordinary, prior, later, earlierSource, laterSource, readPage };
+  }
+
+  it("selects current physical-source proof independently of multiple retained leases", async () => {
+    const f = makeAuthorityFixture();
+    const fixture = renderHook((input: typeof f.input) => useCanonicalPromptContext(input), {
+      initialProps: f.input,
+    });
+    try {
+      await waitFor(() => expect(fixture.result.current.contexts).toHaveLength(1));
+      expect(fixture.result.current.currentContext?.prompt).toBe(f.prior);
+      expect(fixture.result.current.currentContext?.sourceKey).toBe(
+        canonicalPromptSourceKey(f.earlierSource),
+      );
+      fixture.rerender({ ...f.input, source: f.laterSource });
+      await waitFor(() => expect(fixture.result.current.contexts).toHaveLength(2));
+      expect(fixture.result.current.currentContext?.prompt).toBe(f.later);
+      // A USER itself owns ordinary paint. Prior response leases cannot enroll
+      // their cached predecessor as the physical sticky owner at this source.
+      fixture.rerender({ ...f.input, source: f.prior });
+      expect(fixture.result.current.currentContext).toBeUndefined();
+      expect(fixture.result.current.contexts).toHaveLength(2);
+      fixture.rerender({ ...f.input, source: undefined });
+      expect(fixture.result.current.currentContext).toBeUndefined();
+      expect(fixture.result.current.contexts).toHaveLength(2);
+      expect(f.readPage).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      f.owner.dispose();
+    }
+  });
+
+  it("withholds suppressed and unproved advanced-source paint without discarding leases", async () => {
+    const f = makeAuthorityFixture();
+    const fixture = renderHook((input: typeof f.input) => useCanonicalPromptContext(input), {
+      initialProps: f.input,
+    });
+    try {
+      await waitFor(() => expect(fixture.result.current.contexts).toHaveLength(1));
+      act(() => fixture.result.current.cancel());
+      expect(fixture.result.current.cancelled).toBe(true);
+      expect(fixture.result.current.currentContext).toBeUndefined();
+      expect(fixture.result.current.contexts).toHaveLength(1);
+      fixture.rerender({ ...f.input, source: f.laterSource });
+      await waitFor(() => expect(fixture.result.current.contexts).toHaveLength(2));
+      expect(fixture.result.current.currentContext?.prompt).toBe(f.later);
+      fixture.rerender({
+        ...f.input,
+        source: { ...f.laterSource, timelineCursor: { epoch, seq: 105 } },
+      });
+      expect(fixture.result.current.currentContext).toBeUndefined();
+      expect(fixture.result.current.error).toBe(true);
+      expect(fixture.result.current.contexts).toHaveLength(2);
+      expect(f.readPage).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      f.owner.dispose();
+    }
+  });
+
+  it("retains certified local current preview while remote admission is pending", () => {
+    const f = makeAuthorityFixture();
+    const fixture = renderHook((input: typeof f.input) => useCanonicalPromptContext(input), {
+      initialProps: { ...f.input, lookupReady: false },
+    });
+    try {
+      expect(fixture.result.current.currentContext?.prompt).toBe(f.prior);
+      expect(fixture.result.current.error).toBe(false);
+      expect(fixture.result.current.loading).toBe(false);
+      fixture.rerender({
+        ...f.input,
+        lookupReady: false,
+        source: { ...f.earlierSource, timelineCursor: { epoch: "stale-epoch", seq: 50 } },
+      });
+      expect(fixture.result.current.currentContext).toBeUndefined();
+      expect(fixture.result.current.error).toBe(false);
+      expect(f.readPage).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      f.owner.dispose();
+    }
+  });
+
+  it("keeps current source authority after a superseded held source completes late", async () => {
+    const f = makeAuthorityFixture();
+    const held = deferred<CanonicalPromptContext | undefined>();
+    let heldSignal: AbortSignal | undefined;
+    const future: typeof f.earlierSource = {
+      ...f.earlierSource,
+      id: "authority-held-answer",
+      messageId: "authority-held-answer",
+      text: "Uncovered later response",
+      timelineCursor: { epoch, seq: 150 },
+    };
+    const fetchContext = vi.fn((_source: StreamItem, signal: AbortSignal) => {
+      heldSignal = signal;
+      return held.promise;
+    });
+    const fixture = renderHook((input: typeof f.input) => useCanonicalPromptContext(input), {
+      initialProps: f.input,
+    });
+    try {
+      await waitFor(() => expect(fixture.result.current.contexts).toHaveLength(1));
+      fixture.rerender({
+        ...f.input,
+        source: future,
+        ordinaryItems: [...f.ordinary, future],
+        lookup: rawPromptLookup(future, fetchContext),
+      });
+      await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
+      expect(fixture.result.current.currentContext).toBeUndefined();
+      fixture.rerender(f.input);
+      expect(heldSignal?.aborted).toBe(true);
+      expect(fixture.result.current.currentContext?.prompt).toBe(f.prior);
+      await act(async () =>
+        held.resolve({
+          sourceKey: canonicalPromptSourceKey(future),
+          sourceStart: 145,
+          sourceEnd: 150,
+          prompt: stickyUser("authority-late-user", 140, epoch),
+        }),
+      );
+      expect(fixture.result.current.currentContext?.prompt).toBe(f.prior);
+      expect(
+        fixture.result.current.contexts.every(
+          (context) => context.prompt.timelineCursor?.seq !== 140,
+        ),
+      ).toBe(true);
+      expect(fixture.result.current.error).toBe(false);
+      expect(fetchContext).toHaveBeenCalledTimes(1);
+      expect(f.readPage).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+      f.owner.dispose();
+    }
+  });
 });

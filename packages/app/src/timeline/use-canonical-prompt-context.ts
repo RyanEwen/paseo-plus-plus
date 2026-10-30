@@ -295,6 +295,9 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
   );
   return {
     contexts: visibleContexts,
+    // Leases support reuse/navigation; only this existing preview is certified
+    // for the current attempt's source, scope and cancellation state.
+    currentContext: known,
     ...status,
     ...(known ? { loading: false, error: false, limited: false, exhausted: false } : {}),
     cancel,

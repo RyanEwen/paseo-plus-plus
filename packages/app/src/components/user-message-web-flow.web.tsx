@@ -25,6 +25,9 @@ import {
 import { resolveMessageFlow } from "./user-message-flow-model";
 import { useWebMessageMeasurements } from "./user-message-flow-measurements.web";
 
+// A semantic paint marker, separate from the rectangular compact ink occlusion regions.
+const bodyBackdropDataSet = { userMessagePaintBackdrop: "body" };
+
 const columnStyle: CSSProperties = {
   position: "relative",
   display: "flex",
@@ -56,6 +59,7 @@ interface WebMessageGeometry {
   controlsWidth: number;
   controlsHeight: number;
   trailingHeight: number;
+  compactTrailingHeight: number;
 }
 
 /** Only a complete live sample supplies projection dimensions. Invalidated
@@ -79,6 +83,7 @@ function webMessageGeometry(
       controlsWidth: 0,
       controlsHeight: 0,
       trailingHeight: 0,
+      compactTrailingHeight: 0,
     };
   const { metrics } = sample;
   return {
@@ -94,6 +99,7 @@ function webMessageGeometry(
     controlsWidth: metrics.controls?.width ?? 0,
     controlsHeight: metrics.controls?.height ?? 0,
     trailingHeight: sample.visualTrailingHeight,
+    compactTrailingHeight: sample.compactTrailingHeight ?? 0,
   };
 }
 
@@ -125,11 +131,14 @@ function webMessageHeights(
     g.controlsHeight,
   );
   const cap = Math.max(0, (maximumHeight ?? Infinity) - g.trailingHeight);
+  const compactCap = Math.max(0, (maximumHeight ?? Infinity) - g.compactTrailingHeight);
+  const compactBodyHeight = Math.min(compactHeight, compactCap);
+  let bodyHeight: number | undefined;
+  if (bounded) bodyHeight = compact ? compactBodyHeight : Math.min(g.naturalHeight ?? 0, cap);
   return {
     cap,
-    bodyHeight: bounded
-      ? Math.min(compact ? compactHeight : (g.naturalHeight ?? 0), cap)
-      : undefined,
+    compactTotalHeight: compactBodyHeight + g.compactTrailingHeight,
+    bodyHeight,
     textTranslateY: compact ? (compactHeight - g.prefixHeight) / 2 - g.textTop : 0,
   };
 }
@@ -196,7 +205,7 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
     compact,
     bounded,
   );
-  const { cap, bodyHeight, textTranslateY } = webMessageHeights(
+  const { cap, bodyHeight, textTranslateY, compactTotalHeight } = webMessageHeights(
     g,
     flow?.bubbleChrome ?? 0,
     props.maximumHeight,
@@ -267,8 +276,13 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
       onGeometry(null);
       return;
     }
-    onGeometry({ flowHeight, visualHeight: rail.getBoundingClientRect().height });
-  }, [flowHeight, measured.rail, onGeometry]);
+    onGeometry({
+      flowHeight,
+      visualHeight: rail.getBoundingClientRect().height,
+      compactHeight: compactTotalHeight,
+      bounded,
+    });
+  }, [flowHeight, measured.rail, onGeometry, compactTotalHeight, bounded]);
   useLayoutEffect(publishGeometry, [publishGeometry, bounded, compact, bodyHeight, controlsHeight]);
   useLayoutEffect(() => {
     const rail = measured.rail.current;
@@ -368,7 +382,13 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
       >
         <div style={clipStyle}>
           {bounded ? (
-            <View style={backdropStyle} pointerEvents="none" accessible={false} aria-hidden />
+            <View
+              style={backdropStyle}
+              pointerEvents="none"
+              accessible={false}
+              aria-hidden
+              dataSet={bodyBackdropDataSet}
+            />
           ) : null}
           <ScrollView
             ref={viewport}
@@ -395,7 +415,12 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
           />
           {props.summary}
         </div>
-        <div ref={measured.registerControls} style={controlsStyle} aria-hidden={!bounded}>
+        <div
+          ref={measured.registerControls}
+          style={controlsStyle}
+          aria-hidden={!bounded}
+          inert={!bounded}
+        >
           <MessageControlBacking
             visible={bounded}
             style={props.backdropStyle}

@@ -4,6 +4,7 @@ import { TIMELINE_FETCH_PAGE_SIZE } from "../../../src/timeline/timeline-fetch-p
 type TimelineRequestSchemas = Pick<
   typeof import("@getpaseo/protocol/messages"),
   | "AgentTimelineEntryPayloadSchema"
+  | "AgentTimelineListPromptsRequestMessageSchema"
   | "AgentTimelineListPromptsResponseMessageSchema"
   | "FetchAgentTimelineRequestMessageSchema"
   | "FetchAgentTimelineResponseMessageSchema"
@@ -26,6 +27,7 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
   // import here would make Playwright transform a second instance before client loading.
   const {
     AgentTimelineEntryPayloadSchema,
+    AgentTimelineListPromptsRequestMessageSchema,
     AgentTimelineListPromptsResponseMessageSchema,
     FetchAgentTimelineRequestMessageSchema,
     FetchAgentTimelineResponseMessageSchema,
@@ -51,7 +53,9 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     string,
     { epoch: string; cursor: number; probe: boolean; chainKey: string }
   >();
-  const contextSources = new Set<string>();
+  const requestIds = new Set<string>();
+  const indexRequests = new Map<string, { chainKey: string | null }>();
+  const completedIndexes = new Set<string>();
   const completedContext = new Set<string>();
   interface ContextChain {
     epoch: string;
@@ -61,6 +65,9 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     key: string;
     terminal: boolean;
     source: FetchAgentTimelineResponseMessage["payload"]["entries"][number];
+    sourceProved: boolean;
+    probeDelivered: boolean;
+    pendingIndexRequestId: string | null;
     indexedPromptSeq?: number;
   }
   const contextChains = new Map<string, ContextChain>();
@@ -95,6 +102,32 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     return true;
   };
 
+  const canContinueContextAttempt = (
+    chain: ContextChain | undefined,
+    cursor: { epoch: string; seq: number },
+  ): chain is ContextChain =>
+    chain !== undefined &&
+    !chain.terminal &&
+    chain.probeDelivered &&
+    chain.pendingRequestId === null &&
+    chain.pendingIndexRequestId === null &&
+    chain.used < 8 &&
+    chain.epoch === cursor.epoch &&
+    chain.cursor === cursor.seq;
+
+  const currentIndexedContext = (epoch: string, seq: number): ContextChain | undefined => {
+    const chain = currentChainKey ? contextChains.get(currentChainKey) : undefined;
+    return chain &&
+      !chain.terminal &&
+      chain.probeDelivered &&
+      chain.pendingRequestId === null &&
+      chain.pendingIndexRequestId === null &&
+      chain.epoch === epoch &&
+      chain.indexedPromptSeq === seq
+      ? chain
+      : undefined;
+  };
+
   /** Classify source probes and backward reads without consuming a viewed-window slot. */
   const classifyContext = (
     request: Record<string, unknown>,
@@ -105,9 +138,13 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     if (request.projection === "projected" && request.limit === 1) {
       const key = `${cursor.epoch}:${cursor.seq - 1}`;
       const source = sources.get(key);
-      if (!source || contextSources.has(key))
-        return reject("Context probe must name one uncached loaded source occurrence");
-      contextSources.add(key);
+      if (!source) return reject("Context probe must name one loaded source occurrence");
+      const current = currentChainKey ? contextChains.get(currentChainKey) : undefined;
+      // The wire cannot retract a cancelled probe. Reentry may replace an
+      // undelivered attempt or revisit a superseded source, but not duplicate
+      // the same delivered, still-active source attempt.
+      if (current?.source === source && current.probeDelivered && !current.terminal)
+        return reject("Context probe repeats its current delivered source attempt");
       contextChains.set(id, {
         epoch: cursor.epoch,
         cursor: cursor.seq,
@@ -115,6 +152,9 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
         pendingRequestId: id,
         key: id,
         terminal: false,
+        sourceProved: false,
+        probeDelivered: false,
+        pendingIndexRequestId: null,
         source,
       });
       // Cancellation does not retract wire requests. Supersede only mounting ownership.
@@ -126,21 +166,13 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
         chainKey: id,
       });
     } else {
-      const eligible = [...contextChains.values()].filter(
-        (candidate) =>
-          !candidate.terminal &&
-          candidate.pendingRequestId === null &&
-          candidate.used < 8 &&
-          cursor.epoch === candidate.epoch &&
-          cursor.seq === candidate.cursor,
-      );
+      const chain = currentChainKey ? contextChains.get(currentChainKey) : undefined;
       if (
         request.projection !== "canonical" ||
         request.limit !== TIMELINE_FETCH_PAGE_SIZE ||
-        eligible.length !== 1
+        !canContinueContextAttempt(chain, cursor)
       )
         return reject("Context page does not belong to the bounded canonical probe chain");
-      const chain = eligible[0]!;
       chain.used += 1;
       chain.pendingRequestId = id;
       contextRequests.set(id, {
@@ -173,13 +205,7 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     }
     const seq = cursor.seq! - 1;
     const key = `${cursor.epoch}:${seq}`;
-    const chain = [...contextChains.values()].find(
-      (candidate) =>
-        !candidate.terminal &&
-        candidate.pendingRequestId === null &&
-        candidate.epoch === cursor.epoch &&
-        candidate.indexedPromptSeq === seq,
-    );
+    const chain = currentIndexedContext(cursor.epoch, seq);
     if (request.projection === "canonical" && !chain)
       return reject("Canonical indexed content requires its validated source chain");
     if (!promptSeqs.has(seq)) return reject("Content must target an indexed canonical prompt");
@@ -202,7 +228,86 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
     return "content";
   };
 
+  /** Bind the index when sent: an outline request without a current proved source
+   * may populate index knowledge, but cannot complete any context attempt. */
+  const observeIndexRequest = (request: Record<string, unknown>) => {
+    const parsed = AgentTimelineListPromptsRequestMessageSchema.safeParse(request);
+    if (!parsed.success || parsed.data.agentId !== agentId) {
+      reject("Invalid canonical prompt-index request identity");
+      return;
+    }
+    const id = parsed.data.requestId;
+    if (requestIds.has(id)) {
+      reject("Missing or repeated timeline request ID");
+      return;
+    }
+    requestIds.add(id);
+    const chain = currentChainKey ? contextChains.get(currentChainKey) : undefined;
+    const ownsSource =
+      chain &&
+      !chain.terminal &&
+      chain.probeDelivered &&
+      chain.pendingRequestId === null &&
+      chain.pendingIndexRequestId === null &&
+      chain.used === 1;
+    indexRequests.set(id, { chainKey: ownsSource ? chain.key : null });
+    if (ownsSource) {
+      chain.used += 1;
+      chain.pendingIndexRequestId = id;
+    }
+  };
+
+  const observeIndexResponse = (payload: Record<string, unknown>) => {
+    const result = AgentTimelineListPromptsResponseMessageSchema.shape.payload.safeParse(payload);
+    if (!result.success) {
+      indexEpoch = null;
+      promptSeqs.clear();
+      reject("Malformed canonical prompt index");
+      return;
+    }
+    const id = result.data.requestId;
+    const target = indexRequests.get(id);
+    if (!target || completedIndexes.has(id)) {
+      reject("Unclassified or repeated canonical prompt-index response request ID");
+      return;
+    }
+    completedIndexes.add(id);
+    const chain = target.chainKey ? contextChains.get(target.chainKey) : undefined;
+    if (chain && chain.pendingIndexRequestId !== id) {
+      reject("Canonical index does not own its source attempt");
+      return;
+    }
+    if (chain) chain.pendingIndexRequestId = null;
+    if (!indexed || result.data.error) return;
+    indexEpoch = result.data.epoch;
+    promptSeqs = new Set(result.data.prompts.map((prompt) => prompt.seq));
+    if (!chain) return;
+    if (chain.epoch !== indexEpoch || !chain.sourceProved || !chain.probeDelivered) {
+      reject("Canonical index changed its proved source epoch or delivery");
+      return;
+    }
+    const predecessors = [...promptSeqs].filter((seq) => seq < chain.cursor);
+    const predecessor = predecessors.length ? Math.max(...predecessors) : undefined;
+    if (predecessor === undefined) chain.terminal = true;
+    else chain.indexedPromptSeq = predecessor;
+  };
+
   return {
+    /** Outgoing index IDs belong to their actual send-time source, never every idle chain. */
+    observeRequest(request: Record<string, unknown>) {
+      if (request.type === "agent.timeline.list_prompts.request" && request.agentId === agentId)
+        observeIndexRequest(request);
+    },
+
+    /** A validated response becomes usable source proof only when released to the client. */
+    deliverContextResponse(requestId: unknown) {
+      if (typeof requestId !== "string") return;
+      const target = contextRequests.get(requestId);
+      if (!target?.probe) return;
+      const chain = contextChains.get(target.chainKey);
+      if (chain?.sourceProved) chain.probeDelivered = true;
+    },
+
     /** Observe actual advertised capability and the canonical index before classifying reads. */
     observe(message: Record<string, unknown>, payload: Record<string, unknown> | null) {
       if (message.type === "status" && payload?.status === "server_info") {
@@ -211,26 +316,7 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       }
       if (message.type !== "agent.timeline.list_prompts.response" || payload?.agentId !== agentId)
         return;
-      const result = AgentTimelineListPromptsResponseMessageSchema.shape.payload.safeParse(payload);
-      if (!result.success) {
-        indexEpoch = null;
-        promptSeqs.clear();
-        reject("Malformed canonical prompt index");
-        return;
-      }
-      if (!indexed || result.data.error) return;
-      indexEpoch = result.data.epoch;
-      promptSeqs = new Set(result.data.prompts.map((prompt) => prompt.seq));
-      for (const chain of contextChains.values()) {
-        // Only an index observed after the completed source proof can end this chain.
-        if (chain.terminal || chain.pendingRequestId !== null || chain.used !== 1) continue;
-        if (chain.epoch !== indexEpoch) continue;
-        chain.used += 1;
-        const predecessors = [...promptSeqs].filter((seq) => seq < chain.cursor);
-        const predecessor = predecessors.length ? Math.max(...predecessors) : undefined;
-        if (predecessor === undefined) chain.terminal = true;
-        else chain.indexedPromptSeq = predecessor;
-      }
+      observeIndexResponse(payload);
     },
 
     /** Unknown shapes, repeated IDs and redundant cache reads fail the all-request contract. */
@@ -246,8 +332,9 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
       }
       const id = parsed.data.requestId;
       const cursor = parsed.data.cursor;
-      if (typeof id !== "string" || purposes.has(id))
+      if (typeof id !== "string" || requestIds.has(id))
         return reject("Missing or repeated timeline request ID");
+      requestIds.add(id);
       if (
         !["projected", "canonical"].includes(String(request.projection)) ||
         typeof cursor?.epoch !== "string" ||
@@ -354,6 +441,7 @@ export function createTimelineRequestLedger(agentId: string, schemas: TimelineRe
           mountingPrompt = null;
           mountingOwnerKey = chain.key;
         }
+        chain.sourceProved = true;
         chain.cursor = entry.seqStart;
       } else {
         if (!matchesContextBounds(page, target)) {

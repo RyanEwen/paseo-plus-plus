@@ -99,6 +99,7 @@ interface LocalHistoryFixture {
 interface Props {
   text: string;
   successorText?: string;
+  lastUserOnly?: boolean;
   images?: UserMessageImageAttachment[];
   enabled?: boolean;
   scope?: string;
@@ -195,6 +196,7 @@ function useLocalHistoryFixture(localHistory: LocalHistoryFixture | undefined) {
 function ActualPromptStream({
   text,
   successorText,
+  lastUserOnly = false,
   images,
   enabled = true,
   scope = "agent:epoch",
@@ -232,24 +234,22 @@ function ActualPromptStream({
   );
   // A real preceding answer admits an ordinary reading position before the first
   // prompt. The successor then closes the actual CSS sticky collision interval.
-  const liveHead = useMemo<StreamItem[]>(
-    () =>
-      successorText === undefined
-        ? [prompt, answer]
-        : [
-            { ...answer, id: "preceding-answer" },
-            prompt,
-            answer,
-            {
-              kind: "user_message",
-              id: ACTUAL_SUCCESSOR_ID,
-              text: successorText,
-              timestamp: new Date(2),
-            },
-            { ...answer, id: "following-answer", timestamp: new Date(3) },
-          ],
-    [prompt, successorText],
-  );
+  const liveHead = useMemo<StreamItem[]>(() => {
+    if (lastUserOnly) return [prompt];
+    if (successorText === undefined) return [prompt, answer];
+    return [
+      { ...answer, id: "preceding-answer" },
+      prompt,
+      answer,
+      {
+        kind: "user_message",
+        id: ACTUAL_SUCCESSOR_ID,
+        text: successorText,
+        timestamp: new Date(2),
+      },
+      { ...answer, id: "following-answer", timestamp: new Date(3) },
+    ];
+  }, [prompt, successorText, lastUserOnly]);
   const contextOnlyIds = useMemo(
     () => new Set(contextOnlyPrompt ? [prompt.id] : []),
     [contextOnlyPrompt, prompt.id],

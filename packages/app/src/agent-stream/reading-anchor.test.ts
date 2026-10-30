@@ -119,9 +119,9 @@ describe("reading anchor", () => {
       ),
     ).toBe(0);
   });
-  it("keeps visible text below a shrinking image steady in either input order", () => {
+  it("uses ordinary row-top anchoring through shrink in either input order", () => {
     const initial = [
-      { id: "image", top: 0, height: 560, preserveFollowingOnShrink: true },
+      { id: "image", top: 0, height: 560 },
       { id: "text", top: 560, height: 200 },
     ];
     const shrunk = [
@@ -129,39 +129,38 @@ describe("reading anchor", () => {
       { ...initial[1]!, top: 225 },
     ];
     const wheelFirst = createReadingAnchor();
-    wheelFirst.reconcile(677, initial, false, 800);
-    wheelFirst.scroll(517, 800);
+    wheelFirst.reconcile(677, initial);
+    wheelFirst.scroll(517);
     expect(wheelFirst.getRowId()).toBe("image");
-    expect(wheelFirst.project(517, shrunk[0])).toBe(182);
-    expect(wheelFirst.project(517, shrunk[0])).toBe(182);
-    expect(wheelFirst.reconcile(517, shrunk, false, 800)).toBe(182);
-    expect(wheelFirst.reconcile(182, shrunk, false, 800)).toBe(182);
-    expect(shrunk[1]!.top - 182).toBe(43);
+    // The image row's own top did not move. Upstream does not add a separate
+    // correction to preserve the already-visible following image/text boundary.
+    expect(wheelFirst.project(517, shrunk[0])).toBe(517);
+    expect(wheelFirst.project(517, shrunk[0])).toBe(517);
+    expect(wheelFirst.reconcile(517, shrunk)).toBe(517);
+    expect(wheelFirst.reconcile(517, shrunk)).toBe(517);
 
     const resizeFirst = createReadingAnchor();
-    resizeFirst.reconcile(677, initial, false, 800);
-    expect(resizeFirst.reconcile(677, shrunk, false, 800)).toBe(342);
-    resizeFirst.scroll(182, 800);
+    resizeFirst.reconcile(677, initial);
+    // This reader already owns the text row; its real prepend/top correction
+    // remains upstream's 335px shift when the preceding image shrinks.
+    expect(resizeFirst.reconcile(677, shrunk)).toBe(342);
+    resizeFirst.scroll(182);
+    expect(resizeFirst.getRowId()).toBe("image");
     expect(shrunk[1]!.top - 182).toBe(43);
   });
 
-  it("preserves the image top when following text is outside the viewport", () => {
+  it("preserves a tall row's original top while that row shrinks", () => {
     const anchor = createReadingAnchor();
     const initial = [
-      { id: "image", top: 0, height: 1632, preserveFollowingOnShrink: true },
+      { id: "image", top: 0, height: 1632 },
       { id: "text", top: 1632, height: 200 },
     ];
-    anchor.reconcile(100, initial, false, 800);
+    anchor.reconcile(100, initial);
     expect(
-      anchor.reconcile(
-        100,
-        [
-          { ...initial[0]!, height: 1000 },
-          { ...initial[1]!, top: 1000 },
-        ],
-        false,
-        800,
-      ),
+      anchor.reconcile(100, [
+        { ...initial[0]!, height: 1000 },
+        { ...initial[1]!, top: 1000 },
+      ]),
     ).toBe(100);
   });
 });

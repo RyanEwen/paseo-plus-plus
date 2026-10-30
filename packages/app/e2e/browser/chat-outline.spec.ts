@@ -10,13 +10,17 @@ import {
   expectSingleLineStickyGeometry,
 } from "../support/helpers/sticky-preview-geometry";
 import { observePromptPointer } from "../support/helpers/prompt-pointer-observation";
-import type { Locator, Page, TestInfo } from "@playwright/test";
+import type { JSHandle, Locator, Page, TestInfo } from "@playwright/test";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { expect, test } from "../support/fixtures";
 import { expectNearBottom } from "../support/helpers/agent-bottom-anchor";
 import { fillComposerDraft, expectComposerDraft, submitMessage } from "../support/helpers/composer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
-import { trackPromptJumpRequests } from "../support/helpers/agent-timeline-gate";
+import {
+  trackPromptJumpRequests,
+  holdAgentOlderTimelinePages,
+  type TimelineWindowPageReceipt,
+} from "../support/helpers/agent-timeline-gate";
 import {
   clickChatOutlineRowEdge,
   disableChatOutlineFromAppearance,
@@ -59,6 +63,7 @@ import {
   scrollThroughOlderHistoryPages,
   scrollTimelineToNewestLoadedEdge,
   seedLongMockAgentTimeline,
+  seedRemoteToolRunTimeline,
   scrollTimelinePastPrompt,
   scrollTimelinePromptIntoView,
   waitForTimelineGeometryToSettle,
@@ -518,7 +523,7 @@ async function expectStationaryPromptLanding(
       // The current one-line default must be expanded to preserve the long-to-short geometry.
       await revealUserMessageBody(source);
     } else {
-      await scrollActualRowPastTop(page, actualUserRow(page, newest));
+      await scrollActualRowPastTailHandoff(page, actualUserRow(page, newest));
       await expect(sticky).toContainText("Current response context");
       source = sticky;
     }
@@ -681,7 +686,7 @@ test("consecutive pinned previous arrows preserve the second real click without 
     }
     await page.setViewportSize(WIDE_VIEWPORT);
     await openAgentRoute(page, agent);
-    await scrollActualRowPastTop(page, actualUserRow(page, newest));
+    await scrollActualRowPastTailHandoff(page, actualUserRow(page, newest));
     const pinned = pinnedActualRow(page);
     await expect(pinned).toContainText("Newest destination");
     await pinned.getByTestId("user-message-bubble").hover();
@@ -759,17 +764,42 @@ function actualUserRow(page: Page, prompt: string) {
     .filter({ hasText: prompt });
 }
 
-async function scrollActualRowPastTop(page: Page, row: Locator) {
+/** Setup uses published natural/compact geometry; the independent browser
+ * boundary case remains the oracle for the handoff itself.
+ */
+function actualRowTailHandoffDistance(node: Element): number | null {
+  const viewport = node.closest('[data-testid="agent-chat-scroll"]');
+  const body = node.querySelector("[data-actual-prompt-content]");
+  const flow = Number(body?.getAttribute("data-prompt-flow-height"));
+  const compact = Number(body?.getAttribute("data-prompt-compact-height"));
+  if (
+    !viewport ||
+    !body ||
+    !Number.isFinite(flow) ||
+    !Number.isFinite(compact) ||
+    flow <= 0 ||
+    compact <= 0
+  ) {
+    return null;
+  }
+  return (
+    node.getBoundingClientRect().top -
+    viewport.getBoundingClientRect().top +
+    Math.max(0, flow - compact)
+  );
+}
+
+async function scrollActualRowPastTailHandoff(page: Page, row: Locator) {
   const timeline = page.getByTestId("agent-chat-scroll");
   await timeline.hover();
-  const geometry = await row.evaluate((node) => ({
-    rowTop: node.getBoundingClientRect().top,
-    viewportTop: node.closest('[data-testid="agent-chat-scroll"]')!.getBoundingClientRect().top,
-  }));
-  await page.mouse.wheel(0, geometry.rowTop - geometry.viewportTop + 1);
+  await expect.poll(() => row.evaluate(actualRowTailHandoffDistance)).not.toBeNull();
+  const distance = await row.evaluate(actualRowTailHandoffDistance);
+  if (distance === null)
+    throw new Error("The actual prompt has no qualified tail handoff geometry");
+  await page.mouse.wheel(0, distance + 1);
   await expect
     .poll(() =>
-      row.evaluate((node) => {
+      row.evaluate(function originalRowOffset(node) {
         const top = node.closest('[data-testid="agent-chat-scroll"]')!.getBoundingClientRect().top;
         return node.getBoundingClientRect().top - top;
       }),
@@ -809,14 +839,14 @@ test("actual user row preserves node identity while pinning and restores disclos
     const text = await row.getByTestId("user-message-text").elementHandle();
     expect(wrapper).not.toBeNull();
     expect(text).not.toBeNull();
-    await expectActualExpandedGeometry(row);
+    await expectActualExpandedGeometry(row, "prepared-hidden");
     await expectSinglePaintedPromptHandoff({
       page,
       prompt,
       width: WIDE_VIEWPORT.width,
       disclosure: "more",
     });
-    await scrollActualRowPastTop(page, row);
+    await scrollActualRowPastTailHandoff(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
     expect(await row.evaluate((node, prior) => node === prior, wrapper!)).toBe(true);
     await expectActualTextIdentity(row, text!, prompt);
@@ -852,7 +882,7 @@ test("actual user row preserves node identity while pinning and restores disclos
       .getByRole("tab", { name: /Actual row identity/ })
       .click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
-    await expectActualExpandedGeometry(actualUserRow(page, prompt));
+    await expectActualExpandedGeometry(actualUserRow(page, prompt), "prepared-hidden");
   } finally {
     await agent.cleanup();
   }
@@ -882,10 +912,10 @@ test("actual user row find expands each occurrence and preserves its text node",
     await entry.click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
     const row = actualUserRow(page, prompt);
-    await expectActualExpandedGeometry(row);
+    await expectActualExpandedGeometry(row, "prepared-hidden");
     const text = await row.getByTestId("user-message-text").elementHandle();
     expect(text).not.toBeNull();
-    await scrollActualRowPastTop(page, row);
+    await scrollActualRowPastTailHandoff(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
     // Use the existing app shortcut; Find exposes the full original body,
     // independently of explicit pinned More/Less disclosure.
@@ -921,7 +951,7 @@ test("actual user row find expands each occurrence and preserves its text node",
     // original landing and pin before exercising explicit bounded disclosure.
     await entry.click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
-    await scrollActualRowPastTop(page, row);
+    await scrollActualRowPastTailHandoff(page, row);
     await expect(row).toHaveAttribute("data-prompt-pinned", "true");
     await expect(disclosure).toHaveAttribute("aria-expanded", "false");
     await disclosure.click();
@@ -1666,6 +1696,11 @@ async function expectSinglePaintedPromptHandoff({
   await timeline.hover();
   const viewport = (await timeline.boundingBox())!;
   const originalWrapper = (await row.boundingBox())!;
+  await expect.poll(() => row.evaluate(actualRowTailHandoffDistance)).not.toBeNull();
+  const handoffDistance = await row.evaluate(actualRowTailHandoffDistance);
+  if (handoffDistance === null)
+    throw new Error("The actual prompt has no qualified tail handoff geometry");
+  const tailOffset = handoffDistance - (originalWrapper.y - viewport.y);
   const body = row.getByTestId("user-message-bubble");
   const sourceBox = (await body.boundingBox())!;
   const originalText = row.getByTestId("user-message-text");
@@ -1674,8 +1709,10 @@ async function expectSinglePaintedPromptHandoff({
   const originalPixels = await captureVisibleActualPrompt(page, originalText, true);
   for (const offset of [6, 3, 1, -1, -3, -6, -12, -24, -12, -3, -1, 1, 3, 6]) {
     const current = (await row.boundingBox())!;
-    await page.mouse.wheel(0, current.y - viewport.y - offset);
-    await expect.poll(async () => (await row.boundingBox())!.y - viewport.y).toBeCloseTo(offset, 0);
+    await page.mouse.wheel(0, current.y - viewport.y + tailOffset - offset);
+    await expect
+      .poll(async () => (await row.boundingBox())!.y - viewport.y)
+      .toBeCloseTo(offset - tailOffset, 0);
     await expect(row).toHaveAttribute("data-prompt-pinned", offset > 0 ? "false" : "true");
     await expectActualTextIdentity(row, textHandle!, prompt);
     const bounds = (await body.boundingBox())!;
@@ -1686,7 +1723,7 @@ async function expectSinglePaintedPromptHandoff({
       continue;
     }
     await expectActualSingleLineGeometry(row);
-    // Pin the original row edge; bubble padding remains inside that actual row.
+    // Pin the shortened paint edge; original inline allocation remains unchanged.
     expect(bounds.y).toBeCloseTo(viewport.y + sourceBox.y - originalWrapper.y, 0);
     const textBounds = (await originalText.boundingBox())!;
     expect(textBounds.x).toBeCloseTo(originalTextBox.x, 3);
@@ -1733,7 +1770,7 @@ test("keeps colored pinned disclosure readable before and during hover", async (
     await openAgentRoute(page, agent);
     await chatOutlineRail(page).getByRole("tab").first().click();
     await expectTimelinePromptLandedBelowTop(page, prompt);
-    await scrollActualRowPastTop(page, actualUserRow(page, prompt));
+    await scrollActualRowPastTailHandoff(page, actualUserRow(page, prompt));
     const sticky = actualUserRow(page, prompt);
     const bubble = sticky.getByTestId("user-message-bubble");
     const disclosure = sticky.getByTestId("user-message-disclosure");
@@ -1758,5 +1795,343 @@ test("keeps colored pinned disclosure readable before and during hover", async (
     );
   } finally {
     await agent.cleanup();
+  }
+});
+
+test("reaches bottom through a very large last USER without a measurement update loop", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const prompt = Array.from(
+    { length: 1500 },
+    (_, index) =>
+      `Crash reproduction paragraph ${index}: ${"Keep this actual user message at its original inline size. ".repeat(3)}`,
+  )
+    .join("\n")
+    .trim();
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "large-last-user-handoff-",
+    title: "Large last USER handoff",
+    featureValues: { mockAssistantResponse: STICKY_RESPONSE },
+  });
+  try {
+    await agent.client.sendAgentMessage(agent.agentId, "An earlier user prompt.");
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await agent.client.sendAgentMessage(agent.agentId, prompt);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await page.setViewportSize(WIDE_VIEWPORT);
+    await openAgentTimeline(page, agent);
+    const timeline = page.getByTestId("agent-chat-scroll");
+    const row = actualUserRow(page, "Crash reproduction paragraph 1499:");
+    await expect(row).toHaveCount(1);
+    await waitForTimelineGeometryToSettle(page);
+    const text = await row.getByTestId("user-message-text").elementHandle();
+    expect(text).not.toBeNull();
+    for (const delta of [-400, 10_000_000, -1200, 10_000_000]) {
+      await timeline.hover();
+      await page.mouse.wheel(0, delta);
+      await waitForTimelineGeometryToSettle(page);
+      await expect(page.getByText("Paseo ran into a problem.", { exact: true })).toHaveCount(0);
+      await expect(row).toHaveCount(1);
+    }
+    await expectNearBottom(page);
+    await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+    const disclosure = row.getByTestId("user-message-disclosure");
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await expectNearBottom(page);
+    await expectActualTextIdentity(row, text!, prompt);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+/** One finished, cold real-renderer cohort; no scroll or source publication is synthesized. */
+function observeColdHoverTranscript(
+  element: HTMLElement | SVGElement,
+  ids: { prompt: string; answer: string },
+) {
+  if (!(element instanceof HTMLElement)) throw new Error("The timeline is not an HTMLElement");
+  const timeline = element;
+  const prompt = timeline.querySelector<HTMLElement>(`[data-retained-prompt-row="${ids.prompt}"]`)!;
+  const actualBody = prompt.querySelector<HTMLElement>('[data-testid="user-message"]')!;
+  const text = prompt.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const textNode = document.createTreeWalker(text, NodeFilter.SHOW_TEXT).nextNode();
+  const answer = timeline.querySelector<HTMLElement>(`[data-history-row-id="${ids.answer}"]`)!;
+  const assistant = answer.querySelector<HTMLElement>('[data-testid="assistant-message"]')!;
+  const assistantText = document.createTreeWalker(assistant, NodeFilter.SHOW_TEXT).nextNode();
+  if (!textNode || !assistantText)
+    throw new Error("The real USER and Markdown require actual Text nodes");
+  function snapshot() {
+    const viewport = timeline.getBoundingClientRect();
+    const ordinary = Array.from(timeline.querySelectorAll<HTMLElement>("[data-history-row-id]"));
+    const content = prompt.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+    const inner = prompt.querySelector<HTMLElement>('[data-testid="user-message-body-scroll"]')!;
+    return {
+      source: {
+        ordinaryIds: ordinary.map((row) => row.dataset.historyRowId),
+        assistant: assistant.textContent,
+        prompt: text.textContent,
+      },
+      geometry: {
+        scrollTop: timeline.scrollTop,
+        scrollHeight: timeline.scrollHeight,
+        scrollWidth: timeline.scrollWidth,
+        clientHeight: timeline.clientHeight,
+        clientWidth: timeline.clientWidth,
+        rows: ordinary.map((row) => {
+          const bounds = row.getBoundingClientRect();
+          const style = getComputedStyle(row);
+          return {
+            id: row.dataset.historyRowId,
+            x: bounds.left - viewport.left,
+            top: bounds.top - viewport.top,
+            width: bounds.width,
+            allocation:
+              bounds.height +
+              Number.parseFloat(style.marginTop) +
+              Number.parseFloat(style.marginBottom),
+          };
+        }),
+        flowHeight: Number(content.dataset.promptFlowHeight),
+        compactHeight: Number(content.dataset.promptCompactHeight),
+        visualHeight: Number(content.dataset.promptVisualHeight),
+        bounded: content.dataset.promptBounded,
+        bodyExpanded: inner.dataset.bodyExpanded,
+        body: content.getBoundingClientRect().toJSON(),
+        text: text.getBoundingClientRect().toJSON(),
+      },
+      identity: {
+        body: prompt.querySelector('[data-testid="user-message"]') === actualBody,
+        text: prompt.querySelector('[data-testid="user-message-text"]') === text,
+        textNode: text.contains(textNode!),
+        assistant: answer.querySelector('[data-testid="assistant-message"]') === assistant,
+        assistantText: assistant.contains(assistantText!),
+        actualOwners: timeline.querySelectorAll(
+          `[data-retained-prompt-row="${ids.prompt}"], [data-history-row-id="${ids.prompt}"]`,
+        ).length,
+      },
+    };
+  }
+  const original = timeline.scrollTo;
+  const ownDescriptor = Object.getOwnPropertyDescriptor(timeline, "scrollTo");
+  const calls: Array<{
+    args: [options?: ScrollToOptions] | [x: number, y: number];
+    stack: string | undefined;
+  }> = [];
+  let started = false;
+  let baseline: ReturnType<typeof snapshot> | null = null;
+  function callThroughScrollTo(...args: [options?: ScrollToOptions] | [x: number, y: number]) {
+    if (started)
+      calls.push({ args, stack: new Error("Real outer scrollTo after pointer entry").stack });
+    Reflect.apply(original, timeline, args);
+  }
+  timeline.scrollTo = callThroughScrollTo;
+  function begin() {
+    // Exactly one input boundary, before the first real hover handler. Startup
+    // verification is excluded; there is no later reset, retry, or sample drop.
+    baseline = snapshot();
+    started = true;
+  }
+  timeline.addEventListener("pointerover", begin, { capture: true, once: true });
+  return {
+    read: snapshot,
+    baseline: () => baseline,
+    calls: () => calls,
+    async sampleFrames(count: number) {
+      const samples: ReturnType<typeof snapshot>[] = [];
+      for (let frame = 0; frame < count; frame += 1) {
+        await new Promise<number>((resolve) => requestAnimationFrame(resolve));
+        samples.push(snapshot());
+      }
+      return samples;
+    },
+    restore() {
+      timeline.removeEventListener("pointerover", begin, true);
+      if (ownDescriptor) Object.defineProperty(timeline, "scrollTo", ownDescriptor);
+      else Reflect.deleteProperty(timeline, "scrollTo");
+    },
+  };
+}
+
+function realHoverPoint(node: HTMLElement | SVGElement) {
+  const scroll = node.closest('[data-testid="agent-chat-scroll"]')!;
+  const viewport = scroll.getBoundingClientRect();
+  const bounds = node.getBoundingClientRect();
+  const left = Math.max(viewport.left + 1, bounds.left + 1);
+  const right = Math.min(viewport.right - 1, bounds.right - 1);
+  const top = Math.max(viewport.top + 1, bounds.top + 1);
+  const bottom = Math.min(viewport.bottom - 1, bounds.bottom - 1);
+  if (right <= left || bottom <= top)
+    throw new Error("Real hover target has no visible viewport intersection");
+  const x = (left + right) / 2;
+  const y = (top + bottom) / 2;
+  if (!node.contains(document.elementFromPoint(x, y)))
+    throw new Error("The real hover point is owned by another surface");
+  return { x, y };
+}
+
+function isColdHoverTail(entry: TimelineWindowPageReceipt): boolean {
+  return entry.direction === "tail" && entry.entries.length === 40;
+}
+
+function assertColdHoverSamples(
+  baseline: NonNullable<ReturnType<ReturnType<typeof observeColdHoverTranscript>["baseline"]>>,
+  samples: Array<ReturnType<ReturnType<typeof observeColdHoverTranscript>["read"]>>,
+  phase: string,
+) {
+  for (const [frame, sample] of samples.entries()) {
+    const evidence = JSON.stringify({ phase, frame, baseline, sample });
+    expect(
+      sample.source,
+      `Finished source changed; hover causality is not established. ${evidence}`,
+    ).toEqual(baseline.source);
+    expect(sample.identity, evidence).toEqual({
+      body: true,
+      text: true,
+      textNode: true,
+      assistant: true,
+      assistantText: true,
+      actualOwners: 1,
+    });
+    expect(sample.geometry, evidence).toEqual(baseline.geometry);
+  }
+}
+
+test("keeps the finished cold real transcript stationary after hover input stops", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({ theme: "dark", accentColor: "blue", toolCallDetailLevel: "overview" }),
+    );
+  });
+  const agent = await seedRemoteToolRunTimeline();
+  let observedHistory: Awaited<ReturnType<typeof holdAgentOlderTimelinePages>> | undefined;
+  const evidence: Record<string, unknown> = {};
+  let observation: JSHandle<ReturnType<typeof observeColdHoverTranscript>> | undefined;
+  try {
+    const history = await holdAgentOlderTimelinePages(page, agent.agentId, undefined, {
+      contextDelivery: "immediate",
+    });
+    observedHistory = history;
+    const finished = await agent.client.waitForFinish(agent.agentId, 15_000);
+    expect(finished.status).not.toBe("running");
+    expect(finished.final?.lastError ?? null).toBeNull();
+    const beforeAgents = await agent.client.fetchAgents();
+    const beforeAgent = beforeAgents.entries.find(
+      (entry) => entry.agent.id === agent.agentId,
+    )!.agent;
+    expect(beforeAgent.status).not.toBe("running");
+    await page.setViewportSize(WIDE_VIEWPORT);
+    // This freshly seeded agent has never been opened by this browser. Real
+    // bootstrap and source probes own acquisition, without readAt/wheel/jumps.
+    await openAgentTimeline(page, agent);
+    const timeline = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+    await expect.poll(() => history.getWindowPages().some(isColdHoverTail)).toBe(true);
+    const tail = history.getWindowPages().find(isColdHoverTail)!;
+    expect(tail.forwarded).toBe(true);
+    expect(tail.hasOlder).toBe(true);
+    expect(tail.entries.filter((entry) => entry.type === "user_message")).toHaveLength(0);
+    expect(tail.entries.filter((entry) => entry.type === "tool_call").length).toBeGreaterThan(0);
+    expect(tail.entries.at(-1)!.type).toBe("assistant_message");
+    const answerId = tail.entries.at(-1)!.messageId!;
+    expect(answerId).toEqual(expect.any(String));
+    await expect(timeline.getByTestId("tool-call-group")).toHaveCount(1);
+    const answer = timeline.locator(`[data-history-row-id="${answerId}"]`);
+    const assistant = answer.getByTestId("assistant-message");
+    await expect(assistant.getByText(agent.readerText, { exact: true })).toHaveCount(1);
+    await expect.poll(() => history.getMountingPrompt()?.text).toBe(agent.prompt);
+    const recovered = history.getMountingPrompt()!;
+    expect(tail.entries.map((entry) => entry.messageId)).not.toContain(recovered.id);
+    const row = timeline.locator(`[data-retained-prompt-row="${recovered.id}"]`);
+    await expect(row).toHaveCount(1);
+    await expect(row.getByTestId("user-message-text")).toHaveText(agent.prompt);
+    await expect(row.getByTestId("user-message-text")).toBeVisible();
+    await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+    await expect.poll(() => history.getReadAccounting().pendingContext ?? 0).toBe(0);
+    await expect.poll(() => history.getReadAccounting().pendingContent).toBe(0);
+    expect(history.getReadAccounting().contextBefore ?? 0).toBeGreaterThan(0);
+    expect(history.getReadAccounting().contentBefore).toBeGreaterThan(0);
+    expect(history.getReadAccounting().errors).toEqual([]);
+    expect(history.getRequestCount()).toBe(0);
+    await page.evaluate(() => document.fonts.ready);
+    // Leave the timeline before installing the one-entry callthrough boundary.
+    const outside = await timeline.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.left < 2) throw new Error("The wide full-app timeline has no left outside point");
+      return { x: bounds.left - 1, y: bounds.top + 4 };
+    });
+    await page.mouse.move(outside.x, outside.y);
+    await waitForTimelineGeometryToSettle(page);
+    const state = await timeline.evaluateHandle(observeColdHoverTranscript, {
+      prompt: recovered.id,
+      answer: answerId,
+    });
+    observation = state;
+    const startup = await state.evaluate((value) => value.read());
+    expect(startup.geometry.flowHeight).toBeGreaterThan(0);
+    expect(startup.geometry.compactHeight).toBeGreaterThan(0);
+    expect(startup.geometry.bounded).toBe("true");
+    evidence.startup = startup;
+    const bubble = row.getByTestId("user-message-bubble");
+    const actions = row.getByTestId("user-message-trailing-row");
+    for (const target of [bubble, actions, assistant, bubble, actions, assistant]) {
+      const point = await target.evaluate(realHoverPoint);
+      await page.mouse.move(point.x, point.y, { steps: 4 });
+      if (target === bubble) await expect(actions).toHaveCSS("opacity", "1");
+    }
+    const baseline = await state.evaluate((value) => value.baseline());
+    expect(baseline).not.toBeNull();
+    evidence.baseline = baseline;
+    assertColdHoverSamples(startup, [baseline!], "first-real-pointer-entry-before-handler");
+    const stationary = await state.evaluate((value) => value.sampleFrames(24));
+    evidence.stationary = stationary;
+    assertColdHoverSamples(baseline!, stationary, "pointer-stopped-over-real-Markdown");
+    await page.mouse.move(outside.x, outside.y, { steps: 4 });
+    const pointerOut = await state.evaluate((value) => value.sampleFrames(24));
+    evidence.pointerOut = pointerOut;
+    assertColdHoverSamples(baseline!, pointerOut, "pointer-stopped-outside-transcript");
+    const afterAgents = await agent.client.fetchAgents();
+    const afterAgent = afterAgents.entries.find((entry) => entry.agent.id === agent.agentId)!.agent;
+    expect(afterAgent.status, "The seed started running during the hover observation").toBe(
+      beforeAgent.status,
+    );
+    const calls = await state.evaluate((value) => value.calls());
+    evidence.outerCalls = calls;
+    expect(calls).toEqual([]);
+    expect(history.getRequestCount()).toBe(0);
+    expect(history.getReadAccounting().errors).toEqual([]);
+    expect(history.getWindowPages()).toEqual([tail]);
+  } finally {
+    try {
+      if (observation) {
+        evidence.final = await observation
+          .evaluate((value) => ({ snapshot: value.read(), calls: value.calls() }))
+          .catch((error: unknown) => ({ captureError: String(error) }));
+        // Disposal is test-only cleanup; the real scroll implementation was
+        // called throughout observation, and its exact original descriptor returns.
+        await observation.evaluate((value) => value.restore());
+        await observation.dispose();
+      }
+      await testInfo.attach("finished-cold-hover-stationary", {
+        body: JSON.stringify(
+          {
+            ...evidence,
+            accounting: observedHistory?.getReadAccounting(),
+            pages: observedHistory?.getWindowPages(),
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+    } finally {
+      await agent.cleanup();
+    }
   }
 });

@@ -10,6 +10,8 @@ import type { StreamItem, UserMessageItem } from "@/types/stream";
 
 interface PresentationInput {
   tail: StreamItem[];
+  /** Canonical display context is projected without entering ordinary grouping or layout. */
+  retained?: StreamItem[];
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
   level: ToolCallDetailLevel;
@@ -52,31 +54,56 @@ export function createStreamPresentation() {
     return [item.kind === "user_message" ? presentUserMessage(item) : item];
   }
 
+  let ordinaryInput: PresentationInput | null = null;
+  let ordinary: ReturnType<typeof projectToolCallDetailLevel> | null = null;
   return (input: PresentationInput) => {
-    // Retained history is not reprojected or regrouped on each live text update.
-    if (historySource !== input.tail || historyTransform !== input.transform) {
-      historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        (item) => presentRows(item),
-      );
-      historySource = input.tail;
-      historyTransform = input.transform;
+    const ordinaryChanged =
+      ordinaryInput?.tail !== input.tail ||
+      ordinaryInput?.head !== input.head ||
+      ordinaryInput?.transform !== input.transform ||
+      ordinaryInput?.level !== input.level ||
+      ordinaryInput?.isTurnActive !== input.isTurnActive;
+    // Context paint must not replace ordinary segment identities consumed by viewport effects.
+    if (ordinary === null || ordinaryChanged) {
+      // Retained history is not reprojected or regrouped on each live text update.
+      if (historySource !== input.tail || historyTransform !== input.transform) {
+        historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
+          (item) => presentRows(item),
+        );
+        historySource = input.tail;
+        historyTransform = input.transform;
+      }
+      const head: StreamItem[] = [];
+      for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
+        const blocks = presentRows(item);
+        head.push(...blocks);
+      }
+      if (preparedTail !== historyRows || preparedLevel !== input.level) {
+        preparedHistory = prepareToolCallHistory(input.level, historyRows);
+        preparedTail = historyRows;
+        preparedLevel = input.level;
+      }
+      ordinary = projectToolCallDetailLevel({
+        level: input.level,
+        tail: historyRows,
+        head,
+        preparedHistory,
+        isTurnActive: input.isTurnActive,
+      });
+      ordinaryInput = {
+        tail: input.tail,
+        head: input.head,
+        transform: input.transform,
+        level: input.level,
+        isTurnActive: input.isTurnActive,
+      };
     }
-    const head: StreamItem[] = [];
-    for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
-      const blocks = presentRows(item);
-      head.push(...blocks);
-    }
-    if (preparedTail !== historyRows || preparedLevel !== input.level) {
-      preparedHistory = prepareToolCallHistory(input.level, historyRows);
-      preparedTail = historyRows;
-      preparedLevel = input.level;
-    }
-    return projectToolCallDetailLevel({
-      level: input.level,
-      tail: historyRows,
-      head,
-      preparedHistory,
-      isTurnActive: input.isTurnActive,
-    });
+    return {
+      ...ordinary,
+      retained: projectPluginTimelineItems(
+        input.retained ?? [],
+        input.transform,
+      ).flatMap<StreamItem>((item) => presentRows(item)),
+    };
   };
 }

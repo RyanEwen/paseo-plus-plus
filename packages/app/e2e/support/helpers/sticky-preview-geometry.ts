@@ -203,8 +203,13 @@ async function countPaintedPromptPrefix(
   );
 }
 
-/** Ordinary rows expose their entire real text and bubble, with no sticky disclosure. */
-export async function expectActualExpandedGeometry(row: Locator) {
+/** Ordinary rows expose their entire real text and bubble. Prepared sticky
+ * controls must be explicitly requested and remain hidden and inert.
+ */
+export async function expectActualExpandedGeometry(
+  row: Locator,
+  disclosureState: "absent" | "prepared-hidden" = "absent",
+) {
   await expect(row).toHaveAttribute("data-prompt-pinned", "false");
   const geometry = await row.getByTestId("user-message-text").evaluate((text) => {
     const clip = text.closest('[data-testid="text-preview-clip"]')!;
@@ -225,7 +230,24 @@ export async function expectActualExpandedGeometry(row: Locator) {
   expect(geometry.clipHeight).toBe(geometry.textHeight);
   expect(geometry.textScrollHeight).toBe(geometry.textClientHeight);
   expect(geometry.bubbleHeight).toBeCloseTo(geometry.expectedBubbleHeight, 0);
-  await expect(row.getByTestId("user-message-disclosure")).toHaveCount(0);
+  const disclosure = row.getByTestId("user-message-disclosure");
+  if (disclosureState === "prepared-hidden") {
+    await expect(disclosure).toHaveCount(1);
+    await expect(disclosure).toBeHidden();
+    await expect(disclosure).toHaveCSS("visibility", "hidden");
+    const availability = await disclosure.evaluate(function preparedControlAvailability(control) {
+      const active = document.activeElement;
+      control.focus();
+      return {
+        ariaHidden: control.parentElement?.getAttribute("aria-hidden"),
+        inert: control.parentElement?.inert,
+        rejectsFocus: document.activeElement === active,
+      };
+    });
+    expect(availability).toEqual({ ariaHidden: "true", inert: true, rejectsFocus: true });
+  } else {
+    await expect(disclosure).toHaveCount(0);
+  }
   await expect(row.getByTestId("text-preview-measurement")).toHaveCount(0);
 }
 

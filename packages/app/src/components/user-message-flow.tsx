@@ -133,6 +133,8 @@ export interface UserMessageFlowProps {
   compact: boolean;
   bounded: boolean;
   maximumHeight: number | undefined;
+  /** Web's action owner declares its existing compact backing chrome. */
+  compactTrailingPadding?: number;
   backdropStyle: StyleProp<ViewStyle>;
   /** Non-interactive absolute-fill background for the measured visible column. */
   visualBackdrop?: ReactNode;

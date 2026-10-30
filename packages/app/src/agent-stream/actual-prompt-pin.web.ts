@@ -36,6 +36,22 @@ export function getNaturalPromptRowHeight(row: HTMLElement): number {
   return (body ?? row).getBoundingClientRect().height;
 }
 
+/** Add the real caller chrome to the body owner's independently prepared compact paint. */
+function getCompactPromptRowHeight(row: HTMLElement): number | undefined {
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
+  const compact = Number(body?.dataset.promptCompactHeight);
+  const visual = Number(body?.dataset.promptVisualHeight);
+  if (
+    !body ||
+    !(compact > 0) ||
+    !(visual > 0) ||
+    !Number.isFinite(compact) ||
+    !Number.isFinite(visual)
+  )
+    return undefined;
+  return compact + body.getBoundingClientRect().height - visual;
+}
+
 /** Restore natural flow before any successor or reading-anchor measurement. A row
  * crossing from virtual to normal flow must not retain its old extended interval.
  */
@@ -65,6 +81,7 @@ export function syncActualPromptPin(
   virtualPrompts: readonly PromptLayoutPosition[] = [],
   virtualEnd = 0,
   originalMessageId: string | null = null,
+  yieldOrdinaryPaint = false,
 ): string | null {
   if (!isWeb) return null;
   reconcilePromptFlow(content, enabled);
@@ -81,6 +98,7 @@ export function syncActualPromptPin(
     id: row.dataset.historyRowId!,
     top: row.getBoundingClientRect().top - viewportTop + viewport.scrollTop,
     height: getNaturalPromptRowHeight(row),
+    compactHeight: getCompactPromptRowHeight(row),
   }));
   const positions = new Map(virtualPrompts.map((row) => [row.id, row.top]));
   for (const row of geometry) positions.set(row.id, row.top);
@@ -106,11 +124,14 @@ export function syncActualPromptPin(
         ordered.map((row) => ({
           ...row,
           height: geometry.find((item) => item.id === row.id)?.height ?? 0,
+          compactHeight: geometry.find((item) => item.id === row.id)?.compactHeight,
         })),
         viewport.scrollTop,
       )
     : null;
-  const pinnedId = pin && !originalRows.has(pin.id) ? pin.id : null;
+  const prepared = pin && geometry.find((row) => row.id === pin.id)?.compactHeight !== undefined;
+  const pinnedId =
+    pin && prepared && !yieldOrdinaryPaint && !originalRows.has(pin.id) ? pin.id : null;
   for (const row of rows) {
     const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
     if (!body) continue;
@@ -123,8 +144,10 @@ export function syncActualPromptPin(
       body,
       enabled && !originalRows.has(own.id),
       own.height,
+      own.compactHeight,
       height,
       own.id === pinnedId,
+      yieldOrdinaryPaint,
     );
   }
   return pinnedId;
@@ -135,8 +158,10 @@ function applyPromptLane(
   body: HTMLElement,
   enabled: boolean,
   naturalHeight: number,
+  compactHeight: number | undefined,
   height: number,
   pinned: boolean,
+  yieldPaint: boolean,
 ): void {
   row.style.height = enabled ? `${height}px` : "";
   if (enabled && !row.hasAttribute("data-index"))
@@ -145,8 +170,17 @@ function applyPromptLane(
   row.style.pointerEvents = enabled ? "none" : "";
   row.style.zIndex = enabled ? "2" : "";
   if (!row.hasAttribute("data-index")) row.style.position = enabled ? "relative" : "";
-  body.style.position = enabled ? "sticky" : "";
-  body.style.top = enabled ? "0px" : "";
+  // A certified retained owner can release this body's sticky paint while its
+  // existing full natural allocation remains installed through React's handoff.
+  const sticky = enabled && !yieldPaint && compactHeight !== undefined;
+  body.style.position = sticky ? "sticky" : "";
+  // The full original keeps moving until its tail reaches compact paint's tail.
+  // During the React handoff, an ordinary body must not jump to the top before
+  // its bounded paint commits. More remains at the top without moving this gate.
+  const bounded = pinned && body.dataset.promptBounded === "true";
+  const ordinaryTop = Math.min(0, (compactHeight ?? naturalHeight) - naturalHeight);
+  const stickyTop = bounded ? 0 : ordinaryTop;
+  body.style.top = sticky ? `${stickyTop}px` : "";
   body.style.flexShrink = "0";
   body.style.pointerEvents = enabled ? "none" : "";
   body.style.transform = "";

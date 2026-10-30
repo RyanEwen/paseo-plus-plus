@@ -108,7 +108,7 @@ export function useStreamHistoryWindow(input: {
       }
       setWindow({
         agentId,
-        boundaryItemId: items[nextStart]?.id ?? null,
+        boundaryItemId: nextStart === 0 ? null : (items[nextStart]?.id ?? null),
         initialized: true,
       });
       return true;

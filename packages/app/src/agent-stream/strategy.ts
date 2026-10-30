@@ -85,6 +85,8 @@ export interface StreamRenderInput {
   nativeViewportPlacement?: "docked" | "standalone";
   agentId: string;
   segments: StreamRenderSegments;
+  /** One canonical message mounted for paint only, outside the ordinary layout window. */
+  retainedPrompt?: StreamItem;
   /** Isolated display context stays mounted but cannot own ordinary reading geometry. */
   contextOnlyIds?: ReadonlySet<string>;
   historyRowRevision?: StreamHistoryRowRevision;

@@ -13,6 +13,7 @@ interface WebMessageMeasurement {
   summaryWidth: number;
   summaryHeight: number;
   visualTrailingHeight: number;
+  compactTrailingHeight: number | null;
   metrics: MessageFlowMeasurements;
   corners: string;
 }
@@ -38,6 +39,7 @@ function sameMeasurement(left: WebMessageMeasurement | null, right: WebMessageMe
     left.summaryWidth === right.summaryWidth &&
     left.summaryHeight === right.summaryHeight &&
     left.visualTrailingHeight === right.visualTrailingHeight &&
+    left.compactTrailingHeight === right.compactTrailingHeight &&
     left.corners === right.corners &&
     left.metrics.width === right.metrics.width &&
     left.metrics.bodyHeight === right.metrics.bodyHeight &&
@@ -64,11 +66,13 @@ function frame(node: HTMLElement, origin: HTMLElement): MessageFlowFrame {
 /** The one live content lane retains its ordinary inline layout while its
  * parent paints pinned padding. The visual host is measured separately for caps.
  */
-function ordinaryTrailingHeight(trailing: HTMLElement): number | null {
+function trailingHeights(trailing: HTMLElement, compactPadding: number) {
   const row = trailing.querySelector<HTMLElement>('[data-testid="user-message-trailing-row"]');
-  if (!row) return 0;
+  if (!row) return { natural: 0, compact: 0 };
   const content = row.querySelector<HTMLElement>('[data-testid="user-message-action-content"]');
-  return content ? content.getBoundingClientRect().height + SPACING[2] : null;
+  if (!content) return { natural: null, compact: null };
+  const height = content.getBoundingClientRect().height;
+  return { natural: height + SPACING[2], compact: height + compactPadding };
 }
 
 /** Read the one full Text's actual first line. Range geometry retains glyph
@@ -102,6 +106,7 @@ function readNaturalMeasurement(
   nodes: WebMessageNodes,
   binding: object,
   width: number,
+  compactTrailingPadding: number,
 ): WebMessageMeasurement | null {
   const body = nodes.body.current;
   const trailing = nodes.trailing.current;
@@ -113,6 +118,7 @@ function readNaturalMeasurement(
     return null;
   const text = content.querySelector<HTMLElement>('[data-testid="user-message-text"]');
   const ink = textGeometry(text);
+  const trailingHeight = trailingHeights(trailing, compactTrailingPadding);
   const naturalText = frame(textFrame, content);
   // The compact clip cannot own the layout measurement. Its full natural Text
   // remains present, and its measured wrapper reserves exactly that live extent.
@@ -140,11 +146,12 @@ function readNaturalMeasurement(
     summaryWidth: nodes.summary.current?.getBoundingClientRect().width ?? 0,
     summaryHeight: nodes.summary.current?.getBoundingClientRect().height ?? 0,
     visualTrailingHeight: trailing.getBoundingClientRect().height,
+    compactTrailingHeight: trailingHeight.compact,
     corners: `${bubbleStyle.borderTopLeftRadius} ${bubbleStyle.borderTopRightRadius} ${bubbleStyle.borderBottomRightRadius} ${bubbleStyle.borderBottomLeftRadius}`,
     metrics: {
       width,
       bodyHeight: naturalHeight,
-      trailingHeight: ordinaryTrailingHeight(trailing),
+      trailingHeight: trailingHeight.natural,
       bubble: { ...frame(bubble, body), width: naturalWidth, height: naturalHeight },
       content: {
         ...frame(content, bubble),
@@ -162,7 +169,10 @@ function readNaturalMeasurement(
  * ordinary layout. Scroll position is never an input or an invalidation source.
  */
 export function useWebMessageMeasurements(
-  props: Pick<UserMessageFlowProps, "revision" | "bounded" | "compact" | "controls">,
+  props: Pick<
+    UserMessageFlowProps,
+    "revision" | "bounded" | "compact" | "controls" | "compactTrailingPadding"
+  >,
 ) {
   const rail = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -171,6 +181,7 @@ export function useWebMessageMeasurements(
   const frames = useRef(new Map<FrameName, HTMLElement>());
   const observedText = useRef<HTMLElement | null>(null);
   const [width, setWidth] = useState(0);
+  const compactTrailingPadding = props.compactTrailingPadding ?? 0;
   const [fontRevision, setFontRevision] = useState(0);
   const binding = useMemo(
     () => ({ revision: props.revision, width, fontRevision }),
@@ -190,6 +201,7 @@ export function useWebMessageMeasurements(
       { rail, body, trailing, summary, frames: frames.current },
       binding,
       width,
+      compactTrailingPadding,
     );
     if (!next) return;
     if (font.current?.binding === binding && font.current.value !== next.font) {
@@ -198,7 +210,7 @@ export function useWebMessageMeasurements(
     }
     font.current = { binding, value: next.font };
     setMeasurement((previous) => (sameMeasurement(previous, next) ? previous : next));
-  }, [binding, width]);
+  }, [binding, width, compactTrailingPadding]);
   const readCurrent = useRef(read);
   const observer = useMemo(() => new ResizeObserver(() => readCurrent.current()), []);
   const registerElement = useCallback(

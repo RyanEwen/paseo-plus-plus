@@ -73,6 +73,8 @@ interface UserMessageProps {
   /** Keep the actual Text/attachment body mounted through disclosure. */
   previewExpanded?: boolean;
   bodyViewportHeight?: number;
+  /** Prepare web compact paint against the same cap before it becomes bounded. */
+  naturalFlowMaximumHeight?: number;
   onPreviewOverflowChange?: (overflowing: boolean) => void;
   serverId?: string;
   agentId?: string;
@@ -372,6 +374,11 @@ function userMessageHitAllocation(suppressed: boolean, actualWebPrompt: boolean)
   return "auto";
 }
 
+/** The action row's existing compact backing padding is independent of More. */
+function compactMessageActionPadding(webNaturalFlow: boolean, hasTrailingRow: boolean): number {
+  return webNaturalFlow && hasTrailingRow ? SPACING[2] * 2 : 0;
+}
+
 /** Select the platform flow and its presentation flags without changing body ownership. */
 function userMessageFlowConfiguration(
   hasNaturalFlow: boolean,
@@ -389,6 +396,7 @@ function userMessageFlowConfiguration(
 
 export const UserMessage = memo(function UserMessage({
   onNaturalFlowGeometry,
+  naturalFlowMaximumHeight,
   onContentPress,
   contentAccessibilityLabel,
   bubbleWidth,
@@ -666,7 +674,8 @@ export const UserMessage = memo(function UserMessage({
       message={message}
       compact={compactPreview}
       bounded={bodyViewportHeight !== undefined}
-      maximumHeight={bodyViewportHeight}
+      maximumHeight={naturalFlowMaximumHeight ?? bodyViewportHeight}
+      compactTrailingPadding={compactMessageActionPadding(webNaturalFlow, hasTrailingRow)}
       backdropStyle={bubbleStyle}
       visualBackdrop={actionRowBackdrop}
       onGeometry={onNaturalFlowGeometry}

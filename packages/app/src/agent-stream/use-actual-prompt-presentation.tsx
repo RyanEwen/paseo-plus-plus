@@ -189,8 +189,10 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
     bodyViewportHeight: pinned ? rows.bodyViewportHeight : undefined,
     pinned,
     actionRowBackdrop: pinned ? backdrop : undefined,
-    onPreviewOverflowChange: pinned ? disclosure.report : undefined,
-    inlineContentAction: pinned ? disclosure.action : null,
+    // Discover overflow and prepare the real hidden control before the handoff.
+    // WebUserMessageFlow keeps it outside flow, hidden and inert until bounded.
+    onPreviewOverflowChange: isWeb || pinned ? disclosure.report : undefined,
+    inlineContentAction: isWeb || pinned ? disclosure.action : null,
     contentAction: undefined,
     onContentPress: pinned ? reveal : props.onContentPress,
     contentAccessibilityLabel: pinned

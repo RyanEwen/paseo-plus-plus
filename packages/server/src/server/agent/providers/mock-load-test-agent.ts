@@ -423,6 +423,21 @@ function parseLargeAgentStreamPayloadPrompt(
   };
 }
 
+/** DEV pagination scenario: one bounded real tool run, with no interleaved assistant chunks. */
+function parsePaginationToolRunPrompt(prompt: AgentPromptInput): number | null {
+  const match = /^emit (\d+) consecutive pagination tool calls$/.exec(promptToText(prompt));
+  const count = Number(match?.[1]);
+  return Number.isSafeInteger(count) && count > 0 && count <= 200 ? count : null;
+}
+
+function paginationToolRunAnswer(): string {
+  return Array.from(
+    { length: 64 },
+    (_, index) =>
+      `Remote tool-run answer paragraph ${index + 1}. This ordinary assistant response remains readable while earlier tool calls arrive through the canonical history owner.`,
+  ).join("\n\n");
+}
+
 function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStressRequest | null {
   const text = promptToText(prompt);
   const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(text);
@@ -865,6 +880,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.activeTurn = turn;
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);
+    const paginationToolCount = parsePaginationToolRunPrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
@@ -891,6 +907,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleQuestionPromptTurn(turn, questionPrompt);
       } else if (largePayload) {
         this.scheduleLargePayloadTurn(turn, largePayload);
+      } else if (paginationToolCount !== null) {
+        this.scheduleSettledAssistantTurn(turn, paginationToolRunAnswer(), paginationToolCount);
       } else if (stress) {
         this.scheduleStressTurn(turn, stress);
       } else {
@@ -1251,11 +1269,37 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
+  private scheduleSettledAssistantTurn(
+    turn: ActiveTurn,
+    finalText: string,
+    paginationToolCount?: number,
+  ): void {
     turn.timer = setTimeout(() => {
+      if (paginationToolCount !== undefined) this.emitPaginationToolRun(turn, paginationToolCount);
       this.emitSettledAssistantTurn(turn, finalText);
     }, 0);
     turn.timer.unref?.();
+  }
+
+  private emitPaginationToolRun(turn: ActiveTurn, count: number): void {
+    if (this.activeTurn !== turn) return;
+    this.emitTurnStarted(turn);
+    for (let index = 1; index <= count; index += 1) {
+      const callId = `${turn.turnId}:pagination-tool:${index}`;
+      const detail: ToolCallDetail = {
+        type: "read",
+        filePath: `pagination-tool-${index}.ts`,
+        content: `Completed pagination read ${index}.`,
+      };
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({ callId, name: "read", status: "running", detail }),
+      );
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({ callId, name: "read", status: "completed", detail }),
+      );
+    }
   }
 
   private scheduleStreamingAssistantTurn(turn: ActiveTurn, finalText: string): void {

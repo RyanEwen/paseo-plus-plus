@@ -688,11 +688,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isActive,
         isAuthoritativeHistoryReady,
       });
+    const retainedWebSource = useMemo(
+      () => (isWeb ? mergeRetainedPrompts([], retainedContext.contexts, sourceItems) : []),
+      [retainedContext.contexts, sourceItems],
+    );
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
       () =>
         presentStream({
-          tail: canonicalTail,
+          tail: isWeb ? effectiveStreamItems : canonicalTail,
+          retained: retainedWebSource,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
           level: toolCallDetailLevel,
@@ -701,6 +706,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         presentStream,
         canonicalTail,
+        effectiveStreamItems,
+        retainedWebSource,
         effectiveStreamHead,
         transformTimelineItem,
         toolCallDetailLevel,
@@ -730,7 +737,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
         historyStart: historyWindowStart,
-        retainedPositions,
+        retainedPositions: isWeb ? undefined : retainedPositions,
       });
     }, [
       isMobile,
@@ -741,12 +748,45 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       historyWindowStart,
       retainedPositions,
     ]);
-    // Cached canonical membership does not make a retained point part of this
-    // ordinary local window. Only geometric anchoring excludes the copied rows.
-    const viewportContextOnlyIds = useMemo(() => {
-      if (!isWeb || baseRenderModel.retainedOnlyIds.size === 0) return contextOnlyIds;
-      return new Set([...contextOnlyIds, ...baseRenderModel.retainedOnlyIds]);
-    }, [contextOnlyIds, baseRenderModel.retainedOnlyIds]);
+    // Paint retention never extends ordinary presentation, local history, or virtual size.
+    const retainedWebPrompt = useMemo(() => {
+      if (!isWeb || !stickyEnabled) return undefined;
+      const prompt = retainedContext.currentContext?.prompt;
+      if (!prompt) return undefined;
+      const ordinary = [...baseRenderModel.history, ...baseRenderModel.segments.liveHead];
+      const presented = [...presentation.tail, ...presentation.head, ...presentation.retained].find(
+        (item) =>
+          item.kind === "user_message" &&
+          item.timelineCursor?.epoch === prompt.timelineCursor?.epoch &&
+          item.timelineCursor?.seq === prompt.timelineCursor?.seq,
+      );
+      return presented && !ordinary.some((item) => item.id === presented.id)
+        ? presented
+        : undefined;
+    }, [
+      stickyEnabled,
+      retainedContext.currentContext,
+      baseRenderModel.history,
+      baseRenderModel.segments.liveHead,
+      presentation.tail,
+      presentation.head,
+      presentation.retained,
+    ]);
+    const retainedWebLayout = useMemo(
+      () =>
+        layoutStream({
+          strategy: streamRenderStrategy,
+          isTurnActive: false,
+          history: retainedWebPrompt ? [retainedWebPrompt] : [],
+          liveHead: [],
+          timingByAssistantId: baseRenderModel.turnTiming.byAssistantId,
+        }),
+      [retainedWebPrompt, streamRenderStrategy, baseRenderModel.turnTiming.byAssistantId],
+    );
+    const viewportContextOnlyIds = useMemo(
+      () => (isWeb ? undefined : contextOnlyIds),
+      [contextOnlyIds],
+    );
     const streamLayout = useMemo(
       () =>
         layoutStream({
@@ -1191,11 +1231,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const layoutHistoryItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
-      for (const item of streamLayout.history) {
+      for (const item of [...retainedWebLayout.history, ...streamLayout.history]) {
         itemById.set(item.item.id, item);
       }
       return itemById;
-    }, [streamLayout.history]);
+    }, [streamLayout.history, retainedWebLayout.history]);
 
     const layoutLiveHeadItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
@@ -1344,6 +1384,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   agentId,
                   nativeViewportPlacement,
                   segments: renderModel.segments,
+                  retainedPrompt: retainedWebPrompt,
                   contextOnlyIds: viewportContextOnlyIds,
                   historyRowRevision,
                   liveHeadRowRevision: expandedToolCallGroupIds,

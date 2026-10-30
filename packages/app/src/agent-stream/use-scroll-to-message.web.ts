@@ -73,11 +73,25 @@ export function useScrollToMessage({
             const target = scrollContainerRef.current?.querySelector<HTMLElement>(
               `[data-message-id="${CSS.escape(messageId)}"]`,
             );
-            const measuredTarget =
-              placementRef.current === "pinned"
-                ? target?.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')
-                : target;
-            return measuredTarget ? getOriginalPromptTop(measuredTarget) : null;
+            if (placementRef.current === "pinned") {
+              const row = target?.closest<HTMLElement>("[data-actual-prompt-row]");
+              const body = row?.querySelector<HTMLElement>("[data-actual-prompt-content]");
+              const flow = Number(body?.dataset.promptFlowHeight);
+              const compact = Number(body?.dataset.promptCompactHeight);
+              if (
+                !row ||
+                !body ||
+                !(flow > 0) ||
+                !(compact > 0) ||
+                !Number.isFinite(flow) ||
+                !Number.isFinite(compact)
+              )
+                return null;
+              // Both extents share the same current body owner. Caller chrome
+              // cancels in their difference; expanded More is never an input.
+              return row.getBoundingClientRect().top + Math.max(0, flow - compact);
+            }
+            return target ? getOriginalPromptTop(target) : null;
           },
           estimateTargetTop(messageId) {
             // Find occurrences own their exact target; a message-row estimate must

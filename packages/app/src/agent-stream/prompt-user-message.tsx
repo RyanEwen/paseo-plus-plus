@@ -66,6 +66,7 @@ export const PromptUserMessage = memo(function PromptUserMessage({
       onNaturalFlowGeometry={
         webGeometry || (nativeLayout && actualRows) ? reportNaturalGeometry : undefined
       }
+      naturalFlowMaximumHeight={webGeometry ? actualRows?.bodyViewportHeight : undefined}
     />
   );
 });

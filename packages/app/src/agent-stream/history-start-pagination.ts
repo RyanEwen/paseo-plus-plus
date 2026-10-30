@@ -9,6 +9,9 @@ export type HistoryStartPaginationState =
 
 export interface HistoryStartPaginationInput {
   distanceFromHistoryStart: number;
+  /** Full transcript allocation, including retained natural row reservations. */
+  contentHeight: number;
+  viewportHeight: number;
   hasOlderHistory: boolean;
   isLoadingOlderHistory: boolean;
   isReady: boolean;
@@ -115,8 +118,13 @@ export function settleHistoryStartPagination(
     return { state, shouldLoad: false };
   }
   const isAtHistoryStart = input.distanceFromHistoryStart <= HISTORY_START_THRESHOLD_PX;
+  // Compacted pages can leave offset zero in an already full transcript. Only
+  // a viewport without a scrollable range may continue without new user input.
+  // DOM scrollHeight is at least clientHeight, so equality remains fill-eligible.
+  const needsViewportFill = input.viewportHeight > 0 && input.contentHeight <= input.viewportHeight;
   if (
     !isAtHistoryStart ||
+    !needsViewportFill ||
     !input.isReady ||
     !input.hasOlderHistory ||
     input.isLoadingOlderHistory ||

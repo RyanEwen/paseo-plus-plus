@@ -67,7 +67,7 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Workspace notifications](docs/fork-features/workspace-notifications.md)
 - [Agent-aware attention](docs/fork-features/agent-aware-attention.md)
 
-- [Steadier reading](docs/fork-features/steadier-reading.md)
+- [Prompt and history recovery](docs/fork-features/steadier-reading.md)
 - [Mobile navigation](docs/fork-features/mobile-navigation.md)
 
 - [Workspace pickers, status and child workspaces](docs/fork-features/workspace-pickers-and-status.md)

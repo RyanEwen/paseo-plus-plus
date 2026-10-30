@@ -9,6 +9,8 @@ import {
   type AgentTimelineResponseGate,
   type BootstrapTimelineGate,
   type OlderTimelinePagesGate,
+  type OlderTimelinePagesOptions,
+  type TimelineWindowPageReceipt,
 } from "./agent-timeline-gate";
 
 export { holdDaemonHydration };
@@ -118,6 +120,8 @@ interface TimelinePromptPositionSnapshot {
 }
 
 interface OlderHistoryPages {
+  readAccounting(): ReturnType<OlderTimelinePagesGate["getReadAccounting"]>;
+  windowPages(): readonly TimelineWindowPageReceipt[];
   expectRequestedPages(count: number): Promise<void>;
   expectSettledWithRequestedPages(count: number): Promise<void>;
   expectNoRepeatedEntries(): void;
@@ -157,6 +161,33 @@ export async function seedLongMockAgentTimeline(
     newestOlderPagePrompt: promptForTurn(Math.max(0, options.turns - 21)),
     oldestPrompt: promptForTurn(0),
     newestPrompt: promptForTurn(options.turns - 1),
+  };
+}
+
+interface RemoteToolRunTimelineOptions {
+  /** Real completed prefix turns can exercise the existing virtualized viewport cohort. */
+  prefixTurns?: number;
+}
+
+/** Use the DEV mock's finite tool scenario before opening this new agent in any browser. */
+export async function seedRemoteToolRunTimeline(options: RemoteToolRunTimelineOptions = {}) {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "timeline-remote-tool-run-",
+    title: "Remote tool-run pagination regression",
+    model: "e2e-fast-stream",
+  });
+  for (let index = 0; index < (options.prefixTurns ?? 3); index += 1) {
+    await agent.client.sendAgentMessage(agent.agentId, promptForTurn(index));
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+  }
+  const prompt = "emit 120 consecutive pagination tool calls";
+  await agent.client.sendAgentMessage(agent.agentId, prompt);
+  await agent.client.waitForFinish(agent.agentId, 15_000);
+  return {
+    ...agent,
+    prompt,
+    readerText:
+      "Remote tool-run answer paragraph 1. This ordinary assistant response remains readable while earlier tool calls arrive through the canonical history owner.",
   };
 }
 
@@ -382,11 +413,13 @@ export async function holdOlderHistoryPages(
   page: Page,
   agent: MockAgentWorkspace,
   daemonPort?: number,
+  options: OlderTimelinePagesOptions = {},
 ): Promise<OlderHistoryPages> {
   const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(
     page,
     agent.agentId,
     daemonPort,
+    options,
   );
   /** Keep every before read accountable, while releasing content separately from held pages. */
   const assertReadAccounting = () => {
@@ -402,69 +435,83 @@ export async function holdOlderHistoryPages(
     await expect.poll(() => gate.getReadAccounting().pendingContent).toBe(0);
     assertReadAccounting();
     await waitForTimelineGeometryToSettle(page);
-    const before = await captureContentReadViewport(
-      page,
-      gate.getCertifiedPrompts().map((prompt) => prompt.id),
-    );
-    if (gate.flushContentReads() === 0) return;
-    // A source probe can lead to several independently released canonical cache pages.
-    for (let used = 1; used < 8 && gate.getReadAccounting().contextChainActive; used += 1) {
-      await expect.poll(() => gate.getReadAccounting().pendingContext).toBe(0);
-      try {
-        await expect.poll(() => gate.flushContentReads()).toBeGreaterThan(0);
-      } catch (error) {
-        throw new Error(`Context read accounting: ${JSON.stringify(gate.getReadAccounting())}`, {
-          cause: error,
-        });
-      }
-      assertReadAccounting();
-    }
-    const prompts = gate.getCertifiedPrompts();
-    expect(prompts.length).toBeGreaterThan(0);
+    const before = await captureContentReadViewport(page);
+    if (!before.anchor)
+      throw new Error("Content-read anchoring requires a visible ordinary row before discovery");
     const timeline = page.getByTestId("agent-chat-scroll").filter({ visible: true });
-    const currentPrompt = gate.getMountingPrompt();
-    expect(currentPrompt).not.toBeNull();
-    for (const prompt of currentPrompt ? [currentPrompt] : []) {
-      const row = timeline
-        .locator("[data-history-row-id]")
-        .filter({ has: page.getByTestId("user-message").filter({ hasText: prompt.text }) });
-      await expect(row).toHaveCount(1);
-      await expect(row).toHaveAttribute("data-history-row-id", prompt.id);
-      await expect(row.getByTestId("user-message-previous")).toBeAttached();
-      await expect(row.getByTestId("user-message-next")).toBeAttached();
+    const anchorRow = timeline.locator(`[data-history-row-id="${before.anchor.id}"]`);
+    const original = await anchorRow.evaluateHandle((element) => ({
+      row: element,
+      text: document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode(),
+    }));
+    try {
+      if (gate.flushContentReads() === 0) return;
+      // A source probe can lead to several independently released canonical cache pages.
+      for (let used = 1; used < 8 && gate.getReadAccounting().contextChainActive; used += 1) {
+        await expect.poll(() => gate.getReadAccounting().pendingContext).toBe(0);
+        try {
+          await expect.poll(() => gate.flushContentReads()).toBeGreaterThan(0);
+        } catch (error) {
+          throw new Error(`Context read accounting: ${JSON.stringify(gate.getReadAccounting())}`, {
+            cause: error,
+          });
+        }
+        assertReadAccounting();
+      }
+      const currentPrompt = gate.getMountingPrompt();
+      // An ordinary USER at the reading edge owns itself. A completed but obsolete
+      // response lease must not force a retained body into that cohort. Plugins
+      // may intentionally project a USER away; their ordinary membership stays real.
+      if (currentPrompt && !before.anchor.isUser && !before.anchor.isPlugin) {
+        const row = before.rows.includes(currentPrompt.id)
+          ? timeline.locator(`[data-history-row-id="${currentPrompt.id}"]`)
+          : timeline.locator(`[data-retained-prompt-row="${currentPrompt.id}"]`);
+        await expect(row).toHaveCount(1);
+        const owner = timeline.locator(
+          `[data-history-row-id="${currentPrompt.id}"], [data-retained-prompt-row="${currentPrompt.id}"]`,
+        );
+        await expect(owner).toHaveCount(1);
+        const body = row.getByTestId("user-message");
+        await expect(body).toHaveCount(1);
+        await expect(body.getByTestId("user-message-text")).toHaveText(
+          currentPrompt.text.trim() ? [currentPrompt.text] : [],
+        );
+        await expect(row.getByTestId("user-message-previous")).toBeAttached();
+        await expect(row.getByTestId("user-message-next")).toBeAttached();
+      }
+      await expect(page.getByTestId("sticky-user-message")).toHaveCount(0);
+      await waitForTimelineGeometryToSettle(page);
+      const after = await captureContentReadViewport(page, before.anchor.id);
+      const evidence = JSON.stringify({ before, after, accounting: gate.getReadAccounting() });
+      expect(after.rows, evidence).toEqual(before.rows);
+      expect(after.clientHeight, evidence).toBe(before.clientHeight);
+      expect(after.clientWidth, evidence).toBe(before.clientWidth);
+      expect(after.bottomActionVisible, evidence).toBe(before.bottomActionVisible);
+      if (!after.anchor)
+        throw new Error("Content-read anchoring requires the same ordinary row after discovery");
+      expect(after.anchor.id, evidence).toBe(before.anchor.id);
+      expect(after.anchor.text, evidence).toBe(before.anchor.text);
+      expect(Math.abs(after.anchor.top - before.anchor.top), evidence).toBeLessThanOrEqual(1);
+      // Isolated paint adds exactly zero transcript extent or scroll compensation.
+      expect(after.scrollHeight, evidence).toBe(before.scrollHeight);
+      expect(after.scrollWidth, evidence).toBe(before.scrollWidth);
+      expect(after.scrollTop, evidence).toBe(before.scrollTop);
+      expect(
+        await anchorRow.evaluate(
+          (element, prior) =>
+            element === prior.row && prior.text !== null && element.contains(prior.text),
+          original,
+        ),
+        evidence,
+      ).toBe(true);
+      assertReadAccounting();
+    } finally {
+      await original.dispose();
     }
-    await expect(page.getByTestId("sticky-user-message")).toHaveCount(0);
-    await waitForTimelineGeometryToSettle(page);
-    const after = await captureContentReadViewport(
-      page,
-      prompts.map((prompt) => prompt.id),
-      before.anchor?.id,
-    );
-    expect(after.rows).toEqual(
-      before.rows.filter((id) => !prompts.some((prompt) => prompt.id === id)),
-    );
-    expect(after.clientHeight).toBe(before.clientHeight);
-    expect(after.bottomActionVisible).toBe(before.bottomActionVisible);
-    if (!before.anchor || !after.anchor) {
-      throw new Error(
-        "Content-read anchoring requires a visible ordinary row before and after discovery",
-      );
-    }
-    expect(after.anchor.id).toBe(before.anchor.id);
-    expect(Math.abs(after.anchor.top - before.anchor.top)).toBeLessThanOrEqual(1);
-    const addedHeight = after.retainedHeight - before.retainedHeight;
-    expect(
-      Math.abs(after.scrollHeight - before.scrollHeight - addedHeight),
-      JSON.stringify({
-        before: { ...before, rows: before.rows.length },
-        after: { ...after, rows: after.rows.length },
-        addedHeight,
-      }),
-    ).toBeLessThanOrEqual(1);
-    expect(Math.abs(after.scrollTop - before.scrollTop - addedHeight)).toBeLessThanOrEqual(1);
-    assertReadAccounting();
   };
   return {
+    windowPages: gate.getWindowPages,
+    readAccounting: gate.getReadAccounting,
     async expectRequestedPages(count) {
       await gate.waitForRequestCount(count);
       assertReadAccounting();
@@ -806,67 +853,58 @@ export async function scrollTimelinePastPrompt(page: Page, prompt: string): Prom
   ).toHaveAttribute("data-history-row-id", rowId!);
 }
 
-/** Measure ordinary row anchoring while accounting for explicitly certified retained prompts. */
-async function captureContentReadViewport(
-  page: Page,
-  retainedPromptIds: string[],
-  ordinaryAnchorId?: string,
-) {
+/** Measure real ordinary membership without treating a cached prompt as an exclusion. */
+async function captureContentReadViewport(page: Page, ordinaryAnchorId?: string) {
   const viewport = page.getByTestId("agent-chat-scroll").filter({ visible: true });
-  const geometry = await viewport.evaluate(
-    (element, { retainedIds, anchorId }) => {
-      const bounds = element.getBoundingClientRect();
-      const rows = Array.from(element.querySelectorAll<HTMLElement>("[data-history-row-id]"));
-      const ordinary = rows.filter((row) => !retainedIds.includes(row.dataset.historyRowId!));
-      const anchor = anchorId
-        ? ordinary.find((row) => row.dataset.historyRowId === anchorId)
-        : ordinary.find(
-            (row) =>
-              row.getBoundingClientRect().bottom > bounds.top &&
-              row.getBoundingClientRect().top < bounds.bottom,
-          );
-      return {
-        scrollTop: element.scrollTop,
-        scrollHeight: element.scrollHeight,
-        clientHeight: element.clientHeight,
-        rows: ordinary.map((row) => row.dataset.historyRowId!),
-        retainedHeight: rows
-          .filter((row) => retainedIds.includes(row.dataset.historyRowId!))
-          .reduce((sum, row) => {
-            const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
-            if (!body) throw new Error("Certified retained prompt has no measurable body");
-            const style = getComputedStyle(row);
-            const margins =
-              Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom);
-            // Normal flow allocates the outer lane plus its real collision margin.
-            // The painted sticky child can include different action-row chrome.
-            let height = row.getBoundingClientRect().height;
-            if (row.hasAttribute("data-index")) {
-              // Absolute virtual lanes have no compensating flow margin. Their
-              // published natural extent retains the actual caller/group spacing.
-              const flow = Number(body.dataset.promptFlowHeight);
-              const visual = Number(body.dataset.promptVisualHeight);
-              if (![flow, visual].every((value) => Number.isFinite(value) && value > 0)) {
-                throw new Error("Certified virtual prompt has no current flow geometry");
-              }
-              height = flow + body.getBoundingClientRect().height - visual;
-            }
-            const allocation = height + margins;
-            if (!Number.isFinite(allocation) || allocation <= 0) {
-              throw new Error("Certified retained prompt has no positive natural allocation");
-            }
-            return sum + allocation;
-          }, 0),
-        anchor: anchor
-          ? {
-              id: anchor.dataset.historyRowId!,
-              top: anchor.getBoundingClientRect().top - bounds.top,
-            }
-          : null,
-      };
-    },
-    { retainedIds: retainedPromptIds, anchorId: ordinaryAnchorId },
-  );
+  const geometry = await viewport.evaluate((element, anchorId) => {
+    const bounds = element.getBoundingClientRect();
+    const ordinary = Array.from(element.querySelectorAll<HTMLElement>("[data-history-row-id]"));
+    const positions = [];
+    for (const row of ordinary) {
+      const rect = row.getBoundingClientRect();
+      const style = getComputedStyle(row);
+      const marginTop = Number.parseFloat(style.marginTop);
+      const marginBottom = Number.parseFloat(style.marginBottom);
+      let height = rect.height;
+      if (row.hasAttribute("data-index") && row.matches("[data-actual-prompt-row]")) {
+        const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
+        if (!body) throw new Error("Ordinary virtual USER has no actual body");
+        const flow = Number(body.dataset.promptFlowHeight);
+        const visual = Number(body.dataset.promptVisualHeight);
+        height =
+          Number.isFinite(flow) && flow > 0 && Number.isFinite(visual) && visual > 0
+            ? flow + body.getBoundingClientRect().height - visual
+            : body.getBoundingClientRect().height;
+      }
+      const allocation = height + marginTop + marginBottom;
+      if (!Number.isFinite(allocation) || allocation < 0)
+        throw new Error("Ordinary row has invalid real natural allocation");
+      const top = rect.top - bounds.top - marginTop;
+      positions.push({ row, top, bottom: top + allocation, allocation });
+    }
+    const anchor = anchorId
+      ? positions.find((entry) => entry.row.dataset.historyRowId === anchorId)
+      : positions.find(
+          (entry) => entry.allocation > 0 && entry.bottom > 0 && entry.top < bounds.height,
+        );
+    return {
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      scrollWidth: element.scrollWidth,
+      clientHeight: element.clientHeight,
+      clientWidth: element.clientWidth,
+      rows: ordinary.map((row) => row.dataset.historyRowId!),
+      anchor: anchor
+        ? {
+            id: anchor.row.dataset.historyRowId!,
+            top: anchor.top,
+            text: anchor.row.textContent,
+            isUser: anchor.row.matches("[data-actual-prompt-row]"),
+            isPlugin: anchor.row.hasAttribute("data-plugin-row"),
+          }
+        : null,
+    };
+  }, ordinaryAnchorId);
   return {
     ...geometry,
     bottomActionVisible: await page
