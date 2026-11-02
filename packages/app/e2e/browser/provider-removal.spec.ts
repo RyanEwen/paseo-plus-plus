@@ -84,13 +84,19 @@ test.describe("provider removal", () => {
       await openSettingsHost(page, getServerId());
       await openSettingsHostSection(page, getServerId(), "providers");
 
-      await expect(page.getByTestId("provider-actions-claude")).toHaveCount(0);
+      await page.getByTestId("provider-actions-claude").click();
+      await expect(page.getByTestId("provider-copy-migration-prompt-claude")).toBeVisible();
+      await expect(page.getByTestId("provider-remove-claude")).toHaveCount(0);
+      await page.keyboard.press("Escape");
       await openAddProviderArea(page);
       await installAcpCatalogProvider(page, CUSTOM_PROVIDER.name);
       await expectProviderInstalledInSettings(page, CUSTOM_PROVIDER.name);
       await expectProviderSource(client, "custom");
 
       await page.getByTestId(`provider-actions-${CUSTOM_PROVIDER.id}`).click();
+      await expect(
+        page.getByTestId(`provider-copy-migration-prompt-${CUSTOM_PROVIDER.id}`),
+      ).toBeVisible();
       await expect(page.getByTestId(`provider-remove-${CUSTOM_PROVIDER.id}`)).toBeVisible();
       await clickRemoveProviderAndAcceptWarning(page);
 
@@ -130,7 +136,12 @@ test.describe("provider removal", () => {
           exact: true,
         });
         await expect(pluginProviderRow).toBeVisible();
-        await expect(page.getByTestId(`provider-actions-${PLUGIN_PROVIDER.id}`)).toHaveCount(0);
+        await page.getByTestId(`provider-actions-${PLUGIN_PROVIDER.id}`).click();
+        await expect(
+          page.getByTestId(`provider-copy-migration-prompt-${PLUGIN_PROVIDER.id}`),
+        ).toBeVisible();
+        await expect(page.getByTestId(`provider-remove-${PLUGIN_PROVIDER.id}`)).toHaveCount(0);
+        await page.keyboard.press("Escape");
 
         // The provider survives a removeProviders patch pointed at it: the
         // plugin, not config.json, owns the definition.

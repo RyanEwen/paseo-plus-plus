@@ -6,8 +6,10 @@ import path from "node:path";
 import { z } from "zod";
 import { parseStoredAgentRecord, type StoredAgentRecord } from "../agent-storage.js";
 import { readPersistedConfig } from "../../persisted-config.js";
-import { ProviderOverridesSchema } from "../provider-launch-config.js";
-import { resolveConfiguredCodexHistoryProfile } from "../provider-registry.js";
+import {
+  ProviderOverridesSchema,
+  resolveConfiguredCodexHistoryProfile,
+} from "../provider-launch-config.js";
 import { historyRootsOverlap, resolveConfiguredCodexHistory } from "../providers/codex/history.js";
 import { HistoryStorageConflictError, type ConfiguredHistoryStorage } from "./binding.js";
 

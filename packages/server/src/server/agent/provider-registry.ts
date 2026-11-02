@@ -32,12 +32,15 @@ import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
 import { runProviderRefreshActivity } from "./provider-refresh-deadline.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
-  ProviderProfileModel,
-  ProviderRuntimeSettings,
-  ProviderHistoryPolicy,
+import {
+  configuredProviderOptions,
+  mergeRuntimeSettings,
+  toRuntimeSettings,
+  type AgentProviderRuntimeSettingsMap,
+  type ProviderOverride,
+  type ProviderProfileModel,
+  type ProviderRuntimeSettings,
+  type ProviderHistoryPolicy,
 } from "./provider-launch-config.js";
 import { HistoryStorageConflictError } from "./provider-history/binding.js";
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
@@ -260,47 +263,6 @@ function getProviderClientFactory(provider: string): ProviderClientFactory {
     throw new Error(`No provider client factory registered for '${provider}'`);
   }
   return factory;
-}
-
-function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env && !override?.disallowedTools) {
-    return undefined;
-  }
-
-  return {
-    command: override.command
-      ? {
-          mode: "replace",
-          argv: override.command,
-        }
-      : undefined,
-    env: override.env,
-    disallowedTools: override.disallowedTools,
-  };
-}
-
-function mergeRuntimeSettings(
-  base: ProviderRuntimeSettings | undefined,
-  override: ProviderRuntimeSettings | undefined,
-): ProviderRuntimeSettings | undefined {
-  if (!base && !override) {
-    return undefined;
-  }
-
-  return {
-    command: override?.command ?? base?.command,
-    env:
-      base?.env || override?.env
-        ? {
-            ...base?.env,
-            ...override?.env,
-          }
-        : undefined,
-    disallowedTools:
-      base?.disallowedTools || override?.disallowedTools
-        ? [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])]
-        : undefined,
-  };
 }
 
 function applyOverrideToDefinition(
@@ -1127,34 +1089,4 @@ export async function shutdownAgentClients(
       }
     }),
   );
-}
-
-function configuredProviderOptions(
-  override: ProviderOverride | undefined,
-): ProviderOptions | undefined {
-  // COMPAT(providerParams): added in v0.10.0, remove after 2027-03-30 once configs use options.
-  // options wins as a whole record when both spellings are supplied.
-  return override?.options ?? override?.params;
-}
-
-/** Config-only selection for local history preview; never constructs clients or plugin runtimes. */
-export function resolveConfiguredCodexHistoryProfile(
-  provider: string,
-  overrides: Record<string, ProviderOverride>,
-): {
-  runtimeSettings?: ProviderRuntimeSettings;
-  providerOptions?: ProviderOptions;
-  historyPolicy?: ProviderHistoryPolicy;
-} {
-  const selected = overrides[provider];
-  if (!selected || (provider !== "codex" && selected.extends !== "codex"))
-    throw new HistoryStorageConflictError("destination-must-be-configured-codex-profile");
-  if (selected.enabled === false)
-    throw new HistoryStorageConflictError("destination-provider-disabled");
-  const base = provider === "codex" ? undefined : overrides.codex;
-  return {
-    runtimeSettings: mergeRuntimeSettings(toRuntimeSettings(base), toRuntimeSettings(selected)),
-    providerOptions: configuredProviderOptions(selected) ?? configuredProviderOptions(base),
-    historyPolicy: selected.history ?? base?.history,
-  };
 }

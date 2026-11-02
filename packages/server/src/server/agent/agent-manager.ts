@@ -2033,8 +2033,15 @@ export class AgentManager {
       throw new HistoryStorageConflictError("durable-storage-required");
     if (storage && previous?.registration === "intent")
       await this.registry?.bindHistoryIntent(input.agentId, storage);
-    input.context.historyStorage = storage ?? previous?.storage ?? { kind: "unknown" };
+    this.attachHistoryStorage(input.context, storage ?? previous?.storage);
     this.attachClaudeHistoryContexts(input.agentId, input.context, record, storage);
+  }
+
+  private attachHistoryStorage(
+    context: AgentLaunchContext,
+    storage: ProviderHistoryStorage | undefined,
+  ): void {
+    if (storage && storage.kind !== "unknown") context.historyStorage = storage;
   }
 
   private attachClaudeHistoryContexts(
@@ -4371,7 +4378,24 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  private resolveRewindMessageId(agentId: string, messageId: string): string {
+    this.requireSessionAgent(agentId);
+    const submittedRow = this.timelineStore
+      .getRows(agentId)
+      .find(
+        (row) =>
+          row.item.type === "user_message" &&
+          row.item.messageId === messageId &&
+          row.item.clientMessageId === messageId,
+      );
+    if (submittedRow && !submittedRow.providerMessageId) {
+      throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
+    }
+    return submittedRow?.providerMessageId ?? messageId;
+  }
+
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    this.resolveRewindMessageId(agentId, messageId);
     if (this.hasInFlightRun(agentId))
       await this.cancelAgentRunBefore({ agentId, action: "rewind" });
     // Reserve synchronously before the first await so immediate prompts see the rewind barrier.
@@ -4392,18 +4416,7 @@ export class AgentManager {
     lock: ReturnType<AgentRunState["createPendingRun"]>,
   ): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
-    const submittedRow = this.timelineStore
-      .getRows(agentId)
-      .find(
-        (row) =>
-          row.item.type === "user_message" &&
-          row.item.messageId === messageId &&
-          row.item.clientMessageId === messageId,
-      );
-    if (submittedRow && !submittedRow.providerMessageId) {
-      throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
-    }
-    const providerMessageId = submittedRow?.providerMessageId ?? messageId;
+    const providerMessageId = this.resolveRewindMessageId(agentId, messageId);
 
     if (this.runs.getPendingRun(agentId)?.token !== lock.token)
       throw new Error("Rewind lost its foreground reservation");

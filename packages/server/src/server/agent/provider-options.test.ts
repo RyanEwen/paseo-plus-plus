@@ -22,11 +22,11 @@ import {
   historyRootsOverlap,
 } from "./providers/codex/history.js";
 import type { ConfiguredCodexHistoryInput } from "./providers/codex/history.js";
-import type { ProviderCommand } from "./provider-launch-config.js";
 import {
-  buildProviderRegistry,
   resolveConfiguredCodexHistoryProfile,
-} from "./provider-registry.js";
+  type ProviderCommand,
+} from "./provider-launch-config.js";
+import { buildProviderRegistry } from "./provider-registry.js";
 
 const hubPolicy = {
   preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish_execution" }],

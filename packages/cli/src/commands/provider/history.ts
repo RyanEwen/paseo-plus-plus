@@ -1,8 +1,5 @@
 import { Command } from "commander";
-import {
-  previewProviderHistory,
-  type ProviderHistoryPreview,
-} from "@getpaseo/server/provider-history";
+import type { ProviderHistoryPreview } from "@getpaseo/server/provider-history";
 import { addJsonOption, addLocalDaemonOptions } from "../../utils/command-options.js";
 import { withOutput, type CommandOptions, type SingleResult } from "../../output/index.js";
 import { createHistoryMigrationPrompt } from "@getpaseo/client/provider-history-prompt";
@@ -100,6 +97,7 @@ export async function runHistoryPreview(
     throw new Error(
       "Configured destination comparison requires a Codex source and an exact provider ID",
     );
+  const { previewProviderHistory } = await import("@getpaseo/server/provider-history");
   const data = await previewProviderHistory({
     paseoHome: options.daemonTarget.home,
     provider,
