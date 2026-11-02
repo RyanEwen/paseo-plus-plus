@@ -3345,6 +3345,10 @@ export const ja: TranslationResources = {
       addErrorTitle: "プロバイダーを追加できません",
       updateErrorTitle: "プロバイダーを更新できません",
       actions: {
+        copyMigrationPrompt: "移行プロンプトをコピー",
+        migrationPrompt: "移行プロンプト",
+        copying: "コピー中...",
+        copyFailed: "移行プロンプトをコピーできませんでした",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

@@ -1,3 +1,4 @@
+import { previewProviderHistory } from "./provider-history/preview.js";
 import {
   prepareAgentMessage,
   formatAgentMessage,
@@ -2497,6 +2498,12 @@ test("reload releases the original writer before resuming the same session", asy
   class ExclusiveWriterClient extends TestAgentClient {
     current: CloseRecordingTestAgentSession | undefined;
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      expect((await storage.list({ includeHistoryIntents: true }))[0]?.providerHistory).toEqual({
+        origin: "created",
+        registration: "intent",
+        sessionId: null,
+        storage: { kind: "unknown" },
+      });
       this.current = new CloseRecordingTestAgentSession(config);
       return this.current;
     }
@@ -2526,6 +2533,12 @@ test("reload releases the original writer before resuming the same session", asy
         rehydrateFromDisk: true,
       });
       expect(reloaded.id).toBe(created.id);
+      expect((await storage.get(reloaded.id))?.providerHistory).toEqual({
+        origin: "created",
+        registration: "registered",
+        sessionId: created.persistence?.sessionId,
+        storage: { kind: "unknown" },
+      });
       expect(reloaded.persistence?.sessionId).toBe(created.persistence?.sessionId);
     }
     await manager.closeAgent(created.id);
@@ -4304,6 +4317,9 @@ test("importProviderSession imports the selected session without listing and pub
     }
 
     async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+      expect(
+        (await storage.list({ includeHistoryIntents: true }))[0]?.providerHistory?.origin,
+      ).toBe("imported");
       this.importInput = input;
       this.importLaunchContext = context.launchContext;
       return {
@@ -4383,6 +4399,12 @@ test("importProviderSession imports the selected session without listing and pub
     workspaceId: "ws-imported",
   });
 
+  expect((await storage.get(imported.id))?.providerHistory).toEqual({
+    origin: "imported",
+    registration: "registered",
+    sessionId: "thread-selected",
+    storage: { kind: "unknown" },
+  });
   expect(client.listCalls).toBe(0);
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
   expect(client.importLaunchContext).toEqual({
@@ -4418,6 +4440,8 @@ test("importProviderSession imports the selected session without listing and pub
     expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
   ]);
   expect(events).toHaveLength(3);
+  expect(events.filter((event) => event.type === "agent_state")).toHaveLength(1);
+  expect(await storage.list()).toHaveLength(1);
   expect(events[0]).toMatchObject({
     type: "agent_state",
     agent: {
@@ -16220,4 +16244,561 @@ test("attention mode changes do not manufacture historical unread or erase manua
   expect(await storage.get(worker.id)).toEqual(manual);
   expect(manager.getAgent(worker.id)?.attention.requiresAttention).toBe(true);
   expect(notify).not.toHaveBeenCalled();
+});
+
+test("failed provider startup retains an unresolved creation intent without a guessed session ID", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "paseo-history-intent-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  class FailingClient extends TestAgentClient {
+    createCalls = 0;
+    override async createSession(): Promise<AgentSession> {
+      this.createCalls++;
+      expect(
+        (await storage.list({ includeHistoryIntents: true }))[0]?.providerHistory?.registration,
+      ).toBe("intent");
+      throw new Error("fixture-startup-failure");
+    }
+  }
+  const client = new FailingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("fixture-startup-failure");
+    const records = await storage.list({ includeHistoryIntents: true });
+    expect(records).toHaveLength(1);
+    expect(records[0].providerHistory).toEqual({
+      origin: "created",
+      registration: "intent",
+      sessionId: null,
+      storage: { kind: "unknown" },
+    });
+    expect(records[0].persistence).toBeUndefined();
+    const restartedStorage = new AgentStorage(join(directory, "agents"), logger);
+    expect(await restartedStorage.list()).toEqual([]);
+    expect(await restartedStorage.get(records[0].id)).toBeNull();
+    await expect(
+      ensureAgentLoaded(records[0].id, {
+        agentManager: manager,
+        agentStorage: restartedStorage,
+        logger,
+      }),
+    ).rejects.toThrow("Agent not found");
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: directory }, records[0].id, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toMatchObject({ code: "HISTORY_INTENT_CONFLICT" });
+    expect(client.createCalls).toBe(1);
+  } finally {
+    await storage.flush();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("failed native import retains its request without publishing or auto-adopting an orphan", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "paseo-history-import-intent-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  class FailingImportClient extends TestAgentClient {
+    importCalls = 0;
+    async importSession(): Promise<never> {
+      this.importCalls++;
+      throw new Error("fixture-import-failure");
+    }
+  }
+  const client = new FailingImportClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  try {
+    await expect(
+      manager.importProviderSession({
+        provider: "codex",
+        providerHandleId: "native-selected",
+        cwd: directory,
+        workspaceId: "fixture-workspace",
+      }),
+    ).rejects.toThrow("fixture-import-failure");
+    const intents = await storage.list({ includeHistoryIntents: true });
+    expect(intents).toHaveLength(1);
+    expect(intents[0].providerHistory).toEqual({
+      origin: "imported",
+      registration: "intent",
+      sessionId: "native-selected",
+      storage: { kind: "unknown" },
+    });
+    expect(intents[0].workspaceId).toBe("fixture-workspace");
+    expect(intents[0].config?.model).toBe("gpt-5.4");
+    expect(events).toEqual([]);
+    const restartedStorage = new AgentStorage(join(directory, "agents"), logger);
+    expect(await restartedStorage.list()).toEqual([]);
+    expect(await restartedStorage.listByWorkspace("fixture-workspace")).toEqual([]);
+    await expect(
+      ensureAgentLoaded(intents[0].id, {
+        agentManager: manager,
+        agentStorage: restartedStorage,
+        logger,
+      }),
+    ).rejects.toThrow("Agent not found");
+    expect(client.importCalls).toBe(1);
+    const report = await previewProviderHistory({
+      paseoHome: directory,
+      provider: "codex",
+      family: "codex",
+      providerHome: join(directory, "native-home"),
+    });
+    expect(report.unresolvedIntents).toEqual([
+      {
+        agentId: intents[0].id,
+        origin: "imported",
+        requestedSessionId: "native-selected",
+        workspaceId: "fixture-workspace",
+        configFields: ["model"],
+      },
+    ]);
+  } finally {
+    await storage.flush();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ["create", "known-handle"],
+  ["create", "failed-intent"],
+  ["import", "known-handle"],
+  ["import", "failed-intent"],
+  ["internal", "known-handle"],
+  ["internal", "failed-intent"],
+] as const)(
+  "duplicate durable ID %s/%s preserves record, durable timeline and retained view",
+  async (operation, phase) => {
+    const directory = await fs.mkdtemp(join(tmpdir(), "paseo-duplicate-history-"));
+    const storagePath = join(directory, "agents");
+    await fs.mkdir(storagePath);
+    const id = "00000000-0000-4000-8000-000000000980";
+    const file = join(storagePath, "retained.json");
+    const record: StoredAgentRecord = {
+      id,
+      provider: "codex",
+      cwd: directory,
+      workspaceId: "kept-workspace",
+      labels: {},
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+      lastStatus: "closed",
+      persistence:
+        phase === "known-handle" ? { provider: "codex", sessionId: "kept-native" } : undefined,
+      providerHistory: {
+        origin: "imported",
+        registration: phase === "known-handle" ? "registered" : "intent",
+        sessionId: "kept-native",
+        storage: { kind: "unknown" },
+      },
+    };
+    const content = JSON.stringify(record) + "\n";
+    await fs.writeFile(file, content);
+    const storage = new AgentStorage(storagePath, logger);
+    const durable = new RecordingTimelineStore();
+    await durable.appendCommitted(id, { type: "assistant_message", text: "durable kept" });
+    const retained = new InMemoryAgentTimelineStore();
+    retained.initialize(id, { items: [{ type: "assistant_message", text: "retained kept" }] });
+    const before = {
+      record: content,
+      durable: await durable.getCommittedRows(id),
+      retained: retained.fetch(id),
+    };
+    class DuplicateClient extends TestAgentClient {
+      importCalls = 0;
+      async importSession(
+        _input: ImportProviderSessionInput,
+        _context: ImportProviderSessionContext,
+      ): Promise<never> {
+        this.importCalls++;
+        throw new Error("duplicate import must not launch");
+      }
+    }
+    const client = new DuplicateClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: durable,
+      timelineStore: retained,
+      idFactory: () => id,
+      logger,
+    });
+    try {
+      const request =
+        operation !== "import"
+          ? manager.createAgent(
+              { provider: "codex", cwd: directory, internal: operation === "internal" },
+              id,
+              {
+                workspaceId: "other-workspace",
+              },
+            )
+          : manager.importProviderSession({
+              provider: "codex",
+              providerHandleId: "other-native",
+              cwd: directory,
+              workspaceId: "other-workspace",
+            });
+      await expect(request).rejects.toThrow("history intent was not reserved");
+      expect(client.createdConfigs).toEqual([]);
+      expect(client.importCalls).toBe(0);
+      expect(manager.getAgent(id)).toBeNull();
+      expect({
+        record: await fs.readFile(file, "utf8"),
+        durable: await durable.getCommittedRows(id),
+        retained: retained.has(id) ? retained.fetch(id) : null,
+      }).toEqual(before);
+      expect(
+        await new AgentStorage(storagePath, logger).get(id, { includeHistoryIntents: true }),
+      ).toEqual(JSON.parse(content));
+    } finally {
+      if (manager.getAgent(id)) await manager.closeAgent(id);
+      await storage.flush();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test("fresh internal creation keeps its configuration without creating provenance", async () => {
+  const directory = await fs.mkdtemp(join(tmpdir(), "paseo-internal-history-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let id: string | undefined;
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: directory, internal: true },
+      undefined,
+      { workspaceId: undefined },
+    );
+    id = agent.id;
+    expect(client.createdConfigs[0].internal).toBe(true);
+    expect(agent.providerHistory).toBeUndefined();
+    expect(await storage.list({ includeHistoryIntents: true })).toEqual([]);
+    await manager.closeAgent(id);
+    id = undefined;
+    expect(
+      await new AgentStorage(join(directory, "agents"), logger).list({
+        includeHistoryIntents: true,
+      }),
+    ).toEqual([]);
+  } finally {
+    if (id) await manager.closeAgent(id);
+    await storage.flush();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy startup retry preserves unknown provenance and original workspace", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "paseo-history-legacy-retry-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const id = "00000000-0000-4000-8000-000000000981";
+  try {
+    await storage.upsert({
+      id,
+      provider: "codex",
+      cwd: directory,
+      workspaceId: "legacy-workspace",
+      labels: {},
+      lastStatus: "closed",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      config: { model: "gpt-5.4" },
+    });
+    const loaded = await ensureAgentLoaded(id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(loaded.id).toBe(id);
+    expect(loaded.workspaceId).toBe("legacy-workspace");
+    expect(client.createdConfigs).toHaveLength(1);
+    expect((await storage.get(id))?.providerHistory).toBeUndefined();
+  } finally {
+    await manager.closeAgent(id);
+    await storage.flush();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// Exercises daemon sequencing with in-process sessions only; no provider subprocesses.
+test("configured history binds before create/import and survives reload/restart with the same ID", async () => {
+  const directory = await fs.mkdtemp(join(tmpdir(), "paseo-bound-history-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  const selected = {
+    kind: "configured-home" as const,
+    provider: "codex" as const,
+    home: join(directory, "profile"),
+    sqliteHome: join(directory, "db"),
+  };
+  let conflict = false;
+  let closeCalls = 0;
+  let resumeCalls = 0;
+  class BoundSession extends TestAgentSession {
+    readonly historyStorage = selected;
+    constructor(
+      config: AgentSessionConfig,
+      private readonly nativeId: string,
+    ) {
+      super(config);
+    }
+    override describePersistence() {
+      return { provider: "codex" as const, sessionId: this.nativeId };
+    }
+    override async close() {
+      closeCalls++;
+    }
+  }
+  class BoundClient extends TestAgentClient {
+    async resolveHistoryStorage(input: import("./agent-sdk-types.js").ResolveHistoryStorageInput) {
+      if (conflict) throw new Error("fixture-storage-conflict");
+      if (input.previous?.storage.kind === "configured-home")
+        expect(input.previous.storage).toEqual(selected);
+      return selected;
+    }
+    override async createSession(config: AgentSessionConfig, context?: AgentLaunchContext) {
+      const intents = await storage.list({ includeHistoryIntents: true });
+      expect(
+        intents.find((r) => r.providerHistory?.registration === "intent")?.providerHistory?.storage,
+      ).toEqual(selected);
+      expect(context?.historyStorage).toEqual(selected);
+      return new BoundSession(config, "bound-native-id");
+    }
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      context?: AgentLaunchContext,
+    ) {
+      resumeCalls++;
+      expect(context?.historyStorage).toEqual(selected);
+      expect(handle.sessionId).toBe("bound-native-id");
+      return new BoundSession({ provider: "codex", cwd: config!.cwd! }, handle.sessionId);
+    }
+    async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+      const intent = (await storage.list({ includeHistoryIntents: true })).find(
+        (r) => r.providerHistory?.registration === "intent",
+      );
+      expect(intent?.providerHistory).toMatchObject({
+        origin: "imported",
+        sessionId: input.providerHandleId,
+        storage: selected,
+      });
+      expect(context.launchContext?.historyStorage).toEqual(selected);
+      const session = new BoundSession(context.config, input.providerHandleId);
+      return {
+        session,
+        config: context.storedConfig,
+        persistence: session.describePersistence(),
+        timeline: [],
+      };
+    }
+  }
+  const client = new BoundClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const restarted = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(directory, "agents"), logger),
+    logger,
+  });
+  const ids: string[] = [];
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+      workspaceId: "original-workspace",
+    });
+    ids.push(created.id);
+    expect((await storage.get(created.id))?.providerHistory).toEqual({
+      origin: "created",
+      registration: "registered",
+      sessionId: "bound-native-id",
+      storage: selected,
+    });
+    conflict = true;
+    const beforeClose = closeCalls;
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow(
+      "fixture-storage-conflict",
+    );
+    expect(closeCalls).toBe(beforeClose);
+    expect(resumeCalls).toBe(0);
+    conflict = false;
+    await manager.reloadAgentSession(created.id);
+    expect(resumeCalls).toBe(1);
+    await manager.closeAgent(created.id);
+    await storage.flush();
+    await expect(
+      restarted.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "bound-native-id", nativeHandle: "different-thread" },
+        { provider: "codex", cwd: directory },
+        created.id,
+      ),
+    ).rejects.toThrow("bound-native-handle-conflict");
+    expect(resumeCalls).toBe(1);
+    const loaded = await ensureAgentLoaded(created.id, {
+      agentManager: restarted,
+      agentStorage: new AgentStorage(join(directory, "agents"), logger),
+      logger,
+    });
+    expect(loaded.persistence?.sessionId).toBe("bound-native-id");
+    expect(loaded.workspaceId).toBe("original-workspace");
+    expect(resumeCalls).toBe(2);
+    const imported = await manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "import-selected",
+      cwd: directory,
+      workspaceId: "import-workspace",
+    });
+    ids.push(imported.id);
+    expect((await storage.get(imported.id))?.providerHistory).toMatchObject({
+      origin: "imported",
+      sessionId: "import-selected",
+      storage: selected,
+    });
+  } finally {
+    for (const id of ids) {
+      await manager.closeAgent(id).catch(() => undefined);
+      await restarted.closeAgent(id).catch(() => undefined);
+    }
+    await storage.flush();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("configured admission failure preserves hidden request and cannot silently adopt a legacy route", async () => {
+  const directory = await fs.mkdtemp(join(tmpdir(), "paseo-bound-failure-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  class GuardedClient extends TestAgentClient {
+    operations: string[] = [];
+    async resolveHistoryStorage(
+      input: import("./agent-sdk-types.js").ResolveHistoryStorageInput,
+    ): Promise<never> {
+      this.operations.push(input.operation);
+      throw new Error("existing-route-unverified");
+    }
+  }
+  const client = new GuardedClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: directory, model: "gpt-5.4" }, undefined, {
+        workspaceId: "kept-workspace",
+      }),
+    ).rejects.toThrow("existing-route-unverified");
+    expect(client.createdConfigs).toEqual([]);
+    const intent = (await storage.list({ includeHistoryIntents: true }))[0];
+    expect(intent.config?.model).toBe("gpt-5.4");
+    expect(intent.workspaceId).toBe("kept-workspace");
+    expect(intent.providerHistory?.storage).toEqual({ kind: "unknown" });
+    expect(await new AgentStorage(join(directory, "agents"), logger).list()).toEqual([]);
+    const legacy: StoredAgentRecord = {
+      ...intent,
+      id: "00000000-0000-4000-8000-000000000982",
+      providerHistory: undefined,
+      workspaceId: "legacy-workspace",
+    };
+    await storage.upsert(legacy);
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: directory }, legacy.id, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("existing-route-unverified");
+    expect(client.operations).toEqual(["create", "resume"]);
+    expect(await storage.get(legacy.id)).toEqual(legacy);
+    await expect(
+      manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "old-native-id" },
+        { provider: "codex", cwd: directory },
+        legacy.id,
+      ),
+    ).rejects.toThrow("existing-route-unverified");
+    expect(client.resumeOverrides).toEqual([]);
+  } finally {
+    await storage.flush();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("configured native archive/restore checks binding before any native request", async () => {
+  const directory = await fs.mkdtemp(join(tmpdir(), "paseo-bound-archive-"));
+  const storage = new AgentStorage(join(directory, "agents"), logger);
+  const selected = {
+    kind: "configured-home" as const,
+    provider: "codex" as const,
+    home: join(directory, "profile"),
+    sqliteHome: join(directory, "db"),
+  };
+  let conflict = false;
+  const requests: string[] = [];
+  class ArchiveClient extends TestAgentClient {
+    async resolveHistoryStorage(input: import("./agent-sdk-types.js").ResolveHistoryStorageInput) {
+      expect(input.previous?.storage).toEqual(selected);
+      if (conflict) throw new Error("fixture-storage-conflict");
+      return selected;
+    }
+    async archiveNativeSession(_handle: AgentPersistenceHandle, context?: AgentLaunchContext) {
+      expect(context?.historyStorage).toEqual(selected);
+      requests.push("archive");
+    }
+    async unarchiveNativeSession(_handle: AgentPersistenceHandle, context?: AgentLaunchContext) {
+      expect(context?.historyStorage).toEqual(selected);
+      requests.push("restore");
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ArchiveClient() },
+    registry: storage,
+    logger,
+  });
+  const id = "00000000-0000-4000-8000-000000000983";
+  try {
+    await storage.upsert({
+      id,
+      provider: "codex",
+      cwd: directory,
+      labels: {},
+      lastStatus: "closed",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      persistence: { provider: "codex", sessionId: "native-bound" },
+      providerHistory: {
+        origin: "imported",
+        registration: "registered",
+        sessionId: "native-bound",
+        storage: selected,
+      },
+    });
+    conflict = true;
+    await manager.archiveSnapshot(id, "2026-01-02T00:00:00Z"); // Existing archive remains best effort.
+    await expect(manager.unarchiveSnapshot(id)).rejects.toThrow("fixture-storage-conflict");
+    expect(requests).toEqual([]);
+    expect((await storage.get(id))?.archivedAt).toBeTruthy();
+    conflict = false;
+    await manager.unarchiveSnapshot(id);
+    await manager.archiveSnapshot(id, "2026-01-03T00:00:00Z");
+    expect(requests).toEqual(["restore", "archive"]);
+    const stored = await storage.get(id);
+    if (!stored) throw new Error("Expected archive fixture");
+    await storage.upsert({
+      ...stored,
+      persistence: {
+        provider: "codex",
+        sessionId: "native-bound",
+        nativeHandle: "different-thread",
+      },
+    });
+    await expect(manager.unarchiveSnapshot(id)).rejects.toThrow("bound-native-handle-conflict");
+    expect(requests).toEqual(["restore", "archive"]);
+  } finally {
+    await storage.flush();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });

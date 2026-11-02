@@ -3385,6 +3385,10 @@ export const es: TranslationResources = {
       addErrorTitle: "Unable to add provider",
       updateErrorTitle: "No se puede actualizar el proveedor",
       actions: {
+        copyMigrationPrompt: "Copiar prompt de migración",
+        migrationPrompt: "prompt de migración",
+        copying: "Copiando...",
+        copyFailed: "No se pudo copiar el prompt de migración",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

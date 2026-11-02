@@ -3370,6 +3370,10 @@ export const ptBR: TranslationResources = {
       addErrorTitle: "Não foi possível adicionar provedor",
       updateErrorTitle: "Não foi possível atualizar provedor",
       actions: {
+        copyMigrationPrompt: "Copiar prompt de migração",
+        migrationPrompt: "prompt de migração",
+        copying: "Copiando...",
+        copyFailed: "Não foi possível copiar o prompt de migração",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

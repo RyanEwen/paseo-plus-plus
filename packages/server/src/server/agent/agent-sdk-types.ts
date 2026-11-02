@@ -1,3 +1,9 @@
+import type { StoredAgentRecord } from "./agent-storage.js";
+import type {
+  ConfiguredClaudeHistoryStorage,
+  ProviderHistoryBinding,
+  ProviderHistoryStorage,
+} from "./provider-history/binding.js";
 import type {
   AgentFeature,
   AgentFeatureSelect,
@@ -618,9 +624,46 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
+export interface ClaudeRewindTransition {
+  previous: AgentPersistenceHandle;
+  storage: ConfiguredClaudeHistoryStorage;
+  /** Omitted only when staging a fresh rewind, before a provider has allocated a native ID. */
+  next?: AgentPersistenceHandle;
+  /** Local assignment only: called after durable commit, without IO, events or external hooks. */
+  adopt(fresh?: ClaudeFreshRewindContext): void;
+}
+export type CommitClaudeRewind = (transition: ClaudeRewindTransition) => Promise<void>;
+export interface ClaudeInitialHistoryContext {
+  readonly owner: object;
+  admit(): Promise<void>;
+  readonly admission?: StoredAgentRecord;
+  release(): void;
+  commit(input: {
+    storage: ConfiguredClaudeHistoryStorage;
+    next: AgentPersistenceHandle;
+    adopt(): void;
+  }): Promise<void>;
+}
+export interface ClaudeFreshRewindContext {
+  readonly owner: object;
+  admit(): Promise<void>;
+  readonly admission?: StoredAgentRecord;
+  release(): void;
+  operationId: string;
+  commit: CommitClaudeRewind;
+}
+export interface AgentRewindInput {
+  messageId: string;
+  commitClaudeRewind?: CommitClaudeRewind;
+}
+
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
+  /** Canonical server-only storage selection, reserved before provider startup. */
+  historyStorage?: ProviderHistoryStorage;
+  claudeFreshRewind?: ClaudeFreshRewindContext;
+  claudeInitialHistory?: ClaudeInitialHistoryContext;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
@@ -668,6 +711,7 @@ export interface AgentUsageSession {
 }
 
 export interface AgentSession {
+  readonly historyStorage?: ProviderHistoryStorage;
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -703,9 +747,11 @@ export interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
-  revertConversation?(input: { messageId: string }): Promise<void>;
-  revertFiles?(input: { messageId: string }): Promise<void>;
-  revertBoth?(input: { messageId: string }): Promise<void>;
+  readonly claudeFreshRewind?: ClaudeFreshRewindContext;
+  readonly claudeInitialHistory?: ClaudeInitialHistoryContext;
+  revertConversation?(input: AgentRewindInput): Promise<void>;
+  revertFiles?(input: AgentRewindInput): Promise<void>;
+  revertBoth?(input: AgentRewindInput): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
@@ -749,9 +795,20 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ResolveHistoryStorageInput {
+  provider: AgentProvider;
+  config: AgentSessionConfig;
+  env?: Record<string, string>;
+  previous?: ProviderHistoryBinding;
+  operation: "create" | "import" | "resume" | "reload";
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  resolveHistoryStorage?(
+    input: ResolveHistoryStorageInput,
+  ): Promise<ProviderHistoryStorage | undefined>;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -803,12 +860,18 @@ export interface AgentClient {
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
-  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  archiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
-  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  unarchiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

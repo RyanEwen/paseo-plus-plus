@@ -3366,6 +3366,10 @@ export const ru: TranslationResources = {
       addErrorTitle: "Не удалось добавить провайдера",
       updateErrorTitle: "Не удалось обновить провайдера",
       actions: {
+        copyMigrationPrompt: "Скопировать запрос миграции",
+        migrationPrompt: "запрос миграции",
+        copying: "Копирование...",
+        copyFailed: "Не удалось скопировать запрос миграции",
         menu: "Действия с {{name}}",
         remove: "Удалить провайдера",
         removing: "Удаление...",

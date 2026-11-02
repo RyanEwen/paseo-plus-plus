@@ -3,6 +3,11 @@ import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types
 
 import type {
   AgentClient,
+  AgentLaunchContext,
+  AgentRewindInput,
+  ClaudeFreshRewindContext,
+  ClaudeInitialHistoryContext,
+  CommitClaudeRewind,
   AgentCreateConfigUnattendedInput,
   AgentMode,
   AgentModelDefinition,
@@ -32,7 +37,9 @@ import type {
   ProviderOverride,
   ProviderProfileModel,
   ProviderRuntimeSettings,
+  ProviderHistoryPolicy,
 } from "./provider-launch-config.js";
+import { HistoryStorageConflictError } from "./provider-history/binding.js";
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
@@ -118,6 +125,8 @@ interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
   "workspaceGitService" | "managedProcesses" | "ompRuntime"
 > {
+  historyPolicy?: ProviderHistoryPolicy;
+  providerOptions?: ProviderOptions;
   openCodeBridge?: OpenCodeBridge;
   customProvider?: {
     id: string;
@@ -141,6 +150,7 @@ interface ResolvedProvider {
   enabled: boolean;
   derivedFromProviderId: string | null;
   providerOptions?: ProviderOptions;
+  historyPolicy?: ProviderHistoryPolicy;
   createBaseClient: (logger: Logger) => AgentClient;
   contract: ProviderContract;
 }
@@ -187,15 +197,18 @@ const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
 };
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
-  claude: (logger, runtimeSettings) =>
+  claude: (logger, runtimeSettings, options) =>
     new ClaudeAgentClient({
       logger,
       runtimeSettings,
+      historyPolicy: options?.historyPolicy,
     }),
   codex: (logger, runtimeSettings, options) =>
     new CodexAppServerAgentClient(logger, runtimeSettings, {
       workspaceGitService: options?.workspaceGitService,
       customProvider: options?.customProvider,
+      historyPolicy: options?.historyPolicy,
+      configuredProviderOptions: options?.providerOptions,
     }),
   copilot: (logger, runtimeSettings) =>
     new CopilotACPAgentClient({
@@ -432,6 +445,66 @@ function mergeModelAdditions(
   );
 }
 
+function mapClaudeRewindCommit(
+  provider: AgentProvider,
+  commit: CommitClaudeRewind,
+): CommitClaudeRewind {
+  return (transition) =>
+    commit({
+      ...transition,
+      previous: mapPersistenceHandle(provider, transition.previous)!,
+      next: transition.next ? mapPersistenceHandle(provider, transition.next)! : undefined,
+      adopt: (fresh) =>
+        transition.adopt(fresh ? mapClaudeFreshContext(provider, fresh) : undefined),
+    });
+}
+function mapClaudeFreshContext(
+  provider: AgentProvider,
+  context: ClaudeFreshRewindContext,
+): ClaudeFreshRewindContext {
+  return {
+    ...context,
+    get admission() {
+      return context.admission;
+    },
+    commit: mapClaudeRewindCommit(provider, context.commit),
+  };
+}
+function mapInitialHistoryContext(
+  provider: AgentProvider,
+  context: ClaudeInitialHistoryContext,
+): ClaudeInitialHistoryContext {
+  return {
+    ...context,
+    get admission() {
+      return context.admission;
+    },
+    commit: (input) =>
+      context.commit({ ...input, next: mapPersistenceHandle(provider, input.next)! }),
+  };
+}
+function mapHistoryLaunchContext(
+  provider: AgentProvider,
+  context: AgentLaunchContext | undefined,
+): AgentLaunchContext | undefined {
+  return context && (context.claudeFreshRewind || context.claudeInitialHistory)
+    ? {
+        ...context,
+        claudeFreshRewind: context.claudeFreshRewind
+          ? mapClaudeFreshContext(provider, context.claudeFreshRewind)
+          : undefined,
+        claudeInitialHistory: context.claudeInitialHistory
+          ? mapInitialHistoryContext(provider, context.claudeInitialHistory)
+          : undefined,
+      }
+    : context;
+}
+function mapRewindInput(provider: AgentProvider, input: AgentRewindInput): AgentRewindInput {
+  return input.commitClaudeRewind
+    ? { ...input, commitClaudeRewind: mapClaudeRewindCommit(provider, input.commitClaudeRewind) }
+    : input;
+}
+
 // Every session member must cross this boundary, including optional capabilities.
 type ForwardedAgentSession = { [K in keyof Required<AgentSession>]: AgentSession[K] };
 
@@ -443,6 +516,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     },
     get capabilities() {
       return inner.capabilities;
+    },
+    get historyStorage() {
+      return inner.historyStorage;
     },
     get initialTimeline() {
       return inner.initialTimeline;
@@ -473,9 +549,19 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
     setFeature: inner.setFeature?.bind(inner),
-    revertConversation: inner.revertConversation?.bind(inner),
+    get claudeInitialHistory() {
+      return inner.claudeInitialHistory;
+    },
+    get claudeFreshRewind() {
+      return inner.claudeFreshRewind;
+    },
+    revertConversation: inner.revertConversation
+      ? (input) => inner.revertConversation!(mapRewindInput(provider, input))
+      : undefined,
     revertFiles: inner.revertFiles?.bind(inner),
-    revertBoth: inner.revertBoth?.bind(inner),
+    revertBoth: inner.revertBoth
+      ? (input) => inner.revertBoth!(mapRewindInput(provider, input))
+      : undefined,
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
   } satisfies ForwardedAgentSession;
 }
@@ -487,6 +573,7 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
   providerOptions: ProviderOptions | undefined,
+  historyPolicy: ProviderHistoryPolicy | undefined,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -501,6 +588,24 @@ function wrapClientProvider(
       return inner.capabilities;
     },
     shutdown: inner.shutdown?.bind(inner),
+    resolveHistoryStorage: async (input) => {
+      if (!inner.resolveHistoryStorage) {
+        if (
+          historyPolicy?.mode === "configured" ||
+          input.previous?.storage.kind === "configured-home"
+        )
+          throw new HistoryStorageConflictError("unsupported-provider");
+        return undefined;
+      }
+      return inner.resolveHistoryStorage({
+        ...input,
+        config: {
+          ...input.config,
+          provider: inner.provider,
+          providerOptions: mergeProviderOptions(providerOptions, input.config.providerOptions),
+        },
+      });
+    },
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
         provider,
@@ -510,7 +615,7 @@ function wrapClientProvider(
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
           },
-          launchContext,
+          mapHistoryLaunchContext(provider, launchContext),
           { ...options, configuredModelIds },
         ),
       ),
@@ -527,7 +632,7 @@ function wrapClientProvider(
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
           },
-          launchContext,
+          mapHistoryLaunchContext(provider, launchContext),
           { ...options, configuredModelIds },
         ),
       ),
@@ -601,10 +706,12 @@ function wrapClientProvider(
         }
       : undefined,
     archiveNativeSession: archiveNativeSession
-      ? async (handle) => await archiveNativeSession({ ...handle, provider: inner.provider })
+      ? async (handle, context) =>
+          await archiveNativeSession({ ...handle, provider: inner.provider }, context)
       : undefined,
     unarchiveNativeSession: unarchiveNativeSession
-      ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
+      ? async (handle, context) =>
+          await unarchiveNativeSession({ ...handle, provider: inner.provider }, context)
       : undefined,
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
@@ -726,6 +833,7 @@ function createResolvedProviderClient(
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.historyPolicy,
   );
 }
 
@@ -749,7 +857,12 @@ function resolveRegisteredProvider(input: RegisteredProvider): ResolvedProvider 
     enabled: override?.enabled ?? definition.enabledByDefault ?? true,
     derivedFromProviderId: null,
     providerOptions: configuredProviderOptions(override),
-    createBaseClient: (logger) => input.createClient(logger, runtimeSettings),
+    historyPolicy: override?.history,
+    createBaseClient: (logger) =>
+      input.createClient(logger, runtimeSettings, {
+        historyPolicy: override?.history,
+        providerOptions: configuredProviderOptions(override),
+      }),
     contract,
   };
 }
@@ -778,8 +891,9 @@ function buildResolvedBuiltinProviders(
         definition,
         override,
         runtimeSettings: runtimeSettings?.[definition.id],
-        createClient: (logger, settings) =>
+        createClient: (logger, settings, clientOptions) =>
           factory(logger, settings, {
+            ...clientOptions,
             workspaceGitService: options.workspaceGitService,
             managedProcesses: options.managedProcesses,
             ompRuntime: options.ompRuntime,
@@ -834,6 +948,7 @@ function addDerivedProviders(
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         providerOptions: configuredProviderOptions(override),
+        historyPolicy: override.history,
         createBaseClient: (logger) => {
           const acpOptions = {
             logger,
@@ -889,8 +1004,11 @@ function addDerivedProviders(
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
       providerOptions,
+      historyPolicy: override.history ?? baseProvider.historyPolicy,
       createBaseClient: (logger) =>
         baseFactory(logger, mergedRuntimeSettings, {
+          historyPolicy: override.history ?? baseProvider.historyPolicy,
+          providerOptions,
           managedProcesses: options.managedProcesses,
           openCodeBridge: options.openCodeBridge,
           customProvider: {
@@ -1017,4 +1135,26 @@ function configuredProviderOptions(
   // COMPAT(providerParams): added in v0.10.0, remove after 2027-03-30 once configs use options.
   // options wins as a whole record when both spellings are supplied.
   return override?.options ?? override?.params;
+}
+
+/** Config-only selection for local history preview; never constructs clients or plugin runtimes. */
+export function resolveConfiguredCodexHistoryProfile(
+  provider: string,
+  overrides: Record<string, ProviderOverride>,
+): {
+  runtimeSettings?: ProviderRuntimeSettings;
+  providerOptions?: ProviderOptions;
+  historyPolicy?: ProviderHistoryPolicy;
+} {
+  const selected = overrides[provider];
+  if (!selected || (provider !== "codex" && selected.extends !== "codex"))
+    throw new HistoryStorageConflictError("destination-must-be-configured-codex-profile");
+  if (selected.enabled === false)
+    throw new HistoryStorageConflictError("destination-provider-disabled");
+  const base = provider === "codex" ? undefined : overrides.codex;
+  return {
+    runtimeSettings: mergeRuntimeSettings(toRuntimeSettings(base), toRuntimeSettings(selected)),
+    providerOptions: configuredProviderOptions(selected) ?? configuredProviderOptions(base),
+    historyPolicy: selected.history ?? base?.history,
+  };
 }

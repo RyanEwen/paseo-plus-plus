@@ -3433,6 +3433,10 @@ export const en = {
       updateErrorTitle: "Unable to update provider",
       actions: {
         menu: "{{name}} actions",
+        copyMigrationPrompt: "Copy migration prompt",
+        migrationPrompt: "migration prompt",
+        copying: "Copying...",
+        copyFailed: "Couldn't copy migration prompt",
         remove: "Remove provider",
         removing: "Removing...",
       },

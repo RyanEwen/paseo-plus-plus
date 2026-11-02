@@ -3321,6 +3321,10 @@ export const ko: TranslationResources = {
       addErrorTitle: "프로바이더를 추가할 수 없습니다",
       updateErrorTitle: "프로바이더를 업데이트할 수 없습니다",
       actions: {
+        copyMigrationPrompt: "마이그레이션 프롬프트 복사",
+        migrationPrompt: "마이그레이션 프롬프트",
+        copying: "복사 중...",
+        copyFailed: "마이그레이션 프롬프트를 복사하지 못했습니다",
         menu: "{{name}} 작업",
         remove: "프로바이더 제거",
         removing: "제거 중...",

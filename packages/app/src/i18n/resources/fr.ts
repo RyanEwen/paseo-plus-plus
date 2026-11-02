@@ -3396,6 +3396,10 @@ export const fr: TranslationResources = {
       addErrorTitle: "Impossible d’ajouter le fournisseur",
       updateErrorTitle: "Impossible de mettre à jour le fournisseur",
       actions: {
+        copyMigrationPrompt: "Copier le prompt de migration",
+        migrationPrompt: "prompt de migration",
+        copying: "Copie...",
+        copyFailed: "Impossible de copier le prompt de migration",
         menu: "Actions de {{name}}",
         remove: "Supprimer le fournisseur",
         removing: "Suppression…",

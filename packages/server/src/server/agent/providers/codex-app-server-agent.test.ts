@@ -7167,3 +7167,59 @@ describe("Codex interactive resume startup", () => {
     },
   );
 });
+
+test("history storage reports custom home and SQLite roots without claiming isolation", () => {
+  const cwd = path.join(tmpdir(), "paseo-storage-project");
+  const home = path.join(tmpdir(), "paseo-custom-codex");
+  const sqliteHome = path.join(tmpdir(), "paseo-custom-sqlite");
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd },
+    null,
+    createTestLogger(),
+    async () => {
+      throw new Error("This storage inspection must not launch Codex");
+    },
+    { codexHome: home, environment: { CODEX_SQLITE_HOME: sqliteHome } },
+  );
+  expect(session.historyStorage).toEqual({
+    kind: "unverified",
+    provider: "codex",
+    home,
+    sqliteHome,
+  });
+});
+
+test("configured startup SQLite option never enters per-thread config after custom merge", async () => {
+  const customConfig = {
+    model_provider: "fixture",
+    model_providers: {},
+    sqlite_home: "/obsolete-custom-sqlite",
+  };
+  const session = new CodexAppServerAgentSession(
+    createConfig({
+      thinkingOptionId: "medium",
+      providerOptions: { sqlite_home: "/startup-only", web_search: "disabled" },
+    }),
+    null,
+    createTestLogger(),
+    () => {
+      throw new Error("fixture must not spawn");
+    },
+    { customCodexConfig: customConfig },
+  ) as CodexTestSession;
+  session.connectionState = "connected";
+  session.currentThreadId = null;
+  session.activeForegroundTurnId = null;
+  const requests: Array<{ method: string; params: unknown }> = [];
+  session.client = {
+    request: vi.fn(async (method: string, params: unknown) => {
+      requests.push({ method, params });
+      return method === "thread/start" ? { thread: { id: "fixture-thread" } } : {};
+    }),
+  };
+  await session.startTurn("fixture input");
+  expect(requests.find((request) => request.method === "thread/start")?.params).toMatchObject({
+    config: { model_provider: "fixture", web_search: "disabled" },
+  });
+  expect(JSON.stringify(requests)).not.toContain("sqlite_home");
+});

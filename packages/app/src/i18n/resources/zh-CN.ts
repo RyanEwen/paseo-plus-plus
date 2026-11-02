@@ -3259,6 +3259,10 @@ export const zhCN: TranslationResources = {
       addErrorTitle: "无法添加 Provider",
       updateErrorTitle: "无法更新 Provider",
       actions: {
+        copyMigrationPrompt: "复制迁移提示词",
+        migrationPrompt: "迁移提示词",
+        copying: "正在复制...",
+        copyFailed: "无法复制迁移提示词",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

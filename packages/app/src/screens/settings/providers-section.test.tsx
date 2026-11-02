@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
+const clipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
+vi.mock("expo-clipboard", () => ({ setStringAsync: clipboardMock }));
 
 const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
   () => ({
@@ -123,6 +125,10 @@ vi.mock("react-i18next", () => ({
           "settings.providers.actions.menu": "{{name}} actions",
           "settings.providers.actions.remove": "Remove provider",
           "settings.providers.actions.removing": "Removing...",
+          "settings.providers.actions.copyMigrationPrompt": "Copy migration prompt",
+          "settings.providers.actions.migrationPrompt": "migration prompt",
+          "settings.providers.actions.copying": "Copying...",
+          "settings.providers.actions.copyFailed": "Couldn't copy migration prompt",
           "settings.providers.remove.confirmTitle": "Remove {{name}}?",
           "settings.providers.remove.confirmMessage":
             "This deletes the provider entry from config.json. It cannot be undone.",
@@ -282,7 +288,7 @@ vi.mock("@/utils/confirm-dialog", () => ({
 
 import { ProvidersSection } from "./providers-section";
 
-function unexpectedToast(): never {
+function unexpectedToast(): void {
   throw new Error("Provider row interactions should not display a toast");
 }
 
@@ -357,6 +363,8 @@ describe("ProvidersSection", () => {
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
+    clipboardMock.mockReset();
+    clipboardMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -369,6 +377,7 @@ describe("ProvidersSection", () => {
     container?.remove();
     container = null;
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   function render(): void {
@@ -388,6 +397,83 @@ describe("ProvidersSection", () => {
     if (!row) throw new Error(`Expected row with aria-label "${accessibilityLabel}"`);
     return row;
   }
+
+  it("copies generic migration guidance for a built-in provider without executing or inspecting configuration", async () => {
+    const copied = vi.spyOn(toastApi, "copied").mockImplementation(() => {});
+    snapshotState.entries = [{ ...claudeEntry, label: "private-label" }];
+    configState.config = makeConfig();
+    Object.defineProperty(configState.config, "privateAuth", {
+      get: () => {
+        throw new Error("must not read auth");
+      },
+    });
+    render();
+    const button = container!.querySelector<HTMLButtonElement>(
+      '[data-testid="provider-copy-migration-prompt-claude"]',
+    )!;
+    expect(button.textContent).toBe("Copy migration prompt");
+    await act(async () => button.click());
+    expect(clipboardMock).toHaveBeenCalledTimes(1);
+    const prompt = clipboardMock.mock.calls[0][0];
+    expect(prompt).toContain('"provider": "claude"');
+    expect(prompt).toContain('"inventoryPerformed": false');
+    expect(prompt).toContain('"source": null');
+    expect(prompt).toContain('"destination": null');
+    expect(prompt).not.toContain("private-label");
+    expect(copied).toHaveBeenCalledWith("migration prompt");
+    expect(patchConfigMock).not.toHaveBeenCalled();
+    expect(openProviderSettingsMock).not.toHaveBeenCalled();
+    expect(container!.querySelector('[data-testid="provider-remove-claude"]')).toBeNull();
+  });
+
+  it("shows pending copy and success only after clipboard resolves", async () => {
+    const copied = vi.spyOn(toastApi, "copied").mockImplementation(() => {});
+    let finish!: (value: boolean) => void;
+    clipboardMock.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    snapshotState.entries = [disabledCodexEntry];
+    configState.config = makeConfig();
+    render();
+    const button = container!.querySelector<HTMLButtonElement>(
+      '[data-testid="provider-copy-migration-prompt-codex"]',
+    )!;
+    act(() => button.click());
+    expect(button.textContent).toBe("Copying...");
+    expect(button.disabled).toBe(true);
+    expect(copied).not.toHaveBeenCalled();
+    await act(async () => finish(true));
+    expect(button.disabled).toBe(false);
+    expect(copied).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["rejection", "false"])(
+    "reports clipboard %s and permits retry without provider actions",
+    async (failure) => {
+      const error = vi.spyOn(toastApi, "error").mockImplementation(() => {});
+      const copied = vi.spyOn(toastApi, "copied").mockImplementation(() => {});
+      if (failure === "rejection")
+        clipboardMock.mockRejectedValueOnce(new Error("private-platform-error"));
+      else clipboardMock.mockResolvedValueOnce(false);
+      snapshotState.entries = [claudeEntry];
+      configState.config = makeConfig();
+      render();
+      const button = container!.querySelector<HTMLButtonElement>(
+        '[data-testid="provider-copy-migration-prompt-claude"]',
+      )!;
+      await act(async () => button.click());
+      expect(error).toHaveBeenCalledWith("Couldn't copy migration prompt");
+      expect(copied).not.toHaveBeenCalled();
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      expect(copied).toHaveBeenCalledTimes(1);
+      expect(patchConfigMock).not.toHaveBeenCalled();
+      expect(openProviderSettingsMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("renders the disabled provider with its server-provided label in snapshot order", () => {
     snapshotState.entries = [claudeEntry, disabledCodexEntry];

@@ -3337,6 +3337,10 @@ export const ar: TranslationResources = {
       addErrorTitle: "Unable to add provider",
       updateErrorTitle: "غير قادر على تحديث الموفر",
       actions: {
+        copyMigrationPrompt: "نسخ تعليمات الترحيل",
+        migrationPrompt: "تعليمات الترحيل",
+        copying: "جارٍ النسخ...",
+        copyFailed: "تعذّر نسخ تعليمات الترحيل",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

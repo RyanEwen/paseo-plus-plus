@@ -68,6 +68,7 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Agent-aware attention](docs/fork-features/agent-aware-attention.md)
 
 - [Prompt and history recovery](docs/fork-features/steadier-reading.md)
+- [Configured provider profiles, migration guidance and history preview](docs/fork-features/provider-history-preview.md)
 - [Mobile navigation](docs/fork-features/mobile-navigation.md)
 
 - [Workspace pickers, status and child workspaces](docs/fork-features/workspace-pickers-and-status.md)
