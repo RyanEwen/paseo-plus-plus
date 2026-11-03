@@ -1,15 +1,16 @@
 import pino from "pino";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+import { promises as fs } from "node:fs";
 import type {
   AgentSnapshotPayload,
   CreationSnapshot,
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { CreationService, type CreationInput } from "./index.js";
+import { CreationService, type CreationInput, type CreationAgentAttempt } from "./index.js";
 
 const silentLogger = pino({ level: "silent" });
 const directories: string[] = [];
@@ -120,14 +121,19 @@ test("workspace readiness is observable before provider startup and duplicate re
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
 });
 
-test("a failed agent startup retries only that stage with the reserved IDs", async () => {
+test("a confirmed pre-dispatch failure retries only that stage with the reserved IDs", async () => {
   const f = await fixture();
   let attempts = 0;
-  f.input.createAgent = async (id, readyWorkspace, onReady) => {
+  f.input.createAgent = async (id, readyWorkspace, onReady, attempt) => {
     attempts++;
     expect(id).toBe(agent.id);
     expect(readyWorkspace).toEqual(workspace);
-    if (attempts === 1) throw new Error("provider unavailable");
+    expect(attempt.retryHistoryIntent).toBe(attempts === 2);
+    attempt.acknowledgeManager(id);
+    attempt.certifyHistoryIntentReservation(id, workspace.id);
+    if (attempts === 1) throw new Error("session-open hook failed before dispatch");
+    attempt.consumeHistoryRetry(id);
+    attempt.markProviderDispatch(id);
     await onReady(agent);
     return { agent, initialPromptStarted: true };
   };
@@ -321,4 +327,247 @@ test("observer failures are logged without failing creation", async () => {
       err: expect.objectContaining({ message: "delivery failed" }),
     }),
   );
+});
+
+async function readReceipt(directory: string) {
+  const files = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+  expect(files).toHaveLength(1);
+  const file = join(directory, files[0]);
+  return { file, record: JSON.parse(await readFile(file, "utf8")) };
+}
+
+test("old failed agent receipts cannot launder missing dispatch proof through a new callback", async () => {
+  const f = await fixture();
+  f.input.createAgent = async () => {
+    throw new Error("original failure evidence");
+  };
+  await f.service.create(f.input);
+  const { file, record } = await readReceipt(f.directory);
+  record.snapshot.outcomeUnknown = false;
+  record.inFlight = null;
+  delete record.preDispatchAgentFailure;
+  await writeFile(file, JSON.stringify(record));
+  let callbacks = 0;
+  f.input.createAgent = async () => {
+    callbacks++;
+    throw new Error("must not enter manager");
+  };
+  for (let restart = 0; restart < 2; restart++) {
+    expect(await new CreationService(f.directory, silentLogger).create(f.input)).toMatchObject({
+      phase: "failed",
+      failedStage: "agent",
+      outcomeUnknown: true,
+      error: "original failure evidence",
+      workspace,
+      workspaceId: workspace.id,
+      agentId: agent.id,
+    });
+  }
+  expect(callbacks).toBe(0);
+  const durable = (await readReceipt(f.directory)).record;
+  expect(durable.preDispatchAgentFailure).toBeUndefined();
+  expect(durable.snapshot.outcomeUnknown).toBe(true);
+  expect(f.calls).toEqual(["workspace"]);
+});
+
+test("known-unsent workspace failures remain retryable without agent proof", async () => {
+  const f = await fixture();
+  let provisions = 0;
+  f.input.provision = async () => {
+    if (++provisions === 1)
+      throw Object.assign(new Error("missing source"), { code: "directory_not_found" });
+    return { workspace };
+  };
+  expect(await f.service.create(f.input)).toMatchObject({
+    failedStage: "workspace",
+    outcomeUnknown: false,
+  });
+  f.provider.resolve();
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toMatchObject({
+    phase: "completed",
+    workspace,
+    agent,
+  });
+  expect(provisions).toBe(2);
+});
+
+test.each(["dropped", "before-ack"])(
+  "%s manager context never certifies pre-dispatch safety",
+  async (mode) => {
+    const f = await fixture();
+    let callbacks = 0;
+    f.input.createAgent = async (_id, _workspace, _onReady, attempt) => {
+      callbacks++;
+      if (mode === "before-ack")
+        expect(() => attempt.markProviderDispatch(agent.id)).toThrow("not admitted");
+      throw new Error("unclassified callback failure");
+    };
+    const result = await f.service.create(f.input);
+    expect(result).toMatchObject({ failedStage: "agent", outcomeUnknown: true });
+    expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
+    expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
+    expect(callbacks).toBe(1);
+  },
+);
+
+test("safe restart retry joins once and dispatched uncertainty never grants a third callback", async () => {
+  const f = await fixture();
+  let callbacks = 0;
+  let firstAttempt: CreationAgentAttempt | undefined;
+  const entered = deferred();
+  const release = deferred();
+  f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
+    callbacks++;
+    expect(() => attempt.acknowledgeManager("wrong-id")).toThrow("another agent ID");
+    attempt.acknowledgeManager(id);
+    expect(() => attempt.certifyHistoryIntentReservation("wrong-id", workspace.id)).toThrow(
+      "another agent ID",
+    );
+    expect(() => attempt.certifyHistoryIntentReservation(id, "other-workspace")).toThrow(
+      "not admitted",
+    );
+    attempt.certifyHistoryIntentReservation(id, workspace.id);
+    expect(() => attempt.certifyHistoryIntentReservation(id, workspace.id)).toThrow("not admitted");
+    expect(() => attempt.acknowledgeManager(id)).toThrow("already entered");
+    if (callbacks === 1) {
+      firstAttempt = attempt;
+      expect(() => attempt.consumeHistoryRetry(id)).toThrow("not admitted");
+      throw new Error("safe hook failure");
+    }
+    expect(attempt.retryHistoryIntent).toBe(true);
+    expect(() => attempt.consumeHistoryRetry("wrong-id")).toThrow("another agent ID");
+    expect(() => attempt.markProviderDispatch("wrong-id")).toThrow("another agent ID");
+    attempt.consumeHistoryRetry(id);
+    expect(() => attempt.consumeHistoryRetry(id)).toThrow("not admitted");
+    entered.resolve();
+    await release.promise;
+    attempt.markProviderDispatch(id);
+    expect(() => attempt.markProviderDispatch(id)).toThrow("not admitted");
+    throw new Error("SDK may have allocated a native resource");
+  };
+  await f.service.create(f.input);
+  expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBe(true);
+  for (const act of [
+    () => firstAttempt!.certifyHistoryIntentReservation(agent.id, workspace.id),
+    () => firstAttempt!.resolveRetryWorkspaceId(agent.id),
+    () => firstAttempt!.acknowledgeManager(agent.id),
+    () => firstAttempt!.markProviderDispatch(agent.id),
+    () => firstAttempt!.consumeHistoryRetry(agent.id),
+  ])
+    expect(act).toThrow("expired");
+  const restarted = new CreationService(f.directory, silentLogger);
+  const retry = restarted.create(f.input);
+  try {
+    await entered.promise;
+    const durable = (await readReceipt(f.directory)).record;
+    expect(durable.inFlight).toBe("agent");
+    expect(durable.preDispatchAgentFailure).toBeUndefined();
+    const joined = restarted.create(f.input);
+    release.resolve();
+    const result = await retry;
+    expect(await joined).toEqual(result);
+    expect(result).toMatchObject({ failedStage: "agent", outcomeUnknown: true });
+    expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
+    expect(callbacks).toBe(2);
+    expect(f.calls).toEqual(["workspace"]);
+    expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
+  } finally {
+    release.resolve();
+    await retry;
+  }
+});
+
+test("stale safe marker with in-flight work becomes unknown before callback admission", async () => {
+  const f = await fixture();
+  f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
+    attempt.acknowledgeManager(id);
+    attempt.certifyHistoryIntentReservation(id, workspace.id);
+    throw new Error("safe hook");
+  };
+  await f.service.create(f.input);
+  const { file, record } = await readReceipt(f.directory);
+  record.inFlight = "agent";
+  await writeFile(file, JSON.stringify(record));
+  let calls = 0;
+  f.input.createAgent = async () => {
+    calls++;
+    throw new Error("not allowed");
+  };
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toMatchObject({
+    failedStage: "agent",
+    outcomeUnknown: true,
+  });
+  expect(calls).toBe(0);
+  expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
+});
+
+test("safe retry rechecks registered resources and exact request config and env", async () => {
+  const f = await fixture();
+  let calls = 0;
+  f.input.request = { config: { model: "model-a" }, env: { ROUTE: "one" } };
+  f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
+    calls++;
+    attempt.acknowledgeManager(id);
+    attempt.certifyHistoryIntentReservation(id, workspace.id);
+    throw new Error("safe hook");
+  };
+  await f.service.create(f.input);
+  const before = await readReceipt(f.directory);
+  for (const request of [
+    { config: { model: "model-b" }, env: { ROUTE: "one" } },
+    { config: { model: "model-a" }, env: { ROUTE: "two" } },
+  ])
+    await expect(f.service.create({ ...f.input, request })).rejects.toThrow("request_key_conflict");
+  f.input.exists = async (kind) => kind === "agent";
+  await expect(f.service.create(f.input)).rejects.toThrow("agent_id_conflict");
+  expect(calls).toBe(1);
+  expect((await readReceipt(f.directory)).record).toEqual(before.record);
+});
+
+test("failed safe-receipt publication cannot grant retry authority after restart", async () => {
+  const f = await fixture();
+  let callbacks = 0;
+  const rename = fs.rename;
+  let failSafeWrite = false;
+  const spy = vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
+    if (failSafeWrite) {
+      failSafeWrite = false;
+      throw new Error("safe receipt write refused");
+    }
+    return rename(...args);
+  });
+  try {
+    f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
+      callbacks++;
+      attempt.acknowledgeManager(id);
+      attempt.certifyHistoryIntentReservation(id, workspace.id);
+      failSafeWrite = true;
+      throw new Error("safe hook failure");
+    };
+    await expect(f.service.create(f.input)).rejects.toThrow("safe receipt write refused");
+    const durable = (await readReceipt(f.directory)).record;
+    expect(durable.inFlight).toBe("agent");
+    expect(durable.preDispatchAgentFailure).toBeUndefined();
+    const result = await new CreationService(f.directory, silentLogger).create(f.input);
+    expect(result).toMatchObject({ failedStage: "agent", outcomeUnknown: true });
+    expect(callbacks).toBe(1);
+    expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("manager entry without a successful exclusive reservation cannot certify another intention", async () => {
+  const f = await fixture();
+  let calls = 0;
+  f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
+    calls++;
+    attempt.acknowledgeManager(id);
+    throw new Error("a hook or reservation failed before ownership");
+  };
+  const result = await f.service.create(f.input);
+  expect(result).toMatchObject({ outcomeUnknown: true, failedStage: "agent" });
+  expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
+  expect(calls).toBe(1);
 });
