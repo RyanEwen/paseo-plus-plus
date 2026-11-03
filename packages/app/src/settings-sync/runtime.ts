@@ -1,4 +1,10 @@
 import {
+  preserveDeviceAppSettings,
+  applyDeviceAppSettingsUpdate,
+  type DeviceAppSettingsUpdate,
+} from "./device-settings";
+import { exportSharedAppSettings } from "./scope";
+import {
   selectChatPreferencesSupport,
   exportSupportedChatPreferences,
 } from "@/appearance/chat-preferences-support";
@@ -114,7 +120,7 @@ export async function getDeviceSettingsValues(
   );
   return {
     app: exportSupportedAccentSettings(
-      exportSupportedChatPreferences(app, chatSupported, purpose),
+      exportSupportedChatPreferences(exportSharedAppSettings(app), chatSupported, purpose),
       supported,
     ),
     sidebar,
@@ -129,7 +135,7 @@ async function applyValues(values: Record<string, unknown>): Promise<void> {
   // Historical hosts may still store serverId. It remains untouched on the host and device.
   await saveAppSettings({
     queryClient,
-    updates: (current) => ({ ...app, usage: { ...app.usage, serverId: current.usage.serverId } }),
+    updates: (current) => preserveDeviceAppSettings(app, current),
     deps,
   });
   const sidebar = normalizeRemoteSidebarModes(values.sidebar, app);
@@ -174,6 +180,18 @@ export async function saveLocalUsageHost(
   await saveAppSettings({
     queryClient: client,
     updates: (current) => ({ usage: { ...current.usage, serverId } }),
+    deps,
+  });
+}
+
+/** Persist local leaves inside the storage queue to retain newer shared siblings. */
+export async function saveLocalDeviceSettings(
+  client: QueryClient,
+  updates: DeviceAppSettingsUpdate,
+): Promise<void> {
+  await saveAppSettings({
+    queryClient: client,
+    updates: (current) => applyDeviceAppSettingsUpdate(updates, current),
     deps,
   });
 }

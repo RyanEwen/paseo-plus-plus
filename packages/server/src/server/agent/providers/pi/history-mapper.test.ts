@@ -1,3 +1,4 @@
+import { VALID_PNG_BASE64 } from "../../../../test-utils/provider-image-fixtures.js";
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -242,7 +243,7 @@ describe("Pi tool-result image replay", () => {
         toolName: "read",
         content: [
           { type: "text", text: "Read image file [image/png]" },
-          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          { type: "image", data: VALID_PNG_BASE64, mimeType: "image/png" },
         ],
       },
     ]);
@@ -262,18 +263,18 @@ describe("Pi tool-result image replay", () => {
       throw new Error("Missing image");
     const url = image.item.text.match(/\((file:[^)]+)\)/)![1];
     const { readFile, unlink } = await import("node:fs/promises");
-    expect(await readFile(new URL(url))).toEqual(Buffer.from("hello"));
+    expect(await readFile(new URL(url))).toEqual(Buffer.from(VALID_PNG_BASE64, "base64"));
     await unlink(new URL(url));
     const replay = await collectHistory([
       {
         role: "toolResult",
         toolCallId: "image-read",
         toolName: "read",
-        content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+        content: [{ type: "image", data: VALID_PNG_BASE64, mimeType: "image/png" }],
       },
     ]);
     expect(replay).toContainEqual(image);
-    expect(await readFile(new URL(url))).toEqual(Buffer.from("hello"));
+    expect(await readFile(new URL(url))).toEqual(Buffer.from(VALID_PNG_BASE64, "base64"));
   });
 });
 
@@ -283,7 +284,7 @@ test("replayed Pi images keep their position before the following reply", async 
       role: "toolResult",
       toolCallId: "image-position",
       toolName: "read",
-      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+      content: [{ type: "image", data: VALID_PNG_BASE64, mimeType: "image/png" }],
     },
     { role: "assistant", content: [{ type: "text", text: "Image read complete." }] },
   ]);

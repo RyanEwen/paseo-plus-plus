@@ -195,9 +195,17 @@ function workspaceMenuRow(page: Page, title: string): Locator {
 
 async function expectWorkspaceMenuRows(page: Page, titles: readonly string[]) {
   const rows = compactWorkspaceMenu(page).getByRole("menuitem");
-  for (const [index, title] of titles.entries()) {
-    await expect(rows.nth(index)).toHaveAccessibleName(title);
+  for (const title of titles) {
+    await expect(workspaceMenuRow(page, title)).toHaveAccessibleName(title);
   }
+  // The host can prepend its own actions; plugin registration order still defines this subset.
+  await expect
+    .poll(async () =>
+      (await rows.allTextContents())
+        .map((title) => title.trim())
+        .filter((title) => titles.includes(title)),
+    )
+    .toEqual(titles);
 }
 
 async function chooseInWorkspaceMenu(page: Page, title: string) {
@@ -519,6 +527,9 @@ export async function withButtonShowcase(
       useCompactWorkspaceMenu: () =>
         test.step("compact workspace menu carries header buttons with their actions, menus, and content", async () => {
           await openCompactWorkspaceMenu(page);
+          await expect(page.getByTestId("workspace-header-new-agent")).toHaveAccessibleName(
+            "New agent",
+          );
           await expectWorkspaceMenuRows(page, [
             "Deploy application",
             "Header checks",
