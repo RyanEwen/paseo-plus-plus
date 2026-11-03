@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { syncedSettingsPatches } from "./scope";
 import {
   AppSettingsPatchSchema,
   AppSettingsSnapshotSchema,
@@ -8,7 +9,6 @@ import {
 import {
   applySettingsPatches,
   cloneSettingsJson,
-  isSyncedSettingsPath,
   settingsDiff,
   settingsFieldKey,
   settingsValueAtPath,
@@ -107,14 +107,27 @@ export class SettingsSyncModel {
     try {
       const value = await this.deps.readLocal();
       if (!current()) return;
-      this.local =
-        value === null ? { selectedHost: null, hosts: {} } : LocalStateSchema.parse(value);
-      this.hydrated = true;
-      this.publish({
-        selectedHost: this.local.selectedHost,
-        error: null,
-        status: this.local.selectedHost ? "reading" : "local",
-        canWrite: this.local.selectedHost === null,
+      await this.serialize(async () => {
+        if (!current()) return;
+        this.local =
+          value === null ? { selectedHost: null, hosts: {} } : LocalStateSchema.parse(value);
+        const hosts = Object.fromEntries(
+          Object.entries(this.local.hosts).map(([host, record]) => [
+            host,
+            { ...record, pending: syncedSettingsPatches(record.pending) },
+          ]),
+        );
+        const next = { ...this.local, hosts };
+        if (JSON.stringify(next) !== JSON.stringify(this.local)) await this.deps.writeLocal(next);
+        this.local = next;
+        if (!current()) return;
+        this.hydrated = true;
+        this.publish({
+          selectedHost: this.local.selectedHost,
+          error: null,
+          status: this.local.selectedHost ? "reading" : "local",
+          canWrite: this.local.selectedHost === null,
+        });
       });
     } catch (error) {
       if (current()) this.fail(error);
@@ -192,11 +205,10 @@ export class SettingsSyncModel {
         const backup = old?.backup ?? (await this.deps.getDeviceValues("backup"));
         if (!this.current(host, generation)) return;
         // An unknown-outcome write that is already durable needs no second write.
-        const pending = (old?.pending ?? []).filter(
+        const pending = syncedSettingsPatches(old?.pending ?? []).filter(
           (patch) =>
-            isSyncedSettingsPath(patch.path) &&
             JSON.stringify(settingsValueAtPath(snapshot.values, patch.path)) !==
-              JSON.stringify(patch.value),
+            JSON.stringify(patch.value),
         );
         const next = {
           ...this.local,
@@ -223,6 +235,8 @@ export class SettingsSyncModel {
 
   /** Persist touched leaves under the original host before exposing their local projection. */
   async edit(patches: AppSettingsPatch[]): Promise<void> {
+    patches = syncedSettingsPatches(patches);
+    if (!patches.length) return;
     const host = this.state.selectedHost;
     if (!host) throw new Error("No settings host selected");
     const generation = this.generation;
@@ -237,7 +251,10 @@ export class SettingsSyncModel {
         if (!this.current(host, generation)) throw new Error("Settings host changed before saving");
         const record = this.local.hosts[host]!;
         const merged = new Map(
-          record.pending.map((patch) => [settingsFieldKey(patch.path), patch]),
+          syncedSettingsPatches(record.pending).map((patch) => [
+            settingsFieldKey(patch.path),
+            patch,
+          ]),
         );
         for (const patch of patches) {
           const key = settingsFieldKey(patch.path);
@@ -279,9 +296,7 @@ export class SettingsSyncModel {
       throw new Error("Read an empty settings host before publishing");
     const values = await this.deps.getDeviceValues("publish");
     if (!this.current(host, generation)) return;
-    const patches = settingsDiff({}, values, EMPTY).filter((patch) =>
-      isSyncedSettingsPath(patch.path),
-    );
+    const patches = syncedSettingsPatches(settingsDiff({}, values, EMPTY));
     const result = await transport.patch(patches, true);
     if (!this.current(host, generation)) return;
     if (result.conflicts.length) {
@@ -335,8 +350,9 @@ export class SettingsSyncModel {
       const record = this.local.hosts[host];
       if (!record) return;
       const pending = keepDevice
-        ? record.pending.map((patch) => ({
-            ...patch,
+        ? syncedSettingsPatches(record.pending).map((patch) => ({
+            path: patch.path,
+            value: patch.value,
             expectedRevision: settingsPathRevision(snapshot, patch.path),
           }))
         : [];
@@ -381,9 +397,7 @@ export class SettingsSyncModel {
         await this.receive(host, record.snapshot, generation);
       return;
     }
-    const sent = cloneSettingsJson(record.pending).filter((patch) =>
-      isSyncedSettingsPath(patch.path),
-    );
+    const sent = syncedSettingsPatches(cloneSettingsJson(record.pending));
     if (!sent.length) return;
     this.sending = (async () => {
       try {
