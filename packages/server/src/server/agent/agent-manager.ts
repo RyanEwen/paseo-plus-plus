@@ -1,3 +1,23 @@
+import { isBoundEmptyClaudeCreation } from "./agent-storage.js";
+import {
+  registerProviderHistory,
+  sameHistoryStorage,
+  assertConfiguredHistoryIdentity,
+  HistoryStorageConflictError,
+  type ProviderHistoryBinding,
+  type ProviderHistoryStorage,
+  type ConfiguredClaudeHistoryStorage,
+} from "./provider-history/binding.js";
+import type { AgentAttentionOutcome } from "@getpaseo/protocol/messages";
+import { AttentionPresentation } from "./attention/presentation.js";
+import type {
+  AgentAttentionLink,
+  AgentAttentionRequestQuery,
+} from "@getpaseo/protocol/agent-attention";
+import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
+import type { AgentToolResult } from "@getpaseo/plugin/server";
+import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
+import { ensureAgentLoaded } from "./agent-loading.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -26,6 +46,10 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type ClaudeRewindTransition,
+  type ClaudeFreshRewindContext,
+  type ClaudeInitialHistoryContext,
+  type CommitClaudeRewind,
   type AgentCreateSessionOptions,
   type AgentResumePurpose,
   type AgentResumeSessionOptions,
@@ -55,8 +79,8 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
-import { toStoredAgentRecord } from "./agent-projections.js";
-import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import { toStoredAgentRecord, serializeAgentConfig } from "./agent-projections.js";
+import type { StoredAgentRecord, AgentStorage, AgentSnapshotOptions } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -81,7 +105,11 @@ import {
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
-import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
+import {
+  PASEO_MCP_SERVER_NAME,
+  stripInternalPaseoMcpServer,
+  withRuntimePaseoMcpServer,
+} from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
@@ -92,6 +120,19 @@ import {
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import {
+  AgentAttentionObjectives,
+  AttentionObjectiveError,
+  type AttentionAdmission,
+  type AttentionCallbackReservation,
+  type StoredAttentionObjectives,
+} from "./attention/objectives.js";
+import { AttentionPermissionCompletion } from "./attention/permission-completion.js";
+import type {
+  AgentAttentionPeer,
+  AgentAttentionObjectives as AgentAttentionDescription,
+  AgentMessageAttention,
+} from "@getpaseo/protocol/agent-attention";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -124,6 +165,14 @@ export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
     this.name = "AgentManagerShuttingDownError";
+  }
+}
+
+/** Pre-dispatch ownership loss; an idle recipient can still accept the unsent prompt. */
+class SteerTurnChangedError extends Error {
+  constructor(readonly currentTurnId: string | null) {
+    super("Active turn changed before steering could be delivered");
+    this.name = "SteerTurnChangedError";
   }
 }
 
@@ -228,6 +277,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "agent_removed"; agentId: string; workspaceId?: string; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | { type: "timeline_replacement"; agentId: string; epoch: string }
   | {
@@ -280,6 +330,7 @@ export type AgentAttentionCallback = (params: {
   agentId: string;
   provider: AgentProvider;
   reason: "finished" | "error" | "permission";
+  message?: string;
 }) => void;
 
 export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
@@ -315,6 +366,9 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
+  attentionObjectives?: StoredAttentionObjectives;
+  attentionMessage?: string;
+  attention?: AttentionState;
 }
 
 export interface AgentManagerOptions {
@@ -331,6 +385,7 @@ export interface AgentManagerOptions {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
+  pluginAgentTools?: PluginAgentToolsRuntime;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
@@ -346,7 +401,7 @@ export interface AgentManagerOptions {
 
 export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
-  | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
+  | { status: "replaced" | "started"; iterator: AsyncGenerator<AgentStreamEvent> };
 
 function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
@@ -399,7 +454,19 @@ interface HandleStreamEventOptions {
   fromHistory?: boolean;
 }
 
+interface HistoryIntentInput {
+  agentId: string;
+  config: AgentSessionConfig;
+  origin: ProviderHistoryBinding["origin"];
+  sessionId: string | null;
+  workspaceId: string | undefined;
+  launchEnv?: Record<string, string>;
+}
+
 interface ManagedAgentBase {
+  /** Runtime proof retained only while retiring a query whose identity never committed. */
+  historyQueryAdmission?: StoredAgentRecord;
+  providerHistory?: ProviderHistoryBinding;
   id: string;
   provider: AgentProvider;
   cwd: string;
@@ -412,6 +479,8 @@ interface ManagedAgentBase {
   owner?: AgentOwner;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
+  /** Explicit launch overrides, before per-opening hooks and daemon-owned variables. */
+  launchEnv?: Record<string, string>;
   runtimeInfo?: AgentRuntimeInfo;
   createdAt: Date;
   updatedAt: Date;
@@ -433,6 +502,10 @@ interface ManagedAgentBase {
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
+  /** Undefined retains legacy attention until the first classified request. */
+  attentionObjectives?: AgentAttentionObjectives;
+  attentionMessage?: string;
+  attentionTerminal?: "completed" | "canceled";
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
   unsubscribeSession: (() => void) | null;
@@ -554,18 +627,20 @@ interface AgentMetadataPatch {
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
-function attachPersistenceCwd(
+function normalizePersistenceForConfig(
   handle: AgentPersistenceHandle | null,
-  cwd: string,
+  config: AgentSessionConfig,
 ): AgentPersistenceHandle | null {
   if (!handle) {
     return null;
   }
+  const { mcpServers: _launchMcpServers, ...metadata } = handle.metadata ?? {};
   return {
     ...handle,
     metadata: {
-      ...handle.metadata,
-      cwd,
+      ...metadata,
+      cwd: config.cwd,
+      ...(config.mcpServers ? { mcpServers: config.mcpServers } : {}),
     },
   };
 }
@@ -754,14 +829,24 @@ export class AgentManager {
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
+  private readonly permissionCompletions = new WeakMap<
+    ManagedAgent,
+    AttentionPermissionCompletion
+  >();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
+  private readonly runtimeCleanupIdentities = new WeakMap<AgentSession, object>();
+  private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
+  private sessionOpenGeneration = 0;
+  private readonly sessionOpenGenerations = new Map<string, number>();
+  private readonly attachedPluginTools = new Map<string, AttachedAgentTool[]>();
+  private readonly pluginAgentTools: PluginAgentToolsRuntime | undefined;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
@@ -770,6 +855,10 @@ export class AgentManager {
   ) => ProviderPaseoToolsPolicy | undefined;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
+  private attentionServerId?: string;
+  private resolveRemoteAttentionRequester?: (
+    requester: AgentAttentionPeer,
+  ) => Promise<"available" | "missing" | "unknown">;
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
@@ -779,6 +868,7 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
+    this.pluginAgentTools = options.pluginAgentTools;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -863,6 +953,528 @@ export class AgentManager {
     this.onAgentAttention = callback;
   }
 
+  /** Configure host-qualified requester checks without turning a transport failure into orphanhood. */
+  setAttentionHost(input: {
+    serverId: string;
+    resolveRemoteRequester: (
+      requester: AgentAttentionPeer,
+    ) => Promise<"available" | "missing" | "unknown">;
+  }): void {
+    this.attentionServerId = input.serverId;
+    this.resolveRemoteAttentionRequester = input.resolveRemoteRequester;
+    for (const agent of this.agents.values()) {
+      agent.attentionObjectives?.bindHost(input.serverId);
+    }
+  }
+
+  /** Return only the caller's own objective membership, without continuation capability tokens. */
+  getAttentionObjectives(agentId: string): AgentAttentionDescription {
+    return (
+      this.requirePublicAgent(agentId).attentionObjectives?.describe() ?? {
+        activeObjectiveIds: [],
+        objectives: [],
+      }
+    );
+  }
+
+  /** Host-qualified identity used only to bind attention evidence, never to authorize execution. */
+  attentionRequester(agentId: string): AgentAttentionPeer {
+    return { agentId, ...(this.attentionServerId ? { serverId: this.attentionServerId } : {}) };
+  }
+
+  /** Reserve an exact target outcome and recheck membership after persistence before forwarding it. */
+  async reserveAttentionCallback(input: {
+    agentId: string;
+    peer: AgentAttentionPeer;
+    link: AgentAttentionLink;
+    outcome: AgentAttentionOutcome;
+    deliveryId: string;
+  }): Promise<AttentionCallbackReservation> {
+    return this.runForegroundMutation(input.agentId, async () => {
+      const agent = this.requirePublicAgent(input.agentId);
+      const ledger = agent.attentionObjectives;
+      if (!ledger) throw new AttentionObjectiveError(input.link.objectiveId);
+      const reservation = { ...input, requester: this.attentionRequester(input.agentId) };
+      const result = ledger.reserveCallback(reservation);
+      try {
+        await this.persistSnapshot(agent);
+        // Terminal events can close an objective while a storage write is pending.
+        if (agent.attentionObjectives !== ledger)
+          throw new AttentionObjectiveError(input.link.objectiveId);
+        if (result.status === "reserved")
+          ledger.assertCallbackReservation({
+            ...input,
+            outcomeId: input.outcome.id,
+            lease: result.lease,
+          });
+        return result;
+      } catch (error) {
+        // No enqueue can have happened yet. Roll back this owner's claim even when the write throws.
+        // A write that reached disk before failing is recoverable by an exact watcher after restart.
+        if (result.status === "reserved") {
+          try {
+            ledger.releaseCallback({ ...input, lease: result.lease });
+          } catch (releaseError) {
+            if (!(releaseError instanceof AttentionObjectiveError)) throw releaseError;
+          }
+        }
+        throw error;
+      }
+    });
+  }
+
+  /** A failed source write must leave target evidence unacknowledged and available for retry. */
+  async persistAttentionDelivery(agentId: string): Promise<void> {
+    await this.runForegroundMutation(agentId, async () => {
+      this.requireRegistry();
+      await this.persistSnapshot(this.requirePublicAgent(agentId));
+    });
+  }
+
+  async releaseAttentionCallback(input: {
+    agentId: string;
+    peer: AgentAttentionPeer;
+    link: AgentAttentionLink;
+    deliveryId: string;
+    lease: symbol;
+  }): Promise<void> {
+    await this.runForegroundMutation(input.agentId, async () => {
+      const agent = this.requirePublicAgent(input.agentId);
+      try {
+        agent.attentionObjectives?.releaseCallback(input);
+      } catch (error) {
+        if (!(error instanceof AttentionObjectiveError)) throw error;
+      }
+      await this.persistSnapshot(agent);
+    });
+  }
+
+  /** Persist this submission's rejection without inventing a provider acceptance or changing other jobs. */
+  async recordAttentionRejection(input: {
+    agentId: string;
+    admissions: readonly AttentionAdmission[];
+    error: string;
+  }): Promise<void> {
+    await this.runForegroundMutation(input.agentId, async () => {
+      const agent = this.agents.get(input.agentId);
+      if (agent) {
+        agent.attentionObjectives ??= this.createAttentionObjectives(undefined);
+        agent.attentionObjectives.requests.reject(input.admissions, input.error);
+        await this.persistSnapshot(agent);
+        this.emitState(agent, { persist: false });
+        return;
+      }
+      if (!this.registry || !(await this.registry.get(input.agentId))) return;
+      await this.registry.update(input.agentId, (record) => {
+        const ledger = this.createAttentionObjectives(record.attentionObjectives);
+        ledger.requests.reject(input.admissions, input.error);
+        return { ...record, attentionObjectives: ledger.snapshot() };
+      });
+      const updated = await this.registry.get(input.agentId);
+      if (updated) this.dispatchStoredAgentState(updated);
+    });
+  }
+
+  /** Wait for one immutable request outcome under the caller's existing agent observation authority. */
+  async waitForAttentionOutcome(input: {
+    agentId: string;
+    query: AgentAttentionRequestQuery;
+    signal: AbortSignal;
+    waitForSubmission?: boolean;
+  }): Promise<AgentAttentionOutcome | null> {
+    let changed = 0;
+    let wake: (() => void) | undefined;
+    const unsubscribe = this.subscribe(
+      () => {
+        changed += 1;
+        wake?.();
+      },
+      { agentId: input.agentId, replayState: false },
+    );
+    const abort = () => wake?.();
+    input.signal.addEventListener("abort", abort, { once: true });
+    let query = input.query;
+    try {
+      for (;;) {
+        input.signal.throwIfAborted();
+        const before = changed;
+        const state = await this.runForegroundMutation(input.agentId, async () => {
+          const agent = this.agents.get(input.agentId);
+          if (agent?.attentionObjectives) {
+            const result = agent.attentionObjectives.requests.read(query);
+            if (query.acknowledgeOutcomeId) await this.persistSnapshot(agent);
+            return result;
+          }
+          const record = await this.registry?.get(input.agentId);
+          if (!record?.attentionObjectives) return { outcome: null, pending: false, known: false };
+          if (query.acknowledgeOutcomeId) {
+            await this.registry?.update(input.agentId, (current) => {
+              const ledger = this.createAttentionObjectives(current.attentionObjectives);
+              ledger.requests.read(query);
+              return { ...current, attentionObjectives: ledger.snapshot() };
+            });
+          }
+          const latest = await this.registry?.get(input.agentId);
+          return this.createAttentionObjectives(latest?.attentionObjectives).requests.read({
+            link: query.link,
+            requester: query.requester,
+          });
+        });
+        const wasAcknowledgement = query.acknowledgeOutcomeId !== undefined;
+        query = { link: query.link, requester: query.requester };
+        if (state.outcome) return state.outcome;
+        if (!state.pending && (state.known || !input.waitForSubmission || wasAcknowledgement))
+          return null;
+        if (before !== changed) continue;
+        await new Promise<void>((resumeWait) => {
+          wake = resumeWait;
+          if (input.signal.aborted || before !== changed) resumeWait();
+        });
+        wake = undefined;
+      }
+    } finally {
+      unsubscribe();
+      input.signal.removeEventListener("abort", abort);
+    }
+  }
+
+  private readonly attentionPresentation = new AttentionPresentation();
+
+  get agentAwareAttentionEnabled(): boolean {
+    return this.attentionPresentation.agentAware;
+  }
+
+  /** Apply or roll back host config without marking unread, persisting agent state or replaying events. */
+  setAttentionPresentationEnabled(enabled: boolean): void {
+    this.attentionPresentation.setAgentAware(enabled);
+  }
+
+  private createAttentionObjectives(stored?: StoredAttentionObjectives): AgentAttentionObjectives {
+    return this.attentionPresentation.attach(
+      new AgentAttentionObjectives(stored, this.attentionServerId),
+    );
+  }
+
+  /** Approval continues its original objective rather than creating a human-owned request. */
+  captureAttentionContinuation(agentId: string): AttentionAdmission | undefined {
+    const ledger = this.requirePublicAgent(agentId).attentionObjectives;
+    return ledger?.isAudienceKnown ? ledger.capture() : undefined;
+  }
+
+  private assertAttentionAdmission(
+    agent: ManagedAgent,
+    options: AgentRunOptions | undefined,
+  ): void {
+    const inputs = options?.attention ?? [];
+    if (agent.attentionObjectives) {
+      agent.attentionObjectives.assertAdmissions(inputs);
+    } else if (
+      inputs.some(
+        (input) =>
+          input.kind === "continuation" ||
+          (input.kind === "agent" && input.attention?.continuation),
+      )
+    ) {
+      throw new AttentionObjectiveError("unknown continuation");
+    }
+  }
+
+  /** Persist a recipient-bound continuation before an agent's outgoing message can be dispatched. */
+  async prepareAttentionMessage(input: {
+    agentId: string;
+    recipient: AgentAttentionPeer;
+    objectiveId?: string;
+    expectedTurnId?: string | null;
+    requestId?: string;
+  }): Promise<AgentMessageAttention | undefined> {
+    const agent = this.requirePublicAgent(input.agentId);
+    const expectedTurnId =
+      input.expectedTurnId === undefined ? agent.activeTurnId : input.expectedTurnId;
+    return this.runForegroundMutation(agent.id, async () => {
+      if (agent.activeTurnId !== expectedTurnId) {
+        throw new AttentionObjectiveError("outgoing request from a retired turn");
+      }
+      const attention = agent.attentionObjectives?.outgoing({
+        recipient: input.recipient,
+        objectiveId: input.objectiveId,
+        requestId: input.requestId,
+      });
+      if (attention) {
+        await this.persistSnapshot(agent);
+      }
+      return attention;
+    });
+  }
+
+  /** Explicit waiting/final intent is restricted to objectives in this accepted provider turn. */
+  async reportObjectiveStatus(input: {
+    agentId: string;
+    objectiveId: string;
+    disposition: "waiting" | "final";
+  }): Promise<AgentAttentionDescription> {
+    const agent = this.requirePublicAgent(input.agentId);
+    const expectedTurnId = agent.activeTurnId;
+    return this.runForegroundMutation(agent.id, async () => {
+      if (!expectedTurnId || agent.activeTurnId !== expectedTurnId || !agent.attentionObjectives) {
+        throw new AttentionObjectiveError(input.objectiveId);
+      }
+      agent.attentionObjectives.declare(input.objectiveId, input.disposition);
+      await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
+      return agent.attentionObjectives.describe();
+    });
+  }
+
+  /** Request human review for the caller's current objective and keep the stated reason in its chat. */
+  async requestHumanAttention(input: {
+    agentId: string;
+    objectiveId: string;
+    reason: string;
+  }): Promise<{ notified: boolean }> {
+    const agent = this.requirePublicAgent(input.agentId);
+    const expectedTurnId = agent.activeTurnId;
+    return this.runForegroundMutation(agent.id, async () => {
+      if (!expectedTurnId || agent.activeTurnId !== expectedTurnId || !agent.attentionObjectives) {
+        throw new AttentionObjectiveError(input.objectiveId);
+      }
+      return {
+        notified: await this.raiseHumanAttention({
+          agent,
+          objectiveId: input.objectiveId,
+          reason: input.reason,
+        }),
+      };
+    });
+  }
+
+  /** Persist and publish one owned claim inside the caller's existing foreground mutation lane. */
+  private async raiseHumanAttention(input: {
+    agent: ManagedAgent;
+    objectiveId: string;
+    reason: string;
+    isCurrent?: () => boolean;
+  }): Promise<boolean> {
+    const { agent, objectiveId, reason } = input;
+    const objectives = agent.attentionObjectives;
+    if (!objectives) return false;
+    this.requireRegistry();
+    const lease = objectives.reserveHumanAttention(objectiveId, reason);
+    if (!lease) return false;
+    const turnId = agent.activeTurnId;
+    const previousAttention = agent.attention;
+    const previousMessage = agent.attentionMessage;
+    const nextAttention: AttentionState = {
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: new Date(),
+    };
+    const isCurrent = () =>
+      this.agents.get(agent.id) === agent &&
+      agent.attentionObjectives === objectives &&
+      agent.activeTurnId === turnId &&
+      agent.attention === previousAttention &&
+      agent.attentionMessage === previousMessage &&
+      objectives.isHumanAttentionReservationCurrent(lease) &&
+      (input.isCurrent === undefined || input.isCurrent());
+    let persistenceObserved = false;
+    let committed = false;
+    // Resolve and publish inside the writer so an intervening ordinary projection cannot erase
+    // this saved reason. Later chat updates keep their normal persistence path.
+    try {
+      await this.persistSnapshot(agent, {
+        operation: {
+          resolveSnapshot: () => {
+            if (!isCurrent()) return null;
+            return {
+              ...agent,
+              attention: nextAttention,
+              attentionMessage: reason,
+              attentionObjectives: objectives.humanAttentionCandidate(lease),
+            };
+          },
+          onCommitted: () => {
+            // The candidate was written even if its owner retired before this callback.
+            persistenceObserved = true;
+            if (!isCurrent()) return;
+            objectives.commitHumanAttention(lease);
+            agent.attention = nextAttention;
+            agent.attentionMessage = reason;
+            // Establish business success before any observer can fail or mutate newer state.
+            committed = true;
+            this.publishHumanAttention({ agent, reason, turnId });
+          },
+        },
+      });
+    } catch (error) {
+      if (committed) {
+        this.logger.warn(
+          { err: error, agentId: agent.id },
+          "Storage acknowledgement failed after human attention committed",
+        );
+        return true;
+      }
+      objectives.releaseHumanAttention(lease);
+      if (persistenceObserved) {
+        try {
+          await this.repairRetiredHumanAttention(agent.id);
+        } catch (repairError) {
+          const combinedFailure = new AggregateError(
+            [error, repairError],
+            "Human attention acknowledgement and retired candidate repair failed",
+            { cause: repairError },
+          );
+          throw combinedFailure;
+        }
+      }
+      throw error;
+    }
+
+    if (committed) return true;
+    objectives.releaseHumanAttention(lease);
+    await this.repairRetiredHumanAttention(agent.id);
+    throw new AttentionObjectiveError(objectiveId);
+  }
+
+  /** Repair a retired candidate from the instance current when the queue runs, never an old copy. */
+  private async repairRetiredHumanAttention(agentId: string): Promise<void> {
+    const current = this.agents.get(agentId);
+    if (!current) return;
+    await this.persistSnapshot(current, {
+      operation: { resolveSnapshot: () => this.agents.get(agentId) ?? null },
+    });
+  }
+
+  /** Attempt each synchronous observer after commit; none can roll back or poison the writer. */
+  private publishHumanAttention(input: {
+    agent: ManagedAgent;
+    reason: string;
+    turnId: string | null;
+  }): void {
+    const { agent, reason, turnId } = input;
+    const phases = [
+      {
+        name: "timeline",
+        publish: () =>
+          this.recordAndDispatchTimelineItem(
+            agent.id,
+            {
+              type: "tool_call",
+              callId: `human-attention-${randomUUID()}`,
+              name: "request_human_attention",
+              status: "completed",
+              error: null,
+              detail: { type: "plain_text", text: reason },
+            },
+            agent.provider,
+            turnId ?? undefined,
+          ),
+      },
+      { name: "state", publish: () => this.emitState(agent, { persist: false }) },
+      {
+        name: "notification",
+        publish: () =>
+          this.broadcastAgentAttention({ ...agent, attentionMessage: reason }, "finished"),
+      },
+    ];
+    for (const phase of phases) {
+      try {
+        phase.publish();
+      } catch (error) {
+        this.logger.error(
+          { err: error, agentId: agent.id, phase: phase.name },
+          "Human attention observer failed after durable commit",
+        );
+      }
+    }
+  }
+
+  private admitAttention(input: {
+    agent: ManagedAgent;
+    options?: AgentRunOptions;
+    steering: boolean;
+    turnId?: string;
+    accepted?: boolean;
+  }): void {
+    const { agent, options, steering } = input;
+    agent.attentionObjectives ??= this.createAttentionObjectives(undefined);
+    const admissions: readonly AttentionAdmission[] = options?.attention ?? [
+      { kind: "human", requestId: options?.clientMessageId ?? randomUUID() },
+    ];
+    const acceptedTurnId = input.accepted === false ? undefined : input.turnId;
+    let rebindSteer: (() => boolean) | undefined;
+    if (steering && acceptedTurnId) {
+      rebindSteer = this.permissionCompletions
+        .get(agent)
+        ?.prepareSteerAdmission(agent.attentionObjectives, acceptedTurnId);
+    }
+    agent.attentionObjectives.admit({
+      inputs: admissions,
+      steering: steering,
+      acceptance: {
+        turnId: input.turnId,
+        accepted: input.accepted,
+      },
+    });
+    // Steer admission and its scope renewal are synchronous; no terminal can enter between them.
+    if (rebindSteer?.() !== true) {
+      this.retirePermissionCompletion(agent);
+      if (acceptedTurnId) {
+        this.createPermissionCompletion(agent, agent.attentionObjectives, acceptedTurnId);
+      }
+    }
+    agent.attentionTerminal = undefined;
+  }
+
+  /** Bind a new SDK turn so old response markers cannot suppress its accepted final. */
+  private createPermissionCompletion(
+    agent: ManagedAgent,
+    objectives: AgentAttentionObjectives,
+    turnId: string,
+  ): AttentionPermissionCompletion {
+    const completion = new AttentionPermissionCompletion(
+      objectives,
+      turnId,
+      () =>
+        this.agents.get(agent.id) === agent &&
+        agent.attentionObjectives === objectives &&
+        !agent.pendingReplacement,
+    );
+    this.permissionCompletions.set(agent, completion);
+    return completion;
+  }
+
+  /** Bind permission classification to the actual accepted checkpoint, not the latest idle edge. */
+  private observePermissionCompletion(
+    agent: ManagedAgent,
+    turnId: string,
+    permissionId: string,
+  ): void {
+    const objectives = agent.attentionObjectives;
+    if (!objectives?.isAudienceKnown) return;
+    const completion = this.permissionCompletions.get(agent);
+    if (completion?.matches(objectives, turnId)) completion.observePermission(permissionId);
+  }
+
+  /** Retire held response/terminal identities before a new admission or committed lifecycle change. */
+  private retirePermissionCompletion(agent: ManagedAgent): void {
+    this.permissionCompletions.get(agent)?.retire();
+    this.permissionCompletions.delete(agent);
+  }
+
+  /** Publish a reconciled real terminal even when its natural idle edge already passed. */
+  private reconcilePermissionCompletion(
+    agent: ManagedAgent,
+    completion: AttentionPermissionCompletion,
+  ): void {
+    if (this.permissionCompletions.get(agent) !== completion) return;
+    const notifyHuman = completion.reconcile(agent.pendingPermissions.size);
+    if (notifyHuman === undefined) return;
+    agent.attentionTerminal = undefined;
+    if (notifyHuman || !this.attentionPresentation.agentAware)
+      this.setAgentAttention(agent, "finished");
+    this.emitState(agent);
+  }
+
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
   }
@@ -881,6 +1493,62 @@ export class AgentManager {
 
   setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
     this.paseoToolCatalogFactory = factory;
+  }
+
+  invalidatePluginSessions(): void {
+    this.sessionOpenGeneration++;
+  }
+
+  async reloadStalePluginSession(agentId: string): Promise<void> {
+    if (!this.needsPluginSessionReload(agentId)) return;
+    await this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(agentId, async () => {
+        if (!this.needsPluginSessionReload(agentId)) return;
+        await this.reloadAgentSessionInternal(agentId);
+      }),
+    );
+  }
+
+  private needsPluginSessionReload(agentId: string): boolean {
+    const agent = this.getAgent(agentId);
+    return (
+      agent !== null &&
+      agent.lifecycle !== "closed" &&
+      this.sessionOpenGenerations.get(agentId) !== this.sessionOpenGeneration &&
+      !this.hasInFlightRun(agentId)
+    );
+  }
+
+  getPluginTools(agentId: string): readonly AttachedAgentTool[] {
+    return (this.attachedPluginTools.get(agentId) ?? []).filter((tool) =>
+      this.pluginAgentTools?.isToolPluginAvailable(tool.pluginId, tool.pluginInstanceId),
+    );
+  }
+
+  async executePluginTool(
+    tool: AttachedAgentTool,
+    agentId: string,
+    input: unknown,
+    signal?: AbortSignal,
+  ): Promise<AgentToolResult> {
+    const agent = this.getAgent(agentId);
+    if (!agent || agent.lifecycle === "closed") throw new Error(`Agent is not live: ${agentId}`);
+    if (!this.pluginAgentTools) throw new Error("Plugin tools are unavailable");
+    const record = await this.registry?.get(agentId);
+    return this.pluginAgentTools.callTool(
+      tool.pluginId,
+      tool.pluginInstanceId,
+      describeHookAgent({ ...agent, title: record?.title ?? agent.config.title }),
+      tool.name,
+      input,
+      signal,
+    );
+  }
+
+  private detachPluginTools(agentId: string): void {
+    this.attachedPluginTools.delete(agentId);
+    this.sessionOpenGenerations.delete(agentId);
+    this.pluginAgentTools?.detachTools(agentId);
   }
 
   getPaseoToolPolicy(agentId: string): ProviderPaseoToolsPolicy | undefined {
@@ -1283,15 +1951,18 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    if (this.pluginLifecycle && !config.internal) {
-      const request = await this.pluginLifecycle.before("agent.create", {
+    if (this.agents.has(resolvedAgentId))
+      throw new Error(`Agent with id ${resolvedAgentId} already exists`);
+    const previousEmpty = await this.registry?.get(resolvedAgentId);
+    const restoringEmpty = isBoundEmptyClaudeCreation(previousEmpty);
+    if (this.pluginLifecycle && !config.internal && !restoringEmpty) {
+      const request = await this.pluginLifecycle.before("agent.create.before", {
         config,
         env: options.env,
       });
       config = { ...request.config, internal: config.internal };
       options = { ...options, env: request.env };
     }
-    await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
@@ -1301,32 +1972,401 @@ export class AgentManager {
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
-    this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
+    const intent = await this.persistHistoryIntent({
+      agentId: resolvedAgentId,
+      config: storedConfig,
+      origin: "created",
+      sessionId: null,
+      launchEnv: options.env ? { ...options.env } : undefined,
+      workspaceId: options.workspaceId,
+    });
+    // A rejected reservation must retain the existing chat's view and committed timeline.
+    if (!isBoundEmptyClaudeCreation(intent)) await this.deleteAgentState(resolvedAgentId);
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
       storedConfig.cwd,
       paseoToolPolicy,
       options?.env,
-      { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
+      {
+        reason: restoringEmpty ? "resume" : "create",
+        purpose: "interactive",
+        workspaceId: options.workspaceId ?? null,
+        title: options.initialTitle ?? storedConfig.title ?? null,
+        labels: options.labels ?? {},
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
+    await this.prepareHistoryLaunch({
+      agentId: resolvedAgentId,
+      client,
+      config: providerLaunchConfig,
+      context: launchContext,
+      operation: "create",
+      record: intent,
+    });
+    this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
-    await this.requireExternalMcpSupport(session, storedConfig);
+    await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       owner: options.owner,
+      attentionObjectives: options.attentionObjectives,
+      attentionMessage: options.attentionMessage,
+      attention: options.attention,
+      launchEnv: options.env ? { ...options.env } : undefined,
       historyPrimed: true,
+      ...this.emptyClaudeRestorationOptions(intent),
     });
-    if (!agent.internal) {
-      this.pluginLifecycle?.emit("agent.created", {
+    if (!agent.internal && !isBoundEmptyClaudeCreation(intent)) {
+      this.pluginLifecycle?.emit("agent.create.after", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
       });
     }
     return agent;
+  }
+
+  private emptyClaudeRestorationOptions(record: StoredAgentRecord | undefined) {
+    if (!record || !isBoundEmptyClaudeCreation(record)) return {};
+    return {
+      restoring: true,
+      launchEnv: record.launchEnv,
+      labels: record.labels,
+      initialTitle: record.title,
+      workspaceId: record.workspaceId,
+      owner: record.owner,
+      createdAt: new Date(record.createdAt),
+      updatedAt: new Date(record.updatedAt),
+      lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
+      lastError: record.lastError ?? undefined,
+      attention: extractAttention(record),
+      attentionObjectives: record.attentionObjectives,
+      attentionMessage: record.attentionMessage ?? undefined,
+    };
+  }
+
+  private async restoreProviderHistory(agent: ActiveManagedAgent): Promise<void> {
+    const binding = (await this.registry?.get(agent.id, { includeHistoryIntents: true }))
+      ?.providerHistory;
+    agent.providerHistory = registerProviderHistory({
+      binding,
+      sessionId: agent.persistence?.sessionId ?? null,
+      storage: agent.session.historyStorage,
+    });
+  }
+
+  private async persistHistoryIntent(
+    input: HistoryIntentInput,
+  ): Promise<StoredAgentRecord | undefined> {
+    const { agentId, config, origin, sessionId, workspaceId } = input;
+    if (!this.registry) return;
+    if (config.internal) {
+      await this.registry.assertInternalAgentIdAvailable(agentId);
+      return;
+    }
+    const now = new Date().toISOString();
+    return this.registry.reserveHistoryIntent({
+      id: agentId,
+      provider: config.provider,
+      cwd: config.cwd,
+      workspaceId,
+      config: serializeAgentConfig(config),
+      launchEnv: input.launchEnv,
+      createdAt: now,
+      updatedAt: now,
+      lastStatus: "closed",
+      labels: {},
+      internal: config.internal,
+      providerHistory: { origin, registration: "intent", sessionId, storage: { kind: "unknown" } },
+    });
+  }
+
+  private async prepareHistoryLaunch(input: {
+    agentId: string;
+    client: AgentClient;
+    config: AgentSessionConfig;
+    context: AgentLaunchContext;
+    operation: "create" | "import" | "resume" | "reload";
+    record?: StoredAgentRecord;
+    sessionId?: string;
+    nativeHandle?: string;
+  }): Promise<void> {
+    const record =
+      input.record ?? (await this.registry?.get(input.agentId, { includeHistoryIntents: true }));
+    const previous = record?.providerHistory;
+    assertConfiguredHistoryIdentity(
+      previous,
+      input.sessionId
+        ? { sessionId: input.sessionId, nativeHandle: input.nativeHandle }
+        : undefined,
+    );
+    // An old failed request has no creation provenance. Reserving it must not adopt the new default.
+    const operation =
+      input.operation === "create" && record && !previous ? "resume" : input.operation;
+    const storage = await input.client.resolveHistoryStorage?.({
+      provider: input.config.provider,
+      config: input.config,
+      env: input.context.env,
+      previous,
+      operation,
+    });
+    if (storage?.kind === "configured-home" && !input.config.internal && !this.registry)
+      throw new HistoryStorageConflictError("durable-storage-required");
+    if (storage && previous?.registration === "intent")
+      await this.registry?.bindHistoryIntent(input.agentId, storage);
+    this.attachHistoryStorage(input.context, storage ?? previous?.storage);
+    this.attachClaudeHistoryContexts(input.agentId, input.context, record, storage);
+  }
+
+  private attachHistoryStorage(
+    context: AgentLaunchContext,
+    storage: ProviderHistoryStorage | undefined,
+  ): void {
+    if (storage && storage.kind !== "unknown") context.historyStorage = storage;
+  }
+
+  private attachClaudeHistoryContexts(
+    agentId: string,
+    context: AgentLaunchContext,
+    record: StoredAgentRecord | null | undefined,
+    storage: ProviderHistoryStorage | undefined,
+  ): void {
+    const previous = record?.providerHistory;
+    if (
+      record &&
+      previous?.origin === "created" &&
+      previous.sessionId === null &&
+      storage?.kind === "configured-home" &&
+      storage.provider === "claude" &&
+      !record.claudeFreshRewind
+    ) {
+      context.claudeInitialHistory = this.claudeInitialHistoryContext(agentId, storage);
+    }
+    if (record?.claudeFreshRewind) {
+      if (
+        previous?.storage.kind !== "configured-home" ||
+        previous.storage.provider !== "claude" ||
+        !record.persistence
+      )
+        throw new HistoryStorageConflictError("fresh-rewind-record-conflict");
+      context.claudeFreshRewind = this.claudeFreshRewindContext(
+        agentId,
+        record.claudeFreshRewind.operationId,
+      );
+    }
+  }
+
+  private claudeInitialHistoryContext(
+    agentId: string,
+    storage: ConfiguredClaudeHistoryStorage,
+  ): ClaudeInitialHistoryContext {
+    let admitted: StoredAgentRecord | undefined;
+    let conflicted = false;
+    const context: ClaudeInitialHistoryContext = {
+      owner: {},
+      get admission() {
+        return admitted;
+      },
+      release: () => {
+        if (!conflicted) admitted = undefined;
+      },
+      admit: async () => {
+        if (conflicted)
+          throw new HistoryStorageConflictError("initial-admission-conflict-reload-required");
+        const agent = this.requireSessionAgent(agentId);
+        if (agent.session.claudeInitialHistory?.owner !== context.owner)
+          throw new HistoryStorageConflictError("initial-query-admission-conflict");
+        await this.persistSnapshot(agent);
+        const captured = await this.requireRegistry().captureClaudeHistoryAdmission(agentId);
+        if (
+          agent.session.claudeInitialHistory?.owner !== context.owner ||
+          captured.provider !== agent.provider ||
+          !sameHistoryStorage(captured.providerHistory?.storage ?? { kind: "unknown" }, storage) ||
+          captured.providerHistory?.origin !== "created" ||
+          captured.providerHistory.sessionId !== null ||
+          captured.persistence ||
+          captured.claudeFreshRewind
+        )
+          throw new HistoryStorageConflictError("initial-query-admission-conflict");
+        admitted = captured;
+      },
+      commit: async (transition) => {
+        const agent = this.requireSessionAgent(agentId);
+        const expected = admitted;
+        if (
+          !expected ||
+          agent.session.claudeInitialHistory?.owner !== context.owner ||
+          !sameHistoryStorage(
+            expected.providerHistory?.storage ?? { kind: "unknown" },
+            transition.storage,
+          )
+        )
+          throw new HistoryStorageConflictError("stale-initial-history-callback");
+        try {
+          await this.requireRegistry().commitClaudeInitialHandle({
+            expected,
+            next: normalizePersistenceForConfig(transition.next, agent.config)!,
+            assertCurrent: () => {
+              transition.assertCurrent?.();
+              if (
+                this.agents.get(agentId) !== agent ||
+                agent.session.claudeInitialHistory?.owner !== context.owner
+              )
+                throw new HistoryStorageConflictError("stale-initial-history-callback");
+            },
+            onCommitted: (committed) => {
+              agent.providerHistory = committed.providerHistory;
+              agent.persistence = committed.persistence ?? null;
+              agent.runtimeInfo = committed.runtimeInfo;
+              // The null-handle proof expires at the durable commit, even if runtime adoption fails.
+              admitted = undefined;
+              transition.adopt();
+            },
+          });
+        } catch (error) {
+          conflicted = true;
+          throw error;
+        }
+      },
+    };
+    return context;
+  }
+
+  private claudeFreshRewindContext(agentId: string, operationId: string): ClaudeFreshRewindContext {
+    let admitted: StoredAgentRecord | undefined;
+    let conflicted = false;
+    const context: ClaudeFreshRewindContext = {
+      owner: {},
+      operationId,
+      get admission() {
+        return admitted;
+      },
+      release: () => {
+        if (!conflicted) admitted = undefined;
+      },
+      admit: async () => {
+        if (conflicted)
+          throw new HistoryStorageConflictError("fresh-admission-conflict-reload-required");
+        const agent = this.requireSessionAgent(agentId);
+        if (agent.session.claudeFreshRewind?.owner !== context.owner)
+          throw new HistoryStorageConflictError("fresh-query-admission-conflict");
+        await this.persistSnapshot(agent);
+        const captured = await this.requireRegistry().captureClaudeHistoryAdmission(agentId);
+        if (
+          agent.session.claudeFreshRewind?.owner !== context.owner ||
+          captured.claudeFreshRewind?.operationId !== operationId ||
+          captured.provider !== agent.provider ||
+          !sameHistoryStorage(
+            captured.providerHistory?.storage ?? { kind: "unknown" },
+            agent.session.historyStorage ?? { kind: "unknown" },
+          ) ||
+          captured.persistence?.sessionId !== agent.persistence?.sessionId
+        )
+          throw new HistoryStorageConflictError("fresh-query-admission-conflict");
+        admitted = captured;
+      },
+      commit: async (transition) => {
+        const agent = this.requireSessionAgent(agentId);
+        if (
+          agent.session.claudeFreshRewind?.owner !== context.owner ||
+          !transition.next ||
+          !admitted
+        )
+          throw new HistoryStorageConflictError("stale-fresh-rewind-callback");
+        try {
+          await this.commitClaudeRewindTransition(agent, admitted, transition, context);
+        } catch (error) {
+          conflicted = true;
+          throw error;
+        }
+      },
+    };
+    return context;
+  }
+
+  private assertClaudeRewindTransition(
+    agent: ActiveManagedAgent,
+    expected: StoredAgentRecord,
+    transition: ClaudeRewindTransition,
+    fresh: ClaudeFreshRewindContext | undefined,
+  ): void {
+    const binding = expected.providerHistory;
+    if (
+      this.agents.get(agent.id) !== agent ||
+      binding?.storage.kind !== "configured-home" ||
+      binding.storage.provider !== "claude" ||
+      binding.registration !== "registered" ||
+      !sameHistoryStorage(binding.storage, transition.storage) ||
+      !expected.persistence ||
+      expected.persistence.sessionId !== binding.sessionId ||
+      JSON.stringify(expected.persistence) !==
+        JSON.stringify(normalizePersistenceForConfig(transition.previous, agent.config)) ||
+      transition.previous.provider !== agent.provider ||
+      (fresh && agent.session.claudeFreshRewind?.owner !== fresh.owner)
+    )
+      throw new HistoryStorageConflictError("rewind-canonical-handle-conflict");
+  }
+
+  private async commitClaudeRewindTransition(
+    agent: ActiveManagedAgent,
+    expected: StoredAgentRecord,
+    transition: ClaudeRewindTransition,
+    fresh?: ClaudeFreshRewindContext,
+  ): Promise<void> {
+    this.assertClaudeRewindTransition(agent, expected, transition, fresh);
+    const next = transition.next
+      ? (normalizePersistenceForConfig(transition.next, agent.config) ?? undefined)
+      : undefined;
+    const pending = !next ? this.claudeFreshRewindContext(agent.id, randomUUID()) : undefined;
+    try {
+      await this.requireRegistry().commitClaudeRewind({
+        expected,
+        next,
+        freshOperationId: fresh?.operationId ?? pending?.operationId,
+        assertCurrent: () => {
+          transition.assertCurrent?.();
+          if (
+            this.agents.get(agent.id) !== agent ||
+            (fresh && agent.session.claudeFreshRewind?.owner !== fresh.owner)
+          )
+            throw new HistoryStorageConflictError("stale-rewind-callback");
+        },
+        onCommitted: (record) => {
+          agent.providerHistory = record.providerHistory;
+          agent.persistence = record.persistence ?? null;
+          agent.runtimeInfo = record.runtimeInfo;
+          transition.adopt(pending);
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof HistoryStorageConflictError &&
+        error.reason.startsWith("rewind-committed-adoption-failed:")
+      ) {
+        if (fresh) {
+          // This callback runs inside the query pump. Awaiting its own close would deadlock.
+          // The canonical new handle is retained; the caller reports reload-required.
+          agent.lastError =
+            "Claude rewind identity committed; reload required after runtime adoption failed";
+          throw error;
+        }
+        // Disk already owns the new identity. Retire this inconsistent runtime without another snapshot.
+        await agent.session
+          .close()
+          .catch((closeError) =>
+            this.logger.warn({ err: closeError }, "Failed to retire committed rewind runtime"),
+          );
+        const closed = this.prepareAgentForClosure(
+          agent,
+          "rewind committed; reopen from canonical storage",
+        );
+        this.emitClosedAgent(closed, { persist: false });
+      }
+      throw error;
+    }
   }
 
   private buildCreateSessionOptions(options?: {
@@ -1351,6 +2391,8 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      attentionObjectives?: StoredAttentionObjectives;
+      attentionMessage?: string;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1383,6 +2425,8 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      attentionObjectives?: StoredAttentionObjectives;
+      attentionMessage?: string;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1407,10 +2451,11 @@ export class AgentManager {
       : resumeOptions;
     const purpose = currentResumeOptions?.purpose ?? "interactive";
 
+    const launchEnv = record?.launchEnv;
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
-      { purpose },
+      { purpose, env: launchEnv },
     );
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
@@ -1425,23 +2470,35 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
-      undefined,
+      launchEnv,
       {
         reason: "resume",
         purpose,
         workspaceId: options?.workspaceId ?? null,
+        title: record?.title ?? mergedConfig.title ?? null,
+        labels: record?.labels ?? options?.labels ?? {},
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    await this.prepareHistoryLaunch({
+      agentId: resolvedAgentId,
+      client,
+      config: providerLaunchConfig,
+      context: launchContext,
+      operation: "resume",
+      sessionId: handle.sessionId,
+      nativeHandle: handle.nativeHandle,
+    });
     const session = await client.resumeSession(
       handle,
       providerLaunchConfig,
       launchContext,
       currentResumeOptions,
     );
-    await this.requireExternalMcpSupport(session, storedConfig);
+    await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
+      launchEnv,
       persistence: handle,
       restoring: true,
     });
@@ -1480,16 +2537,36 @@ export class AgentManager {
       },
       resolvedAgentId,
     );
-    this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
       storedConfig.cwd,
       paseoToolPolicy,
       undefined,
-      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId },
+      {
+        reason: "import",
+        purpose: "interactive",
+        workspaceId: input.workspaceId,
+        labels: input.labels ?? {},
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const intent = await this.persistHistoryIntent({
+      agentId: resolvedAgentId,
+      config: storedConfig,
+      origin: "imported",
+      sessionId: input.providerHandleId,
+      workspaceId: input.workspaceId,
+    });
+    await this.prepareHistoryLaunch({
+      agentId: resolvedAgentId,
+      client,
+      config: providerLaunchConfig,
+      context: launchContext,
+      operation: "import",
+      record: intent,
+    });
+    this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
     const imported = await client.importSession(
       {
         providerHandleId: input.providerHandleId,
@@ -1497,6 +2574,7 @@ export class AgentManager {
       },
       { config: providerLaunchConfig, storedConfig, launchContext },
     );
+    await this.requireExternalMcpSupport(imported.session, providerLaunchConfig, launchContext);
     let handedToRegistration = false;
     try {
       const importedConfig = await this.normalizeConfig(
@@ -1554,7 +2632,7 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
     if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "reload");
+      await this.cancelAgentRunBefore({ agentId, action: "reload" });
       existing = this.requireSessionAgent(agentId);
     }
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
@@ -1573,6 +2651,7 @@ export class AgentManager {
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       refreshConfig,
       agentId,
+      { env: existing.launchEnv },
     );
     const hadPreviousPaseoToolPolicy = this.paseoToolPolicies.has(agentId);
     const previousPaseoToolPolicy = this.paseoToolPolicies.get(agentId);
@@ -1581,15 +2660,30 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
-      undefined,
-      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
+      existing.launchEnv,
+      {
+        reason: "refresh",
+        purpose: "interactive",
+        workspaceId: existing.workspaceId,
+        title: await this.resolveInitialPersistedTitle(agentId, existing.config, null),
+        labels: existing.labels,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    await this.prepareHistoryLaunch({
+      agentId,
+      client,
+      config: providerLaunchConfig,
+      context: launchContext,
+      operation: "reload",
+      sessionId: handle?.sessionId,
+      nativeHandle: handle?.nativeHandle,
+    });
     if (
-      Object.keys(storedConfig.mcpServers ?? {}).length > 0 &&
+      Object.keys(stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {}).length > 0 &&
       existing.session.capabilities.supportsMcpServers !== true
     ) {
-      throw new Error(`Provider '${provider}' does not support MCP servers`);
+      throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
     }
 
     let session: AgentSession | undefined;
@@ -1608,16 +2702,11 @@ export class AgentManager {
       session = handle
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
-      await this.requireExternalMcpSupport(session, storedConfig);
+      await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
       this.assertAcceptingAgentRegistrations();
 
       if (rehydrateFromDisk) {
-        // Wipe the in-memory timeline so registerSession mints a new epoch and
-        // hydrateTimelineFromProvider re-streams the freshly read provider history.
-        this.timelineStore.delete(agentId);
-        for (const event of this.providerSubagents.deleteParent(agentId)) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
+        this.resetReloadedHistory(agentId);
       }
 
       // Preserve existing labels and timeline during reload.
@@ -1626,6 +2715,7 @@ export class AgentManager {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
+        launchEnv: existing.launchEnv,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
@@ -1633,19 +2723,16 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        attentionObjectives: existing.attentionObjectives?.snapshot(),
+        attentionMessage: existing.attentionMessage,
         restoring: true,
       });
     } catch (error) {
-      if (closedExisting) {
-        this.emitClosedAgent(closedExisting, { persist: false });
-      } else if (this.agents.get(agentId) === existing) {
-        existing.lifecycle = "error";
-        existing.lastError = error instanceof Error ? error.message : String(error);
-        this.emitState(existing);
-      }
+      this.reportReloadFailure({ agentId, existing, closedExisting, error });
       throw error;
     } finally {
       if (!handedToRegistration) {
+        this.detachPluginTools(agentId);
         if (hadPreviousPaseoToolPolicy) {
           this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
         } else {
@@ -1655,6 +2742,32 @@ export class AgentManager {
           await this.closeUnregisteredSession(session);
         }
       }
+    }
+  }
+
+  /** Report the failed reload's current owner without changing its rethrow or resource cleanup. */
+  private reportReloadFailure(input: {
+    agentId: string;
+    existing: ActiveManagedAgent;
+    closedExisting: ManagedAgentClosed | undefined;
+    error: unknown;
+  }): void {
+    const { agentId, existing, closedExisting, error } = input;
+    if (closedExisting) {
+      this.emitClosedAgent(closedExisting, { persist: false });
+    } else if (this.agents.get(agentId) === existing) {
+      existing.lifecycle = "error";
+      existing.lastError = error instanceof Error ? error.message : String(error);
+      existing.attentionObjectives?.blockers.observeFailure();
+      this.emitState(existing);
+    }
+  }
+
+  /** Reset history before registration mints a new epoch and replays the provider's current history. */
+  private resetReloadedHistory(agentId: string): void {
+    this.timelineStore.delete(agentId);
+    for (const event of this.providerSubagents.deleteParent(agentId)) {
+      this.dispatch({ type: "provider_subagent", event });
     }
   }
 
@@ -1747,6 +2860,64 @@ export class AgentManager {
     });
   }
 
+  /** Capture runtime capabilities without handing lifecycle ownership to the collector. */
+  getRuntimeCleanupCandidates(): RuntimeCleanupCandidate[] {
+    if (!this.registry) return [];
+    const candidates: RuntimeCleanupCandidate[] = [];
+    for (const agent of this.agents.values()) {
+      const updatedAt = agent.updatedAt;
+      let identity = this.runtimeCleanupIdentities.get(agent.session);
+      if (!identity) {
+        identity = Object.freeze({});
+        this.runtimeCleanupIdentities.set(agent.session, identity);
+      }
+      const isEligible = () =>
+        this.agents.get(agent.id) === agent &&
+        agent.updatedAt === updatedAt &&
+        this.runtimeHasNoPendingWork(agent);
+      candidates.push({
+        identity,
+        agentId: agent.id,
+        parentAgentId: getParentAgentIdFromLabels(agent.labels) ?? undefined,
+        provider: agent.provider,
+        sessionId: agent.persistence?.sessionId ?? null,
+        lastActivityAt: updatedAt.getTime(),
+        isEligible,
+        canStopRuntime: agent.session.canStopRuntime?.bind(agent.session),
+        closeIfEligible: async (revalidate) => {
+          if (!agent.persistence?.sessionId) return false;
+          // Block prompt admission before entering the close lane. A skipped close also
+          // releases this barrier, so the waiting prompt keeps the existing runtime.
+          this.collectingRuntimes.add(agent.id);
+          try {
+            return await this.runLifecycleMutation(agent.id, () =>
+              this.closeAgentRuntime(agent.id, () => isEligible() && revalidate()),
+            );
+          } finally {
+            this.collectingRuntimes.delete(agent.id);
+          }
+        },
+      });
+    }
+    return candidates;
+  }
+
+  private runtimeHasNoPendingWork(agent: LiveManagedAgent): boolean {
+    return (
+      agent.lifecycle === "idle" &&
+      !agent.internal &&
+      agent.activeForegroundTurnId === null &&
+      !this.runs.hasRun(agent.id) &&
+      !agent.pendingReplacement &&
+      agent.pendingPermissions.size === 0 &&
+      agent.inFlightPermissionResponses.size === 0 &&
+      (this.collectingRuntimes.has(agent.id) || !this.lifecycleMutationTails.has(agent.id)) &&
+      !this.foregroundMutationTails.has(agent.id) &&
+      !this.sessionEventTails.has(agent.id) &&
+      !this.providerSubagents.list(agent.id).some((child) => child.status === "running")
+    );
+  }
+
   closeAgent(agentId: string): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
@@ -1767,7 +2938,7 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string): Promise<void> {
+  private async closeAgentRuntime(agentId: string, canClose?: () => boolean): Promise<boolean> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -1782,6 +2953,7 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
+    if (canClose && !canClose()) return false;
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
@@ -1794,6 +2966,7 @@ export class AgentManager {
     } catch (error) {
       persistError = error;
     }
+    this.detachPluginTools(agentId);
     this.emitClosedAgent(closedAgent, { persist: false });
     this.logger.trace(
       {
@@ -1807,6 +2980,7 @@ export class AgentManager {
     if (persistError !== undefined) {
       throw persistError;
     }
+    return true;
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
@@ -1824,13 +2998,44 @@ export class AgentManager {
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
-    return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
+    return this.runArchiveMutation(agentId, (committedLosses) =>
+      this.archiveAgentUnlocked({ agentId, committedLosses }),
+    );
   }
 
-  private async archiveAgentUnlocked(
+  /** Report durable removal before later cleanup can fail; ordinary runtime close is not loss. */
+  notifyRequesterRemovalCommitted(agentId: string): void {
+    this.agents.get(agentId)?.attentionObjectives?.blockers.suspend();
+    this.recheckCommittedRequesterLosses(new Set([agentId]));
+  }
+
+  /** Share captured-checkpoint verification for committed archive and hard-delete events. */
+  private recheckCommittedRequesterLosses(committedLosses: ReadonlySet<string>): void {
+    if (committedLosses.size === 0) return;
+    for (const worker of this.agents.values()) this.checkOrphanedAttention(worker, committedLosses);
+  }
+
+  /** Collect nested durable losses, then recheck only after every acquired lifecycle lane settles. */
+  private async runArchiveMutation<T>(
     agentId: string,
-    requestedArchivedAt?: string,
-  ): Promise<{ archivedAt: string }> {
+    mutation: (committedLosses: Set<string>) => Promise<T>,
+  ): Promise<T> {
+    const committedLosses = new Set<string>();
+    try {
+      return await this.runLifecycleMutation(agentId, () => mutation(committedLosses));
+    } finally {
+      // The outer action may reject after saving an archive flag. Do not await another
+      // agent's foreground lane while holding this requester's lifecycle lane.
+      this.recheckCommittedRequesterLosses(committedLosses);
+    }
+  }
+
+  private async archiveAgentUnlocked(input: {
+    agentId: string;
+    committedLosses: Set<string>;
+    archivedAt?: string;
+  }): Promise<{ archivedAt: string }> {
+    const { agentId, committedLosses, archivedAt: requestedArchivedAt } = input;
     const agent = this.requireAgent(agentId);
     if (agent.internal) {
       // Nothing about an internal agent is on disk, and archiving must not put
@@ -1846,7 +3051,7 @@ export class AgentManager {
       await this.closeAgentRuntime(agentId);
       await this.deleteAgentState(agentId);
       this.retireInternalAgent({ record, lastMessage });
-      await this.cascadeArchiveChildren(record);
+      await this.cascadeArchiveChildren(record, committedLosses);
       return { archivedAt };
     }
     if (!this.registry) {
@@ -1861,13 +3066,16 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
-    const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
+    const { archivedAt } = await this.markRecordArchived(stored, {
+      archivedAt: requestedArchivedAt,
+      committedLosses,
+    });
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgentRuntime(agentId);
-    await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
+    await this.syncNativeArchiveState(stored, "archive");
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(stored);
+    await this.cascadeArchiveChildren(stored, committedLosses);
 
     return { archivedAt };
   }
@@ -1878,6 +3086,7 @@ export class AgentManager {
   // handoff agents omit this label, so they stand outside the cascade.
   private async cascadeArchiveChildren(
     parent: Pick<StoredAgentRecord, "id" | "workspaceId">,
+    committedLosses: Set<string>,
   ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
@@ -1908,9 +3117,13 @@ export class AgentManager {
         if (shouldDetachFromArchivedParent(parent, currentChild)) {
           await this.detachAgentUnlocked(currentChild.id);
         } else if (this.agents.has(currentChild.id)) {
-          await this.archiveAgentUnlocked(currentChild.id);
+          await this.archiveAgentUnlocked({ agentId: currentChild.id, committedLosses });
         } else {
-          await this.archiveSnapshotUnlocked(currentChild.id, new Date().toISOString());
+          await this.archiveSnapshotUnlocked({
+            agentId: currentChild.id,
+            archivedAt: new Date().toISOString(),
+            committedLosses,
+          });
         }
       });
     }
@@ -1926,18 +3139,20 @@ export class AgentManager {
         if (!current || getParentAgentIdFromLabels(current.labels) !== parentAgentId) {
           return;
         }
-        await this.archiveAgentUnlocked(current.id);
+        await this.archiveAgentUnlocked({ agentId: current.id, committedLosses });
       });
     }
   }
 
   private async markRecordArchived(
     record: StoredAgentRecord,
-    archivedAt = new Date().toISOString(),
+    input: { archivedAt?: string; committedLosses: Set<string> },
   ): Promise<ArchivedStoredAgentRecord> {
+    const archivedAt = input.archivedAt ?? new Date().toISOString();
     const archivedRecord = await this.persistArchivedRecord(record, {
       archivedAt,
       updatedAt: archivedAt,
+      committedLosses: input.committedLosses,
     });
 
     if (this.agents.has(record.id)) {
@@ -1953,12 +3168,15 @@ export class AgentManager {
 
   private async persistArchivedRecord(
     record: StoredAgentRecord,
-    options: { archivedAt: string; updatedAt?: string },
+    options: { archivedAt: string; updatedAt?: string; committedLosses: Set<string> },
   ): Promise<ArchivedStoredAgentRecord> {
     const archivedRecord = buildArchivedAgentRecord(record, options);
     await this.requireRegistry().upsert(archivedRecord);
+    // This is committed requester loss even if an observer, runtime close, or cascade fails.
+    options.committedLosses.add(record.id);
+    this.agents.get(record.id)?.attentionObjectives?.blockers.suspend();
     if (!record.archivedAt && !record.internal) {
-      this.pluginLifecycle?.emit("agent.archived", {
+      this.pluginLifecycle?.emit("agent.archive.after", {
         agent: describeHookAgent(archivedRecord),
         archivedAt: archivedRecord.archivedAt,
       });
@@ -2010,11 +3228,16 @@ export class AgentManager {
         finalizedForegroundTurnIds: new Set(),
         unsubscribeSession: null,
         persistence: record.persistence ?? null,
+        providerHistory: record.providerHistory,
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
         attention,
+        attentionObjectives: record.attentionObjectives
+          ? this.createAttentionObjectives(record.attentionObjectives)
+          : undefined,
+        attentionMessage: record.attentionMessage ?? undefined,
         internal: record.internal,
         labels: record.labels,
       },
@@ -2226,6 +3449,7 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     if (agent.attention.requiresAttention) {
       agent.attention = { requiresAttention: false };
+      agent.attentionMessage = undefined;
       await this.persistSnapshot(agent);
       this.emitState(agent, { persist: false });
     }
@@ -2272,20 +3496,22 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
-    return this.runLifecycleMutation(agentId, () =>
-      this.archiveSnapshotUnlocked(agentId, archivedAt),
+    return this.runArchiveMutation(agentId, (committedLosses) =>
+      this.archiveSnapshotUnlocked({ agentId, archivedAt, committedLosses }),
     );
   }
 
-  private async archiveSnapshotUnlocked(
-    agentId: string,
-    archivedAt: string,
-  ): Promise<StoredAgentRecord> {
+  private async archiveSnapshotUnlocked(input: {
+    agentId: string;
+    archivedAt: string;
+    committedLosses: Set<string>;
+  }): Promise<StoredAgentRecord> {
+    const { agentId, archivedAt, committedLosses } = input;
     const registry = this.requireRegistry();
     // A stored-only archive can have waited behind a persisted resume. Reuse the
     // live archive transition so its newly acquired runtime is closed as well.
     if (this.agents.has(agentId)) {
-      await this.archiveAgentUnlocked(agentId, archivedAt);
+      await this.archiveAgentUnlocked({ agentId, archivedAt, committedLosses });
       const archivedRecord = await registry.get(agentId);
       if (!archivedRecord) throw new Error(`Agent not found: ${agentId}`);
       return archivedRecord;
@@ -2296,15 +3522,15 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
+    const nextRecord = await this.persistArchivedRecord(record, { archivedAt, committedLosses });
 
-    await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
+    await this.syncNativeArchiveState(record, "archive");
 
     this.discardRetainedAgentState(agentId);
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(record);
+    await this.cascadeArchiveChildren(record, committedLosses);
 
     return nextRecord;
   }
@@ -2331,7 +3557,7 @@ export class AgentManager {
     // Close and native restore share the lifecycle lane with persisted resume.
     // No new history or interactive runtime can acquire the writer between them.
     if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
-    await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
+    await this.syncNativeArchiveState(record, "restore");
 
     await registry.upsert({
       ...record,
@@ -2459,8 +3685,21 @@ export class AgentManager {
    * emitted by the handler flow through dispatchStream so they persist and
    * broadcast like normal timeline events.
    */
-  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+  async tryRunOutOfBand(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<boolean> {
+    if (this.collectingRuntimes.has(agentId) || !this.agents.has(agentId)) {
+      await this.waitForAgentClose(agentId);
+      await ensureAgentLoaded(agentId, {
+        agentManager: this,
+        agentStorage: this.requireRegistry(),
+        logger: this.logger,
+      });
+    }
     const agent = this.requireSessionAgent(agentId);
+    this.assertAttentionAdmission(agent, options);
     // Providers parse slash commands from the raw text, so a command another agent sent
     // must reach them without its sender envelope.
     const agentMessage = typeof prompt === "string" ? parseAgentMessage(prompt) : null;
@@ -2470,6 +3709,7 @@ export class AgentManager {
     if (!handler) {
       return false;
     }
+    this.touchUpdatedAt(agent);
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
       this.emitState(agent);
@@ -2489,7 +3729,7 @@ export class AgentManager {
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
     };
-    void (async () => {
+    void this.runForegroundMutation(agentId, async () => {
       try {
         await handler.run({ emit: dispatch });
       } catch (error) {
@@ -2500,7 +3740,7 @@ export class AgentManager {
           item: { type: "assistant_message", text: `[Error] ${text}` },
         });
       }
-    })();
+    });
     return true;
   }
 
@@ -2548,40 +3788,69 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      this.assertAttentionAdmission(agent, options);
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
+      this.admitAttention({ agent, options, steering: false, turnId: result.turnId });
       return result.turnId;
     } catch (error) {
       if (pendingRun.settled) {
         throw error;
       }
-      if (isStaleProviderSessionError(error)) {
+      if (error instanceof AttentionObjectiveError) {
         pendingRun.start = { status: "failed", error: error.message };
+        agent.pendingReplacement = false;
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        throw error;
+      }
+      if (isStaleProviderSessionError(error)) {
+        this.runs.settleForegroundStart(pendingRun, { status: "failed", error: error.message });
         agent.pendingReplacement = false;
         if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
         this.runs.settleForegroundRun(agentId, pendingRun.token);
         throw error;
       }
       agent.pendingReplacement = false;
+      // A rejected startup owns its own problem, without removing unrelated waiting objectives.
+      this.admitAttention({ agent, options, steering: false, accepted: false });
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-      pendingRun.start = { status: "failed", error: errorMsg };
-      // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
-      if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
-          messageId: options.clientMessageId,
+      agent.attentionObjectives?.requests.reject(options?.attention ?? [], errorMsg);
+      this.runs.settleForegroundStart(pendingRun, { status: "failed", error: errorMsg });
+      try {
+        // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
+        if (options?.clientMessageId) {
+          this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
+            messageId: options.clientMessageId,
+          });
+        }
+        await this.handleStreamEvent(agent, {
+          type: "turn_failed",
+          provider: agent.provider,
+          error: errorMsg,
         });
+        this.finalizeForegroundTurn(agent);
+      } finally {
+        // A steer waiting on this start is released only once the run is cleared.
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
       }
-      await this.handleStreamEvent(agent, {
-        type: "turn_failed",
-        provider: agent.provider,
-        error: errorMsg,
-      });
-      this.finalizeForegroundTurn(agent);
-      this.runs.settleForegroundRun(agentId, pendingRun.token);
       throw error;
     }
+  }
+
+  private async *streamAfterRuntimeCollection(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    await this.waitForAgentClose(agentId);
+    await ensureAgentLoaded(agentId, {
+      agentManager: this,
+      agentStorage: this.requireRegistry(),
+      logger: this.logger,
+    });
+    yield* this.streamAgent(agentId, prompt, options);
   }
 
   streamAgent(
@@ -2589,7 +3858,10 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
+    if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
+      return this.streamAfterRuntimeCollection(agentId, prompt, options);
     const existingAgent = this.requireSessionAgent(agentId);
+    this.assertAttentionAdmission(existingAgent, options);
     this.logger.trace(
       {
         agentId,
@@ -2640,9 +3912,10 @@ export class AgentManager {
         agent.pendingReplacement = false;
       }
       const turnStartedAt = new Date();
-      pendingRun.start = { status: "started", turnId };
+      this.runs.settleForegroundStart(pendingRun, { status: "started", turnId });
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
+      agent.attention = { requiresAttention: false };
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
@@ -2743,7 +4016,10 @@ export class AgentManager {
         ? { provider: mutableAgent.provider, sessionId: mutableAgent.runtimeInfo.sessionId }
         : null);
     if (persistenceHandle) {
-      mutableAgent.persistence = attachPersistenceCwd(persistenceHandle, mutableAgent.cwd);
+      mutableAgent.persistence = normalizePersistenceForConfig(
+        persistenceHandle,
+        mutableAgent.config,
+      );
     }
     this.logger.trace(
       {
@@ -2787,6 +4063,7 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
+    this.assertAttentionAdmission(snapshot, options);
     if (
       snapshot.lifecycle !== "running" &&
       !snapshot.activeForegroundTurnId &&
@@ -2802,7 +4079,7 @@ export class AgentManager {
     this.emitState(agent);
 
     try {
-      await this.cancelAgentRunBefore(agentId, "replace");
+      await this.cancelAgentRunBefore({ agentId, action: "replace", options });
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
       const latest = this.agents.get(agentId);
@@ -2819,17 +4096,25 @@ export class AgentManager {
     options?: AgentSteerOptions,
   ): Promise<SteerResult> {
     const agent = this.requireSessionAgent(agentId);
+    this.assertAttentionAdmission(agent, options);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
     if (!expectedTurnId || !agent.session.steerActiveTurn) {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      this.assertAttentionAdmission(agent, options);
       const admission = await agent.session.steerActiveTurn!(prompt, {
         ...options,
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedSteer(
+          agent,
+          prompt,
+          options,
+          expectedTurnId,
+          admission.providerMessageId,
+        );
       }
       return admission;
     });
@@ -2846,7 +4131,11 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
+    // A turn that is still starting has no id to steer yet. Replacing it would drop its
+    // prompt, so wait until it is accepted (or fails) and steer the turn it became.
+    await this.runs.waitForForegroundStart(agentId);
     const agent = this.requireSessionAgent(agentId);
+    this.assertAttentionAdmission(agent, options);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
     if (!expectedTurnId) {
       return { status: "inactive" };
@@ -2854,12 +4143,19 @@ export class AgentManager {
 
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
+          this.assertAttentionAdmission(agent, options);
           const admission = await agent.session.steerActiveTurn!(prompt, {
             ...options,
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedSteer(
+              agent,
+              prompt,
+              options,
+              expectedTurnId,
+              admission.providerMessageId,
+            );
           }
           return admission;
         })
@@ -2874,22 +4170,34 @@ export class AgentManager {
       return { status: "inactive" };
     }
 
-    await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
-    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-    return {
-      status: "replaced",
-      iterator: await this.replaceAdmittedForegroundTurn(
-        agent,
-        expectedTurnId,
-        prompt,
-        stripSteerOptions(options),
-      ),
-    };
+    try {
+      await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
+      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+      return {
+        status: "replaced",
+        iterator: await this.replaceAdmittedForegroundTurn(
+          agent,
+          expectedTurnId,
+          prompt,
+          stripSteerOptions(options),
+        ),
+      };
+    } catch (error) {
+      const recipientIdle = agent.activeTurnId === null && !this.runs.hasRun(agentId);
+      const originalTurnFinished =
+        error instanceof SteerTurnChangedError && error.currentTurnId === null;
+      if (!originalTurnFinished || !recipientIdle) throw error;
+      // Reserve the new run synchronously. Never reselect or replace a later owner's turn.
+      return {
+        status: "started",
+        iterator: this.streamAgent(agentId, prompt, stripSteerOptions(options)),
+      };
+    }
   }
 
   private assertSteerAdmissionOwnsTurn(agent: ActiveManagedAgent, expectedTurnId: string): void {
     if (agent.activeTurnId !== expectedTurnId) {
-      throw new Error("Active turn changed before steering could be delivered");
+      throw new SteerTurnChangedError(agent.activeTurnId);
     }
   }
 
@@ -2948,7 +4256,12 @@ export class AgentManager {
     this.emitState(agent);
 
     try {
-      await this.cancelAgentRunBefore(agent.id, "replace");
+      await this.cancelAgentRunBefore({
+        agentId: agent.id,
+        action: "replace",
+        options,
+        expectedTurnId,
+      });
       return this.streamAgent(agent.id, prompt, options);
     } catch (error) {
       const latest = this.agents.get(agent.id);
@@ -2962,16 +4275,19 @@ export class AgentManager {
   private async recordAcceptedSteer(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
-    clientMessageId: string | undefined,
+    options: AgentRunOptions | undefined,
     expectedTurnId: string,
+    providerMessageId: string | undefined,
   ): Promise<void> {
-    if (!clientMessageId) {
-      return;
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+    this.admitAttention({ agent, options, steering: true, turnId: expectedTurnId });
+    if (options?.clientMessageId) {
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted", {
+        messageId: options.clientMessageId,
+        turnId: expectedTurnId,
+        ...(providerMessageId ? { providerMessageId } : {}),
+      });
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, "accepted", {
-      messageId: clientMessageId,
-      turnId: expectedTurnId,
-    });
     this.emitState(agent);
   }
 
@@ -3099,10 +4415,21 @@ export class AgentManager {
       throw new Error("A response to this permission request is already being submitted");
     }
     agent.inFlightPermissionResponses.add(requestId);
+    const completion = this.permissionCompletions.get(agent);
+    const submission = completion?.beginResponse(requestId);
+    const ownsResponse = () =>
+      submission === undefined || completion?.ownsResponse(submission) === true;
 
     try {
       const result = await agent.session.respondToPermission(requestId, response);
+      if (!ownsResponse()) return result;
+      if (submission) {
+        const disposition = result?.followUpPrompt ? "follow_up" : "no_follow_up";
+        completion?.classify(submission, disposition);
+      }
       agent.pendingPermissions.delete(requestId);
+      agent.attentionObjectives?.blockers.resolvePermission(requestId);
+      if (completion) this.reconcilePermissionCompletion(agent, completion);
 
       try {
         await this.refreshSessionState(agent);
@@ -3110,8 +4437,10 @@ export class AgentManager {
         // Ignore refresh errors - state sync after permission approval is best effort.
       }
 
+      if (!ownsResponse()) return result;
       this.touchUpdatedAt(agent);
       await this.persistSnapshot(agent);
+      if (!ownsResponse()) return result;
       this.emitState(agent);
 
       const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
@@ -3121,6 +4450,11 @@ export class AgentManager {
       }
 
       return result;
+    } catch (error) {
+      // Only an unclassified provider submission can become unknown; refresh errors cannot
+      // rewrite a known follow-up decision or turn a rejected submission into final success.
+      if (submission) completion?.classify(submission, "unknown");
+      throw error;
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
@@ -3196,11 +4530,21 @@ export class AgentManager {
     return { status: "settled" };
   }
 
-  private async cancelAgentRunBefore(
-    agentId: string,
-    action: "reload" | "replace" | "rewind",
-  ): Promise<void> {
-    const result = await this.cancelAgentRun(agentId);
+  private async cancelAgentRunBefore(params: {
+    agentId: string;
+    action: "reload" | "replace" | "rewind";
+    options?: AgentRunOptions;
+    expectedTurnId?: string;
+  }): Promise<void> {
+    const { agentId, action, options } = params;
+    const result = await this.runForegroundMutation(agentId, async () => {
+      const agent = this.requireAgent(agentId);
+      if (params.expectedTurnId) {
+        this.assertSteerAdmissionOwnsTurn(agent, params.expectedTurnId);
+      }
+      this.assertAttentionAdmission(agent, options);
+      return this.cancelAgentRunNow(agentId);
+    });
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
@@ -3254,8 +4598,8 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
-  async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
-    const agent = this.requireSessionAgent(agentId);
+  private resolveRewindMessageId(agentId: string, messageId: string): string {
+    this.requireSessionAgent(agentId);
     const submittedRow = this.timelineStore
       .getRows(agentId)
       .find(
@@ -3267,19 +4611,65 @@ export class AgentManager {
     if (submittedRow && !submittedRow.providerMessageId) {
       throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
     }
-    const providerMessageId = submittedRow?.providerMessageId ?? messageId;
+    return submittedRow?.providerMessageId ?? messageId;
+  }
 
-    if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "rewind");
-    }
-
+  async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    this.resolveRewindMessageId(agentId, messageId);
+    if (this.hasInFlightRun(agentId))
+      await this.cancelAgentRunBefore({ agentId, action: "rewind" });
+    // Reserve synchronously before the first await so immediate prompts see the rewind barrier.
     const lock = this.runs.createPendingRun(agentId);
+    try {
+      await this.runForegroundMutation(agentId, () =>
+        this.rewindInLane(agentId, messageId, mode, lock),
+      );
+    } finally {
+      this.runs.settleForegroundRun(agentId, lock.token);
+    }
+  }
+
+  private async rewindInLane(
+    agentId: string,
+    messageId: string,
+    mode: RewindMode,
+    lock: ReturnType<AgentRunState["createPendingRun"]>,
+  ): Promise<void> {
+    const agent = this.requireSessionAgent(agentId);
+    const providerMessageId = this.resolveRewindMessageId(agentId, messageId);
+
+    if (this.runs.getPendingRun(agentId)?.token !== lock.token)
+      throw new Error("Rewind lost its foreground reservation");
+    let callbackLive = true;
+    let callbackUsed = false;
     try {
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.start",
       );
-      await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
+      let commitClaudeRewind: CommitClaudeRewind | undefined;
+      if (
+        mode !== "files" &&
+        agent.providerHistory?.storage.kind === "configured-home" &&
+        agent.providerHistory.storage.provider === "claude"
+      ) {
+        await this.drainSessionEvents(agentId);
+        this.refreshSessionPersistence(agent);
+        await this.persistSnapshot(agent);
+        const expected = await this.requireRegistry().get(agentId);
+        if (!expected) throw new HistoryStorageConflictError("rewind-record-missing");
+        commitClaudeRewind = async (transition) => {
+          if (!callbackLive || callbackUsed || this.agents.get(agentId) !== agent)
+            throw new HistoryStorageConflictError("stale-rewind-callback");
+          callbackUsed = true;
+          await this.commitClaudeRewindTransition(agent, expected, transition);
+        };
+      }
+      await invokeRewindCapability(agent.session, {
+        messageId: providerMessageId,
+        mode,
+        commitClaudeRewind,
+      });
       if (mode !== "files") {
         await this.hydrateTimelineFromProvider(agentId, {
           force: true,
@@ -3302,13 +4692,20 @@ export class AgentManager {
         "agent.rewind.complete",
       );
     } catch (error) {
+      // A committed-adoption failure already retired this runtime and left the
+      // canonical handle on disk. Never refresh from that abandoned provider or
+      // mask the original recovery error with a rejected old-handle snapshot.
+      if (this.agents.get(agentId) === agent) {
+        this.refreshSessionPersistence(agent);
+        await this.persistSnapshot(agent);
+      }
       this.logger.warn(
         { err: error, agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.failed",
       );
       throw error;
     } finally {
-      this.runs.settleForegroundRun(agentId, lock.token);
+      callbackLive = false;
     }
   }
 
@@ -3317,16 +4714,23 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agentId);
   }
 
+  notifyAgentRemoved(agent: Pick<StoredAgentRecord, "id" | "workspaceId" | "internal">): void {
+    this.dispatch({
+      type: "agent_removed",
+      agentId: agent.id,
+      workspaceId: agent.workspaceId,
+      internal: agent.internal === true,
+    });
+  }
+
   async deleteCommittedTimeline(agentId: string): Promise<void> {
     await this.durableTimelineStore?.deleteAgent(agentId);
   }
 
   async getLastAssistantMessage(agentId: string): Promise<string | null> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      return null;
+    if (!this.timelineStore.has(agentId)) {
+      return (await this.durableTimelineStore?.getLastAssistantMessage(agentId)) ?? null;
     }
-
     return await this.getLastAssistantMessageFromStores(agentId);
   }
 
@@ -3567,6 +4971,8 @@ export class AgentManager {
       lastUsage?: AgentUsage;
       lastError?: string;
       attention?: AttentionState;
+      attentionObjectives?: StoredAttentionObjectives;
+      attentionMessage?: string;
       /**
        * Bringing a known agent back, rather than starting a new one. Its timestamps and
        * attention come from what was already recorded, and installing the session is not
@@ -3577,6 +4983,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      launchEnv?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -3593,6 +5000,17 @@ export class AgentManager {
       );
 
       const now = new Date();
+      if (session.claudeFreshRewind) {
+        await this.deleteCommittedTimeline(resolvedAgentId);
+        this.resetReloadedHistory(resolvedAgentId);
+        options = {
+          ...options,
+          timeline: [],
+          timelineRows: [],
+          timelineNextSeq: 0,
+          historyPrimed: true,
+        };
+      }
       const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
         agentId: resolvedAgentId,
         now,
@@ -3607,6 +5025,8 @@ export class AgentManager {
         durableTimelineHasRows,
         options,
       });
+
+      await this.restoreProviderHistory(managed);
 
       // Read history before publishing the agent: a provider failure must leave the
       // session unregistered so the registration catch closes it.
@@ -3637,6 +5057,7 @@ export class AgentManager {
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(managed, {
         title: initialPersistedTitle,
+        registerClaudeEmptyCreation: !!session.claudeInitialHistory,
       });
       this.assertAgentRegistrationActive(managed);
       if (!options?.publishWhenReady) {
@@ -3689,16 +5110,23 @@ export class AgentManager {
 
   private async requireExternalMcpSupport(
     session: AgentSession,
-    storedConfig: AgentSessionConfig,
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
   ): Promise<void> {
     if (
-      Object.keys(storedConfig.mcpServers ?? {}).length === 0 ||
+      Object.keys(stripInternalPaseoMcpServer(launchConfig).mcpServers ?? {}).length === 0 ||
       session.capabilities.supportsMcpServers === true
     ) {
       return;
     }
     await this.closeUnregisteredSession(session);
-    throw new Error(`Provider '${storedConfig.provider}' does not support MCP servers`);
+    throw this.unsupportedMcpError(launchConfig, launchContext);
+  }
+
+  private unsupportedMcpError(config: AgentSessionConfig, context: AgentLaunchContext): Error {
+    const owners = [...new Set(Object.values(context.mcpServerOwners ?? {}))];
+    const source = owners.length ? ` (plugin ${owners.join(", ")})` : "";
+    return new Error(`Provider '${config.provider}' does not support MCP servers${source}`);
   }
 
   private async initializeAgentTimelineForRegister(params: {
@@ -3752,9 +5180,12 @@ export class AgentManager {
           lastUsage?: AgentUsage;
           lastError?: string;
           attention?: AttentionState;
+          attentionObjectives?: StoredAttentionObjectives;
+          attentionMessage?: string;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          launchEnv?: Record<string, string>;
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -3765,6 +5196,7 @@ export class AgentManager {
       cwd: config.cwd,
       workspaceId: options?.workspaceId,
       owner: options?.owner,
+      launchEnv: options?.launchEnv,
       session,
       capabilities: session.capabilities,
       config,
@@ -3784,18 +5216,31 @@ export class AgentManager {
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
-      persistence: attachPersistenceCwd(
+      persistence: normalizePersistenceForConfig(
         options?.persistence ?? session.describePersistence(),
-        config.cwd,
+        config,
       ),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
-      attention: resolveInitialAttention(options?.attention),
+      ...this.restoreAttentionFields(options),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;
+  }
+
+  /** Restore known audience data without reclassifying records whose origin is still unknown. */
+  private restoreAttentionFields(
+    options?: Pick<CreateAgentOptions, "attention" | "attentionObjectives" | "attentionMessage">,
+  ): Pick<ActiveManagedAgent, "attention" | "attentionObjectives" | "attentionMessage"> {
+    return {
+      attention: resolveInitialAttention(options?.attention),
+      attentionObjectives: options?.attentionObjectives
+        ? this.createAttentionObjectives(options.attentionObjectives)
+        : undefined,
+      attentionMessage: options?.attentionMessage,
+    };
   }
 
   private async loadCommittedTimelineSeed(
@@ -3816,6 +5261,8 @@ export class AgentManager {
     cancelReason: string,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    this.retirePermissionCompletion(agent);
+    agent.attentionObjectives?.blockers.suspend();
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3831,6 +5278,9 @@ export class AgentManager {
     this.runs.clearAgentRun(agent.id);
     return {
       ...agent,
+      historyQueryAdmission:
+        agent.session?.claudeFreshRewind?.admission ??
+        agent.session?.claudeInitialHistory?.admission,
       lifecycle: "closed",
       session: null,
       activeForegroundTurnId: null,
@@ -3849,6 +5299,7 @@ export class AgentManager {
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
+    this.detachPluginTools(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -3857,7 +5308,7 @@ export class AgentManager {
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
     this.emitState(agent, options);
     if (!agent.internal) {
-      this.pluginLifecycle?.emit("agent.closed", {
+      this.pluginLifecycle?.emit("agent.close.after", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
       });
     }
@@ -4016,7 +5467,7 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: AgentSnapshotOptions,
   ): Promise<void> {
     if (!this.registry) {
       return;
@@ -4068,6 +5519,9 @@ export class AgentManager {
     try {
       const pending = agent.session.getPendingPermissions();
       agent.pendingPermissions = new Map(pending.map((request) => [request.id, request]));
+      agent.attentionObjectives?.blockers.synchronizePermissions(
+        pending.map((request) => request.id),
+      );
     } catch {
       agent.pendingPermissions.clear();
     }
@@ -4089,9 +5543,9 @@ export class AgentManager {
         newInfo.modeId !== agent.runtimeInfo?.modeId;
       agent.runtimeInfo = newInfo;
       if (!agent.persistence && newInfo.sessionId) {
-        agent.persistence = attachPersistenceCwd(
+        agent.persistence = normalizePersistenceForConfig(
           { provider: agent.provider, sessionId: newInfo.sessionId },
-          agent.cwd,
+          agent.config,
         );
       }
       // Emit state if runtimeInfo changed so clients get the updated model
@@ -4447,16 +5901,7 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "model_changed":
-        agent.runtimeInfo = event.runtimeInfo;
-        if (!agent.persistence && event.runtimeInfo.sessionId) {
-          agent.persistence = attachPersistenceCwd(
-            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
-            agent.cwd,
-          );
-        }
-        this.applyObservedMode(agent, event.runtimeInfo.modeId ?? agent.currentModeId);
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
+        this.onStreamModelChanged(agent, event, flags);
         return undefined;
       case "thinking_option_changed":
         agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
@@ -4500,9 +5945,11 @@ export class AgentManager {
         });
         return undefined;
       case "turn_started":
+        if (options?.fromHistory) return undefined;
         this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, flags });
         return undefined;
       case "permission_requested":
+        if (options?.fromHistory) return undefined;
         this.onStreamPermissionRequested(agent, event);
         return undefined;
       case "permission_resolved":
@@ -4511,6 +5958,24 @@ export class AgentManager {
       default:
         return undefined;
     }
+  }
+
+  /** Apply the provider model snapshot before publishing its mode and persistence changes. */
+  private onStreamModelChanged(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "model_changed" }>,
+    flags: StreamEventFlags,
+  ): void {
+    agent.runtimeInfo = event.runtimeInfo;
+    if (!agent.persistence && event.runtimeInfo.sessionId) {
+      agent.persistence = normalizePersistenceForConfig(
+        { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
+        agent.config,
+      );
+    }
+    this.applyObservedMode(agent, event.runtimeInfo.modeId ?? agent.currentModeId);
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
   }
 
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {
@@ -4525,7 +5990,10 @@ export class AgentManager {
   private refreshSessionPersistence(agent: ActiveManagedAgent): void {
     const handle = agent.session.describePersistence();
     if (handle) {
-      agent.persistence = attachPersistenceCwd(handle, agent.cwd);
+      if (agent.providerHistory && agent.providerHistory.sessionId === null) {
+        agent.providerHistory = { ...agent.providerHistory, sessionId: handle.sessionId };
+      }
+      agent.persistence = normalizePersistenceForConfig(handle, agent.config);
     }
   }
 
@@ -4585,6 +6053,21 @@ export class AgentManager {
       "agent.manager.turn.completed",
     );
     if (terminalDisposition === "stale") return;
+    const completion = this.permissionCompletions.get(agent);
+    const objectives = agent.attentionObjectives;
+    const deferred =
+      eventTurnId !== undefined &&
+      objectives !== undefined &&
+      completion?.observeTerminal(objectives, eventTurnId) === true;
+    agent.attentionTerminal = deferred ? undefined : "completed";
+    if (
+      !deferred &&
+      eventTurnId &&
+      agent.pendingPermissions.size === 0 &&
+      agent.inFlightPermissionResponses.size === 0
+    ) {
+      agent.attentionObjectives?.requests.record({ turnId: eventTurnId, kind: "finished" });
+    }
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
@@ -4592,6 +6075,7 @@ export class AgentManager {
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
     agent.lastError = undefined;
+    if (deferred && completion) this.reconcilePermissionCompletion(agent, completion);
     if (
       !isForegroundEvent &&
       !agent.activeForegroundTurnId &&
@@ -4629,6 +6113,14 @@ export class AgentManager {
       "handleStreamEvent: turn_failed",
     );
     if (terminalDisposition === "stale") return;
+    this.retirePermissionCompletion(agent);
+    agent.attentionObjectives?.blockers.observeFailure();
+    if (eventTurnId)
+      agent.attentionObjectives?.requests.record({
+        turnId: eventTurnId,
+        kind: "error",
+        error: event.error,
+      });
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
@@ -4671,6 +6163,15 @@ export class AgentManager {
       "agent.manager.turn.canceled",
     );
     if (terminalDisposition === "stale") return;
+    this.retirePermissionCompletion(agent);
+    agent.attentionObjectives?.blockers.retire();
+    agent.attentionTerminal = "canceled";
+    if (eventTurnId)
+      agent.attentionObjectives?.requests.record({
+        turnId: eventTurnId,
+        kind: "canceled",
+        error: "The accepted request was canceled",
+      });
     if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
       agent.lifecycle = "idle";
     }
@@ -4710,9 +6211,13 @@ export class AgentManager {
       return;
     }
     this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null);
+    // Standalone provider work has no proven continuation and retains the human-facing default.
+    this.admitAttention({ agent, steering: false, turnId: eventTurnId });
     if (eventTurnId) {
       this.openActiveTurn(agent, eventTurnId, new Date());
     }
+    agent.lastError = undefined;
+    agent.attention = { requiresAttention: false };
     agent.lifecycle = "running";
     this.emitState(agent);
   }
@@ -4723,9 +6228,27 @@ export class AgentManager {
   ): void {
     const hadPendingPermissions = agent.pendingPermissions.size > 0;
     agent.pendingPermissions.set(event.request.id, event.request);
+    const turnId = event.turnId ?? agent.activeTurnId;
+    if (turnId) {
+      agent.attentionObjectives?.requests.record({
+        turnId,
+        kind: "permission",
+        permission: event.request,
+      });
+      this.observePermissionCompletion(agent, turnId, event.request.id);
+      agent.attentionObjectives?.blockers.observePermission({
+        turnId,
+        permissionId: event.request.id,
+      });
+    }
     this.refreshSessionPersistence(agent);
-    if (!hadPendingPermissions && !agent.internal) {
-      this.broadcastAgentAttention(agent, "permission");
+    if (!agent.internal) {
+      const agentProblem =
+        agent.attentionObjectives?.isAudienceKnown === true &&
+        !agent.attentionObjectives.hasHumanAudience();
+      const humanProblem = !this.attentionPresentation.agentAware || !agentProblem;
+      if (!hadPendingPermissions && humanProblem) this.broadcastAgentAttention(agent, "permission");
+      if (agentProblem) this.checkOrphanedAttention(agent);
     }
     this.emitState(agent);
   }
@@ -4738,6 +6261,8 @@ export class AgentManager {
   }): void {
     const { agent, event, options, flags } = params;
     agent.pendingPermissions.delete(event.requestId);
+    if (!options?.fromHistory)
+      agent.attentionObjectives?.blockers.resolvePermission(event.requestId);
     this.refreshSessionPersistence(agent);
     if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
       agent.bufferedPermissionResolutions.set(event.requestId, event);
@@ -4755,6 +6280,7 @@ export class AgentManager {
   ): void {
     for (const [requestId] of agent.pendingPermissions) {
       agent.pendingPermissions.delete(requestId);
+      agent.attentionObjectives?.blockers.resolvePermission(requestId);
       if (!options?.fromHistory) {
         this.dispatchStream(agent.id, {
           type: "permission_resolved",
@@ -4774,6 +6300,16 @@ export class AgentManager {
     options?: { providerMessageId?: string },
   ): AgentStreamEvent {
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
+    // Coalesced assistant text bypasses onStreamTimelineEvent. Capture its committed turn-scoped
+    // projection at the shared append point before a terminal event freezes the request outcome.
+    if (item.type === "assistant_message" && turnId) {
+      this.agents
+        .get(agentId)
+        ?.attentionObjectives?.requests.updateContent(
+          turnId,
+          this.timelineStore.getLastAssistantMessage(agentId, turnId) ?? item.text,
+        );
+    }
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
@@ -4975,41 +6511,130 @@ export class AgentManager {
   private checkAndSetAttention(agent: ManagedAgent): void {
     const previousStatus = this.previousStatuses.get(agent.id);
     const currentStatus = agent.lifecycle;
-
-    // Track the new status
     this.previousStatuses.set(agent.id, currentStatus);
 
-    // Skip attention tracking for internal agents
-    if (agent.internal) {
-      return;
+    const finished = previousStatus === "running" && currentStatus === "idle";
+    let humanCompletion = finished;
+    if (finished && agent.attentionObjectives?.isAudienceKnown) {
+      humanCompletion =
+        agent.attentionTerminal === "completed" &&
+        agent.pendingPermissions.size === 0 &&
+        agent.inFlightPermissionResponses.size === 0 &&
+        agent.attentionObjectives.finish();
+      agent.attentionTerminal = undefined;
+    }
+    if (agent.internal) return;
+
+    const enteredError = previousStatus !== "error" && currentStatus === "error";
+    const agentProblem =
+      agent.attentionObjectives?.isAudienceKnown === true &&
+      !agent.attentionObjectives.hasHumanAudience();
+    const humanProblem = !this.attentionPresentation.agentAware || !agentProblem;
+    if (enteredError && agentProblem) {
+      this.checkOrphanedAttention(agent);
     }
 
-    // Skip if already requires attention
-    if (agent.attention.requiresAttention) {
-      return;
-    }
+    // Explicit/manual unread survives new quiet results. It does not retarget the new request.
+    if (agent.attention.requiresAttention) return;
+    const reason = this.resolveAttentionReason({
+      humanCompletion,
+      finished,
+      enteredError,
+      humanProblem,
+    });
+    if (!reason) return;
+    this.setAgentAttention(agent, reason);
+  }
 
-    // Check if agent transitioned from running to idle (finished)
-    if (previousStatus === "running" && currentStatus === "idle") {
-      agent.attention = {
-        requiresAttention: true,
-        attentionReason: "finished",
-        attentionTimestamp: new Date(),
-      };
-      this.broadcastAgentAttention(agent, "finished");
-      return;
-    }
+  /** Select presentation only after lifecycle bookkeeping and manual-unread preservation. No state is changed here. */
+  private resolveAttentionReason(input: {
+    humanCompletion: boolean;
+    finished: boolean;
+    enteredError: boolean;
+    humanProblem: boolean;
+  }): "finished" | "error" | null {
+    const { humanCompletion, finished, enteredError, humanProblem } = input;
+    const presentCompletion = this.attentionPresentation.agentAware ? humanCompletion : finished;
+    if (presentCompletion) return "finished";
+    if (enteredError && humanProblem) return "error";
+    return null;
+  }
 
-    // Check if agent entered error state
-    if (previousStatus !== "error" && currentStatus === "error") {
-      agent.attention = {
-        requiresAttention: true,
-        attentionReason: "error",
-        attentionTimestamp: new Date(),
-      };
-      this.broadcastAgentAttention(agent, "error");
-      return;
+  /** Share normal completion publication with reconciled terminals, preserving manual unread. */
+  private setAgentAttention(agent: ManagedAgent, reason: "finished" | "error"): void {
+    if (agent.internal || agent.attention.requiresAttention) return;
+    agent.attentionMessage = undefined;
+    agent.attention = {
+      requiresAttention: true,
+      attentionReason: reason,
+      attentionTimestamp: new Date(),
+    };
+    this.broadcastAgentAttention(agent, reason);
+  }
+
+  /** Reuse original blocker ownership for initial checks and committed local lifecycle loss. */
+  private checkOrphanedAttention(
+    agent: ManagedAgent,
+    lostLocalRequesters?: ReadonlySet<string>,
+  ): void {
+    const objectives = agent.attentionObjectives;
+    if (!objectives || agent.internal) return;
+    const task = objectives.blockers
+      .verify({
+        lostLocalRequesters,
+        resolveRequester: (requester) => this.resolveAttentionRequester(requester),
+        isCurrent: (checkpoint) => {
+          const sameOwner =
+            this.agents.get(agent.id) === agent &&
+            agent.attentionObjectives === objectives &&
+            !agent.pendingReplacement;
+          const stillBlocked =
+            checkpoint.reason === "error"
+              ? agent.lifecycle === "error"
+              : agent.pendingPermissions.has(checkpoint.permissionId);
+          return sameOwner && stillBlocked;
+        },
+        escalate: async ({ objectiveId, reason, isCurrent }) => {
+          const message =
+            reason === "permission"
+              ? "This task needs permission, but its requesting agent is no longer available."
+              : "This task failed, but its requesting agent is no longer available.";
+          await this.runForegroundMutation(agent.id, async () => {
+            // A foreground write may retire the exact checkpoint while this lane is held.
+            if (!isCurrent()) return;
+            await this.raiseHumanAttention({ agent, objectiveId, reason: message, isCurrent });
+          });
+        },
+      })
+      .catch((error) => {
+        this.logger.warn(
+          { error, agentId: agent.id },
+          "Could not verify requesting agent availability",
+        );
+      });
+    this.trackBackgroundTask(task);
+  }
+
+  /** Unknown routes and resumable local runtimes are not proof of requester loss. */
+  private async resolveAttentionRequester(
+    requester: AgentAttentionPeer,
+  ): Promise<"available" | "missing" | "unknown"> {
+    const remote = requester.serverId && requester.serverId !== this.attentionServerId;
+    if (remote) {
+      return this.resolveRemoteAttentionRequester
+        ? this.resolveRemoteAttentionRequester(requester)
+        : "unknown";
     }
+    // Opaque transport sender IDs cannot be used as unchecked local storage addresses.
+    try {
+      validateAgentId(requester.agentId, "attentionRequester");
+    } catch {
+      return "unknown";
+    }
+    const record = await this.registry?.get(requester.agentId);
+    if (record) return record.archivedAt ? "missing" : "available";
+    if (this.agents.has(requester.agentId)) return "available";
+    return this.registry ? "missing" : "unknown";
   }
 
   private enqueueBackgroundPersist(agent: ManagedAgent): void {
@@ -5113,7 +6738,15 @@ export class AgentManager {
     agent: ManagedAgent,
     reason: "finished" | "error" | "permission",
   ): void {
-    if (isDelegatedAgent(agent)) {
+    // COMPAT(agentAudienceOrigin): added in v0.12.0, remove after 2027-04-22 only once
+    // retained unknown-origin records have been explicitly classified. Never infer their audience.
+    if (
+      !this.attentionPresentation.allowsNotification({
+        knownAudience: agent.attentionObjectives?.isAudienceKnown === true,
+        delegated: isDelegatedAgent(agent),
+        intervention: agent.attention.requiresAttention && !!agent.attentionMessage,
+      })
+    ) {
       return;
     }
 
@@ -5121,6 +6754,7 @@ export class AgentManager {
       agentId: agent.id,
       provider: agent.provider,
       reason,
+      message: agent.attentionMessage,
     });
   }
 
@@ -5165,7 +6799,7 @@ export class AgentManager {
     for (const subscriber of this.subscribers) {
       if (
         subscriber.agentId &&
-        event.type === "agent_stream" &&
+        (event.type === "agent_stream" || event.type === "agent_removed") &&
         subscriber.agentId !== event.agentId
       ) {
         continue;
@@ -5201,6 +6835,7 @@ export class AgentManager {
 
   private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
     if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "agent_removed") return event.internal;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
     if (event.type !== "provider_subagent") return false;
     const parentAgentId =
@@ -5335,10 +6970,17 @@ export class AgentManager {
       reason: PluginSessionOpenRequest["reason"];
       purpose: PluginSessionOpenRequest["purpose"];
       workspaceId?: string | null;
+      title?: string | null;
+      labels?: Record<string, string>;
     },
   ): Promise<AgentLaunchContext> {
+    // A plugin changing during this open must still make the resulting session stale.
+    const generation = this.sessionOpenGeneration;
+    this.detachPluginTools(agentId);
+    let mcpServers: AgentSessionConfig["mcpServers"];
+    let mcpServerOwners: Record<string, string> | undefined;
     if (this.pluginLifecycle) {
-      const request: PluginSessionOpenRequest = {
+      const request = {
         agentId,
         provider: client.provider,
         cwd,
@@ -5346,29 +6988,49 @@ export class AgentManager {
         reason: opening?.reason ?? "resume",
         purpose: opening?.purpose ?? "interactive",
         env: { ...env },
+        title: opening?.title ?? null,
+        labels: opening?.labels ?? {},
+        tools: [],
+        mcpServers: {},
       };
-      const transformed = await this.pluginLifecycle.before("agent.session_open", request);
+      const transformed = await this.pluginLifecycle.before("agent.open.before", request);
       env = transformed.env;
+      if (request.purpose === "interactive") {
+        this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
+        mcpServers = transformed.mcpServers;
+        mcpServerOwners = transformed.mcpServerOwners;
+      }
     }
     const context: AgentLaunchContext = {
       agentId,
+      mcpServers,
+      mcpServerOwners,
       env: {
         ...env,
         PASEO_AGENT_ID: agentId,
         PASEO_AGENT_CWD: cwd,
       },
     };
-    if (
+    const useNativeTools =
       this.paseoToolsEnabled &&
       isPaseoToolPolicyEnabled(paseoToolPolicy) &&
-      client.capabilities.supportsNativePaseoTools &&
-      this.paseoToolCatalogFactory
+      client.capabilities.supportsNativePaseoTools;
+    if (
+      this.paseoToolCatalogFactory &&
+      (useNativeTools || this.getPluginTools(agentId).length > 0)
     ) {
-      context.paseoTools = await this.paseoToolCatalogFactory({
-        callerAgentId: agentId,
-        paseoToolPolicy,
-      });
+      try {
+        const catalog = await this.paseoToolCatalogFactory({
+          callerAgentId: agentId,
+          paseoToolPolicy,
+        });
+        if (useNativeTools) context.paseoTools = catalog;
+      } catch (error) {
+        this.detachPluginTools(agentId);
+        throw error;
+      }
     }
+    this.sessionOpenGenerations.set(agentId, generation);
     return context;
   }
 
@@ -5376,7 +7038,26 @@ export class AgentManager {
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
-    return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
+    const savedServerNames = new Set(
+      Object.keys(stripInternalPaseoMcpServer(launchConfig).mcpServers ?? {}),
+    );
+    for (const name of Object.keys(launchContext.mcpServers ?? {})) {
+      const owner = launchContext.mcpServerOwners?.[name];
+      if (name === PASEO_MCP_SERVER_NAME || savedServerNames.has(name)) {
+        const existingOwner = savedServerNames.has(name)
+          ? "agent saved configuration"
+          : "Paseo internal MCP server";
+        throw new Error(`MCP server '${name}' from plugin ${owner} collides with ${existingOwner}`);
+      }
+    }
+    const merged =
+      Object.keys(launchContext.mcpServers ?? {}).length > 0
+        ? {
+            ...launchConfig,
+            mcpServers: { ...launchConfig.mcpServers, ...launchContext.mcpServers },
+          }
+        : launchConfig;
+    return launchContext.paseoTools ? stripInternalPaseoMcpServer(merged) : merged;
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
@@ -5429,22 +7110,33 @@ export class AgentManager {
   }
 
   private async syncNativeArchiveState(
-    provider: AgentProvider,
-    persistence: AgentPersistenceHandle | null | undefined,
+    record: StoredAgentRecord,
     state: "archive" | "restore",
   ): Promise<void> {
+    const { provider, persistence } = record;
     if (!persistence) return;
     const client = this.clients.get(provider);
     const sync =
       state === "archive" ? client?.archiveNativeSession : client?.unarchiveNativeSession;
     if (!sync) return;
-    if (state === "restore") {
-      await sync.call(client, persistence);
-      return;
-    }
     try {
-      await sync.call(client, persistence);
+      assertConfiguredHistoryIdentity(record.providerHistory, persistence);
+      const storage = await client?.resolveHistoryStorage?.({
+        provider,
+        config: {
+          provider,
+          cwd: record.cwd,
+          providerOptions: record.config?.providerOptions ?? undefined,
+        },
+        previous: record.providerHistory,
+        operation: "resume",
+      });
+      const context: AgentLaunchContext = {
+        historyStorage: storage ?? record.providerHistory?.storage ?? { kind: "unknown" },
+      };
+      await sync.call(client, persistence, context);
     } catch (error) {
+      if (state === "restore") throw error;
       this.logger.warn(
         { error, provider, sessionId: persistence.sessionId },
         "Failed to archive native session (best-effort)",

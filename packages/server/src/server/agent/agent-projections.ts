@@ -1,3 +1,5 @@
+import { registerProviderHistory } from "./provider-history/binding.js";
+import { AttentionPresentation } from "./attention/presentation.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -77,7 +79,7 @@ export function toStoredAgentRecord(
   options?: ProjectionOptions,
 ): StoredAgentRecord {
   const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
-  const config = buildSerializableConfig(agent.config);
+  const config = serializeAgentConfig(agent.config);
   const persistence = sanitizePersistenceHandle(agent.persistence);
   const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
 
@@ -95,6 +97,7 @@ export function toStoredAgentRecord(
     lastStatus: agent.lifecycle,
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
+    launchEnv: agent.launchEnv ? { ...agent.launchEnv } : undefined,
     runtimeInfo,
     features: normalizeFeatures(agent.features),
     persistence,
@@ -104,9 +107,31 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
+    attentionObjectives: agent.attentionObjectives?.snapshot(),
+    humanAttentionRequired: agent.attentionObjectives?.requiresHumanAttention({
+      hasUnread: agent.attention.requiresAttention,
+      hasProblem: agent.lifecycle === "error" || agent.pendingPermissions.size > 0,
+    }),
+    attentionMessage: agent.attentionMessage,
     internal: options?.internal,
     owner: agent.owner,
+    providerHistory: registerProviderHistory({
+      binding: agent.providerHistory,
+      sessionId: persistence?.sessionId ?? null,
+    }),
   } satisfies StoredAgentRecord;
+}
+
+/** Omit absent audience metadata before JSON sanitization, preserving known false and explicit null. */
+function projectAttentionPresentation(
+  input: Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage">,
+): Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage"> {
+  return {
+    ...(input.humanAttentionRequired !== undefined
+      ? { humanAttentionRequired: input.humanAttentionRequired }
+      : {}),
+    ...(input.attentionMessage !== undefined ? { attentionMessage: input.attentionMessage } : {}),
+  };
 }
 
 export function toAgentPayload(
@@ -120,6 +145,7 @@ export function toAgentPayload(
     configuredThinkingOptionId: thinkingOptionId,
   });
 
+  const attentionObjectives = agent.attentionObjectives?.describe();
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
@@ -149,6 +175,11 @@ export function toAgentPayload(
     labels: agent.labels,
     archivedAt: options?.archivedAt ?? null,
     ...(agent.internal ? { internal: true } : {}),
+    ...(attentionObjectives !== undefined ? { attentionObjectives } : {}),
+    ...projectAttentionPresentation({
+      humanAttentionRequired: AttentionPresentation.forAgent(agent),
+      attentionMessage: agent.attentionMessage,
+    }),
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
@@ -205,9 +236,23 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+/** Apply the current host presentation choice to retained facts without mutating the stored record. */
+function storedHumanAttention(
+  record: StoredAgentRecord,
+  options?: { agentAwareAttention?: boolean },
+): boolean | undefined {
+  return AttentionPresentation.project({
+    enabled: options?.agentAwareAttention ?? true,
+    humanAttentionRequired: record.humanAttentionRequired,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionMessage: record.attentionMessage,
+  });
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
+  options?: { agentAwareAttention?: boolean },
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -256,6 +301,10 @@ export function buildStoredAgentPayload(
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
+    ...projectAttentionPresentation({
+      humanAttentionRequired: storedHumanAttention(record, options),
+      attentionMessage: record.attentionMessage,
+    }),
     archivedAt: record.archivedAt ?? null,
     ...(record.internal ? { internal: true } : {}),
     labels: normalizeLabels(record.labels),
@@ -282,6 +331,10 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
+    ...projectAttentionPresentation({
+      humanAttentionRequired: agent.humanAttentionRequired,
+      attentionMessage: agent.attentionMessage,
+    }),
     labels: agent.labels,
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };
@@ -363,7 +416,7 @@ export function toRecentProviderSessionDescriptorPayload(
   };
 }
 
-function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
+export function serializeAgentConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
   if (config.modeId) {
     serializable.modeId = config.modeId;

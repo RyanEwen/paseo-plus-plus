@@ -1,11 +1,12 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { replaceCodeMirrorContent } from "./code-mirror";
 
 /** A sheet tab's body, named after the tab it shows. */
 export function sheet(page: Page, label: string): Locator {
   return page.getByRole("dialog", { name: label });
 }
 
-/** A sheet tab's header, which carries its title, Close, and the Open as tab glyph. */
+/** A sheet tab's header, which carries its title, Back, Close, and the Open as tab glyph. */
 export function sheetHeader(page: Page, label: string): Locator {
   return page.getByTestId("sheet-tab-header").filter({ hasText: label });
 }
@@ -55,6 +56,12 @@ export async function closeSheet(page: Page, label: string): Promise<void> {
   await expect(sheet(page, label)).toHaveCount(0);
 }
 
+/** Steps a sheet opened from a list back to that list, in the same sheet. */
+export async function backToList(page: Page, label: string): Promise<void> {
+  await sheetHeader(page, label).getByRole("button", { name: "Back" }).click();
+  await expect(sheet(page, label)).toHaveCount(0);
+}
+
 export async function openSheetAsTab(page: Page, label: string): Promise<void> {
   await sheetHeader(page, label).getByRole("button", { name: "Open as tab" }).click();
   await expect(sheet(page, label)).toHaveCount(0);
@@ -66,9 +73,7 @@ export async function replaceSheetFileText(
   content: string,
 ): Promise<void> {
   const editor = sheet(page, label).getByTestId("file-source-editor").locator(".cm-content");
-  await editor.click();
-  await editor.press("ControlOrMeta+A");
-  await editor.pressSequentially(content);
+  await replaceCodeMirrorContent({ editor, content });
 }
 
 export async function selectTabFromSwitcher(page: Page, label: string): Promise<void> {
@@ -85,6 +90,15 @@ export async function selectTabFromSwitcher(page: Page, label: string): Promise<
   const option = page.getByText(label, { exact: true }).filter({ visible: true }).last();
   await expect(option).toBeVisible();
   await option.click();
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+}
+
+/** Each open sheet renders its own backdrop, so counting them counts the sheets. */
+export async function expectOneSheetOpen(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(1);
+}
+
+export async function expectNoSheetOpen(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
 }
 

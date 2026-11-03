@@ -13,8 +13,13 @@ function createArmedHistoryStartPaginationState() {
   return rearmHistoryStartPagination(createHistoryStartPaginationState());
 }
 
-const visibleHistoryStart: HistoryStartPaginationInput = {
+const visibleHistoryStart: HistoryStartPaginationInput & {
+  contentHeight: number;
+  viewportHeight: number;
+} = {
   distanceFromHistoryStart: 0,
+  contentHeight: 400,
+  viewportHeight: 516,
   hasOlderHistory: true,
   isLoadingOlderHistory: false,
   isReady: true,
@@ -112,6 +117,58 @@ describe("history start pagination", () => {
     expect(continued.shouldLoad).toBe(true);
     expect(isHistoryStartLoadingOperation(first.state)).toBe(true);
     expect(isHistoryStartLoadingOperation(pageApplied.state)).toBe(true);
+    expect(isHistoryStartLoadingOperation(continued.state)).toBe(true);
+  });
+
+  it("stops continuation at a full viewport despite zero offset and real page progress", () => {
+    // Actual remote tool-run RED: grouping changes, but these physical dimensions do not.
+    const fullHistoryStart = { ...visibleHistoryStart, contentHeight: 3855 };
+    const first = evaluateHistoryStartPagination(
+      createArmedHistoryStartPaginationState(),
+      fullHistoryStart,
+    );
+    expect(first.shouldLoad).toBe(true);
+    const pageApplied = evaluateHistoryStartPagination(first.state, {
+      ...fullHistoryStart,
+      progressKey: "epoch-1:10",
+    });
+    expect(pageApplied.state).toEqual({ status: "settling", loadedProgressKey: "epoch-1:10" });
+    const fullAfterPage = { ...fullHistoryStart, progressKey: "epoch-1:10" };
+    const stopped = settleHistoryStartPagination(pageApplied.state, fullAfterPage);
+
+    expect(stopped.shouldLoad).toBe(false);
+    expect(stopped.state).toEqual({ status: "latched" });
+    expect(isHistoryStartLoadingOperation(stopped.state)).toBe(false);
+    expect(evaluateHistoryStartPagination(stopped.state, fullAfterPage)).toEqual(stopped);
+    const rearmed = evaluateHistoryStartPagination(
+      rearmHistoryStartPagination(stopped.state),
+      fullAfterPage,
+    );
+    expect(rearmed.shouldLoad).toBe(true);
+    const away = evaluateHistoryStartPagination(stopped.state, {
+      ...fullAfterPage,
+      distanceFromHistoryStart: 300,
+    });
+    expect(away.state).toEqual({ status: "ready" });
+    expect(evaluateHistoryStartPagination(away.state, fullAfterPage).shouldLoad).toBe(true);
+  });
+
+  it("continues fill when measured content fits exactly without a scrollable range", () => {
+    // DOM scrollHeight is at least clientHeight, including genuinely underfilled content.
+    const fittingHistoryStart = { ...visibleHistoryStart, contentHeight: 516 };
+    const first = evaluateHistoryStartPagination(
+      createArmedHistoryStartPaginationState(),
+      fittingHistoryStart,
+    );
+    const pageApplied = evaluateHistoryStartPagination(first.state, {
+      ...fittingHistoryStart,
+      progressKey: "epoch-1:10",
+    });
+    const continued = settleHistoryStartPagination(pageApplied.state, {
+      ...fittingHistoryStart,
+      progressKey: "epoch-1:10",
+    });
+    expect(continued.shouldLoad).toBe(true);
     expect(isHistoryStartLoadingOperation(continued.state)).toBe(true);
   });
 

@@ -139,9 +139,11 @@ test("Explorer divider hover presets honor pixel minimums and persist exact widt
   await expect(preset).toBeEnabled();
   const shellWidth = await explorer.evaluate((element) => {
     let shell = element.parentElement;
+    // The dock's own frame contains its handle; the measured workspace row also contains main.
     while (
       shell &&
-      !shell.querySelector('[data-testid="workspace-explorer-sidebar-resize-handle"]')
+      (!shell.querySelector('[data-testid="workspace-explorer-sidebar-resize-handle"]') ||
+        !shell.querySelector('[data-testid="workspace-pane-main"]'))
     ) {
       shell = shell.parentElement;
     }

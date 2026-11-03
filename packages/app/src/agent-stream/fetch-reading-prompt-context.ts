@@ -1,5 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { ContextPageReader } from "@/timeline/read-canonical-prompt-context";
+import type {
+  ContextPageReader,
+  ContextPromptIndexReader,
+} from "@/timeline/read-canonical-prompt-context";
 export {
   fetchReadingPromptContext,
   fetchCanonicalPromptContext,
@@ -30,6 +33,19 @@ export function normalContextPageReader(client: DaemonClient, agentId: string): 
     if (page.agentId !== agentId || page.direction !== "before" || !matchesProjection)
       throw new Error("Reading context has a different journal identity");
     return page;
+  };
+}
+
+/** Acquire a fresh root USER index without applying a timeline window or sharing outline state. */
+export function normalContextPromptIndexReader(
+  client: DaemonClient,
+  agentId: string,
+): ContextPromptIndexReader {
+  return async (_request, signal) => {
+    if (signal.aborted) throw new Error("Reading context was cancelled");
+    const index = await client.listAgentTimelinePrompts(agentId);
+    if (signal.aborted) throw new Error("Reading context was cancelled");
+    return index;
   };
 }
 

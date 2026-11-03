@@ -3,8 +3,58 @@ import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-mode
 import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
+import type { PromptDiscoveryStatus } from "./use-prompt-discovery";
 
 export type UserPrompt = Extract<StreamItem, { kind: "user_message" }>;
+
+interface PromptFeedbackState {
+  busy: boolean;
+  error: boolean;
+  cancelled: boolean;
+  discoveryStatus: PromptDiscoveryStatus;
+}
+
+interface RetainedContextFeedback {
+  loading: boolean;
+  error: boolean;
+  cancelled: boolean;
+  limited: boolean;
+  exhausted: boolean;
+}
+
+const EMPTY_CONTEXT_FEEDBACK: RetainedContextFeedback = {
+  loading: false,
+  error: false,
+  cancelled: false,
+  limited: false,
+  exhausted: false,
+};
+
+/** Passive context never covers an available prompt with loading feedback.
+ * Explicit navigation keeps its own failure and retry, even if context also failed.
+ * Without a prompt, the same rail owns the system placeholder and context retry.
+ */
+export function resolvePromptFeedback(
+  navigation: PromptFeedbackState & { message: UserPrompt | undefined },
+  context: RetainedContextFeedback = EMPTY_CONTEXT_FEEDBACK,
+): PromptFeedbackState & { retryContext: boolean } {
+  if (navigation.message) return { ...navigation, retryContext: false };
+  const navigationNeedsRetry =
+    navigation.error || navigation.cancelled || navigation.discoveryStatus === "limited";
+  let discoveryStatus = navigation.discoveryStatus;
+  if (!navigationNeedsRetry) {
+    if (context.limited) discoveryStatus = "limited";
+    else if (context.exhausted) discoveryStatus = "exhausted";
+  }
+  return {
+    busy: navigation.busy || context.loading,
+    error: navigation.error || context.error,
+    cancelled: navigation.cancelled || context.cancelled,
+    discoveryStatus,
+    retryContext: !navigationNeedsRetry && (context.error || context.cancelled || context.limited),
+  };
+}
+
 export interface PromptTarget {
   key: string;
   seq?: number;
@@ -246,10 +296,10 @@ export function resolvePromptGeometry(
   };
 }
 
-/** Follow/latest presentation owns the newest loaded canonical USER only when
- * ordinary coverage reaches the followed tail without holes. An optimistic row
- * has no canonical cursor; sparse windows still need the bounded context reader.
- * Manual reading always resolves its actual source, including interleaved turns. */
+/** Published reading geometry owns physical context even while following output.
+ * Before the viewport publishes an edge, use the latest canonical source, or its
+ * loaded USER when ordinary coverage reaches the tail without holes. Semantic
+ * latest navigation is independent of this source selection. */
 export function resolveRetainedContextSource(
   items: readonly StreamItem[],
   epoch: string | null,
@@ -257,8 +307,7 @@ export function resolveRetainedContextSource(
   coverage: readonly CanonicalTimelineCoverage[],
 ): StreamItem | undefined {
   if (reading.navigating) return undefined;
-  if (!reading.following && reading.rowId !== null)
-    return resolveContextSource(items, epoch, reading.rowId, reading.seq);
+  if (reading.rowId !== null) return resolveContextSource(items, epoch, reading.rowId, reading.seq);
 
   let latest: StreamItem | undefined;
   for (let index = items.length - 1; index >= 0; index -= 1) {

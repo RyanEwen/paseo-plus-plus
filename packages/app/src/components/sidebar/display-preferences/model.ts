@@ -1,3 +1,4 @@
+import type { WorkspaceSort } from "@/projects/workspace-structure";
 import {
   getSettingsEditingBlocked,
   subscribeSettingsEditingBlocked,
@@ -49,6 +50,8 @@ export interface SidebarDisplayPreferences {
   showBackground: boolean;
   toggleBackground: () => void;
   grouping: SidebarGroupMode;
+  workspaceSort: WorkspaceSort;
+  setWorkspaceSort: (sort: WorkspaceSort) => void;
   setGrouping: (mode: SidebarGroupMode) => void;
   toggleGrouping: () => void;
   titleSource: WorkspaceTitleSource;
@@ -88,6 +91,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const oneProjectAtATime = useSidebarViewStore((state) => state.oneProjectAtATime);
   const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
   const showBackground = useSidebarViewStore((state) => state.showBackground);
+  const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
+  const setWorkspaceSort = useSidebarViewStore((state) => state.setWorkspaceSort);
   const grouping = useSidebarViewStore((state) => state.groupMode);
   const setGrouping = useSidebarViewStore((state) => state.setGroupMode);
   const toggleGrouping = useSidebarViewStore((state) => state.toggleGroupMode);
@@ -261,6 +266,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       showBackground,
       toggleBackground,
       grouping,
+      workspaceSort,
+      setWorkspaceSort,
       setGrouping,
       toggleGrouping,
       titleSource: workspaceTitleSource,
@@ -306,6 +313,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       showBackground,
       toggleBackground,
       grouping,
+      workspaceSort,
+      setWorkspaceSort,
       setGrouping,
       toggleGrouping,
       workspaceTitleSource,

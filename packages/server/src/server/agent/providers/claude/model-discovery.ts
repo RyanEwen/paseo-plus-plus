@@ -5,8 +5,10 @@ import { raceProviderRefreshAbort } from "../../provider-refresh-deadline.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import { claudeQuery, type ClaudeQueryInput, type ClaudeQueryContext } from "./query.js";
+import type { ConfiguredClaudeHistoryStorage } from "../../provider-history/binding.js";
 
 interface ClaudeModelDiscoveryOptions {
+  historyStorage?: ConfiguredClaudeHistoryStorage;
   resolveBinary: () => Promise<string>;
   runtimeSettings?: ProviderRuntimeSettings;
   env: NodeJS.ProcessEnv;
@@ -69,6 +71,7 @@ export async function discoverClaudeModels(
       },
       {
         runtimeSettings: options.runtimeSettings,
+        historyStorage: options.historyStorage,
         onChildProcess: (process) => {
           child = process;
         },

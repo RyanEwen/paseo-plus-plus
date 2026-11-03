@@ -77,6 +77,7 @@ import {
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
+  configurePaseoBrowserIdentity,
   getLegacyPaseoBrowserProfileSession,
   PASEO_BROWSER_PROFILE_PARTITION,
   getPaseoBrowserProfileSession,
@@ -101,7 +102,7 @@ import {
   registerExternalQuitSignals,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
-import { runDesktopStartup } from "./desktop-startup.js";
+import { configureDesktopRendererClient, runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { registerBrowserExtensions } from "./features/browser-extensions/index.js";
 import { buildBrowserExtensionContextMenuItems } from "./features/browser-extensions/context-menus.js";
@@ -153,6 +154,17 @@ if (desktopDistribution.isPreview) {
 }
 
 app.setName(APP_NAME);
+const mainWindowUserAgent = configurePaseoBrowserIdentity({
+  app,
+  appName: app.getName(),
+  appVersion: app.getVersion(),
+  electronVersion: process.versions.electron,
+});
+// Bind normal fork toasts to the installed identity before Electron creates its notifier.
+// Leave upstream/debug fallback behavior and Electron's CLSID adoption unchanged.
+if (process.platform === "win32" && app.isPackaged && desktopDistribution.windowsAppUserModelId) {
+  app.setAppUserModelId(desktopDistribution.windowsAppUserModelId);
+}
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
@@ -371,6 +383,12 @@ if (electronFlags) {
   }
   log.info("[electron-flags]", electronFlags);
 }
+
+configureDesktopRendererClient({
+  platform: process.platform,
+  realUserId: process.getuid?.(),
+  commandLine: app.commandLine,
+});
 
 if (process.platform === "linux") {
   // Keep the desktop/dock identity independent of the wrapped Electron filename.
@@ -742,6 +760,7 @@ async function createWindow(
       webviewTag: true,
     },
   });
+  mainWindow.webContents.setUserAgent(mainWindowUserAgent);
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
   const webContentsId = mainWindow.webContents.id;

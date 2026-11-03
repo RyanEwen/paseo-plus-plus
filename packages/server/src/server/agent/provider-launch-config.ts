@@ -1,3 +1,5 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { HistoryStorageConflictError } from "./provider-history/binding.js";
 import { isAbsolute } from "node:path";
 import {
   executableExists,
@@ -12,12 +14,14 @@ export {
   AgentProviderRuntimeSettingsMapSchema,
   ProviderCommandSchema,
   ProviderOverrideSchema,
+  ProviderHistoryPolicySchema,
   ProviderOverridesSchema,
   ProviderProfileModelSchema,
   ProviderRuntimeSettingsSchema,
   type AgentProviderRuntimeSettingsMap,
   type ProviderCommand,
   type ProviderOverride,
+  type ProviderHistoryPolicy,
   type ProviderOverrides,
   type ProviderProfileModel,
   type ProviderRuntimeSettings,
@@ -26,6 +30,7 @@ import {
   ProviderOverrideSchema,
   ProviderOverridesSchema,
   ProviderRuntimeSettingsSchema,
+  type ProviderHistoryPolicy,
   type ProviderCommand,
   type ProviderOverride,
   type ProviderOverrides,
@@ -276,4 +281,77 @@ export async function isProviderCommandAvailable(
   } catch {
     return false;
   }
+}
+
+export function toRuntimeSettings(
+  override?: ProviderOverride,
+): ProviderRuntimeSettings | undefined {
+  if (!override?.command && !override?.env && !override?.disallowedTools) {
+    return undefined;
+  }
+
+  return {
+    command: override.command
+      ? {
+          mode: "replace",
+          argv: override.command,
+        }
+      : undefined,
+    env: override.env,
+    disallowedTools: override.disallowedTools,
+  };
+}
+
+export function mergeRuntimeSettings(
+  base: ProviderRuntimeSettings | undefined,
+  override: ProviderRuntimeSettings | undefined,
+): ProviderRuntimeSettings | undefined {
+  if (!base && !override) {
+    return undefined;
+  }
+
+  return {
+    command: override?.command ?? base?.command,
+    env:
+      base?.env || override?.env
+        ? {
+            ...base?.env,
+            ...override?.env,
+          }
+        : undefined,
+    disallowedTools:
+      base?.disallowedTools || override?.disallowedTools
+        ? [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])]
+        : undefined,
+  };
+}
+
+export function configuredProviderOptions(
+  override: ProviderOverride | undefined,
+): ProviderOptions | undefined {
+  // COMPAT(providerParams): added in v0.10.0, remove after 2027-03-30 once configs use options.
+  // options wins as a whole record when both spellings are supplied.
+  return override?.options ?? override?.params;
+}
+
+/** Config-only selection for local history preview; never constructs clients or plugin runtimes. */
+export function resolveConfiguredCodexHistoryProfile(
+  provider: string,
+  overrides: Record<string, ProviderOverride>,
+): {
+  runtimeSettings?: ProviderRuntimeSettings;
+  providerOptions?: ProviderOptions;
+  historyPolicy?: ProviderHistoryPolicy;
+} {
+  const selected = overrides[provider];
+  if (!selected || (provider !== "codex" && selected.extends !== "codex"))
+    throw new HistoryStorageConflictError("destination-must-be-configured-codex-profile");
+  if (selected.enabled === false)
+    throw new HistoryStorageConflictError("destination-provider-disabled");
+  const base = provider === "codex" ? undefined : overrides.codex;
+  return {
+    runtimeSettings: mergeRuntimeSettings(toRuntimeSettings(base), toRuntimeSettings(selected)),
+    providerOptions: configuredProviderOptions(selected) ?? configuredProviderOptions(base),
+    historyPolicy: selected.history ?? base?.history,
+  };
 }

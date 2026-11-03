@@ -2,12 +2,13 @@ import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:chi
 import { query, type Options, type Query, type SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
 import {
-  createProviderEnv,
   createProviderEnvSpec,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
-import { buildSelfNodeCommand } from "../../../paseo-env.js";
+import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
+import type { ConfiguredClaudeHistoryStorage } from "../../provider-history/binding.js";
+import { checkClaudeHistoryRoute } from "./history.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -18,6 +19,7 @@ export type ClaudeQueryInput = Parameters<typeof query>[0] & { options: ClaudeOp
 export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 
 export interface ClaudeQueryContext {
+  historyStorage?: ConfiguredClaudeHistoryStorage;
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
   queryFactory?: ClaudeQueryFactory;
@@ -74,11 +76,11 @@ function applyRuntimeSettingsToClaudeOptions(
         runtimeSettings,
         overlays: [launchEnv],
       });
-      const providerEnv = createProviderEnv({
-        baseEnv: spawnOptions.env,
-        runtimeSettings,
-        overlays: [launchEnv],
-      });
+      // Session-open hooks may explicitly supply a client identity. Keep inherited
+      // SDK/parent identities cleared while honoring this launch-only contribution.
+      providerEnvSpec.envOverlay.CLAUDE_CODE_ENTRYPOINT = launchEnv?.CLAUDE_CODE_ENTRYPOINT;
+      const providerEnv = createExternalProcessEnv(spawnOptions.env, providerEnvSpec.envOverlay);
+      if (context.historyStorage) checkClaudeHistoryRoute(context.historyStorage, providerEnv);
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)
         : null;
@@ -111,6 +113,8 @@ function applyRuntimeSettingsToClaudeOptions(
 }
 
 export function claudeQuery(input: ClaudeQueryInput, context: ClaudeQueryContext = {}): Query {
+  if (context.historyStorage)
+    checkClaudeHistoryRoute(context.historyStorage, input.options.env ?? {});
   const launchQuery = context.queryFactory ?? query;
   return launchQuery({
     ...input,

@@ -7,7 +7,7 @@ import {
 import { migrateSidebarOrderState, useSidebarOrderStore } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
-  it("prefixes legacy per-server workspace order with the source server id", () => {
+  it("preserves legacy workspace ordering across hosts", () => {
     const migrated = migrateSidebarOrderState({
       projectOrderByServerId: {
         "host-a": ["project-a"],
@@ -23,9 +23,7 @@ describe("migrateSidebarOrderState", () => {
       statusWorkspaceOrder: [],
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
-      workspaceOrderByProject: {
-        "project-a": ["host-a:main", "host-a:feature", "host-b:main"],
-      },
+      workspaceOrderByProject: { "project-a": ["host-a:main", "host-a:feature", "host-b:main"] },
     });
   });
 
@@ -40,111 +38,156 @@ describe("migrateSidebarOrderState", () => {
   });
 
   it("normalizes pinned workspace order", () => {
-    const migrated = migrateSidebarOrderState({
-      pinnedWorkspaceOrder: [" host-a:one ", "host-a:one", "", "host-b:two"],
-    });
-
-    expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
-  });
-});
-
-// A directory whose name ends in a space produces a view key that ends in a
-// space. Trimming it on write used to make the sidebar's reconcile effect loop
-// forever, crashing the app with React error #185 (see #4880).
-describe("sidebar order keys that end in whitespace", () => {
-  const PROJECT_KEY = "host:srv-1:/home/u/Reklamation ";
-
-  beforeEach(() => {
-    useSidebarOrderStore.setState({
-      projectOrder: [],
-      pinnedWorkspaceOrder: [],
-      workspaceOrderByProject: {},
-    });
-  });
-
-  it("stores a project key exactly as given", () => {
-    useSidebarOrderStore.getState().setProjectOrder([PROJECT_KEY]);
-
-    expect(useSidebarOrderStore.getState().projectOrder).toEqual([PROJECT_KEY]);
-  });
-
-  it("scopes a workspace order under the project key the sidebar indexes by", () => {
-    useSidebarOrderStore.getState().setWorkspaceOrder(PROJECT_KEY, ["srv-1:main"]);
-
-    // use-sidebar-workspaces-list reads workspaceOrderByProject by view key
-    // directly, so the scope has to be stored under that same key.
-    expect(useSidebarOrderStore.getState().workspaceOrderByProject[PROJECT_KEY]).toEqual([
-      "srv-1:main",
-    ]);
-    expect(useSidebarOrderStore.getState().getWorkspaceOrder(PROJECT_KEY)).toEqual(["srv-1:main"]);
-  });
-
-  it("settles the sidebar order reconcile instead of rewriting it forever", () => {
-    const projects: SidebarProjectEntry[] = [
-      {
-        viewKey: PROJECT_KEY,
-        projectName: "Reklamation ",
-        projectKind: "non_git",
-        iconWorkingDir: "/home/u/Reklamation ",
-        hosts: [],
-        workspaces: [],
-      },
-    ];
-    const runPass = () =>
-      computeSidebarOrderUpdates({
-        projects,
-        persistedProjectOrder: useSidebarOrderStore.getState().projectOrder,
-        getWorkspaceOrder: (key) => useSidebarOrderStore.getState().getWorkspaceOrder(key),
+    it("deduplicates pinned workspace order without rewriting identities", () => {
+      const migrated = migrateSidebarOrderState({
+        pinnedWorkspaceOrder: ["host-a:one", "host-a:one", "", "host-b:two"],
       });
 
-    // First pass adds the newly visible project.
-    const first = runPass();
-    expect(first.projectOrder).toEqual([PROJECT_KEY]);
-    useSidebarOrderStore.getState().setProjectOrder(first.projectOrder ?? []);
-
-    // Second pass must find nothing left to do; otherwise the effect that
-    // applies these updates re-runs on every render.
-    expect(runPass().projectOrder).toBeNull();
+      expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
+    });
   });
 
-  it("still trims keys when migrating persisted state", () => {
-    const migrated = migrateSidebarOrderState({
-      projectOrder: [" host-a:one ", "host-a:one"],
+  // A directory whose name ends in a space produces a view key that ends in a
+  // space. Trimming it on write used to make the sidebar's reconcile effect loop
+  // forever, crashing the app with React error #185 (see #4880).
+  describe("sidebar order keys that end in whitespace", () => {
+    const PROJECT_KEY = "host:srv-1:/home/u/Reklamation ";
+
+    beforeEach(() => {
+      useSidebarOrderStore.setState({
+        projectOrder: [],
+        pinnedWorkspaceOrder: [],
+      });
     });
 
-    expect(migrated.projectOrder).toEqual(["host-a:one"]);
-  });
-});
+    it("stores a project key exactly as given", () => {
+      useSidebarOrderStore.getState().setProjectOrder([PROJECT_KEY]);
 
-it("keeps the filtered anchor move when later reconciliation appends a new cached project", () => {
-  const order = useSidebarOrderStore.getState();
-  order.setProjectOrder(["a", "hidden", "b", "unknown"]);
-  const next = moveProjectInFullOrder({
-    currentOrder: order.getProjectOrder(),
-    knownProjectKeys: ["a", "hidden", "b"],
-    move: { activeKey: "b", overKey: "a", from: 1, to: 0 },
+      expect(useSidebarOrderStore.getState().projectOrder).toEqual([PROJECT_KEY]);
+    });
+
+    it("settles the sidebar order reconcile instead of rewriting it forever", () => {
+      const projects: SidebarProjectEntry[] = [
+        {
+          viewKey: PROJECT_KEY,
+          projectName: "Reklamation ",
+          projectKind: "non_git",
+          iconWorkingDir: "/home/u/Reklamation ",
+          hosts: [],
+          workspaces: [],
+        },
+      ];
+      const runPass = () =>
+        computeSidebarOrderUpdates({
+          projects,
+          persistedProjectOrder: useSidebarOrderStore.getState().projectOrder,
+        });
+
+      // First pass adds the newly visible project.
+      const first = runPass();
+      expect(first.projectOrder).toEqual([PROJECT_KEY]);
+      useSidebarOrderStore.getState().setProjectOrder(first.projectOrder ?? []);
+
+      // Second pass must find nothing left to do; otherwise the effect that
+      // applies these updates re-runs on every render.
+      expect(runPass().projectOrder).toBeNull();
+    });
+
+    it("still trims legacy keys when migrating per-host persisted state", () => {
+      const migrated = migrateSidebarOrderState({
+        projectOrderByServerId: { host: [" host-a:one ", "host-a:one"] },
+      });
+
+      expect(migrated.projectOrder).toEqual(["host-a:one"]);
+    });
   });
-  order.setProjectOrder(next!);
-  const projects: SidebarProjectEntry[] = ["a", "hidden", "b", "new"].map((viewKey) => ({
-    viewKey,
-    projectName: viewKey,
-    projectKind: "non_git",
-    iconWorkingDir: `/repo/${viewKey}`,
-    hosts: [],
-    workspaces: [],
-  }));
-  const updates = computeSidebarOrderUpdates({
-    projects,
-    persistedProjectOrder: order.getProjectOrder(),
-    getWorkspaceOrder: order.getWorkspaceOrder,
-  });
-  order.setProjectOrder(updates.projectOrder!);
-  expect(order.getProjectOrder()).toEqual(["b", "a", "hidden", "unknown", "new"]);
-  expect(
-    computeSidebarOrderUpdates({
+
+  it("keeps the filtered anchor move when later reconciliation appends a new cached project", () => {
+    const order = useSidebarOrderStore.getState();
+    order.setProjectOrder(["a", "hidden", "b", "unknown"]);
+    const next = moveProjectInFullOrder({
+      currentOrder: order.getProjectOrder(),
+      knownProjectKeys: ["a", "hidden", "b"],
+      move: { activeKey: "b", overKey: "a", from: 1, to: 0 },
+    });
+    order.setProjectOrder(next!);
+    const projects: SidebarProjectEntry[] = ["a", "hidden", "b", "new"].map((viewKey) => ({
+      viewKey,
+      projectName: viewKey,
+      projectKind: "non_git",
+      iconWorkingDir: `/repo/${viewKey}`,
+      hosts: [],
+      workspaces: [],
+    }));
+    const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder: order.getProjectOrder(),
       getWorkspaceOrder: order.getWorkspaceOrder,
-    }).projectOrder,
-  ).toBeNull();
+    });
+    order.setProjectOrder(updates.projectOrder!);
+    expect(order.getProjectOrder()).toEqual(["b", "a", "hidden", "unknown", "new"]);
+    expect(
+      computeSidebarOrderUpdates({
+        projects,
+        persistedProjectOrder: order.getProjectOrder(),
+        getWorkspaceOrder: order.getWorkspaceOrder,
+      }).projectOrder,
+    ).toBeNull();
+  });
+});
+
+it("preserves project, pinned and ordinary workspace order", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["b", "a"],
+      pinnedWorkspaceOrder: ["h:y", "h:x"],
+      workspaceOrderByProject: { a: ["h:old", "h:new"] },
+    }),
+  ).toEqual({
+    projectOrder: ["b", "a"],
+    pinnedWorkspaceOrder: ["h:y", "h:x"],
+    workspaceOrderByProject: { a: ["h:old", "h:new"] },
+  });
+});
+
+it("preserves whitespace in current project and pin identities during upgrade", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["project "],
+      pinnedWorkspaceOrder: ["host:workspace "],
+      workspaceOrderByProject: {},
+    }),
+  ).toEqual({
+    projectOrder: ["project "],
+    pinnedWorkspaceOrder: ["host:workspace "],
+    workspaceOrderByProject: {},
+  });
+});
+
+it("retains a pre-beta manual order when upgrading", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["project"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { project: ["host:b", "host:a"] },
+    }),
+  ).toEqual({
+    projectOrder: ["project"],
+    pinnedWorkspaceOrder: [],
+    workspaceOrderByProject: { project: ["host:b", "host:a"] },
+  });
+});
+
+it("starts with an empty manual order for beta users whose order was discarded", () => {
+  expect(migrateSidebarOrderState({ projectOrder: ["p"], pinnedWorkspaceOrder: ["h:a"] })).toEqual({
+    projectOrder: ["p"],
+    pinnedWorkspaceOrder: ["h:a"],
+    workspaceOrderByProject: {},
+  });
+});
+it("preserves spaces in saved workspace scopes and identities", () => {
+  expect(
+    migrateSidebarOrderState({ workspaceOrderByProject: { "project ": ["host:b ", "host:a "] } })
+      .workspaceOrderByProject,
+  ).toEqual({ "project ": ["host:b ", "host:a "] });
 });

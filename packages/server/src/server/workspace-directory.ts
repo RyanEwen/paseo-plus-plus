@@ -12,6 +12,7 @@ import {
   type WorkspaceStateBucket,
 } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { hasHumanAgentAttention } from "@getpaseo/protocol/agent-attention";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { resolveProjectDisplayName } from "./workspace-registry.js";
@@ -77,6 +78,7 @@ export interface WorkspaceDirectoryDeps {
     list(): Promise<PersistedWorkspaceRecord[]>;
   };
   listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
+  workspaceLastUserMessageTimes(): Promise<ReadonlyMap<string, string>>;
   listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
   listTerminalActivityContributions(): Promise<
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
@@ -218,12 +220,14 @@ export class WorkspaceDirectory {
   }): Promise<Map<string, WorkspaceDescriptorPayload>> {
     const [
       agents,
+      lastUserMessageTimes,
       providerSubagentActivity,
       persistedWorkspaces,
       persistedProjects,
       terminalContributions,
     ] = await Promise.all([
       this.deps.listAgentPayloads(),
+      this.deps.workspaceLastUserMessageTimes(),
       this.deps.listProviderSubagentActivity(),
       this.deps.workspaceRegistry.list(),
       this.deps.projectRegistry.list(),
@@ -258,6 +262,9 @@ export class WorkspaceDirectory {
       const workspaceId = includedWorkspaces[i].workspaceId;
       descriptorsByWorkspaceId.set(workspaceId, {
         ...workspaceDescriptors[i],
+        humanAttentionRequired: false,
+        createdAt: includedWorkspaces[i].createdAt,
+        lastUserMessageAt: lastUserMessageTimes.get(workspaceId) ?? null,
         archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
       });
     }
@@ -293,6 +300,15 @@ export class WorkspaceDirectory {
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
       const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
+      const explicitReview = contributingAgents.some(
+        (agent) =>
+          agent.requiresAttention &&
+          agent.attentionMessage &&
+          agent.humanAttentionRequired === true,
+      );
+      if (explicitReview && (descriptor.status === "running" || descriptor.status === "done"))
+        descriptor.status = "attention";
+
       const result = this.resolveStatusEnteredAt({
         workspaceId,
         winningBucket: descriptor.status,
@@ -359,8 +375,8 @@ export class WorkspaceDirectory {
   // Aggregate each agent's state bucket into its owning workspace descriptor,
   // keeping the highest-priority bucket. A record's owner IS its `workspaceId`;
   // status never fans out to same-cwd siblings. A subagent in another workspace
-  // is a root for that workspace. Same-workspace descendants contribute only
-  // running activity to the nearest ancestor in that workspace.
+  // is a root for that workspace. Known audiences contribute their own status,
+  // including child blockers, separately from whether a person needs to act.
   private applyAgentBucketContributions(params: {
     activeAgents: AgentSnapshotPayload[];
     descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
@@ -369,7 +385,11 @@ export class WorkspaceDirectory {
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
 
     for (const agent of activeAgents) {
-      const workspaceAgent = resolveWorkspaceRootAgent(agent, activeAgentsById);
+      // COMPAT(agentAudienceAttention): added in v0.12.0, remove after 2027-04-22 once legacy origins are classified.
+      const workspaceAgent =
+        agent.humanAttentionRequired === undefined
+          ? resolveWorkspaceRootAgent(agent, activeAgentsById)
+          : agent;
       if (!workspaceAgent) {
         continue;
       }
@@ -383,6 +403,7 @@ export class WorkspaceDirectory {
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
+            attentionMessage: agent.attentionMessage,
           })
         : "running";
 
@@ -394,6 +415,12 @@ export class WorkspaceDirectory {
       if (!existing) {
         continue;
       }
+      existing.humanAttentionRequired ||=
+        isWorkspaceRoot &&
+        hasHumanAgentAttention({
+          ...agent,
+          pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+        });
       if (
         getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
       ) {
@@ -424,6 +451,9 @@ export class WorkspaceDirectory {
       const existing = descriptorsByWorkspaceId.get(workspaceId);
       if (!existing) {
         continue;
+      }
+      if (bucket === "needs_input" || bucket === "attention") {
+        existing.humanAttentionRequired = true;
       }
       if (
         getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
@@ -532,6 +562,7 @@ export class WorkspaceDirectory {
           pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
           requiresAttention: agent.requiresAttention,
           attentionReason: agent.attentionReason ?? null,
+          attentionMessage: agent.attentionMessage,
         });
         return derived === winningBucket;
       })
