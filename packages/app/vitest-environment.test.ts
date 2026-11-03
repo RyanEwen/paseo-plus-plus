@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { loadConfigFromFile } from "vite";
 
 const appDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(appDir, "../..");
@@ -13,6 +14,16 @@ const tsgoEntry = path.join(
   path.dirname(require.resolve("@typescript/native-preview/package.json")),
   "bin/tsgo.js",
 );
+
+it("browser dependency optimization leaves excluded vendor modules to Vite's transforms", async () => {
+  const loaded = await loadConfigFromFile(
+    { command: "serve", mode: "test" },
+    path.join(appDir, "vitest.config.ts"),
+  );
+  expect(loaded).not.toBeNull();
+  const { include = [], exclude = [] } = loaded!.config.optimizeDeps ?? {};
+  expect(include.filter((dependency) => exclude.includes(dependency))).toEqual([]);
+});
 
 it("the test configuration typechecks with Expo's generated environment declaration", () => {
   const fixtureDir = mkdtempSync(path.join(appDir, ".vitest-expo-env-"));
