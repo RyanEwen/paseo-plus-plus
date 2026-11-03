@@ -225,7 +225,8 @@ test("tab move menus and divider presets preserve workspace tabs", async ({ page
     const countBefore = await main.getByRole("tab").count();
     await main.getByTestId("workspace-new-tab-button").click();
     await page.getByTestId("workspace-new-tab-split-agent").click();
-    await expect(page.getByTestId(/^workspace-new-tab-layout-agent-/)).toHaveCount(20);
+    // Seven ratios expose both regions across horizontal and vertical splits.
+    await expect(page.getByTestId(/^workspace-new-tab-layout-agent-/)).toHaveCount(28);
     await expect(main.getByRole("tab")).toHaveCount(countBefore);
     const splitEvidence = resolve("../../docs/qa-evidence/workspace-split-presets");
     mkdirSync(splitEvidence, { recursive: true });

@@ -1,3 +1,4 @@
+import { providerHistoryCommand } from "./history.js";
 import { Command } from "commander";
 import { runLsCommand } from "./ls.js";
 import { runModelsCommand } from "./models.js";
@@ -27,5 +28,6 @@ export function createProviderCommand(): Command {
       .argument("<provider>", "Provider name"),
   ).action(withOutput(runDiagnosticCommand));
 
+  provider.addCommand(providerHistoryCommand());
   return provider;
 }

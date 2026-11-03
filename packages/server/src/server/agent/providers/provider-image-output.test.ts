@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { afterEach } from "vitest";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, statSync, readdirSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
@@ -24,6 +24,7 @@ import { projectTimelineRows } from "../timeline-projection.js";
 import { describe, expect, test } from "vitest";
 
 import {
+  MAX_PROVIDER_IMAGE_BYTES,
   isProviderImageMarkdown,
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
@@ -35,8 +36,8 @@ const HASH = "a".repeat(64);
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 
-function renderImageMarkdown(imagePath: string): string {
-  const item = renderProviderImageOutputAsAssistantMarkdown({ path: imagePath });
+async function renderImageMarkdown(imagePath: string): Promise<string> {
+  const item = await renderProviderImageOutputAsAssistantMarkdown({ path: imagePath });
   if (!item || item.type !== "assistant_message") {
     throw new Error("Expected provider image output to render as assistant markdown.");
   }
@@ -63,8 +64,8 @@ describe("isProviderImageMarkdown", () => {
     ).toBe(true);
   });
 
-  test("emits Windows file paths as file URIs", () => {
-    const markdown = renderImageMarkdown(
+  test("emits Windows file paths as file URIs", async () => {
+    const markdown = await renderImageMarkdown(
       `C:\\Users\\me\\AppData\\Local\\Temp\\paseo-attachments\\${HASH}.png`,
     );
 
@@ -74,22 +75,24 @@ describe("isProviderImageMarkdown", () => {
     expect(isProviderImageMarkdown(markdown)).toBe(true);
   });
 
-  test("emits POSIX file paths with spaces as valid file URI markdown", () => {
-    const markdown = renderImageMarkdown("/home/user/Projects/Project With Spaces/screenshot.png");
+  test("emits POSIX file paths with spaces as valid file URI markdown", async () => {
+    const markdown = await renderImageMarkdown(
+      "/home/user/Projects/Project With Spaces/screenshot.png",
+    );
 
     expect(markdown).toBe(
       "\n\n![Image](file:///home/user/Projects/Project%20With%20Spaces/screenshot.png)\n\n",
     );
   });
 
-  test("encodes URI-significant characters in POSIX file paths", () => {
-    const markdown = renderImageMarkdown("/tmp/screenshot#1?draft.png");
+  test("encodes URI-significant characters in POSIX file paths", async () => {
+    const markdown = await renderImageMarkdown("/tmp/screenshot#1?draft.png");
 
     expect(markdown).toBe("\n\n![Image](file:///tmp/screenshot%231%3Fdraft.png)\n\n");
   });
 
-  test("preserves double-leading slashes in POSIX file paths", () => {
-    const markdown = renderImageMarkdown("//tmp/screenshot#1.png");
+  test("preserves double-leading slashes in POSIX file paths", async () => {
+    const markdown = await renderImageMarkdown("//tmp/screenshot#1.png");
 
     expect(markdown).toBe("\n\n![Image](file:////tmp/screenshot%231.png)\n\n");
   });
@@ -101,8 +104,8 @@ describe("isProviderImageMarkdown", () => {
       "\\\\?\\UNC\\server\\share\\shot?draft.png",
       "file://server/share/shot%3Fdraft.png",
     ],
-  ])("encodes %s image paths as file URIs", (_label, imagePath, expectedSource) => {
-    expect(renderImageMarkdown(imagePath)).toBe(`\n\n![Image](${expectedSource})\n\n`);
+  ])("encodes %s image paths as file URIs", async (_label, imagePath, expectedSource) => {
+    expect(await renderImageMarkdown(imagePath)).toBe(`\n\n![Image](${expectedSource})\n\n`);
   });
 
   test("rejects user-authored markdown that is not a materialized attachment", () => {
@@ -114,17 +117,19 @@ describe("isProviderImageMarkdown", () => {
   });
 });
 
-describe("materializeProviderImage", () => {
+describe("materializeProviderImage", async () => {
   test.each([PNG, PNG.replace(/=+$/, ""), `data:image/png;base64,${PNG}`, `  ${PNG}\n`])(
     "preserves accepted original bytes and content identity",
-    (data) => {
-      const result = materializeProviderImage({ data, mimeType: "image/png" });
+    async (data) => {
+      const result = await materializeProviderImage({ data, mimeType: "image/png" });
       const bytes = Buffer.from(PNG, "base64");
       expect(readFileSync(result.path)).toEqual(bytes);
       expect(path.basename(result.path)).toBe(
         `${createHash("sha256").update(bytes).digest("hex")}.png`,
       );
-      expect(materializeProviderImage({ data: PNG, mimeType: "image/png" }).path).toBe(result.path);
+      expect((await materializeProviderImage({ data: PNG, mimeType: "image/png" })).path).toBe(
+        result.path,
+      );
     },
   );
 
@@ -135,26 +140,28 @@ describe("materializeProviderImage", () => {
     ["image/bmp", [66, 77]],
     ["image/tiff", [73, 73, 42, 0]],
     ["image/tiff", [77, 77, 0, 43]],
-  ])("recognizes %s container signatures without changing bytes", (mimeType, signature) => {
+  ])("recognizes %s container signatures without changing bytes", async (mimeType, signature) => {
     const bytes = Buffer.from(signature);
-    const result = materializeProviderImage({ data: bytes.toString("base64"), mimeType });
+    const result = await materializeProviderImage({ data: bytes.toString("base64"), mimeType });
     expect(readFileSync(result.path)).toEqual(bytes);
   });
 
-  test("rejects oversized strings before normalization and never writes rejected inputs", () => {
-    const accepted = materializeProviderImage({ data: PNG, mimeType: "image/png" });
+  test("rejects oversized strings before normalization and never writes rejected inputs", async () => {
+    const accepted = await materializeProviderImage({ data: PNG, mimeType: "image/png" });
     const directory = path.dirname(accepted.path);
     const before = readdirSync(directory);
     // Trimming first would hide this overflow and report malformed base64 instead.
     const oversized = " ".repeat(PROVIDER_IMAGE_MAX_BASE64_LENGTH + 257);
     for (const data of [oversized, `data:image/png;base64,${oversized}`]) {
-      expect(() => materializeProviderImage({ data, mimeType: "image/png" })).toThrow("16 MiB");
+      await expect(materializeProviderImage({ data, mimeType: "image/png" })).rejects.toThrow(
+        "16 MiB",
+      );
     }
     // Within the encoded-character ceiling, but greater than the decoded-byte ceiling.
     const decodedOverflow = "A".repeat(PROVIDER_IMAGE_MAX_BASE64_LENGTH);
-    expect(() =>
+    await expect(
       materializeProviderImage({ data: decodedOverflow, mimeType: "image/png" }),
-    ).toThrow("16 MiB");
+    ).rejects.toThrow("16 MiB");
     expect(PROVIDER_IMAGE_MAX_BYTES % 3).toBe(1);
     expect(readdirSync(directory)).toEqual(before);
   });
@@ -169,22 +176,22 @@ describe("materializeProviderImage", () => {
     "AB==",
     "data:image/png,AAAA",
     "data:text/plain;base64,AAAA",
-  ])("rejects malformed input without a file", (data) => {
-    expect(() => materializeProviderImage({ data, mimeType: "image/png" })).toThrow();
+  ])("rejects malformed input without a file", async (data) => {
+    await expect(materializeProviderImage({ data, mimeType: "image/png" })).rejects.toThrow();
   });
 
-  test("rejects unsupported formats and MIME/signature mismatches", () => {
-    expect(() => materializeProviderImage({ data: PNG, mimeType: "image/svg+xml" })).toThrow(
-      "unsupported",
-    );
-    expect(() => materializeProviderImage({ data: PNG, mimeType: "image/jpeg" })).toThrow(
+  test("rejects unsupported formats and MIME/signature mismatches", async () => {
+    await expect(
+      materializeProviderImage({ data: PNG, mimeType: "image/svg+xml" }),
+    ).rejects.toThrow("unsupported");
+    await expect(materializeProviderImage({ data: PNG, mimeType: "image/jpeg" })).rejects.toThrow(
       "declared format",
     );
   });
 
-  test("renders explicit rejection without forwarding oversized data to a materializer", () => {
+  test("renders explicit rejection without forwarding oversized data to a materializer", async () => {
     let calls = 0;
-    const item = renderProviderImageOutputAsAssistantMarkdown(
+    const item = await renderProviderImageOutputAsAssistantMarkdown(
       { data: "A".repeat(PROVIDER_IMAGE_MAX_BASE64_LENGTH + 257) },
       {
         materialize() {
@@ -199,7 +206,7 @@ describe("materializeProviderImage", () => {
       text: "Image output omitted: Image input exceeds the 16 MiB attachment limit.",
     });
     expect(
-      renderProviderImageOutputAsAssistantMarkdown(
+      await renderProviderImageOutputAsAssistantMarkdown(
         { data: "bad", mimeType: "image/png" },
         { materialize: materializeProviderImage },
       ),
@@ -209,8 +216,8 @@ describe("materializeProviderImage", () => {
     });
   });
 
-  test("recreates the private temp directory if the cached directory is removed", () => {
-    const first = materializeProviderImage({
+  test("recreates the private temp directory if the cached directory is removed", async () => {
+    const first = await materializeProviderImage({
       data: PNG,
       mimeType: "image/png",
     });
@@ -219,7 +226,7 @@ describe("materializeProviderImage", () => {
 
     rmSync(firstDir, { recursive: true, force: true });
 
-    const second = materializeProviderImage({
+    const second = await materializeProviderImage({
       data: PNG,
       mimeType: "image/png",
     });
@@ -711,8 +718,8 @@ test("closing an admitted lazy send before its callback prevents invocation", as
 });
 
 describe("provider image paragraph boundaries", () => {
-  test.each(["", "\n"])("keeps image outputs separate from prose ending in %j", (ending) => {
-    const image = renderProviderImageOutputAsAssistantMarkdown({
+  test.each(["", "\n"])("keeps image outputs separate from prose ending in %j", async (ending) => {
+    const image = await renderProviderImageOutputAsAssistantMarkdown({
       url: "https://example.com/chart.png",
     });
     if (!image) throw new Error("Expected image output");
@@ -746,10 +753,10 @@ describe("provider image paragraph boundaries", () => {
   });
 });
 
-test("materialized image output retains paragraph boundaries and attachment recognition", () => {
-  const item = renderProviderImageOutputAsAssistantMarkdown(
+test("materialized image output retains paragraph boundaries and attachment recognition", async () => {
+  const item = await renderProviderImageOutputAsAssistantMarkdown(
     { data: "YWJjMTIz", mimeType: "image/png" },
-    { materialize: () => ({ path: `/tmp/paseo-attachments/${HASH}.png` }) },
+    { materialize: async () => ({ path: `/tmp/paseo-attachments/${HASH}.png` }) },
   );
   expect(item).toEqual({
     type: "assistant_message",
@@ -757,4 +764,90 @@ test("materialized image output retains paragraph boundaries and attachment reco
   });
   if (!item || item.type !== "assistant_message") throw new Error("Expected image output");
   expect(isProviderImageMarkdown(item.text)).toBe(true);
+});
+
+test("repeated content is reused without rewriting the attachment", async () => {
+  const image = {
+    data: PNG,
+    mimeType: "image/png",
+  };
+  const first = await materializeProviderImage(image);
+  const before = statSync(first.path, { bigint: true });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const second = await materializeProviderImage(image);
+  expect(second.path).toBe(first.path);
+  expect(statSync(second.path, { bigint: true }).mtimeNs).toBe(before.mtimeNs);
+});
+
+test("8 MiB materialization leaves the event loop responsive and preserves bytes", async () => {
+  const bytes = Buffer.concat([
+    Buffer.from(PNG, "base64").subarray(0, 8),
+    Buffer.alloc(8 * 1024 * 1024 - 8, 37),
+  ]);
+  const data = bytes.toString("base64");
+  // Main-thread CPU time between ticks bounds the decode and hash work done on the loop;
+  // wall-clock gaps on shared CI runners also count preemption and timer granularity.
+  // File writes stay on fs/promises, so they never block the loop.
+  const threadCpuMs = () => {
+    const { user, system } = process.threadCpuUsage();
+    return (user + system) / 1000;
+  };
+  let previous = threadCpuMs();
+  let longest = 0;
+  const probe = setInterval(() => {
+    const now = threadCpuMs();
+    longest = Math.max(longest, now - previous);
+    previous = now;
+  }, 1);
+  try {
+    const result = await materializeProviderImage({ data, mimeType: "image/png" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    console.log(`8 MiB attachment longest blocking stretch: ${longest.toFixed(2)} ms CPU`);
+    expect(longest).toBeLessThan(50);
+    expect(readFileSync(result.path).equals(bytes)).toBe(true);
+    rmSync(result.path, { force: true });
+  } finally {
+    clearInterval(probe);
+  }
+});
+
+test("preserves strict base64 decoding across chunk boundaries", async () => {
+  const bytes = Buffer.concat([
+    Buffer.from(PNG, "base64").subarray(0, 8),
+    Buffer.alloc(512 * 1024 - 8, 123),
+  ]);
+  const base64 = bytes.toString("base64");
+  const data = base64;
+  const result = await materializeProviderImage({ data, mimeType: "image/png" });
+  expect(readFileSync(result.path).equals(bytes)).toBe(true);
+});
+
+test("rejects oversized materialization before work and leaves the queue usable", async () => {
+  const data = "A".repeat(Math.ceil(MAX_PROVIDER_IMAGE_BYTES / 3) * 4 + 260);
+  await expect(materializeProviderImage({ data, mimeType: "image/png" })).rejects.toThrow(
+    "exceeds",
+  );
+  const omitted = await renderProviderImageOutputAsAssistantMarkdown(
+    { data, mimeType: "image/png" },
+    { materialize: materializeProviderImage },
+  );
+  expect(omitted).toEqual({
+    type: "assistant_message",
+    text: "Image output omitted: Image input exceeds the 16 MiB attachment limit.",
+  });
+  const image = await materializeProviderImage({ data: PNG, mimeType: "image/png" });
+  expect(readFileSync(image.path)).toEqual(Buffer.from(PNG, "base64"));
+});
+
+test("simultaneous requests for the same content share the published file", async () => {
+  const image = {
+    data: PNG,
+    mimeType: "image/png",
+  };
+  const results = await Promise.all([
+    materializeProviderImage(image),
+    materializeProviderImage(image),
+  ]);
+  expect(results[0]).toEqual(results[1]);
+  expect(readFileSync(results[0].path)).toEqual(Buffer.from(PNG, "base64"));
 });

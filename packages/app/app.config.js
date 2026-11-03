@@ -126,7 +126,7 @@ export default {
     name: isPreviewBuild ? "Paseo++" : variant.name,
     slug: isPreviewBuild ? previewExpoProject.slug : "voice-mobile",
     version: isPreviewBuild ? nativeReleaseVersion.version : nativeReleaseVersion.appVersion,
-    orientation: "portrait",
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: isPreviewBuild ? "paseo-plus-plus" : "paseo",
     userInterfaceStyle: "automatic",
