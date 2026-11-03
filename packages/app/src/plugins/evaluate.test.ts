@@ -706,7 +706,7 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
-  it("keeps the host reveal hook on the deprecated client/react-native entry", () => {
+  it("shares the fork host reveal hook between current UI and the deprecated native entry", () => {
     const plugin = evaluatePluginClientBundle(
       "legacy-reveal",
       bundle(`
@@ -714,7 +714,7 @@ describe("evaluatePluginClientBundle", () => {
         const ui = require("@getpaseo/plugin/client/ui");
         if (typeof legacy.useRevealedText !== "function") throw new Error("Missing legacy reveal hook");
         if (legacy.StreamedText !== ui.StreamedText) throw new Error("Missing current UI exports");
-        if ("useRevealedText" in ui) throw new Error("Legacy hook leaked into current UI");
+        if (ui.useRevealedText !== legacy.useRevealedText) throw new Error("Current and legacy reveal hooks differ");
         plugin.addScreen({ id: "reveal", title: "Reveal", Component: legacy.useRevealedText });
       `),
     );

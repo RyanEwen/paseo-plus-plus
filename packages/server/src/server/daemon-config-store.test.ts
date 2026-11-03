@@ -1345,7 +1345,7 @@ describe("DaemonConfigStore reload", () => {
 });
 
 describe("attention preference daemon authority", () => {
-  test("attention preference persists one host without copying device or sibling config", () => {
+  test("attention preference persists one host without copying device or sibling config", async () => {
     const firstHome = mkdtempSync(path.join(tmpdir(), "attention-config-a-"));
     const secondHome = mkdtempSync(path.join(tmpdir(), "attention-config-b-"));
     try {
@@ -1361,7 +1361,7 @@ describe("attention preference daemon authority", () => {
       const a = new DaemonConfigStore(firstHome, reloadableConfig(loadPersistedConfig(firstHome)));
       const b = new DaemonConfigStore(secondHome, reloadableConfig({}));
       expect(a.get().notifications?.agentAwareAttention).toBe(true);
-      a.patch({ notifications: { agentAwareAttention: false } });
+      await a.patch({ notifications: { agentAwareAttention: false } });
       expect(loadPersistedConfig(firstHome).daemon?.notifications).toEqual({
         futurePreference: "keep",
         agentAwareAttention: false,
@@ -1387,7 +1387,9 @@ describe("attention preference daemon authority", () => {
         path.join(firstHome, "config.json"),
         JSON.stringify({ daemon: { notifications: { agentAwareAttention: true } } }),
       );
-      expect(restored.reload().appliedPaths).toContain("daemon.notifications.agentAwareAttention");
+      expect((await restored.reload()).appliedPaths).toContain(
+        "daemon.notifications.agentAwareAttention",
+      );
       expect(restored.get().notifications?.agentAwareAttention).toBe(true);
     } finally {
       rmSync(firstHome, { recursive: true, force: true });
@@ -1395,7 +1397,7 @@ describe("attention preference daemon authority", () => {
     }
   });
 
-  test("attention preference rolls back failed live apply without observers", () => {
+  test("attention preference rolls back failed live apply without observers", async () => {
     const home = mkdtempSync(path.join(tmpdir(), "attention-config-rollback-"));
     try {
       const store = new DaemonConfigStore(home, reloadableConfig({}));
@@ -1414,7 +1416,7 @@ describe("attention preference daemon authority", () => {
       store.onChange(() => {
         publications++;
       });
-      expect(() => store.patch({ notifications: { agentAwareAttention: false } })).toThrow(
+      await expect(store.patch({ notifications: { agentAwareAttention: false } })).rejects.toThrow(
         "Owning apply rejected",
       );
       expect(live).toBe(true);
@@ -1427,12 +1429,12 @@ describe("attention preference daemon authority", () => {
   });
 });
 
-test("attention preference patch reaches the existing host store", () => {
+test("attention preference patch reaches the existing host store", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "attention-existing-patch-"));
   try {
     const store = new DaemonConfigStore(home, reloadableConfig({}));
     const patch: Record<string, unknown> = { notifications: { agentAwareAttention: false } };
-    store.patch(patch);
+    await store.patch(patch);
     const values: Record<string, unknown> = store.get();
     expect(values.notifications).toEqual({ agentAwareAttention: false });
     expect(loadPersistedConfig(home)).toMatchObject({
