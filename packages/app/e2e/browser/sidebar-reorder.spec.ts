@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { defaultSidebarModeProfiles } from "../../src/stores/sidebar-mode-preferences";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
@@ -121,6 +122,13 @@ test("projects, workspaces, and pinned chats reorder with an immediate mouse dra
     const ordinaryRows = page.locator(
       `[data-testid="${firstWorkspaceTestId}"], [data-testid="${secondWorkspaceTestId}"]`,
     );
+    await expect
+      .poll(() => rowTestIds(ordinaryRows))
+      .toEqual([secondWorkspaceTestId, firstWorkspaceTestId]);
+    await selectWorkspaceSort(page, "Manual");
+    await quickDragFirstRowAfterSecond(ordinaryRows, pressWorkspaceRow);
+    await quickDragFirstRowAfterSecond(ordinaryRows, pressWorkspaceRow);
+    await selectWorkspaceSort(page, "Created");
     await expect
       .poll(() => rowTestIds(ordinaryRows))
       .toEqual([secondWorkspaceTestId, firstWorkspaceTestId]);
@@ -1131,12 +1139,6 @@ async function revealWorkspaces(list: Locator, action: "Show more" | "Show less"
   await list.getByLabel(action, { exact: true }).click();
 }
 
-async function selectProjectGrouping(page: Page) {
-  await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByRole("menuitem", { name: /^Group/ }).click();
-  await page.getByTestId("sidebar-grouping-project").click();
-}
-
 type CompactProject = Awaited<ReturnType<typeof seedCompactProject>>;
 
 function compactProjectRows(page: Page, seed: CompactProject["seed"]) {
@@ -1146,6 +1148,22 @@ function compactProjectRows(page: Page, seed: CompactProject["seed"]) {
     group: list.locator(".."),
     project: page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(seed.projectKey)}`),
   };
+}
+
+/** Configure the fixed-seven fixture without changing default sidebar profiles. */
+async function seedSevenWorkspaceScene(page: Page, includeStatus: boolean) {
+  const modeProfiles = defaultSidebarModeProfiles();
+  modeProfiles.project.initialWorkspaceCount = 7;
+  if (includeStatus) modeProfiles.status.initialWorkspaceCount = 7;
+  await page.addInitScript((profiles) => {
+    localStorage.setItem(
+      "sidebar-view",
+      JSON.stringify({
+        version: 12,
+        state: { groupMode: "project", workspaceSort: "created", modeProfiles: profiles },
+      }),
+    );
+  }, modeProfiles);
 }
 
 async function expectActiveOverflowTransitions(page: Page, { seed, ids, agent }: CompactProject) {
@@ -1202,7 +1220,10 @@ async function expectStatusBucketsRetainActiveOverflow(
   const done = page.getByTestId("sidebar-status-group-rows-done");
   const doneRows = done.locator('[data-testid^="sidebar-workspace-row-"]');
   await expect(doneRows).toHaveCount(7);
-  await revealWorkspaces(done, "Show more");
+  const doneToggle = page.getByTestId("sidebar-status-group-show-more-done");
+  await expect(doneToggle).toHaveCount(1);
+  await expect(doneToggle).toHaveAttribute("aria-label", "Show more");
+  await doneToggle.click();
   await expect(doneRows).toHaveCount(12);
   await seed.client.sendAgentMessage(agent.id, "status overflow");
   await seed.client.waitForFinish(agent.id, 15_000);
@@ -1214,7 +1235,9 @@ async function expectStatusBucketsRetainActiveOverflow(
   await expect(doneRows).toHaveCount(11);
   await seed.client.clearWorkspaceAttention(seed.workspaceId);
   await expect(doneRows).toHaveCount(12);
-  await revealWorkspaces(done, "Show less");
+  await expect(doneToggle).toHaveCount(1);
+  await expect(doneToggle).toHaveAttribute("aria-label", "Show less");
+  await doneToggle.click();
   await expect(doneRows).toHaveCount(7);
   const activeAgents: Array<{ id: string }> = [];
   for (const workspaceId of ids.slice(0, 8)) {
@@ -1235,10 +1258,10 @@ async function expectStatusBucketsRetainActiveOverflow(
   await Promise.all(activeAgents.map((item) => seed.client.waitForFinish(item.id, 15_000)));
   const attention = page.getByTestId("sidebar-status-group-rows-attention");
   await expect(attention.locator('[data-testid^="sidebar-workspace-row-"]')).toHaveCount(8);
-  await expect(attention.getByLabel("Show more", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-status-group-show-more-attention")).toHaveCount(0);
   for (const workspaceId of ids.slice(0, 8)) await seed.client.clearWorkspaceAttention(workspaceId);
   await expect(doneRows).toHaveCount(7);
-  await selectProjectGrouping(page);
+  await selectSidebarProjectGrouping(page);
   await expectWorkspaceOrder(rows, ids.slice(0, 7));
 }
 
@@ -1246,6 +1269,7 @@ test("compact groups retain active overflow and reveal the current ordered rows"
   page,
 }) => {
   test.setTimeout(120_000);
+  await seedSevenWorkspaceScene(page, true);
   const fixture = await seedCompactProject();
   try {
     await gotoAppShell(page);
@@ -1297,6 +1321,8 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
     await restorePreBetaOrder(page, projectEquivalenceViewKey(seed.projectKey), keys);
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await selectWorkspaceSort(page, "Created");
     await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
     await selectWorkspaceSort(page, "Manual");
     await expect.poll(() => rowTestIds(rows)).toEqual(ids);
@@ -1333,6 +1359,7 @@ test("collapsed groups lead with the open workspace instead of hiding it behind 
   page,
 }) => {
   test.setTimeout(120_000);
+  await seedSevenWorkspaceScene(page, false);
   const { seed, ids } = await seedCompactProject();
   try {
     await gotoAppShell(page);
@@ -1344,12 +1371,12 @@ test("collapsed groups lead with the open workspace instead of hiding it behind 
     await openWorkspaceRow(page, ids[9]!);
     await expectWorkspaceOrder(rows, ids);
     await revealWorkspaces(group, "Show less");
-    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[9]!]);
     await expect(
       page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
     ).toHaveAttribute("aria-selected", "true");
     await reconnectSidebar(page);
-    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[9]!]);
     await expect(
       page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
     ).toHaveAttribute("aria-selected", "true");
@@ -1367,6 +1394,17 @@ test("a Manual drag in a collapsed group keeps the open workspace's saved place"
   page,
 }) => {
   test.setTimeout(120_000);
+  const profiles = defaultSidebarModeProfiles();
+  profiles.project.initialWorkspaceCount = 7;
+  await page.addInitScript((modeProfiles) => {
+    localStorage.setItem(
+      "sidebar-view",
+      JSON.stringify({
+        version: 12,
+        state: { groupMode: "project", workspaceSort: "manual", modeProfiles },
+      }),
+    );
+  }, profiles);
   const { seed, ids } = await seedCompactProject();
   try {
     await gotoAppShell(page);
@@ -1384,11 +1422,14 @@ test("a Manual drag in a collapsed group keeps the open workspace's saved place"
     await toggle.click();
     await openWorkspaceRow(page, ids[9]!);
     await toggle.click();
-    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[9]!]);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
+    ).toHaveAttribute("aria-selected", "true");
     await quickDragFirstRowAfterSecond(workspaceRows(page, [ids[0]!, ids[1]!]), pressWorkspaceRow);
-    await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
+    await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2, 7), ids[9]!]);
     await reconnectSidebar(page);
-    await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
+    await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2, 7), ids[9]!]);
     await toggle.click();
     await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2)]);
   } finally {
