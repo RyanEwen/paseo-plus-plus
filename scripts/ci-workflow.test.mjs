@@ -1208,14 +1208,15 @@ test("workflows avoid retired macOS 14 runners", () => {
   }
 });
 
-test("macOS jobs use latest runners while preserving release architectures", () => {
-  for (const [workflow, jobId] of [
-    [ciWorkflowPath, "server-tests-macos"],
-    [nixWorkflowPath, "build-desktop-darwin"],
+test("macOS jobs retain the file-observer runner pin and release architectures", () => {
+  for (const [workflow, jobId, runner] of [
+    // Keep the supported file-observation baseline independent of latest-image changes.
+    [ciWorkflowPath, "server-tests-macos", "macos-15"],
+    [nixWorkflowPath, "build-desktop-darwin", "macos-latest"],
   ]) {
     assert.match(
       jobBlocks(readFileSync(workflow, "utf8")).get(jobId).join("\n"),
-      /^    runs-on: macos-latest$/m,
+      new RegExp(`^    runs-on: ${runner}$`, "m"),
     );
   }
   const release = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");

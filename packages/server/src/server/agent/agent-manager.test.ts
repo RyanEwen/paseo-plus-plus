@@ -3219,7 +3219,7 @@ test.each([
   { provider: "codex", hasHandle: false },
   { provider: "opencode", hasHandle: false },
 ])(
-  "$provider preserves explicit launch env across reloads and storage-backed resumes (handle: $hasHandle)",
+  "$provider preserves explicit launch env across reloads and storage-backed resumes (handle: $hasHandle; otherwise legacy unknown provenance)",
   async ({ provider, hasHandle }) => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-launch-env-"));
     const storagePath = join(workdir, "agents");
@@ -3253,10 +3253,26 @@ test.each([
     let manager = new AgentManager({ clients: { [provider]: client }, registry: storage, logger });
     const env = { XDG_DATA_HOME: join(workdir, "agent-data"), CUSTOM_EMPTY: "" };
     const expectedEnv = { ...env };
-    const agent = await manager.createAgent({ provider, cwd: workdir }, undefined, {
-      workspaceId: undefined,
-      env,
-    });
+    const agent = hasHandle
+      ? await manager.createAgent({ provider, cwd: workdir }, undefined, {
+          workspaceId: undefined,
+          env,
+        })
+      : { id: randomUUID() };
+    if (!hasHandle) {
+      // Seed an actual legacy record with unknown provenance, never an established native ID.
+      await storage.upsert({
+        id: agent.id,
+        provider,
+        cwd: workdir,
+        labels: {},
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        lastStatus: "closed",
+        persistence: null,
+        launchEnv: expectedEnv,
+      });
+    }
     onTestFinished(async () => {
       await manager.closeAgent(agent.id);
       await manager.flush();
@@ -3266,12 +3282,6 @@ test.each([
 
     await manager.closeAgent(agent.id);
     await manager.flush();
-
-    if (!hasHandle) {
-      const record = await storage.get(agent.id);
-      if (!record) throw new Error("Created agent was not persisted");
-      await storage.upsert({ ...record, persistence: null });
-    }
 
     // Fresh storage and manager instances must read the environment from disk.
     for (let restart = 0; restart < 2; restart += 1) {
@@ -3295,6 +3305,17 @@ test.each([
       expect(toAgentPayload(resumed).persistence?.metadata).not.toHaveProperty("launchEnv");
       await manager.closeAgent(agent.id);
       await manager.flush();
+    }
+    if (hasHandle) {
+      const record = await storage.get(agent.id);
+      if (!record?.providerHistory?.sessionId)
+        throw new Error("Expected established native identity");
+      const inconsistent = { ...record, persistence: null };
+      await storage.upsert(inconsistent);
+      await expect(
+        ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger }),
+      ).rejects.toThrow("already has durable state");
+      expect(await storage.get(agent.id)).toEqual(inconsistent);
     }
   },
 );
