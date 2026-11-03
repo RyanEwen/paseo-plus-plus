@@ -288,6 +288,7 @@ async function selectSendingOption(
   setting: string,
   option: string,
 ) {
+  await openSettingsSection(page, "general");
   await page.getByRole("button", { name: new RegExp(`^${setting}:`) }).click();
   await page.getByRole("menuitem", { name: option, exact: true }).click();
   await expect(
@@ -331,6 +332,7 @@ test("send shortcut selection persists and controls the composer", async ({ page
     });
     await test.step("choose the explicit modifier shortcut and retain it after reload", async () => {
       await pressSettingsToggleShortcut(page);
+      await openSettingsSection(page, "general");
       await expect(
         page.getByRole("button", { name: "Send shortcut: Enter", exact: true }),
       ).toBeVisible();

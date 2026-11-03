@@ -41,10 +41,11 @@ async function expectExplorerActiveTabForeground(
 test("automatic Explorer opening applies only to new workspace layouts", async ({ page }) => {
   const workspace = await seedWorkspace({ repoPrefix: "explorer-sidebar-auto-open-" });
   await page.addInitScript(() => {
-    if (!localStorage.getItem("@paseo:app-settings")) {
+    const settings = JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}");
+    if (!Object.hasOwn(settings, "autoOpenExplorerSidebar")) {
       localStorage.setItem(
         "@paseo:app-settings",
-        JSON.stringify({ autoOpenExplorerSidebar: true }),
+        JSON.stringify({ ...settings, autoOpenExplorerSidebar: true }),
       );
     }
   });
