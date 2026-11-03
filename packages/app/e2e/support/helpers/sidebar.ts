@@ -350,8 +350,31 @@ export async function expectMobileExplorerHidden(page: Page): Promise<void> {
 export async function revealSidebarProjectWorkspaces(
   page: Page,
   projectKey: string,
+  workspaceId: string,
 ): Promise<void> {
-  await page
-    .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(projectKey)}`)
-    .click();
+  const projectViewKey = projectEquivalenceViewKey(projectKey);
+  const target = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+  const showMore = page
+    .getByTestId(`sidebar-project-show-more-${projectViewKey}`)
+    .and(page.getByLabel("Show more", { exact: true }));
+  await expect(page.getByTestId(`sidebar-project-row-${projectViewKey}`)).toBeVisible();
+  await expect
+    .poll(async () => (await target.isVisible()) || (await showMore.isVisible()))
+    .toBe(true);
+  if (!(await target.isVisible())) await showMore.click();
+  await expect(target).toBeVisible();
+}
+
+export async function seedLegacyCompactTabSwitcher(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const settings = JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}");
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({
+        ...settings,
+        chatDisplay: settings.chatDisplay ?? "full",
+        paseoPlusPlus: { ...settings.paseoPlusPlus, mobileWorkspaceTabs: false },
+      }),
+    );
+  });
 }
