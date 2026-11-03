@@ -37,6 +37,8 @@ const NetworkPolicySchema = z
 // Codex config reference, maintained against Codex CLI 0.143+.
 export const CodexProviderOptionsSchema = z
   .object({
+    // Storage is a process-start setting. Configured history consumes it before thread/start.
+    sqlite_home: z.string().min(1).optional(),
     approval_policy: ApprovalPolicySchema.optional(),
     sandbox_mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
     sandbox_workspace_write: z

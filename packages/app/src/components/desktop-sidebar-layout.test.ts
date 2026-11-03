@@ -107,7 +107,7 @@ it("reserves room for Explorer and the workspace before showing app navigation",
     isSettingsRoute: false,
     explorerVisible: true,
   });
-  expect(contentMinimumWidth).toBe(600);
+  expect(contentMinimumWidth).toBe(640);
   expect(
     canDesktopAppSidebarShare({
       contentMinimumWidth,
@@ -119,7 +119,14 @@ it("reserves room for Explorer and the workspace before showing app navigation",
     canDesktopAppSidebarShare({
       contentMinimumWidth,
       requestedSidebarWidth: 320,
-      viewportWidth: 951,
+      viewportWidth: 959,
+    }),
+  ).toBe(false);
+  expect(
+    canDesktopAppSidebarShare({
+      contentMinimumWidth,
+      requestedSidebarWidth: 320,
+      viewportWidth: 960,
     }),
   ).toBe(true);
 });

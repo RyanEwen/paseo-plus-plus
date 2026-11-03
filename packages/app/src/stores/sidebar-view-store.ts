@@ -11,6 +11,7 @@ import {
 } from "./sidebar-mode-preferences";
 import type { AppSettings } from "@/hooks/use-settings/storage";
 import { getSettingsHostSelected, getSettingsEditingBlocked } from "@/settings-sync/save-handler";
+import type { WorkspaceSort } from "@/projects/workspace-structure";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
@@ -85,6 +86,7 @@ export interface SidebarViewStoreState extends SidebarModePreferences {
   projectVisibility: SidebarProjectVisibility;
   groupEmptyProjects: boolean;
   emptyProjectSortMode: SidebarEmptyProjectSortMode;
+  workspaceSort: WorkspaceSort;
   showBackground: boolean;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
   hostFilters: string[];
@@ -109,6 +111,7 @@ export interface SidebarViewStoreState extends SidebarModePreferences {
   setWorkspaceSortMode: (mode: SidebarWorkspaceSortMode) => void;
   setSortMode: (mode: SidebarSortMode) => void;
   setProjectVisibility: (visibility: SidebarProjectVisibility) => void;
+  setWorkspaceSort: (sort: WorkspaceSort) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   /** Explicitly choose one project, replacing previous choices including unavailable keys. */
@@ -128,6 +131,7 @@ interface SidebarViewPersistedState {
   projectVisibility: SidebarProjectVisibility;
   groupEmptyProjects: boolean;
   emptyProjectSortMode: SidebarEmptyProjectSortMode;
+  workspaceSort: WorkspaceSort;
   showBackground: boolean;
   hostFilters: string[];
   projectFilters: string[];
@@ -141,6 +145,7 @@ const SidebarLabelFilterSchema = z.object({
 const SidebarViewPersistedStateSchema = z.strictObject({
   modeProfiles: SidebarModeProfilesSchema.optional(),
   localModeFilters: SidebarLocalModeFiltersSchema.optional(),
+  workspaceSort: z.enum(["manual", "created", "lastPrompt"]).optional(),
   showBackground: z.boolean().optional(),
   groupMode: PersistedSidebarGroupModeSchema.optional(),
   workspaceSortMode: z.enum(["name", "status", "custom"]).optional(),
@@ -192,6 +197,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       projectVisibility: "all",
       groupEmptyProjects: true,
       emptyProjectSortMode: "custom",
+      workspaceSort: "manual",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -209,6 +215,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       projectVisibility: legacyGroupMode === "status" ? "unarchived" : "all",
       groupEmptyProjects: true,
       emptyProjectSortMode: "custom",
+      workspaceSort: "manual",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -226,6 +233,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       state.projectVisibility ?? (state.groupMode === "status" ? "unarchived" : "all"),
     groupEmptyProjects: state.groupEmptyProjects ?? true,
     emptyProjectSortMode: state.emptyProjectSortMode ?? "custom",
+    workspaceSort: state.workspaceSort ?? "manual",
     hostFilters: readHostFilters(state),
     projectFilters: state.projectFilters ?? [],
     labelFilter: state.labelFilter
@@ -263,6 +271,7 @@ export function normalizeSidebarModeState(persistedState: unknown) {
   }
   return {
     ...projectSidebarMode({ groupMode: legacy.groupMode, modeProfiles, localModeFilters }),
+    workspaceSort: legacy.workspaceSort,
     modeProfilesInitialized: !!profiles,
   };
 }
@@ -270,11 +279,12 @@ export function normalizeSidebarModeState(persistedState: unknown) {
 export function sidebarPersistedState(
   state: Pick<
     SidebarViewStoreState,
-    "groupMode" | "modeProfiles" | "modeProfilesInitialized" | "localModeFilters"
+    "groupMode" | "modeProfiles" | "modeProfilesInitialized" | "localModeFilters" | "workspaceSort"
   >,
 ) {
   return {
     groupMode: state.groupMode,
+    workspaceSort: state.workspaceSort,
     ...(state.modeProfilesInitialized
       ? { modeProfiles: state.modeProfiles }
       : {
@@ -455,6 +465,8 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
         preferencePendingCount: 0,
         setModePreferences: setPreferences,
         updateLocalFilters: setLocalFilters,
+        workspaceSort: "manual",
+        setWorkspaceSort: (workspaceSort) => set({ workspaceSort }),
         showBackground: false,
         groupMode: "project",
         sortMode: "custom",

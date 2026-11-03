@@ -20,12 +20,10 @@ export function WorkspaceHttpLinkMenu({
   url,
   children,
   defaultDestination,
-  inline = false,
 }: {
   url: string | null | undefined;
   children: ReactNode;
   defaultDestination?: BrowserLinkDestination;
-  inline?: boolean;
 }) {
   const openInPaseo = useWorkspaceBrowserOpeningContext();
   const policy = useWorkspaceLinkOpeningContext();
@@ -39,7 +37,7 @@ export function WorkspaceHttpLinkMenu({
     return children;
   }
   return (
-    <BrowserLinkMenu url={url} destinations={destinations} inline={inline}>
+    <BrowserLinkMenu url={url} destinations={destinations}>
       {children}
     </BrowserLinkMenu>
   );
@@ -49,16 +47,14 @@ function BrowserLinkMenu({
   url,
   children,
   destinations,
-  inline,
 }: {
   url: string;
   children: ReactNode;
   destinations: BrowserLinkDestination[];
-  inline: boolean;
 }) {
   return (
     <ContextMenu>
-      <ContextMenuTrigger contextOnly inline={inline} style={styles.inline}>
+      <ContextMenuTrigger contextOnly style={styles.inline}>
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent testID="workspace-http-link-menu">

@@ -339,3 +339,33 @@ test("batch provenance retains separate recipients and capability links without 
   ]);
   expect(JSON.stringify(requests[0]?.prompt)).not.toContain("private-reply-capability");
 });
+
+test("runtime safety sees queued messages until provider dispatch settles", async () => {
+  const clock = createClock();
+  let release!: () => void;
+  const dispatched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    dispatch: async () => {
+      await dispatched;
+      return "steered";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  expect(delivery.hasPending("parent")).toBe(false);
+  delivery.enqueue({
+    recipientId: "parent",
+    prompt: "finished",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  expect(delivery.hasPending("parent")).toBe(true);
+  clock.advance(2000);
+  expect(delivery.hasPending("parent")).toBe(true);
+  release();
+  await delivery.close();
+  expect(delivery.hasPending("parent")).toBe(false);
+});

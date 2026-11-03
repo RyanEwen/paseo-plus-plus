@@ -237,10 +237,6 @@ describe("buildSidebarProjection", () => {
       "pinned",
       ...sorted,
     ]);
-    expect(projection.shortcutModel.shortcutIndexByWorkspaceKey.size).toBe(9);
-    expect(
-      projection.shortcutModel.shortcutIndexByWorkspaceKey.has(missing.entry.workspaceKey),
-    ).toBe(false);
     expect(input.projects[0].workspaces.map((row) => row.name)).toEqual(savedOrder);
     const custom = buildSidebarProjection(input);
     expect(custom.pinnedGroups.unpinnedProjects[0].workspaces.map((row) => row.name)).toEqual(
@@ -1524,6 +1520,8 @@ function attentionWorkspace(
     projectDisplayName: "Project",
     projectRootPath: "/repo",
     workspaceDirectory: `/repo/${input.id}`,
+    createdAt: null,
+    lastUserMessageAt: null,
     projectKind: "git",
     workspaceKind: "worktree",
     name: input.id,

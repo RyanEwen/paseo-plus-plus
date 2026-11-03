@@ -559,9 +559,11 @@ export function NativeUserMessageFlow(props: UserMessageFlowProps) {
               style={styles.controlsRow}
               collapsable={false}
             >
-              <NativeMessageVisibility driver={driver} visible="compact" style={styles.summary}>
-                {props.summary}
-              </NativeMessageVisibility>
+              {props.summary ? (
+                <NativeMessageVisibility driver={driver} visible="compact" style={styles.summary}>
+                  {props.summary}
+                </NativeMessageVisibility>
+              ) : null}
               {props.controls}
             </View>
           </Animated.View>

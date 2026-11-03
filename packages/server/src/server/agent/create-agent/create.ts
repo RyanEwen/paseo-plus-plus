@@ -1,4 +1,5 @@
-import type { AgentPromptSource, AgentMessageDelivery } from "../agent-messages/index.js";
+import type { FinishSubscriptions } from "../finish-subscriptions/index.js";
+import type { AgentPromptSource } from "../agent-messages/index.js";
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
@@ -16,7 +17,7 @@ import type { AgentStorage } from "../agent-storage.js";
 import type { AgentMessageAttention } from "@getpaseo/protocol/agent-attention";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
-import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import { startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
@@ -24,7 +25,7 @@ import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp
 import { resolveCreateAgentIntent } from "./intent.js";
 
 export interface CreateAgentCommandDependencies {
-  agentMessages?: AgentMessageDelivery;
+  finishSubscriptions?: FinishSubscriptions;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -174,16 +175,13 @@ export async function createAgentCommand(
     resolved.createOptions,
   );
 
-  let initialAttention: AgentMessageAttention | undefined;
-  if (input.kind === "mcp" && input.callerAgentId && resolved.prompt !== undefined) {
-    initialAttention = await dependencies.agentManager.prepareAttentionMessage({
-      agentId: input.callerAgentId,
-      objectiveId: input.callerObjectiveId,
-      expectedTurnId: callerTurnId,
-      recipient: { agentId: snapshot.id },
-    });
-    if (resolved.source) resolved.source = { ...resolved.source, attention: initialAttention };
-  }
+  const initialAttention = await prepareCreatedAttention(
+    dependencies,
+    input,
+    resolved,
+    snapshot,
+    callerTurnId,
+  );
 
   if (input.kind === "session") await input.onAgentReady?.(snapshot);
 
@@ -193,19 +191,23 @@ export async function createAgentCommand(
   if (input.kind === "mcp") {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
-  const stopNotification = armCreatedAgentFinishNotification({
+  const notification = await registerCreatedFinish(
     dependencies,
     input,
+    resolved,
     snapshot,
-    prompt: resolved.prompt,
-    attention: initialAttention,
-  });
+    initialAttention,
+  );
 
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch((error) => {
-      stopNotification?.();
-      throw error;
-    });
+    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch(
+      async (error) => {
+        await notification?.reject();
+        throw error;
+      },
+    );
+    if (sendResult.started && !sendResult.error) notification?.accept();
+    else await notification?.reject();
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
     initialPromptError = sendResult.error ?? null;
@@ -219,33 +221,6 @@ export async function createAgentCommand(
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
-}
-
-/** Arm the creator's existing completion watch synchronously before the initial prompt is submitted. */
-function armCreatedAgentFinishNotification(params: {
-  dependencies: CreateAgentCommandDependencies;
-  input: CreateAgentCommandInput;
-  snapshot: ManagedAgent;
-  prompt: AgentPromptInput | undefined;
-  attention: AgentMessageAttention | undefined;
-}): (() => void) | undefined {
-  const { dependencies, input, snapshot, prompt, attention } = params;
-  if (input.kind !== "mcp" || !input.notifyOnFinish || !input.callerAgentId || prompt === undefined)
-    return undefined;
-
-  return setupFinishNotification({
-    agentMessages: requireAgentMessages(dependencies),
-    agentManager: dependencies.agentManager,
-    agentStorage: dependencies.agentStorage,
-    childAgentId: snapshot.id,
-    callerAgentId: input.callerAgentId,
-    attention: attention?.requesterObjective
-      ? { continuation: attention.requesterObjective }
-      : undefined,
-    // Detached agents have no parent label, but still notify their creator.
-    requireParentOwnership: !(input.detached ?? false),
-    logger: dependencies.logger,
-  });
 }
 
 async function resolveSessionCreateAgent(
@@ -598,7 +573,63 @@ async function resolveMcpCwd(params: {
   };
 }
 
-function requireAgentMessages(dependencies: CreateAgentCommandDependencies): AgentMessageDelivery {
-  if (!dependencies.agentMessages) throw new Error("Agent message delivery is not configured");
-  return dependencies.agentMessages;
+function requireFinishSubscriptions(
+  dependencies: CreateAgentCommandDependencies,
+): FinishSubscriptions {
+  if (!dependencies.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
+  return dependencies.finishSubscriptions;
+}
+
+async function prepareCreatedAttention(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentCommandInput,
+  resolved: ResolvedCreateAgent,
+  snapshot: ManagedAgent,
+  callerTurnId: string | null | undefined,
+): Promise<AgentMessageAttention | undefined> {
+  let initialAttention: AgentMessageAttention | undefined;
+  if (input.kind === "mcp" && input.callerAgentId && resolved.prompt !== undefined) {
+    initialAttention = await dependencies.agentManager.prepareAttentionMessage({
+      agentId: input.callerAgentId,
+      objectiveId: input.callerObjectiveId,
+      expectedTurnId: callerTurnId,
+      recipient: { agentId: snapshot.id },
+    });
+    if (resolved.source) resolved.source = { ...resolved.source, attention: initialAttention };
+    if (initialAttention?.requesterObjective)
+      resolved.runOptions = {
+        ...resolved.runOptions,
+        clientMessageId: initialAttention.requesterObjective.requestId,
+      };
+  }
+
+  return initialAttention;
+}
+
+async function registerCreatedFinish(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentCommandInput,
+  resolved: ResolvedCreateAgent,
+  snapshot: ManagedAgent,
+  initialAttention: AgentMessageAttention | undefined,
+) {
+  return input.kind === "mcp" &&
+    input.notifyOnFinish &&
+    input.callerAgentId &&
+    resolved.prompt !== undefined
+    ? await requireFinishSubscriptions(dependencies).register(
+        {
+          childAgentId: snapshot.id,
+          callerAgentId: input.callerAgentId,
+          requireParentOwnership: !(input.detached ?? false),
+          attention: initialAttention?.requesterObjective
+            ? {
+                link: initialAttention.requesterObjective,
+                requester: dependencies.agentManager.attentionRequester(input.callerAgentId),
+              }
+            : undefined,
+        },
+        true,
+      )
+    : undefined;
 }

@@ -14,7 +14,7 @@ import React, {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import { Pressable, Text, View, type LayoutChangeEvent, type LayoutRectangle } from "react-native";
 import { useFilePanelOpenWithMenu } from "@/file-panels";
 import {
   CopyX,
@@ -35,6 +35,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 import { SortableInlineList } from "@/components/sortable-inline-list";
+import type { SortableItemLayout } from "@/components/use-sortable-item-layout";
 import type {
   DraggableListDragHandleProps,
   DraggableRenderItemInfo,
@@ -1152,6 +1153,36 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   );
 }
 
+interface CompactTabSlotsInput {
+  host: PaneHost;
+  compact: boolean;
+}
+
+/** Only compact web Explorer uses its existing sortable owner; main, sheet and native retain slots. */
+function compactTabSlots({ host, compact }: CompactTabSlotsInput): boolean {
+  return compact && !(isWeb && host === "explorer");
+}
+
+interface SortableWorkspaceTabLayoutInput {
+  host: PaneHost;
+  compact: boolean;
+  onTabFrame: (key: string, frame: LayoutRectangle) => void;
+}
+
+/** Bind Explorer's sortable root frames to workspace tab identity without changing other hosts. */
+function useSortableWorkspaceTabLayout({
+  host,
+  compact,
+  onTabFrame,
+}: SortableWorkspaceTabLayoutInput) {
+  return useMemo(() => {
+    if (!isWeb || host !== "explorer" || !compact) return undefined;
+    return ({ item, frame }: SortableItemLayout<ResolvedWorkspaceDesktopTabRowItem>) => {
+      onTabFrame(item.tab.key, frame);
+    };
+  }, [host, compact, onTabFrame]);
+}
+
 function CompactWorkspaceTabSlot({
   item,
   index,
@@ -1234,6 +1265,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const isCompact = useIsCompactFormFactor();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const fillAvailableWidth = isCompact && host === "main";
+  const usesCompactTabSlots = compactTabSlots({ host, compact: isCompact });
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [tabsScrollWidth, setTabsScrollWidth] = useState(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
@@ -1244,6 +1276,11 @@ function ResolvedWorkspaceDesktopTabsRow({
     activeTabKey: tabs.find((item) => item.isActive)?.tab.key,
     enabled: isCompact,
     offset: tabScrollBoundary.offset,
+  });
+  const onSortableTabLayout = useSortableWorkspaceTabLayout({
+    host,
+    compact: isCompact,
+    onTabFrame: tabScroll.onTabFrame,
   });
 
   const [labelMeasurements, setLabelMeasurements] = useState(
@@ -1645,7 +1682,7 @@ function ResolvedWorkspaceDesktopTabsRow({
             onScroll={tabScrollBoundary.onScroll}
             scrollEventThrottle={16}
           >
-            {isCompact ? (
+            {usesCompactTabSlots ? (
               displayedTabs.map((item, index) => (
                 <CompactWorkspaceTabSlot
                   key={tabKeyExtractor(item)}
@@ -1665,6 +1702,7 @@ function ResolvedWorkspaceDesktopTabsRow({
                 externalDndContext={externalDndContext}
                 activeId={activeDragTabId}
                 getItemData={getTabDragData}
+                onItemLayout={onSortableTabLayout}
                 renderItem={renderTab}
               />
             )}

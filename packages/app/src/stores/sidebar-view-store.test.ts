@@ -54,6 +54,7 @@ describe("sidebar view store", () => {
       modeProfiles: defaultSidebarModeProfiles(),
       localModeFilters: defaultSidebarLocalModeFilters(),
       modeProfilesInitialized: true,
+      workspaceSort: "manual",
       showBackground: false,
       groupMode: "project",
       workspaceSortMode: "custom",
@@ -233,6 +234,7 @@ describe("sidebar view store", () => {
         },
       }),
     ).toEqual({
+      workspaceSort: "created",
       showBackground: false,
       groupMode: "status",
       workspaceSortMode: "status",
@@ -257,6 +259,7 @@ describe("sidebar view store", () => {
         hostFilter: "host-a",
       }),
     ).toEqual({
+      workspaceSort: "created",
       showBackground: false,
       groupMode: "status",
       workspaceSortMode: "status",
@@ -281,6 +284,7 @@ describe("sidebar view store", () => {
         hostFilters: ["host-a", "host-b"],
       }),
     ).toEqual({
+      workspaceSort: "created",
       showBackground: false,
       groupMode: "status",
       workspaceSortMode: "status",
@@ -431,6 +435,7 @@ describe("sidebar view store", () => {
         projectFilters: ["project-a", "project-b"],
       }),
     ).toEqual({
+      workspaceSort: "created",
       showBackground: false,
       groupMode: "project",
       workspaceSortMode: "custom",
@@ -446,6 +451,7 @@ describe("sidebar view store", () => {
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+      workspaceSort: "created",
       showBackground: false,
       groupMode: "project",
       workspaceSortMode: "custom",
@@ -856,4 +862,15 @@ it("keeps quick text per mode, local and transient even while settings editing i
     store.close("project");
     store.close("status");
   }
+});
+
+it("defaults to Manual and persists the Last prompt choice across migration", () => {
+  expect(migrateSidebarViewState({}).workspaceSort).toBe("manual");
+  expect(
+    migrateSidebarViewState({ workspaceSort: "lastPrompt", groupMode: "status" }),
+  ).toMatchObject({ workspaceSort: "lastPrompt", groupMode: "status" });
+});
+
+it("retains the manual sorting preference on reload", () => {
+  expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
 });
