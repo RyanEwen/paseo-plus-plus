@@ -102,6 +102,46 @@ interface WebMessageNodes {
   frames: Map<FrameName, HTMLElement>;
 }
 
+/** Ordinary previews allocate their committed clip, toggle and caller chrome.
+ * The hidden full Text remains searchable but does not enlarge this allocation.
+ */
+function readOrdinaryPreviewMeasurement(
+  nodes: WebMessageNodes,
+  binding: object,
+  width: number,
+): WebMessageMeasurement | null {
+  const body = nodes.body.current;
+  const trailing = nodes.trailing.current;
+  const bubble = nodes.frames.get("bubble");
+  const content = nodes.frames.get("content");
+  const text = nodes.frames.get("text");
+  const controls = nodes.frames.get("controls");
+  if (!body || !trailing || !bubble || !content || !text || !controls || !(width > 0)) return null;
+  const ink = textGeometry(content.querySelector<HTMLElement>('[data-testid="user-message-text"]'));
+  const bubbleStyle = getComputedStyle(bubble);
+  const trailingHeight = trailing.getBoundingClientRect().height;
+  return {
+    binding,
+    font: ink.font,
+    textHeight: ink.height,
+    summaryWidth: nodes.summary.current?.getBoundingClientRect().width ?? 0,
+    summaryHeight: nodes.summary.current?.getBoundingClientRect().height ?? 0,
+    visualTrailingHeight: trailingHeight,
+    compactTrailingHeight: trailingHeight,
+    corners: `${bubbleStyle.borderTopLeftRadius} ${bubbleStyle.borderTopRightRadius} ${bubbleStyle.borderBottomRightRadius} ${bubbleStyle.borderBottomLeftRadius}`,
+    metrics: {
+      width,
+      bodyHeight: body.getBoundingClientRect().height,
+      trailingHeight,
+      bubble: frame(bubble, body),
+      content: frame(content, bubble),
+      text: frame(text, content),
+      prefixHeight: ink.prefixHeight,
+      controls: frame(controls, nodes.rail.current ?? body),
+    },
+  };
+}
+
 function readNaturalMeasurement(
   nodes: WebMessageNodes,
   binding: object,
@@ -171,7 +211,7 @@ function readNaturalMeasurement(
 export function useWebMessageMeasurements(
   props: Pick<
     UserMessageFlowProps,
-    "revision" | "bounded" | "compact" | "controls" | "compactTrailingPadding"
+    "revision" | "bounded" | "compact" | "controls" | "compactTrailingPadding" | "bodyPresentation"
   >,
 ) {
   const rail = useRef<HTMLDivElement>(null);
@@ -182,10 +222,11 @@ export function useWebMessageMeasurements(
   const observedText = useRef<HTMLElement | null>(null);
   const [width, setWidth] = useState(0);
   const compactTrailingPadding = props.compactTrailingPadding ?? 0;
+  const bodyPresentation = props.bodyPresentation ?? "actualPrompt";
   const [fontRevision, setFontRevision] = useState(0);
   const binding = useMemo(
-    () => ({ revision: props.revision, width, fontRevision }),
-    [props.revision, width, fontRevision],
+    () => ({ revision: props.revision, width, fontRevision, bodyPresentation }),
+    [props.revision, width, fontRevision, bodyPresentation],
   );
   const current = useRef(binding);
   const font = useRef<{ binding: object; value: string } | null>(null);
@@ -197,12 +238,11 @@ export function useWebMessageMeasurements(
       setWidth(actualWidth);
       return;
     }
-    const next = readNaturalMeasurement(
-      { rail, body, trailing, summary, frames: frames.current },
-      binding,
-      width,
-      compactTrailingPadding,
-    );
+    const nodes = { rail, body, trailing, summary, frames: frames.current };
+    const next =
+      bodyPresentation === "ordinaryPreview"
+        ? readOrdinaryPreviewMeasurement(nodes, binding, width)
+        : readNaturalMeasurement(nodes, binding, width, compactTrailingPadding);
     if (!next) return;
     if (font.current?.binding === binding && font.current.value !== next.font) {
       setFontRevision((value) => value + 1);
@@ -210,7 +250,7 @@ export function useWebMessageMeasurements(
     }
     font.current = { binding, value: next.font };
     setMeasurement((previous) => (sameMeasurement(previous, next) ? previous : next));
-  }, [binding, width, compactTrailingPadding]);
+  }, [binding, width, compactTrailingPadding, bodyPresentation]);
   const readCurrent = useRef(read);
   const observer = useMemo(() => new ResizeObserver(() => readCurrent.current()), []);
   const registerElement = useCallback(
