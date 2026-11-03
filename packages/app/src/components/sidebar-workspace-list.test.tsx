@@ -1581,6 +1581,7 @@ describe("workspace family store transitions", () => {
         reorderedVisibleKeys: [transitionKey("b"), transitionKey("a")],
         projectPinnedKeys: new Set(),
         storedWorkspaceOrder: order.getWorkspaceOrder(TRANSITION_SCOPE),
+        move: { activeKey: transitionKey("a"), overKey: transitionKey("b"), from: 0, to: 1 },
       });
       if (result.workspaceOrder !== null)
         order.setWorkspaceOrder(TRANSITION_SCOPE, result.workspaceOrder);
@@ -1910,7 +1911,7 @@ describe("workspace family store transitions", () => {
     act(freshDrop);
     expect(writes).toHaveBeenCalledExactlyOnceWith(
       TRANSITION_SCOPE,
-      ["b", "a", "parent", "other-parent", "other-child", "outside"].map((id) => transitionKey(id)),
+      ["parent", "b", "a", "other-parent", "other-child", "outside"].map((id) => transitionKey(id)),
     );
     expectVisible(["parent", "b", "a", "other-parent", "other-child", "outside"]);
   });
