@@ -25,15 +25,6 @@ export const FEATURE_EXAMPLE_IMAGES: Partial<
       outlines: [{ left: 178, top: 104, width: 192, height: 28 }],
     },
   ],
-  sidebarProjectSelector: [
-    {
-      id: "project-selector",
-      source: require("../../assets/settings-examples/project-selector.png"),
-      width: 1440,
-      height: 900,
-      viewport: { left: 0, top: 125, width: 320, height: 270 },
-    },
-  ],
   sidebarActivityChips: [
     {
       id: "project-header",

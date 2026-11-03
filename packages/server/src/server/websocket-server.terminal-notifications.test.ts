@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
@@ -111,6 +112,18 @@ function workspaceRecord(overrides?: Partial<PersistedWorkspaceRecord>): Persist
 function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): WorkspaceRegistry {
   return createStub<WorkspaceRegistry>({
     list: vi.fn(async () => records),
+    update: vi.fn(
+      async (
+        workspaceId: string,
+        updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+      ) => {
+        const index = records.findIndex((record) => record.workspaceId === workspaceId);
+        if (index < 0) return null;
+        const updated = updater(records[index]);
+        records[index] = updated;
+        return updated;
+      },
+    ),
     get: vi.fn(
       async (workspaceId: string) =>
         records.find((record) => record.workspaceId === workspaceId) ?? null,
@@ -156,6 +169,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     null,
     { allowedOrigins: new Set() },
     createWorkspaceAutoNameStub(),
+    createWorkspaceRuntimeStore(),
     undefined,
     undefined,
     terminalManager,

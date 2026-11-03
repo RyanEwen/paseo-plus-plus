@@ -1,11 +1,11 @@
 import type { ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
-import { mapCodexToolCallFromThreadItem } from "../../../../server/src/server/agent/providers/codex/tool-call-mapper";
-import { mapClaudeFailedToolCall } from "../../../../server/src/server/agent/providers/claude/tool-call-mapper";
-import { mapOpencodeToolCall } from "../../../../server/src/server/agent/providers/opencode/tool-call-mapper";
+import { mapCodexToolCallFromThreadItem } from "../../../../server/dist/server/server/agent/providers/codex/tool-call-mapper.js";
+import { mapClaudeFailedToolCall } from "../../../../server/dist/server/server/agent/providers/claude/tool-call-mapper.js";
+import { mapOpencodeToolCall } from "../../../../server/dist/server/server/agent/providers/opencode/tool-call-mapper.js";
 import {
   mapToolDetail,
   parseToolArgs,
-} from "../../../../server/src/server/agent/providers/pi/tool-call-mapper";
+} from "../../../../server/dist/server/server/agent/providers/pi/tool-call-mapper.js";
 
 export const ACTIVITY_READ_COMMAND = "cat src/notifications.ts";
 export const ACTIVITY_READ_OUTPUT = "export const notification = 'exact preserved output';";

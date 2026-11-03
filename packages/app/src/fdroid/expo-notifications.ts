@@ -46,3 +46,4 @@ export async function dismissNotificationAsync(_identifier: string): Promise<voi
 export function addNotificationReceivedListener(_listener: (notification: never) => void) {
   return { remove() {} };
 }
+export function clearLastNotificationResponse(): void {}

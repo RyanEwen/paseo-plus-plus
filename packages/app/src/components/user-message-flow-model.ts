@@ -75,6 +75,10 @@ export interface MessageFlowFrame {
 export interface NaturalMessageGeometry {
   flowHeight: number;
   visualHeight: number;
+  /** Web handoff uses prepared compact paint, independent of the current More extent. */
+  compactHeight?: number;
+  /** Current committed web paint, never the handoff's threshold metric. */
+  bounded?: boolean;
 }
 
 export interface MessageFlowMeasurements {

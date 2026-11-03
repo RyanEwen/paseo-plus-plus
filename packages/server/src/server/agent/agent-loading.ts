@@ -142,6 +142,7 @@ export async function ensureAgentLoaded(
         attentionObjectives: record.attentionObjectives,
         attentionMessage: record.attentionMessage ?? undefined,
         attention: extractAttention(record),
+        env: record.launchEnv,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

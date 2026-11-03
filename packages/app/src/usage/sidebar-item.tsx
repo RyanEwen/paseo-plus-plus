@@ -34,7 +34,7 @@ import {
 import { UsageModal } from "./usage-modal";
 
 /** Each summary window with data on the usage host, under its source; empty while none has. */
-function useUsageSummary(): readonly PinnedUsageSource[] {
+export function useUsageSummary(): readonly PinnedUsageSource[] {
   const { t } = useTranslation();
   const serverId = useUsageHostId();
   const { inSidebar } = useUsageInSidebar();
@@ -43,21 +43,15 @@ function useUsageSummary(): readonly PinnedUsageSource[] {
   return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
 }
 
-/** Whether the sidebar Usage item has anything to show. */
-export function useHasUsageSummary(): boolean {
-  return useUsageSummary().length > 0;
-}
-
 /**
  * The sidebar footer's usage entry: each summary window's source icon and percent, and nothing
  * while no summary window has data, since the footer's Usage icon already opens Usage.
  * Pressing it opens the Usage modal.
  */
-export function UsageSidebarItem() {
+export function UsageSidebarItem({ sources }: { sources: readonly PinnedUsageSource[] }) {
   const { t } = useTranslation();
   const label = t(builtinSidebarNavLabelKey("usage"));
   const openUsage = useOpenSidebarUsage();
-  const sources = useUsageSummary();
   if (sources.length === 0) return null;
   return <PinnedUsageTrigger label={label} sources={sources} onPress={openUsage} />;
 }
@@ -195,12 +189,7 @@ function PinnedUsageLine({
           <Fragment key={window.key}>
             {layout === "meters" ? (
               <View style={[styles.meterSlot, leadStyle]}>
-                <UsageMeter
-                  percent={window.percent}
-                  tone={window.tone}
-                  quiet
-                  style={styles.meter}
-                />
+                <UsageMeter percent={window.percent} tone={window.tone} quiet />
               </View>
             ) : null}
             <Text
@@ -271,10 +260,6 @@ const styles = StyleSheet.create((theme) => ({
     flexBasis: 0,
     minWidth: MIN_METER_WIDTH,
     marginRight: METER_GAP,
-  },
-  meter: {
-    height: 6,
-    borderRadius: 3,
   },
   percent: {
     flexShrink: 0,

@@ -37,7 +37,6 @@ import {
   type PanelIconProps,
   type PanelPresentation,
 } from "@/panels/panel-registry";
-import { ensurePanelsRegistered } from "@/panels/register-panels";
 import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
@@ -184,7 +183,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
   const { config } = useDaemonConfig(serverId);
   const plugins = useInstalledPlugins();
   const isCompact = useIsCompactFormFactor();
-  ensurePanelsRegistered();
 
   const launchSelection = useCallback(
     (selection: NewTabSelection) => (destination: WorkspaceTabLaunchDestination) => {

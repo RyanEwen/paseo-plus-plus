@@ -502,6 +502,8 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
       metrics.contentMeasuredForKey === metrics.containerKey;
     return {
       distanceFromHistoryStart: metrics.offsetY,
+      contentHeight: metrics.contentHeight,
+      viewportHeight: metrics.viewportHeight,
       hasOlderHistory,
       isLoadingOlderHistory,
       isReady: historyStartReadyRef.current && hasMeasuredViewport,
@@ -951,6 +953,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      holdReadingPosition: () => bottomAnchorController.detachByUser(),
     };
     viewportRef.current = handle;
     return () => {

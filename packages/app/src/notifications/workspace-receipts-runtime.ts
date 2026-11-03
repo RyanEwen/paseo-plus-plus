@@ -1,9 +1,16 @@
+import type { WorkspaceDirectoryObserver } from "@/runtime/directory-sync";
 import type { WorkspaceNotificationReceipts } from "@getpaseo/protocol/notification-receipts";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import { notificationReceiptDevice } from "./receipt-device";
 import { WorkspaceNotificationSynchronizer } from "./workspace-receipts";
+
+interface WorkspaceNotificationStartInput {
+  serverId: string;
+  client: DaemonClient;
+  observeWorkspaces: (observer: WorkspaceDirectoryObserver) => () => void;
+}
 
 interface ObservedAttention {
   agentId: string;
@@ -22,7 +29,8 @@ class WorkspaceNotificationRuntime {
   private readonly hosts = new Map<string, WorkspaceNotificationSynchronizer>();
   private readonly active = new Map<string, ActiveWorkspace>();
 
-  start(serverId: string, client: DaemonClient): () => void {
+  start(input: WorkspaceNotificationStartInput): () => void {
+    const { serverId, client, observeWorkspaces } = input;
     const report = (error: unknown) =>
       console.warn("[notifications] Workspace acknowledgement failed", { serverId, error });
     const sync = new WorkspaceNotificationSynchronizer({
@@ -44,20 +52,15 @@ class WorkspaceNotificationRuntime {
     const connection = client.subscribeConnectionStatus((state) =>
       sync.setConnected(state.status === "connected"),
     );
-    const workspaces = client.observeWorkspaces({ includeBackground: true });
-    const stopObserving = workspaces.subscribe({
-      snapshot: (snapshot) => sync.accept(snapshot.entries),
-      update: (message) => {
-        if (message.type === "workspace_update" && message.payload.kind === "upsert")
-          sync.accept([message.payload.workspace]);
-      },
+    const stopObserving = observeWorkspaces({
+      snapshot: (workspaces) => sync.accept([...workspaces]),
+      update: (workspaces) => sync.accept([...workspaces]),
       error: report,
     });
     void sync.start().catch(report);
     return () => {
       connection();
       stopObserving();
-      void workspaces.release().catch(report);
       sync.dispose();
       if (this.hosts.get(serverId) === sync) this.hosts.delete(serverId);
     };

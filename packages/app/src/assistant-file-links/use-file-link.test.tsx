@@ -2,9 +2,9 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import React, { useCallback, useMemo, useState, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
 import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
@@ -283,6 +283,12 @@ describe("useFileLink", () => {
       });
     },
   );
+
+  // Lookups resolve after a test's last assertion; an unmounted hook cannot re-render
+  // once jsdom is torn down.
+  afterEach(() => {
+    cleanup();
+  });
 
   it("returns the same object across no-op parent rerenders", () => {
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
