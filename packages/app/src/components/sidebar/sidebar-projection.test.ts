@@ -236,7 +236,11 @@ describe("buildSidebarProjection", () => {
       { key: "needs_input", workspaceIds: ["second"] },
       { key: "running", workspaceIds: ["first", "third"] },
     ]);
-    expect(listItems().filter((item) => item.kind === "workspace")).toHaveLength(1);
+    expect(
+      listItems()
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual(["first", "third"]);
 
     // One workspace changes group, even when the destination's rows are collapsed.
     third.entry.statusBucket = "needs_input";
@@ -244,6 +248,11 @@ describe("buildSidebarProjection", () => {
       { key: "needs_input", workspaceIds: ["second", "third"] },
       { key: "running", workspaceIds: ["first"] },
     ]);
+    expect(
+      listItems()
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual(["first"]);
 
     // Global pins leave status membership; project pins above remained in their bucket.
     input.pinnedKeys.pinnedWorkspaceKeys = [third.entry.workspaceKey];
@@ -1351,21 +1360,50 @@ describe("workspace family projection", () => {
     expect(setSectionsCollapsed(collapsed, targets, false)).toEqual(state);
   });
 
-  it("keeps the active child family reachable outside the ordinary age window", () => {
+  it("keeps the selected child family reachable outside the ordinary age window", () => {
     const input = nestedProjectionInput("status");
+    const now = new Date("2026-10-22T12:00:00Z").getTime();
+    // Inactive old families isolate selection from the active-work exemption.
+    for (const entry of input.workspaceEntriesByKey.values()) {
+      entry.statusBucket = "done";
+      entry.statusEnteredAt = new Date(now - 2 * 86_400_000);
+    }
     const projection = buildSidebarProjection(input);
-    const items = buildStatusListItems({
+    const listOptions = {
       groups: projection.workspaceGroups,
       workspaceTree: projection.workspaceTree,
-      activeWorkspaceKey: "srv:grandchild",
-      collapsedGroupKeys: new Set(),
-      expandedGroupKeys: new Set(),
+      collapsedGroupKeys: new Set<string>(),
+      expandedGroupKeys: new Set<string>(),
       initialCount: 1,
-      updatedWithin: { days: 1, now: new Date("2026-10-22T12:00:00Z").getTime() },
+      updatedWithin: { days: 1, now },
+    };
+    const withoutSelection = buildStatusListItems(listOptions);
+    expect(
+      withoutSelection
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual([]);
+    const items = buildStatusListItems({
+      ...listOptions,
+      activeWorkspaceKey: "srv:grandchild",
     });
     expect(
       items.filter((item) => item.kind === "workspace").map((item) => item.workspace.workspaceId),
     ).toEqual(["parent"]);
+    const headers = items.filter((item) => item.kind === "header");
+    expect(headers.map((item) => item.group.key)).toEqual(["done"]);
+    expect(headers[0]!.group.rows.map((row) => row.workspaceId)).toEqual([
+      "independent",
+      "parent",
+      "child",
+      "grandchild",
+      "sibling",
+    ]);
+    expect(projection.workspaceTree.get("srv:parent")).toEqual({
+      parentKey: null,
+      childKeys: ["srv:child", "srv:sibling"],
+      descendantKeys: ["srv:child", "srv:grandchild", "srv:sibling"],
+    });
   });
 
   it("prunes collapsed children from keyboard traversal and transiently reveals an active descendant", () => {
@@ -1397,6 +1435,25 @@ describe("workspace family projection", () => {
   it("limits by whole families and admits one when any descendant is recent", () => {
     const input = nestedProjectionInput("status");
     const now = new Date("2026-10-22T12:00:00Z").getTime();
+    // Every family starts inactive and old so only descendant recency can admit it.
+    for (const entry of input.workspaceEntriesByKey.values()) {
+      entry.statusBucket = "done";
+      entry.statusEnteredAt = new Date(now - 2 * 86_400_000);
+    }
+    const oldProjection = buildSidebarProjection(input);
+    const oldItems = buildStatusListItems({
+      groups: oldProjection.workspaceGroups,
+      workspaceTree: oldProjection.workspaceTree,
+      collapsedGroupKeys: new Set(),
+      expandedGroupKeys: new Set(),
+      initialCount: 1,
+      updatedWithin: { days: 1, now },
+    });
+    expect(
+      oldItems
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual([]);
     input.workspaceEntriesByKey.get("srv:grandchild")!.statusEnteredAt = new Date(now);
     const projection = buildSidebarProjection(input);
     const items = buildStatusListItems({
@@ -1412,18 +1469,25 @@ describe("workspace family projection", () => {
     ).toEqual(["parent"]);
     expect(
       items.filter((item) => item.kind === "header").map((item) => item.group.rows.length),
-    ).toEqual([1, 4]);
-    expect(projection.workspaceGroups[1].rows.map((row) => row.workspaceId)).toEqual([
+    ).toEqual([5]);
+    expect(projection.workspaceGroups.map((group) => group.key)).toEqual(["done"]);
+    expect(projection.workspaceGroups[0].rows.map((row) => row.workspaceId)).toEqual([
+      "independent",
       "parent",
       "child",
       "grandchild",
       "sibling",
     ]);
+    expect(projection.workspaceTree.get("srv:parent")).toEqual({
+      parentKey: null,
+      childKeys: ["srv:child", "srv:sibling"],
+      descendantKeys: ["srv:child", "srv:grandchild", "srv:sibling"],
+    });
     const expanded = buildStatusListItems({
       groups: projection.workspaceGroups,
       workspaceTree: projection.workspaceTree,
       collapsedGroupKeys: new Set(),
-      expandedGroupKeys: new Set(["attention", "done"]),
+      expandedGroupKeys: new Set(["done"]),
       initialCount: 1,
       updatedWithin: { days: 1, now },
     });
