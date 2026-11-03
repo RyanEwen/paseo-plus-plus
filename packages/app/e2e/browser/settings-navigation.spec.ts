@@ -922,7 +922,7 @@ test.describe("Settings sidebar navigation", () => {
 
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
     await page.keyboard.press(`${modifier}+,`);
-    await expect(page).toHaveURL(/\/settings\/general$/);
+    await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
     await page.screenshot({ path: testInfo.outputPath("settings-after-model-selector.png") });
     await expect(popover).toHaveCount(0);
 
@@ -956,7 +956,7 @@ test.describe("Settings sidebar navigation", () => {
 
       const modifier = process.platform === "darwin" ? "Meta" : "Control";
       await page.keyboard.press(`${modifier}+,`);
-      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
       await page.screenshot({
         path: testInfo.outputPath("settings-after-existing-model-selector.png"),
       });
