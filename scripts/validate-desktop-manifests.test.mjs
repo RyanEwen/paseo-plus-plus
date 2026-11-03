@@ -28,7 +28,8 @@ import { verifyAndroidApkSigner } from "./preview-release/android-signer.mjs";
 import { dump, load } from "js-yaml";
 import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url);
+const desktopRequire = createRequire(new URL("../packages/desktop/package.json", import.meta.url));
+const require = createRequire(desktopRequire.resolve("electron-builder/package.json"));
 
 test("daemon tracing and smoke load the native PTY addons used by each platform", () => {
   for (const [platform, expected] of [
@@ -488,6 +489,7 @@ test("prepares a Windows ARM64 build with inherited packaging and required Azure
       platformSpecificBuildOptions: config.linux,
       config,
       fileAssociations: [],
+      info: { metadata: config.extraMetadata },
       appInfo: {
         productName: config.productName,
         sanitizedProductName: config.productName,
