@@ -224,6 +224,56 @@ it("rejects a drop when its sorting changes away and back without issuing prefer
   useSidebarViewStore.setState({ setModePreferences: originalCommand });
 });
 
+it.each(["created", "lastPrompt"] as const)(
+  "invalidates cached workspace drops across %s and admits only fresh pin gestures",
+  async (automaticSort) => {
+    useSidebarViewStore.setState({
+      groupMode: "project",
+      workspaceSortMode: "custom",
+      workspaceSort: "manual",
+    });
+    try {
+      await act(() => root?.render(<ReorderGuardHarness />));
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit()).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      expect(reorderGuard!.disabled).toBe(true);
+      expect(reorderGuard!.canCommit()).toBe(false);
+      expect(reorderGuard!.canCommit(true)).toBe(false);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit()).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(false);
+      expect(reorderGuard!.canCommit(true)).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit(true)).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      // Status mode keeps its own existing workspace-order preference.
+      await act(() =>
+        useSidebarViewStore.setState({ groupMode: "status", workspaceSort: automaticSort }),
+      );
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+    } finally {
+      await act(() =>
+        useSidebarViewStore.setState({
+          groupMode: "project",
+          workspaceSortMode: "custom",
+          workspaceSort: "manual",
+        }),
+      );
+    }
+  },
+);
+
 it("keeps sorted manual pins available while rejecting ordinary and stale-mode drops", async () => {
   useSidebarViewStore.setState({ groupMode: "project", workspaceSortMode: "name" });
   await act(() => root?.render(<ReorderGuardHarness />));

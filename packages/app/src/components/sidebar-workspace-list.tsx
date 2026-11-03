@@ -1847,9 +1847,9 @@ function ProjectBlock({
         workspaceEntriesByKey.get(workspace.workspaceKey)?.projectPinnedAt != null
       )
         return "pins";
-      return workspaceDrag.disabled ? null : "ordinary";
+      return !manualSort || workspaceDrag.disabled ? null : "ordinary";
     },
-    [projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
+    [manualSort, projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
   );
   const renderFamilyRow = useCallback(
     (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) =>
@@ -2003,10 +2003,9 @@ function ProjectBlock({
             onDragEnd={handleWorkspaceDragEnd}
             onDragBegin={workspaceDrag.onDragBegin}
             getDragGroupKey={workspaceDragGroup}
-            disabled={
-              !manualSort ||
-              visibleWorkspaces.every((workspace) => workspaceDragGroup(workspace) === null)
-            }
+            disabled={visibleWorkspaces.every(
+              (workspace) => workspaceDragGroup(workspace) === null,
+            )}
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
             useDragHandle
