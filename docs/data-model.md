@@ -37,7 +37,7 @@ All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 ## App preferences
 
 Each daemon owns an independent `app-settings.json`. Each client can select one settings host,
-independently of its active workspace. Selection reads the destination before enabling edits.
+independently of its active workspace. Selection reads the destination before enabling shared edits.
 An empty host requires the explicit **Use this device settings** action; selecting it never
 publishes the preferences already on the device.
 
@@ -46,6 +46,13 @@ projects one profile and its device-local host/project filters together. Legacy 
 only the previously active mode, after both local stores have loaded; the other mode starts with
 explicit defaults. Existing profiles take precedence over legacy flat fields. Selecting a settings
 host adopts only that host's document and keeps both local filter sets.
+
+Device fonts, text sizes, content width, terminal behavior, keyboard mode, link/pane placement and
+platform-specific tab/layout toggles stay local; see [settings scope](fork-features/sync-app-settings.md).
+Remote adoption preserves current device choices even when historical hosts contain those fields.
+Old outboxes discard device-only leaves while retaining shared siblings and their revision fences.
+A mixed save persists its local portion before rejecting a shared portion the host cannot accept.
+Local storage must load successfully before either portion can be saved.
 
 Connection credentials, desktop daemon controls, the Usage report host selection, custom order,
 collapsed groups, workspace layouts, navigation and drafts stay local. Project and workspace pins

@@ -1368,12 +1368,16 @@ async function readLocalBranchTip(cwd: string, branchName: string): Promise<stri
 
 /** Resolve the default placement once, before presenting it to creation hooks. */
 export async function resolveDefaultWorktreePath(
-  options: Pick<CreateWorktreeOptions, "cwd" | "paseoHome" | "worktreesRoot" | "worktreeSlug">,
+  options: Pick<
+    CreateWorktreeOptions,
+    "cwd" | "paseoHome" | "worktreesRoot" | "worktreeSlug" | "exactNames"
+  >,
 ): Promise<string> {
   const original = join(
     await getPaseoWorktreesRoot(options.cwd, options.paseoHome, options.worktreesRoot),
     options.worktreeSlug,
   );
+  if (options.exactNames) return original;
   let candidate = original;
   let suffix = 1;
   while (await pathExists(candidate)) candidate = `${original}-${suffix++}`;
@@ -1398,8 +1402,12 @@ export const createWorktree = async ({
       explicitWorktreePath ??
       (exactNames ? join(projectDirectory, worktreeSlug) : undefined) ??
       (await resolveDefaultWorktreePath({ cwd, paseoHome, worktreesRoot, worktreeSlug }));
-    if (await pathExists(plannedPath))
-      throw new Error(`Worktree directory already exists: ${plannedPath}`);
+    if (await pathExists(plannedPath)) {
+      const hint = exactNames
+        ? ". Choose another worktree name or select the existing worktree."
+        : "";
+      throw new Error(`Worktree directory already exists: ${plannedPath}${hint}`);
+    }
     const branchesBefore =
       source.kind === "checkout-branch" ||
       source.kind === "checkout-change-request" ||

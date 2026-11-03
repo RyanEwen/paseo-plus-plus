@@ -127,6 +127,7 @@ async function createWorktreeCoreWithPriority(
     paseoHome: input.paseoHome,
     worktreesRoot: input.worktreesRoot,
     worktreeSlug: normalizedSlug,
+    exactNames: input.exactNames,
   });
   const { stdout: sourceRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd: input.cwd,
