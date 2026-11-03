@@ -37,7 +37,6 @@ import {
   expectToolCallGroupPositionPreserved,
   rememberToolCallGroupPosition,
   seedItemPagedToolGroupTimeline,
-  useChatDisplay,
   userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
@@ -261,7 +260,16 @@ test.describe("Agent timeline pagination", () => {
     page,
   }) => {
     test.setTimeout(120_000);
-    await useChatDisplay(page, "collapseToolCalls");
+    // Name the action-style labels exactly, independent of readable-label defaults.
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({
+          chatDisplay: "collapseToolCalls",
+          paseoPlusPlus: { descriptiveToolCalls: false },
+        }),
+      );
+    });
     const agent = await seedItemPagedToolGroupTimeline();
     try {
       const history = await holdOlderHistoryPages(page, agent, { itemPagedHost: true });
