@@ -184,7 +184,10 @@ export default defineConfig({
       "react-dom",
       // These viewport imports otherwise trigger a reload during cold browser tests.
       "react-native-worklets",
-      "react-native-enriched-markdown",
+      "@noble/curves/ed25519.js",
+      "@noble/hashes/sha2.js",
+      "@noble/hashes/hmac.js",
+      "@noble/ciphers/chacha.js",
       "micromark-extension-gfm-table",
       "mdast-util-gfm-table",
       "micromark-util-decode-string",

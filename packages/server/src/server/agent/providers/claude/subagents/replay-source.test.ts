@@ -1,3 +1,4 @@
+import { VALID_PNG_BASE64 } from "../../../../../test-utils/provider-image-fixtures.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
@@ -712,7 +713,7 @@ describe("live and replay agree", () => {
 });
 
 it("awaits image materialization before publishing replay observations", async () => {
-  const bytes = Buffer.from("async replay image fixture");
+  const bytes = Buffer.from(VALID_PNG_BASE64, "base64");
   const convertEntry = async () => {
     const item = await renderProviderImageOutputAsAssistantMarkdown(
       { data: bytes.toString("base64"), mimeType: "image/png" },

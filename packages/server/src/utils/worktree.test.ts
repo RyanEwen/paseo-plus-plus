@@ -9,6 +9,7 @@ import {
   runWorktreeSetupCommands,
   runWorktreeTeardownCommands,
   slugify,
+  resolveDefaultWorktreePath,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
@@ -170,6 +171,11 @@ describe("paseo worktree manager", () => {
     expect(losers).toHaveLength(1);
     expect(String(losers[0]!.reason)).toContain("Worktree directory already exists");
     const winner = winners[0]!.value;
+    const placement = { cwd: repoDir, paseoHome, worktreeSlug: "same-path" };
+    expect(await resolveDefaultWorktreePath({ ...placement, exactNames: true })).toBe(
+      winner.worktreePath,
+    );
+    expect(await resolveDefaultWorktreePath(placement)).toBe(`${winner.worktreePath}-1`);
     expect(["concurrent-a", "concurrent-b"]).toContain(winner.branchName);
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();

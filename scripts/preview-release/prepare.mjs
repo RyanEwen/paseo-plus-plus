@@ -7,7 +7,10 @@ import { isMainModule } from "../is-main-module.mjs";
 import { resolvePreviewRelease } from "./metadata.mjs";
 import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
 
-const require = createRequire(import.meta.url);
+const desktopRequire = createRequire(
+  new URL("../../packages/desktop/package.json", import.meta.url),
+);
+const require = createRequire(desktopRequire.resolve("electron-builder/package.json"));
 const { getConfig } = require("app-builder-lib/out/util/config/config.js");
 
 /** Prepare version and packaging inputs in a disposable checkout, leaving npm releases untouched. */
