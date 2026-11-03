@@ -309,6 +309,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   let stripAssistantMessageIds = false;
   let stripCanonicalSubmittedPromptsFeature = false;
   let stripPromptIndexFeature = false;
+  let stripWholeTurnTimelineFeature = false;
   let failingTimelineDirection: "before" | "tail" | undefined;
   let shellToolCommandOverride: string | null = null;
   let failingTimelineAgentId: string | null = null;
@@ -529,6 +530,12 @@ export async function installDaemonWebSocketGate(page: Page) {
         messageType,
         "agentTimelinePromptIndex",
       );
+      outboundMessage = stripServerFeature(
+        outboundMessage,
+        stripWholeTurnTimelineFeature,
+        messageType,
+        "wholeTurnTimeline",
+      );
       const isTimelineResponse = messageType === "fetch_agent_timeline_response";
       if (isTimelineResponse) {
         outboundMessage = failTimelineResponse(
@@ -643,6 +650,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     stripPromptIndex(stripped = true): void {
       stripPromptIndexFeature = stripped;
+    },
+    stripWholeTurnTimeline(stripped = true): void {
+      stripWholeTurnTimelineFeature = stripped;
     },
     failTimelineResponses(agentId: string, direction?: "before" | "tail"): void {
       failingTimelineAgentId = agentId;
