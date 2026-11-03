@@ -19,6 +19,43 @@ const bin = path.resolve("node_modules", ".bin");
 const packageName = "react-native-draggable-flatlist";
 const patchFile = `${packageName}+4.0.3.patch`;
 
+for (const platform of ["ios", "android"]) {
+  test(`patched Markdown ships ${platform} props generated from its native specs`, () => {
+    const packageDir = path.resolve("packages/app/node_modules/react-native-enriched-markdown");
+    const output = mkdtempSync(path.join(tmpdir(), `markdown-${platform}-codegen-`));
+    try {
+      // includesGeneratedCode makes native builds use the shipped headers instead of
+      // regenerating them after patch-package changes the TypeScript specs.
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.resolve("node_modules/react-native/scripts/generate-codegen-artifacts.js"),
+          "-p",
+          packageDir,
+          "-t",
+          platform,
+          "-o",
+          output,
+          "-s",
+          "library",
+        ],
+        { encoding: "utf8" },
+      );
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const header =
+        platform === "ios"
+          ? "ReactCodegen/EnrichedMarkdownTextSpec/Props.h"
+          : "jni/react/renderer/components/EnrichedMarkdownTextSpec/Props.h";
+      assert.equal(
+        readFileSync(path.join(packageDir, platform, "generated", header), "utf8"),
+        readFileSync(path.join(output, header), "utf8"),
+      );
+    } finally {
+      rmSync(output, { recursive: true, force: true });
+    }
+  });
+}
+
 function createCheckout() {
   const root = mkdtempSync(path.join(tmpdir(), "postinstall-patches-"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "checkout" }));
@@ -132,6 +169,89 @@ test("jest-worker terminal retirement patch is delivered and reapplied idempoten
     const repeated = install(root);
     assert.equal(repeated.status, 0, repeated.stderr);
     assert.equal(readFileSync(workerPath, "utf8"), patched);
+    assert.equal(existsSync(packageDir), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("enriched-markdown UMD metadata patch is delivered and reapplied idempotently", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "postinstall-markdown-umd-"));
+  const appDir = path.join(root, "packages", "app");
+  const packageDir = path.join(appDir, "node_modules", "react-native-enriched-markdown");
+  const patchName = "react-native-enriched-markdown+1.2.0-nightly-20261014-766fc0e67.patch";
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "checkout" }));
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(path.join(appDir, "package.json"), JSON.stringify({ name: "fixture-app" }));
+    cpSync(path.resolve("packages/app/node_modules/react-native-enriched-markdown"), packageDir, {
+      recursive: true,
+    });
+    mkdirSync(path.join(root, "patches"));
+    copyFileSync(path.resolve("patches", patchName), path.join(root, "patches", patchName));
+
+    const metadataPath = path.join(packageDir, "lib", "module", "web", "wasm", "package.json");
+    const parentMetadataPath = path.join(packageDir, "lib", "module", "package.json");
+    const parentMetadata = readFileSync(parentMetadataPath, "utf8");
+    const version = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")).version;
+    assert.equal(version, "1.2.0-nightly-20261014-766fc0e67");
+    assert.equal(JSON.parse(parentMetadata).type, "module");
+    const factories = ["lib/module/web/wasm/md4c.js", "src/web/wasm/md4c.js"].map((file) => ({
+      file: path.join(packageDir, file),
+      bytes: readFileSync(path.join(packageDir, file)),
+    }));
+
+    // A previously installed copy may lack only this new metadata file. Complete
+    // the private target before reversing the entire selected patch to pristine.
+    if (!existsSync(metadataPath)) {
+      writeFileSync(metadataPath, '{\n  "type": "commonjs"\n}\n');
+    }
+    assert.deepEqual(JSON.parse(readFileSync(metadataPath, "utf8")), { type: "commonjs" });
+
+    const isWindows = process.platform === "win32";
+    const reverse = spawnSync(
+      isWindows ? "patch-package.cmd" : "patch-package",
+      [
+        "--reverse",
+        "--patch-dir",
+        path.relative(appDir, path.join(root, "patches")),
+        "--error-on-fail",
+      ],
+      {
+        cwd: appDir,
+        encoding: "utf8",
+        shell: isWindows,
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      },
+    );
+    assert.equal(reverse.status, 0, reverse.stderr || reverse.stdout);
+    assert.equal(
+      existsSync(metadataPath),
+      false,
+      "full patch reversal must remove the added WASM package scope",
+    );
+
+    /** Check real delivery without changing the parser or either Metro UMD factory. */
+    function assertPatchedPackage() {
+      assert.deepEqual(JSON.parse(readFileSync(metadataPath, "utf8")), { type: "commonjs" });
+      assert.equal(readFileSync(parentMetadataPath, "utf8"), parentMetadata);
+      assert.equal(JSON.parse(readFileSync(parentMetadataPath, "utf8")).type, "module");
+      assert.equal(
+        JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")).version,
+        version,
+      );
+      for (const factory of factories) {
+        assert.deepEqual(readFileSync(factory.file), factory.bytes);
+      }
+    }
+
+    const first = install(root);
+    assert.equal(first.status, 0, first.stderr || first.stdout);
+    assertPatchedPackage();
+
+    const repeated = install(root);
+    assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout);
+    assertPatchedPackage();
     assert.equal(existsSync(packageDir), true);
   } finally {
     rmSync(root, { recursive: true, force: true });

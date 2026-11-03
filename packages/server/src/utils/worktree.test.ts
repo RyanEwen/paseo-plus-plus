@@ -7,7 +7,9 @@ import {
   mapWorkspaceCwdToWorktree,
   listPaseoWorktrees,
   runWorktreeSetupCommands,
+  runWorktreeTeardownCommands,
   slugify,
+  resolveDefaultWorktreePath,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
@@ -169,6 +171,11 @@ describe("paseo worktree manager", () => {
     expect(losers).toHaveLength(1);
     expect(String(losers[0]!.reason)).toContain("Worktree directory already exists");
     const winner = winners[0]!.value;
+    const placement = { cwd: repoDir, paseoHome, worktreeSlug: "same-path" };
+    expect(await resolveDefaultWorktreePath({ ...placement, exactNames: true })).toBe(
+      winner.worktreePath,
+    );
+    expect(await resolveDefaultWorktreePath(placement)).toBe(`${winner.worktreePath}-1`);
     expect(["concurrent-a", "concurrent-b"]).toContain(winner.branchName);
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
@@ -274,7 +281,15 @@ describe("paseo worktree manager", () => {
     expect(existsSync(created.worktreePath)).toBe(true);
 
     const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
-    expect(ownership.allowed).toBe(true);
+    expect(ownership).toMatchObject({ allowed: true, worktreePath: created.worktreePath });
+    // Windows may report the same root through native 8.3 and JS long spellings.
+    const nativeWorktreePath = realpathSync.native(created.worktreePath);
+    await expect(
+      runWorktreeTeardownCommands({
+        worktreePath: created.worktreePath,
+        teardownCwd: nativeWorktreePath,
+      }),
+    ).resolves.toEqual([]);
     await expect(
       isPaseoOwnedWorktreeCwd(join(created.worktreePath, "packages", "app"), { paseoHome }),
     ).resolves.toMatchObject({
@@ -393,6 +408,22 @@ describe("paseo worktree manager", () => {
       paseoHome,
     });
 
+    expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
+  it("deletes a worktree when Git reports its source through native and long path spellings", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "identity-delete",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "identity-delete",
+      paseoHome,
+    });
+    await deletePaseoWorktree({
+      cwd: realpathSync.native(repoDir),
+      worktreePath: created.worktreePath,
+      paseoHome,
+    });
     expect(existsSync(created.worktreePath)).toBe(false);
   });
 

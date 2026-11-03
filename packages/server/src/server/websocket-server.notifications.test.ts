@@ -1,5 +1,6 @@
 import { NotificationReceipts } from "@getpaseo/protocol/notification-receipts";
 import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -151,6 +152,7 @@ function createServer(
     null,
     { allowedOrigins: new Set() },
     createWorkspaceAutoNameStub(),
+    createWorkspaceRuntimeStore(),
     undefined,
     undefined,
     undefined,
@@ -451,10 +453,12 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     );
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-1",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });
@@ -484,11 +488,13 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const getLastAssistantMessage = vi.fn(async () => "Done.");
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-2",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         labels: {},
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });
@@ -576,7 +582,7 @@ it("attention preference committed host config refreshes both devices without at
     const secondRefresh = vi.fn(async () => {});
     const first = connectClient(server, null, { refreshAttention: firstRefresh });
     const second = connectClient(server, null, { refreshAttention: secondRefresh });
-    store.patch({ notifications: { agentAwareAttention: false } });
+    await store.patch({ notifications: { agentAwareAttention: false } });
     expect(agentManager.agentAwareAttentionEnabled).toBe(false);
     expect(firstRefresh).toHaveBeenCalledTimes(1);
     expect(secondRefresh).toHaveBeenCalledTimes(1);
@@ -591,14 +597,14 @@ it("attention preference committed host config refreshes both devices without at
     const release = store.onApply(() => {
       throw new Error("Reject next apply");
     });
-    expect(() => store.patch({ notifications: { agentAwareAttention: true } })).toThrow(
+    await expect(store.patch({ notifications: { agentAwareAttention: true } })).rejects.toThrow(
       "Reject next apply",
     );
     expect(agentManager.agentAwareAttentionEnabled).toBe(false);
     expect(firstRefresh).toHaveBeenCalledTimes(1);
     expect(secondRefresh).toHaveBeenCalledTimes(1);
     release();
-    store.patch({ notifications: { agentAwareAttention: true } });
+    await store.patch({ notifications: { agentAwareAttention: true } });
     expect(agentManager.agentAwareAttentionEnabled).toBe(true);
     expect(firstRefresh).toHaveBeenCalledTimes(2);
     expect(secondRefresh).toHaveBeenCalledTimes(2);

@@ -1,3 +1,10 @@
+import {
+  ProviderHistoryStorageSchema,
+  registerProviderHistory,
+  sameHistoryStorage,
+  preserveSnapshotHistoryBinding,
+} from "./provider-history/binding.js";
+import { toStoredAgentRecord } from "./agent-projections.js";
 import { AgentAttentionObjectives } from "./attention/objectives.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
 import { WorkspaceAttention } from "./workspace-attention.js";
@@ -9,7 +16,11 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
+import {
+  AgentStorage,
+  parseStoredAgentRecord as normalizeStoredRecord,
+  type StoredAgentRecord,
+} from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -129,6 +140,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
         sessionId: overrides.sessionId ?? "session-123",
       }),
     persistence: overrides.persistence ?? null,
+    providerHistory: overrides.providerHistory,
     historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
     lastUsage: overrides.lastUsage,
@@ -150,6 +162,410 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("internal history admission waits for queued records and never creates provenance", async () => {
+    const record = toStoredAgentRecord(createManagedAgent({ id: "internal-collision" }));
+    record.providerHistory = {
+      origin: "imported",
+      registration: "intent",
+      sessionId: "native-kept",
+      storage: { kind: "unknown" },
+    };
+    const publication = storage.upsert(record);
+    const admission = storage.assertInternalAgentIdAvailable(record.id);
+    await publication;
+    await expect(admission).rejects.toThrow("history intent was not reserved");
+    expect(await storage.get(record.id)).toBeNull();
+    expect(await storage.get(record.id, { includeHistoryIntents: true })).toEqual(record);
+    await storage.assertInternalAgentIdAvailable("fresh-internal");
+    expect(await storage.get("fresh-internal", { includeHistoryIntents: true })).toBeNull();
+    expect(
+      await new AgentStorage(storagePath, logger).list({ includeHistoryIntents: true }),
+    ).toEqual([normalizeStoredRecord(record)]);
+  });
+
+  test("history binding survives legacy adapter snapshots, archive writes and disk reload", async () => {
+    const binding = {
+      origin: "imported" as const,
+      registration: "registered" as const,
+      sessionId: "native-selected",
+      storage: {
+        kind: "unverified" as const,
+        provider: "codex" as const,
+        home: path.join(tmpDir, "custom-home"),
+      },
+    };
+    const agent = createManagedAgent({
+      id: "history-binding",
+      provider: "codex-work",
+      providerHistory: binding,
+      persistence: { provider: "codex-work", sessionId: "native-selected" },
+    });
+    await storage.applySnapshot(agent);
+    await storage.update(agent.id, (record) => ({ ...record, archivedAt: "2026-01-01T00:00:00Z" }));
+    await storage.applySnapshot({ ...agent, providerHistory: undefined });
+    const record = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(record?.providerHistory).toEqual(binding);
+    expect(record?.archivedAt).toBe("2026-01-01T00:00:00Z");
+    expect(record?.persistence?.provider).toBe("codex-work");
+    if (!record) throw new Error("Expected persisted fixture record");
+    expect(buildStoredAgentPayload(record, ["codex-work"]).persistence?.sessionId).toBe(
+      "native-selected",
+    );
+  });
+
+  test("an intent reservation cannot overwrite an existing agent or another request", async () => {
+    const existing = createManagedAgent({
+      id: "existing-history",
+      persistence: { provider: "codex", sessionId: "existing-session" },
+    });
+    await storage.applySnapshot(existing);
+    const record = await storage.get(existing.id);
+    if (!record) throw new Error("Expected existing record");
+    await expect(storage.reserveHistoryIntent(record)).rejects.toMatchObject({
+      code: "HISTORY_INTENT_CONFLICT",
+    });
+    expect(await storage.get(existing.id)).toEqual(record);
+    const next: StoredAgentRecord = {
+      id: "new-history",
+      provider: "codex",
+      cwd: tmpDir,
+      labels: {},
+      lastStatus: "closed",
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      providerHistory: {
+        origin: "created",
+        registration: "intent",
+        sessionId: null,
+        storage: { kind: "unknown" },
+      },
+    };
+    const reservations = await Promise.allSettled([
+      storage.reserveHistoryIntent(next),
+      storage.reserveHistoryIntent(next),
+    ]);
+    expect(reservations.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.get(next.id)).toBeNull();
+    expect(await reloaded.get(next.id, { includeHistoryIntents: true })).toEqual(next);
+  });
+
+  test("configured intent binding is durable, hidden and immutable across older snapshots", async () => {
+    const agent = createManagedAgent({ id: "bound-intent", provider: "codex-work" });
+    const record = toStoredAgentRecord(agent);
+    record.persistence = undefined;
+    record.providerHistory = {
+      origin: "created",
+      registration: "intent",
+      sessionId: null,
+      storage: { kind: "unknown" },
+    };
+    expect(await storage.reserveHistoryIntent(record)).toEqual(record);
+    const selected = {
+      kind: "configured-home" as const,
+      provider: "codex" as const,
+      home: path.join(tmpDir, "profile"),
+      sqliteHome: path.join(tmpDir, "db"),
+    };
+    await storage.bindHistoryIntent(agent.id, selected);
+    await storage.bindHistoryIntent(agent.id, {
+      sqliteHome: selected.sqliteHome,
+      home: selected.home,
+      provider: selected.provider,
+      kind: selected.kind,
+    });
+    await expect(
+      storage.bindHistoryIntent(agent.id, { ...selected, sqliteHome: "/different" }),
+    ).rejects.toMatchObject({ reason: "intent-storage-already-bound" });
+    const reopened = new AgentStorage(storagePath, logger);
+    expect(await reopened.get(agent.id)).toBeNull();
+    expect(
+      (await reopened.get(agent.id, { includeHistoryIntents: true }))?.providerHistory?.storage,
+    ).toEqual(selected);
+    await storage.applySnapshot({
+      ...agent,
+      providerHistory: {
+        ...record.providerHistory,
+        registration: "registered",
+        sessionId: "stable-native-id",
+        storage: selected,
+      },
+      persistence: { provider: "codex-work", sessionId: "stable-native-id" },
+    });
+    await storage.applySnapshot({
+      ...agent,
+      providerHistory: { ...record.providerHistory, registration: "registered" },
+      persistence: { provider: "codex-work", sessionId: "stable-native-id" },
+    });
+    expect((await storage.get(agent.id))?.providerHistory?.storage).toEqual(selected);
+    await expect(
+      storage.applySnapshot({
+        ...agent,
+        providerHistory: { ...record.providerHistory, storage: { ...selected, home: "/changed" } },
+        persistence: { provider: "codex-work", sessionId: "stable-native-id" },
+      }),
+    ).rejects.toMatchObject({ reason: "snapshot-storage-changed" });
+    expect(
+      (await new AgentStorage(storagePath, logger).get(agent.id))?.providerHistory?.storage,
+    ).toEqual(selected);
+    const registered = {
+      ...record.providerHistory,
+      registration: "registered" as const,
+      sessionId: "stable-native-id",
+      storage: selected,
+    };
+    await storage.applySnapshot({
+      ...agent,
+      providerHistory: registered,
+      persistence: { provider: "codex-work", sessionId: "stable-native-id" },
+    });
+    await expect(
+      storage.applySnapshot({
+        ...agent,
+        providerHistory: registered,
+        persistence: { provider: "codex-work", sessionId: "changed-native-id" },
+      }),
+    ).rejects.toMatchObject({ reason: "bound-session-id-changed" });
+    expect((await storage.get(agent.id))?.persistence?.sessionId).toBe("stable-native-id");
+    await expect(
+      storage.applySnapshot({
+        ...agent,
+        providerHistory: registered,
+        persistence: {
+          provider: "codex-work",
+          sessionId: "stable-native-id",
+          nativeHandle: "other-thread",
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "bound-native-handle-conflict" });
+
+    await storage.remove(agent.id);
+    await expect(storage.bindHistoryIntent(agent.id, selected)).rejects.toMatchObject({
+      code: "HISTORY_INTENT_CONFLICT",
+    });
+  });
+
+  test("configured snapshots cannot retag a binding while its persisted handle stays unchanged", async () => {
+    const selected = {
+      kind: "configured-home" as const,
+      provider: "codex" as const,
+      home: path.join(tmpDir, "profile"),
+      sqliteHome: path.join(tmpDir, "db"),
+    };
+    const binding = {
+      origin: "created" as const,
+      registration: "registered" as const,
+      sessionId: "old",
+      storage: selected,
+    };
+    const agent = createManagedAgent({
+      id: "binding-only-conflict",
+      provider: "codex-work",
+      providerHistory: binding,
+      persistence: { provider: "codex-work", sessionId: "old" },
+    });
+    await storage.applySnapshot(agent);
+    const canonical = await new AgentStorage(storagePath, logger).get(agent.id);
+    // Exact helper counterexample: its handle stays old while only incoming metadata changes.
+    expect(() =>
+      preserveSnapshotHistoryBinding(
+        binding,
+        { ...binding, sessionId: "new" },
+        { sessionId: "old" },
+      ),
+    ).toThrow("bound-session-id-changed");
+    for (const [incoming, reason] of [
+      [{ ...binding, sessionId: "new" }, "bound-session-id-changed"],
+      [{ ...binding, origin: "imported" as const }, "snapshot-origin-changed"],
+      [{ ...binding, registration: "intent" as const }, "snapshot-registration-regressed"],
+    ] as const) {
+      await expect(
+        storage.applySnapshot({ ...agent, providerHistory: incoming }),
+      ).rejects.toMatchObject({ reason });
+      expect(await new AgentStorage(storagePath, logger).get(agent.id)).toEqual(canonical);
+    }
+    // An older unknown-ID observation cannot clear the established canonical ID.
+    await storage.applySnapshot({ ...agent, providerHistory: { ...binding, sessionId: null } });
+    expect((await new AgentStorage(storagePath, logger).get(agent.id))?.providerHistory).toEqual(
+      binding,
+    );
+  });
+
+  test("configured intent registration binds only the actual handle and preserves initial provenance", async () => {
+    const selected = {
+      kind: "configured-home" as const,
+      provider: "codex" as const,
+      home: path.join(tmpDir, "profile"),
+      sqliteHome: path.join(tmpDir, "db"),
+    };
+    const initial = {
+      origin: "created" as const,
+      registration: "intent" as const,
+      sessionId: null,
+      storage: selected,
+    };
+    const agent = createManagedAgent({ id: "canonical-registration", provider: "codex-work" });
+    const record = {
+      ...toStoredAgentRecord(agent),
+      persistence: undefined,
+      providerHistory: initial,
+    };
+    await storage.reserveHistoryIntent(record);
+    for (const [incoming, persistence, reason] of [
+      [
+        { ...initial, registration: "registered" as const, sessionId: "new" },
+        { provider: "codex-work", sessionId: "old" },
+        "bound-session-id-changed",
+      ],
+      [
+        { ...initial, registration: "registered" as const, sessionId: "new" },
+        undefined,
+        "snapshot-registration-without-handle",
+      ],
+      [
+        { ...initial, registration: "registered" as const, origin: "imported" as const },
+        { provider: "codex-work", sessionId: "actual" },
+        "snapshot-origin-changed",
+      ],
+      [
+        { ...initial, sessionId: "actual" },
+        { provider: "codex-work", sessionId: "actual" },
+        "snapshot-intent-id-changed",
+      ],
+    ] as const) {
+      await expect(
+        storage.applySnapshot({
+          ...agent,
+          providerHistory: incoming,
+          persistence: persistence ?? null,
+        }),
+      ).rejects.toMatchObject({ reason });
+      const reloaded = new AgentStorage(storagePath, logger);
+      expect(await reloaded.get(agent.id)).toBeNull();
+      expect(
+        (await reloaded.get(agent.id, { includeHistoryIntents: true }))?.providerHistory,
+      ).toEqual(initial);
+    }
+    // Registration can see the native handle after its initial binding observation (Codex
+    // getRuntimeInfo creates the first thread); the queued handle supplies the canonical ID.
+    await storage.applySnapshot({
+      ...agent,
+      providerHistory: { ...initial, registration: "registered" },
+      persistence: { provider: "codex-work", sessionId: "actual" },
+    });
+    const registered = { ...initial, registration: "registered", sessionId: "actual" };
+    expect((await new AgentStorage(storagePath, logger).get(agent.id))?.providerHistory).toEqual(
+      registered,
+    );
+    await storage.applySnapshot({
+      ...agent,
+      providerHistory: { ...initial, registration: "registered", sessionId: "actual" },
+      persistence: { provider: "codex-work", sessionId: "actual" },
+    });
+    expect((await storage.get(agent.id))?.providerHistory).toEqual(registered);
+  });
+
+  test.each(["null", "missing"] as const)(
+    "configured snapshot with %s persistence cannot erase the resumable handle",
+    async (absence) => {
+      const binding = {
+        origin: "imported" as const,
+        registration: "registered" as const,
+        sessionId: "native-resumable",
+        storage: {
+          kind: "configured-home" as const,
+          provider: "codex" as const,
+          home: path.join(tmpDir, "profile"),
+          sqliteHome: path.join(tmpDir, "db"),
+        },
+      };
+      const handle = {
+        provider: "codex-work",
+        sessionId: "native-resumable",
+        nativeHandle: "native-resumable",
+        metadata: { cwd: tmpDir, provider: "codex-work" },
+      };
+      const agent = createManagedAgent({
+        id: `missing-handle-${absence}`,
+        provider: "codex-work",
+        providerHistory: binding,
+        persistence: handle,
+        workspaceId: "original-workspace",
+      });
+      await storage.applySnapshot(agent);
+      const before = await new AgentStorage(storagePath, logger).get(agent.id);
+      const snapshot = { ...agent, persistence: null, updatedAt: new Date("2026-01-01T00:00:00Z") };
+      if (absence === "missing") Reflect.deleteProperty(snapshot, "persistence");
+      await expect(storage.applySnapshot(snapshot)).rejects.toMatchObject({
+        reason: "bound-session-handle-missing",
+      });
+      const restarted = new AgentStorage(storagePath, logger);
+      const reloaded = await restarted.get(agent.id);
+      expect(reloaded).toEqual(before);
+      expect(reloaded?.persistence).toEqual(handle);
+      expect(reloaded?.providerHistory).toEqual(binding);
+      if (!reloaded) throw new Error("Expected resumable record after reload");
+      expect(buildStoredAgentPayload(reloaded, ["codex-work"]).persistence?.sessionId).toBe(
+        "native-resumable",
+      );
+      expect(await restarted.listByProviderSession("codex-work", "native-resumable")).toMatchObject(
+        [{ id: agent.id, workspaceId: "original-workspace", persistence: handle }],
+      );
+    },
+  );
+
+  test.each(["legacy", "unverified"] as const)(
+    "%s snapshots retain existing missing-handle semantics",
+    async (kind) => {
+      const binding =
+        kind === "unverified"
+          ? {
+              origin: "created" as const,
+              registration: "registered" as const,
+              sessionId: "native",
+              storage: { kind: "unverified" as const, provider: "codex" as const, home: tmpDir },
+            }
+          : undefined;
+      const agent = createManagedAgent({
+        id: `ordinary-${kind}`,
+        provider: "codex",
+        providerHistory: binding,
+        persistence: { provider: "codex", sessionId: "native" },
+      });
+      await storage.applySnapshot(agent);
+      await storage.applySnapshot({ ...agent, persistence: null });
+      const reloaded = await new AgentStorage(storagePath, logger).get(agent.id);
+      expect(reloaded?.persistence).toBeNull();
+      expect(reloaded?.providerHistory).toEqual(binding);
+    },
+  );
+
+  test("queued reservation returns the original legacy record without adopting new provenance", async () => {
+    const record = toStoredAgentRecord(createManagedAgent({ id: "legacy-selection" }));
+    record.persistence = undefined;
+    await storage.upsert(record);
+    const proposed = {
+      ...record,
+      workspaceId: "different",
+      providerHistory: {
+        origin: "created" as const,
+        registration: "intent" as const,
+        sessionId: null,
+        storage: { kind: "unknown" as const },
+      },
+    };
+    expect(await storage.reserveHistoryIntent(proposed)).toEqual(record);
+    expect(await storage.get(record.id)).toEqual(record);
+  });
+
+  test("legacy records are never rewritten as Paseo-created history", async () => {
+    const agent = createManagedAgent({ id: "history-legacy" });
+    await storage.applySnapshot(agent);
+    expect(
+      (await new AgentStorage(storagePath, logger).get(agent.id))?.providerHistory,
+    ).toBeUndefined();
   });
 
   test.each([
@@ -911,4 +1327,354 @@ describe("AgentStorage", () => {
     const after = await afterReload.list();
     expect(after.some((r) => r.id === agentId)).toBe(false);
   });
+});
+
+describe("configured Claude rewind commits", () => {
+  let directory: string;
+  let registry: AgentStorage;
+  const log = createTestLogger();
+  beforeEach(async () => {
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-rewind-storage-"));
+    registry = new AgentStorage(directory, log);
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: "guarded",
+        provider: "claude-work",
+        workspaceId: "original-workspace",
+        persistence: { provider: "claude-work", sessionId: "old", nativeHandle: "old" },
+        providerHistory: {
+          origin: "imported",
+          registration: "registered",
+          sessionId: "old",
+          storage: { kind: "configured-home", provider: "claude", home: directory + "/" },
+        },
+      }),
+    );
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await registry.flush();
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  const newHandle = { provider: "claude-work", sessionId: "new", nativeHandle: "new" };
+  test("empty Claude registration and first snapshot publish atomically; failed write leaves hidden audit intent", async () => {
+    await registry.update("guarded", (r) => ({
+      ...r,
+      persistence: null,
+      providerHistory: {
+        ...r.providerHistory!,
+        origin: "created",
+        registration: "intent",
+        sessionId: null,
+      },
+    }));
+    const intent = (await registry.get("guarded", { includeHistoryIntents: true }))!;
+    const snapshot = createManagedAgent({
+      id: "guarded",
+      provider: "claude-work",
+      persistence: null,
+      providerHistory: { ...intent.providerHistory!, registration: "registered" },
+    });
+    const writer = vi
+      .spyOn(
+        registry as unknown as { writeRecord(record: StoredAgentRecord): Promise<void> },
+        "writeRecord",
+      )
+      .mockRejectedValueOnce(new Error("fixture-registration-write-failed"));
+    await expect(
+      registry.applySnapshot(snapshot, { registerClaudeEmptyCreation: true }),
+    ).rejects.toThrow("fixture-registration-write-failed");
+    writer.mockRestore();
+    expect(await new AgentStorage(directory, log).get("guarded")).toBeNull();
+    expect(
+      (await registry.get("guarded", { includeHistoryIntents: true }))?.providerHistory
+        ?.registration,
+    ).toBe("intent");
+    await expect(registry.applySnapshot(snapshot)).rejects.toThrow(
+      "snapshot-registration-without-handle",
+    );
+    await registry.applySnapshot(snapshot, { registerClaudeEmptyCreation: true });
+    expect((await new AgentStorage(directory, log).get("guarded"))?.providerHistory).toMatchObject({
+      origin: "created",
+      registration: "registered",
+      sessionId: null,
+    });
+  });
+  test("bound empty recreation reuses exact record and rejects changed config, audience or provenance", async () => {
+    await registry.update("guarded", (r) => ({
+      ...r,
+      persistence: null,
+      launchEnv: { CLAUDE_CODE_ENTRYPOINT: "saved-explicit-env" },
+      providerHistory: { ...r.providerHistory!, origin: "created", sessionId: null },
+    }));
+    const before = (await registry.get("guarded"))!;
+    const request = {
+      ...before,
+      providerHistory: {
+        ...before.providerHistory!,
+        registration: "intent" as const,
+        storage: { kind: "unknown" as const },
+      },
+    };
+    expect(await registry.reserveHistoryIntent(request)).toEqual(before);
+    for (const change of [
+      { config: { ...before.config, model: "different" } },
+      { launchEnv: { CLAUDE_CODE_ENTRYPOINT: "changed-env" } },
+      { launchEnv: undefined },
+      { cwd: "/other" },
+      { workspaceId: "other" },
+      { provider: "other" },
+      { providerHistory: { ...request.providerHistory, origin: "imported" as const } },
+    ]) {
+      await expect(registry.reserveHistoryIntent({ ...request, ...change })).rejects.toThrow(
+        "already has durable state",
+      );
+    }
+    expect(await new AgentStorage(directory, log).get("guarded")).toEqual(
+      normalizeStoredRecord(before),
+    );
+  });
+  test("initial lazy handle binds once through canonical queue; snapshots cannot supply or clear it", async () => {
+    await registry.update("guarded", (r) => ({
+      ...r,
+      persistence: null,
+      providerHistory: { ...r.providerHistory!, origin: "created", sessionId: null },
+    }));
+    const empty = (await registry.get("guarded"))!;
+    await expect(
+      registry.applySnapshot(
+        createManagedAgent({
+          id: "guarded",
+          provider: "claude-work",
+          persistence: newHandle,
+          providerHistory: { ...empty.providerHistory!, sessionId: "new" },
+        }),
+      ),
+    ).rejects.toThrow("initial-handle-binding-required");
+    await registry.commitClaudeInitialHandle({
+      expected: empty,
+      next: newHandle,
+      onCommitted: () => {},
+    });
+    await expect(
+      registry.commitClaudeInitialHandle({
+        expected: empty,
+        next: { ...newHandle, sessionId: "second", nativeHandle: "second" },
+        onCommitted: () => {},
+      }),
+    ).rejects.toMatchObject({ code: "HISTORY_STORAGE_CONFLICT" });
+    await expect(
+      registry.applySnapshot(
+        createManagedAgent({
+          id: "guarded",
+          provider: "claude-work",
+          persistence: null,
+          providerHistory: empty.providerHistory,
+        }),
+      ),
+    ).rejects.toThrow("bound-session-handle-missing");
+    expect((await new AgentStorage(directory, log).get("guarded"))?.persistence).toEqual(newHandle);
+  });
+  test.each(["imported", "fresh", "codex"])(
+    "initial binding rejects %s authority",
+    async (kind) => {
+      await registry.update("guarded", (r) => ({
+        ...r,
+        persistence: null,
+        claudeFreshRewind: kind === "fresh" ? { operationId: "pending" } : undefined,
+        providerHistory: {
+          ...r.providerHistory!,
+          origin: kind === "imported" ? "imported" : "created",
+          sessionId: null,
+          storage:
+            kind === "codex"
+              ? {
+                  kind: "configured-home",
+                  provider: "codex",
+                  home: directory,
+                  sqliteHome: directory,
+                }
+              : r.providerHistory!.storage,
+        },
+      }));
+      const expected = (await registry.get("guarded"))!;
+      await expect(
+        registry.commitClaudeInitialHandle({ expected, next: newHandle, onCommitted: () => {} }),
+      ).rejects.toThrow("initial-handle-binding-conflict");
+    },
+  );
+  test("storage union keeps Codex SQLite required and cross-provider observations incompatible", () => {
+    const claude = {
+      kind: "configured-home" as const,
+      provider: "claude" as const,
+      home: directory,
+    };
+    const codex = {
+      kind: "configured-home" as const,
+      provider: "codex" as const,
+      home: directory,
+      sqliteHome: directory,
+    };
+    expect(
+      ProviderHistoryStorageSchema.safeParse({ ...codex, sqliteHome: undefined }).success,
+    ).toBe(false);
+    expect(
+      ProviderHistoryStorageSchema.safeParse({ ...claude, sqliteHome: directory }).success,
+    ).toBe(false);
+    expect(sameHistoryStorage(claude, codex)).toBe(false);
+    expect(() =>
+      registerProviderHistory({
+        binding: {
+          origin: "created",
+          registration: "registered",
+          sessionId: "old",
+          storage: claude,
+        },
+        sessionId: "old",
+        storage: codex,
+      }),
+    ).toThrow("provider-storage-observation-conflict");
+  });
+  test("only explicit queued rewind advances ID and preserves all other canonical metadata", async () => {
+    const before = (await registry.get("guarded"))!;
+    const adopted = vi.fn();
+    await registry.commitClaudeRewind({ expected: before, next: newHandle, onCommitted: adopted });
+    const after = (await new AgentStorage(directory, log).get("guarded"))!;
+    expect(after).toEqual(
+      normalizeStoredRecord({
+        ...before,
+        persistence: newHandle,
+        providerHistory: { ...before.providerHistory!, sessionId: "new" },
+        runtimeInfo: before.runtimeInfo ? { ...before.runtimeInfo, sessionId: "new" } : undefined,
+      }),
+    );
+    expect(adopted).toHaveBeenCalledTimes(1);
+    await expect(
+      registry.applySnapshot(
+        createManagedAgent({
+          id: "guarded",
+          provider: "claude-work",
+          persistence: before.persistence!,
+          providerHistory: before.providerHistory,
+        }),
+      ),
+    ).rejects.toThrow("bound-session-id-changed");
+  });
+  test("fresh intent survives ordinary snapshots/reload and is consumed only by exact operation", async () => {
+    const before = (await registry.get("guarded"))!;
+    await registry.commitClaudeRewind({
+      expected: before,
+      freshOperationId: "operation",
+      onCommitted: () => {},
+    });
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: "guarded",
+        provider: "claude-work",
+        persistence: before.persistence!,
+        providerHistory: before.providerHistory,
+      }),
+    );
+    const pending = (await registry.get("guarded"))!;
+    expect((await new AgentStorage(directory, log).get("guarded"))?.claudeFreshRewind).toEqual({
+      operationId: "operation",
+    });
+    expect(pending.claudeFreshRewind).toEqual({ operationId: "operation" });
+    expect(pending.persistence?.sessionId).toBe("old");
+    await expect(
+      registry.commitClaudeRewind({
+        expected: pending,
+        next: newHandle,
+        freshOperationId: "wrong",
+        onCommitted: () => {},
+      }),
+    ).rejects.toThrow("rewind-handle-conflict");
+    await registry.commitClaudeRewind({
+      expected: pending,
+      next: newHandle,
+      freshOperationId: "operation",
+      onCommitted: () => {},
+    });
+    const loaded = await new AgentStorage(directory, log).get("guarded");
+    expect(loaded?.claudeFreshRewind).toBeUndefined();
+    expect(loaded?.persistence).toEqual(newHandle);
+  });
+  test("CAS conflict preserves newer metadata and original resumable identity", async () => {
+    const before = (await registry.get("guarded"))!;
+    await registry.setTitle("guarded", "newer title");
+    const adopt = vi.fn();
+    await expect(
+      registry.commitClaudeRewind({ expected: before, next: newHandle, onCommitted: adopt }),
+    ).rejects.toThrow("rewind-canonical-record-changed");
+    expect(adopt).not.toHaveBeenCalled();
+    expect(await new AgentStorage(directory, log).get("guarded")).toMatchObject({
+      title: "newer title",
+      persistence: { sessionId: "old" },
+    });
+  });
+  test("failed atomic record writer never adopts or overwrites the prior native identity", async () => {
+    const before = (await registry.get("guarded"))!;
+    const writer = vi
+      .spyOn(
+        registry as unknown as { writeRecord(record: StoredAgentRecord): Promise<void> },
+        "writeRecord",
+      )
+      .mockRejectedValueOnce(new Error("fixture-record-write-failed"));
+    const adopt = vi.fn();
+    await expect(
+      registry.commitClaudeRewind({ expected: before, next: newHandle, onCommitted: adopt }),
+    ).rejects.toThrow("fixture-record-write-failed");
+    writer.mockRestore();
+    expect(adopt).not.toHaveBeenCalled();
+    expect(await new AgentStorage(directory, log).get("guarded")).toEqual(
+      normalizeStoredRecord(before),
+    );
+  });
+  test("post-commit adoption failure reports committed disk identity", async () => {
+    const before = (await registry.get("guarded"))!;
+    await expect(
+      registry.commitClaudeRewind({
+        expected: before,
+        next: newHandle,
+        onCommitted: () => {
+          throw new Error("fixture adoption error");
+        },
+      }),
+    ).rejects.toThrow("rewind-committed-adoption-failed:new");
+    expect(await new AgentStorage(directory, log).get("guarded")).toMatchObject({
+      persistence: newHandle,
+      providerHistory: { sessionId: "new", origin: "imported" },
+    });
+  });
+  test.each(["codex", "foreign-handle"])(
+    "refuses %s transition without weakening Codex snapshots",
+    async (kind) => {
+      if (kind === "codex") {
+        const old = (await registry.get("guarded"))!;
+        await registry.update("guarded", (r) => ({
+          ...r,
+          providerHistory: {
+            ...old.providerHistory!,
+            storage: {
+              kind: "configured-home",
+              provider: "codex",
+              home: directory,
+              sqliteHome: directory,
+            },
+          },
+        }));
+      }
+      const before = (await registry.get("guarded"))!;
+      await expect(
+        registry.commitClaudeRewind({
+          expected: before,
+          next: kind === "codex" ? newHandle : { ...newHandle, provider: "other" },
+          onCommitted: () => {},
+        }),
+      ).rejects.toThrow();
+      expect(await new AgentStorage(directory, log).get("guarded")).toEqual(
+        normalizeStoredRecord(before),
+      );
+    },
+  );
 });

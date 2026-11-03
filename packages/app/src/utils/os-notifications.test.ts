@@ -7,6 +7,7 @@ import type {
   NotificationAcknowledgement,
   NotificationDismissal,
 } from "@getpaseo/protocol/notification-receipts";
+import { WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendWorkspaceOsNotification } from "@/notifications/workspace-notification";
 import type { OsNotificationPayload } from "./os-notifications";
@@ -203,7 +204,7 @@ describe("sendOsNotification", () => {
     (globalThis as { dispatchEvent?: unknown }).dispatchEvent = dispatchEvent;
     (globalThis as { location?: unknown }).location = { assign };
 
-    const { sendOsNotification, WEB_NOTIFICATION_CLICK_EVENT } = await loadModuleForPlatform("web");
+    const { sendOsNotification } = await loadModuleForPlatform("web");
 
     const sent = await sendOsNotification({
       title: "Agent finished",
@@ -230,7 +231,7 @@ describe("sendOsNotification", () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it("falls back to route navigation when no listener handles the click", async () => {
+  it("leaves navigation to the app when no listener handles the click", async () => {
     const created: MockNotificationInstance[] = [];
 
     class MockNotification implements MockNotificationInstance {
@@ -278,9 +279,7 @@ describe("sendOsNotification", () => {
     expect(clicked.clickListeners).toHaveLength(1);
     clicked.clickListeners[0]?.({} as Event);
 
-    expect(assign).toHaveBeenCalledWith(
-      "/h/srv%20with%20space/workspace/workspace-1?open=agent%3Aagent%2F1",
-    );
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("returns false when the Notification API is unavailable", async () => {
@@ -847,6 +846,56 @@ describe("Cross-device workspace notification receipts", () => {
     } finally {
       releasePending();
       releaseWrite();
+      releaseAcknowledgement();
+      f.sync.dispose();
+    }
+  });
+
+  it("accepts a complete hidden-workspace baseline beyond page one while retaining newer alerts and a pending native dismissal until acknowledgement", async () => {
+    const device = memoryDevice([
+      { identifier: "old-hidden", data: receipt(1, "workspace-204") },
+      { identifier: "new-hidden", data: receipt(2, "workspace-204") },
+      { identifier: "other-workspace", data: receipt(1, "untouched") },
+    ]);
+    const f = fixture(device);
+    f.device.pending.push({ id: "swipe-while-hidden", data: receipt(1, "swiped") });
+    let releaseAcknowledgement!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseAcknowledgement = resolve;
+    });
+    f.ports.acknowledge = async (workspaceId, notification) => {
+      f.requests.push({ workspaceId, notification });
+      await held;
+    };
+    f.sync.setConnected(true);
+    const started = f.sync.start();
+    try {
+      await expect.poll(() => f.requests.length).toBe(1);
+      const baseline = Array.from({ length: 205 }, (_, index) => ({
+        id: `workspace-${index}`,
+        notificationReceipts: state(2, 1, "remote-read"),
+      }));
+      f.sync.accept(baseline);
+      const flushed = f.sync.flush();
+      expect(f.device.confirmed).toEqual([]);
+      expect(f.device.pending.map((entry) => entry.id)).toEqual(["swipe-while-hidden"]);
+      releaseAcknowledgement();
+      await Promise.all([started, flushed]);
+      expect(new Set(device.dismissed)).toEqual(new Set(["old-hidden"]));
+      expect(f.device.confirmed).toEqual(["swipe-while-hidden"]);
+      expect(f.requests).toEqual([
+        {
+          workspaceId: "swiped",
+          notification: {
+            kind: "event",
+            acknowledgementId: "swipe-while-hidden",
+            sequence: 1,
+            attention: [],
+          },
+        },
+      ]);
+      expect(f.errors).toEqual([]);
+    } finally {
       releaseAcknowledgement();
       f.sync.dispose();
     }

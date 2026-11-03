@@ -14,7 +14,6 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Readable tool activity](docs/fork-features/readable-tool-activity.md)
 
 - [Previous agents](docs/fork-features/previous-agents.md)
-- [Project selector](docs/fork-features/project-selector.md)
 
 - [Project activity chips](docs/fork-features/project-activity-chips.md)
 - [Bold project names](docs/fork-features/bold-project-names.md)
@@ -30,7 +29,6 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 
 ## Display and reading preferences
 
-- [Tool call display](docs/fork-features/tool-call-display.md)
 - [Workspace tab widths](docs/fork-features/workspace-tab-widths.md)
 
 - [Split layout controls](docs/fork-features/split-layout-controls.md)
@@ -43,10 +41,11 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 
 ## Other additions
 
+- [Project selector](docs/fork-features/project-selector.md)
 - [Desktop browser and extensions](docs/fork-features/desktop-browser-and-extensions.md)
 - [Automatic usage refresh](docs/fork-features/automatic-usage-refresh.md)
 
-- [Sync app settings](docs/fork-features/sync-app-settings.md)
+- [Sync app settings while keeping device preferences local](docs/fork-features/sync-app-settings.md)
 - [Android SSH hosts](docs/fork-features/android-ssh-hosts.md)
 
 - [Restore archived workspaces](docs/fork-features/restore-archived-workspaces.md)
@@ -67,7 +66,8 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Workspace notifications](docs/fork-features/workspace-notifications.md)
 - [Agent-aware attention](docs/fork-features/agent-aware-attention.md)
 
-- [Steadier reading](docs/fork-features/steadier-reading.md)
+- [Prompt and history recovery](docs/fork-features/steadier-reading.md)
+- [Configured provider profiles, migration guidance and history preview](docs/fork-features/provider-history-preview.md)
 - [Mobile navigation](docs/fork-features/mobile-navigation.md)
 
 - [Workspace pickers, status and child workspaces](docs/fork-features/workspace-pickers-and-status.md)

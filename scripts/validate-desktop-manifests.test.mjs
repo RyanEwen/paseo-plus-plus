@@ -31,7 +31,8 @@ import { verifyAndroidApkSigner } from "./preview-release/android-signer.mjs";
 import { dump, load } from "js-yaml";
 import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url);
+const desktopRequire = createRequire(new URL("../packages/desktop/package.json", import.meta.url));
+const require = createRequire(desktopRequire.resolve("electron-builder/package.json"));
 
 test("daemon tracing and smoke load the native PTY addons used by each platform", () => {
   for (const [platform, expected] of [
@@ -292,122 +293,128 @@ test("Android compiler resume requires the exact plan, both Metro inputs, maps, 
   }
 });
 
-test("Android Metro-only CLI separates preparation from normal and resumed compilation", () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "paseo-android-metro-only-"));
-  try {
-    const driver = fileURLToPath(new URL("./preview-release/android-bundle.mjs", import.meta.url));
-    const metro = path.join(directory, "metro.mjs");
-    const compiler = path.join(directory, "hermesc");
-    const reactNative = path.join(directory, "react-native");
-    const preparedDir = path.join(directory, "prepared");
-    const digestFile = path.join(directory, "bundle-sha256.txt");
-    const events = path.join(directory, "events.jsonl");
-    mkdirSync(path.join(reactNative, "scripts"), { recursive: true });
+// This actual runner uses GNU time and Linux Hermes; checksum admission above stays portable.
+test.skipIf(process.platform !== "linux")(
+  "Android Metro-only CLI separates preparation from normal and resumed compilation",
+  () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "paseo-android-metro-only-"));
+    try {
+      const driver = fileURLToPath(
+        new URL("./preview-release/android-bundle.mjs", import.meta.url),
+      );
+      const metro = path.join(directory, "metro.mjs");
+      const compiler = path.join(directory, "hermesc");
+      const reactNative = path.join(directory, "react-native");
+      const preparedDir = path.join(directory, "prepared");
+      const digestFile = path.join(directory, "bundle-sha256.txt");
+      const events = path.join(directory, "events.jsonl");
+      mkdirSync(path.join(reactNative, "scripts"), { recursive: true });
 
-    // Small executable fixtures exercise the actual CLI and subprocess boundaries.
-    // They record orchestration without running Metro, Hermes, or a native build.
-    writeFileSync(
-      metro,
-      `import fs from 'node:fs';
+      // Small executable fixtures exercise the actual CLI and subprocess boundaries.
+      // They record orchestration without running Metro, Hermes, or a native build.
+      writeFileSync(
+        metro,
+        `import fs from 'node:fs';
 const argument = name => process.argv[process.argv.indexOf(name) + 1];
 fs.appendFileSync('events.jsonl', 'Metro\\n');
 fs.writeFileSync(argument('--bundle-output'), 'retained Metro JavaScript');
 fs.writeFileSync(argument('--sourcemap-output'), '{"version":3}');
 `,
-    );
-    writeFileSync(
-      compiler,
-      `#!${process.execPath}
+      );
+      writeFileSync(
+        compiler,
+        `#!${process.execPath}
 const fs = require('node:fs');
 const output = process.argv[process.argv.indexOf('-out') + 1];
 fs.appendFileSync('events.jsonl', 'Hermes\\n');
 fs.writeFileSync(output, Buffer.from('c61fbc03c103191f', 'hex'));
 fs.writeFileSync(output + '.map', '{"version":3}');
 `,
-      { mode: 0o755 },
-    );
-    writeFileSync(
-      path.join(reactNative, "scripts/compose-source-maps.js"),
-      `const fs = require('node:fs');
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        path.join(reactNative, "scripts/compose-source-maps.js"),
+        `const fs = require('node:fs');
 fs.appendFileSync('events.jsonl', 'source maps\\n');
 fs.writeFileSync(process.argv[process.argv.indexOf('-o') + 1], '{"version":3}');
 `,
-    );
-    const plan = {
-      root: directory,
-      node: [process.execPath],
-      cli: metro,
-      command: "export:embed",
-      entry: path.join(directory, "index.ts"),
-      assetName: "index.android.bundle",
-      config: null,
-      extraArgs: [],
-      dev: false,
-      minify: false,
-      hermesEnabled: true,
-      hermesCommand: compiler,
-      hermesFlags: ["-O", "-output-source-map"],
-      reactNative,
-      digestFile,
-      preparedDir,
-    };
-    const planPath = path.join(directory, "plan.json");
-    const planSource = JSON.stringify(plan);
-    writeFileSync(planPath, planSource);
-    const run = (...args) =>
-      spawnSync(process.execPath, [driver, planPath, ...args], {
-        encoding: "utf8",
-        env: { ...process.env, GITHUB_ACTIONS: "false" },
-        timeout: 15_000,
-      });
-    const bundle = path.join(preparedDir, "assets/index.android.bundle");
-    const retained = path.join(preparedDir, "compiler-input.js");
-    const packagerMap = path.join(preparedDir, "maps/index.android.bundle.packager.map");
-    const phases = () => readFileSync(events, "utf8").trim().split("\n");
+      );
+      const plan = {
+        root: directory,
+        node: [process.execPath],
+        cli: metro,
+        command: "export:embed",
+        entry: path.join(directory, "index.ts"),
+        assetName: "index.android.bundle",
+        config: null,
+        extraArgs: [],
+        dev: false,
+        minify: false,
+        hermesEnabled: true,
+        hermesCommand: compiler,
+        hermesFlags: ["-O", "-output-source-map"],
+        reactNative,
+        digestFile,
+        preparedDir,
+      };
+      const planPath = path.join(directory, "plan.json");
+      const planSource = JSON.stringify(plan);
+      writeFileSync(planPath, planSource);
+      const run = (...args) =>
+        spawnSync(process.execPath, [driver, planPath, ...args], {
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_ACTIONS: "false" },
+          timeout: 15_000,
+        });
+      const bundle = path.join(preparedDir, "assets/index.android.bundle");
+      const retained = path.join(preparedDir, "compiler-input.js");
+      const packagerMap = path.join(preparedDir, "maps/index.android.bundle.packager.map");
+      const phases = () => readFileSync(events, "utf8").trim().split("\n");
 
-    const prepared = run("--metro-only");
-    assert.equal(prepared.status, 0, prepared.stderr);
-    assert.deepEqual(phases(), ["Metro"]);
-    assert.equal(readFileSync(bundle, "utf8"), "retained Metro JavaScript");
-    assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
-    assert.equal(existsSync(digestFile), false);
-    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-    const receiptPath = path.join(directory, "receipt.json");
-    writeFileSync(
-      receiptPath,
-      JSON.stringify({
-        planSHA256: digest(planSource),
-        metroInputSHA256: digest(readFileSync(bundle)),
-        packagerMapSHA256: digest(readFileSync(packagerMap)),
-        hermesSHA256: digest(readFileSync(compiler)),
-      }),
-    );
-    writeFileSync(events, "");
-    const resumed = run("--resume-from-metro", receiptPath);
-    assert.equal(resumed.status, 0, resumed.stderr);
-    assert.deepEqual(phases(), ["Hermes", "source maps"]);
-    assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
-    assert.equal(readFileSync(bundle).subarray(0, 8).toString("hex"), "c61fbc03c103191f");
-    assert.equal(readFileSync(digestFile, "utf8").trim(), digest(readFileSync(bundle)));
+      const prepared = run("--metro-only");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      assert.deepEqual(phases(), ["Metro"]);
+      assert.equal(readFileSync(bundle, "utf8"), "retained Metro JavaScript");
+      assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
+      assert.equal(existsSync(digestFile), false);
+      const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+      const receiptPath = path.join(directory, "receipt.json");
+      writeFileSync(
+        receiptPath,
+        JSON.stringify({
+          planSHA256: digest(planSource),
+          metroInputSHA256: digest(readFileSync(bundle)),
+          packagerMapSHA256: digest(readFileSync(packagerMap)),
+          hermesSHA256: digest(readFileSync(compiler)),
+        }),
+      );
+      writeFileSync(events, "");
+      const resumed = run("--resume-from-metro", receiptPath);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      assert.deepEqual(phases(), ["Hermes", "source maps"]);
+      assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
+      assert.equal(readFileSync(bundle).subarray(0, 8).toString("hex"), "c61fbc03c103191f");
+      assert.equal(readFileSync(digestFile, "utf8").trim(), digest(readFileSync(bundle)));
 
-    writeFileSync(events, "");
-    const normal = run();
-    assert.equal(normal.status, 0, normal.stderr);
-    assert.deepEqual(phases(), ["Metro", "Hermes", "source maps"]);
-    assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
+      writeFileSync(events, "");
+      const normal = run();
+      assert.equal(normal.status, 0, normal.stderr);
+      assert.deepEqual(phases(), ["Metro", "Hermes", "source maps"]);
+      assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
 
-    // Release-plan rejection must happen before preparation removes any saved input.
-    writeFileSync(planPath, JSON.stringify({ ...plan, dev: true }));
-    writeFileSync(events, "");
-    const rejected = run("--metro-only");
-    assert.notEqual(rejected.status, 0);
-    assert.match(rejected.stderr, /optimized release Hermes bytecode/);
-    assert.equal(readFileSync(events, "utf8"), "");
-    assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+      // Release-plan rejection must happen before preparation removes any saved input.
+      writeFileSync(planPath, JSON.stringify({ ...plan, dev: true }));
+      writeFileSync(events, "");
+      const rejected = run("--metro-only");
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /optimized release Hermes bytecode/);
+      assert.equal(readFileSync(events, "utf8"), "");
+      assert.equal(readFileSync(retained, "utf8"), "retained Metro JavaScript");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 function withManifest(contents, run) {
   const dir = mkdtempSync(path.join(tmpdir(), "paseo-validate-desktop-manifest-"));
@@ -668,6 +675,7 @@ test("prepares a Windows ARM64 build with inherited packaging and required Azure
       platformSpecificBuildOptions: config.linux,
       config,
       fileAssociations: [],
+      info: { metadata: config.extraMetadata },
       appInfo: {
         productName: config.productName,
         sanitizedProductName: config.productName,

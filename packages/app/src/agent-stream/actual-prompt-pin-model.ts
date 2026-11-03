@@ -2,6 +2,8 @@ interface MeasuredPromptRow {
   id: string;
   top: number;
   height: number;
+  /** Natural tail meets this fixed compact paint; omitted callers retain top-edge ownership. */
+  compactHeight?: number;
 }
 
 export interface ActualPromptPin {
@@ -27,6 +29,10 @@ export function resolveActualPromptPin(
     }
   }
   if (!active) return null;
+  // The latest natural USER still retires its predecessor at the reading edge.
+  // It may remain ordinary until enough of its own full body has scrolled past.
+  const compactHeight = active.compactHeight ?? active.height;
+  if (active.top + active.height > viewportTop + compactHeight) return null;
   const translateY = Math.max(0, viewportTop - active.top);
   const collisionLimit = next ? next.top - active.top - active.height : translateY;
   return { id: active.id, translateY: Math.min(translateY, collisionLimit) };

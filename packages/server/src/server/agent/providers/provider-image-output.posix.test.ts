@@ -5,8 +5,8 @@ import { describe, expect, test } from "vitest";
 import { materializeProviderImage } from "./provider-image-output.js";
 
 describe.skipIf(process.platform === "win32")("materializeProviderImage", () => {
-  test("writes image attachments under a private temp directory", () => {
-    const materialized = materializeProviderImage({
+  test("writes image attachments under a private temp directory", async () => {
+    const materialized = await materializeProviderImage({
       data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=",
       mimeType: "image/png",
     });

@@ -13,20 +13,53 @@ function rowOf(range: Range): HTMLElement | null {
   return range.startContainer.parentElement?.closest<HTMLElement>("[data-history-row-id]") ?? null;
 }
 
+/** Wait for the real ordinary body and physical sticky release before reading ranges. */
+function areFindRowsReadyForReveal(rows: readonly HTMLElement[]): boolean {
+  const body = rows[0]?.querySelector<HTMLElement>('[data-testid="user-message-body-scroll"]');
+  const actualPrompt = body?.closest<HTMLElement>("[data-actual-prompt-content]");
+  const awaitingOriginal = actualPrompt && rows.some((row) => row.dataset.promptPinned !== "false");
+  if (
+    body?.dataset.bodyExpanded === "false" ||
+    awaitingOriginal ||
+    actualPrompt?.style.position === "sticky"
+  ) {
+    return false;
+  }
+  return !rows.some((row) => row.querySelector('[aria-busy="true"]'));
+}
+
 export function createFindViewport({
   getBindings,
   getRoot,
   highlightName,
 }: ViewportInput): Pick<ChatFindOperations, "reveal" | "clear"> {
   let generation = 0;
+  let selection: AbortController | null = null;
+  const releaseSelection = () => {
+    selection?.abort();
+    selection = null;
+  };
   return {
     clear() {
       generation += 1;
+      releaseSelection();
       CSS.highlights.delete(highlightName);
     },
     // The source message owns navigation; the rendered occurrence owns its position.
-    reveal(messageId, query, occurrence, signal) {
+    reveal(messageId, query, occurrence, callerSignal) {
       const owner = ++generation;
+      releaseSelection();
+      // The selected generation outlives the acknowledgement while the outer
+      // owner settles. Clear, supersession and caller cancellation retire it.
+      const controller = new AbortController();
+      selection = controller;
+      const signal = controller.signal;
+      const abort = () => controller.abort();
+      callerSignal.addEventListener("abort", abort, { once: true });
+      signal.addEventListener("abort", () => callerSignal.removeEventListener("abort", abort), {
+        once: true,
+      });
+      if (callerSignal.aborted) abort();
       return new Promise((resolve, reject) => {
         let frame = 0;
         let started = false;
@@ -36,18 +69,19 @@ export function createFindViewport({
           cancelAnimationFrame(frame);
           signal.removeEventListener("abort", cancelled);
         };
-        const cancelled = () => {
+        const fail = (error: unknown) => {
           cleanup();
-          reject(new Error("Search cancelled"));
+          controller.abort();
+          reject(error);
         };
-        const poll = () => {
+        const cancelled = () => fail(new Error("Search cancelled"));
+        const read = () => {
           if (signal.aborted || owner !== generation) {
             cancelled();
             return;
           }
           if (performance.now() >= deadline) {
-            cleanup();
-            reject(new Error("Could not reveal this match; retry"));
+            fail(new Error("Could not reveal this match; retry"));
             return;
           }
           const current = getBindings();
@@ -69,14 +103,7 @@ export function createFindViewport({
             frame = requestAnimationFrame(poll);
             return;
           }
-          const body = rows[0]?.querySelector<HTMLElement>(
-            '[data-testid="user-message-body-scroll"]',
-          );
-          if (body?.dataset.bodyExpanded === "false") {
-            frame = requestAnimationFrame(poll);
-            return;
-          }
-          if (rows.some((row) => row.querySelector('[aria-busy="true"]'))) {
+          if (!areFindRowsReadyForReveal(rows)) {
             frame = requestAnimationFrame(poll);
             return;
           }
@@ -86,6 +113,7 @@ export function createFindViewport({
           const range = ranges[index];
           cleanup();
           if (!range) {
+            controller.abort();
             resolve({ occurrence: 0, count: 0 });
             return;
           }
@@ -118,6 +146,13 @@ export function createFindViewport({
           });
           CSS.highlights.set(highlightName, new Highlight(range));
           resolve({ occurrence: index, count: ranges.length });
+        };
+        const poll = () => {
+          try {
+            read();
+          } catch (error) {
+            fail(error);
+          }
         };
         signal.addEventListener("abort", cancelled, { once: true });
         frame = requestAnimationFrame(poll);

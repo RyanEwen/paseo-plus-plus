@@ -3,6 +3,7 @@ import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import type { ReadingRowReplacements } from "./reading-anchor";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
@@ -66,6 +67,8 @@ export interface StreamViewportHandle {
     occurrence?: ScrollToMessageOccurrence,
     placement?: PromptJumpPlacement,
   ) => void;
+  /** Stop following output while rows open or close. */
+  holdReadingPosition: () => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -85,8 +88,14 @@ export interface StreamRenderInput {
   nativeViewportPlacement?: "docked" | "standalone";
   agentId: string;
   segments: StreamRenderSegments;
+  /** One canonical message mounted for paint only, outside the ordinary layout window. */
+  retainedPrompt?: StreamItem;
+  /** Isolated display context stays mounted but cannot own ordinary reading geometry. */
+  contextOnlyIds?: ReadonlySet<string>;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
+  /** Presentation rows replaced by another row after history is folded. */
+  readingRowReplacements?: ReadingRowReplacements;
   boundary: StreamHistoryBoundary;
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;

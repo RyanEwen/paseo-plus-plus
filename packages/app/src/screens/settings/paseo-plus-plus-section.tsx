@@ -1,4 +1,5 @@
 import { AccentSection } from "./paseo-plus-plus/accent-section";
+import { DEVICE_LOCAL_FORK_SETTING_KEYS } from "@/settings-sync/scope";
 import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
 import { SettingsSyncSection } from "./settings-sync-section";
@@ -23,7 +24,6 @@ const OPTIONAL_FEATURES: readonly PaseoPlusPlusFeature[] = [
   "descriptiveToolCalls",
   "stickyUserPrompts",
   "previousAgents",
-  "sidebarProjectSelector",
   "sidebarActivityChips",
   "sidebarProjectEmphasis",
   "sidebarBulkActions",
@@ -57,6 +57,7 @@ export function PaseoPlusPlusSection() {
     pending,
     failed,
     isLoading,
+    isLocalLoading,
     error: settingsError,
   } = useSettingsSave<PaseoPlusPlusFeature>();
 
@@ -89,7 +90,13 @@ export function PaseoPlusPlusSection() {
               key={feature}
               feature={feature}
               value={settings.paseoPlusPlus[feature]}
-              disabled={isLoading || settingsError !== null || pending !== null}
+              disabled={
+                (DEVICE_LOCAL_FORK_SETTING_KEYS.some((key) => key === feature)
+                  ? isLocalLoading
+                  : isLoading) ||
+                settingsError !== null ||
+                pending !== null
+              }
               pending={pending === feature}
               failed={failed === feature}
               onChange={changeFeature}

@@ -1,3 +1,13 @@
+import {
+  preserveDeviceAppSettings,
+  applyDeviceAppSettingsUpdate,
+  type DeviceAppSettingsUpdate,
+} from "./device-settings";
+import { exportSharedAppSettings } from "./scope";
+import {
+  selectChatPreferencesSupport,
+  exportSupportedChatPreferences,
+} from "@/appearance/chat-preferences-support";
 import { normalizeRemoteSidebarModes } from "./sidebar-values";
 import { createSyncedSidebarSettingsSave } from "./sidebar-edits";
 import type { QueryClient } from "@tanstack/react-query";
@@ -79,8 +89,10 @@ export async function getDeviceSettingsValues(
     (await loadAppSettingsFromStorage());
   await initializeDeviceSidebarModes();
   const app: Record<string, unknown> = {};
-  for (const key of SYNC_APP_SETTING_KEYS satisfies readonly (keyof AppSettings)[])
+  for (const key of SYNC_APP_SETTING_KEYS) {
+    if (key === "useLegacyTerminalRenderer" || key === "toolCallDetailLevel") continue;
     if (!LEGACY_PRESENTATION_KEYS.has(key)) app[key] = settings[key];
+  }
   app.usage = { displayAs: settings.usage.displayAs, pins: settings.usage.pins };
   if (!useSidebarViewStore.persist.hasHydrated()) {
     await useSidebarViewStore.persist.rehydrate();
@@ -102,7 +114,17 @@ export async function getDeviceSettingsValues(
     useSessionStore.getState(),
     settingsSync.getState().selectedHost,
   );
-  return { app: exportSupportedAccentSettings(app, supported), sidebar };
+  const chatSupported = selectChatPreferencesSupport(
+    useSessionStore.getState(),
+    settingsSync.getState().selectedHost,
+  );
+  return {
+    app: exportSupportedAccentSettings(
+      exportSupportedChatPreferences(exportSharedAppSettings(app), chatSupported, purpose),
+      supported,
+    ),
+    sidebar,
+  };
 }
 
 /** Project host values through the existing normalization and durable app write path. */
@@ -113,7 +135,7 @@ async function applyValues(values: Record<string, unknown>): Promise<void> {
   // Historical hosts may still store serverId. It remains untouched on the host and device.
   await saveAppSettings({
     queryClient,
-    updates: (current) => ({ ...app, usage: { ...app.usage, serverId: current.usage.serverId } }),
+    updates: (current) => preserveDeviceAppSettings(app, current),
     deps,
   });
   const sidebar = normalizeRemoteSidebarModes(values.sidebar, app);
@@ -158,6 +180,18 @@ export async function saveLocalUsageHost(
   await saveAppSettings({
     queryClient: client,
     updates: (current) => ({ usage: { ...current.usage, serverId } }),
+    deps,
+  });
+}
+
+/** Persist local leaves inside the storage queue to retain newer shared siblings. */
+export async function saveLocalDeviceSettings(
+  client: QueryClient,
+  updates: DeviceAppSettingsUpdate,
+): Promise<void> {
+  await saveAppSettings({
+    queryClient: client,
+    updates: (current) => applyDeviceAppSettingsUpdate(updates, current),
     deps,
   });
 }

@@ -524,6 +524,7 @@ export const HOST_SECTION_SLUGS = [
   "pair-device",
   "agents",
   "metadata",
+  "voice",
   "workspaces",
   "providers",
   "usage",
@@ -561,10 +562,6 @@ export function buildSettingsRoute() {
 
 export function buildSettingsSectionRoute(section: SettingsSectionSlug) {
   return `/settings/${section}` as const;
-}
-
-export function buildSettingsAddHostRoute(intentId: string | number = "1") {
-  return `/settings/general?addHost=${encodeURIComponent(String(intentId))}` as const;
 }
 
 export function buildSettingsHostRoute(serverId: string) {

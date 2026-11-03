@@ -2321,6 +2321,33 @@ describe("explicit prompt jump placement", () => {
 });
 
 describe("actual prompt row ownership", () => {
+  it("hands off at the natural tail against fixed compact paint, independently of More", () => {
+    const natural = [{ id: "prompt", top: 80, height: 340, compactHeight: 101, visualHeight: 101 }];
+    const expanded = natural.map((row) => ({ ...row, visualHeight: 300 }));
+    // Additive geometry is ignored by old source: the first guard is behavioral,
+    // not a missing API/export or a manufactured renderer measurement.
+    expect(resolveActualPromptPin(natural, 318)).toBeNull();
+    const positions = [318, 319, 320, 319, 318];
+    const expected = [null, "prompt", "prompt", "prompt", null];
+    expect(positions.map((top) => resolveActualPromptPin(natural, top)?.id ?? null)).toEqual(
+      expected,
+    );
+    expect(positions.map((top) => resolveActualPromptPin(expanded, top)?.id ?? null)).toEqual(
+      expected,
+    );
+    const successor = [
+      ...natural,
+      { id: "next", top: 500, height: 340, compactHeight: 101, visualHeight: 101 },
+    ];
+    // Its ordinary original takes over the edge before its own later collapse.
+    expect(resolveActualPromptPin(successor, 500)).toBeNull();
+    expect(resolveActualPromptPin(successor, 739)?.id).toBe("next");
+    const last = [{ id: "last", top: 80, height: 1000, compactHeight: 93 }];
+    const maximumScroll = 80 + 1000 - 320;
+    // No extra tail reservation may be invented to make a last USER reach987.
+    expect(resolveActualPromptPin(last, maximumScroll)).toBeNull();
+  });
+
   it("keeps one original row at the edge until its successor pushes it out", () => {
     const rows = [
       { id: "old", top: 80, height: 96 },
