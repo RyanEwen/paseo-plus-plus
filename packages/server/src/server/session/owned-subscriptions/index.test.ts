@@ -186,7 +186,7 @@ test("attachment binary proofs remain bound to the initiating physical request",
       requestId: "read",
     },
     async () => {
-      delivery.authorizeFileReply(frame, source);
+      delivery.authorizeBinaryReply(frame, source);
       expect(delivery.permitsBinary(source, frame)).toBe(true);
       expect(delivery.permitsBinary(sibling, frame)).toBe(false);
     },

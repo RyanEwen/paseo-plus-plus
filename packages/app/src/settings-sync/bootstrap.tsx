@@ -9,6 +9,7 @@ import {
   settingsSync,
   observeSidebarSettingsEdits,
   saveLocalUsageHost,
+  saveLocalDeviceSettings,
   initializeDeviceSidebarModes,
 } from "./runtime";
 import {
@@ -31,7 +32,12 @@ export function SettingsSyncBootstrap() {
 
   useEffect(() => {
     const uninstall = installSettingsSyncSaveHandler(
-      createSyncedAppSettingsSave(settingsSync, loadAppSettingsFromStorage, saveLocalUsageHost),
+      createSyncedAppSettingsSave(
+        settingsSync,
+        loadAppSettingsFromStorage,
+        saveLocalUsageHost,
+        saveLocalDeviceSettings,
+      ),
     );
     let hydrated = false;
     let initializing = false;

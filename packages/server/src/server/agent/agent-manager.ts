@@ -3915,7 +3915,11 @@ export class AgentManager {
       this.runs.settleForegroundStart(pendingRun, { status: "started", turnId });
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
-      agent.attention = { requiresAttention: false };
+      // Quiet agent work must preserve unread left by an earlier human request or Mark unread.
+      // Missing admissions use the normal human-request admission in startPendingForegroundTurn.
+      if (!options?.attention || options.attention.some((input) => input.kind === "human")) {
+        agent.attention = { requiresAttention: false };
+      }
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
