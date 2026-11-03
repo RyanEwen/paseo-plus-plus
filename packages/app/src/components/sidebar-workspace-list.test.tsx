@@ -1713,6 +1713,59 @@ describe("workspace family store transitions", () => {
     return element;
   }
 
+  it.each(["project", "pinned"] as const)(
+    "active families outlive the count window and return after Done (%s)",
+    (mode) => {
+      const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "animate");
+      const cancel = vi.fn();
+      Object.defineProperty(HTMLElement.prototype, "animate", {
+        configurable: true,
+        value: vi.fn(() => ({ cancel })),
+      });
+      try {
+        act(() => {
+          renderLayout(mode);
+          const current = useSidebarViewStore.getState();
+          useSidebarViewStore.setState({
+            initialWorkspaceCount: 1,
+            modeProfilesInitialized: true,
+            modeProfiles: {
+              ...current.modeProfiles,
+              project: { ...current.modeProfiles.project, initialWorkspaceCount: 1 },
+            },
+          });
+        });
+        expect(useSidebarViewStore.getState().initialWorkspaceCount).toBe(1);
+        const outsideSelector = `[data-testid="sidebar-workspace-row-${transitionKey("outside")}"]`;
+        expect(container.querySelector(outsideSelector)).toBeNull();
+        const updateStatus = (status: WorkspaceDescriptor["status"]) => {
+          const store = useSessionStore.getState();
+          const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
+          const outside = workspaces.get("outside");
+          if (!outside) throw new Error("Missing outside workspace");
+          workspaces.set("outside", {
+            ...outside,
+            status,
+            statusEnteredAt: new Date("2020-01-01T00:00:00Z"),
+          });
+          store.setWorkspaces(SERVER_ID, workspaces);
+        };
+        act(() => updateStatus("running"));
+        const runningRow = layoutElement("sidebar-workspace-row", "outside");
+        expect(container.querySelectorAll(outsideSelector)).toHaveLength(1);
+        act(() => updateStatus("attention"));
+        expect(layoutElement("sidebar-workspace-row", "outside")).toBe(runningRow);
+        act(() => updateStatus("done"));
+        expect(container.querySelector(outsideSelector)).toBeNull();
+        expect(cancel).toHaveBeenCalled();
+      } finally {
+        if (originalAnimate)
+          Object.defineProperty(HTMLElement.prototype, "animate", originalAnimate);
+        else Reflect.deleteProperty(HTMLElement.prototype, "animate");
+      }
+    },
+  );
+
   it.each(["project", "status", "pinned"] as const)(
     "T53 family row layout restores roots and indents only content (%s)",
     (mode) => {

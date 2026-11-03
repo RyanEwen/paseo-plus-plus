@@ -14,6 +14,6 @@ The filter icon beside the bell opens a quick text filter for the current mode. 
 
 In **Display → Empty projects**, choose **Show**, **Group**, or **Hide** for project groups with no visible workspaces.
 
-In **Display → Workspace limits**, open **Count limit** or **Updated within** to choose each view’s limits independently. The count defaults to 20 and the age limit to All. Quick text matching runs before the count window, so a match beyond the first 20 can still appear. **Show more** reveals every matching workspace in that group, including older entries.
+In **Display → Workspace limits**, open **Count limit** or **Updated within** to choose each view’s limits independently. The count defaults to 20 and the age limit to All. Running and needs-attention workspace families remain visible beyond either limit, as does the open workspace’s family. These exceptions keep the saved order; Done families return to the normal window when attention clears. Quick text matching runs before the count window, so a match beyond the first 20 can still appear. **Show more** reveals every matching workspace in that group, including older entries.
 
 [Feature branch](https://github.com/RyanEwen/paseo-plus-plus/tree/feat/sidebar-display-preferences). The guide on `main` describes the integrated behavior.

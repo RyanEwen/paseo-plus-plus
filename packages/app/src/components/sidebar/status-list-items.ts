@@ -1,5 +1,6 @@
 import {
   EMPTY_WORKSPACE_TREE,
+  collectActiveWorkspaceKeys,
   includeActiveWorkspaceFamily,
   workspaceFamilyRoots,
   workspaceFamilyUpdatedAt,
@@ -73,6 +74,7 @@ export function buildStatusListItems({
       visibleItems,
       tree: workspaceTree,
       activeWorkspaceKey,
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
     });
     for (const workspace of rendered) {
       result.push({ kind: "workspace", workspace, groupKey: group.key });
@@ -81,7 +83,7 @@ export function buildStatusListItems({
       kind: "footer",
       groupKey: group.key,
       expanded,
-      canToggle,
+      canToggle: canToggle && (expanded || rendered.length < roots.length),
     });
   }
   return result;

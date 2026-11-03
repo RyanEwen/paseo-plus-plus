@@ -5,6 +5,8 @@ import {
 } from "./workspace-tree-attention";
 import {
   orderWorkspaceFamilies,
+  collectActiveWorkspaceKeys,
+  includeActiveWorkspaceFamily,
   resolveWorkspaceParents,
   summarizeWorkspaceChildren,
   workspaceCollapseKey,
@@ -68,6 +70,67 @@ function makeWorkspace(
   };
   return { placement, entry };
 }
+
+it("active descendants retain their whole family beyond a window without moving passive siblings or pin partitions", () => {
+  const rows = [
+    makeWorkspace("first"),
+    makeWorkspace("hidden"),
+    makeWorkspace("parent"),
+    makeWorkspace("child", "running"),
+    makeWorkspace("selected"),
+    makeWorkspace("selected-child"),
+  ];
+  const entries = new Map(rows.map((row) => [row.entry.workspaceKey, row.entry]));
+  const family = orderWorkspaceFamilies({
+    workspaces: rows.map((row) => row.placement),
+    parents: new Map([
+      ["srv:child", "srv:parent"],
+      ["srv:selected-child", "srv:selected"],
+    ]),
+  });
+  const roots = family.rows.filter((row) => !family.tree.get(row.workspaceKey)?.parentKey);
+  const rendered = includeActiveWorkspaceFamily({
+    roots,
+    visibleItems: roots.slice(0, 1),
+    tree: family.tree,
+    activeWorkspaceKey: "srv:selected-child",
+    activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+  });
+  expect(rendered.map((row) => row.workspaceKey)).toEqual([
+    "srv:first",
+    "srv:parent",
+    "srv:selected",
+  ]);
+  expect(family.tree.get("srv:parent")?.descendantKeys).toEqual(["srv:child"]);
+  expect(family.rows.map((row) => row.workspaceKey)).toEqual(
+    rows.map((row) => row.placement.workspaceKey),
+  );
+  // An independently pinned child is a separate family and cannot expose the ordinary parent.
+  const separated = orderWorkspaceFamilies({
+    workspaces: [rows[3]!.placement],
+    parents: new Map([["srv:child", "srv:parent"]]),
+  });
+  expect(
+    includeActiveWorkspaceFamily({
+      roots: separated.rows,
+      visibleItems: [],
+      tree: separated.tree,
+      activeWorkspaceKey: null,
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+    }).map((row) => row.workspaceKey),
+  ).toEqual(["srv:child"]);
+  const doneEntries = new Map(entries);
+  doneEntries.set("srv:child", { ...rows[3]!.entry, statusBucket: "done" });
+  expect(
+    includeActiveWorkspaceFamily({
+      roots,
+      visibleItems: roots.slice(0, 1),
+      tree: family.tree,
+      activeWorkspaceKey: null,
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(doneEntries),
+    }).map((row) => row.workspaceKey),
+  ).toEqual(["srv:first"]);
+});
 
 function makeProject(
   workspaces: SidebarWorkspacePlacement[],
