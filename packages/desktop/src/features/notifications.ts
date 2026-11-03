@@ -1,8 +1,13 @@
+import {
+  DesktopNotificationReceipts,
+  notificationHistoryIdentifier,
+} from "./notification-receipts.js";
 import { z } from "zod";
 import { desktopDistribution } from "../distribution.js";
 import {
   createViewedAgentNotifications,
   type KnownAgentNotification,
+  type DeliveredAgentToast,
 } from "./viewed-agent-notifications.js";
 import { createWindowsToastHistory } from "./windows-toast-history.js";
 import path from "node:path";
@@ -15,7 +20,7 @@ import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
   createWindowsAgentNotificationOpener,
-  shouldRetainWindowsNotification,
+  classifyWindowsNotificationClose,
 } from "./windows-agent-notification.js";
 
 interface NotificationInput {
@@ -30,10 +35,16 @@ interface NotificationClickPayload {
 }
 
 const activeNotifications = new Set<Notification>();
+const notificationRecords = new Map<
+  Notification,
+  { identifier: string; nativeIdentifier: string; data: Record<string, unknown> | undefined }
+>();
+const programmaticDismissals = new WeakSet<Notification>();
 const agentNotifications = new Map<Notification, KnownAgentNotification>();
 
 function releaseNotification(notification: Notification): void {
   activeNotifications.delete(notification);
+  notificationRecords.delete(notification);
   agentNotifications.delete(notification);
 }
 
@@ -126,9 +137,65 @@ export function ensureNotificationCenterRegistration(): void {
 }
 
 export function registerNotificationHandlers(openAgentLink: (url: string) => void): void {
+  let receiptStore: DesktopNotificationReceipts | null = null;
+  // Load at the IPC/callback boundary, so a damaged receipt file cannot abort app startup.
+  function receipts(): DesktopNotificationReceipts {
+    receiptStore ??= new DesktopNotificationReceipts(app.getPath("userData"));
+    return receiptStore;
+  }
+  const canReadHistory =
+    process.platform === "win32" &&
+    app.isPackaged &&
+    desktopDistribution.windowsAppUserModelId !== null;
   const history = createWindowsToastHistory({
     executable: process.execPath,
-    isPackagedFork: app.isPackaged && desktopDistribution.isPreview,
+    isPackagedFork: app.isPackaged && desktopDistribution.windowsAppUserModelId !== null,
+  });
+  ipcMain.handle("paseo:notification:listDelivered", async () => {
+    const known = [...notificationRecords.values()].map(({ identifier, data }) => ({
+      identifier,
+      data,
+    }));
+    let persisted: ReturnType<DesktopNotificationReceipts["history"]> = [];
+    if (canReadHistory) {
+      try {
+        persisted = receipts().history(await history.list());
+      } catch (error) {
+        // Identity verification failures leave history untouched; live own entries still reconcile.
+        console.warn("[notifications] Could not inspect owned notification history", error);
+      }
+    }
+    const byId = new Map([...persisted, ...known].map((item) => [item.identifier, item]));
+    return [...byId.values()];
+  });
+  ipcMain.handle("paseo:notification:dismissDelivered", async (_event, input: unknown) => {
+    const identifiers = z.array(z.string().min(1)).max(256).parse(input);
+    const selected = new Set(identifiers);
+    const forgotten = new Set<string>();
+    let removedHistory: DeliveredAgentToast[] = [];
+    if (canReadHistory) {
+      const delivered = (await history.list()).filter((item) => {
+        const identifier = notificationHistoryIdentifier(item);
+        return identifier !== null && selected.has(identifier);
+      });
+      if (delivered.length) await history.remove(delivered);
+      removedHistory = delivered;
+    }
+    for (const [notification, record] of notificationRecords) {
+      if (!selected.has(record.identifier)) continue;
+      programmaticDismissals.add(notification);
+      notification.close();
+      releaseNotification(notification);
+      forgotten.add(record.nativeIdentifier);
+    }
+    // Release selected live instances even if durable mapping retirement fails.
+    // Keep persistence errors visible to the caller; they are not acknowledgements.
+    receipts().forgetHistory(removedHistory);
+    receipts().forget([...forgotten]);
+  });
+  ipcMain.handle("paseo:notification:pendingDismissals", () => receipts().pending());
+  ipcMain.handle("paseo:notification:acknowledgeDismissals", (_event, input: unknown) => {
+    receipts().acknowledge(z.array(z.string().min(1)).max(256).parse(input));
   });
   const viewed = createViewedAgentNotifications({
     canView(windowId) {
@@ -140,7 +207,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
       );
     },
     known: () => agentNotifications.values(),
-    list: () => (process.platform === "win32" ? history.list() : Promise.resolve([])),
+    list: () => (canReadHistory ? history.list() : Promise.resolve([])),
     remove: (toasts) => history.remove(toasts),
   });
   const targetSchema = z.object({
@@ -169,11 +236,48 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     Notification.handleActivation((details) => {
       openWindowsNotification(details);
     });
+    // Electron 44.5.1 registers the Windows COM activator when its presenter is
+    // initialized, not when handleActivation installs the callback.
+    Notification.isSupported();
   }
 
   ipcMain.handle("paseo:notification:isSupported", () => {
     return Notification.isSupported();
   });
+
+  /** Preserve delivery identity and register the delivery event before showing.
+   * Persistence failure keeps the existing live notification behavior. */
+  function retainNotificationDelivery(
+    notification: Notification,
+    notificationId: string,
+    data: Record<string, unknown> | undefined,
+    toastXml: string | null,
+  ): void {
+    const historyIdentity = toastXml
+      ? notificationHistoryIdentifier({
+          namespace: "current",
+          group: "Notifications",
+          tag: notificationId,
+          arguments: buildWindowsAgentNotificationArguments({ notificationId, data }) ?? "",
+        })
+      : null;
+    // Persist event identity before showing; a process restart must not lose history ownership.
+    try {
+      receipts().shown(notificationId, data, historyIdentity ?? undefined);
+    } catch (error) {
+      console.warn("[notifications] Could not preserve notification routing", error);
+    }
+    notificationRecords.set(notification, {
+      identifier: historyIdentity ?? `live:${notificationId}`,
+      nativeIdentifier: notificationId,
+      data,
+    });
+    notification.on("show", () => {
+      for (const window of BrowserWindow.getAllWindows())
+        window.webContents.send("paseo:event:notification-delivered", {});
+    });
+    activeNotifications.add(notification);
+  }
 
   ipcMain.handle("paseo:notification:send", async (event, rawInput?: NotificationInput) => {
     if (!Notification.isSupported()) {
@@ -214,7 +318,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
       silent,
     });
 
-    activeNotifications.add(notification);
+    retainNotificationDelivery(notification, notificationId, data, toastXml);
     if (target) {
       let shown = false;
       let dismissWhenShown = false;
@@ -225,6 +329,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
           dismissWhenShown = true;
           return;
         }
+        programmaticDismissals.add(notification);
         notification.close();
         releaseNotification(notification);
       };
@@ -235,7 +340,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
           dismissKnown();
           if (process.platform === "win32") {
             void history
-              .remove([{ tag: notificationId, group: "Notifications", arguments: "" }])
+              .removeCurrentLive(notificationId)
               .catch((error) =>
                 console.warn("[notifications] Failed to remove viewed toast from history", error),
               );
@@ -264,7 +369,22 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     });
 
     notification.on("close", (closeEvent) => {
-      if (process.platform === "win32" && shouldRetainWindowsNotification(closeEvent.reason)) {
+      const disposition = classifyWindowsNotificationClose({
+        reason: closeEvent.reason,
+        programmatic: programmaticDismissals.delete(notification),
+      });
+      if (disposition === "acknowledge") {
+        try {
+          if (receipts().dismissed(notificationId)) {
+            for (const window of BrowserWindow.getAllWindows())
+              window.webContents.send("paseo:event:notification-dismissals-changed", {});
+          }
+        } catch (error) {
+          console.warn("[notifications] Could not preserve explicit dismissal", error);
+        }
+      }
+
+      if (process.platform === "win32" && disposition === "retain") {
         // getHistory() is macOS-only and returns an empty list on Windows.
         // Keep this reference so foreground Center taps retain their listener.
         return;

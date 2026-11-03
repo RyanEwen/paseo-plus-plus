@@ -1,3 +1,9 @@
+import type { StoredAgentRecord } from "./agent-storage.js";
+import type {
+  ConfiguredClaudeHistoryStorage,
+  ProviderHistoryBinding,
+  ProviderHistoryStorage,
+} from "./provider-history/binding.js";
 import type {
   AgentFeature,
   AgentFeatureSelect,
@@ -11,6 +17,7 @@ import type {
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { AttentionAdmission } from "./attention/objectives.js";
 
 export type {
   AgentFeature,
@@ -197,6 +204,8 @@ export type AgentPromptContentBlock =
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
 export interface AgentRunOptions {
+  /** Daemon-owned audience provenance, never inferred from provider prompt text. */
+  attention?: readonly AttentionAdmission[];
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
@@ -208,7 +217,11 @@ export interface AgentSteerOptions extends AgentRunOptions {
   clearPendingPermissions?: boolean;
 }
 
-export type SteerResult = { status: "accepted" } | { status: "unavailable" };
+// providerMessageId names the steered message in the provider's own history, when the provider
+// mints one. Rewinding to the message needs it.
+export type SteerResult =
+  | { status: "accepted"; providerMessageId?: string }
+  | { status: "unavailable" };
 
 export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
@@ -313,7 +326,10 @@ export type ToolCallDetail =
       subAgentType?: string;
       description?: string;
       childSessionId?: string;
-      log: string;
+      // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. Apps before v0.14.1
+      // require `log`; every producer sends it empty and carries the same tag. Optional here because
+      // protocol timeline items, where `log` is optional, flow into this type.
+      log?: string;
       actions?: Array<{
         index: number;
         toolName: string;
@@ -615,9 +631,52 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
+export interface ClaudeRewindTransition {
+  /** Exact provider query/admission must still own this queued mutation. */
+  assertCurrent?(): void;
+  previous: AgentPersistenceHandle;
+  storage: ConfiguredClaudeHistoryStorage;
+  /** Omitted only when staging a fresh rewind, before a provider has allocated a native ID. */
+  next?: AgentPersistenceHandle;
+  /** Local assignment only: called after durable commit, without IO, events or external hooks. */
+  adopt(fresh?: ClaudeFreshRewindContext): void;
+}
+export type CommitClaudeRewind = (transition: ClaudeRewindTransition) => Promise<void>;
+export interface ClaudeInitialHistoryContext {
+  readonly owner: object;
+  admit(): Promise<void>;
+  readonly admission?: StoredAgentRecord;
+  release(): void;
+  commit(input: {
+    storage: ConfiguredClaudeHistoryStorage;
+    assertCurrent?(): void;
+    next: AgentPersistenceHandle;
+    adopt(): void;
+  }): Promise<void>;
+}
+export interface ClaudeFreshRewindContext {
+  readonly owner: object;
+  admit(): Promise<void>;
+  readonly admission?: StoredAgentRecord;
+  release(): void;
+  operationId: string;
+  commit: CommitClaudeRewind;
+}
+export interface AgentRewindInput {
+  messageId: string;
+  commitClaudeRewind?: CommitClaudeRewind;
+}
+
 export interface AgentLaunchContext {
+  /** Launch-only plugin MCP servers and their owners; never persisted. */
+  mcpServers?: Record<string, McpServerConfig>;
+  mcpServerOwners?: Record<string, string>;
   agentId?: string;
   env?: Record<string, string>;
+  /** Canonical server-only storage selection, reserved before provider startup. */
+  historyStorage?: ProviderHistoryStorage;
+  claudeFreshRewind?: ClaudeFreshRewindContext;
+  claudeInitialHistory?: ClaudeInitialHistoryContext;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
@@ -665,6 +724,7 @@ export interface AgentUsageSession {
 }
 
 export interface AgentSession {
+  readonly historyStorage?: ProviderHistoryStorage;
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -687,6 +747,7 @@ export interface AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
+  /** Null until a new provider process could resume this session; see docs/providers.md. */
   describePersistence(): AgentPersistenceHandle | null;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.
@@ -694,15 +755,21 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /** True only when releasing this runtime loses no background work or pending replies.
+   * An optional additional veto: missing methods use daemon baseline eligibility;
+   * implemented checks that reject or return false keep the runtime resident. */
+  canStopRuntime?(): Promise<boolean>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
-  revertConversation?(input: { messageId: string }): Promise<void>;
-  revertFiles?(input: { messageId: string }): Promise<void>;
-  revertBoth?(input: { messageId: string }): Promise<void>;
+  readonly claudeFreshRewind?: ClaudeFreshRewindContext;
+  readonly claudeInitialHistory?: ClaudeInitialHistoryContext;
+  revertConversation?(input: AgentRewindInput): Promise<void>;
+  revertFiles?(input: AgentRewindInput): Promise<void>;
+  revertBoth?(input: AgentRewindInput): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
@@ -746,9 +813,20 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ResolveHistoryStorageInput {
+  provider: AgentProvider;
+  config: AgentSessionConfig;
+  env?: Record<string, string>;
+  previous?: ProviderHistoryBinding;
+  operation: "create" | "import" | "resume" | "reload";
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  resolveHistoryStorage?(
+    input: ResolveHistoryStorageInput,
+  ): Promise<ProviderHistoryStorage | undefined>;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -800,12 +878,18 @@ export interface AgentClient {
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
-  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  archiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
-  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  unarchiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

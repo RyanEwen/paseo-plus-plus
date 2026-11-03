@@ -10,6 +10,7 @@ import { HostUpdateAction, HostUpdateSheet } from "@/components/hosts/host-updat
 import { SidebarViewModeButton } from "@/components/sidebar/view-mode-button";
 import { SidebarProjectSelector } from "@/components/sidebar/sidebar-project-selector";
 import { SidebarBulkCollapseControls } from "@/components/sidebar/bulk-collapse-controls";
+import { useAddHost } from "@/hosts/add-host";
 import { router } from "expo-router";
 import {
   CircleGauge,
@@ -82,14 +83,9 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import { buildSettingsAddHostRoute, buildDefaultSettingsRoute } from "@/utils/host-routes";
+import { buildDefaultSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
-import {
-  UsageSidebarItem,
-  UsageSidebarRoot,
-  useHasUsageSummary,
-  useOpenSidebarUsage,
-} from "@/usage";
+import { UsageSidebarItem, UsageSidebarRoot, useUsageSummary, useOpenSidebarUsage } from "@/usage";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
@@ -186,9 +182,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
 
   const handleOpenProjectMobile = useCallback(() => {
-    showMobileAgent();
     void openProjectPicker();
-  }, [showMobileAgent, openProjectPicker]);
+  }, [openProjectPicker]);
 
   const handleOpenProjectDesktop = useCallback(() => {
     void openProjectPicker();
@@ -203,14 +198,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     router.push(buildDefaultSettingsRoute());
   }, []);
 
-  const handleAddHostMobile = useCallback(() => {
-    showMobileAgent();
-    router.push(buildSettingsAddHostRoute(Date.now()));
-  }, [showMobileAgent]);
-
-  const handleAddHostDesktop = useCallback(() => {
-    router.push(buildSettingsAddHostRoute(Date.now()));
-  }, []);
+  const handleAddHostMobile = useAddHost();
+  const handleAddHostDesktop = handleAddHostMobile;
 
   const handleOpenHostSettingsMobile = useCallback(
     (serverId: string) => {
@@ -225,9 +214,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   }, []);
 
   const handleImportSessionMobile = useCallback(() => {
-    showMobileAgent();
     openImportSession();
-  }, [openImportSession, showMobileAgent]);
+  }, [openImportSession]);
 
   const labels = useMemo(
     (): SidebarLabels => ({
@@ -394,8 +382,9 @@ function SidebarHostPicker({
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
-  const { settings } = useAppSettings();
-  const showHostUpdates = settings.paseoPlusPlus.sidebarHostUpdates;
+  const { settings, isLoading: settingsLoading, error: settingsError } = useAppSettings();
+  const showHostUpdates =
+    !settingsLoading && settingsError === null && settings.paseoPlusPlus.sidebarHostUpdates;
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -590,10 +579,10 @@ function SidebarUsageIcon({ label }: { label: string }) {
  */
 function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void }) {
   const { items } = useSidebarNavItems("footer");
-  const hasUsageSummary = useHasUsageSummary();
+  const usageSummary = useUsageSummary();
   const rowsRef = useRef<View | null>(null);
   const visibleItems = items.filter(
-    (item) => item.visible && (item.kind === "plugin" || hasUsageSummary),
+    (item) => item.visible && (item.kind === "plugin" || usageSummary.length > 0),
   );
   if (visibleItems.length === 0) return null;
   return (
@@ -609,7 +598,7 @@ function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void
               onBeforeNavigate={onBeforeNavigate}
             />
           ) : (
-            <UsageSidebarItem key={item.key} />
+            <UsageSidebarItem key={item.key} sources={usageSummary} />
           ),
         )}
       </View>
@@ -830,8 +819,11 @@ function DesktopSidebar({
     [active, resizeAnimatedStyle],
   );
   const desktopSidebarBorderStyle = useMemo(
-    () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
-    [insetsTop],
+    () => [
+      styles.desktopSidebarBorder,
+      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
+    ],
+    [insetsTop, insets.bottom],
   );
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
@@ -967,7 +959,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: 0,
   },
   workspacesSectionHeader: {
-    minHeight: density.rowHeight,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",

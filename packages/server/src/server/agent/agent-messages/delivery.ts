@@ -2,6 +2,7 @@ import type { PromptDispatchDisposition } from "../agent-prompt.js";
 import { randomUUID } from "node:crypto";
 import type { AgentPromptInput, AgentPromptContentBlock } from "../agent-sdk-types.js";
 import { prepareAgentMessage, type AgentPromptSource } from "./envelope.js";
+import type { AttentionAdmission } from "../attention/objectives.js";
 
 interface Message {
   recipientId: string;
@@ -26,6 +27,7 @@ interface Admitted extends Message {
   reject(error: unknown): void;
 }
 interface DispatchRequest {
+  attention: readonly AttentionAdmission[];
   recipientId: string;
   messageIds: readonly string[];
   prompt: AgentPromptInput;
@@ -43,6 +45,8 @@ interface Dependencies {
 }
 export interface AgentMessageDelivery {
   enqueue(message: Message): Receipt;
+  /** Queued messages and provider dispatches still owned by this recipient. */
+  hasPending(recipientId: string): boolean;
   /** Stop admission, flush pending messages, and await provider dispatch acknowledgments. */
   close(): Promise<void>;
   /** Existing completion waits include agent messages admitted before the wait. */
@@ -73,6 +77,15 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           typeof entry === "string" ? [{ type: "text", text: entry }] : entry,
         );
     const request: DispatchRequest = {
+      attention: messages.map((message) => ({
+        kind: "agent",
+        requestId: message.receipt.messageId,
+        requester: {
+          agentId: message.source.agentId,
+          ...(message.source.serverId ? { serverId: message.source.serverId } : {}),
+        },
+        attention: message.source.attention,
+      })),
       recipientId,
       messageIds: messages.map((message) => message.receipt.messageId),
       prompt,
@@ -138,6 +151,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   return {
+    hasPending: (recipientId) => pending.has(recipientId) || dispatching.has(recipientId),
     enqueue(message) {
       if (closed) throw new Error("Agent message delivery is closed");
       let resolve!: Admitted["resolve"];

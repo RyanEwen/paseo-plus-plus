@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentStorage } from "./agent/agent-storage.js";
+import { AgentDirectory } from "./agent/directory.js";
 import { describe, expect, test } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
@@ -70,6 +75,16 @@ class WorkspaceStatus {
     projectRegistry: { list: async () => [this.project] },
     workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
+    workspaceLastUserMessageTimes: async () => {
+      const times = new Map<string, string>();
+      for (const agent of this.agents) {
+        if (!agent.workspaceId || !agent.lastUserMessageAt) continue;
+        const previous = times.get(agent.workspaceId);
+        if (!previous || agent.lastUserMessageAt > previous)
+          times.set(agent.workspaceId, agent.lastUserMessageAt);
+      }
+      return times;
+    },
     listProviderSubagentActivity: async () => this.providerSubagents,
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
@@ -226,14 +241,16 @@ class WorkspaceStatus {
     });
   }
 
-  async workspaceDescriptor(): Promise<WorkspaceDescriptorPayload> {
+  async workspaceDescriptor(
+    workspaceId = this.workspace.workspaceId,
+  ): Promise<WorkspaceDescriptorPayload> {
     const entries = await this.directory.listFetchEntries({
       type: "fetch_workspaces_request",
       requestId: "workspace-descriptor",
     });
-    const entry = entries.entries[0];
+    const entry = entries.entries.find((workspace) => workspace.id === workspaceId);
     if (!entry) {
-      throw new Error("No workspace descriptor found");
+      throw new Error(`No workspace descriptor found for ${workspaceId}`);
     }
     return entry;
   }
@@ -242,8 +259,12 @@ class WorkspaceStatus {
 interface AgentState {
   id: string;
   status: AgentSnapshotPayload["status"];
+  lastUserMessageAt?: string | null;
+  archivedAt?: string | null;
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
+  humanAttentionRequired?: boolean;
+  attentionMessage?: string;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
 }
 
@@ -261,7 +282,7 @@ function createAgent(
     effectiveThinkingOptionId: null,
     createdAt: NOW,
     updatedAt: NOW,
-    lastUserMessageAt: null,
+    lastUserMessageAt: input.lastUserMessageAt ?? null,
     status: input.status,
     capabilities: {
       supportsStreaming: true,
@@ -287,9 +308,11 @@ function createAgent(
     title: null,
     labels: input.labels ?? {},
     requiresAttention: input.requiresAttention ?? false,
+    humanAttentionRequired: input.humanAttentionRequired,
+    attentionMessage: input.attentionMessage,
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: null,
-    archivedAt: null,
+    archivedAt: input.archivedAt ?? null,
   } satisfies AgentSnapshotPayload;
 }
 
@@ -560,6 +583,7 @@ describe("WorkspaceDirectory empty projects", () => {
       projectRegistry: { list: async () => input.projects },
       workspaceRegistry: { list: async () => input.workspaces },
       listAgentPayloads: async () => [],
+      workspaceLastUserMessageTimes: async () => new Map(),
       listProviderSubagentActivity: async () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
@@ -723,6 +747,7 @@ test("Git observation targets exclude archived records without hydrating app des
       ],
     },
     listAgentPayloads: unexpectedHydration,
+    workspaceLastUserMessageTimes: unexpectedHydration,
     listProviderSubagentActivity: unexpectedHydration,
     listTerminalActivityContributions: unexpectedHydration,
     buildWorkspaceDescriptor: unexpectedHydration,
@@ -731,4 +756,182 @@ test("Git observation targets exclude archived records without hydrating app des
   expect(await directory.listObservationTargets()).toEqual([
     { id: "observed", workspaceDirectory: "/workspace/observed", workspaceKind: "local_checkout" },
   ]);
+});
+
+test.each([
+  {
+    relationship: "same-workspace child",
+    workerWorkspaceId: "workspace-1",
+    parentStatus: "attention",
+    parentHumanAttention: true,
+  },
+  {
+    relationship: "cross-workspace child",
+    workerWorkspaceId: "workspace-worktree",
+    parentStatus: "done",
+    parentHumanAttention: false,
+  },
+  {
+    relationship: "independent",
+    workerWorkspaceId: "workspace-1",
+    parentStatus: "attention",
+    parentHumanAttention: true,
+  },
+])(
+  "$relationship separates routine status from explicit human escalation",
+  async ({ relationship, workerWorkspaceId, parentStatus, parentHumanAttention }) => {
+    const quiet = new WorkspaceStatus();
+    quiet.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
+    const escalated = new WorkspaceStatus();
+    escalated.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
+    const routine: AgentState = {
+      id: "worker",
+      status: "idle",
+      requiresAttention: false,
+      humanAttentionRequired: false,
+    };
+    const attention: AgentState = {
+      ...routine,
+      requiresAttention: true,
+      attentionReason: "finished",
+      humanAttentionRequired: true,
+    };
+    if (relationship === "same-workspace child") {
+      quiet.hasDelegatedAgent(routine);
+      escalated.hasDelegatedAgent(attention);
+    } else if (relationship === "cross-workspace child") {
+      quiet.hasWorktreeWorkspace();
+      escalated.hasWorktreeWorkspace();
+      quiet.hasDelegatedAgentInWorktree(routine);
+      escalated.hasDelegatedAgentInWorktree(attention);
+    } else {
+      quiet.hasRootAgent(routine);
+      escalated.hasRootAgent(attention);
+    }
+    expect(await quiet.workspaceDescriptor(workerWorkspaceId)).toMatchObject({
+      id: workerWorkspaceId,
+      status: "done",
+      humanAttentionRequired: false,
+    });
+    // The worker contributes to its exact workspace regardless of directory ordering.
+    expect(await escalated.workspaceDescriptor(workerWorkspaceId)).toMatchObject({
+      id: workerWorkspaceId,
+      status: "attention",
+      humanAttentionRequired: true,
+    });
+    expect(await escalated.workspaceDescriptor("workspace-1")).toMatchObject({
+      id: "workspace-1",
+      status: parentStatus,
+      humanAttentionRequired: parentHumanAttention,
+    });
+  },
+);
+
+test("agent-owned child blockers remain visible without a human badge", async () => {
+  const workspace = new WorkspaceStatus();
+  workspace.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
+  workspace.hasDelegatedAgent({ id: "worker", status: "error", humanAttentionRequired: false });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "failed",
+    humanAttentionRequired: false,
+  });
+  workspace.hasDelegatedAgent({
+    id: "permission-worker",
+    status: "idle",
+    pendingPermissionCount: 1,
+    humanAttentionRequired: false,
+  });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "needs_input",
+    humanAttentionRequired: false,
+  });
+});
+
+test("an explicit child escalation is Ready during ongoing work, with blocking status still primary", async () => {
+  const workspace = new WorkspaceStatus();
+  workspace.hasRootAgent({ id: "parent-agent", status: "running", humanAttentionRequired: false });
+  workspace.hasDelegatedAgent({
+    id: "worker",
+    status: "running",
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionMessage: "Choose an account",
+    humanAttentionRequired: true,
+  });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "attention",
+    humanAttentionRequired: true,
+  });
+  workspace.hasDelegatedAgent({ id: "blocked", status: "error", humanAttentionRequired: false });
+  expect(await workspace.workspaceDescriptor()).toMatchObject({
+    status: "failed",
+    humanAttentionRequired: true,
+  });
+});
+
+test("workspace sort times retain the latest human prompt after its agent is archived", async () => {
+  const scenario = new WorkspaceStatus();
+  scenario.hasRootAgent({
+    id: "older",
+    status: "idle",
+    lastUserMessageAt: "2026-03-03T12:00:00.000Z",
+  });
+  scenario.hasRootAgent({
+    id: "archived",
+    status: "idle",
+    lastUserMessageAt: "2026-03-04T12:00:00.000Z",
+    archivedAt: "2026-03-05T12:00:00.000Z",
+  });
+  scenario.hasRootAgent({ id: "output-only", status: "running" });
+  expect(await scenario.workspaceDescriptor()).toMatchObject({
+    createdAt: NOW,
+    lastUserMessageAt: "2026-03-04T12:00:00.000Z",
+    status: "running",
+  });
+});
+
+test("prompt recency reads archived records without projecting agents or exposing internal prompts", async () => {
+  const home = await mkdtemp(join(tmpdir(), "workspace-prompt-times-"));
+  const storage = new AgentStorage(home, createTestLogger());
+  try {
+    const base = {
+      provider: "unavailable",
+      cwd: home,
+      workspaceId: "w",
+      createdAt: NOW,
+      updatedAt: NOW,
+      labels: {},
+      lastStatus: "closed" as const,
+    };
+    await storage.upsert({
+      ...base,
+      id: "archived",
+      archivedAt: NOW,
+      lastUserMessageAt: "2026-03-04T00:00:00.000Z",
+    });
+    await storage.upsert({
+      ...base,
+      id: "internal",
+      internal: true,
+      lastUserMessageAt: "2026-03-05T00:00:00.000Z",
+    });
+    await storage.upsert({ ...base, id: "output", lastActivityAt: "2026-03-06T00:00:00.000Z" });
+    const unexpectedProjection = (): never => {
+      throw new Error("Prompt sorting projected an agent payload");
+    };
+    const directory = new AgentDirectory({
+      storage,
+      manager: { listAgents: () => [] },
+      workspaces: { get: async () => null, list: async () => [] },
+      projectLive: unexpectedProjection,
+      projectStored: unexpectedProjection,
+      isProviderVisible: () => false,
+      isStoredProviderAvailable: () => false,
+    });
+    expect(await directory.workspaceLastUserMessageTimes()).toEqual(
+      new Map([["w", "2026-03-04T00:00:00.000Z"]]),
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

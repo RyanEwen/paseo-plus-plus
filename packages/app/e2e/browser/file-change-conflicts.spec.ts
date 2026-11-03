@@ -8,6 +8,7 @@ import {
 } from "../support/helpers/file-explorer";
 import type { WithWorkspace } from "../support/helpers/with-workspace";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { replaceCodeMirrorContent } from "../support/helpers/code-mirror";
 import {
   expectFileCalloutWasRendered,
   expectNoFileCalloutWasRendered,
@@ -51,9 +52,7 @@ async function openTrackedFile(
 
 async function replaceEditorText(page: Page, content: string): Promise<void> {
   const editor = visibleEditor(page);
-  await editor.click();
-  await editor.press("Control+A");
-  await editor.type(content);
+  await replaceCodeMirrorContent({ editor, content });
 }
 
 async function expectOnlyFileCallout(page: Page, title: string): Promise<void> {
@@ -182,7 +181,8 @@ test.describe("Workspace file change conflicts", () => {
     await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
 
     await unlink(filePath);
-    await expect(filePane(page).getByText("The file was deleted.", { exact: true })).toBeVisible();
+    await expectDeletedFileNotice(page);
+    await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
     await writeFile(filePath, "# After\n", "utf8");
 
     await expect(filePane(page).getByText("After", { exact: true })).toBeVisible();

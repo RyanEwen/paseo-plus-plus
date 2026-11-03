@@ -16,6 +16,7 @@ import { setAssistantMessageHeight } from "@/utils/assistant-message-height-esti
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
+import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
@@ -239,7 +240,7 @@ function shouldStopDetailWheelPropagation(detailRoot: HTMLElement, event: WheelE
 }
 
 interface AssistantTurnFooterProps {
-  getContent: () => string;
+  getContent?: () => string;
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
@@ -339,10 +340,12 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
-      <TurnCopyButton
-        getContent={getContent}
-        containerStyle={assistantTurnFooterStylesheet.copyButton}
-      />
+      {getContent ? (
+        <TurnCopyButton
+          getContent={getContent}
+          containerStyle={assistantTurnFooterStylesheet.copyButton}
+        />
+      ) : null}
       {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {primaryLabel ? (
         <Pressable
@@ -580,6 +583,10 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
+  // Details that do not sit in a card leave the header as a lone highlighted pill.
+  pressableExpandedDetached: {
+    borderRadius: theme.borderRadius.full,
+  },
   detailWrapperBorderless: {
     borderWidth: 0,
   },
@@ -795,6 +802,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     >
       <MarkdownRenderer
         text={revealedMessage}
+        agentCommands
         streaming={phase !== "complete" || revealedMessage.length < renderedMessage.text.length}
         client={client}
         workspaceRoot={workspaceRoot}
@@ -1657,7 +1665,10 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       expandableBadgeStylesheet.pressable,
       isPressed && isInteractive ? expandableBadgeStylesheet.pressablePressed : null,
       isExpanded && expandableBadgeStylesheet.pressableExpanded,
-      isExpanded && !borderlessWhenExpanded && expandableBadgeStylesheet.pressableExpandedAttached,
+      isExpanded &&
+        (borderlessWhenExpanded
+          ? expandableBadgeStylesheet.pressableExpandedDetached
+          : expandableBadgeStylesheet.pressableExpandedAttached),
     ],
     [borderlessWhenExpanded, isExpanded, isInteractive, isPressed],
   );
@@ -1835,6 +1846,9 @@ interface ToolCallProps {
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
+  itemId: string;
+  /** Shown as its own row rather than inside a tool call group. */
+  standalone?: boolean;
 }
 
 export const ToolCall = memo(function ToolCall({
@@ -1856,13 +1870,19 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
+  itemId,
+  standalone = true,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const descriptiveToolCalls = useSettings(
     (settings) => settings.paseoPlusPlus.descriptiveToolCalls,
   );
   const { t: activityTranslation } = useTranslation();
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
+  const { expanded: isExpanded, toggle: toggleExpanded } = useToolCallExpanded({
+    callId: itemId,
+    defaultExpanded: defaultExpanded ?? false,
+    standalone,
+  });
 
   const isMobile = useIsCompactFormFactor();
   const shouldRenderInline = !isMobile || forceInline;
@@ -1929,10 +1949,11 @@ export const ToolCall = memo(function ToolCall({
         showLoadingSkeleton: presentation.isLoadingDetails,
       });
     } else {
-      setIsExpanded((prev) => !prev);
+      toggleExpanded();
     }
   }, [
     shouldRenderInline,
+    toggleExpanded,
     openToolCall,
     toolName,
     presentation.detail,
@@ -2038,5 +2059,7 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
+  if (previous.itemId !== next.itemId) return false;
+  if (previous.standalone !== next.standalone) return false;
   return true;
 }

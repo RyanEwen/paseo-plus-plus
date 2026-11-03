@@ -12,7 +12,6 @@ const preferencesObject = z.looseObject({
   descriptiveToolCalls: z.boolean().catch(true),
   stickyUserPrompts: z.boolean().catch(true),
   previousAgents: z.boolean().catch(true),
-  sidebarProjectSelector: z.boolean().catch(true),
   sidebarActivityChips: z.boolean().catch(true),
   sidebarProjectEmphasis: z.boolean().catch(true),
   sidebarBulkActions: z.boolean().catch(true),

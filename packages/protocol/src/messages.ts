@@ -1,4 +1,15 @@
 import {
+  NotificationAcknowledgementSchema,
+  WorkspaceNotificationReceiptsSchema,
+} from "./notification-receipts.js";
+import {
+  DaemonNotificationPreferencesSchema,
+  AgentAttentionObjectivesSchema,
+  AgentAttentionPeerSchema,
+  AgentAttentionRequestQuerySchema,
+  AgentMessageAttentionSchema,
+} from "./agent-attention.js";
+import {
   AttachmentReadCancelRequestSchema,
   AttachmentReadCancelResponseSchema,
   AttachmentListRequestSchema,
@@ -99,6 +110,16 @@ import {
   ScheduleRunOnceResponseSchema,
   ScheduleUpdateResponseSchema,
 } from "./schedule/rpc-schemas.js";
+import {
+  SpeechLocalModelsDeleteRequestSchema,
+  SpeechLocalModelsDeleteResponseSchema,
+  SpeechLocalModelsDownloadRequestSchema,
+  SpeechLocalModelsDownloadResponseSchema,
+  SpeechLocalModelsListRequestSchema,
+  SpeechLocalModelsListResponseSchema,
+  SpeechSettingsPatchSchema,
+  SpeechSettingsSchema,
+} from "./speech/rpc-schemas.js";
 import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
@@ -204,6 +225,9 @@ const MutableBrowserToolsConfigSchema = z
 const MutableRelayConfigSchema = z
   .object({
     enabled: z.boolean(),
+    // COMPAT(relayProtectedSecurity): added in v0.13.0, keep optional while old daemons are supported.
+    // When true the daemon admits only relay sessions that negotiated protected endpoint security.
+    requireProtectedSecurity: z.boolean().optional(),
   })
   .passthrough();
 
@@ -233,17 +257,29 @@ export const MutableDaemonConfigSchema = z
       .optional(),
     app: z.object({ baseUrl: z.string() }).optional(),
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
+    // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
+    usage: z.object({ enabled: z.boolean() }).optional(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
+    notifications: DaemonNotificationPreferencesSchema.optional(),
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
+    // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
+    // Persisted host-wide value, applied live by the daemon.
+    idleRuntimeCleanup: z.boolean().optional(),
+    // COMPAT(restartRecovery): added in v0.14.0, keep optional for older hosts.
+    resumeOnStartup: z.boolean().optional(),
+    resumePrompt: z.string().optional(),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    // COMPAT(speechSettings): added in v0.12.0, optional because older daemons omit it.
+    features: SpeechSettingsSchema.optional(),
+    envOverrides: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
 
@@ -251,19 +287,25 @@ export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
+    usage: z.object({ enabled: z.boolean() }).optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    notifications: DaemonNotificationPreferencesSchema.optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
+    idleRuntimeCleanup: z.boolean().optional(),
+    resumeOnStartup: z.boolean().optional(),
+    resumePrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    features: SpeechSettingsPatchSchema.optional(),
   })
   .partial()
   .passthrough();
@@ -629,7 +671,9 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       subAgentType: z.string().optional(),
       description: z.string().optional(),
       childSessionId: z.string().optional(),
-      log: z.string(),
+      // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. A sub-agent card is a
+      // launch marker; apps before v0.14.1 required `log`, so daemons still send it empty.
+      log: z.string().optional(),
       // Compat cruft for clients <= 0.1.65-beta.3 that required this field. Producers still
       // emit `[]`; nothing reads it. Drop the field (and the `[]` emissions) once those
       // clients are no longer in the field.
@@ -815,6 +859,8 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
         data: z.object({
           serverId: z.string(),
           workspaceId: z.string().optional(),
+          notificationSequence: z.number().int().positive().optional(),
+          attentionTimestamp: z.string().optional(),
           agentId: z.string(),
           reason: z.enum(["finished", "error", "permission"]),
         }),
@@ -873,6 +919,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
+  attentionObjectives: AgentAttentionObjectivesSchema.optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
@@ -898,6 +947,8 @@ export const AgentListItemPayloadSchema = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   providerUnavailable: z.boolean().optional(),
 });
@@ -1415,6 +1466,7 @@ export const SendAgentMessageRequestSchema = z.object({
   /** Opaque sender identity for agent-originated prompts. */
   sourceAgentId: z.string().min(1).optional(),
   sourceAgentServerId: z.string().min(1).optional(),
+  agentAttention: AgentMessageAttentionSchema.optional(),
   sessionMode: z.string().optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
@@ -1428,6 +1480,7 @@ export const WaitForFinishRequestSchema = z.object({
   /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
   timeoutMs: z.number().int().positive().optional(),
+  attentionRequest: AgentAttentionRequestQuerySchema.optional(),
 });
 
 export const DaemonGetStatusRequestSchema = z.object({
@@ -1476,6 +1529,10 @@ export const DiagnosticsRequestSchema = z.object({
 export const PluginCatalogGetRequestSchema = z.object({
   type: z.literal("plugin.catalog.get.request"),
   requestId: z.string(),
+  /** Client bundles the client already holds; the daemon leaves out each one whose hash matches. */
+  cachedClientBundles: z
+    .array(z.object({ id: PluginIdSchema, clientBundleHash: z.string() }))
+    .optional(),
 });
 
 export const PluginListRequestSchema = z.object({
@@ -1592,6 +1649,14 @@ export const PluginRemoveRequestSchema = pluginIdRequest("plugin.remove.request"
 
 export const PluginRpcInvokeRequestSchema = z.object({
   type: z.literal("plugin.rpc.invoke.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema,
+  method: z.string().min(1),
+  input: z.unknown().optional(),
+});
+
+export const PluginRpcSubscribeRequestSchema = z.object({
+  type: z.literal("plugin.rpc.subscribe.request"),
   requestId: z.string(),
   pluginId: PluginIdSchema,
   method: z.string().min(1),
@@ -1763,6 +1828,9 @@ export const CreateAgentRequestMessageSchema = z.object({
   // Optional caller context lets managed CLI invocations use the same daemon-owned
   // workspace and parentage policy as agent-scoped MCP creation.
   callerAgentId: z.string().optional(),
+  sourceAgentId: z.string().min(1).optional(),
+  sourceAgentServerId: z.string().min(1).optional(),
+  agentAttention: AgentMessageAttentionSchema.optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
@@ -1898,11 +1966,17 @@ export const RestartServerRequestMessageSchema = z.object({
   type: z.literal("restart_server_request"),
   reason: z.string().optional(),
   requestId: z.string(),
+  // Restart keeps terminals unless this is true. Daemons that predate
+  // `features.terminalsSurviveRestart` ignore it and close terminals anyway.
+  killTerminals: z.boolean().optional(),
 });
 
 export const ShutdownServerRequestMessageSchema = z.object({
   type: z.literal("shutdown_server_request"),
   requestId: z.string(),
+  // Shutdown closes terminals unless this is true. Gate on
+  // `features.terminalsSurviveRestart`: older daemons drop the field.
+  keepTerminals: z.boolean().optional(),
 });
 
 export const DaemonUpdateAvailabilityRequestMessageSchema = z.object({
@@ -1921,6 +1995,8 @@ export const AgentTimelineCursorSchema = z.object({
 });
 
 export const FetchAgentTimelineRequestMessageSchema = z.object({
+  // Keep available turns whole for tail/before pages; after catch-up stays incremental.
+  wholeTurns: z.boolean().optional(),
   type: z.literal("fetch_agent_timeline_request"),
   agentId: z.string(),
   requestId: z.string(),
@@ -2767,6 +2843,7 @@ export const WorkspaceClearAttentionRequestSchema = z.object({
   type: z.literal("workspace.clear_attention.request"),
   workspaceId: z.union([z.string(), z.array(z.string())]),
   requestId: z.string(),
+  notification: NotificationAcknowledgementSchema.optional(),
 });
 
 export const WorkspaceMarkUnreadRequestSchema = z.object({
@@ -3357,6 +3434,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  PluginRpcSubscribeRequestSchema,
   AgentTimelineAppendRequestSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
@@ -3495,6 +3573,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ChatWaitRequestSchema,
   ScheduleCreateRequestSchema,
   ScheduleListRequestSchema,
+  SpeechLocalModelsListRequestSchema,
+  SpeechLocalModelsDownloadRequestSchema,
+  SpeechLocalModelsDeleteRequestSchema,
   ScheduleInspectRequestSchema,
   ScheduleLogsRequestSchema,
   SchedulePauseRequestSchema,
@@ -3699,9 +3780,15 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(internalWorkspaces): added in v0.9.0; remove gate after 2027-03-17.
         internalWorkspaces: z.boolean().optional(),
         backgroundWorkspaces: z.boolean().optional(),
+        // COMPAT(agentAudienceAttention): added in v0.12.0, remove the client gate after
+        // 2027-04-22 once supported hosts implement objective-aware human attention.
+        agentAudienceAttention: z.boolean().optional(),
+        agentAudienceAttentionSettings: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
+        // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
+        usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -3713,6 +3800,8 @@ export const ServerInfoStatusPayloadSchema = z
         appSettingsSync: z.boolean().optional(),
         // COMPAT(appSettingsAccentColor): added in v0.11.2, remove gate after 2027-10-14.
         appSettingsAccentColor: z.boolean().optional(),
+        // COMPAT(appSettingsChatPreferences): added in v0.15.0, remove gate after 2027-05-02.
+        appSettingsChatPreferences: z.boolean().optional(),
         // COMPAT(appSettingsSidebarModeProfiles): added in v0.11.2, remove after 2027-10-16.
         appSettingsSidebarModeProfiles: z.boolean().optional(),
         // COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
@@ -3745,6 +3834,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
+        // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
+        speechSettings: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
@@ -3767,14 +3858,22 @@ export const ServerInfoStatusPayloadSchema = z
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
+        // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
+        pluginSubscriptions: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
+        // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
+        idleRuntimeCleanupSetting: z.boolean().optional(),
+        // COMPAT(restartRecovery): added in v0.14.0, remove gate after 2027-04-28.
+        resumeOnStartupSetting: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": z.boolean().optional(),
+        // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
+        "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
@@ -3814,6 +3913,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonSelfUpdate: z.boolean().optional(),
         // COMPAT(daemonUpdateAvailability): added after v0.11.2, remove gate after 2027-04-14.
         daemonUpdateAvailability: z.boolean().optional(),
+        // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
+        terminalsSurviveRestart: z.boolean().optional(),
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
@@ -3822,16 +3923,22 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagents: z.boolean().optional(),
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
+        wholeTurnTimeline: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(projectWorkspacePinning): added in v0.11.2, remove gate after 2027-02-11.
         projectWorkspacePinning: z.boolean().optional(),
+        // COMPAT(workspaceNotificationReceipts): added after v0.12.0-beta.3; remove gate after 2027-10-21 once host floors include receipt sync. Retain the wire field.
+        workspaceNotificationReceipts: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
         hubRelationship: z.boolean().optional(),
+        // COMPAT(relayProtectedSecurity): added in v0.13.0. A capable daemon always advertises
+        // it; relay clients that negotiated legacy security reject the connection on seeing it.
+        relayProtectedSecurity: z.boolean().optional(),
         // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
         projectGithubClone: z.boolean().optional(),
         // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
@@ -3861,7 +3968,9 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
+        workspaceSortTimes: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
@@ -4161,6 +4270,7 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
 
 export const WorkspaceDescriptorPayloadSchema = z
   .object({
+    notificationReceipts: WorkspaceNotificationReceiptsSchema.optional(),
     id: z.string(),
     projectId: z.string(),
     projectDisplayName: z.string(),
@@ -4200,6 +4310,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    humanAttentionRequired: z.boolean().optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
     // coerces a missing field to `null` so downstream code never has to
@@ -4209,6 +4320,8 @@ export const WorkspaceDescriptorPayloadSchema = z
       .nullish()
       .transform((value) => value ?? null),
     activityAt: z.string().nullable(),
+    createdAt: z.string().optional(),
+    lastUserMessageAt: z.string().nullable().optional(),
     diffStat: z
       .object({
         additions: z.number(),
@@ -4977,6 +5090,8 @@ export const AgentAttentionRequiredMessageSchema = z.object({
         data: z.object({
           serverId: z.string(),
           workspaceId: z.string().optional(),
+          notificationSequence: z.number().int().positive().optional(),
+          attentionTimestamp: z.string().optional(),
           agentId: z.string(),
           reason: z.enum(["finished", "error", "permission"]),
         }),
@@ -5124,6 +5239,18 @@ export const SendAgentMessageResponseMessageSchema = z.object({
   }),
 });
 
+export const AgentAttentionOutcomeSchema = z.object({
+  id: z.string(),
+  requestId: z.string(),
+  requester: AgentAttentionPeerSchema,
+  acceptedTurnId: z.string().nullable(),
+  kind: z.enum(["permission", "finished", "error", "canceled", "rejected"]),
+  lastMessage: z.string().nullable(),
+  error: z.string().nullable(),
+  permission: AgentPermissionRequestPayloadSchema.optional(),
+});
+export type AgentAttentionOutcome = z.infer<typeof AgentAttentionOutcomeSchema>;
+
 export const WaitForFinishResponseMessageSchema = z.object({
   type: z.literal("wait_for_finish_response"),
   payload: z.object({
@@ -5132,6 +5259,7 @@ export const WaitForFinishResponseMessageSchema = z.object({
     final: AgentSnapshotPayloadSchema.nullable(),
     error: z.string().nullable(),
     lastMessage: z.string().nullable(),
+    attentionOutcome: AgentAttentionOutcomeSchema.nullable().optional(),
   }),
 });
 
@@ -5173,6 +5301,22 @@ export const DaemonGetStatusResponseSchema = z.object({
           error: z.string().nullable().optional(),
         }),
       ),
+      // Processes a terminal cleanup on this host (a kill restart or stop) could not confirm
+      // gone; empty when every cleanup finished. Daemons without terminalsSurviveRestart have
+      // no such cleanup and omit it.
+      terminalCleanupUnconfirmed: z
+        .array(
+          z.object({
+            pid: z.number(),
+            role: z.string(),
+            reason: z.string(),
+            detail: z.string(),
+          }),
+        )
+        .optional(),
+      // Set when this host's terminals are held by a terminal worker from a newer Paseo, which
+      // this daemon leaves running but cannot drive: why, and what the user can do.
+      terminalsUnavailable: z.string().optional(),
     })
     .passthrough(),
 });
@@ -6666,6 +6810,7 @@ export const TerminalAttentionRequiredSchema = z.object({
   payload: z.object({
     subscriptionId: z.string().optional(),
     serverId: z.string().optional(),
+    notificationSequence: z.number().int().positive().optional(),
     terminalId: z.string(),
     cwd: z.string(),
     workspaceId: z.string().optional(),
@@ -6821,7 +6966,10 @@ export const PluginCatalogGetResponseSchema = z.object({
     plugins: z.array(
       z.object({
         id: PluginIdSchema,
-        clientBundle: z.string(),
+        /** Left out only when the request listed this plugin with the same `clientBundleHash`. */
+        clientBundle: z.string().optional(),
+        /** SHA-256 of `clientBundle`, hex encoded. */
+        clientBundleHash: z.string().optional(),
         requirements: PluginRequirementsSchema.optional(),
       }),
     ),
@@ -6974,8 +7122,24 @@ export const PluginRpcInvokeResponseSchema = z.object({
   type: z.literal("plugin.rpc.invoke.response"),
   payload: z.object({
     requestId: z.string(),
-    output: z.unknown(),
+    output: z.unknown().optional(),
   }),
+});
+
+export const PluginRpcSubscribeResponseSchema = z.object({
+  type: z.literal("plugin.rpc.subscribe.response"),
+  payload: z.object({ requestId: z.string(), subscriptionId: z.string() }),
+});
+
+/** A JSON subscription event. A `Uint8Array` event rides as binary opcode 0x20 instead. */
+export const PluginRpcEventSchema = z.object({
+  type: z.literal("plugin.rpc.event"),
+  payload: z.object({ subscriptionId: z.string(), event: z.unknown() }),
+});
+
+export const PluginRpcClosedSchema = z.object({
+  type: z.literal("plugin.rpc.closed"),
+  payload: z.object({ subscriptionId: z.string(), error: z.string().optional() }),
 });
 
 export const AgentTimelineAppendResponseSchema = z.object({
@@ -7058,6 +7222,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  PluginRpcSubscribeResponseSchema,
+  PluginRpcEventSchema,
+  PluginRpcClosedSchema,
   AgentTimelineAppendResponseSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,
@@ -7246,6 +7413,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ChatWaitResponseSchema,
   ScheduleCreateResponseSchema,
   ScheduleListResponseSchema,
+  SpeechLocalModelsListResponseSchema,
+  SpeechLocalModelsDownloadResponseSchema,
+  SpeechLocalModelsDeleteResponseSchema,
   ScheduleInspectResponseSchema,
   ScheduleLogsResponseSchema,
   SchedulePauseResponseSchema,

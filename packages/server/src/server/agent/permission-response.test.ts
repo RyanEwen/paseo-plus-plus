@@ -1,3 +1,4 @@
+import type { AttentionAdmission } from "./attention/objectives.js";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -11,6 +12,10 @@ import type { AgentStreamEvent } from "../messages.js";
 import { respondToAgentPermission } from "./permission-response.js";
 
 class FakePermissionAgentManager {
+  continuation?: AttentionAdmission;
+  captureAttentionContinuation(): AttentionAdmission | undefined {
+    return this.continuation;
+  }
   permissionResult: AgentPermissionResult | void;
   hasRunInFlight = false;
   outOfBandHandled = false;
@@ -32,13 +37,15 @@ class FakePermissionAgentManager {
     return this.permissionResult;
   }
 
-  tryRunOutOfBand(): boolean {
+  async tryRunOutOfBand(): Promise<boolean> {
     return this.outOfBandHandled;
   }
 
   getAgent() {
     return undefined;
   }
+
+  async reloadStalePluginSession(): Promise<void> {}
 
   hasInFlightRun(): boolean {
     return this.hasRunInFlight;
@@ -139,4 +146,24 @@ describe("respondToAgentPermission", () => {
       },
     ]);
   });
+});
+
+test("human approval retains the original agent objective in the provider follow-up", async () => {
+  const agentManager = new FakePermissionAgentManager();
+  agentManager.continuation = {
+    kind: "continuation",
+    objectiveIds: ["agent-request"],
+    admissionId: "accepted-request",
+  };
+  agentManager.permissionResult = { followUpPrompt: "continue the delegated task" };
+  await respondToAgentPermission({
+    agentManager,
+    agentId: "worker",
+    requestId: "permission-1",
+    response: { behavior: "allow" },
+    logger: createTestLogger(),
+  });
+  expect(agentManager.streamRuns[0]?.options?.attention).toEqual([
+    { kind: "continuation", objectiveIds: ["agent-request"], admissionId: "accepted-request" },
+  ]);
 });

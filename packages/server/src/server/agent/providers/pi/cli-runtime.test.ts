@@ -165,6 +165,25 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("passes a native session directory without changing the configuration home", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const launches: PiRuntimeLaunch[] = [];
+    const runtime = createRuntime(child, launches);
+    const session = await runtime.startSession({
+      cwd: "/workspace/project",
+      sessionDir: "/fixture/private sessions",
+      env: { PI_CODING_AGENT_DIR: "/fixture/custom-agent", INTEGRATION_SETTING: "preserved" },
+    });
+
+    expect(launches[0]).toMatchObject({
+      sessionDir: "/fixture/private sessions",
+      argv: ["pi", "--mode", "rpc", "--session-dir", "/fixture/private sessions"],
+      env: { PI_CODING_AGENT_DIR: "/fixture/custom-agent", INTEGRATION_SETTING: "preserved" },
+    });
+    await session.close();
+  });
+
   test("passes an MCP config path to Pi", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

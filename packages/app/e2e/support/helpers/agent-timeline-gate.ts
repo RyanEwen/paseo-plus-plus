@@ -18,12 +18,37 @@ export interface AgentTimelineResponseGate {
   waitForDelayedResponse(): Promise<void>;
 }
 
+/** Actual window response metadata; forwarded means released to the production client. */
+export interface TimelineWindowPageReceipt {
+  direction: "tail" | "before";
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
+  hasOlder: boolean;
+  forwarded: boolean;
+  entries: Array<{
+    seqStart: number;
+    seqEnd: number;
+    type: string;
+    callId?: string;
+    messageId?: string;
+  }>;
+}
+
+export interface OlderTimelinePagesOptions {
+  /** Cold opening must acquire context through production without a test-triggered flush. */
+  contextDelivery?: "held" | "immediate";
+}
+
 export interface OlderTimelinePagesGate {
+  getWindowPages(): readonly TimelineWindowPageReceipt[];
   getRequestCount(): number;
   getReadAccounting(): ReturnType<ReturnType<typeof createTimelineRequestLedger>["summary"]>;
   getCertifiedPrompts(): Array<{ id: string; text: string }>;
   getMountingPrompt(): { id: string; text: string } | null;
   flushContentReads(): number;
+  /** Release validated context now and let later context responses pass through. */
+  releaseContentReads(): void;
   getRepeatedEntryCount(): number;
   getOwnedEntryCountContaining(text: string): number;
   releasePage(pageNumber: number): void;
@@ -114,7 +139,7 @@ function getPayload(message: Record<string, unknown>): Record<string, unknown> |
 interface ObservedTimelineEntry {
   seqStart: number;
   seqEnd: number;
-  item: { type: string };
+  item: { type: string; callId?: string; messageId?: string };
 }
 
 function readTimelineEntries(payload: Record<string, unknown>): ObservedTimelineEntry[] {
@@ -128,6 +153,19 @@ function readTimelineEntries(payload: Record<string, unknown>): ObservedTimeline
       typeof candidate.item?.type === "string"
     );
   });
+}
+
+function readWindowEntryReceipt(
+  entry: ObservedTimelineEntry,
+): TimelineWindowPageReceipt["entries"][number] {
+  const receipt: TimelineWindowPageReceipt["entries"][number] = {
+    seqStart: entry.seqStart,
+    seqEnd: entry.seqEnd,
+    type: entry.item.type,
+  };
+  if (typeof entry.item.callId === "string") receipt.callId = entry.item.callId;
+  if (typeof entry.item.messageId === "string") receipt.messageId = entry.item.messageId;
+  return receipt;
 }
 
 function readCursorSeq(cursor: unknown): number | undefined {
@@ -344,13 +382,36 @@ export async function delayAgentOlderTimelineResponse(
   return delayAgentTimelineResponse(page, agentId, "before");
 }
 
+export interface OlderTimelinePagesOptions {
+  daemonPort?: number;
+  /**
+   * Hide whole-turn paging from the app so it reads this host with item pages, as it reads
+   * daemons released before whole-turn pages. An item page can end inside a turn or a tool run.
+   */
+  itemPagedHost?: boolean;
+}
+
+function withoutWholeTurnPages(message: WebSocketMessage): WebSocketMessage {
+  const sessionMessage = getSessionMessage(message);
+  const payload = sessionMessage ? getPayload(sessionMessage) : null;
+  if (sessionMessage?.type !== "status" || payload?.status !== "server_info") return message;
+  const envelope = parseWebSocketJson(message) as {
+    message: { payload: { features?: Record<string, unknown> } };
+  };
+  delete envelope.message.payload.features?.wholeTurnTimeline;
+  return JSON.stringify(envelope);
+}
+
 export async function holdAgentOlderTimelinePages(
   page: Page,
   agentId: string,
-  daemonPort?: number,
+  options: OlderTimelinePagesOptions = {},
 ): Promise<OlderTimelinePagesGate> {
+  const { daemonPort } = options;
   const ledger = createTimelineRequestLedger(agentId, await loadProtocolSchemas());
+  const windowPages: TimelineWindowPageReceipt[] = [];
   const contentForwards: Array<() => void> = [];
+  let contentReadsReleased = false;
   let requestCount = 0;
   let responseCount = 0;
   let repeatedEntryCount = 0;
@@ -374,6 +435,7 @@ export async function holdAgentOlderTimelinePages(
     const server = ws.connectToServer();
     ws.onMessage((message) => {
       const sessionMessage = getSessionMessage(message);
+      if (sessionMessage) ledger.observeRequest(sessionMessage);
       if (
         sessionMessage?.type === "fetch_agent_timeline_request" &&
         sessionMessage.agentId === agentId &&
@@ -395,14 +457,21 @@ export async function holdAgentOlderTimelinePages(
       if (purpose === "content" || purpose === "context") {
         if (purpose === "content") ledger.completeContent(payload);
         else ledger.completeContext(payload);
-        contentForwards.push(forward);
+        const deliver = () => {
+          ledger.deliverContextResponse(payload.requestId);
+          forward();
+        };
+        if (contentReadsReleased || options.contextDelivery === "immediate") deliver();
+        else contentForwards.push(deliver);
       } else {
         forward();
       }
       resolveRequestWaiters();
       return true;
     };
-    server.onMessage((message) => {
+    server.onMessage((received) => {
+      const message = options.itemPagedHost ? withoutWholeTurnPages(received) : received;
+
       const sessionMessage = getSessionMessage(message);
       const payload = sessionMessage ? getPayload(sessionMessage) : null;
       // Server-info can be a direct envelope; prompt indexes use session messages.
@@ -420,8 +489,24 @@ export async function holdAgentOlderTimelinePages(
         return;
       }
 
+      const startSeq = readCursorSeq(payload.startCursor);
+      const endSeq = readCursorSeq(payload.endCursor);
+      if (typeof payload.epoch !== "string" || startSeq === undefined || endSeq === undefined) {
+        throw new Error("Window response has no canonical range");
+      }
+      const receipt: TimelineWindowPageReceipt = {
+        direction: payload.direction === "tail" ? "tail" : "before",
+        epoch: payload.epoch,
+        startSeq,
+        endSeq,
+        hasOlder: payload.hasOlder === true,
+        forwarded: false,
+        entries: readTimelineEntries(payload).map(readWindowEntryReceipt),
+      };
+      windowPages.push(receipt);
       recordOwnedTimelineEntries(payload, ownedEntries);
       if (payload.direction === "tail") {
+        receipt.forwarded = true;
         ledger.observeWindow(payload);
         forward();
         return;
@@ -431,6 +516,7 @@ export async function holdAgentOlderTimelinePages(
       repeatedEntryCount += recordRepeatedTimelineEntries(payload, entryKeys);
       const pageNumber = responseCount;
       const forwardWindow = () => {
+        receipt.forwarded = true;
         ledger.observeWindow(payload);
         forward();
       };
@@ -445,10 +531,16 @@ export async function holdAgentOlderTimelinePages(
   });
 
   return {
+    getWindowPages: () => windowPages,
     getRequestCount: () => requestCount,
     getReadAccounting: ledger.summary,
     getCertifiedPrompts: ledger.certifiedPrompts,
     getMountingPrompt: ledger.mountingPrompt,
+    releaseContentReads() {
+      contentReadsReleased = true;
+      const forwards = contentForwards.splice(0);
+      for (const forward of forwards) forward();
+    },
     flushContentReads() {
       const forwards = contentForwards.splice(0);
       for (const forward of forwards) forward();

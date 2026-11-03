@@ -104,11 +104,11 @@ export const fr: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Onglets des espaces sur mobile",
-        hint: "Afficher une barre d’onglets défilante dans les espaces compacts. Désactivez pour retrouver le sélecteur précédent sans changer l’onglet actif.",
+        hint: "Afficher des onglets de même largeur sur les écrans compacts, avec défilement uniquement si nécessaire. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
       },
       widerWorkspaceTabs: {
         label: "Onglets d’espace de travail plus larges",
-        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Les onglets courts gardent leur largeur naturelle. Désactivez pour rétablir la limite précédente.",
+        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Sur téléphone, les onglets de l’espace de travail se partagent toujours la largeur disponible à parts égales.",
       },
 
       descriptiveToolCalls: {
@@ -116,13 +116,9 @@ export const fr: TranslationResources = {
         hint: "Décrit les opérations connues et conserve les commandes et sorties exactes dans les détails. Désactivez pour rétablir les libellés classiques.",
       },
 
-      sidebarProjectSelector: {
-        label: "Projet sélectionné dans l’en-tête",
-        hint: "Affiche le nom du projet sélectionné dans l’en-tête des espaces de travail. Sinon, l’en-tête indique Espaces de travail ; les choix d’hôtes et de projets restent disponibles.",
-      },
       stickyUserPrompts: {
         label: "Garder les messages en vue",
-        hint: "Affiche le message courant au-dessus du chat avec développement et navigation",
+        hint: "Épingle un message compact avec développement et navigation précédent/suivant. Les messages ordinaires restent déployés et le chargement ne masque jamais un message disponible.",
       },
       previousAgents: {
         label: "Agents précédents",
@@ -288,6 +284,7 @@ export const fr: TranslationResources = {
       daemonClientUnavailable: "Client du daemon indisponible",
       daemonClientDisconnected: "Le client du daemon est déconnecté",
       noFileFound: "Aucun fichier trouvé pour {{token}}",
+      folderOutsideWorkspace: "{{path}} se trouve en dehors de cet espace de travail",
       unexpectedDictationError: "Une erreur inattendue s’est produite pendant la dictée.",
     },
     connectionStatus: {
@@ -355,6 +352,8 @@ export const fr: TranslationResources = {
       sendAndInterrupt: "Envoyer et interrompre",
       sendAndSteer: "Envoyer et réorienter",
       sendMessage: "Envoyer le message",
+      longPressToQueue: "Appui long pour mettre en file d’attente",
+      longPressToSendNow: "Appui long pour envoyer maintenant",
       queue: "Mettre en file d’attente",
       send: "Envoyer",
     },
@@ -894,7 +893,11 @@ export const fr: TranslationResources = {
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
       updateHost: "Mettez à jour l’hôte pour utiliser le rendu natif du terminal.",
+      restoreRequiresUpdate: "Mettez à jour l’hôte pour afficher les terminaux.",
       unableToSubscribe: "Impossible de s’abonner au terminal",
+      fileUploaded: "Fichier envoyé",
+      pasteFileFailed: "Impossible de coller le fichier : {{reason}}",
+      uploadingFile: "Envoi du fichier…",
     },
     sheet: {
       openAsTab: "Ouvrir dans un onglet",
@@ -1467,6 +1470,16 @@ export const fr: TranslationResources = {
       multipleWorkspaces_other: "Espaces de {{count}} projets",
       title: "Projets",
     },
+    workspaceTree: {
+      expand: "Développer les espaces de travail enfants de {{name}}",
+      collapse: "Replier les espaces de travail enfants de {{name}}",
+      activeChild: "Contient l’espace de travail actif.",
+      summary_one: "{{count}} espace de travail enfant : {{status}}",
+      summary_other: "{{count}} espaces de travail enfants : {{status}}",
+      humanAttention_one: "{{count}} espace de travail enfant nécessite votre attention",
+      humanAttention_other: "{{count}} espaces de travail enfants nécessitent votre attention",
+      unknownStatus: "État indisponible",
+    },
     statusGroupAccessibility: "Groupe {{label}}",
     statusBucket: {
       workingCount: "{{count}} en cours",
@@ -1509,6 +1522,13 @@ export const fr: TranslationResources = {
       showBackground: "Afficher les espaces en arrière-plan",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
+      sort: {
+        label: "Tri",
+        created: "Création",
+        manual: "Manuel",
+        lastPrompt: "Dernier prompt",
+        updateHost: "Mettez les hôtes à jour pour trier les espaces de travail",
+      },
       grouping: {
         label: "Regroupement",
         project: "Projet",
@@ -2333,6 +2353,12 @@ export const fr: TranslationResources = {
     backdrop: "Arrière-plan du menu",
   },
   subagents: {
+    parent: {
+      backToParent: "Retour au parent",
+      backTo: "Retour à {{label}}",
+      parentAgent: "Agent parent",
+      openParent: "Ouvrir le parent",
+    },
     title: "Sous-agents",
     pillLabelOne: "1 sous-agent",
     pillLabelMany: "{{count}} sous-agents",
@@ -2363,7 +2389,6 @@ export const fr: TranslationResources = {
         alwaysUseExtension: "Toujours utiliser pour .{{extension}}",
         alwaysUseFilename: "Toujours utiliser pour {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "Actions du fichier",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -2382,6 +2407,8 @@ export const fr: TranslationResources = {
       notFound: "Fichier introuvable",
       failedToLoadPreview: "Impossible de charger l’aperçu du fichier",
       editor: {
+        preview: "Aperçu",
+        source: "Source",
         fileSize: "Taille du fichier : {{size}}",
         lines: "{{count}} lignes",
         editorStatus: "État de l’éditeur : {{status}}",
@@ -2429,7 +2456,6 @@ export const fr: TranslationResources = {
   toolCallDetails: {
     error: "Erreur",
     empty: "Aucun détail supplémentaire disponible",
-    subAgentActivity: "Activité du sous-agent",
     input: "Entrée",
     output: "Sortie",
   },
@@ -2503,7 +2529,14 @@ export const fr: TranslationResources = {
       paseoCalls: { one: "{{count}} appel Paseo", other: "{{count}} appels Paseo" },
     },
   },
+  turnSummary: {
+    details: "Voir les détails du tour",
+    sentBy: "Envoyé par {{name}}",
+    showMore: "Afficher plus",
+    showLess: "Afficher moins",
+  },
   toolCallGroup: {
+    thought: "Réfléchi",
     editedFiles: {
       one: "{{count}} fichier modifié",
       other: "{{count}} fichiers modifiés",
@@ -2572,6 +2605,11 @@ export const fr: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "Vérifier l’utilisation",
+    checkUsageHint: "S’applique à {{host}} sur tous les appareils",
+    off: "L’utilisation est désactivée sur {{host}}.",
+    turnOn: "Activer",
+
     options: "Paramètres",
     refreshFailed: "Impossible d’actualiser l’utilisation",
     noHosts: "Aucun hôte connecté",
@@ -2619,6 +2657,7 @@ export const fr: TranslationResources = {
       days: "{{value}} j",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Dernière mise à jour {{relativeTime}}",
@@ -2626,6 +2665,8 @@ export const fr: TranslationResources = {
       resetTimePassed: "Heure de réinitialisation dépassée",
       resettingNow: "réinitialisation en cours",
       resetsIn: "se réinitialise dans {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "s’épuise maintenant",
       runsOutIn: "s’épuise dans {{duration}}",
       justNow: "à l’instant",
@@ -2716,6 +2757,19 @@ export const fr: TranslationResources = {
     },
     notifications: {
       title: "Notifications",
+      chooseHost:
+        "Choisissez un hôte de réglages pour configurer les alertes sur tous ses appareils.",
+      hostTitle: "Notifications sur {{host}}",
+      agentAware: "Alertes adaptées aux agents",
+      agentAwareHint:
+        "Gardez silencieux les résultats courants entre agents et affichez le badge « À relire » quand vous devez intervenir. Ce réglage s’applique à tous les appareils connectés à {{host}}. Les demandes d’intervention humaine et les alertes de sécurité restent disponibles quand il est désactivé.",
+      updateHost: "Mettez cet hôte à jour pour modifier les alertes adaptées aux agents.",
+      readOnly: "Vous devez pouvoir administrer cet hôte pour modifier ce réglage.",
+      unavailable:
+        "Connectez-vous à un hôte compatible avec les droits d’administration avant d’enregistrer.",
+      notSaved: "L’hôte n’a pas enregistré cette préférence d’alertes. Réessayez.",
+      loadFailed: "Impossible de charger la préférence de notifications de l’hôte.",
+      saving: "Enregistrement...",
       permission: "Autorisation des notifications",
       refreshAccessibility: "Actualiser l’autorisation des notifications",
       playSound: "Émettre un son",
@@ -2734,6 +2788,7 @@ export const fr: TranslationResources = {
       connections: "Connexions",
       agents: "Agents",
       metadata: "Métadonnées",
+      voice: "Voix",
       workspaces: "Espaces de travail",
       providers: "Fournisseurs",
       usage: "Utilisation",
@@ -2752,9 +2807,72 @@ export const fr: TranslationResources = {
       automaticHint: "Paseo choisit un modèle rapide disponible",
       preferredHint: "Choisissez le modèle utilisé par Paseo",
       model: "Modèle",
-      fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
+      modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+    },
+    voice: {
+      offline: "Connectez-vous à cet hôte pour configurer la voix.",
+      updateHost: "Mettez à jour l'hôte pour configurer la voix.",
+      saveError: "Impossible de mettre à jour les réglages vocaux",
+      provider: "Fournisseur",
+      providers: {
+        local: "Local",
+        openai: "OpenAI",
+      },
+      voice: "Voix",
+      save: "Enregistrer",
+      retry: "Réessayer",
+      cancel: "Annuler",
+      model: "Modèle",
+      language: "Langue",
+      languagePlaceholder: "Détection automatique",
+      setBy: "Défini par {{name}}",
+      unknownProvider: "Mettez à jour l'app pour configurer {{provider}}",
+      sites: {
+        dictationStt: "Transcription",
+        voiceModeStt: "Écoute",
+        voiceModeTts: "Parole",
+      },
+      dictation: {
+        title: "Dictée",
+        enabled: "Dictée",
+        enabledHint: "Parlez dans la zone de message au lieu de taper",
+      },
+      voiceMode: {
+        title: "Mode vocal",
+        info: "Le mode vocal transcrit ce que vous dites et lit à voix haute les réponses de l'agent.",
+        enabled: "Mode vocal",
+        enabledHint: "Parlez à vos agents sans les mains",
+      },
+      openai: {
+        apiKey: "Clé d'API",
+        apiKeyHint: "Enregistrée sur l'hôte, jamais réaffichée.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "Enregistrée",
+        missingKey: "Clé d'API manquante",
+        baseUrl: "URL de base",
+        baseUrlHint: "Pour les serveurs compatibles OpenAI. Laissez vide pour utiliser OpenAI.",
+      },
+      models: {
+        loading: "Chargement des modèles...",
+        loadError: "Impossible de charger les modèles locaux",
+        none: "Aucun modèle disponible",
+        downloaded: "Téléchargé",
+        inUse: "Utilisé",
+        recommended: "Recommandé",
+        download: "Télécharger",
+        downloadAction: "Télécharger {{label}}",
+        downloading: "Téléchargement...",
+        downloadingPercent: "Téléchargement {{percent}} %",
+        extracting: "Extraction...",
+        delete: "Supprimer",
+        deleteAction: "Supprimer {{label}}",
+        deleteTitle: "Supprimer {{label}} ?",
+        deleteMessage: "Cela libère {{size}}. Vous pourrez le retélécharger plus tard.",
+        languages: "Langues de {{label}}",
+        moreLanguages: "{{languages}} et {{count}} autres",
+      },
     },
     general: {
       title: "Général",
@@ -2802,10 +2920,25 @@ export const fr: TranslationResources = {
           queue:
             "Quand l’agent est en cours d’exécution, Entrée met en file d’attente. Cmd/Ctrl+Entrée envoie.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée interrompt. Entrée insère une nouvelle ligne.",
+          steer:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée oriente le tour actif. Entrée insère une nouvelle ligne.",
+          queue:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée met en file d'attente. Entrée insère une nouvelle ligne.",
+        },
         options: {
           interrupt: "Interrompre",
           steer: "Réorienter",
           queue: "File d’attente",
+        },
+      },
+      sendShortcut: {
+        label: "Raccourci d’envoi",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2824,12 +2957,15 @@ export const fr: TranslationResources = {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",
       },
-      toolCallDetail: {
-        label: "Affichage des appels d’outils",
-        description: "Comment les appels d’outils apparaissent dans la chronologie",
+      chatDisplay: {
+        updateHost:
+          "Mettez à jour votre hôte de paramètres sélectionné pour modifier les préférences de discussion",
+        label: "Affichage du chat",
+        description: "La part du travail de l’agent affichée dans le chat",
         options: {
-          overview: "Résumé",
-          detailed: "Détails complets",
+          full: "Complet",
+          collapseToolCalls: "Réduire les appels d’outils",
+          collapseTurns: "Réduire les tours",
         },
       },
       language: {
@@ -2851,11 +2987,6 @@ export const fr: TranslationResources = {
     },
     diagnostics: {
       title: "Diagnostic",
-      legacyTerminalRenderer: {
-        label: "Utiliser l’ancien rendu du terminal",
-        description: "Utilise l’ancien terminal WebView après la réouverture d’un terminal",
-        accessibilityLabel: "Utiliser l’ancien rendu du terminal",
-      },
       testAudio: "Tester le son",
       playTest: "Lancer le test",
       playing: "Lecture…",
@@ -3226,6 +3357,19 @@ export const fr: TranslationResources = {
       },
       agents: {
         unavailable: "Connectez-vous à cet hôte pour gérer les agents",
+        resumeOnStartup: {
+          title: "Reprendre les agents après un redémarrage",
+          info: "Rouvre les agents qui travaillaient lorsque l’hôte s’est arrêté et envoie le message de reprise. S’applique après un redémarrage normal ou un plantage.",
+          hint: "Continuer automatiquement le travail interrompu.",
+          prompt: "Message de reprise",
+          edit: "Modifier",
+          editAccessibilityLabel: "Modifier le message",
+        },
+        idleRuntimeCleanup: {
+          title: "Libérer les agents inactifs",
+          hint: "Libère de la mémoire après une heure d’inactivité.",
+          info: "Arrête le processus de l’agent tout en conservant sa conversation. Envoyez un message pour la reprendre.\n\nLe travail en cours, les notifications en attente et les vérifications de sécurité du fournisseur empêchent le nettoyage.",
+        },
       },
       workspaces: {
         unavailable: "Connectez-vous à cet hôte pour gérer les espaces de travail",
@@ -3320,6 +3464,10 @@ export const fr: TranslationResources = {
           requestFailedTitle: "Erreur",
           requestFailedMessage:
             "Impossible d’envoyer la demande de redémarrage. Paseo se reconnecte automatiquement : réessayez quand l’hôte apparaît en ligne.",
+          closeTerminals: "Redémarrer et fermer les terminaux",
+          closeTerminalsHint: "Redémarre et ferme aussi tous les terminaux ouverts sur cet hôte.",
+          closeTerminalsConfirmMessage:
+            "Le daemon va redémarrer et fermer tous ses terminaux, ce qui arrêtera les programmes qui y tournent. L'app se reconnectera automatiquement.",
           dialogFailedMessage:
             "Impossible d’ouvrir la boîte de dialogue de confirmation du redémarrage.",
         },
@@ -3377,6 +3525,10 @@ export const fr: TranslationResources = {
       addErrorTitle: "Impossible d’ajouter le fournisseur",
       updateErrorTitle: "Impossible de mettre à jour le fournisseur",
       actions: {
+        copyMigrationPrompt: "Copier le prompt de migration",
+        migrationPrompt: "prompt de migration",
+        copying: "Copie...",
+        copyFailed: "Impossible de copier le prompt de migration",
         menu: "Actions de {{name}}",
         remove: "Supprimer le fournisseur",
         removing: "Suppression…",
