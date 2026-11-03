@@ -122,6 +122,8 @@ export function NaturalMessageBubble({
   );
 }
 
+export type UserMessageBodyPresentation = "actualPrompt" | "ordinaryPreview";
+
 export interface UserMessageFlowProps {
   driver?: NativeMessagePresentationDriver | null;
   children: ReactNode;
@@ -130,6 +132,8 @@ export interface UserMessageFlowProps {
   summary: ReactNode;
   revision: object;
   message: string;
+  /** Ordinary previews own their clipped allocation; actual prompts retain full natural flow. */
+  bodyPresentation?: UserMessageBodyPresentation;
   compact: boolean;
   bounded: boolean;
   maximumHeight: number | undefined;

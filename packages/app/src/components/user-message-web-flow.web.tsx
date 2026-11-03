@@ -186,13 +186,14 @@ function MessageControlBacking({
  */
 export function WebUserMessageFlow(props: UserMessageFlowProps) {
   const { onGeometry, onHoverChange } = props;
+  const ordinaryPreview = props.bodyPresentation === "ordinaryPreview";
   const measured = useWebMessageMeasurements(props);
   const sample = measured.measurement;
   const metrics = sample?.metrics;
   const hasText = props.message.trim().length > 0;
   const flow = metrics ? resolveMessageFlow({ measurements: metrics, hasText }) : null;
-  const compact = props.compact && flow !== null;
-  const bounded = props.bounded && flow !== null;
+  const compact = !ordinaryPreview && props.compact && flow !== null;
+  const bounded = !ordinaryPreview && props.bounded && flow !== null;
   const expanded = bounded && !compact;
   const viewport = useRef<NativeScrollView>(null);
   const attachments = useRef<HTMLElement | null>(null);
@@ -312,10 +313,11 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
     () => ({
       ...columnStyle,
       width: width > 0 ? width : "100%",
-      height: naturalHeight,
+      // A clipped ordinary preview measures auto layout, never its previous sample.
+      height: ordinaryPreview ? undefined : naturalHeight,
       marginLeft: -inset,
     }),
-    [width, naturalHeight, inset],
+    [width, naturalHeight, inset, ordinaryPreview],
   );
   const scrollStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
