@@ -1,6 +1,11 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { WorkspaceLayoutPersistedStateSchema } from "../../src/stores/workspace-layout-storage";
-import type { SplitGroup, SplitNode } from "../../src/stores/workspace-layout-actions";
+import {
+  collectAllTabs,
+  type SplitGroup,
+  type SplitNode,
+} from "../../src/stores/workspace-layout-actions";
+import { MIN_SPLIT_SIZE } from "../../src/stores/workspace-layout-constants";
 import { test } from "../support/fixtures";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import { createCreationScenario } from "../support/helpers/creation";
@@ -79,6 +84,17 @@ async function dividerSnapshot(divider: Locator) {
     while (group && !Array.from(group.children).some(isChild)) group = group.parentElement;
     if (!group) throw new Error("Divider's owning rendered group is missing");
     const frame = group.getBoundingClientRect();
+    let handle: Element = element;
+    while (handle.parentElement !== group) {
+      const parent = handle.parentElement;
+      if (!parent) throw new Error("Divider detached from its owning group");
+      handle = parent;
+    }
+    const preceding = Array.from(group.children).slice(
+      0,
+      Array.from(group.children).indexOf(handle),
+    );
+    const dividerIndex = preceding.filter(isChild).length - 1;
     const children = Array.from(group.children)
       .filter(isChild)
       .map((child) => {
@@ -95,6 +111,7 @@ async function dividerSnapshot(divider: Locator) {
     const freeWidth = children.reduce((sum, child) => sum + child.width, 0);
     return {
       dividerX: element.getBoundingClientRect().x,
+      dividerIndex,
       groupX: frame.x,
       groupC: frame.width,
       freeF: freeWidth,
@@ -194,6 +211,94 @@ async function splitIntoFourPanes(page: Page): Promise<void> {
   }
 }
 
+/** Build equal ordinary quarters through the same split/focus controls, keeping the unequal fixture separate. */
+async function splitIntoBalancedFourPanes(page: Page): Promise<void> {
+  await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+  await expect(splitDividers(page)).toHaveCount(1);
+  await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+  await expect(splitDividers(page)).toHaveCount(2);
+  await runWorkspaceActionFromCommandCenter(page, "Focus pane left");
+  await runWorkspaceActionFromCommandCenter(page, "Focus pane left");
+  await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+  await expect(splitDividers(page)).toHaveCount(3);
+  const snapshot = await dividerSnapshot(splitDividers(page).first());
+  expect(snapshot.children).toHaveLength(4);
+  for (const child of snapshot.children) {
+    expect(child.flexGrow).toBeCloseTo(0.25, 10);
+  }
+}
+
+/** Require measured legal physical headroom before delegating the unchanged mouse drag. */
+async function dragUnclampedDivider(
+  divider: Locator,
+  deltaX: number,
+  preview?: () => Promise<void>,
+): Promise<void> {
+  const snapshot = await dividerSnapshot(divider);
+  const left = snapshot.children[snapshot.dividerIndex];
+  const right = snapshot.children[snapshot.dividerIndex + 1];
+  if (!left || !right) throw new Error("Divider has no measured adjacent pane pair");
+  const pairFraction = (left.width + right.width) / snapshot.freeF;
+  const minimumPixels = Math.min(MIN_SPLIT_SIZE, pairFraction / 2) * snapshot.freeF;
+  const projectedDelta = (deltaX / snapshot.groupC) * snapshot.freeF;
+  const leftHeadroom = left.width + projectedDelta - minimumPixels;
+  const rightHeadroom = right.width - projectedDelta - minimumPixels;
+  await test.info().attach(`split-headroom-${snapshot.dividerIndex + 1}-${deltaX}`, {
+    body: Buffer.from(
+      JSON.stringify(
+        {
+          requestedDelta: deltaX,
+          projectedDelta,
+          left,
+          right,
+          groupC: snapshot.groupC,
+          freeF: snapshot.freeF,
+          minimumPixels,
+          leftHeadroom,
+          rightHeadroom,
+        },
+        null,
+        2,
+      ),
+    ),
+    contentType: "application/json",
+  });
+  expect(leftHeadroom, "left pane must have measured unclamped headroom").toBeGreaterThan(
+    TOLERANCE_PX,
+  );
+  expect(rightHeadroom, "right pane must have measured unclamped headroom").toBeGreaterThan(
+    TOLERANCE_PX,
+  );
+  await dragDivider(divider, deltaX, preview);
+}
+
+/** Compare persistent identities without requiring ephemeral New launcher tab IDs to survive reload. */
+async function splitLifecycleIdentity(page: Page) {
+  const snapshot = await dividerSnapshot(splitDividers(page).first());
+  const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
+  if (!raw) throw new Error("Lifecycle layout is not persisted");
+  const state = WorkspaceLayoutPersistedStateSchema.parse(JSON.parse(raw).state);
+  const layout = state.layoutByWorkspace[snapshot.workspaceKey];
+  if (!layout) throw new Error("Measured lifecycle workspace has no persisted layout");
+  const ordinaryPaneIds = snapshot.children.flatMap((child) => child.paneIds);
+  const ordinary = new Set(ordinaryPaneIds);
+  const explorerIds = snapshot.fullChildIds.filter((id) => !ordinary.has(id));
+  expect(explorerIds).toHaveLength(1);
+  const explorerId = explorerIds[0];
+  const explorerIndex = snapshot.fullChildIds.indexOf(explorerId);
+  return {
+    workspaceKey: snapshot.workspaceKey,
+    groupId: snapshot.groupId,
+    ordinaryPaneIds,
+    fullChildIds: snapshot.fullChildIds,
+    explorerId,
+    explorerFraction: snapshot.layoutSizes[explorerIndex],
+    persistentTabs: collectAllTabs(layout.root)
+      .filter((tab) => tab.target.kind !== "new_tab")
+      .map((tab) => ({ tabId: tab.tabId, target: tab.target })),
+  };
+}
+
 async function expectDividersTrackPointer(
   page: Page,
   distance = DRAG_DISTANCE,
@@ -282,24 +387,31 @@ for (const hasTouch of [false, true]) {
         await creation.submitPrompt("Reply briefly.", "Create");
         await creation.expectAssistantReply();
         await waitForWorkspaceTabsVisible(page);
-        await splitIntoFourPanes(page);
-        await expectDividersTrackPointer(page);
+        await splitIntoBalancedFourPanes(page);
+        const identities = await splitLifecycleIdentity(page);
+        await expectDividersTrackPointer(page, DRAG_DISTANCE, dragUnclampedDivider);
+        expect(await splitLifecycleIdentity(page)).toEqual(identities);
         await page
           .getByTestId("workspace-explorer-toggle")
           .filter({ visible: true })
           .first()
           .click();
         await expect(page.getByTestId("workspace-explorer-sidebar")).toBeVisible();
-        await expectDividersTrackPointer(page, -DRAG_DISTANCE);
+        expect(await splitLifecycleIdentity(page)).toEqual(identities);
+        await expectDividersTrackPointer(page, -DRAG_DISTANCE, dragUnclampedDivider);
+        expect(await splitLifecycleIdentity(page)).toEqual(identities);
         await page
           .getByTestId("workspace-explorer-toggle")
           .filter({ visible: true })
           .first()
           .click();
         await expect(page.getByTestId("workspace-explorer-sidebar")).not.toBeVisible();
+        expect(await splitLifecycleIdentity(page)).toEqual(identities);
         await page.reload();
         await expect(splitDividers(page)).toHaveCount(3);
-        await expectDividersTrackPointer(page);
+        expect(await splitLifecycleIdentity(page)).toEqual(identities);
+        await expectDividersTrackPointer(page, DRAG_DISTANCE, dragUnclampedDivider);
+        expect(await splitLifecycleIdentity(page)).toEqual(identities);
       } finally {
         await creation.cleanup();
       }
