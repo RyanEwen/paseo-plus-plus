@@ -32,7 +32,10 @@ type PluginSidebarContribution = SDKPluginSidebarContribution<PluginText>;
 type PluginSidebarItemContribution = SDKPluginSidebarItemContribution<PluginText>;
 type PluginScreenContribution = SDKPluginScreenContribution<PluginText>;
 type PluginSettingsScreenContribution = SDKPluginSettingsScreenContribution<PluginText>;
-type PluginWorkspacePanelContribution = SDKPluginWorkspacePanelContribution<PluginText>;
+type WorkspacePanelInput = SDKPluginWorkspacePanelContribution<PluginText>;
+type PluginWorkspacePanelContribution =
+  | (Extract<WorkspacePanelInput, { context?: "workspace" }> & { context: "workspace" })
+  | Extract<WorkspacePanelInput, { context: "agent" }>;
 
 export type PluginSidebarSection = "header" | "footer";
 
@@ -68,6 +71,8 @@ export interface InstalledPlugin extends EvaluatedPlugin {
   paseo: PaseoApi;
   /** Calls one of the plugin's server RPC methods on its host. */
   invoke(method: string, input: unknown): Promise<unknown>;
+  /** Subscribes to one of the plugin's server subscriptions; released with the lifetime. */
+  subscribe: import("@getpaseo/plugin/client/host").PluginSubscribe;
   serverId: string;
   requirements?: PluginRequirements;
   clientBundle: string;

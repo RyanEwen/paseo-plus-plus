@@ -38,6 +38,8 @@ import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
+import * as Clipboard from "expo-clipboard";
+import { createHistoryMigrationPrompt } from "@getpaseo/client/provider-history-prompt";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -100,6 +102,7 @@ interface ProviderActionsMenuProps {
   providerId: string;
   providerLabel: string;
   isRemoving: boolean;
+  canRemove: boolean;
   iconSize: number;
   foregroundColor: string;
   foregroundMutedColor: string;
@@ -111,6 +114,7 @@ function ProviderActionsMenu({
   providerId,
   providerLabel,
   isRemoving,
+  canRemove,
   iconSize,
   foregroundColor,
   foregroundMutedColor,
@@ -118,6 +122,22 @@ function ProviderActionsMenu({
   onRemove,
 }: ProviderActionsMenuProps) {
   const { t } = useTranslation();
+  const toast = useToast();
+  const [isCopying, setIsCopying] = useState(false);
+  const handleCopyMigrationPrompt = useCallback(async () => {
+    if (isCopying) return;
+    setIsCopying(true);
+    try {
+      const { prompt } = createHistoryMigrationPrompt({ provider: providerId });
+      const copied = await Clipboard.setStringAsync(prompt);
+      if (!copied) throw new Error("Clipboard unavailable");
+      toast.copied(t("settings.providers.actions.migrationPrompt"));
+    } catch {
+      toast.error(t("settings.providers.actions.copyFailed"));
+    } finally {
+      setIsCopying(false);
+    }
+  }, [isCopying, providerId, t, toast]);
   const handleRemove = useCallback(() => {
     onRemove(providerId, providerLabel);
   }, [onRemove, providerId, providerLabel]);
@@ -138,7 +158,7 @@ function ProviderActionsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        disabled={isRemoving}
+        disabled={isRemoving || isCopying}
         hitSlop={8}
         onPressIn={stopPressInPropagation}
         style={triggerStyle}
@@ -155,15 +175,25 @@ function ProviderActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
         <DropdownMenuItem
-          destructive
-          leading={trashLeading}
-          onSelect={handleRemove}
-          status={isRemoving ? "pending" : "idle"}
-          pendingLabel={t("settings.providers.actions.removing")}
-          testID={`provider-remove-${providerId}`}
+          onSelect={handleCopyMigrationPrompt}
+          status={isCopying ? "pending" : "idle"}
+          pendingLabel={t("settings.providers.actions.copying")}
+          testID={`provider-copy-migration-prompt-${providerId}`}
         >
-          {t("settings.providers.actions.remove")}
+          {t("settings.providers.actions.copyMigrationPrompt")}
         </DropdownMenuItem>
+        {canRemove ? (
+          <DropdownMenuItem
+            destructive
+            leading={trashLeading}
+            onSelect={handleRemove}
+            status={isRemoving ? "pending" : "idle"}
+            pendingLabel={t("settings.providers.actions.removing")}
+            testID={`provider-remove-${providerId}`}
+          >
+            {t("settings.providers.actions.remove")}
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -254,18 +284,17 @@ function ProviderRow({
               accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
             />
             <View style={styles.menuSlot}>
-              {canRemove ? (
-                <ProviderActionsMenu
-                  providerId={def.id}
-                  providerLabel={def.label}
-                  isRemoving={isRemoving}
-                  iconSize={theme.iconSize.sm}
-                  foregroundColor={theme.colors.foreground}
-                  foregroundMutedColor={theme.colors.foregroundMuted}
-                  dangerColor={theme.colors.statusDanger}
-                  onRemove={onRemove}
-                />
-              ) : null}
+              <ProviderActionsMenu
+                providerId={def.id}
+                providerLabel={def.label}
+                isRemoving={isRemoving}
+                canRemove={canRemove}
+                iconSize={theme.iconSize.sm}
+                foregroundColor={theme.colors.foreground}
+                foregroundMutedColor={theme.colors.foregroundMuted}
+                dangerColor={theme.colors.statusDanger}
+                onRemove={onRemove}
+              />
             </View>
           </View>
         </>

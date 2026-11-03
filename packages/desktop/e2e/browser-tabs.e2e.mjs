@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
 import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
+import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 import { prepareNativePaneRenderer, runNativePaneRegression } from "./native-pane.electron.mjs";
 import {
@@ -86,6 +89,65 @@ async function waitForPort(port, label, processInfo) {
     await delay(200);
   }
   throw new Error(`Timed out waiting for ${label} on port ${port}`);
+}
+
+/** Accept only the browser endpoint announced by this launch's owned Electron stream. */
+function desktopCdpEndpoint(announcements) {
+  if (announcements.length === 0) return null;
+  assert(announcements.length === 1, "Owned Electron announced ambiguous CDP endpoints");
+  const match = /^ws:\/\/127\.0\.0\.1:([0-9]+)\/devtools\/browser\/[0-9a-f-]+$/i.exec(
+    announcements[0],
+  );
+  assert(match !== null, "Owned Electron announced an invalid loopback CDP endpoint");
+  const port = Number(match[1]);
+  assert(
+    Number.isInteger(port) && port > 0 && port <= 65535,
+    "Owned Electron announced an invalid CDP port",
+  );
+  return { port, httpUrl: `http://127.0.0.1:${port}` };
+}
+
+/** Observe complete Electron-prefixed lines without mixing stdout and stderr fragments. */
+function observeDesktopCdpAnnouncements(stream, announcements) {
+  const prefix = "[electron] DevTools listening on ";
+  let partialLine = "";
+  const observeOutput = (chunk) => {
+    partialLine += chunk.toString();
+    const lines = partialLine.split(/\r?\n/);
+    partialLine = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith(prefix)) announcements.push(line.slice(prefix.length));
+    }
+  };
+  stream.on("data", observeOutput);
+  return () => stream.removeListener("data", observeOutput);
+}
+
+/** Wait within the existing startup budget; an unrelated open TCP port is never readiness. */
+async function waitForDesktopCdpEndpoint(processInfo) {
+  const deadline = Date.now() + timeoutMs;
+  const announcements = [];
+  // Called synchronously after spawnLogged, before any await. Only this child's
+  // live streams are observed, never a possibly reused or appended artifact log.
+  // dev-runner prefixes its sole Electron child's streams separately from Metro.
+  const stopObserving = [processInfo.child.stdout, processInfo.child.stderr].map((stream) =>
+    observeDesktopCdpAnnouncements(stream, announcements),
+  );
+  try {
+    while (Date.now() < deadline) {
+      if (processInfo.child.exitCode !== null || processInfo.child.signalCode !== null) {
+        throw new Error(`Electron runner exited before CDP readiness; see ${processInfo.logPath}`);
+      }
+      const endpoint = desktopCdpEndpoint(announcements);
+      if (endpoint !== null) return endpoint;
+      await delay(200);
+    }
+    throw new Error(
+      `Timed out waiting for owned Electron CDP announcement; see ${processInfo.logPath}`,
+    );
+  } finally {
+    for (const stop of stopObserving) stop();
+  }
 }
 
 function writeJson(filePath, value) {
@@ -256,6 +318,20 @@ async function waitForRendererReady(page, expoPort, artifactDir) {
   await page
     .getByRole("button", { name: "Settings", exact: true })
     .waitFor({ state: "visible", timeout: timeoutMs });
+}
+
+async function settleDesktopStartup(page) {
+  await expect(
+    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
+  ).toBeVisible({ timeout: timeoutMs });
+  // The dev launcher supplies its package directory as an open-project request.
+  // Before the local host connects, that request opens the connection prompt.
+  // Finish startup before exercising the unrelated Settings/browser workflows.
+  const connectionPrompt = page.getByTestId("add-host-method-modal");
+  if (await connectionPrompt.isVisible()) {
+    await connectionPrompt.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(connectionPrompt).toBeHidden();
+  }
 }
 
 async function startTargetPage() {
@@ -1307,8 +1383,7 @@ async function main() {
   const workspaceRoot = path.join(runtimeDir, "workspaces");
   fs.mkdirSync(paseoHome, { recursive: true });
 
-  const [daemonPort, expoPort, cdpPort, inspectorPort, remotePort] = await Promise.all([
-    reservePort(),
+  const [daemonPort, expoPort, inspectorPort, remotePort] = await Promise.all([
     reservePort(),
     reservePort(),
     reservePort(),
@@ -1316,9 +1391,7 @@ async function main() {
   ]);
   const listen = `127.0.0.1:${daemonPort}`;
   seedPaseoHome(paseoHome, listen, workspaceRoot);
-  const extensionFixtures = nativePaneOnly ? null : seedBrowserExtensions(userData);
-  const target = await startTargetPage();
-  if (!nativePaneOnly) seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  const { extensionFixtures, target } = await prepareTargetFixtures(userData, paseoHome);
   const remoteHome = path.join(runtimeDir, "remote-home");
   seedPaseoHome(remoteHome, `127.0.0.1:${remotePort}`, path.join(runtimeDir, "remote-workspaces"));
   const children = [];
@@ -1365,16 +1438,17 @@ async function main() {
         : {}),
     };
     if (nativePaneOnly) fs.mkdirSync(commonEnv.TMPDIR, { recursive: true });
-    writeJson(path.join(artifactDir, "runtime-context.json"), {
+    const runtimeContext = {
       runtimeDir,
       daemonPort,
       expoPort,
-      cdpPort,
+      cdpPort: null,
       inspectorPort,
       targetUrl: target.url,
       privateDisplay: process.env.DISPLAY,
       nativePaneOnly,
-    });
+    };
+    writeJson(path.join(artifactDir, "runtime-context.json"), runtimeContext);
     const daemon = spawnLogged(
       "daemon",
       process.execPath,
@@ -1424,17 +1498,19 @@ async function main() {
           EXPO_UNSTABLE_HEADLESS: "1",
           EXPO_PORT: String(expoPort),
           EXPO_DEV_URL: `http://localhost:${expoPort}`,
-          PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
+          PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: "0",
           PASEO_ELECTRON_USER_DATA_DIR: userData,
-          PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
+          PASEO_ELECTRON_FLAGS: "--remote-debugging-address=127.0.0.1 --remote-debugging-port=0",
         },
       },
       artifactDir,
     );
     children.push(desktop.child);
-    await waitForPort(cdpPort, "Electron CDP", desktop);
+    const cdpEndpoint = await waitForDesktopCdpEndpoint(desktop);
+    runtimeContext.cdpPort = cdpEndpoint.port;
+    writeJson(path.join(artifactDir, "runtime-context.json"), runtimeContext);
 
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    browser = await chromium.connectOverCDP(cdpEndpoint.httpUrl);
     let page = await waitForAppPage(browser, expoPort);
     appPage = page;
     page.on("pageerror", (error) =>
@@ -1443,6 +1519,7 @@ async function main() {
     await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
     await waitForRendererReady(page, expoPort, artifactDir);
+    if (!nativePaneOnly) await settleDesktopStartup(page);
 
     if (nativePaneOnly) {
       const callerAgentId = await createCallerAgent(daemonPort);
@@ -1489,6 +1566,14 @@ async function main() {
       console.log("Plugin external links and workspace browser passed.");
       return;
     }
+    const settingsScroll = await runSettingsScrollRegression(page, (size) =>
+      resizeDesktopWindow(inspectorPort, size),
+    );
+    if (process.env.PASEO_DESKTOP_SETTINGS_SCROLL_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsScroll });
+      console.log("Desktop Settings scroll regression passed.");
+      return;
+    }
     const settingsMemory = await runSettingsMemoryRegression(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
@@ -1498,6 +1583,7 @@ async function main() {
       return;
     }
 
+    const adaptiveTheme = await runAdaptiveThemeRegression(artifactDir);
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent({ daemonPort });
@@ -1525,7 +1611,7 @@ async function main() {
         try {
           await task();
         } finally {
-          browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+          browser = await chromium.connectOverCDP(cdpEndpoint.httpUrl);
           page = await waitForAppPage(browser, expoPort);
           appPage = page;
         }
@@ -1537,7 +1623,12 @@ async function main() {
     });
     writeJson(path.join(artifactDir, "browser-report.json"), report);
     const pluginLinks = await checkPluginLinks();
-    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
+    writeJson(path.join(artifactDir, "result.json"), {
+      ...report,
+      settingsMemory,
+      pluginLinks,
+      adaptiveTheme,
+    });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );
@@ -1571,3 +1662,21 @@ async function main() {
 }
 
 await main();
+
+async function evaluateDesktopWindow(inspectorPort, expression) {
+  return inspectWindowPresentation(inspectorPort, "", `(async () => { ${expression} })()`);
+}
+
+async function resizeDesktopWindow(inspectorPort, { width, height }) {
+  return evaluateDesktopWindow(
+    inspectorPort,
+    `const [width, height] = win.getContentSize(); win.setContentSize(${width}, ${height}); return { width, height };`,
+  );
+}
+
+async function prepareTargetFixtures(userData, paseoHome) {
+  const extensionFixtures = nativePaneOnly ? null : seedBrowserExtensions(userData);
+  const target = await startTargetPage();
+  if (!nativePaneOnly) seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  return { extensionFixtures, target };
+}

@@ -7,16 +7,28 @@ import { expect, type Page } from "../fixtures";
 import { gotoAppShell, openSettings } from "./app";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { copyPluginExample } from "./plugin-fixture";
+import { buildSettingsSectionRoute } from "@/utils/host-routes";
+import { expectAppRoute } from "./route-assertions";
+
+/** Open the real General section; the fork settings entry opens Paseo++ preferences. */
+async function openLanguageSettings(page: Page, generalLabel: "General" | "通用") {
+  await openSettings(page);
+  await page
+    .getByTestId("settings-sidebar")
+    .getByRole("button", { name: generalLabel, exact: true })
+    .click();
+  await expectAppRoute(page, buildSettingsSectionRoute("general"));
+}
 
 async function chooseChinese(page: Page) {
-  await openSettings(page);
+  await openLanguageSettings(page, "General");
   await page.getByRole("button", { name: "System", exact: true }).click();
   await page.getByRole("menuitem", { name: "简体中文 - Simplified Chinese", exact: true }).click();
   await page.goBack();
 }
 
 async function chooseEnglish(page: Page) {
-  await page.getByTestId("sidebar-settings").click();
+  await openLanguageSettings(page, "通用");
   await page.getByRole("button", { name: "简体中文", exact: true }).click();
   await page.getByRole("menuitem", { name: "English - 英语", exact: true }).click();
   await page.goBack();

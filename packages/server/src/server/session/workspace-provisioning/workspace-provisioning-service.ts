@@ -103,7 +103,7 @@ export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
-  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
+  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot">;
   isDirectory: (path: string) => Promise<boolean>;
   logger: Logger;
   lifecycle?: PluginLifecycle;
@@ -324,7 +324,9 @@ export function createWorkspaceProvisioningService(deps: {
   }
 
   function emitWorkspaceCreated(workspace: PersistedWorkspaceRecord): void {
-    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
+    deps.lifecycle?.emit("workspace.create.after", {
+      workspace: describeHookWorkspace(workspace),
+    });
   }
 
   async function resolveSourceProjectForWorktree(input: {

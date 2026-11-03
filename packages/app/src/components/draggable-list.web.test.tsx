@@ -14,7 +14,12 @@ import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { Active, ClientRect, Over, DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { useDragReorderState, type DragReorderState } from "./drag-reorder/use-drag-reorder-state";
 import type { DragReorderMove } from "./drag-reorder/reorder-items";
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
+import {
+  SidebarWorkspaceTreeProvider,
+  type SidebarWorkspaceTreeModel,
+} from "./sidebar/workspace-tree-context";
+import { useWorkspaceFamilyDragAuthority } from "./sidebar/use-workspace-family-drag";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -219,6 +224,56 @@ it("rejects a drop when its sorting changes away and back without issuing prefer
   useSidebarViewStore.setState({ setModePreferences: originalCommand });
 });
 
+it.each(["created", "lastPrompt"] as const)(
+  "invalidates cached workspace drops across %s and admits only fresh pin gestures",
+  async (automaticSort) => {
+    useSidebarViewStore.setState({
+      groupMode: "project",
+      workspaceSortMode: "custom",
+      workspaceSort: "manual",
+    });
+    try {
+      await act(() => root?.render(<ReorderGuardHarness />));
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit()).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      expect(reorderGuard!.disabled).toBe(true);
+      expect(reorderGuard!.canCommit()).toBe(false);
+      expect(reorderGuard!.canCommit(true)).toBe(false);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit()).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(false);
+      expect(reorderGuard!.canCommit(true)).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit(true)).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      // Status mode keeps its own existing workspace-order preference.
+      await act(() =>
+        useSidebarViewStore.setState({ groupMode: "status", workspaceSort: automaticSort }),
+      );
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+    } finally {
+      await act(() =>
+        useSidebarViewStore.setState({
+          groupMode: "project",
+          workspaceSortMode: "custom",
+          workspaceSort: "manual",
+        }),
+      );
+    }
+  },
+);
+
 it("keeps sorted manual pins available while rejecting ordinary and stale-mode drops", async () => {
   useSidebarViewStore.setState({ groupMode: "project", workspaceSortMode: "name" });
   await act(() => root?.render(<ReorderGuardHarness />));
@@ -291,6 +346,24 @@ function createPinnedDragEvents(): { start: DragStartEvent; end: DragEndEvent } 
   };
 }
 
+/** Give flat pin rows the same collection-owned admission used by the real sidebar. */
+function PinnedDragOwner({ children }: { children: React.ReactNode }) {
+  const authority = useWorkspaceFamilyDragAuthority([]);
+  const value = useMemo<SidebarWorkspaceTreeModel>(
+    () => ({
+      tree: new Map(),
+      revision: "flat-pins",
+      dragAuthority: authority,
+      collapsedKeys: new Set(),
+      activeWorkspaceKey: null,
+      entries: new Map(),
+      humanAttentionWorkspaceKeys: new Set(),
+    }),
+    [authority],
+  );
+  return <SidebarWorkspaceTreeProvider value={value}>{children}</SidebarWorkspaceTreeProvider>;
+}
+
 it.each(["project", "status"] as const)(
   "guards top-level %s pins without disabling their independent manual order",
   async (mode) => {
@@ -306,12 +379,14 @@ it.each(["project", "status"] as const)(
     const dragEvents = createPinnedDragEvents();
     const original = [{ id: "one" }, { id: "two" }, { id: "three" }];
     const renderPins = (data: Item[]) => (
-      <SidebarPinnedList
-        data={data}
-        keyExtractor={keyExtractor}
-        renderItem={renderPinnedRow}
-        onDragEnd={dropped}
-      />
+      <PinnedDragOwner>
+        <SidebarPinnedList
+          data={data}
+          keyExtractor={keyExtractor}
+          renderItem={renderPinnedRow}
+          onDragEnd={dropped}
+        />
+      </PinnedDragOwner>
     );
     try {
       await act(() => root?.render(renderPins(original)));

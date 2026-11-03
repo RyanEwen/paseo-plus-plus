@@ -13,6 +13,7 @@ import { createTempGitRepo } from "../support/helpers/workspace";
 import {
   ensureExplorerSidebar,
   openChangesPanel,
+  openChangesTreePanel,
   waitForWorkspaceTabsVisible,
 } from "../support/helpers/workspace-tabs";
 
@@ -344,10 +345,14 @@ test("All changes combines committed and pending edits and preserves an unfinish
   const workspace = await createWorkspaceWithNetDiff();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await configureDiffPresentation(page, { layout: "unified", wrapLines: false });
-  await openWorkspaceChangesSurface(page, workspace);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesTreePanel(page);
+  await selectChangesComparison(page, "All changes");
+  await openChangesPanel(page);
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
-  await selectChangesComparison(page, "All changes");
   const mode = tree.getByRole("button", { name: "Diff mode", exact: true });
   await expect(mode).toContainText("All changes");
   await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts"]);
@@ -1483,12 +1488,14 @@ test("collapsing and expanding restores the real horizontal scroll offset", asyn
 async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
   await page.addInitScript(
     ({ settingsKey, fontSize }) => {
-      if (localStorage.getItem(settingsKey)) {
+      const settings = JSON.parse(localStorage.getItem(settingsKey) ?? "{}");
+      if (settings.codeFontSize !== undefined) {
         return;
       }
       localStorage.setItem(
         settingsKey,
         JSON.stringify({
+          ...settings,
           theme: "dark",
           sendBehavior: "interrupt",
           serviceUrlBehavior: "ask",

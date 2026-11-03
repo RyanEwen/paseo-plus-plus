@@ -24,6 +24,11 @@ provider icon map. You do not need a core manifest entry or provider factory.
 
 ## Provider-native session options
 
+Provider persistence capability does not establish storage isolation or exclusive ownership.
+Preserve native import and same-ID resume semantics. The
+[history preview](fork-features/provider-history-preview.md) records the supported inventory
+scope and the distinction between Paseo initiation and exclusive ownership.
+
 The provider owns validation and application of the opaque record in
 `AgentSessionConfig.providerOptions`. The registry supplies the effective options
 at session startup. See [provider configuration](custom-providers.md#provider-options)
@@ -86,6 +91,16 @@ A provider that can register runtime tools directly should set `supportsNativePa
 
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
+Catalog and MCP capability discovery request ephemeral Pi sessions. Extensions can still write
+their own state; an ephemeral probe does not establish history isolation. New-chat storage and
+native import routes remain unchanged. See [provider history preview](fork-features/provider-history-preview.md)
+for the current separation boundary.
+
+Codex can opt in to [configured-home safety](fork-features/provider-history-preview.md#bind-a-configured-codex-profile).
+Storage planning runs after launch environment hooks and before provider startup. Keep startup-only
+selectors out of per-thread config and preserve the canonical binding through derived provider IDs.
+Claude has its own [configured profile admission and rewind contract](fork-features/provider-history-preview.md#bind-a-configured-claude-profile). Other providers remain unsupported by this policy.
+
 Pi extension adapters live under `packages/server/src/server/agent/providers/pi/extensions/<extension>/`. Each adapter turns Pi RPC facts into Paseo tool, timeline, subagent, or question mappings through the [extension contract](../packages/server/src/server/agent/providers/pi/extensions/contract.ts). To add one, create its directory, add one entry to `extensions/registry.ts`, and test it with fixtures captured from the real extension in Pi that record package, version, source commit, Pi version, and capture date. `agent.ts`, `history-mapper.ts`, and `tool-call-mapper.ts` never name an extension.
 
 Paseo's per-agent and daemon-wide system prompts are appended by its generated Pi integration extension. Paseo deliberately does not pass `--append-system-prompt`, because that flag replaces Pi's automatic `APPEND_SYSTEM.md` discovery instead of composing with it.
@@ -106,7 +121,7 @@ OMP supports native Paseo host tools. The adapter registers the full caller-scop
 
 Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
 
-OpenCode adapters target v1.14.46 and v2.0.10. V2 rejects binaries older than the tested 2.0.10 SDK at runtime selection. Runtime selection uses the configured command and environment. A recognized version is cached until provider configuration reload; a failed, timed-out, or unrecognized probe retains the v1 path and retries detection on the next operation. Load v2 code and materialize its plugin only after positive v2 selection; v1 sessions remain undecorated. Keep upstream SDK types inside the version-specific adapter. OpenCode owns storage migration; a missing native session must fail resume rather than create a replacement. V2 has no native archive/unarchive operation: archiving affects Paseo only. V1 retains native archiving.
+OpenCode adapters target v1.14.46 and v2.0.10. V2 rejects versions older than 2.0.10. Paseo selects an explicit server, then a healthy local registered service, then its own helper. It never stops a reused service. A local service loads the Paseo bridge from its watched plugin directory; sessions bind their own bridge credentials through OpenCode RPC. See [OpenCode with an existing v2 server](custom-providers.md#opencode-with-an-existing-v2-server) for setup and isolation limits. Load v2 code and materialize its plugin only after positive v2 selection; v1 sessions remain undecorated. Keep upstream SDK types inside the version-specific adapter. OpenCode owns storage migration; a missing native session must fail resume rather than create a replacement. V2 has no native archive/unarchive operation: archiving affects Paseo only. V1 retains native archiving.
 
 Use OpenCode v2 execution events to trigger turn completion, with active-state and durable-log reconciliation after admission, reconnect, and while a turn remains active. Do not use `session.wait`: a healthy turn exceeding Node's HTTP headers deadline produces a transport error while OpenCode keeps working. The live event feed has no replay, and shutdown interruption preserves the previous idle outcome, so the session snapshot alone cannot recover missed execution events. Quiet streams are healthy: v2 heartbeats are SSE comments, not application events.
 
@@ -523,6 +538,8 @@ interface AgentSession {
   } | null;
 }
 ```
+
+`describePersistence()` returns a handle only once a new provider process could resume it. Reload, idle runtime collection and daemon restart resume whatever handle the agent stored; a stored agent without one starts a new session instead. When there is no handle, `AgentManager` stores `getRuntimeInfo().sessionId` as one, so that ID follows the same rule. Codex, for example, starts a thread when the agent is created but writes its rollout only at its first turn, and `thread/resume` fails for it until then, so its adapter reports neither ID before Codex announces that turn.
 
 `setMode` and `setThinkingOption` may return an `AgentProviderNotice` when the provider knows the change needs user-facing context. For example, providers that stage changes until the next turn should return an `info` notice while a turn is already running. The app renders the notice generically as a toast; provider-specific lifecycle behavior stays in the provider implementation.
 
