@@ -76,6 +76,7 @@ type SidebarReorderView = Pick<
   | "sortMode"
   | "emptyProjectSortMode"
   | "workspaceSortMode"
+  | "workspaceSort"
   | "hostFilters"
   | "projectFilters"
   | "labelFilter"
@@ -85,7 +86,10 @@ type SidebarReorderView = Pick<
 >;
 
 export function sidebarReorderSort(view: SidebarReorderView, domain: SidebarReorderDomain): string {
-  if (domain === "workspace") return view.workspaceSortMode;
+  if (domain === "workspace") {
+    if (view.groupMode === "project" && view.workspaceSort !== "manual") return view.workspaceSort;
+    return view.workspaceSortMode;
+  }
   return view.groupMode === "project" ? view.sortMode : view.emptyProjectSortMode;
 }
 

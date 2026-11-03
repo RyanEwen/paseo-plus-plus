@@ -12,7 +12,6 @@ import {
   loadSessionMessageReaders,
   connectNewWorkspaceDaemonClient,
 } from "../support/helpers/new-workspace";
-import { getServerId } from "../support/helpers/server-id";
 import { openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort, wsRoutePatternForPort } from "../support/helpers/daemon-port";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
@@ -20,8 +19,10 @@ import {
   addDirectHostFromSettings,
   clickSettingsBackToWorkspace,
   openSettingsHostSection,
+  openSettingsSection,
   selectSettingsHost,
 } from "../support/helpers/settings";
+import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
 
@@ -58,6 +59,14 @@ test.describe("Settings host selection", () => {
 
       await openSettings(page);
 
+      await openSettingsHostSection(page, remoteDaemon.serverId, "connections");
+
+      await selectSettingsHost(page, getServerId());
+      await openSettingsSection(page, "appearance");
+      await openSettingsHostSection(page, getServerId(), "connections");
+
+      await clickSettingsBackToWorkspace(page);
+      await openSettings(page);
       await openSettingsHostSection(page, remoteDaemon.serverId, "connections");
     } finally {
       await remoteWorkspace.cleanup().catch(() => undefined);
@@ -133,9 +142,9 @@ test("explicit settings host sync shares preferences across independent clients 
     await expect(
       second.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch"),
     ).not.toBeChecked();
-    await second.getByTestId("paseo-plus-plus-sidebarProjectSelector").getByRole("switch").click();
+    await second.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch").click();
     await expect(
-      page.getByTestId("paseo-plus-plus-sidebarProjectSelector").getByRole("switch"),
+      page.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch"),
     ).not.toBeChecked();
     // Keep B on the ordinary sidebar before toggling A, so visibility proves a live update.
     await second.goto(new URL("/", page.url()).href);

@@ -1,10 +1,12 @@
 import { DockReservationContext } from "./dock-reservation";
 import { usePublishDockReservation } from "./use-dock-reservation";
 import { KeyboardDockDisplacementContext } from "./dock-displacement.ios";
-import { useMemo, useEffect, type ReactNode } from "react";
-import { Animated, useAnimatedValue, type ViewProps } from "react-native";
+import { useMemo, useEffect, useRef, type ReactNode } from "react";
+import { Animated, useAnimatedValue, type View, type ViewProps } from "react-native";
 import { useKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardTranslationContext } from "./context";
+import { useKeyboardTranslationScope } from "./measure";
 
 interface KeyboardTranslateViewProps extends ViewProps {
   children: ReactNode;
@@ -39,7 +41,10 @@ export function KeyboardTranslateView({
   // Fullscreen resizes this view while disabling translation. iOS Fabric can
   // reapply its previous transform during that layout commit. Keep the graph
   // attached and apply the mode on the native animation frame; a static zero or
-  // setValue during the React commit gets overwritten by the resize.
+  // setValue during the React commit gets overwritten by the resize. A rebuilt
+  // graph (a new bottomClearance after rotation) starts from JS-side keyboard
+  // values, so run it on the native frame too or it stays stale until the
+  // keyboard next moves.
   const enabledValue = useAnimatedValue(enabled ? 1 : 0);
   useEffect(() => {
     const animation = Animated.timing(enabledValue, {
@@ -49,7 +54,7 @@ export function KeyboardTranslateView({
     });
     animation.start();
     return () => animation.stop();
-  }, [enabled, enabledValue]);
+  }, [enabled, enabledValue, translateY]);
   // Measurement and sticky compensation must read the same gated native transform.
   const effectiveTranslateY = useMemo(
     () => Animated.multiply(translateY, enabledValue),
@@ -64,13 +69,19 @@ export function KeyboardTranslateView({
     [effectiveTranslateY],
   );
 
+  const frameRef = useRef<View>(null);
+  const translation = useMemo(() => ({ enabled, bottomClearance }), [bottomClearance, enabled]);
+  const scope = useKeyboardTranslationScope(frameRef, translation);
+
   return (
-    <Animated.View style={[style, keyboardStyle]} {...props}>
-      <KeyboardDockDisplacementContext.Provider value={displacement}>
-        <DockReservationContext.Provider value={reservation}>
-          {children}
-        </DockReservationContext.Provider>
-      </KeyboardDockDisplacementContext.Provider>
+    <Animated.View ref={frameRef} style={[style, keyboardStyle]} {...props}>
+      <KeyboardTranslationContext.Provider value={scope}>
+        <KeyboardDockDisplacementContext.Provider value={displacement}>
+          <DockReservationContext.Provider value={reservation}>
+            {children}
+          </DockReservationContext.Provider>
+        </KeyboardDockDisplacementContext.Provider>
+      </KeyboardTranslationContext.Provider>
     </Animated.View>
   );
 }

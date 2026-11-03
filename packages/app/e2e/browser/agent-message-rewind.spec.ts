@@ -22,8 +22,10 @@ async function completeSubmittedTurn(
   const userMessage = originalUserMessages(page).filter({ hasText: prompt });
   await expect(userMessage).toBeVisible();
 
+  await expectAgentReadyToInterrupt(page);
   const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
   expect(finish.status).toBe("idle");
+  await expectAgentIdle(page);
   await expect(
     originalTimelineRows(page).getByText("(end of synthetic stream)", { exact: true }).last(),
   ).toBeVisible();

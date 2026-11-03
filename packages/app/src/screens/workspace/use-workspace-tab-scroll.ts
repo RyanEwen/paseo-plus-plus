@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
-import { ScrollView, type LayoutChangeEvent } from "react-native";
+import { ScrollView, type LayoutChangeEvent, type LayoutRectangle } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 import { resolveWorkspaceTabScrollOffset } from "./workspace-tab-layout";
 
@@ -56,13 +56,19 @@ export function useWorkspaceTabScroll({
     [revealActiveTab],
   );
 
-  const onTabLayout = useCallback(
-    (tabKey: string, event: LayoutChangeEvent) => {
-      tabFrames.current.set(tabKey, event.nativeEvent.layout);
+  // Sortable roots publish plain measured frames; ordinary slots use the same owning boundary.
+  const onTabFrame = useCallback(
+    (tabKey: string, frame: LayoutRectangle) => {
+      if (frame.width <= 0 || frame.height <= 0) return;
+      tabFrames.current.set(tabKey, frame);
       revealActiveTab();
     },
     [revealActiveTab],
   );
+  const onTabLayout = useCallback(
+    (tabKey: string, event: LayoutChangeEvent) => onTabFrame(tabKey, event.nativeEvent.layout),
+    [onTabFrame],
+  );
 
-  return { scrollRef, onLayout, onContentSizeChange, onTabLayout };
+  return { scrollRef, onLayout, onContentSizeChange, onTabLayout, onTabFrame };
 }

@@ -28,5 +28,5 @@ export function useLimitedSidebarGroup<T>(
     [mode],
   );
 
-  return { visibleItems, expanded, canToggle, toggleExpanded };
+  return { visibleItems, canToggle, expanded, toggleExpanded };
 }

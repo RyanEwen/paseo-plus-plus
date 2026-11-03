@@ -19,6 +19,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
+import { useUsageSetting } from "./setting";
 import { usageCopy } from "./copy";
 import {
   replaceReport,
@@ -147,6 +148,7 @@ function toQueryState(query: {
 
 /** Usage reports for one host, as shown on its settings page. */
 export function useHostUsage(serverId: string): { view: UsageView; refresh: () => void } {
+  const setting = useUsageSetting(serverId);
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
@@ -155,6 +157,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     queryKey: usageReportsQueryKey(serverId),
     queryFn: () => listReports(queryClient, serverId),
     ...activity,
+    enabled: isConnected && isSupported && setting.enabled,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
@@ -166,6 +169,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
   const view = resolveUsageView(
     {
       hostLabel,
+      enabled: setting.ready ? setting.enabled : undefined,
       isConnected,
       supportsUsage: isSupported,
       query: toQueryState(query),
@@ -182,16 +186,18 @@ const NO_REPORTS: UsageReportEntry[] = [];
  * load, or without a host.
  */
 export function useUsageHostReports(serverId: string | null): UsageReportEntry[] {
+  const setting = useUsageSetting(serverId);
   const queryClient = useQueryClient();
   const activity = useUsageQueryActivity(serverId);
   const query = useFetchQuery({
     queryKey: usageReportsQueryKey(serverId ?? ""),
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
     ...activity,
+    enabled: setting.enabled && activity.enabled,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
-  return query.data ?? NO_REPORTS;
+  return setting.enabled ? (query.data ?? NO_REPORTS) : NO_REPORTS;
 }
 
 /**
@@ -228,7 +234,8 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
 export function useHostReportsUsage(serverId: string): boolean {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isSupported = useSessionStore((state) => supportsUsage(state.sessions[serverId]));
-  return isConnected && isSupported;
+  const setting = useUsageSetting(serverId);
+  return isConnected && isSupported && setting.enabled;
 }
 
 /** Every host with whether it is connected and reports usage, in host order. */

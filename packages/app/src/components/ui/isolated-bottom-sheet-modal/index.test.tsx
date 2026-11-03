@@ -169,6 +169,7 @@ import {
   type ContextBridge,
   useIsolatedBottomSheetVisibility,
 } from ".";
+import { useAnimatedLayout } from "@gorhom/bottom-sheet/src/hooks/useAnimatedLayout";
 import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
 
 /** Renders whatever the portal is currently holding, from its own place in the tree. */
@@ -1022,5 +1023,36 @@ describe("actual patched modal RAF and portal cancellation", () => {
       [...sheetControls.finishCloses.values()][0]!();
     });
     expect(release).toHaveBeenCalledTimes(2);
+  });
+});
+describe("bottom sheet layout subscription", () => {
+  it("stops updating a dismissed sheet when the window resizes", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    let layout: ReturnType<typeof useAnimatedLayout> | undefined;
+    const viewport = document.documentElement;
+    const originalWidth = Object.getOwnPropertyDescriptor(viewport, "clientWidth");
+    function resize(width: number) {
+      Object.defineProperty(viewport, "clientWidth", { configurable: true, value: width });
+      act(() => window.dispatchEvent(new Event("resize")));
+    }
+    function LayoutProbe() {
+      layout = useAnimatedLayout(undefined, 0, 0);
+      return null;
+    }
+    try {
+      act(() => root.render(<LayoutProbe />));
+      if (!layout) throw new Error("Sheet layout did not mount");
+      const mountedLayout = layout;
+      resize(640);
+      expect(mountedLayout.get().window.width).toBe(640);
+      act(() => root.render(null));
+      resize(960);
+      expect(mountedLayout.get().window.width).toBe(640);
+    } finally {
+      act(() => root.unmount());
+      if (originalWidth) Object.defineProperty(viewport, "clientWidth", originalWidth);
+      else Reflect.deleteProperty(viewport, "clientWidth");
+    }
   });
 });

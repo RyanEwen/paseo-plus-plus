@@ -1,3 +1,7 @@
+import {
+  selectChatPreferencesSupport,
+  exportSupportedChatPreferences,
+} from "@/appearance/chat-preferences-support";
 import { normalizeRemoteSidebarModes } from "./sidebar-values";
 import { createSyncedSidebarSettingsSave } from "./sidebar-edits";
 import type { QueryClient } from "@tanstack/react-query";
@@ -79,8 +83,10 @@ export async function getDeviceSettingsValues(
     (await loadAppSettingsFromStorage());
   await initializeDeviceSidebarModes();
   const app: Record<string, unknown> = {};
-  for (const key of SYNC_APP_SETTING_KEYS satisfies readonly (keyof AppSettings)[])
+  for (const key of SYNC_APP_SETTING_KEYS) {
+    if (key === "useLegacyTerminalRenderer" || key === "toolCallDetailLevel") continue;
     if (!LEGACY_PRESENTATION_KEYS.has(key)) app[key] = settings[key];
+  }
   app.usage = { displayAs: settings.usage.displayAs, pins: settings.usage.pins };
   if (!useSidebarViewStore.persist.hasHydrated()) {
     await useSidebarViewStore.persist.rehydrate();
@@ -102,7 +108,17 @@ export async function getDeviceSettingsValues(
     useSessionStore.getState(),
     settingsSync.getState().selectedHost,
   );
-  return { app: exportSupportedAccentSettings(app, supported), sidebar };
+  const chatSupported = selectChatPreferencesSupport(
+    useSessionStore.getState(),
+    settingsSync.getState().selectedHost,
+  );
+  return {
+    app: exportSupportedAccentSettings(
+      exportSupportedChatPreferences(app, chatSupported, purpose),
+      supported,
+    ),
+    sidebar,
+  };
 }
 
 /** Project host values through the existing normalization and durable app write path. */

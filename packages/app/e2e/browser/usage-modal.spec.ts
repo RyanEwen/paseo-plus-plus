@@ -409,7 +409,7 @@ test("displayed usage refreshes every fifteen minutes and stops when hidden", as
     await gotoAppShell(page);
     await openUsageFromIcon(page);
     const card = page.getByTestId("usage-report-login-journey:account");
-    await expect(card.getByText("31%", { exact: true })).toBeVisible();
+    await expect(card.getByText("31% used", { exact: true })).toBeVisible();
     await expect.poll(() => completed).toBe(requests.length);
     const initialRequests = requests.length;
 
@@ -431,7 +431,7 @@ test("displayed usage refreshes every fifteen minutes and stops when hidden", as
       windows: [{ id: "five_hour", label: "Session", usedPct: 64 }],
     });
     await refreshLoginUsage(page);
-    await expect(card.getByText("64%", { exact: true })).toBeVisible();
+    await expect(card.getByText("64% used", { exact: true })).toBeVisible();
     expect(requests.at(-1)?.forceRefresh).toBe(true);
     await expect.poll(() => completed).toBe(requests.length);
 
@@ -441,7 +441,7 @@ test("displayed usage refreshes every fifteen minutes and stops when hidden", as
     expect(requests).toHaveLength(closedRequests);
 
     await openUsageFromIcon(page);
-    await expect(card.getByText("64%", { exact: true })).toBeVisible();
+    await expect(card.getByText("64% used", { exact: true })).toBeVisible();
     await expect.poll(() => requests.length).toBeGreaterThan(closedRequests);
   } finally {
     await fixture.cleanup();
@@ -801,15 +801,15 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     await openCompactUsageWithClock(page, now);
     const card = page.getByTestId("usage-report-login-journey:account");
     await expect(card.getByTestId("usage-freshness")).toHaveText("Updated just now");
-    await expect(card.getByText("resets 30m", { exact: false }).first()).toBeVisible();
+    await expect(card.getByText("resets in 30m", { exact: false }).first()).toBeVisible();
     // The shared minute clock is wall-aligned, and the daemon timestamps use real time.
     // After two browser minutes the latest displayed tick is one or two minutes old.
     await advanceUsageClock(page, 120_000);
     await expect(card.getByTestId("usage-freshness")).toHaveText(/^Updated [12]m ago$/);
-    await expect(card.getByText(/resets (28|29)m/).first()).toBeVisible();
-    await expect(card.getByText(/runs out (28|29)m/)).toBeVisible();
+    await expect(card.getByText(/resets in (28|29)m/).first()).toBeVisible();
+    await expect(card.getByText(/runs out in (28|29)m/)).toBeVisible();
     await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText(
-      /^resets (28|29)m$/,
+      /^resets in (28|29)m\s·\s/,
     );
   } finally {
     await login.cleanup();
