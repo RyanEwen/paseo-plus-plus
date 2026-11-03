@@ -38,5 +38,12 @@ export function useSettingsSave<Key extends string>() {
     [updateSettings],
   );
 
-  return { ...appSettings, isLoading: appSettings.isLoading || syncBlocked, pending, failed, save };
+  return {
+    ...appSettings,
+    isLoading: appSettings.isLoading || syncBlocked,
+    isLocalLoading: appSettings.isLoading,
+    pending,
+    failed,
+    save,
+  };
 }
