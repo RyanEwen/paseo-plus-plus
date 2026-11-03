@@ -45,7 +45,7 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Desktop browser and extensions](docs/fork-features/desktop-browser-and-extensions.md)
 - [Automatic usage refresh](docs/fork-features/automatic-usage-refresh.md)
 
-- [Sync app settings](docs/fork-features/sync-app-settings.md)
+- [Sync app settings while keeping device preferences local](docs/fork-features/sync-app-settings.md)
 - [Android SSH hosts](docs/fork-features/android-ssh-hosts.md)
 
 - [Restore archived workspaces](docs/fork-features/restore-archived-workspaces.md)

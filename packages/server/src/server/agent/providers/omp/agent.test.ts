@@ -1,3 +1,7 @@
+import {
+  VALID_PNG_BASE64,
+  holdProviderImageMaterialization,
+} from "../../../../test-utils/provider-image-fixtures.js";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -1657,7 +1661,7 @@ test.each([false, true])(
     const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
     const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
     onTestFinished(() => session.close());
-    const bytes = Buffer.from("OMP attachment fixture");
+    const bytes = Buffer.from(VALID_PNG_BASE64, "base64");
     const first = session.startTurn([
       { type: "text", text: "Describe this image." },
       { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
@@ -1685,11 +1689,12 @@ test("interrupting OMP during image conversion cancels the admitted turn and per
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   let admitted = false;
+  const image = holdProviderImageMaterialization();
   const first = session
     .startTurn([
       {
         type: "image",
-        data: Buffer.alloc(16 * 1024 * 1024, 53).toString("base64"),
+        data: VALID_PNG_BASE64,
         mimeType: "image/png",
       },
     ])
@@ -1697,11 +1702,12 @@ test("interrupting OMP during image conversion cancels the admitted turn and per
       admitted = true;
       return result;
     });
-  await waitForImmediate();
+  await image.entered;
   expect(admitted).toBe(false);
   expect(runtime.latestSession().prompts).toHaveLength(0);
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image interrupt");
+  image.release();
   const original = await first;
   expect(events).toContainEqual(
     expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
@@ -1716,16 +1722,18 @@ test("closing OMP during image conversion rejects its pending start", async () =
   const runtime = new FakeOmp();
   const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
   const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  const image = holdProviderImageMaterialization();
   const first = session.startTurn([
     {
       type: "image",
-      data: Buffer.alloc(16 * 1024 * 1024, 54).toString("base64"),
+      data: VALID_PNG_BASE64,
       mimeType: "image/png",
     },
   ]);
   const rejected = expect(first).rejects.toThrow("closed");
-  await waitForImmediate();
+  await image.entered;
   expect(runtime.latestSession().prompts).toHaveLength(0);
   await session.close();
+  image.release();
   await rejected;
 });

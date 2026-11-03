@@ -582,7 +582,7 @@ it("attention preference committed host config refreshes both devices without at
     const secondRefresh = vi.fn(async () => {});
     const first = connectClient(server, null, { refreshAttention: firstRefresh });
     const second = connectClient(server, null, { refreshAttention: secondRefresh });
-    store.patch({ notifications: { agentAwareAttention: false } });
+    await store.patch({ notifications: { agentAwareAttention: false } });
     expect(agentManager.agentAwareAttentionEnabled).toBe(false);
     expect(firstRefresh).toHaveBeenCalledTimes(1);
     expect(secondRefresh).toHaveBeenCalledTimes(1);
@@ -597,14 +597,14 @@ it("attention preference committed host config refreshes both devices without at
     const release = store.onApply(() => {
       throw new Error("Reject next apply");
     });
-    expect(() => store.patch({ notifications: { agentAwareAttention: true } })).toThrow(
+    await expect(store.patch({ notifications: { agentAwareAttention: true } })).rejects.toThrow(
       "Reject next apply",
     );
     expect(agentManager.agentAwareAttentionEnabled).toBe(false);
     expect(firstRefresh).toHaveBeenCalledTimes(1);
     expect(secondRefresh).toHaveBeenCalledTimes(1);
     release();
-    store.patch({ notifications: { agentAwareAttention: true } });
+    await store.patch({ notifications: { agentAwareAttention: true } });
     expect(agentManager.agentAwareAttentionEnabled).toBe(true);
     expect(firstRefresh).toHaveBeenCalledTimes(2);
     expect(secondRefresh).toHaveBeenCalledTimes(2);
