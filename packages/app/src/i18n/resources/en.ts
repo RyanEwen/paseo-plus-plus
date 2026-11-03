@@ -6,7 +6,7 @@ export const en = {
   },
   settingsSync: {
     title: "Settings sync",
-    hint: "Sync app preferences and sidebar item visibility through one chosen host. Host/project filters, workspace order and collapsed groups stay local. Switching loads saved settings before editing.",
+    hint: "Sync shared app preferences and sidebar item visibility through one chosen host. Fonts, sizes, hardware and layout preferences stay on each device. Switching loads saved settings before shared edits.",
     host: "Settings host",
     deviceOnly: "This device only",
     unavailableHost: "Selected host unavailable",

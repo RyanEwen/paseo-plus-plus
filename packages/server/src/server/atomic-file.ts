@@ -12,7 +12,7 @@ interface AtomicFileRuntime {
 
 const runtime: AtomicFileRuntime = {
   platform: process.platform,
-  rename: fs.rename,
+  rename: (source, destination) => fs.rename(source, destination),
   now: () => performance.now(),
   sleep,
 };
