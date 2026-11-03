@@ -83,7 +83,6 @@ export async function verifySettingsExamplesHelp(page: Page, compact: boolean, d
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
     if (
       [
-        "sidebarProjectSelector",
         "sidebarWorkspaceTransitions",
         "sidebarActivityChips",
         "sidebarProjectEmphasis",
@@ -104,7 +103,7 @@ export async function verifySettingsExamplesHelp(page: Page, compact: boolean, d
       await page.keyboard.press("Tab");
     }
     await expect(content).toBeHidden();
-    if (!compact && example === "sidebarProjectSelector") {
+    if (!compact && example === "sidebarActivityChips") {
       await trigger.hover();
       await expect(content).toBeVisible();
       await page.mouse.move(2, 2);

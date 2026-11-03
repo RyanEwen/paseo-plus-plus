@@ -1,5 +1,6 @@
 import { NotificationReceipts } from "@getpaseo/protocol/notification-receipts";
 import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -151,6 +152,7 @@ function createServer(
     null,
     { allowedOrigins: new Set() },
     createWorkspaceAutoNameStub(),
+    createWorkspaceRuntimeStore(),
     undefined,
     undefined,
     undefined,
@@ -451,10 +453,12 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     );
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-1",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });
@@ -484,11 +488,13 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const getLastAssistantMessage = vi.fn(async () => "Done.");
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-2",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         labels: {},
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });

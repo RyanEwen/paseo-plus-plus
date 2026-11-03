@@ -1,3 +1,7 @@
+import { selectChatPreferencesSupport } from "@/appearance/chat-preferences-support";
+import { useSettingsSyncState } from "@/settings-sync/bootstrap";
+import { useSessionStore } from "@/stores/session-store";
+import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -8,38 +12,38 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { isNative } from "@/constants/platform";
-import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
+import { type ChatDisplay } from "@/hooks/use-settings";
 
-const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
-  "detailed",
-  "overview",
-];
+const CHAT_DISPLAYS: readonly ChatDisplay[] = ["full", "collapseToolCalls", "collapseTurns"];
 
 export function ChatSection() {
   const { t } = useTranslation();
-  const { settings, updateSettings } = useAppSettings();
+  const { selectedHost } = useSettingsSyncState();
+  const supported = useSessionStore((state) => selectChatPreferencesSupport(state, selectedHost));
+  const { settings, save, pending, failed, isLoading, error } = useSettingsSave<
+    "chatDisplay" | "autoExpandReasoning" | "chatOutlineEnabled"
+  >();
 
-  const toolCallDetailOptions = useMemo(
+  const chatDisplayOptions = useMemo(
     () =>
-      TOOL_CALL_DETAIL_LEVELS.map((value) => ({
+      CHAT_DISPLAYS.map((value) => ({
         value,
-        label: t(`settings.general.toolCallDetail.options.${value}`),
+        label: t(`settings.general.chatDisplay.options.${value}`),
       })),
     [t],
   );
 
-  const changeToolCallDetailLevel = useCallback(
-    (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) =>
-      void updateSettings({ toolCallDetailLevel }),
-    [updateSettings],
+  const changeChatDisplay = useCallback(
+    (chatDisplay: ChatDisplay) => void save("chatDisplay", { chatDisplay }),
+    [save],
   );
   const changeAutoExpandReasoning = useCallback(
-    (autoExpandReasoning: boolean) => void updateSettings({ autoExpandReasoning }),
-    [updateSettings],
+    (autoExpandReasoning: boolean) => void save("autoExpandReasoning", { autoExpandReasoning }),
+    [save],
   );
   const changeChatOutline = useCallback(
-    (chatOutlineEnabled: boolean) => void updateSettings({ chatOutlineEnabled }),
-    [updateSettings],
+    (chatOutlineEnabled: boolean) => void save("chatOutlineEnabled", { chatOutlineEnabled }),
+    [save],
   );
 
   return (
@@ -53,11 +57,17 @@ export function ChatSection() {
             onValueChange={changeAutoExpandReasoning}
           />
           <SettingsSelect
-            label={t("settings.general.toolCallDetail.label")}
-            hint={t("settings.general.toolCallDetail.description")}
-            value={settings.toolCallDetailLevel}
-            options={toolCallDetailOptions}
-            onValueChange={changeToolCallDetailLevel}
+            label={t("settings.general.chatDisplay.label")}
+            hint={t(
+              supported
+                ? "settings.general.chatDisplay.description"
+                : "settings.general.chatDisplay.updateHost",
+            )}
+            disabled={!supported || isLoading || pending !== null || error !== null}
+            error={failed === "chatDisplay" ? t("paseoPlusPlus.saveFailed") : undefined}
+            value={settings.chatDisplay}
+            options={chatDisplayOptions}
+            onValueChange={changeChatDisplay}
           />
           {isNative ? null : (
             <SettingsSwitch

@@ -7,7 +7,17 @@ export function hydratePromptEntry(
   entry: import("./read-canonical-prompt-context").ContextEntry,
   epoch: string,
 ): UserPrompt {
-  const item = hydrateStreamState(
+  const item = decodePromptEntry(entry, epoch);
+  if (!item) throw new Error("Prompt content is unavailable");
+  return item;
+}
+
+/** A valid USER can have no painted row; use the ordinary renderer's content policy. */
+export function decodePromptEntry(
+  entry: import("./read-canonical-prompt-context").ContextEntry,
+  epoch: string,
+): UserPrompt | undefined {
+  return hydrateStreamState(
     [
       {
         event: {
@@ -22,6 +32,4 @@ export function hydratePromptEntry(
     ],
     { source: "canonical" },
   ).find((candidate): candidate is UserPrompt => candidate.kind === "user_message");
-  if (!item) throw new Error("Prompt content is unavailable");
-  return item;
 }

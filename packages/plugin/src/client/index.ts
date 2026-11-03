@@ -1,5 +1,11 @@
 export type {
   PluginHostProps,
+  PluginTab,
+  PluginPanelProps,
+  PluginWorkspacePanelParams,
+  PluginAgentPanelParams,
+  PluginFilePanelParams,
+  PluginAgentPanelContribution,
   PluginFilePanelContribution,
   PluginFilePanelProps,
   PluginSurfaceProps,
@@ -52,8 +58,6 @@ export type {
   PluginFile,
   PluginFileBytesState,
   PluginFileEvent,
-  PluginFileLocation,
-  PluginFileTab,
   PluginFileTextState,
   PluginFileUrlState,
   PluginFileWriteOptions,
@@ -67,7 +71,12 @@ export {
 } from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
-export { useRpc } from "./rpc-context.js";
+export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
+export type {
+  PluginSubscribeOptions,
+  PluginSubscriptionClosed,
+  PluginSubscriptionHandle,
+} from "../rpc.js";
 import type { SettingsDefinition } from "../settings.js";
 import type { SettingsState } from "./contracts.js";
 import type { ZodType } from "zod";
@@ -91,3 +100,5 @@ export declare function openExternalUrl(url: string): Promise<void>;
 export { defineTranslations, useTranslation } from "./translations.js";
 export type { PluginI18n } from "./translations.js";
 export type { PluginText, PluginMessage, PluginTranslations } from "../text.js";
+
+export { useTabState } from "./tab.js";

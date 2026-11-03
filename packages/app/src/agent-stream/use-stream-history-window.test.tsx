@@ -71,6 +71,54 @@ describe("useStreamHistoryWindow", () => {
     expect(loadRemoteOlder).toHaveBeenCalledOnce();
   });
 
+  it("keeps remotely prepended rows visible after all local history was revealed", async () => {
+    Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
+      value: 2,
+      configurable: true,
+    });
+    const items = [
+      message("u1", "user_message"),
+      message("a1", "assistant_message"),
+      message("u2", "user_message"),
+      message("a2", "assistant_message"),
+    ];
+    const loadRemoteOlder = vi.fn(async () => true);
+    const { result, rerender } = renderHook(
+      ({ history }) =>
+        useStreamHistoryWindow({
+          agentId: "agent-1",
+          items: history,
+          loadRemoteOlder,
+        }),
+      { initialProps: { history: items } },
+    );
+    expect(result.current.start).toBe(2);
+    await act(async () => result.current.loadOlder());
+    expect(result.current.start).toBe(0);
+    expect(result.current.hasLocalHistory).toBe(false);
+    expect(loadRemoteOlder).not.toHaveBeenCalled();
+
+    await act(async () => result.current.loadOlder());
+    expect(loadRemoteOlder).toHaveBeenCalledOnce();
+    const prepended = [message("u0", "user_message"), message("a0", "assistant_message"), ...items];
+    rerender({ history: prepended });
+
+    // The accepted remote page enters the already fully revealed ordinary window.
+    expect(result.current.start).toBe(0);
+    expect(result.current.hasLocalHistory).toBe(false);
+    expect(prepended.slice(result.current.start).map((item) => item.id)).toEqual([
+      "u0",
+      "a0",
+      "u1",
+      "a1",
+      "u2",
+      "a2",
+    ]);
+    expect(prepended[2]).toBe(items[0]);
+    expect(prepended[3]).toBe(items[1]);
+    expect(loadRemoteOlder).toHaveBeenCalledOnce();
+  });
+
   it("keeps its boundary at the same item when loaded history is prepended", () => {
     Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
       value: 2,

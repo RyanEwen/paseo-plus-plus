@@ -260,7 +260,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
   useEffect(() => {
     if (!supportsNotificationReceipts) return;
-    return workspaceNotificationRuntime.start(serverId, client);
+    return workspaceNotificationRuntime.start({
+      serverId,
+      client,
+      observeWorkspaces: (observer) => getHostRuntimeStore().observeWorkspaces(serverId, observer),
+    });
   }, [client, serverId, supportsNotificationReceipts]);
   useEffect(() => {
     if (isAppVisible && supportsNotificationReceipts) workspaceNotificationRuntime.resume(serverId);
@@ -467,10 +471,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, planTimelineTailFetch()),
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
-      },
-      schedule: (task, delayMs) => {
-        const timeout = setTimeout(task, delayMs);
-        return () => clearTimeout(timeout);
       },
     });
     viewedTimelineSyncRef.current = sync;
