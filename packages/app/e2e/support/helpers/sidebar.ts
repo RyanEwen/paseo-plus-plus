@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 import { projectEquivalenceViewKey } from "./project-view-key";
 
@@ -233,6 +233,11 @@ export async function expectWorkspaceAbsentFromSidebar(
 export async function openSidebarDisplayPage(page: Page, branchTestID: string): Promise<void> {
   await page.getByTestId("sidebar-display-preferences-menu").click();
   await page.getByTestId(branchTestID).click();
+}
+
+/** Locate host-backed Sort, excluding the fork's separate project and workspace sort controls. */
+export function sidebarWorkspaceSortMenuItem(page: Page): Locator {
+  return page.getByRole("menuitem").filter({ has: page.getByText("Sort", { exact: true }) });
 }
 
 // The heading chooser owns local host/project filters even when the rich heading is off.

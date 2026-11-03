@@ -20,6 +20,7 @@ import {
   expectMobileAgentSidebarHidden,
   selectSidebarStatusGrouping,
   selectSidebarProjectGrouping,
+  sidebarWorkspaceSortMenuItem,
   closeSidebarDisplayPreferences,
   openWorkspaceContextMenu,
 } from "../support/helpers/sidebar";
@@ -1026,10 +1027,7 @@ for (const destination of ["collapsed", "limit"] as const) {
 }
 async function selectWorkspaceSort(page: Page, name: "Manual" | "Created" | "Last prompt") {
   await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page
-    .getByRole("menuitem")
-    .filter({ has: page.getByText("Sort", { exact: true }) })
-    .click();
+  await sidebarWorkspaceSortMenuItem(page).click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 
@@ -1040,9 +1038,7 @@ async function reconnectSidebar(page: Page): Promise<void> {
 
 async function expectNoWorkspaceSortChoice(page: Page): Promise<void> {
   await page.getByTestId("sidebar-display-preferences-menu").click();
-  await expect(
-    page.getByRole("menuitem").filter({ has: page.getByText("Sort", { exact: true }) }),
-  ).toHaveCount(0);
+  await expect(sidebarWorkspaceSortMenuItem(page)).toHaveCount(0);
 }
 
 async function promptWorkspace(seed: Awaited<ReturnType<typeof seedWorkspace>>, agentId: string) {
