@@ -37,7 +37,7 @@ describe("migrateSidebarOrderState", () => {
     expect(useSidebarOrderStore.getState().statusWorkspaceOrder).toEqual(["srv:two", "srv:one"]);
   });
 
-  it("normalizes pinned workspace order", () => {
+  describe("normalizes pinned workspace order", () => {
     it("deduplicates pinned workspace order without rewriting identities", () => {
       const migrated = migrateSidebarOrderState({
         pinnedWorkspaceOrder: ["host-a:one", "host-a:one", "", "host-b:two"],
@@ -144,6 +144,7 @@ it("preserves project, pinned and ordinary workspace order", () => {
       workspaceOrderByProject: { a: ["h:old", "h:new"] },
     }),
   ).toEqual({
+    statusWorkspaceOrder: [],
     projectOrder: ["b", "a"],
     pinnedWorkspaceOrder: ["h:y", "h:x"],
     workspaceOrderByProject: { a: ["h:old", "h:new"] },
@@ -158,6 +159,7 @@ it("preserves whitespace in current project and pin identities during upgrade", 
       workspaceOrderByProject: {},
     }),
   ).toEqual({
+    statusWorkspaceOrder: [],
     projectOrder: ["project "],
     pinnedWorkspaceOrder: ["host:workspace "],
     workspaceOrderByProject: {},
@@ -172,6 +174,7 @@ it("retains a pre-beta manual order when upgrading", () => {
       workspaceOrderByProject: { project: ["host:b", "host:a"] },
     }),
   ).toEqual({
+    statusWorkspaceOrder: [],
     projectOrder: ["project"],
     pinnedWorkspaceOrder: [],
     workspaceOrderByProject: { project: ["host:b", "host:a"] },
@@ -180,6 +183,7 @@ it("retains a pre-beta manual order when upgrading", () => {
 
 it("starts with an empty manual order for beta users whose order was discarded", () => {
   expect(migrateSidebarOrderState({ projectOrder: ["p"], pinnedWorkspaceOrder: ["h:a"] })).toEqual({
+    statusWorkspaceOrder: [],
     projectOrder: ["p"],
     pinnedWorkspaceOrder: ["h:a"],
     workspaceOrderByProject: {},

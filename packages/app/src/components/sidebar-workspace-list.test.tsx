@@ -1644,6 +1644,7 @@ describe("workspace family store transitions", () => {
     const wire = JSON.parse(
       JSON.stringify({
         ...child,
+        createdAt: child.createdAt?.toISOString(),
         activityAt: null,
         humanAttentionRequired: input.humanAttentionRequired,
       }),
