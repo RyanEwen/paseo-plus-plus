@@ -4,7 +4,16 @@ const http = require("node:http");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = require("electron");
+const { configureDesktopRendererClient } = require("../dist/desktop-startup.js");
+
+configureDesktopRendererClient({
+  platform: process.platform,
+  realUserId: process.getuid?.(),
+  commandLine: app.commandLine,
+});
+
 const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
+const { getGuestCdpTransport } = require("../dist/features/browser-automation/cdp-transport.js");
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
@@ -3040,8 +3049,11 @@ async function stopCompatibilityWorker(guest, profile, extensionId) {
   if (!entry) {
     fail("compatibility fixture worker was not running before the idle simulation");
   }
-  await guest.debugger.sendCommand("ServiceWorker.enable");
-  await guest.debugger.sendCommand("ServiceWorker.stopWorker", { versionId: entry[0] });
+  // Navigation metadata and this fixture share the exact guest's CDP lifetime.
+  // Fixture cleanup must leave that transport attached.
+  const transport = getGuestCdpTransport(guest);
+  await transport.send("ServiceWorker.enable");
+  await transport.send("ServiceWorker.stopWorker", { versionId: entry[0] });
   const deadline = Date.now() + BROWSER_PROFILE_TIMEOUT_MS;
   while (profile.serviceWorkers.getAllRunning()[entry[0]]) {
     if (Date.now() >= deadline) {
@@ -3062,7 +3074,6 @@ async function assertBrowserExtensionWorkerWake({
 }) {
   const { openBrowserExtensionPopup } = require("../dist/features/browser-extensions/actions.js");
   let popup;
-  guest.debugger.attach("1.3");
   try {
     await stopCompatibilityWorker(guest, profile, extension.id);
     guest.reload();
@@ -3090,7 +3101,6 @@ async function assertBrowserExtensionWorkerWake({
     }
     pass("sleeping extension worker wakes for navigation and reads the new document identity");
   } finally {
-    guest.debugger.detach();
     if (popup) {
       await closeHarnessWindow(popup);
     }
@@ -3102,7 +3112,6 @@ async function assertBrowserExtensionWindowEvents({ owner, profile, runtime, gue
   const { openBrowserExtensionPopup } = require("../dist/features/browser-extensions/actions.js");
   let popup;
   let created;
-  guest.debugger.attach("1.3");
   try {
     await stopCompatibilityWorker(guest, profile, extension.id);
     created = new BrowserWindow({
@@ -3140,7 +3149,6 @@ async function assertBrowserExtensionWindowEvents({ owner, profile, runtime, gue
     await waitForEvent("onRemoved");
     pass("sleeping extension worker wakes for real window creation and receives window removal");
   } finally {
-    guest.debugger.detach();
     if (popup) {
       await closeHarnessWindow(popup);
     }
@@ -3163,7 +3171,6 @@ async function assertBrowserExtensionTabEvents({
   const { openBrowserExtensionPopup } = require("../dist/features/browser-extensions/actions.js");
   let popup;
   let extraFixture;
-  firstGuest.debugger.attach("1.3");
   try {
     popup = await openBrowserExtensionPopup({
       owner,
@@ -3289,7 +3296,6 @@ async function assertBrowserExtensionTabEvents({
       workspaceId: "compatibility-workspace",
       browserId: "browser-first",
     });
-    firstGuest.debugger.detach();
     if (extraFixture) {
       await closeHarnessWindow(extraFixture.handle.win);
     }
@@ -3328,7 +3334,6 @@ async function assertBrowserExtensionContextMenus({
     buildBrowserExtensionContextMenuItems,
   } = require("../dist/features/browser-extensions/context-menus.js");
   let popup;
-  guest.debugger.attach("1.3");
   try {
     popup = await openBrowserExtensionPopup({
       owner,
@@ -3409,7 +3414,6 @@ async function assertBrowserExtensionContextMenus({
       "real browser context menu includes extension actions and wakes an idle worker for onClicked",
     );
   } finally {
-    guest.debugger.detach();
     if (popup) {
       await closeHarnessWindow(popup);
     }
@@ -3451,11 +3455,11 @@ async function assertPrivateExtensionFrameDenied({ guest, privateUrl, extensionI
       resolveDenial(details);
     }
   }
-  guest.debugger.attach("1.3");
+  const transport = getGuestCdpTransport(guest);
   guest.debugger.on("message", onMessage);
   try {
-    await guest.debugger.sendCommand("Page.enable");
-    await guest.debugger.sendCommand("Network.enable");
+    await transport.send("Page.enable");
+    await transport.send("Network.enable");
     await guest.executeJavaScript(`(() => {
       const frame = document.createElement("iframe");
       frame.name = "paseo-private-extension-frame";
@@ -3490,7 +3494,6 @@ async function assertPrivateExtensionFrameDenied({ guest, privateUrl, extensionI
     }
   } finally {
     guest.debugger.removeListener("message", onMessage);
-    guest.debugger.detach();
   }
 }
 

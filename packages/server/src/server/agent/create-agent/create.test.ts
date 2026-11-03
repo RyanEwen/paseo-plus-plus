@@ -69,6 +69,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
       getAgent: vi.fn(() => snapshot),
       tryRunOutOfBand: vi.fn(() => false),
       hasInFlightRun: vi.fn(() => false),
+      reloadStalePluginSession: async () => {},
       streamAgent,
       waitForAgentRunStart: vi.fn(async () => undefined),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
@@ -90,6 +91,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
 
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
     clientMessageId: "msg-create-1",
+    attention: [{ kind: "human", requestId: "msg-create-1" }],
   });
 });
 

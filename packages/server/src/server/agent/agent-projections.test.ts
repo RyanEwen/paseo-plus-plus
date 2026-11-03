@@ -539,3 +539,34 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
     });
   });
 });
+
+it("attention mode projects stored rows without rewriting recipient or unread evidence", () => {
+  const record = toStoredAgentRecord(
+    createManagedAgent({
+      attention: {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date("2026-01-01T00:00:00Z"),
+      },
+    }),
+  );
+  record.humanAttentionRequired = false;
+  const original = structuredClone(record);
+  expect(
+    buildStoredAgentPayload(record, ["claude"], { agentAwareAttention: true })
+      .humanAttentionRequired,
+  ).toBe(false);
+  expect(
+    buildStoredAgentPayload(record, ["claude"], { agentAwareAttention: false })
+      .humanAttentionRequired,
+  ).toBeUndefined();
+  expect(record).toEqual(original);
+  record.attentionMessage = "Choose the account";
+  expect(buildStoredAgentPayload(record, ["claude"], { agentAwareAttention: false })).toMatchObject(
+    {
+      requiresAttention: true,
+      humanAttentionRequired: true,
+      attentionMessage: "Choose the account",
+    },
+  );
+});

@@ -58,6 +58,12 @@ restore the same workspace and could repeat the crash.
 
 ## App-Wide Route Hops
 
+Keep Add host in `hosts/add-host`, opened through `useAddHost()`. It is an in-place
+flow; callers choose what happens after success. Settings opts into the new host’s
+Overview. Do not send callers to Settings with an `addHost` query parameter: a
+retained route replays that request when appearance changes remount its content.
+The flow provider and sheet host stay outside appearance keys so open drafts survive.
+
 When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back
 into a host workspace, use `navigateToWorkspace()`. Do not make the caller
 branch on its current route.
@@ -104,8 +110,13 @@ Do not collapse this topology with a catch-all, `getId`, or
 
 ## Agent Targets
 
-Notifications and agent URLs enter the router with different authoritative
-targets.
+Notifications and agent URLs name a host and agent. Both use
+`navigateToAgent()`, which reads the agent's current workspace from the store
+or routes through `/h/[serverId]/agent/[agentId]`. The agent route waits for
+the named host, demands its directory, and waits for workspace and layout
+hydration before opening the tab. Keep the stable agent URL free of a workspace
+hint. [Notifications](notifications.md) owns tap delivery and native lifecycle
+constraints.
 
 - Notifications carry `serverId`, `workspaceId`, and `agentId`. Route them
   directly to the workspace with the agent open intent.
@@ -121,6 +132,16 @@ the pane again when the destination consumes them after layout hydration.
 
 Both paths converge on `navigateToAgent()`. Do not make notification routing
 guess a workspace, and do not add a workspace to the stable agent URL format.
+When a workspace target cannot open yet, `navigateToWorkspace()` records a
+pending open in the layout model under that host and workspace key. The owning
+workspace screen consumes it once after hydration. Archived-workspace recovery
+reads the same pending target, so startup redirects cannot discard it and a
+retained screen cannot consume another workspace's request.
+
+Legacy `?open=` links seed this model state at the matched route boundary and
+then lose the query parameter. Internal navigation does not use the query as a
+handoff. Read matched route params locally; global search params let retained
+workspace screens observe requests for other workspaces.
 
 Consume workspace open intents from local route params only while that route is
 focused. Retained native screens still have their own workspace params; reading
@@ -128,12 +149,7 @@ the global `open` value there pairs another screen's chat with the wrong workspa
 Nested workspace navigation must also clear `open` when no target is supplied,
 because React Navigation merges params on retained screens.
 
-OS notification dismissal follows the visible chat, independently of navigation or
-server attention. A retained route, unfocused pane, loading chat, hidden window,
-or compact sidebar does not acknowledge a notification. Browser cleanup covers
-only notifications created by that browser session. Windows history cleanup
-requires the executable-owned fork notification identity; legacy Debug and upstream
-histories remain separate.
+Opening a selected, ready workspace in the foreground acknowledges its existing notifications through the host. A retained route, unfocused pane, loading workspace, hidden window, or compact sidebar must not acknowledge it. Capture the displayed delivery boundary once per activation; receiving a later event while the workspace stays open does not create another acknowledgement. See [workspace notifications](architecture.md#workspace-notifications) for synchronization and OS limits.
 
 ## Params
 

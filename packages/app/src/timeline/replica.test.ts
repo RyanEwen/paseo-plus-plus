@@ -62,7 +62,6 @@ function createOwner(
       fetchPage: async () => ({ hasNewer: false, endCursor: null }),
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
-      schedule: () => () => undefined,
     },
   });
 }
@@ -376,6 +375,22 @@ describe("viewed timeline persistence", () => {
     ]);
   });
 
+  it("preparing an already painted cache again keeps history out of the live head", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: { readTimeline: async () => cachedTimeline(), commitTimeline: () => undefined },
+      prepareAgent: async () => undefined,
+    });
+    await replica.prepare(AGENT_ID);
+    const painted = useSessionStore.getState().sessions[SERVER_ID]!.agentStreamTail.get(AGENT_ID);
+    expect(painted).toEqual(cachedTimeline().items);
+    await replica.prepare(AGENT_ID);
+    const session = useSessionStore.getState().sessions[SERVER_ID]!;
+    expect(session.agentStreamHead.get(AGENT_ID) ?? []).toEqual([]);
+    expect(session.agentStreamTail.get(AGENT_ID)).toBe(painted);
+  });
+
   it("reconciles a live head that overlaps the cached canonical timeline", async () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     let release!: (value: CachedTimeline) => void;
@@ -606,7 +621,6 @@ describe("create handoff lifetime", () => {
         },
         fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
         reportError: () => undefined,
-        schedule: () => () => undefined,
       },
     });
 

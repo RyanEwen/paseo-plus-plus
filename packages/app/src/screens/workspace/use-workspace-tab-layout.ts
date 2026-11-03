@@ -13,6 +13,7 @@ interface UseWorkspaceTabLayoutInput {
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
   compact: boolean;
+  fillAvailableWidth?: boolean;
   host?: PaneHost;
   iconOnlyTabWidth?: number;
 }
@@ -28,10 +29,12 @@ export function useWorkspaceTabLayout(
   const { settings } = useSettings();
   const widerTabs = settings.paseoPlusPlus.widerWorkspaceTabs;
   const iconOnly = input.host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
+  // Fill only from the tab track's own geometry, never from a guessed window width.
+  const fallbackViewportWidth = input.fillAvailableWidth ? 0 : viewportWidth;
   const resolvedViewportWidth =
     typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
       ? input.viewportWidthOverride
-      : viewportWidth;
+      : fallbackViewportWidth;
 
   const layout = useMemo(
     () =>
@@ -40,6 +43,7 @@ export function useWorkspaceTabLayout(
         tabLabelWidths: input.tabLabelWidths,
         metrics: input.metrics,
         compact: input.compact,
+        fillAvailableWidth: input.fillAvailableWidth,
         widerTabs,
         iconOnly,
         iconOnlyTabWidth: input.iconOnlyTabWidth,
@@ -48,6 +52,7 @@ export function useWorkspaceTabLayout(
       input.metrics,
       input.tabLabelWidths,
       input.compact,
+      input.fillAvailableWidth,
       resolvedViewportWidth,
       widerTabs,
       iconOnly,

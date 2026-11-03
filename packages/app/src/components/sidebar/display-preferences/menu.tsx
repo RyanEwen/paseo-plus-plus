@@ -209,7 +209,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
   const { settings } = useAppSettings();
-  const { projects } = useSidebarModel();
+  const { projects, workspaceSortSupported } = useSidebarModel();
   const { expandAll, collapseAll } = useSidebarBulkCollapse();
   const isCompact = useIsCompactFormFactor();
   const { labels } = useWorkspaceLabelProjection();
@@ -344,6 +344,16 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
       },
     ];
 
+    if (preferences.grouping === "project") {
+      definitions.push({
+        id: "sort",
+        title: t("sidebar.display.sort.label"),
+        content: (
+          <SortPage preferences={preferences} automaticSortSupported={workspaceSortSupported} />
+        ),
+      });
+    }
+
     if (showLabelFilter) {
       definitions.push({
         id: "labelFilter",
@@ -364,7 +374,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
       );
     }
     return definitions;
-  }, [t, preferences, showLabelFilter, labels, openManager]);
+  }, [t, preferences, workspaceSortSupported, showLabelFilter, labels, openManager]);
 
   return (
     <>
@@ -429,6 +439,14 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
                 testID="sidebar-display-sorting"
               >
                 {t("sidebar.display.sorting.label")}
+              </MenuSubTrigger>
+            ) : null}
+            {preferences.grouping === "project" ? (
+              <MenuSubTrigger
+                id="sort"
+                value={t(`sidebar.display.sort.${preferences.workspaceSort}`)}
+              >
+                {t("sidebar.display.sort.label")}
               </MenuSubTrigger>
             ) : null}
             <MenuSubTrigger
@@ -498,6 +516,42 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         </MenuRoot>
       </PreferencesDisabledContext.Provider>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />
+    </>
+  );
+}
+
+function SortPage({
+  preferences,
+  automaticSortSupported,
+}: {
+  preferences: Preferences;
+  automaticSortSupported: boolean;
+}): ReactElement {
+  const { t } = useTranslation();
+  const { setWorkspaceSort } = preferences;
+  const selectManual = useCallback(() => setWorkspaceSort("manual"), [setWorkspaceSort]);
+  const selectCreated = useCallback(() => setWorkspaceSort("created"), [setWorkspaceSort]);
+  const selectLastPrompt = useCallback(() => setWorkspaceSort("lastPrompt"), [setWorkspaceSort]);
+  return (
+    <>
+      <MenuItem selected={preferences.workspaceSort === "manual"} onSelect={selectManual}>
+        {t("sidebar.display.sort.manual")}
+      </MenuItem>
+      {automaticSortSupported ? (
+        <>
+          <MenuItem selected={preferences.workspaceSort === "created"} onSelect={selectCreated}>
+            {t("sidebar.display.sort.created")}
+          </MenuItem>
+          <MenuItem
+            selected={preferences.workspaceSort === "lastPrompt"}
+            onSelect={selectLastPrompt}
+          >
+            {t("sidebar.display.sort.lastPrompt")}
+          </MenuItem>
+        </>
+      ) : (
+        <MenuItem disabled>{t("sidebar.display.sort.updateHost")}</MenuItem>
+      )}
     </>
   );
 }

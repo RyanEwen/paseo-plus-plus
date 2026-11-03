@@ -160,6 +160,7 @@ describe("Custom-only sidebar reorder domains", () => {
     groupMode: "project" as const,
     sortMode: "custom" as const,
     workspaceSortMode: "custom" as const,
+    workspaceSort: "manual" as const,
     emptyProjectSortMode: "project" as const,
     hostFilters: [],
     projectFilters: [],

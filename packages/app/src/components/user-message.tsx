@@ -1,13 +1,23 @@
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
+import { MessageSender } from "./user-message/index";
 import { useTextLink } from "@/hooks/use-text-link";
 import { TextPreview } from "@/components/ui/text-preview";
 import { UserMessagePreviewContent } from "./user-message-preview-content";
 import { UserMessageAttachments } from "./user-message-attachments";
+import {
+  NaturalMessageBubble,
+  NaturalMessageFlowContext,
+  UserMessageFlow,
+  type NaturalMessageGeometry,
+} from "./user-message-flow";
+import { WebUserMessageFlow } from "./user-message-web-flow";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { SPACING } from "@/styles/theme";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { formatMessageTimestamp } from "@/utils/time";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -15,7 +25,7 @@ import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ReactNode } from "react";
 import * as React from "react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useContext, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Text,
@@ -25,6 +35,12 @@ import {
 } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
+import { NativeMessagePresentationContext } from "./user-message-native-presentation";
+import {
+  NativeUserMessageFlow,
+  NativeMessageSuffixMask,
+  NativeMessageVisibility,
+} from "./user-message-native-flow";
 import { StyleSheet } from "react-native-unistyles";
 import {
   useDisableOuterSpacing,
@@ -33,6 +49,9 @@ import {
 } from "./message-layout";
 import { TurnCopyButton } from "./turn-copy-button";
 interface UserMessageProps {
+  sender?: AgentMessage["sender"];
+  /** An optional measured viewport retains the one ordinary body's natural flow. */
+  onNaturalFlowGeometry?: (geometry: NaturalMessageGeometry | null) => void;
   onContentPress?: (event: GestureResponderEvent) => void;
   contentAccessibilityLabel?: string;
   /** Measured source width keeps the sticky copy's glyph positions aligned at the edge. */
@@ -57,6 +76,8 @@ interface UserMessageProps {
   /** Keep the actual Text/attachment body mounted through disclosure. */
   previewExpanded?: boolean;
   bodyViewportHeight?: number;
+  /** Prepare web compact paint against the same cap before it becomes bounded. */
+  naturalFlowMaximumHeight?: number;
   onPreviewOverflowChange?: (overflowing: boolean) => void;
   serverId?: string;
   agentId?: string;
@@ -72,6 +93,9 @@ interface UserMessageProps {
   isPending?: boolean;
   disableOuterSpacing?: boolean;
 }
+
+const EMPTY_MESSAGE_IMAGES: UserMessageImageAttachment[] = [];
+const EMPTY_MESSAGE_ATTACHMENTS: AgentAttachment[] = [];
 
 const userMessageStylesheet = StyleSheet.create((theme) => ({
   suppressed: { opacity: 0 },
@@ -99,6 +123,9 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   content: {
     alignItems: "flex-end",
+    // Let the message column shrink to its chat rail before measuring the body.
+    minWidth: 0,
+    flexShrink: 1,
     maxWidth: "100%",
     cursor: "auto",
   },
@@ -118,6 +145,8 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     minWidth: 0,
+    // End alignment does not stretch or constrain this child's intrinsic width.
+    maxWidth: "100%",
     minHeight: 0,
     flexShrink: 1,
   },
@@ -142,11 +171,13 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   trailingRow: {
     alignSelf: "flex-end",
+    marginTop: theme.spacing[2],
+  },
+  trailingContent: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: 24,
     gap: theme.spacing[2],
-    marginTop: theme.spacing[2],
   },
   // The absolute-fill backdrop follows this padding, keeping content inside its edges.
   trailingRowWithBackdrop: { padding: theme.spacing[2], flexShrink: 0 },
@@ -192,6 +223,17 @@ function UserMessageText({
   | "onContentPress"
   | "contentAccessibilityLabel"
 > & { hasText: boolean }) {
+  const naturalFlow = useContext(NaturalMessageFlowContext);
+  const reportTextLayout = useCallback(
+    (event: import("react-native").TextLayoutEvent) => {
+      naturalFlow?.reportText(event.nativeEvent.lines);
+      if (naturalFlow) {
+        onPreviewOverflowChange?.(event.nativeEvent.lines.length > (previewLines ?? 1));
+      }
+      onBubbleTextLayout?.(event);
+    },
+    [naturalFlow, onBubbleTextLayout, onPreviewOverflowChange, previewLines],
+  );
   const textMaskStyle = useMemo(
     () => [
       userMessageStylesheet.textMask,
@@ -199,10 +241,18 @@ function UserMessageText({
     ],
     [copyMask?.prefixHeight],
   );
+  const compactPrefixHeight = naturalFlow?.textPrefixHeight;
+  const suffixMaskStyle = useMemo(
+    () => [
+      userMessageStylesheet.textMask,
+      inlineUnistylesStyle({ top: compactPrefixHeight ?? 0, bottom: 0 }),
+    ],
+    [compactPrefixHeight],
+  );
   const keyboardLink = useTextLink(onContentPress);
   const textAccessibility = useMemo(
     () =>
-      onContentPress
+      onContentPress && !naturalFlow?.nativePresentation
         ? {
             accessible: true,
             "aria-hidden": false,
@@ -213,16 +263,25 @@ function UserMessageText({
             ...keyboardLink,
           }
         : { accessible: !hideTextAccessibility, "aria-hidden": hideTextAccessibility },
-    [onContentPress, hideTextAccessibility, contentAccessibilityLabel, keyboardLink],
+    [
+      onContentPress,
+      hideTextAccessibility,
+      contentAccessibilityLabel,
+      keyboardLink,
+      naturalFlow?.nativePresentation,
+    ],
   );
   return (
     <View style={userMessageStylesheet.textRegion}>
       {hasText && (
         <TextPreview
-          onTextLayout={onBubbleTextLayout}
+          onTextLayout={reportTextLayout}
           selectable
           numberOfLines={previewLines ?? 1}
-          expanded={previewExpanded || previewLines === undefined}
+          expanded={
+            !naturalFlow?.clipText &&
+            (naturalFlow !== null || previewExpanded || previewLines === undefined)
+          }
           onOverflowChange={onPreviewOverflowChange ?? ignorePreviewOverflow}
           style={userMessageStylesheet.text}
           {...textAccessibility}
@@ -231,6 +290,24 @@ function UserMessageText({
         >
           {message}
         </TextPreview>
+      )}
+      {/* Keep the one natural Text fully laid out; mask only suffix ink beyond
+          the current measured first line, without changing its flow height. */}
+      {naturalFlow?.nativePresentation ? (
+        <NativeMessageSuffixMask
+          driver={naturalFlow.nativePresentation}
+          backgroundStyle={userMessageStylesheet.textMask}
+        />
+      ) : (
+        compactPrefixHeight !== undefined && (
+          <View
+            style={suffixMaskStyle}
+            pointerEvents="none"
+            accessible={false}
+            testID="user-message-suffix-mask"
+            aria-hidden
+          />
+        )
       )}
       {!!copyMask?.prefixHeight && (
         <View
@@ -268,13 +345,62 @@ function areMessageActionsVisible(compact: boolean, hovered: boolean, navigation
   return compact || isNative || hovered || navigationHeld === true;
 }
 
+/** Keep ordinary action visibility independent of the native sticky paint mode. */
+interface UserMessageActionVisibility {
+  suppressed: boolean;
+  pending: boolean;
+  hasActions: boolean;
+  compact: boolean;
+  hovered: boolean;
+  navigationHeld: boolean | undefined;
+}
+
+function shouldShowUserMessageActions({
+  suppressed,
+  pending,
+  hasActions,
+  compact,
+  hovered,
+  navigationHeld,
+}: UserMessageActionVisibility) {
+  return (
+    !suppressed &&
+    !pending &&
+    hasActions &&
+    areMessageActionsVisible(compact, hovered, navigationHeld)
+  );
+}
+
 function userMessageHitAllocation(suppressed: boolean, actualWebPrompt: boolean) {
   if (suppressed) return "none";
   if (actualWebPrompt) return "box-none";
   return "auto";
 }
 
+/** The action row's existing compact backing padding is independent of More. */
+function compactMessageActionPadding(webNaturalFlow: boolean, hasTrailingRow: boolean): number {
+  return webNaturalFlow && hasTrailingRow ? SPACING[2] * 2 : 0;
+}
+
+/** Select the platform flow and its presentation flags without changing body ownership. */
+function userMessageFlowConfiguration(
+  hasNaturalFlow: boolean,
+  hasBodyViewport: boolean,
+  hasNativeDriver: boolean,
+) {
+  const ordinaryFlow = isWeb ? WebUserMessageFlow : UserMessageFlow;
+  return {
+    actualWebPrompt: isWeb && hasBodyViewport,
+    webNaturalFlow: isWeb && hasNaturalFlow,
+    nativeNaturalFlow: !isWeb && hasNaturalFlow,
+    Flow: hasNativeDriver ? NativeUserMessageFlow : ordinaryFlow,
+  };
+}
+
 export const UserMessage = memo(function UserMessage({
+  sender,
+  onNaturalFlowGeometry,
+  naturalFlowMaximumHeight,
   onContentPress,
   contentAccessibilityLabel,
   bubbleWidth,
@@ -297,8 +423,8 @@ export const UserMessage = memo(function UserMessage({
   agentId,
   messageId,
   message,
-  images = [],
-  attachments = [],
+  images = EMPTY_MESSAGE_IMAGES,
+  attachments = EMPTY_MESSAGE_ATTACHMENTS,
   timestamp,
   capabilities,
   client,
@@ -308,8 +434,14 @@ export const UserMessage = memo(function UserMessage({
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
+  const nativeDriver = useContext(NativeMessagePresentationContext);
   const expandedCopy = isExpandedPromptCopy(copyMask);
-  const actualWebPrompt = isWeb && bodyViewportHeight !== undefined;
+  const flowConfiguration = userMessageFlowConfiguration(
+    onNaturalFlowGeometry !== undefined,
+    bodyViewportHeight !== undefined,
+    Boolean(nativeDriver),
+  );
+  const { actualWebPrompt, webNaturalFlow, nativeNaturalFlow } = flowConfiguration;
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
@@ -322,11 +454,14 @@ export const UserMessage = memo(function UserMessage({
   const compactPreview = previewLines !== undefined && !previewExpanded;
   const showMessageActions = hasText;
   const hasTrailingRow = showMessageActions || !!navigationActions;
-  const showTrailingRow =
-    !copyMask &&
-    !isPending &&
-    hasTrailingRow &&
-    areMessageActionsVisible(isCompact, isHovered, keepActionsVisible);
+  const showTrailingRow = shouldShowUserMessageActions({
+    suppressed: !!copyMask,
+    pending: isPending,
+    hasActions: hasTrailingRow,
+    compact: isCompact,
+    hovered: isHovered,
+    navigationHeld: keepActionsVisible,
+  });
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
@@ -358,20 +493,20 @@ export const UserMessage = memo(function UserMessage({
   const contentStyle = useMemo(
     () => [
       userMessageStylesheet.content,
-      bodyViewportHeight === undefined
+      bodyViewportHeight === undefined || onNaturalFlowGeometry !== undefined
         ? undefined
         : inlineUnistylesStyle({ maxHeight: bodyViewportHeight }),
     ],
-    [bodyViewportHeight],
+    [bodyViewportHeight, onNaturalFlowGeometry],
   );
   const bubbleStyle = useMemo(
     () =>
       resolveUserMessageBubbleStyle(
         bubbleWidth,
         pinned,
-        compactPreview || bodyViewportHeight !== undefined,
+        onNaturalFlowGeometry === undefined && (compactPreview || bodyViewportHeight !== undefined),
       ),
-    [bubbleWidth, pinned, compactPreview, bodyViewportHeight],
+    [bubbleWidth, pinned, compactPreview, bodyViewportHeight, onNaturalFlowGeometry],
   );
   // The hit target stays absolute and independent of body layout. Reuse the bubble's
   // actual corners, including its pinned variant, for feedback without clipping children.
@@ -391,20 +526,22 @@ export const UserMessage = memo(function UserMessage({
   const trailingRowStyle = useMemo(
     () => [
       userMessageStylesheet.trailingRow,
-      actionRowBackdrop ? userMessageStylesheet.trailingRowWithBackdrop : undefined,
-      previewLines === undefined ? undefined : userMessageStylesheet.trailingRowPreview,
+      actionRowBackdrop && !nativeNaturalFlow
+        ? userMessageStylesheet.trailingRowWithBackdrop
+        : undefined,
+      previewLines === undefined || nativeNaturalFlow
+        ? undefined
+        : userMessageStylesheet.trailingRowPreview,
       showTrailingRow
         ? userMessageStylesheet.trailingRowVisible
         : userMessageStylesheet.trailingRowHidden,
     ],
-    [showTrailingRow, previewLines, actionRowBackdrop],
+    [showTrailingRow, previewLines, actionRowBackdrop, nativeNaturalFlow],
   );
 
   const attachmentContent = useMemo(
     () => (
       <UserMessageAttachments
-        onContentPress={onContentPress}
-        contentAccessibilityLabel={contentAccessibilityLabel}
         images={images}
         attachments={attachments}
         compact={compactPreview}
@@ -412,92 +549,229 @@ export const UserMessage = memo(function UserMessage({
         onOpen={setLightboxMetadata}
       />
     ),
-    [onContentPress, contentAccessibilityLabel, images, attachments, compactPreview, hasText],
+    [images, attachments, compactPreview, hasText],
+  );
+  const flowRevision = useMemo(
+    () => ({ message, images, attachments, isPending, hasTrailingRow }),
+    [message, images, attachments, isPending, hasTrailingRow],
+  );
+  const Bubble = onNaturalFlowGeometry ? NaturalMessageBubble : View;
+  const contentTarget = onContentPress ? (
+    <PressHighlight
+      style={contentPressTargetStyle}
+      highlightStyle={contentPressHighlight}
+      onPress={onContentPress}
+      accessible={false}
+      focusable={false}
+      aria-hidden
+      testID="user-message-content-target"
+    />
+  ) : null;
+  const bubbleContent = (
+    <Bubble
+      style={bubbleStyle}
+      pointerEvents={actualWebPrompt || webNaturalFlow ? "auto" : undefined}
+      ref={bubbleRef}
+      onLayout={onBubbleLayout}
+      testID="user-message-bubble"
+    >
+      {nativeDriver ? (
+        <NativeMessageVisibility
+          driver={nativeDriver}
+          visible="pinned"
+          style={StyleSheet.absoluteFill}
+        >
+          {contentTarget}
+        </NativeMessageVisibility>
+      ) : (
+        contentTarget
+      )}
+      <UserMessagePreviewContent
+        action={inlineContentAction}
+        compact={compactPreview}
+        bounded={bodyViewportHeight !== undefined}
+        hasText={hasText}
+        attachments={attachmentContent}
+      >
+        <UserMessageText
+          message={message}
+          hasText={hasText}
+          previewLines={previewLines}
+          previewExpanded={previewExpanded}
+          onPreviewOverflowChange={onPreviewOverflowChange}
+          hideTextAccessibility={hideTextAccessibility}
+          onBubbleTextLayout={onBubbleTextLayout}
+          copyMask={copyMask}
+          onContentPress={onContentPress}
+          contentAccessibilityLabel={contentAccessibilityLabel}
+        />
+      </UserMessagePreviewContent>
+      {contentAction}
+    </Bubble>
+  );
+  const trailingBackdrop = useMemo(() => {
+    if (nativeDriver) {
+      return (
+        <NativeMessageVisibility
+          driver={nativeDriver}
+          visible="pinned"
+          style={StyleSheet.absoluteFill}
+        >
+          {actionRowBackdrop}
+        </NativeMessageVisibility>
+      );
+    }
+    return nativeNaturalFlow ? null : actionRowBackdrop;
+  }, [nativeDriver, nativeNaturalFlow, actionRowBackdrop]);
+  const trailingContent = useMemo(
+    () =>
+      hasTrailingRow ? (
+        <UserMessageTrailingRow
+          style={trailingRowStyle}
+          backed={Boolean(actionRowBackdrop)}
+          backdrop={trailingBackdrop}
+          pointerEvents={showTrailingRow ? "auto" : "none"}
+          testID="user-message-trailing-row"
+          aria-hidden={!!copyMask}
+          accessibilityElementsHidden={!!copyMask}
+        >
+          {showMessageActions ? (
+            <UserMessageTextActions
+              formattedTimestamp={formattedTimestamp}
+              capabilities={capabilities}
+              messageId={messageId}
+              isRewindPending={rewindMutation.isPending}
+              message={message}
+              onRewind={handleRewind}
+              getContent={getMessageContent}
+            />
+          ) : null}
+          {navigationActions}
+        </UserMessageTrailingRow>
+      ) : null,
+    [
+      hasTrailingRow,
+      trailingRowStyle,
+      actionRowBackdrop,
+      showTrailingRow,
+      copyMask,
+      trailingBackdrop,
+      showMessageActions,
+      formattedTimestamp,
+      capabilities,
+      messageId,
+      rewindMutation.isPending,
+      message,
+      handleRewind,
+      getMessageContent,
+      navigationActions,
+    ],
+  );
+  const Flow = flowConfiguration.Flow;
+  const content = onNaturalFlowGeometry ? (
+    <Flow
+      driver={nativeDriver}
+      trailing={trailingContent}
+      controls={inlineContentAction}
+      summary={null}
+      revision={flowRevision}
+      message={message}
+      compact={compactPreview}
+      bounded={bodyViewportHeight !== undefined}
+      maximumHeight={naturalFlowMaximumHeight ?? bodyViewportHeight}
+      compactTrailingPadding={compactMessageActionPadding(webNaturalFlow, hasTrailingRow)}
+      backdropStyle={bubbleStyle}
+      visualBackdrop={actionRowBackdrop}
+      onGeometry={onNaturalFlowGeometry}
+      onHoverChange={webNaturalFlow ? setIsHovered : undefined}
+    >
+      {renderMessageSender(sender, serverId)}
+      {bubbleContent}
+    </Flow>
+  ) : (
+    <View
+      style={contentStyle}
+      pointerEvents={actualWebPrompt ? "box-none" : undefined}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+    >
+      {renderMessageSender(sender, serverId)}
+      {bubbleContent}
+      {trailingContent}
+    </View>
   );
   return (
     <View
       style={containerStyle}
       testID="user-message"
       aria-busy={isPending}
-      pointerEvents={userMessageHitAllocation(expandedCopy, actualWebPrompt)}
+      pointerEvents={
+        onNaturalFlowGeometry ? "box-none" : userMessageHitAllocation(expandedCopy, actualWebPrompt)
+      }
       aria-hidden={expandedCopy}
       accessibilityElementsHidden={expandedCopy}
       importantForAccessibility={expandedCopy ? "no-hide-descendants" : "auto"}
     >
-      <View
-        style={contentStyle}
-        pointerEvents={actualWebPrompt ? "box-none" : undefined}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
-      >
-        <View
-          style={bubbleStyle}
-          pointerEvents={actualWebPrompt ? "auto" : undefined}
-          ref={bubbleRef}
-          onLayout={onBubbleLayout}
-          testID="user-message-bubble"
-        >
-          {onContentPress && (
-            <PressHighlight
-              style={contentPressTargetStyle}
-              highlightStyle={contentPressHighlight}
-              onPress={onContentPress}
-              accessible={false}
-              focusable={false}
-              aria-hidden
-              testID="user-message-content-target"
-            />
-          )}
-          <UserMessagePreviewContent
-            action={inlineContentAction}
-            compact={compactPreview}
-            bounded={bodyViewportHeight !== undefined}
-            hasText={hasText}
-            attachments={attachmentContent}
-          >
-            <UserMessageText
-              message={message}
-              hasText={hasText}
-              previewLines={previewLines}
-              previewExpanded={previewExpanded}
-              onPreviewOverflowChange={onPreviewOverflowChange}
-              hideTextAccessibility={hideTextAccessibility}
-              onBubbleTextLayout={onBubbleTextLayout}
-              copyMask={copyMask}
-              onContentPress={onContentPress}
-              contentAccessibilityLabel={contentAccessibilityLabel}
-            />
-          </UserMessagePreviewContent>
-          {contentAction}
-        </View>
-        {hasTrailingRow ? (
-          <View
-            style={trailingRowStyle}
-            pointerEvents={showTrailingRow ? "auto" : "none"}
-            testID="user-message-trailing-row"
-            aria-hidden={!!copyMask}
-            accessibilityElementsHidden={!!copyMask}
-          >
-            {actionRowBackdrop}
-            {showMessageActions ? (
-              <UserMessageTextActions
-                formattedTimestamp={formattedTimestamp}
-                capabilities={capabilities}
-                messageId={messageId}
-                isRewindPending={rewindMutation.isPending}
-                message={message}
-                onRewind={handleRewind}
-                getContent={getMessageContent}
-              />
-            ) : null}
-            {navigationActions}
-          </View>
-        ) : null}
-      </View>
+      {content}
       <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
     </View>
   );
 });
+
+/** Keep web action content at its ordinary rail width. Pinned padding paints
+ * into the existing chat gutter instead of narrowing and rewrapping the content.
+ * Native keeps the same single View and the original composed row styles.
+ */
+function UserMessageTrailingRow({
+  backed,
+  backdrop,
+  style,
+  children,
+  ...props
+}: React.ComponentProps<typeof View> & { backed: boolean; backdrop: ReactNode }) {
+  const flow = useContext(NaturalMessageFlowContext);
+  const web = flow?.web === true;
+  const railWidth = flow?.webRailWidth;
+  const preparedWidth = railWidth !== undefined && railWidth > 0;
+  const padding = backed ? SPACING[2] : 0;
+  const paintStyle = useMemo<React.ComponentProps<typeof View>["style"]>(() => {
+    if (!web) return [userMessageStylesheet.trailingContent, style];
+    return [
+      style,
+      {
+        maxWidth: preparedWidth ? railWidth + padding * 2 : "100%",
+        marginLeft: preparedWidth ? -padding : 0,
+        marginRight: preparedWidth ? -padding : 0,
+      },
+    ];
+  }, [web, style, preparedWidth, railWidth, padding]);
+  const contentStyle = useMemo<React.ComponentProps<typeof View>["style"]>(
+    () => [
+      userMessageStylesheet.trailingContent,
+      {
+        maxWidth: preparedWidth ? railWidth : "100%",
+        minWidth: 0,
+        flexShrink: 1,
+      },
+    ],
+    [preparedWidth, railWidth],
+  );
+  if (!web)
+    return (
+      <View {...props} style={paintStyle}>
+        {backdrop}
+        {children}
+      </View>
+    );
+  return (
+    <View {...props} style={paintStyle}>
+      {backdrop}
+      <View style={contentStyle} testID="user-message-action-content">
+        {children}
+      </View>
+    </View>
+  );
+}
 
 /** Keep timestamp, rewind and copy together beside optional prompt navigation. */
 function UserMessageTextActions({
@@ -538,4 +812,11 @@ function UserMessageTextActions({
       />
     </>
   );
+}
+
+function renderMessageSender(
+  sender: AgentMessage["sender"] | undefined,
+  serverId: string | undefined,
+): ReactNode {
+  return sender ? <MessageSender sender={sender} serverId={serverId} /> : null;
 }

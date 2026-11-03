@@ -359,6 +359,27 @@ index 272311d..d8cfc20 100644
    }, []);
    const handleUnmountSheet = (0, _react.useCallback)(key => {
      const _sheetsQueue = sheetsQueueRef.current.slice();
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js
+index 973d05c..b484b5f 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/hooks/useAnimatedLayout.js
+@@ -86,7 +86,7 @@ function useAnimatedLayout(containerLayoutState, topInset, bottomInset, modal, s
+     });
+   }, [state, verticalInset, modal]);
+   (0, _react.useEffect)(() => {
+-    _reactNative.Dimensions.addEventListener('change', ({
++    const subscription = _reactNative.Dimensions.addEventListener('change', ({
+       window
+     }) => {
+       state.modify(_state => {
+@@ -96,6 +96,7 @@ function useAnimatedLayout(containerLayoutState, topInset, bottomInset, modal, s
+         return _state;
+       });
+     });
++    return () => subscription.remove();
+   }, [state]);
+   //#endregion
+ 
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
 index e44ad86..96555ef 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/index.js
@@ -755,6 +776,27 @@ index 11d3da9..f1d05a9 100644
    }, []);
    const handleUnmountSheet = useCallback(key => {
      const _sheetsQueue = sheetsQueueRef.current.slice();
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js b/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js
+index b0eec93..67713a2 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/module/hooks/useAnimatedLayout.js
+@@ -82,7 +82,7 @@ export function useAnimatedLayout(containerLayoutState, topInset, bottomInset, m
+     });
+   }, [state, verticalInset, modal]);
+   useEffect(() => {
+-    Dimensions.addEventListener('change', ({
++    const subscription = Dimensions.addEventListener('change', ({
+       window
+     }) => {
+       state.modify(_state => {
+@@ -92,6 +92,7 @@ export function useAnimatedLayout(containerLayoutState, topInset, bottomInset, m
+         return _state;
+       });
+     });
++    return () => subscription.remove();
+   }, [state]);
+   //#endregion
+ 
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/index.js b/node_modules/@gorhom/bottom-sheet/lib/module/index.js
 index 8259637..eb057fe 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/module/index.js
@@ -1191,6 +1233,26 @@ index 8782dee..1473399 100644
      },
      []
    );
+diff --git a/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts b/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts
+index 68c674d..564833c 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts
++++ b/node_modules/@gorhom/bottom-sheet/src/hooks/useAnimatedLayout.ts
+@@ -106,13 +106,14 @@ export function useAnimatedLayout(
+     [state, verticalInset, modal]
+   );
+   useEffect(() => {
+-    Dimensions.addEventListener('change', ({ window }) => {
++    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+       state.modify(_state => {
+         'worklet';
+         _state.window = window;
+         return _state;
+       });
+     });
++    return () => subscription.remove();
+   }, [state]);
+   //#endregion
+ 
 diff --git a/node_modules/@gorhom/bottom-sheet/src/index.ts b/node_modules/@gorhom/bottom-sheet/src/index.ts
 index 7aaea57..6a5f5a4 100644
 --- a/node_modules/@gorhom/bottom-sheet/src/index.ts

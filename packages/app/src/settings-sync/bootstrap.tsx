@@ -38,7 +38,13 @@ export function SettingsSyncBootstrap() {
     let active = true;
     const owner = new AbortController();
     const updateGate = () => {
+      if (!active || !uninstall.isCurrent()) return;
       const state = settingsSync.getState();
+      uninstall.updateReadAvailability({
+        hydrated,
+        generation: settingsSync.getGeneration(),
+        status: state.status,
+      });
       setSettingsHostSelected(state.selectedHost !== null);
       setSettingsEditingBlocked(
         !hydrated || !state.canWrite || !["local", "ready", "offline"].includes(state.status),
@@ -49,15 +55,15 @@ export function SettingsSyncBootstrap() {
     const stopSidebar = observeSidebarSettingsEdits();
     const initialize = async () => {
       await initializeDeviceSidebarModes();
-      if (!active) return;
+      if (!active || !uninstall.isCurrent()) return;
       await settingsSync.load(owner.signal);
-      if (!active) return;
+      if (!active || !uninstall.isCurrent()) return;
       hydrated = true;
       setInitialized(true);
       updateGate();
     };
     const startInitialization = () => {
-      if (!active || hydrated || initializing) return;
+      if (!active || !uninstall.isCurrent() || hydrated || initializing) return;
       initializing = true;
       void initialize()
         .catch(console.error)

@@ -283,3 +283,89 @@ test("batches retain each sender's attachment context and image order", async ()
     )?.map((message) => message.source?.agentId),
   ).toEqual(["one", "two"]);
 });
+
+test("batch provenance retains separate recipients and capability links without rendering tokens", async () => {
+  const requests: Array<
+    Parameters<Parameters<typeof createAgentMessageDelivery>[0]["dispatch"]>[0]
+  > = [];
+  const delivery = createAgentMessageDelivery({
+    dispatch: async (request) => {
+      requests.push(request);
+      return "steered";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "one",
+    prompt: "result one",
+    source: {
+      kind: "agent-message",
+      agentId: "worker-a",
+      serverId: "host-a",
+      attention: {
+        continuation: {
+          objectiveId: "human-job",
+          token: "private-reply-capability",
+          requestId: "original-request",
+        },
+      },
+    },
+  });
+  delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "two",
+    prompt: "result two",
+    source: { kind: "agent-notification", agentId: "worker-b", event: "finished" },
+  });
+  await delivery.close();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.attention).toEqual([
+    {
+      kind: "agent",
+      requestId: "one",
+      requester: { agentId: "worker-a", serverId: "host-a" },
+      attention: {
+        continuation: {
+          objectiveId: "human-job",
+          token: "private-reply-capability",
+          requestId: "original-request",
+        },
+      },
+    },
+    { kind: "agent", requestId: "two", requester: { agentId: "worker-b" } },
+  ]);
+  expect(JSON.stringify(requests[0]?.prompt)).not.toContain("private-reply-capability");
+});
+
+test("runtime safety sees queued messages until provider dispatch settles", async () => {
+  const clock = createClock();
+  let release!: () => void;
+  const dispatched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    dispatch: async () => {
+      await dispatched;
+      return "steered";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  expect(delivery.hasPending("parent")).toBe(false);
+  delivery.enqueue({
+    recipientId: "parent",
+    prompt: "finished",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  expect(delivery.hasPending("parent")).toBe(true);
+  clock.advance(2000);
+  expect(delivery.hasPending("parent")).toBe(true);
+  release();
+  await delivery.close();
+  expect(delivery.hasPending("parent")).toBe(false);
+});

@@ -4,8 +4,7 @@ import type React from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import type { StreamItem } from "@/types/stream";
-import { getStreamItemMessageId } from "./presentation";
+import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import { createPromptJumpSettleController, PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
 import type { ScrollToMessageOccurrence } from "./strategy";
 
@@ -73,11 +72,25 @@ export function useScrollToMessage({
             const target = scrollContainerRef.current?.querySelector<HTMLElement>(
               `[data-message-id="${CSS.escape(messageId)}"]`,
             );
-            const measuredTarget =
-              placementRef.current === "pinned"
-                ? target?.querySelector<HTMLElement>('[data-testid="user-message-bubble"]')
-                : target;
-            return measuredTarget ? getOriginalPromptTop(measuredTarget) : null;
+            if (placementRef.current === "pinned") {
+              const row = target?.closest<HTMLElement>("[data-actual-prompt-row]");
+              const body = row?.querySelector<HTMLElement>("[data-actual-prompt-content]");
+              const flow = Number(body?.dataset.promptFlowHeight);
+              const compact = Number(body?.dataset.promptCompactHeight);
+              if (
+                !row ||
+                !body ||
+                !(flow > 0) ||
+                !(compact > 0) ||
+                !Number.isFinite(flow) ||
+                !Number.isFinite(compact)
+              )
+                return null;
+              // Both extents share the same current body owner. Caller chrome
+              // cancels in their difference; expanded More is never an input.
+              return row.getBoundingClientRect().top + Math.max(0, flow - compact);
+            }
+            return target ? getOriginalPromptTop(target) : null;
           },
           estimateTargetTop(messageId) {
             // Find occurrences own their exact target; a message-row estimate must

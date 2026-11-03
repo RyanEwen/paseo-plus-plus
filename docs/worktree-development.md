@@ -10,13 +10,11 @@ Every fork feature has its own maintained branch, including its tests, documenta
 fixes. Maintain the fork assuming upstream never accepts those features. Upstream adoption is
 optional and does not determine whether we maintain or release a feature.
 
-Keep a clean upstream-facing branch alongside each fork feature branch. The upstream-facing
-branch contains upstream plus that feature and its required dependencies, ready for a focused PR
-whenever upstream wants it. Merge fork `main` into the fork companion, never into the clean
-upstream-facing branch. Carry feature changes to both branches and record their correspondence;
-a branch pair is ready only when the feature changes and checks are current on both sides.
-Resolve dependencies explicitly rather than bringing unrelated fork features into an upstream PR.
-Neither keeping a branch ready nor an upstream request authorizes pushing to upstream.
+Maintain each feature on its fork branch with the existing owner. The Paseo team may borrow those branches if useful. Upstream PR readiness, portable settings placement and compatibility with upstream product choices do not gate fork completion or releases.
+
+Preserve prepared upstream-facing branches and their qualification receipts as optional borrowing material. Do not require new counterparts or duplicate every subsequent fork change into them. Record the exact source and verification limits when one is used; its historical checks do not qualify later fork changes. Never reset or delete preserved work as part of this scope change.
+
+An upstream request does not authorize pushing or posting there.
 
 Keep only our own branches locally and in the fork. Our clean upstream-facing feature branches
 are ours; imported upstream feature branches and published upstream mirrors are not. Fetch
@@ -33,7 +31,7 @@ branch is `main`. This development checkout keeps the fork and upstream remotes 
 | `integration`, tracking `fork/integration` | Long-lived combined testing branch for selected feature work.                        |
 | `refs/upstream-source/main`                | Private comparison checkpoint for upstream main; not a local or published branch.    |
 | Fork feature branches                      | Own each feature and receive fork `main` updates.                                    |
-| Upstream-facing feature branches           | Keep the same feature ready for an upstream PR without unrelated fork history.       |
+| Preserved upstream-facing feature branches | Optional borrowing material with recorded source and verification limits.            |
 | Temporary review branches                  | Optional bounded reviews before combination in `integration`.                        |
 
 Inspect actual remote URLs and full heads when adopting a checkout. A ref's name does not prove
@@ -67,17 +65,54 @@ and explicit owner comparison-ref migration. Do not bulk-push their commits, pru
 active workspaces, or silently replace their bases with `main`. Historical QA receipts retain the
 branch names and source hashes that were actually qualified; they do not define today's workflow.
 
-Configure upstream fetching without a wildcard branch refspec:
+### Sync upstream and maintained features
 
-```bash
-git config --replace-all remote.origin.fetch '+refs/heads/main:refs/upstream-source/main'
-git fetch --no-tags origin
-```
+Invoke `/sync-fork` in Claude or `$sync-fork` in Codex to sync upstream into fork `main`, refresh
+maintained feature branches, and integrate their accepted changes. The repository skill lives in
+`.agents/skills/sync-fork`; `.claude/skills/sync-fork` links to it. This section owns the workflow.
 
-For upstream synchronization, record the previous and fetched checkpoint SHAs before reviewing
-the delta. Integrate the reviewed upstream changes into fork `main` through the same qualification
-process; do not reset fork `main` to upstream or publish the comparison checkpoint as a branch.
-Review the [fork overview](release.md#fork-overview-review) for additions that upstream now provides.
+Invocation authorizes normal local commits and merges needed for this integration within current
+session permissions. It does not authorize upstream writes, resets, force-pushes, deletions,
+releases, daemon restarts, or blanket acceptance of unfinished work. Publish to the fork only when
+the session authorizes it; do not repeat confirmations already answered. Stop dependent mutations
+when ownership, acceptance, or permissions remain unresolved, and report the exact blocker.
+
+1. Inspect actual fetch and push URLs, worktrees, full local and remote heads, tracking refs,
+   dirty work, and unpublished commits. Inventory maintained features with their owners and
+   acceptance state; distinguish them from preserved upstream-facing and legacy refs. Use owner
+   records and feature guides rather than branch names alone. Record each starting SHA and base,
+   including local work absent from the fork. Preserve dirty and unpublished work with its owner;
+   a sync request does not authorize committing unrelated changes or moving active workspaces.
+2. Verify `fork` targets RyanEwen/paseo-plus-plus and `origin` targets getpaseo/paseo before fetching.
+   Record `refs/upstream-source/main` before the fetch, or record that it is absent. Configure the
+   private checkpoint as below, fetch fork heads without pruning preserved refs, and record the
+   fetched upstream checkpoint and fork heads. Review the upstream delta; never reset fork `main`
+   to it or publish the checkpoint as a branch.
+
+   ```bash
+   git config --replace-all remote.origin.fetch '+refs/heads/main:refs/upstream-source/main'
+   git fetch --no-tags origin
+   ```
+
+3. Reuse the existing synchronization owner and qualified workspace; follow the session's workspace
+   arrangement rules if a new owner is needed. Prepare and review the upstream merge against the
+   resolved fork `main`, reconcile local unpublished history explicitly, and qualify the exact
+   integration candidate before advancing `main`. Review the
+   [fork overview](release.md#fork-overview-review) for additions upstream now provides.
+4. Have each existing feature owner merge the updated fork `main` into its maintained branch,
+   resolve conflicts there, and qualify changed behavior. Coordinate one heavy validation operation
+   at a time through the [visible queue](#run-checks-through-a-visible-queue). Reuse unchanged
+   evidence and keep source SHAs and platform limits explicit. Leave preserved upstream-facing
+   and legacy refs intact unless separately authorized reconciliation applies.
+5. Assemble selected owner changes in `integration`, review conflicts with their owners, and run
+   combined qualification. Integrate only reviewed, accepted feature commits into `main`; keep
+   unfinished or unqualified changes pending. Merge the resulting `main` back into `integration`
+   and bring maintained features current with that final `main`, recording checks required by
+   additional changes. Never promote all of `integration` while it contains unaccepted work.
+6. Report exact before/after upstream checkpoint, fork `main`, maintained feature, and `integration`
+   SHAs; accepted and deferred changes; preserved unpublished work and refs; check results and
+   limitations; and whether changes are local or published. Do not claim completion for blocked
+   branches or qualification that has not run.
 
 Release only the exact validated fork integration SHA through
 [fork preview distribution](release.md#fork-preview-distribution). Temporary release coordination

@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createServer, type Server as HTTPServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -281,6 +282,9 @@ function createVoiceAssistantWebSocketServer(params: {
   const { httpServer, broker } = params;
   const agentManager = {
     setAgentAttentionCallback() {},
+    setAttentionHost() {},
+    setAttentionPresentationEnabled() {},
+    agentAwareAttentionEnabled: true,
     subscribe: () => () => {},
     getMetricsSnapshot: () => ({
       total: 0,
@@ -290,6 +294,7 @@ function createVoiceAssistantWebSocketServer(params: {
     }),
   };
   const daemonConfigStore = {
+    get: () => ({ notifications: { agentAwareAttention: true } }),
     onApply: () => () => {},
     onChange: () => () => {},
   };
@@ -306,6 +311,7 @@ function createVoiceAssistantWebSocketServer(params: {
     null,
     { allowedOrigins: new Set(["*"]) },
     createWorkspaceAutoNameStub(),
+    createWorkspaceRuntimeStore(),
     undefined,
     undefined,
     undefined,

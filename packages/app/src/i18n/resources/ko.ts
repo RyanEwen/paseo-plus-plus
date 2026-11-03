@@ -102,11 +102,11 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 스크롤 가능한 탭 막대를 표시합니다. 끄면 선택한 탭을 유지하며 이전 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 같은 너비의 탭을 표시하고 필요한 경우에만 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
       },
       widerWorkspaceTabs: {
         label: "더 넓은 작업 공간 탭",
-        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 짧은 탭은 자연스러운 너비를 유지합니다. 끄면 이전 최대 너비로 돌아갑니다.",
+        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰의 작업 공간 탭은 항상 사용 가능한 너비를 균등하게 나눕니다.",
       },
 
       descriptiveToolCalls: {
@@ -114,13 +114,9 @@ export const ko: TranslationResources = {
         hint: "알려진 작업을 설명하고 정확한 명령과 출력은 세부 정보에 보존합니다. 끄면 기존 레이블로 돌아갑니다.",
       },
 
-      sidebarProjectSelector: {
-        label: "제목에 선택한 프로젝트 표시",
-        hint: "워크스페이스 제목에 선택한 프로젝트 이름을 표시합니다. 끄면 워크스페이스로 표시되며 호스트와 프로젝트 선택은 계속 사용할 수 있습니다.",
-      },
       stickyUserPrompts: {
         label: "사용자 메시지 계속 표시",
-        hint: "현재 메시지를 채팅 위에 표시하고 펼치기와 이전/다음 이동을 제공합니다",
+        hint: "현재 메시지를 간단히 고정하고 펼치거나 이전/다음으로 이동할 수 있습니다. 일반 메시지는 항상 펼쳐져 있으며 로딩 표시가 기존 메시지를 가리지 않습니다.",
       },
       previousAgents: {
         label: "이전 에이전트",
@@ -284,6 +280,7 @@ export const ko: TranslationResources = {
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
       daemonClientDisconnected: "데몬 클라이언트 연결이 끊어졌습니다",
       noFileFound: "{{token}}에 해당하는 파일을 찾을 수 없습니다",
+      folderOutsideWorkspace: "{{path}}은(는) 이 워크스페이스 밖에 있습니다",
       unexpectedDictationError: "받아쓰기를 처리하는 중 예기치 않은 오류가 발생했습니다.",
     },
     connectionStatus: {
@@ -350,6 +347,8 @@ export const ko: TranslationResources = {
       sendAndInterrupt: "보내고 중단",
       sendAndSteer: "보내고 지시 추가",
       sendMessage: "메시지 보내기",
+      longPressToQueue: "길게 눌러 대기열에 추가",
+      longPressToSendNow: "길게 눌러 지금 보내기",
       queue: "대기열",
       send: "보내기",
     },
@@ -885,7 +884,11 @@ export const ko: TranslationResources = {
     terminal: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
+      restoreRequiresUpdate: "터미널을 보려면 호스트를 업데이트하세요.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
+      fileUploaded: "파일을 업로드했습니다",
+      pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
+      uploadingFile: "파일 업로드 중…",
     },
     sheet: {
       openAsTab: "탭으로 열기",
@@ -1441,6 +1444,16 @@ export const ko: TranslationResources = {
       multipleWorkspaces_other: "{{count}}개 프로젝트의 워크스페이스",
       title: "프로젝트",
     },
+    workspaceTree: {
+      expand: "{{name}}의 하위 워크스페이스 펼치기",
+      collapse: "{{name}}의 하위 워크스페이스 접기",
+      activeChild: "활성 워크스페이스가 포함되어 있습니다.",
+      summary_one: "하위 워크스페이스 {{count}}개: {{status}}",
+      summary_other: "하위 워크스페이스 {{count}}개: {{status}}",
+      humanAttention_one: "하위 워크스페이스 {{count}}개에 사용자의 확인이 필요합니다",
+      humanAttention_other: "하위 워크스페이스 {{count}}개에 사용자의 확인이 필요합니다",
+      unknownStatus: "상태를 확인할 수 없음",
+    },
     statusGroupAccessibility: "{{label}} 그룹",
     statusBucket: {
       workingCount: "{{count}}개 작업 중",
@@ -1483,6 +1496,13 @@ export const ko: TranslationResources = {
       showBackground: "백그라운드 작업 공간 표시",
       trigger: "표시 설정",
       heading: "표시",
+      sort: {
+        label: "정렬",
+        created: "생성일",
+        manual: "수동",
+        lastPrompt: "마지막 프롬프트",
+        updateHost: "작업 공간을 정렬하려면 호스트를 업데이트하세요",
+      },
       grouping: {
         label: "그룹화",
         project: "프로젝트",
@@ -2291,6 +2311,12 @@ export const ko: TranslationResources = {
     backdrop: "메뉴 배경",
   },
   subagents: {
+    parent: {
+      backToParent: "상위 에이전트로 돌아가기",
+      backTo: "{{label}}(으)로 돌아가기",
+      parentAgent: "상위 에이전트",
+      openParent: "상위 에이전트 열기",
+    },
     title: "하위 에이전트",
     pillLabelOne: "하위 에이전트 1개",
     pillLabelMany: "하위 에이전트 {{count}}개",
@@ -2321,7 +2347,6 @@ export const ko: TranslationResources = {
         alwaysUseExtension: ".{{extension}}에 항상 사용",
         alwaysUseFilename: "{{filename}}에 항상 사용",
         option: "{{title}} — {{owner}}",
-        actions: "파일 작업",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -2340,6 +2365,8 @@ export const ko: TranslationResources = {
       notFound: "파일을 찾을 수 없습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
+        preview: "미리보기",
+        source: "소스",
         fileSize: "파일 크기 {{size}}",
         lines: "{{count}} 라인",
         editorStatus: "편집기 상태 {{status}}",
@@ -2386,7 +2413,6 @@ export const ko: TranslationResources = {
   toolCallDetails: {
     error: "오류",
     empty: "추가 세부 정보가 없습니다",
-    subAgentActivity: "서브에이전트 활동",
     input: "입력",
     output: "출력",
   },
@@ -2453,7 +2479,14 @@ export const ko: TranslationResources = {
       paseoCalls: { one: "Paseo 호출 {{count}}개", other: "Paseo 호출 {{count}}개" },
     },
   },
+  turnSummary: {
+    details: "턴 세부 정보 보기",
+    sentBy: "{{name}}이(가) 보냄",
+    showMore: "더 보기",
+    showLess: "접기",
+  },
   toolCallGroup: {
+    thought: "생각함",
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
       other: "{{count}} 파일을 편집했습니다.",
@@ -2521,6 +2554,11 @@ export const ko: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "사용량 확인",
+    checkUsageHint: "모든 기기에서 {{host}}에 적용",
+    off: "{{host}}의 사용량 확인이 꺼져 있습니다.",
+    turnOn: "켜기",
+
     options: "설정",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
@@ -2568,6 +2606,7 @@ export const ko: TranslationResources = {
       days: "{{value}}일",
       hours: "{{value}}시간",
       minutes: "{{value}}분",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "마지막 업데이트: {{relativeTime}}",
@@ -2575,6 +2614,8 @@ export const ko: TranslationResources = {
       resetTimePassed: "초기화 시간이 지났습니다",
       resettingNow: "지금 재설정 중",
       resetsIn: "{{duration}} 후 재설정",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "지금 한도에 도달",
       runsOutIn: "{{duration}} 후 한도에 도달",
       justNow: "방금",
@@ -2660,6 +2701,17 @@ export const ko: TranslationResources = {
     },
     notifications: {
       title: "알림",
+      chooseHost: "설정할 호스트를 선택하여 연결된 모든 기기의 알림을 구성하세요.",
+      hostTitle: "{{host}}의 알림",
+      agentAware: "에이전트를 고려한 알림",
+      agentAwareHint:
+        "에이전트 간의 일반적인 결과는 조용히 처리하고, 조치가 필요할 때 «검토 대기» 배지를 표시합니다. {{host}}에 연결된 모든 기기에 적용됩니다. 이 설정을 꺼도 사람의 개입 요청과 안전 알림은 계속 제공됩니다.",
+      updateHost: "이 알림 설정을 변경하려면 호스트를 업데이트하세요.",
+      readOnly: "이 설정을 변경하려면 해당 호스트의 관리 권한이 필요합니다.",
+      unavailable: "저장하기 전에 관리 권한이 있는 지원 호스트에 연결하세요.",
+      notSaved: "호스트에서 이 알림 설정을 저장하지 않았습니다. 다시 시도하세요.",
+      loadFailed: "호스트의 알림 설정을 불러올 수 없습니다.",
+      saving: "저장 중...",
       permission: "알림 권한",
       refreshAccessibility: "알림 권한 새로 고침",
       playSound: "소리 재생",
@@ -2678,6 +2730,7 @@ export const ko: TranslationResources = {
       connections: "연결",
       agents: "에이전트",
       metadata: "메타데이터",
+      voice: "음성",
       workspaces: "워크스페이스",
       providers: "프로바이더",
       usage: "사용량",
@@ -2696,9 +2749,72 @@ export const ko: TranslationResources = {
       automaticHint: "Paseo가 사용 가능한 빠른 모델을 선택합니다",
       preferredHint: "Paseo에서 사용할 모델을 선택하세요",
       model: "모델",
-      fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
+      modelHint: "이 모델만 사용합니다. 실패해도 Paseo는 다른 모델을 시도하지 않습니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
+    },
+    voice: {
+      offline: "음성을 설정하려면 이 호스트에 연결하세요.",
+      updateHost: "음성을 설정하려면 호스트를 업데이트하세요.",
+      saveError: "음성 설정을 업데이트할 수 없습니다",
+      provider: "제공자",
+      providers: {
+        local: "로컬",
+        openai: "OpenAI",
+      },
+      voice: "목소리",
+      save: "저장",
+      retry: "다시 시도",
+      cancel: "취소",
+      model: "모델",
+      language: "언어",
+      languagePlaceholder: "자동 감지",
+      setBy: "{{name}}에서 설정됨",
+      unknownProvider: "{{provider}}을(를) 설정하려면 앱을 업데이트하세요",
+      sites: {
+        dictationStt: "음성 텍스트 변환",
+        voiceModeStt: "듣기",
+        voiceModeTts: "말하기",
+      },
+      dictation: {
+        title: "받아쓰기",
+        enabled: "받아쓰기",
+        enabledHint: "입력하는 대신 메시지 상자에 말하세요",
+      },
+      voiceMode: {
+        title: "음성 모드",
+        info: "음성 모드는 말한 내용을 텍스트로 옮기고 에이전트의 답변을 소리 내어 읽어 줍니다.",
+        enabled: "음성 모드",
+        enabledHint: "손을 쓰지 않고 에이전트와 대화하세요",
+      },
+      openai: {
+        apiKey: "API 키",
+        apiKeyHint: "호스트에 저장되며 다시 표시되지 않습니다.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "저장됨",
+        missingKey: "API 키 없음",
+        baseUrl: "기본 URL",
+        baseUrlHint: "OpenAI 호환 서버용입니다. OpenAI를 사용하려면 비워 두세요.",
+      },
+      models: {
+        loading: "모델을 불러오는 중...",
+        loadError: "로컬 모델을 불러올 수 없습니다",
+        none: "사용 가능한 모델 없음",
+        downloaded: "다운로드됨",
+        inUse: "사용 중",
+        recommended: "추천",
+        download: "다운로드",
+        downloadAction: "{{label}} 다운로드",
+        downloading: "다운로드 중...",
+        downloadingPercent: "다운로드 중 {{percent}}%",
+        extracting: "압축 해제 중...",
+        delete: "삭제",
+        deleteAction: "{{label}} 삭제",
+        deleteTitle: "{{label}}을(를) 삭제할까요?",
+        deleteMessage: "{{size}}가 확보됩니다. 나중에 다시 다운로드할 수 있습니다.",
+        languages: "{{label}} 지원 언어",
+        moreLanguages: "{{languages}} 외 {{count}}개",
+      },
     },
     general: {
       title: "일반",
@@ -2743,10 +2859,25 @@ export const ko: TranslationResources = {
           queue:
             "에이전트가 실행 중일 때 Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 제출합니다.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 중단합니다. Enter는 줄바꿈합니다.",
+          steer:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 현재 턴에 지시합니다. Enter는 줄바꿈합니다.",
+          queue:
+            "에이전트가 실행 중일 때 {{modifier}}+Enter는 대기열에 추가합니다. Enter는 줄바꿈합니다.",
+        },
         options: {
           interrupt: "중단",
           steer: "지시",
           queue: "대기열",
+        },
+      },
+      sendShortcut: {
+        label: "전송 단축키",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2765,12 +2896,14 @@ export const ko: TranslationResources = {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
       },
-      toolCallDetail: {
-        label: "도구 호출 표시",
-        description: "타임라인에 도구 호출이 표시되는 방식",
+      chatDisplay: {
+        updateHost: "채팅 환경설정을 변경하려면 선택한 설정 호스트를 업데이트하세요",
+        label: "채팅 표시",
+        description: "채팅에 표시할 에이전트 작업의 양",
         options: {
-          overview: "요약",
-          detailed: "전체 세부정보",
+          full: "전체",
+          collapseToolCalls: "도구 호출 접기",
+          collapseTurns: "턴 접기",
         },
       },
       language: {
@@ -2792,11 +2925,6 @@ export const ko: TranslationResources = {
     },
     diagnostics: {
       title: "진단",
-      legacyTerminalRenderer: {
-        label: "레거시 터미널 렌더러 사용",
-        description: "터미널을 다시 열 때 이전 WebView 터미널을 사용합니다.",
-        accessibilityLabel: "레거시 터미널 렌더러 사용",
-      },
       testAudio: "오디오 테스트",
       playTest: "테스트 재생",
       playing: "재생 중...",
@@ -3157,6 +3285,19 @@ export const ko: TranslationResources = {
       },
       agents: {
         unavailable: "에이전트를 관리하려면 이 호스트에 연결하세요",
+        resumeOnStartup: {
+          title: "재시작 후 에이전트 재개",
+          info: "호스트가 중지될 때 작업 중이던 에이전트를 다시 열고 재개 메시지를 보냅니다. 정상 재시작과 비정상 종료 후 모두 적용됩니다.",
+          hint: "중단된 작업을 자동으로 계속합니다.",
+          prompt: "재개 메시지",
+          edit: "편집",
+          editAccessibilityLabel: "메시지 편집",
+        },
+        idleRuntimeCleanup: {
+          title: "유휴 에이전트 해제",
+          hint: "1시간 동안 활동이 없으면 메모리를 확보합니다.",
+          info: "대화를 유지하면서 에이전트 프로세스를 중지합니다. 메시지를 보내면 다시 이어집니다.\n\n진행 중인 작업, 대기 중인 알림, 프로바이더 안전 검사가 있으면 정리하지 않습니다.",
+        },
       },
       workspaces: {
         unavailable: "워크스페이스를 관리하려면 이 호스트에 연결하세요",
@@ -3249,6 +3390,10 @@ export const ko: TranslationResources = {
           requestFailedTitle: "오류",
           requestFailedMessage:
             "재시작 요청을 보내지 못했습니다. Paseo가 자동으로 다시 연결하므로 호스트가 온라인으로 표시되면 다시 시도하세요.",
+          closeTerminals: "재시작하고 터미널 닫기",
+          closeTerminalsHint: "재시작하면서 이 호스트의 모든 터미널도 닫습니다.",
+          closeTerminalsConfirmMessage:
+            "데몬을 재시작하고 모든 터미널을 닫습니다. 터미널에서 실행 중인 프로그램은 종료됩니다. 앱은 자동으로 다시 연결됩니다.",
           dialogFailedMessage: "재시작 확인 대화 상자를 열 수 없습니다.",
         },
         update: {
@@ -3304,6 +3449,10 @@ export const ko: TranslationResources = {
       addErrorTitle: "프로바이더를 추가할 수 없습니다",
       updateErrorTitle: "프로바이더를 업데이트할 수 없습니다",
       actions: {
+        copyMigrationPrompt: "마이그레이션 프롬프트 복사",
+        migrationPrompt: "마이그레이션 프롬프트",
+        copying: "복사 중...",
+        copyFailed: "마이그레이션 프롬프트를 복사하지 못했습니다",
         menu: "{{name}} 작업",
         remove: "프로바이더 제거",
         removing: "제거 중...",
