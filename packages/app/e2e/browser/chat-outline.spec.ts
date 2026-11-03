@@ -2058,7 +2058,7 @@ test("keeps the finished cold real transcript stationary after hover input stops
   const evidence: Record<string, unknown> = {};
   let observation: JSHandle<ReturnType<typeof observeColdHoverTranscript>> | undefined;
   try {
-    const history = await holdAgentOlderTimelinePages(page, agent.agentId, undefined, {
+    const history = await holdAgentOlderTimelinePages(page, agent.agentId, {
       contextDelivery: "immediate",
     });
     observedHistory = history;

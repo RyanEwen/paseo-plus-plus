@@ -34,6 +34,10 @@ import {
   waitForTimelineGeometryToSettle,
   sendLiveTurnBeforeHydration,
   expectTimelineViewportAnchoredAfterPrepend,
+  expectToolCallGroupPositionPreserved,
+  rememberToolCallGroupPosition,
+  seedItemPagedToolGroupTimeline,
+  useChatDisplay,
   userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
@@ -250,6 +254,32 @@ test.describe("Agent timeline pagination", () => {
     }
   });
 
+  // Hosts paged by items can end a page inside a tool run. The older page extends the group
+  // the reader is on, which changes the row hosting it; the reader must stay with that group
+  // rather than land at history start and drain every older page.
+  test("keeps the reading position when an older item page extends the tool-call group being read", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await useChatDisplay(page, "collapseToolCalls");
+    const agent = await seedItemPagedToolGroupTimeline();
+    try {
+      const history = await holdOlderHistoryPages(page, agent, { itemPagedHost: true });
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+
+      await userScrollsTimelineToHistoryStart(page);
+      await history.expectRequestedPages(1);
+      const reading = await rememberToolCallGroupPosition(page, agent.loadedCommands);
+
+      history.releasePage(1);
+      await expectToolCallGroupPositionPreserved(page, agent.totalCommands, reading);
+      await history.expectSettledWithRequestedPages(1);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("loads older history when the user navigates to history start with the keyboard", async ({
     page,
   }) => {
@@ -304,7 +334,7 @@ test.describe("Agent timeline pagination", () => {
       const observations: Record<string, unknown> = {};
       let gate: Awaited<ReturnType<typeof holdAgentOlderTimelinePages>> | undefined;
       try {
-        gate = await holdAgentOlderTimelinePages(page, agent.agentId, undefined, {
+        gate = await holdAgentOlderTimelinePages(page, agent.agentId, {
           contextDelivery: "immediate",
         });
         await openAgentTimeline(page, agent);
@@ -563,7 +593,7 @@ test.describe("Agent timeline pagination", () => {
       await agent.client.waitForFinish(agent.agentId, 15_000);
       // This unique agent has never been browser-opened. Context responses pass
       // through the existing validators immediately; no input or helper publishes an edge.
-      const history = await holdOlderHistoryPages(page, agent, undefined, {
+      const history = await holdOlderHistoryPages(page, agent, {
         contextDelivery: "immediate",
       });
       observedHistory = history;

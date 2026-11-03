@@ -1,5 +1,6 @@
 import { NotificationReceipts } from "@getpaseo/protocol/notification-receipts";
 import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -151,6 +152,7 @@ function createServer(
     null,
     { allowedOrigins: new Set() },
     createWorkspaceAutoNameStub(),
+    createWorkspaceRuntimeStore(),
     undefined,
     undefined,
     undefined,

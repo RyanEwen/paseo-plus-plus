@@ -1,4 +1,5 @@
 import { WorkspaceNotificationReceiptsSchema } from "@getpaseo/protocol/notification-receipts";
+import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -307,6 +308,9 @@ const WorkspaceGitRuntimeSchema = z
 const StoredWorkspaceSchema = z.strictObject({
   // Null is known legacy absence; omission identifies an older incomplete projection.
   notificationReceipts: WorkspaceNotificationReceiptsSchema.nullable().optional(),
+  // Require both keys: a cursor without these values would preserve the wrong sort on reconnect.
+  createdAt: IsoDateSchema.nullable(),
+  lastUserMessageAt: IsoDateSchema.nullable(),
   id: z.string(),
   projectId: z.string(),
   projectDisplayName: z.string(),
@@ -709,9 +713,15 @@ function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
   };
 }
 
+function restoreWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
+  return deserializeWorkspace(stored);
+}
+
 function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
   return {
     notificationReceipts: workspace.notificationReceipts ?? null,
+    createdAt: workspace.createdAt?.toISOString() ?? null,
+    lastUserMessageAt: workspace.lastUserMessageAt?.toISOString() ?? null,
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
@@ -781,7 +791,14 @@ function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
   const canonicalItems = timeline.items.filter(
     (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
   );
-  const items = canonicalItems.map(serializeTimelineItem).filter((item) => item !== null);
+  const start = findMountedWindowStart({
+    items: canonicalItems,
+    minMountedCount: MAX_TIMELINE_ITEMS,
+  });
+  const items = canonicalItems
+    .slice(start)
+    .map(serializeTimelineItem)
+    .filter((item) => item !== null);
   const range = timeline.range;
   const canPersistCoverage =
     range !== null &&
@@ -798,7 +815,7 @@ function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
     canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
   return {
     agentId: timeline.agentId,
-    items: items.slice(-MAX_TIMELINE_ITEMS),
+    items,
     range: canPersistCoverage
       ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
       : null,
@@ -856,6 +873,7 @@ function deserializeWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
   return normalizeWorkspaceDescriptor({
     ...stored,
     notificationReceipts: stored.notificationReceipts ?? undefined,
+    createdAt: stored.createdAt ?? undefined,
   });
 }
 
@@ -898,7 +916,7 @@ function applyDirectoryRow(
       if (stored.notificationReceipts === undefined && result.checkpoint?.workspaces) {
         result.receiptCoverageIncomplete = true;
       }
-      result.workspaces.set(row.id, deserializeWorkspace(stored));
+      result.workspaces.set(row.id, restoreWorkspace(stored));
       return;
     }
     case "project": {

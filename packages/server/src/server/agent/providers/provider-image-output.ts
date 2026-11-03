@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import * as fsSync from "node:fs";
+import * as fs from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -46,32 +47,26 @@ function assertProviderImageInputLengths(image: ProviderImageOutput): void {
 }
 
 let materializedImageAttachmentDir: string | null = null;
+// Serialize materializations: one decoder and one file operation at a time, including
+// concurrent history replay and live turns. A rejected operation must not poison the queue.
+let pendingMaterialization: Promise<unknown> = Promise.resolve();
 
-function canReuseMaterializedImageAttachmentDir(dir: string): boolean {
-  try {
-    const stats = fsSync.lstatSync(dir);
-    if (!stats.isDirectory()) {
-      return false;
+async function getMaterializedImageAttachmentDir(): Promise<string> {
+  if (materializedImageAttachmentDir) {
+    try {
+      const stats = await fs.lstat(materializedImageAttachmentDir);
+      if (stats.isDirectory()) {
+        await fs.chmod(materializedImageAttachmentDir, PRIVATE_ATTACHMENT_DIR_MODE);
+        return materializedImageAttachmentDir;
+      }
+    } catch {
+      /* Temp storage may have been removed between turns. */
     }
-    fsSync.chmodSync(dir, PRIVATE_ATTACHMENT_DIR_MODE);
-    return true;
-  } catch {
-    return false;
   }
-}
-
-function getMaterializedImageAttachmentDir(): string {
-  if (
-    materializedImageAttachmentDir &&
-    canReuseMaterializedImageAttachmentDir(materializedImageAttachmentDir)
-  ) {
-    return materializedImageAttachmentDir;
-  }
-
-  materializedImageAttachmentDir = fsSync.mkdtempSync(
+  materializedImageAttachmentDir = await fs.mkdtemp(
     path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX),
   );
-  fsSync.chmodSync(materializedImageAttachmentDir, PRIVATE_ATTACHMENT_DIR_MODE);
+  await fs.chmod(materializedImageAttachmentDir, PRIVATE_ATTACHMENT_DIR_MODE);
   return materializedImageAttachmentDir;
 }
 
@@ -179,20 +174,84 @@ function assertImageSignature(bytes: Buffer, mimeType: string): void {
   }
 }
 
-// Filenames are a content hash of the bytes so re-materializing the same image
-// within a process reuses the existing temp file instead of leaking a fresh one
-// for repeated image blocks or history replay.
+export const MAX_PROVIDER_IMAGE_BYTES = PROVIDER_IMAGE_MAX_BYTES;
+const BASE64_CHUNK_CHARACTERS = 256 * 1024;
+
 export function materializeProviderImage(image: {
   data: string;
   mimeType: string | null;
-}): MaterializedProviderImage {
-  const admitted = admitProviderImage(image);
-  const attachmentsDir = getMaterializedImageAttachmentDir();
-  const extension = getImageExtension(admitted.mimeType);
-  const filePath = path.join(attachmentsDir, `${admitted.sha256}.${extension}`);
-  fsSync.writeFileSync(filePath, admitted.bytes, { mode: MATERIALIZED_IMAGE_FILE_MODE });
-  fsSync.chmodSync(filePath, MATERIALIZED_IMAGE_FILE_MODE);
-  return { path: filePath };
+}): Promise<MaterializedProviderImage> {
+  const result = pendingMaterialization.then(() => materializeImage(image));
+  pendingMaterialization = result.catch(() => {});
+  return result;
+}
+
+async function materializeImage(image: {
+  data: string;
+  mimeType: string | null;
+}): Promise<MaterializedProviderImage> {
+  const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
+  const { data, mimeType } = normalized;
+  const hash = createHash("sha256");
+  let first = true;
+  for await (const bytes of decodeImage(data)) {
+    if (first) {
+      assertImageSignature(bytes, mimeType);
+      first = false;
+    }
+    hash.update(bytes);
+  }
+  const dir = await getMaterializedImageAttachmentDir();
+  const filePath = path.join(dir, `${hash.digest("hex")}.${getImageExtension(mimeType)}`);
+  try {
+    await fs.stat(filePath);
+    return { path: filePath };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const staging = await fs.mkdtemp(path.join(dir, ".pending-"));
+  const stagingPath = path.join(staging, "image");
+  try {
+    await fs.chmod(staging, PRIVATE_ATTACHMENT_DIR_MODE);
+    const file = await fs.open(stagingPath, "wx", MATERIALIZED_IMAGE_FILE_MODE);
+    try {
+      await file.chmod(MATERIALIZED_IMAGE_FILE_MODE);
+      // Decode again only for a new hash. This bounds retained memory to one chunk
+      // and performs no writes at all for repeated content, including history replay.
+      for await (const bytes of decodeImage(data)) await file.writeFile(bytes);
+    } finally {
+      await file.close();
+    }
+    await fs.rename(stagingPath, filePath);
+    return { path: filePath };
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true });
+  }
+}
+
+async function* decodeImage(data: string): AsyncGenerator<Buffer> {
+  if (!data.length || data.length > PROVIDER_IMAGE_MAX_BASE64_LENGTH) {
+    decodeImageData(data); // Use the same admission errors as durable attachments.
+  }
+  // Reject decoded overflow before inspecting the first container chunk.
+  let trailingPadding = 0;
+  if (data.endsWith("==")) trailingPadding = 2;
+  else if (data.endsWith("=")) trailingPadding = 1;
+  if (Math.floor(((data.length - trailingPadding) * 3) / 4) > PROVIDER_IMAGE_MAX_BYTES)
+    throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
+  let decodedBytes = 0;
+  for (let offset = 0; offset < data.length; offset += BASE64_CHUNK_CHARACTERS) {
+    const chunk = data.slice(offset, offset + BASE64_CHUNK_CHARACTERS);
+    if (offset + chunk.length < data.length && chunk.includes("="))
+      throw new ProviderImageInputError("Image contains invalid base64 data.");
+    const bytes = decodeImageData(chunk);
+    decodedBytes += bytes.length;
+    if (decodedBytes > PROVIDER_IMAGE_MAX_BYTES)
+      throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
+    yield bytes;
+    await setImmediate();
+  }
 }
 
 export interface AdmittedProviderImage {
@@ -228,7 +287,10 @@ export function isProviderImageMarkdown(text: string): boolean {
 }
 
 interface RenderProviderImageOutputOptions {
-  materialize?: (image: { data: string; mimeType: string | null }) => MaterializedProviderImage;
+  materialize?: (image: {
+    data: string;
+    mimeType: string | null;
+  }) => Promise<MaterializedProviderImage>;
 }
 
 function nonEmptyString(value: string | null | undefined): string | null {
@@ -285,10 +347,10 @@ function escapeMarkdownImageSource(value: string): string {
   return markdownImageSource(value).replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
 }
 
-export function renderProviderImageOutputAsAssistantMarkdown(
+export async function renderProviderImageOutputAsAssistantMarkdown(
   image: ProviderImageOutput,
   options: RenderProviderImageOutputOptions = {},
-): AgentTimelineItem | null {
+): Promise<AgentTimelineItem | null> {
   try {
     assertProviderImageInputLengths(image);
   } catch (error) {
@@ -313,7 +375,7 @@ export function renderProviderImageOutputAsAssistantMarkdown(
   let materialized: MaterializedProviderImage | null = null;
   try {
     materialized = options.materialize
-      ? options.materialize({
+      ? await options.materialize({
           data,
           mimeType: nonEmptyString(image.mimeType),
         })

@@ -1,3 +1,5 @@
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
+import { MessageSender } from "./user-message/index";
 import { useTextLink } from "@/hooks/use-text-link";
 import { TextPreview } from "@/components/ui/text-preview";
 import { UserMessagePreviewContent } from "./user-message-preview-content";
@@ -47,6 +49,7 @@ import {
 } from "./message-layout";
 import { TurnCopyButton } from "./turn-copy-button";
 interface UserMessageProps {
+  sender?: AgentMessage["sender"];
   /** An optional measured viewport retains the one ordinary body's natural flow. */
   onNaturalFlowGeometry?: (geometry: NaturalMessageGeometry | null) => void;
   onContentPress?: (event: GestureResponderEvent) => void;
@@ -395,6 +398,7 @@ function userMessageFlowConfiguration(
 }
 
 export const UserMessage = memo(function UserMessage({
+  sender,
   onNaturalFlowGeometry,
   naturalFlowMaximumHeight,
   onContentPress,
@@ -681,6 +685,7 @@ export const UserMessage = memo(function UserMessage({
       onGeometry={onNaturalFlowGeometry}
       onHoverChange={webNaturalFlow ? setIsHovered : undefined}
     >
+      {renderMessageSender(sender, serverId)}
       {bubbleContent}
     </Flow>
   ) : (
@@ -690,6 +695,7 @@ export const UserMessage = memo(function UserMessage({
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
+      {renderMessageSender(sender, serverId)}
       {bubbleContent}
       {trailingContent}
     </View>
@@ -806,4 +812,11 @@ function UserMessageTextActions({
       />
     </>
   );
+}
+
+function renderMessageSender(
+  sender: AgentMessage["sender"] | undefined,
+  serverId: string | undefined,
+): ReactNode {
+  return sender ? <MessageSender sender={sender} serverId={serverId} /> : null;
 }

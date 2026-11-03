@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
 import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
+import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 import { prepareNativePaneRenderer, runNativePaneRegression } from "./native-pane.electron.mjs";
 import {
@@ -315,6 +318,20 @@ async function waitForRendererReady(page, expoPort, artifactDir) {
   await page
     .getByRole("button", { name: "Settings", exact: true })
     .waitFor({ state: "visible", timeout: timeoutMs });
+}
+
+async function settleDesktopStartup(page) {
+  await expect(
+    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
+  ).toBeVisible({ timeout: timeoutMs });
+  // The dev launcher supplies its package directory as an open-project request.
+  // Before the local host connects, that request opens the connection prompt.
+  // Finish startup before exercising the unrelated Settings/browser workflows.
+  const connectionPrompt = page.getByTestId("add-host-method-modal");
+  if (await connectionPrompt.isVisible()) {
+    await connectionPrompt.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(connectionPrompt).toBeHidden();
+  }
 }
 
 async function startTargetPage() {
@@ -1374,9 +1391,7 @@ async function main() {
   ]);
   const listen = `127.0.0.1:${daemonPort}`;
   seedPaseoHome(paseoHome, listen, workspaceRoot);
-  const extensionFixtures = nativePaneOnly ? null : seedBrowserExtensions(userData);
-  const target = await startTargetPage();
-  if (!nativePaneOnly) seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  const { extensionFixtures, target } = await prepareTargetFixtures(userData, paseoHome);
   const remoteHome = path.join(runtimeDir, "remote-home");
   seedPaseoHome(remoteHome, `127.0.0.1:${remotePort}`, path.join(runtimeDir, "remote-workspaces"));
   const children = [];
@@ -1504,6 +1519,7 @@ async function main() {
     await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
     await waitForRendererReady(page, expoPort, artifactDir);
+    if (!nativePaneOnly) await settleDesktopStartup(page);
 
     if (nativePaneOnly) {
       const callerAgentId = await createCallerAgent(daemonPort);
@@ -1550,6 +1566,14 @@ async function main() {
       console.log("Plugin external links and workspace browser passed.");
       return;
     }
+    const settingsScroll = await runSettingsScrollRegression(page, (size) =>
+      resizeDesktopWindow(inspectorPort, size),
+    );
+    if (process.env.PASEO_DESKTOP_SETTINGS_SCROLL_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsScroll });
+      console.log("Desktop Settings scroll regression passed.");
+      return;
+    }
     const settingsMemory = await runSettingsMemoryRegression(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
@@ -1559,6 +1583,7 @@ async function main() {
       return;
     }
 
+    const adaptiveTheme = await runAdaptiveThemeRegression(artifactDir);
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent({ daemonPort });
@@ -1598,7 +1623,12 @@ async function main() {
     });
     writeJson(path.join(artifactDir, "browser-report.json"), report);
     const pluginLinks = await checkPluginLinks();
-    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
+    writeJson(path.join(artifactDir, "result.json"), {
+      ...report,
+      settingsMemory,
+      pluginLinks,
+      adaptiveTheme,
+    });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );
@@ -1632,3 +1662,21 @@ async function main() {
 }
 
 await main();
+
+async function evaluateDesktopWindow(inspectorPort, expression) {
+  return inspectWindowPresentation(inspectorPort, "", `(async () => { ${expression} })()`);
+}
+
+async function resizeDesktopWindow(inspectorPort, { width, height }) {
+  return evaluateDesktopWindow(
+    inspectorPort,
+    `const [width, height] = win.getContentSize(); win.setContentSize(${width}, ${height}); return { width, height };`,
+  );
+}
+
+async function prepareTargetFixtures(userData, paseoHome) {
+  const extensionFixtures = nativePaneOnly ? null : seedBrowserExtensions(userData);
+  const target = await startTargetPage();
+  if (!nativePaneOnly) seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  return { extensionFixtures, target };
+}

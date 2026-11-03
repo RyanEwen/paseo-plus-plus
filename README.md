@@ -29,7 +29,6 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 
 ## Display and reading preferences
 
-- [Tool call display](docs/fork-features/tool-call-display.md)
 - [Workspace tab widths](docs/fork-features/workspace-tab-widths.md)
 
 - [Split layout controls](docs/fork-features/split-layout-controls.md)

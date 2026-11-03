@@ -1520,6 +1520,8 @@ function attentionWorkspace(
     projectDisplayName: "Project",
     projectRootPath: "/repo",
     workspaceDirectory: `/repo/${input.id}`,
+    createdAt: null,
+    lastUserMessageAt: null,
     projectKind: "git",
     workspaceKind: "worktree",
     name: input.id,

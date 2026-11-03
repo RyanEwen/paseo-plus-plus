@@ -1404,6 +1404,7 @@ describe("configured Claude rewind commits", () => {
     await registry.update("guarded", (r) => ({
       ...r,
       persistence: null,
+      launchEnv: { CLAUDE_CODE_ENTRYPOINT: "saved-explicit-env" },
       providerHistory: { ...r.providerHistory!, origin: "created", sessionId: null },
     }));
     const before = (await registry.get("guarded"))!;
@@ -1418,6 +1419,8 @@ describe("configured Claude rewind commits", () => {
     expect(await registry.reserveHistoryIntent(request)).toEqual(before);
     for (const change of [
       { config: { ...before.config, model: "different" } },
+      { launchEnv: { CLAUDE_CODE_ENTRYPOINT: "changed-env" } },
+      { launchEnv: undefined },
       { cwd: "/other" },
       { workspaceId: "other" },
       { provider: "other" },

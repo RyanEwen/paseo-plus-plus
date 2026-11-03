@@ -423,6 +423,7 @@ describe("loadAppSettingsFromStorage", () => {
 
     expect(result).toEqual(DEFAULT_CLIENT_SETTINGS);
     expect(DEFAULT_CLIENT_SETTINGS.language).toBe("system");
+    expect(DEFAULT_CLIENT_SETTINGS.chatDisplay).toBe("collapseTurns");
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual(
       DEFAULT_CLIENT_SETTINGS,
     );
@@ -462,6 +463,39 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.chatOutlineEnabled).toBe(false);
+  });
+
+  it("uses Enter to send by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendShortcut).toBe("enter");
+    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("enter");
+  });
+
+  it("loads the modifier Enter send preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendShortcut: "mod-enter" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendShortcut).toBe("mod-enter");
+  });
+
+  it("falls back to Enter when the stored send shortcut is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendShortcut: "yes" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendShortcut).toBe("enter");
   });
 
   it("defaults sidebar navigation items to an empty preference list", async () => {
@@ -627,26 +661,6 @@ describe("loadAppSettingsFromStorage", () => {
     expect(legacySide.openInSidePane).not.toHaveProperty("pullRequests");
   });
 
-  it("uses the native terminal renderer by default", async () => {
-    const deps = makeDeps();
-
-    const result = await loadAppSettingsFromStorage(deps);
-
-    expect(result.useLegacyTerminalRenderer).toBe(false);
-  });
-
-  it("loads the per-device legacy terminal renderer preference", async () => {
-    const deps = makeDeps({
-      storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ useLegacyTerminalRenderer: true }),
-      }),
-    });
-
-    const result = await loadAppSettingsFromStorage(deps);
-
-    expect(result.useLegacyTerminalRenderer).toBe(true);
-  });
-
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -712,6 +726,7 @@ describe("loadAppSettingsFromStorage", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "dark",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "collapseToolCalls",
     });
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual({
       manageBuiltInDaemon: false,
@@ -887,6 +902,7 @@ describe("loadSettingsFromStorage", () => {
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "collapseToolCalls",
     });
   });
 
@@ -931,6 +947,7 @@ describe("loadSettingsFromStorage", () => {
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "collapseToolCalls",
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
     });
@@ -952,6 +969,7 @@ describe("loadSettingsFromStorage", () => {
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "collapseToolCalls",
     });
   });
 });
@@ -1027,7 +1045,7 @@ describe("saveAppSettings", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
-      toolCallDetailLevel: "overview",
+      chatDisplay: "collapseToolCalls",
     });
   });
 
@@ -1082,40 +1100,58 @@ describe("appearance settings", () => {
     expect(result.contentFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
-    expect(result.toolCallDetailLevel).toBe("overview");
+    expect(result.chatDisplay).toBe("collapseToolCalls");
   });
 
   it.each([
-    { stored: { toolCallDetailLevel: "detailed" }, expected: "detailed" },
-    { stored: { toolCallDetailLevel: "overview" }, expected: "overview" },
-    { stored: { compactToolCalls: false }, expected: "detailed" },
+    { stored: { toolCallDetailLevel: "detailed" }, expected: "full" },
+    { stored: { toolCallDetailLevel: "overview" }, expected: "collapseToolCalls" },
+    { stored: { compactToolCalls: false }, expected: "full" },
   ])("preserves the saved tool call display choice $stored", async ({ stored, expected }) => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify(stored),
       }),
     });
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe(expected);
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe(expected);
   });
 
-  it("migrates the enabled compact tool call preference to overview", async () => {
+  it("migrates the enabled compact tool call preference to collapsed tool calls", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({ compactToolCalls: true }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe("collapseToolCalls");
   });
 
-  it("clears settings with an unrecognized tool call detail level", async () => {
+  it.each([
+    ["overview", "collapseToolCalls"],
+    ["concise", "collapseToolCalls"],
+    ["detailed", "full"],
+    ["unknown", "collapseToolCalls"],
+  ])("reads the %s tool call detail level as the %s chat display", async (legacy, display) => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: "unknown" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: legacy }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe(display);
+  });
+
+  it("keeps a stored chat display over the tool call detail level it replaced", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          chatDisplay: "collapseTurns",
+          toolCallDetailLevel: "detailed",
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe("collapseTurns");
   });
 
   it("migrates a switched-off checks row item to the hidden checks display", async () => {
@@ -1415,7 +1451,12 @@ it("includes shared app preferences in the daemon sync scope and excludes device
   const sharedKeys = Object.keys(DEFAULT_CLIENT_SETTINGS).filter(
     (key) => key !== "filePanelAssociations",
   );
-  expect([...SYNC_APP_SETTING_KEYS].sort()).toEqual(sharedKeys.sort());
+  // Optional legacy wire keys remain accepted after their client preference is replaced.
+  const legacyWireKeys = ["toolCallDetailLevel", "useLegacyTerminalRenderer"];
+  expect([...SYNC_APP_SETTING_KEYS].filter((key) => !legacyWireKeys.includes(key)).sort()).toEqual(
+    sharedKeys.sort(),
+  );
+  expect(SYNC_APP_SETTING_KEYS).toEqual(expect.arrayContaining(legacyWireKeys));
   expect(SYNC_APP_SETTING_KEYS).not.toContain("filePanelAssociations");
   expect(SYNC_APP_SETTING_KEYS).not.toContain("manageBuiltInDaemon");
   expect(SYNC_APP_SETTING_KEYS).not.toContain("releaseChannel");

@@ -60,6 +60,14 @@ test("automatic Explorer opening applies only to new workspace layouts", async (
       )
       .toBe(true);
     await expect(explorerSidebar(page)).toBeVisible();
+    // Check the first render before toggling registers the Explorer pane id.
+    await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
+    await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(1);
+    await page.reload();
+    await waitForWorkspaceTabsVisible(page);
+    await expect(explorerSidebar(page)).toBeVisible();
+    await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
+    await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(1);
     await page.getByTestId("workspace-explorer-toggle").first().click();
     await expect(explorerSidebar(page)).toHaveCount(0);
     await page.reload();
@@ -79,6 +87,9 @@ test.describe("Explorer sidebar", () => {
     try {
       await gotoWorkspace(page, workspace.workspaceId);
       await waitForWorkspaceTabsVisible(page);
+      await expect(explorerSidebar(page)).toHaveCount(0);
+      await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
+      await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(0);
       const mainTabsBefore = await page
         .getByTestId("workspace-pane-main")
         .locator('[data-testid^="workspace-tab-"]')

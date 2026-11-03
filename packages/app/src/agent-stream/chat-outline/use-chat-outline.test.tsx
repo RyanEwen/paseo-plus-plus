@@ -110,6 +110,7 @@ describe("useChatOutline", () => {
     const scrollToMessage = vi.fn();
     const viewportRef = createRef<StreamViewportHandle>();
     viewportRef.current = {
+      holdReadingPosition: vi.fn(),
       scrollToMessage,
       scrollToBottom: vi.fn(),
       prepareForViewportChange: vi.fn(),
@@ -144,6 +145,7 @@ describe("useChatOutline", () => {
     const scrollToMessage = vi.fn();
     const viewportRef = createRef<StreamViewportHandle>();
     viewportRef.current = {
+      holdReadingPosition: vi.fn(),
       scrollToMessage,
       scrollToBottom: vi.fn(),
       prepareForViewportChange: vi.fn(),
@@ -400,6 +402,7 @@ describe("useChatOutline", () => {
     const viewport: StreamViewportHandle = {
       scrollToBottom: vi.fn(),
       prepareForViewportChange: vi.fn(),
+      holdReadingPosition: vi.fn(),
       scrollToMessage,
     };
     const viewportRef = { current: viewport };
@@ -451,6 +454,7 @@ describe("useChatOutline", () => {
       current: {
         scrollToBottom: vi.fn(),
         prepareForViewportChange: vi.fn(),
+        holdReadingPosition: vi.fn(),
         scrollToMessage,
       },
     };
@@ -508,6 +512,7 @@ describe("useChatOutline", () => {
     const viewport: StreamViewportHandle = {
       scrollToBottom: vi.fn(),
       prepareForViewportChange: vi.fn(),
+      holdReadingPosition: vi.fn(),
       scrollToMessage,
     };
     const livePrompt = {
@@ -727,6 +732,7 @@ function cancelledJumpFixture() {
     head: [],
     viewportRef: {
       current: {
+        holdReadingPosition: vi.fn(),
         scrollToBottom: vi.fn(),
         prepareForViewportChange: vi.fn(),
         scrollToMessage,
@@ -1739,6 +1745,7 @@ describe("passive indexed latest prompt content", () => {
     const scrollToMessage = vi.fn();
     const viewportRef = {
       current: {
+        holdReadingPosition: vi.fn(),
         scrollToBottom: vi.fn(),
         prepareForViewportChange: vi.fn(),
         scrollToMessage,

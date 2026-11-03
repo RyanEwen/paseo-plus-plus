@@ -155,6 +155,7 @@ export function SidebarStatusWorkspaceList({
       dragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => (
       <StatusWorkspaceRow
+        key={workspace.workspaceKey}
         workspace={workspace}
         {...buildStatusRowProjectPresentation({
           workspace,
@@ -603,7 +604,6 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   inStatusGroup = true,
-  onWorkspacePress,
   drag,
   isDragging = false,
   dragHandleProps,
@@ -634,9 +634,8 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
 
   const handlePress = useCallback(() => {
     if (!workspace.serverId) return;
-    onWorkspacePress?.();
     navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
-  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
+  }, [workspace.serverId, workspace.workspaceId]);
 
   return (
     <StatusWorkspaceRowWithMenu

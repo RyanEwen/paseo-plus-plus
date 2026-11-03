@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
+import type { ToastApi } from "@/components/toast-host";
 const clipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
 vi.mock("expo-clipboard", () => ({ setStringAsync: clipboardMock }));
 
@@ -288,11 +289,15 @@ vi.mock("@/utils/confirm-dialog", () => ({
 
 import { ProvidersSection } from "./providers-section";
 
-function unexpectedToast(): void {
+function unexpectedToast(): never {
   throw new Error("Provider row interactions should not display a toast");
 }
 
-const toastApi = { show: unexpectedToast, copied: unexpectedToast, error: unexpectedToast };
+const toastApi: ToastApi = {
+  show: unexpectedToast,
+  copied: unexpectedToast,
+  error: unexpectedToast,
+};
 
 const claudeEntry: ProviderSnapshotEntry = {
   provider: "claude",

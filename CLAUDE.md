@@ -76,6 +76,9 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/agent-documentation-review.md](docs/agent-documentation-review.md) | Codex lifecycle hooks for keeping fork descriptions and developer docs aligned                                                 |
 | [docs/worktree-development.md](docs/worktree-development.md)             | Fork branch roles, owner lifecycle, upstream synchronization, environment qualification, and review assembly                   |
 | [docs/native-browser-feasibility.md](docs/native-browser-feasibility.md) | Native browser ownership, practical extension limits and qualification gates                                                   |
+| [docs/relay-endpoint-security.md](docs/relay-endpoint-security.md)       | Relay E2EE modes: Noise NK mapping, record framing, negotiation, the `requireProtectedSecurity` flag, close codes              |
+| [docs/terminal-rendering.md](docs/terminal-rendering.md)                 | Native terminal view: xterm owns the grid, cluster placement, emoji widths, mixed-direction limits, render regression          |
+| [docs/terminal-worker.md](docs/terminal-worker.md)                       | Terminal worker process model, socket/record/secret, protocol-bump rule and draining, the worker's file copy, Windows desktop  |
 
 ### Writing docs
 
@@ -127,10 +130,9 @@ See [docs/development.md](docs/development.md) for full setup, build sync requir
 
 ## Release branches
 
-When the user says "this goes to next", create or
-retarget the PR to `next` and preserve that destination through delivery. Follow
-[release branch discipline](docs/release.md#release-branch-discipline) for creating
-and updating `next`, integrating it after a release, and releasing a hotfix from a tag.
+Merge normal PRs into `main`, including while a beta soaks or a release is being finalized. Each
+release builds in a short-lived release workspace from `origin/main` or a release tag; see
+[release base and source](docs/release.md#release-base-and-source).
 
 ## Critical rules
 

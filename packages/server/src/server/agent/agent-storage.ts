@@ -65,8 +65,10 @@ const STORED_AGENT_SCHEMA = z.object({
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
+  resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
+  launchEnv: z.record(z.string(), z.string()).optional(),
   runtimeInfo: z
     .object({
       provider: z.string(),
@@ -135,7 +137,8 @@ function matchesEmptyClaudeRecreation(
     existing.provider === requested.provider &&
     existing.cwd === requested.cwd &&
     existing.workspaceId === requested.workspaceId &&
-    digest(existing.config) === digest(requested.config)
+    digest(existing.config) === digest(requested.config) &&
+    digest(existing.launchEnv ?? null) === digest(requested.launchEnv ?? null)
   );
 }
 
@@ -148,6 +151,7 @@ function claudeQueryIdentity(record: StoredAgentRecord) {
     workspaceId: record.workspaceId,
     archivedAt: record.archivedAt,
     config: record.config,
+    launchEnv: record.launchEnv,
     persistence: record.persistence,
     providerHistory: record.providerHistory,
     claudeFreshRewind: record.claudeFreshRewind,
@@ -608,6 +612,7 @@ export class AgentStorage {
         if (existing && existing.archivedAt !== undefined) {
           record.archivedAt = existing.archivedAt;
         }
+        record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, current);
         return record;
       },
       options?.operation?.onCommitted,
@@ -826,4 +831,13 @@ function projectDirNameFromCwd(cwd: string): string {
     return sanitizedRoot || "root";
   }
   return prefix + withoutRoot.replace(/[\\/]+/g, "-");
+}
+
+function shouldResumeSnapshotOnStartup(
+  existing: StoredAgentRecord | null,
+  snapshot: { lifecycle: string },
+): boolean | undefined {
+  return (
+    existing?.resumeOnStartup && snapshot.lifecycle !== "idle" && snapshot.lifecycle !== "error"
+  );
 }

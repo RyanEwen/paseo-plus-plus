@@ -202,6 +202,8 @@ function workspace(input: {
   scripts?: WorkspaceDescriptor["scripts"];
 }): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: input.id,
     projectId: input.projectId,
     projectDisplayName: input.projectDisplayName,
@@ -290,10 +292,6 @@ function initializeSidebarState(workspaces: WorkspaceDescriptor[]): void {
     useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
     useSidebarOrderStore.setState({
       projectOrder: ["project-a", "project-b"],
-      workspaceOrderByProject: {
-        ["project-a"]: [`${SERVER_ID}:a-main`, `${SERVER_ID}:a-one`, `${SERVER_ID}:a-two`],
-        ["project-b"]: [`${SERVER_ID}:b-main`, `${SERVER_ID}:b-one`, `${SERVER_ID}:b-two`],
-      },
     });
   });
 }
@@ -467,7 +465,6 @@ describe("sidebar workspace render isolation", () => {
       useSessionStore.getState().clearSession(SERVER_ID);
       useSidebarOrderStore.setState({
         projectOrder: [],
-        workspaceOrderByProject: {},
       });
     });
   });

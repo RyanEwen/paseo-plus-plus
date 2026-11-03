@@ -199,6 +199,7 @@ export class DirectorySync {
   private readonly fullDemandSources = new Set<object>();
   private readonly scriptStatusDemand = new Map<object, string>();
   private demandRefresh: Promise<void> | null = null;
+  private subscriptionGeneration = 0;
   private satisfiedDemandSource: DirectorySourceToken | null = null;
   private cursors: DirectoryCheckpoint = {};
   private unselectedCacheCursors: DirectoryCheckpoint = {};
@@ -377,6 +378,7 @@ export class DirectorySync {
   }
 
   private releaseSubscriptions(input: DirectoryReleaseOptions = {}): void {
+    this.subscriptionGeneration += 1;
     for (const subscription of [
       this.agentSubscription,
       ...(input.preserveWorkspaces ? [] : [this.workspaceSubscription]),
@@ -482,6 +484,7 @@ export class DirectorySync {
     this.observeDirectoryEvents();
     this.observeScriptStatusEvents();
     const source = this.connection.source;
+    const subscriptionGeneration = this.subscriptionGeneration;
     if (
       !force &&
       this.satisfiedDemandSource?.clientGeneration === source.clientGeneration &&
@@ -494,6 +497,7 @@ export class DirectorySync {
       .then(() => {
         const connection = this.getOnlineConnection();
         if (
+          this.subscriptionGeneration === subscriptionGeneration &&
           connection &&
           this.hasDemand() &&
           this.agentSubscription &&
@@ -505,11 +509,11 @@ export class DirectorySync {
       .finally(() => {
         this.demandRefresh = null;
         const current = this.connection.source;
-        if (
-          this.hasDemand() &&
-          (current.clientGeneration !== source.clientGeneration ||
-            current.connectionEpoch !== source.connectionEpoch)
-        ) {
+        const sourceChanged =
+          current.clientGeneration !== source.clientGeneration ||
+          current.connectionEpoch !== source.connectionEpoch;
+        const subscriptionsReleased = this.subscriptionGeneration !== subscriptionGeneration;
+        if (this.hasDemand() && (sourceChanged || subscriptionsReleased)) {
           void this.requestDemandRefresh().catch(() => undefined);
         }
       });

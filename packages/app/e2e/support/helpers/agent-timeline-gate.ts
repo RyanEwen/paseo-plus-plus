@@ -382,12 +382,32 @@ export async function delayAgentOlderTimelineResponse(
   return delayAgentTimelineResponse(page, agentId, "before");
 }
 
+export interface OlderTimelinePagesOptions {
+  daemonPort?: number;
+  /**
+   * Hide whole-turn paging from the app so it reads this host with item pages, as it reads
+   * daemons released before whole-turn pages. An item page can end inside a turn or a tool run.
+   */
+  itemPagedHost?: boolean;
+}
+
+function withoutWholeTurnPages(message: WebSocketMessage): WebSocketMessage {
+  const sessionMessage = getSessionMessage(message);
+  const payload = sessionMessage ? getPayload(sessionMessage) : null;
+  if (sessionMessage?.type !== "status" || payload?.status !== "server_info") return message;
+  const envelope = parseWebSocketJson(message) as {
+    message: { payload: { features?: Record<string, unknown> } };
+  };
+  delete envelope.message.payload.features?.wholeTurnTimeline;
+  return JSON.stringify(envelope);
+}
+
 export async function holdAgentOlderTimelinePages(
   page: Page,
   agentId: string,
-  daemonPort?: number,
   options: OlderTimelinePagesOptions = {},
 ): Promise<OlderTimelinePagesGate> {
+  const { daemonPort } = options;
   const ledger = createTimelineRequestLedger(agentId, await loadProtocolSchemas());
   const windowPages: TimelineWindowPageReceipt[] = [];
   const contentForwards: Array<() => void> = [];
@@ -449,7 +469,9 @@ export async function holdAgentOlderTimelinePages(
       resolveRequestWaiters();
       return true;
     };
-    server.onMessage((message) => {
+    server.onMessage((received) => {
+      const message = options.itemPagedHost ? withoutWholeTurnPages(received) : received;
+
       const sessionMessage = getSessionMessage(message);
       const payload = sessionMessage ? getPayload(sessionMessage) : null;
       // Server-info can be a direct envelope; prompt indexes use session messages.

@@ -2,14 +2,17 @@ import { mkdtemp, mkdir, appendFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { AgentManager } from "../../agent-manager.js";
+import type { PluginLifecycle } from "../../../plugins/lifecycle/index.js";
 import { AgentStorage, type StoredAgentRecord } from "../../agent-storage.js";
 import { ensureAgentLoaded } from "../../agent-loading.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import type { ClaudeQueryInput } from "./query.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { claudeProjectDir } from "./project-dir.js";
 import { FakeClaudeSdk } from "./test-rewind-claude-sdk.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type { AgentSession } from "../../agent-sdk-types.js";
@@ -277,7 +280,10 @@ describe("Claude rewind after a turn whose last assistant message came from a su
   });
 });
 
-async function configuredRewindFixture(outcomes: TurnOutcome[]) {
+async function configuredRewindFixture(
+  outcomes: TurnOutcome[],
+  fixtureOptions: { env?: Record<string, string>; pluginLifecycle?: PluginLifecycle } = {},
+) {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-configured-rewind-"));
   vi.stubEnv("HOME", root);
   const home = path.join(root, "profile");
@@ -349,12 +355,13 @@ async function configuredRewindFixture(outcomes: TurnOutcome[]) {
     clients: { claude: client },
     registry: storage,
     logger: createTestLogger(),
+    pluginLifecycle: fixtureOptions.pluginLifecycle,
   });
   const failures: unknown[] = [];
   const agent = await manager.createAgent(
     { provider: "claude", cwd: root, model: "claude-sonnet-4-6" },
     undefined,
-    { workspaceId: "original-workspace" },
+    { workspaceId: "original-workspace", env: fixtureOptions.env },
   );
   if (!agent.session) throw new Error("fixture session missing");
   agent.session.subscribe((event) => {
@@ -397,6 +404,9 @@ function driftMutation(field: string) {
   return (r: StoredAgentRecord) => ({
     ...r,
     ...(field === "config" ? { config: { ...r.config, model: "changed-after-admission" } } : {}),
+    ...(field === "launchEnv"
+      ? { launchEnv: { CLAUDE_CODE_ENTRYPOINT: "changed-after-admission" } }
+      : {}),
     ...(field === "workspace" ? { workspaceId: "changed-workspace" } : {}),
     ...(field === "archive" ? { archivedAt: "2026-11-02T00:00:00.000Z" } : {}),
     ...(field === "provider" ? { provider: "other-profile" } : {}),
@@ -416,6 +426,8 @@ function driftMutation(field: string) {
 }
 
 function assertDriftMetadata(actual: StoredAgentRecord | null, field: string): void {
+  if (field === "launchEnv")
+    expect(actual?.launchEnv).toEqual({ CLAUDE_CODE_ENTRYPOINT: "changed-after-admission" });
   if (field === "workspace") expect(actual?.workspaceId).toBe("changed-workspace");
   if (field === "config") expect(actual?.config?.model).toBe("changed-after-admission");
   if (field === "provider") expect(actual?.provider).toBe("other-profile");
@@ -424,7 +436,24 @@ function assertDriftMetadata(actual: StoredAgentRecord | null, field: string): v
 
 describe("configured Claude managed rewind", () => {
   test("empty registered chat restarts before first prompt without changing ID, binding or metadata", async () => {
-    const f = await configuredRewindFixture([{ assistantMessageId: "a1" }]);
+    const hooks: string[] = [];
+    const opens: string[] = [];
+    const pluginLifecycle: PluginLifecycle = {
+      wait: async () => {},
+      emit: (name) => {
+        hooks.push(name);
+      },
+      before: async (name, request) => {
+        hooks.push(name);
+        if ("reason" in request) opens.push(String(request.reason));
+        return request;
+      },
+    };
+    const env = { CLAUDE_CODE_ENTRYPOINT: "saved-explicit-entrypoint" };
+    const f = await configuredRewindFixture([{ assistantMessageId: "a1" }], {
+      env,
+      pluginLifecycle,
+    });
     let restarted: AgentManager | undefined;
     try {
       await f.storage.setTitle(f.agent.id, "original empty title");
@@ -436,6 +465,7 @@ describe("configured Claude managed rewind", () => {
         clients: { claude: f.client },
         registry,
         logger: createTestLogger(),
+        pluginLifecycle,
       });
       await expect(
         restarted.createAgent({ provider: "claude", cwd: f.root, model: "different" }, f.agent.id, {
@@ -448,6 +478,9 @@ describe("configured Claude managed rewind", () => {
         logger: createTestLogger(),
       });
       expect(loaded.id).toBe(f.agent.id);
+      expect(hooks.filter((name) => name === "agent.create.before")).toHaveLength(1);
+      expect(hooks.filter((name) => name === "agent.create.after")).toHaveLength(1);
+      expect(opens.at(-1)).toBe("resume");
       const reopened = await registry.get(f.agent.id);
       expect(reopened).toMatchObject({
         createdAt: before.createdAt,
@@ -456,6 +489,7 @@ describe("configured Claude managed rewind", () => {
         workspaceId: "original-workspace",
         providerHistory: before.providerHistory,
         config: before.config,
+        launchEnv: env,
       });
       if (!loaded.session) throw new Error("fixture empty session missing");
       await runTurns(loaded.session, 1);
@@ -496,6 +530,228 @@ describe("configured Claude managed rewind", () => {
       }
     },
   );
+  test("configured rewind blocks concurrent history and prompt admission while retiring the old query", async () => {
+    const f = await configuredRewindFixture([
+      { assistantMessageId: "a1" },
+      { assistantMessageId: "a2" },
+    ]);
+    const retiring = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let rewind: Promise<void> | undefined;
+    try {
+      await runTurns(f.session, 2);
+      const query = f.conversation.queryFactory.mock.results[0].value;
+      vi.spyOn(query, "return").mockImplementationOnce(async () => {
+        retiring.resolve();
+        await release.promise;
+      });
+      rewind = f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation");
+      await retiring.promise;
+      let historyDone = false;
+      const reading = Array.fromAsync(f.session.streamHistory()).then((rows) => {
+        historyDone = true;
+        return rows;
+      });
+      let promptDone = false;
+      const starting = f.session.startTurn("continue the committed fork").then(() => {
+        promptDone = true;
+        return undefined;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(historyDone).toBe(false);
+      expect(promptDone).toBe(false);
+      release.resolve();
+      await rewind;
+      const rows = await reading;
+      await starting;
+      expect(JSON.stringify(rows)).toContain("fixture fork");
+      expect(f.session.describePersistence()?.sessionId).toBe("forked-session-1");
+      expect(
+        (await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id))?.persistence
+          ?.sessionId,
+      ).toBe("forked-session-1");
+      expect(f.conversation.queryFactory.mock.calls.at(-1)?.[0].options.resume).toBe(
+        "forked-session-1",
+      );
+    } finally {
+      release.resolve();
+      await rewind?.catch(() => {});
+      await f.cleanup();
+    }
+  });
+  test("external close and reopen await detached retirement cleanup during configured rewind", async () => {
+    const f = await configuredRewindFixture([
+      { assistantMessageId: "a1" },
+      { assistantMessageId: "a2" },
+    ]);
+    const retiring = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let rewind: Promise<unknown> | undefined;
+    let reopening: Promise<unknown> | undefined;
+    try {
+      await runTurns(f.session, 2);
+      const query = f.conversation.queryFactory.mock.results[0].value;
+      vi.spyOn(query, "return").mockImplementationOnce(async () => {
+        retiring.resolve();
+        await release.promise;
+      });
+      rewind = f.manager
+        .rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation")
+        .catch((error) => error);
+      await retiring.promise;
+      const resume = vi.spyOn(f.client, "resumeSession");
+      const closeEntered = Promise.withResolvers<void>();
+      const close = f.session.close.bind(f.session);
+      let providerCloseDone = false;
+      vi.spyOn(f.session, "close").mockImplementationOnce(async () => {
+        closeEntered.resolve();
+        await close();
+        providerCloseDone = true;
+      });
+      let closeDone = false;
+      let reopenDone = false;
+      const closing = f.manager.closeAgent(f.agent.id).then(() => {
+        closeDone = true;
+        return undefined;
+      });
+      reopening = closing.then(async () => {
+        const loaded = await ensureAgentLoaded(f.agent.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: createTestLogger(),
+        });
+        reopenDone = true;
+        return loaded;
+      });
+      await closeEntered.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(providerCloseDone).toBe(false);
+      expect(closeDone).toBe(false);
+      expect(reopenDone).toBe(false);
+      expect(resume).not.toHaveBeenCalled();
+      release.resolve();
+      const error = await rewind;
+      expect(error).toBeInstanceOf(Error);
+      await reopening;
+      expect(resume).toHaveBeenCalledOnce();
+      expect(f.manager.getAgent(f.agent.id)?.persistence?.sessionId).toBe(SESSION_ID);
+      expect(
+        (await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id))?.persistence
+          ?.sessionId,
+      ).toBe(SESSION_ID);
+    } finally {
+      release.resolve();
+      await rewind;
+      await reopening;
+      await f.cleanup();
+    }
+  });
+
+  test("SDK close rejection retains retirement ownership until iterator cleanup settles", async () => {
+    const f = await configuredRewindFixture([
+      { assistantMessageId: "a1" },
+      { assistantMessageId: "a2" },
+    ]);
+    const retiring = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let rewind: Promise<unknown> | undefined;
+    let closing: Promise<unknown> | undefined;
+    try {
+      await runTurns(f.session, 2);
+      const query = f.conversation.queryFactory.mock.results[0].value;
+      vi.spyOn(query, "close").mockImplementationOnce(() => {
+        throw new Error("fixture-sdk-close-failed");
+      });
+      const returned = vi.spyOn(query, "return").mockImplementationOnce(async () => {
+        retiring.resolve();
+        await release.promise;
+      });
+      rewind = f.manager
+        .rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation")
+        .catch((error) => error);
+      await retiring.promise;
+      let closeDone = false;
+      closing = f.session
+        .close()
+        .catch((error) => error)
+        .then((result) => {
+          closeDone = true;
+          return result;
+        });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closeDone).toBe(false);
+      release.resolve();
+      expect(await closing).toMatchObject({ message: "fixture-sdk-close-failed" });
+      expect(await rewind).toMatchObject({ message: "fixture-sdk-close-failed" });
+      expect(returned).toHaveBeenCalledOnce();
+      expect(
+        (await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id))?.persistence
+          ?.sessionId,
+      ).toBe(SESSION_ID);
+    } finally {
+      release.resolve();
+      await rewind;
+      await closing;
+      await f.cleanup();
+    }
+  });
+  test("normal fork adoption failure before assignment preserves canonical recovery without an old-handle snapshot", async () => {
+    const f = await configuredRewindFixture([
+      { assistantMessageId: "a1" },
+      { assistantMessageId: "a2" },
+    ]);
+    try {
+      await runTurns(f.session, 2);
+      const revert = f.session.revertConversation!.bind(f.session);
+      vi.spyOn(f.session, "revertConversation").mockImplementationOnce((input) =>
+        revert({
+          ...input,
+          commitClaudeRewind: (transition) =>
+            input.commitClaudeRewind!({
+              ...transition,
+              adopt: () => {
+                throw new Error("fixture-before-assignment");
+              },
+            }),
+        }),
+      );
+      let committed = false;
+      const commit = f.storage.commitClaudeRewind.bind(f.storage);
+      vi.spyOn(f.storage, "commitClaudeRewind").mockImplementationOnce((input) =>
+        commit({
+          ...input,
+          onCommitted: (record) => {
+            committed = true;
+            input.onCommitted(record);
+          },
+        }),
+      );
+      const staleSnapshots: string[] = [];
+      const snapshot = f.storage.applySnapshot.bind(f.storage);
+      vi.spyOn(f.storage, "applySnapshot").mockImplementation((agent, options) => {
+        if (committed && agent.persistence?.sessionId === SESSION_ID)
+          staleSnapshots.push(agent.persistence.sessionId);
+        return snapshot(agent, options);
+      });
+      await expect(
+        f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation"),
+      ).rejects.toThrow("rewind-committed-adoption-failed:forked-session-1");
+      expect(staleSnapshots).toEqual([]);
+      expect(f.manager.getAgent(f.agent.id)).toBeNull();
+      expect(
+        (await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id))?.persistence
+          ?.sessionId,
+      ).toBe("forked-session-1");
+      const loaded = await ensureAgentLoaded(f.agent.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: createTestLogger(),
+      });
+      expect(loaded.persistence?.sessionId).toBe("forked-session-1");
+    } finally {
+      await f.cleanup();
+    }
+  });
   test("combined fork failure reports files-first partial effect and keeps prior native identity", async () => {
     const f = await configuredRewindFixture([
       { assistantMessageId: "a1" },
@@ -585,6 +841,120 @@ describe("configured Claude managed rewind", () => {
     }
   });
   test.each(["initial", "fresh"] as const)(
+    "%s cancellation during admission never submits the canceled prompt or consumes identity",
+    async (phase) => {
+      const f = await configuredRewindFixture(["no-response", { assistantMessageId: "a2" }]);
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      try {
+        if (phase === "fresh") {
+          await runTurns(f.session, 2);
+          await f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation");
+        }
+        const before = (await f.storage.get(f.agent.id))!;
+        const context =
+          phase === "initial" ? f.session.claudeInitialHistory! : f.session.claudeFreshRewind!;
+        const admit = context.admit.bind(context);
+        vi.spyOn(context, "admit").mockImplementationOnce(async () => {
+          await admit();
+          entered.resolve();
+          await release.promise;
+        });
+        const count = f.conversation.userMessageIds.length;
+        const events: unknown[] = [];
+        f.session.subscribe((event) => events.push(event));
+        const starting = f.session.startTurn("never submit this canceled prompt");
+        await entered.promise;
+        await f.session.interrupt();
+        release.resolve();
+        await starting;
+        expect(f.conversation.userMessageIds).toHaveLength(count);
+        expect(JSON.stringify(events)).toContain('"type":"turn_canceled"');
+        expect(JSON.stringify(events)).not.toContain("never submit this canceled prompt");
+        const after = await f.storage.get(f.agent.id);
+        expect(after?.providerHistory).toEqual(before.providerHistory);
+        expect(after?.persistence).toEqual(before.persistence);
+        expect(after?.claudeFreshRewind).toEqual(before.claudeFreshRewind);
+      } finally {
+        release.resolve();
+        await f.cleanup();
+      }
+    },
+  );
+  test.each(["initial", "fresh"] as const)(
+    "%s retired query cannot commit an acknowledgment delayed before the storage queue",
+    async (phase) => {
+      const f = await configuredRewindFixture(["no-response", { assistantMessageId: "a2" }]);
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<void>();
+      const assertions = vi.fn();
+      try {
+        if (phase === "fresh") {
+          await runTurns(f.session, 2);
+          await f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation");
+        }
+        const before = (await f.storage.get(f.agent.id))!;
+        if (phase === "initial") {
+          const commit = f.storage.commitClaudeInitialHandle.bind(f.storage);
+          vi.spyOn(f.storage, "commitClaudeInitialHandle").mockImplementationOnce(async (input) => {
+            entered.resolve();
+            await release.promise;
+            try {
+              return await commit({
+                ...input,
+                assertCurrent: () => {
+                  assertions();
+                  input.assertCurrent?.();
+                },
+              });
+            } finally {
+              settled.resolve();
+            }
+          });
+        } else {
+          const commit = f.storage.commitClaudeRewind.bind(f.storage);
+          vi.spyOn(f.storage, "commitClaudeRewind").mockImplementationOnce(async (input) => {
+            entered.resolve();
+            await release.promise;
+            try {
+              return await commit({
+                ...input,
+                assertCurrent: () => {
+                  assertions();
+                  input.assertCurrent?.();
+                },
+              });
+            } finally {
+              settled.resolve();
+            }
+          });
+        }
+        const events: unknown[] = [];
+        f.session.subscribe((event) => events.push(event));
+        const turn = runTurns(f.session, 1);
+        await entered.promise;
+        await f.session.close();
+        release.resolve();
+        await settled.promise;
+        await turn;
+        expect(assertions).toHaveBeenCalledOnce();
+        const after = (await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id))!;
+        expect(after.providerHistory).toEqual(before.providerHistory);
+        expect(after.persistence).toEqual(before.persistence);
+        expect(after.claudeFreshRewind).toEqual(before.claudeFreshRewind);
+        expect(JSON.stringify(events)).not.toContain('"messageId":"a2"');
+        const id = phase === "fresh" ? "fresh-actual-session" : SESSION_ID;
+        expect(await readFile(path.join(f.project, `${id}.jsonl`), "utf8")).toContain(
+          '"subtype":"init"',
+        );
+      } finally {
+        release.resolve();
+        await f.cleanup();
+      }
+    },
+  );
+  test.each(["initial", "fresh"] as const)(
     "%s missing persisted transcript retains recovery state without polling",
     async (phase) => {
       const f = await configuredRewindFixture(["no-response", { assistantMessageId: "a2" }]);
@@ -609,6 +979,7 @@ describe("configured Claude managed rewind", () => {
     async (phase) => {
       for (const field of [
         "config",
+        "launchEnv",
         "workspace",
         "archive",
         "provider",
@@ -865,6 +1236,8 @@ describe("configured Claude managed rewind", () => {
       });
       expect(restarted.fetchTimeline(f.agent.id, { limit: 0 }).rows).toEqual([]);
       if (!loaded.session) throw new Error("fixture resumed session missing");
+      expect(await Array.fromAsync(loaded.session.streamHistory())).toEqual([]);
+      expect(loaded.session.describePersistence()?.sessionId).toBe(SESSION_ID);
       const failures: unknown[] = [];
       loaded.session.subscribe((event) => {
         if (event.type === "turn_failed") failures.push(event);
@@ -879,5 +1252,51 @@ describe("configured Claude managed rewind", () => {
       await restarted?.closeAgent(f.agent.id).catch(() => {});
       await f.cleanup();
     }
+  });
+});
+
+describe("Claude rewind to a message steered into a running turn", () => {
+  test("forks at the entry Claude read the message after", async () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), "claude-rewind-steer-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    const conversation = createConversation([{ assistantMessageId: "assistant-1" }]);
+    const rewindSdk = new FakeClaudeSdk();
+    const session = await createSession(conversation, rewindSdk);
+
+    try {
+      await runTurns(session, 1);
+      // A steered message opens no turn: Claude Code records it as a queued_command attachment
+      // under the uuid Paseo minted for it, hung off the entry it was read after.
+      const projectDir = await claudeProjectDir(process.cwd(), { configDir });
+      mkdirSync(projectDir, { recursive: true });
+      const entries = [
+        { type: "user", uuid: conversation.userMessageIds[0], parentUuid: null },
+        { type: "assistant", uuid: "assistant-1", parentUuid: conversation.userMessageIds[0] },
+        { type: "user", uuid: "tool-result-1", parentUuid: "assistant-1" },
+        {
+          type: "attachment",
+          uuid: "queued-command-1",
+          parentUuid: "tool-result-1",
+          attachment: { type: "queued_command", source_uuid: "steered-message-1" },
+        },
+      ];
+      writeFileSync(
+        path.join(projectDir, `${SESSION_ID}.jsonl`),
+        entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""),
+      );
+
+      await session.revertConversation?.({ messageId: "steered-message-1" });
+    } finally {
+      await session.close();
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      rmSync(configDir, { recursive: true, force: true });
+    }
+
+    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "tool-result-1" }]);
   });
 });

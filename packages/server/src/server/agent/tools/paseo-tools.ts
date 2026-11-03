@@ -1,7 +1,9 @@
+import { registerPluginTools } from "./plugin-tools.js";
+import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
-  waitForPermissionChange,
+  HostOperationRejectedError,
   type HostOperation,
   type AgentHostOperationResult,
   type HostOperations,
@@ -80,8 +82,6 @@ import {
 import {
   type PromptDispatchDisposition,
   sendPromptToAgent,
-  setupFinishNotification,
-  setupFinishWait,
   waitForAgentRunStartWithTimeout,
 } from "../agent-prompt.js";
 import { respondToAgentPermission } from "../permission-response.js";
@@ -122,6 +122,7 @@ import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 export interface PaseoToolHostDependencies {
   attachmentStore?: AttachmentStore;
   agentMessages?: () => AgentMessageDelivery;
+  finishSubscriptions?: () => FinishSubscriptions;
   serverId?: string;
   hosts?: () => ToolHosts;
   agentManager: AgentManager;
@@ -177,10 +178,6 @@ export interface PaseoToolHostDependencies {
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
   logger: Logger;
-}
-
-function settledStatus(status: string): "error" | "idle" {
-  return status === "error" ? "error" : "idle";
 }
 
 interface ProviderSummary {
@@ -667,8 +664,13 @@ function createToolCatalog(
     if (!options.agentMessages) throw new Error("Agent message delivery is not configured");
     return options.agentMessages();
   }
+  function finishSubscriptions(): FinishSubscriptions {
+    if (!options.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
+    return options.finishSubscriptions();
+  }
   const localHostOperations = new Map<string, HostOperation>();
   const tools = new Map<string, PaseoToolDefinition>();
+  const builtinNames = new Set<string>();
   const hostTools = new Map([
     ["create_agent", "createAgent"],
     ["create_workspace", "createWorkspace"],
@@ -698,57 +700,6 @@ function createToolCatalog(
       getStatus: (args, context) => localHostOperations.get("get_agent_status")!(args, context),
       getActivity: (args, context) => localHostOperations.get("get_agent_activity")!(args, context),
       listAgents: (args, context) => localHostOperations.get("list_agents")!(args, context),
-      async observe(agentId, handler, signal) {
-        const unsubscribe = agentManager.subscribe(
-          (event) => {
-            if (event.type === "agent_state") handler(toAgentPayload(event.agent));
-          },
-          { agentId, replayState: true },
-        );
-        const stop = () => unsubscribe();
-        signal.addEventListener("abort", stop, { once: true });
-        return async () => {
-          signal.removeEventListener("abort", stop);
-          unsubscribe();
-        };
-      },
-      async wait({ agentId, signal, attentionRequest }) {
-        if (attentionRequest) {
-          const attentionOutcome = await agentManager.waitForAttentionOutcome({
-            agentId,
-            query: attentionRequest,
-            signal,
-          });
-          const snapshot = agentManager.getAgent(agentId);
-          const final = snapshot
-            ? await serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger)
-            : null;
-          let status: "idle" | "error" | "permission" = "error";
-          if (attentionOutcome?.kind === "finished") status = "idle";
-          if (attentionOutcome?.kind === "permission") status = "permission";
-          return {
-            status,
-            final,
-            attentionOutcome,
-            lastMessage: attentionOutcome?.lastMessage ?? null,
-            error: attentionOutcome?.error ?? null,
-          };
-        }
-        const settled = await agentManager.waitForAgentEvent(agentId, {
-          signal,
-          waitForActive: true,
-        });
-        const snapshot = agentManager.getAgent(agentId);
-        const final = snapshot
-          ? await serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger)
-          : null;
-        return {
-          status: settled.permission ? "permission" : settledStatus(settled.status),
-          final,
-          lastMessage: settled.lastMessage,
-          error: final?.lastError ?? null,
-        };
-      },
     },
   });
   const registerTool = (
@@ -757,6 +708,7 @@ function createToolCatalog(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<AgentHostOperationResult>,
   ) => {
+    builtinNames.add(name);
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
       return;
     }
@@ -780,40 +732,36 @@ function createToolCatalog(
       };
       handler = async ({ serverId, ...input }, context) => {
         const destination = serverId ?? options.serverId;
+        let remoteNotification: FinishRegistration | undefined;
         try {
-          const { attention, targetAgentId, ...response } = await hostResolver.use(
+          const {
+            attention: _attention,
+            targetAgentId: _targetAgentId,
+            ...response
+          } = await hostResolver.use(
             serverId,
             (host) => host[operation](input, context),
+            async ({ agentId, attention, requireParentOwnership }) => {
+              if (!callerAgentId || input.notifyOnFinish === false) return;
+              remoteNotification = await finishSubscriptions().register(
+                {
+                  childAgentId: agentId,
+                  callerAgentId,
+                  serverId: destination,
+                  requireParentOwnership,
+                  attention: attention?.requesterObjective
+                    ? {
+                        link: attention.requesterObjective,
+                        requester: agentManager.attentionRequester(callerAgentId),
+                      }
+                    : undefined,
+                },
+                true,
+              );
+            },
           );
-          let childAgentId: string | undefined;
-          if (name === "create_agent") {
-            childAgentId = (response.structuredContent as { agentId: string }).agentId;
-          } else if (name === "send_agent_prompt" && destination !== options.serverId) {
-            childAgentId = targetAgentId;
-          }
-          if (childAgentId && callerAgentId && input.notifyOnFinish !== false) {
-            setupFinishWait({
-              agentMessages: agentMessages(),
-              agentManager,
-              agentStorage,
-              originServerId: options.serverId,
-              childServerId: destination,
-              childAgentId,
-              callerAgentId,
-              attention: attention?.requesterObjective
-                ? { continuation: attention.requesterObjective }
-                : undefined,
-              logger: childLogger,
-              wait: (signal, attentionRequest) =>
-                hostResolver.use(destination, (host) =>
-                  host.wait({ agentId: childAgentId, signal, attentionRequest }),
-                ),
-              afterPermission: (requestId, signal) =>
-                hostResolver.use(destination, (host) =>
-                  waitForPermissionChange(host, childAgentId, requestId, signal),
-                ),
-            });
-          }
+          if (response.isError) await remoteNotification?.reject();
+          else remoteNotification?.accept();
           return {
             ...response,
             structuredContent: {
@@ -822,6 +770,11 @@ function createToolCatalog(
             },
           };
         } catch (error) {
+          // A lost response does not establish whether the remote daemon admitted the prompt.
+          // Reconcile the child rather than silently dropping notification intent.
+          if (error instanceof PaseoToolInputError || error instanceof HostOperationRejectedError)
+            await remoteNotification?.reject();
+          else remoteNotification?.accept();
           if (!options.serverId) throw error;
           const failure = {
             serverId: destination,
@@ -1651,7 +1604,7 @@ function createToolCatalog(
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain. Use get_attention_context and report_objective_status(waiting) before ending an interim reply while a human result is delegated.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. For a different provider, set settings.modeId from inspect_provider; omission is accepted for targets with no modes and for unattended execution supported by the target. Do not guess; call list_providers and list_models first if uncertain. Use get_attention_context and report_objective_status(waiting) before ending an interim reply while a human result is delegated.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1679,6 +1632,7 @@ function createToolCatalog(
         {
           agentManager,
           agentStorage,
+          finishSubscriptions: options.finishSubscriptions?.(),
           logger: childLogger,
           paseoHome: options.paseoHome,
           worktreesRoot: options.worktreesRoot,
@@ -1707,7 +1661,7 @@ function createToolCatalog(
           },
           mode: parsedArgs.settings?.modeId,
           promptFailure: "throw",
-          notifyOnFinish: false,
+          notifyOnFinish,
           detached: resolvedArgs.detached,
           callerAgentId,
           callerObjectiveId: parsedArgs.objectiveId,
@@ -2113,76 +2067,68 @@ function createToolCatalog(
             objectiveId,
           })
         : undefined;
-      let stopNotification: (() => void) | undefined;
-      let acceptDispatch!: (result: PromptDispatchDisposition | false) => void;
-      const dispatchResult = new Promise<PromptDispatchDisposition | false>((resolve) => {
-        acceptDispatch = resolve;
-      });
-      const notifying = Boolean(callerAgentId && notifyOnFinish);
-      function prepareDispatch(): void {
-        if (!callerAgentId || !notifyOnFinish) return;
-        stopNotification = setupFinishNotification({
-          agentMessages: agentMessages(),
-          agentManager,
-          agentStorage,
-          childAgentId: agentId,
-          childServerId: options.serverId,
-          callerAgentId,
-          attention: attention?.requesterObjective
-            ? { continuation: attention.requesterObjective }
-            : undefined,
-          waitForTurnStart: false,
-          dispatchResult,
-          logger: childLogger,
-        });
+      if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
+        throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
-      function confirmDispatch(disposition: PromptDispatchDisposition): void {
-        // A new turn must ignore outcomes from the displaced turn. Its iterator
-        // has not started yet, so rearm here; steering keeps the early observer.
-        if (disposition !== "turn_started") {
-          acceptDispatch(disposition);
-          return;
-        }
-        acceptDispatch(disposition);
-        if (!callerAgentId || !notifyOnFinish) return;
-        stopNotification?.();
-        stopNotification = setupFinishNotification({
-          agentMessages: agentMessages(),
-          agentManager,
-          agentStorage,
-          childAgentId: agentId,
-          childServerId: options.serverId,
-          callerAgentId,
-          attention: attention?.requesterObjective
-            ? { continuation: attention.requesterObjective }
-            : undefined,
-          waitForTurnStart: true,
-          logger: childLogger,
-        });
+      const notifying = Boolean(callerAgentId && notifyOnFinish);
+      const notification =
+        notifying && callerAgentId
+          ? await (() => {
+              if (!options.finishSubscriptions)
+                throw new Error("Finish subscriptions are not configured");
+              return options.finishSubscriptions().register(
+                {
+                  childAgentId: agentId,
+                  callerAgentId,
+                  attention: attention?.requesterObjective
+                    ? {
+                        link: attention.requesterObjective,
+                        requester: agentManager.attentionRequester(callerAgentId),
+                      }
+                    : undefined,
+                },
+                true,
+              );
+            })()
+          : undefined;
+      function confirmDispatch(_disposition: PromptDispatchDisposition): void {
+        notification?.accept();
+      }
+      function rejectNotification(): void {
+        void notification
+          ?.reject()
+          .catch((error) =>
+            childLogger.error(
+              { err: error, agentId },
+              "Failed to remove rejected finish subscription",
+            ),
+          );
       }
 
       if (callerAgentId) {
-        if (!agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
-          throw new PaseoToolInputError(`Agent ${agentId} not found`);
-        }
-        const receipt = agentMessages().enqueue({
-          recipientId: agentId,
-          messageId: attention?.requesterObjective?.requestId,
-          prompt,
-          source: {
-            kind: "agent-message",
-            agentId: callerAgentId,
-            attention,
-            title: resolveCallerAgent()?.config.title ?? undefined,
-          },
-          sessionMode,
-          activeTurnBehavior,
-          beforeDispatch: prepareDispatch,
-          onDispatch: confirmDispatch,
-        });
+        const receipt = (() => {
+          try {
+            return agentMessages().enqueue({
+              recipientId: agentId,
+              messageId: attention?.requesterObjective?.requestId,
+              prompt,
+              source: {
+                kind: "agent-message",
+                attention,
+                agentId: callerAgentId,
+                title: resolveCallerAgent()?.config.title ?? undefined,
+              },
+              sessionMode,
+              activeTurnBehavior,
+              onDispatch: confirmDispatch,
+            });
+          } catch (error) {
+            rejectNotification();
+            throw error;
+          }
+        })();
         void receipt.dispatched.catch(() => {
-          acceptDispatch(false);
-          stopNotification?.();
+          rejectNotification();
         });
         return {
           content: [],
@@ -2209,8 +2155,7 @@ function createToolCatalog(
         onDispatch: confirmDispatch,
         logger: childLogger,
       }).catch((error) => {
-        acceptDispatch(false);
-        stopNotification?.();
+        rejectNotification();
         if (error instanceof AgentNotFoundError) {
           throw new PaseoToolInputError(error.message);
         }
@@ -2220,7 +2165,7 @@ function createToolCatalog(
       // Return once the provider has accepted the turn, so the status reports it running.
       if (disposition === "turn_started") {
         await waitForAgentRunStartWithTimeout(agentManager, agentId).catch((error) => {
-          stopNotification?.();
+          rejectNotification();
           throw error;
         });
       }
@@ -3440,6 +3385,14 @@ function createToolCatalog(
     },
   );
 
+  registerPluginTools({
+    agentManager,
+    callerAgentId,
+    scope,
+    tools,
+    builtinNames,
+    policy: options.paseoToolPolicy,
+  });
   return toCatalog();
 }
 
