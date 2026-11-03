@@ -26,10 +26,30 @@ test.use({
 
 type ChatDisplay = "full" | "collapseToolCalls" | "collapseTurns";
 
-async function useChatDisplay(page: Page, chatDisplay: ChatDisplay): Promise<void> {
-  await page.addInitScript((value) => {
-    localStorage.setItem("@paseo:app-settings", JSON.stringify({ chatDisplay: value }));
-  }, chatDisplay);
+async function useChatDisplay(
+  page: Page,
+  chatDisplay: ChatDisplay,
+  options?: { stickyUserPrompts: boolean; descriptiveToolCalls?: boolean },
+): Promise<void> {
+  await page.addInitScript(
+    ({ display, stickyUserPrompts, descriptiveToolCalls }) => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({
+          chatDisplay: display,
+          paseoPlusPlus:
+            stickyUserPrompts === undefined
+              ? undefined
+              : { stickyUserPrompts, descriptiveToolCalls },
+        }),
+      );
+    },
+    {
+      display: chatDisplay,
+      stickyUserPrompts: options?.stickyUserPrompts,
+      descriptiveToolCalls: options?.descriptiveToolCalls,
+    },
+  );
 }
 
 async function seedAnsweredAgent(title: string) {
@@ -128,7 +148,7 @@ test.describe("Turn collapse", () => {
   test("folds each answered turn behind a summary line that opens it", async ({ page }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1280, height: 1000 });
-    await useChatDisplay(page, "collapseTurns");
+    await useChatDisplay(page, "collapseTurns", { stickyUserPrompts: false });
     const agent = await seedAnsweredAgent("Turn collapse");
     try {
       await openAgentRoute(page, agent);
@@ -288,7 +308,12 @@ async function watchReceivedMessagePreview(page: Page, senderLabel: string): Pro
       [...document.querySelectorAll("[data-testid=user-message]")].find((row) =>
         row.textContent?.includes(label),
       ) ?? null;
-    const initialFade = findBubble()?.querySelector("svg") ?? null;
+    // Sender icons are outside this clip and cannot stand in for its preview fade.
+    const findFade = () =>
+      findBubble()?.querySelector(
+        '[data-testid="user-message-preview-clip"] > :not([data-testid="user-message-preview-body"]) svg',
+      ) ?? null;
+    const initialFade = findFade();
     if (!initialFade) throw new Error(`No faded bubble for ${label}`);
     const framesWithoutClip: number[] = [];
     const framesRemounted: number[] = [];
@@ -297,7 +322,7 @@ async function watchReceivedMessagePreview(page: Page, senderLabel: string): Pro
     const sample = () => {
       if (!running) return;
       const bubble = findBubble();
-      const fade = bubble?.querySelector("svg") ?? null;
+      const fade = findFade();
       if (!fade || !bubble?.textContent?.includes("Show more")) framesWithoutClip.push(frame);
       else if (fade !== initialFade) framesRemounted.push(frame);
       frame += 1;
@@ -331,7 +356,10 @@ async function expectReceivedMessagePreviewUndisturbed(page: Page): Promise<void
 test("opening a turn keeps the received message above it clipped on every frame", async ({
   page,
 }) => {
-  await useChatDisplay(page, "collapseTurns");
+  await useChatDisplay(page, "collapseTurns", {
+    stickyUserPrompts: false,
+    descriptiveToolCalls: false,
+  });
   const recipient = await seedReceivedReviewWithToolTurn();
   try {
     await openAgentRoute(page, recipient);
@@ -446,18 +474,22 @@ async function useThinkingDisplay(
   page: Page,
   autoExpandReasoning: boolean,
   chatDisplay: ChatDisplay,
+  descriptiveToolCalls?: boolean,
 ) {
   await page.addInitScript(
     (settings) => {
       localStorage.setItem(
         "@paseo:app-settings",
         JSON.stringify({
-          ...settings,
+          autoExpandReasoning: settings.autoExpandReasoning,
+          ...(settings.descriptiveToolCalls === undefined
+            ? {}
+            : { paseoPlusPlus: { descriptiveToolCalls: settings.descriptiveToolCalls } }),
           chatDisplay: sessionStorage.getItem("e2e-chat-display") ?? settings.chatDisplay,
         }),
       );
     },
-    { autoExpandReasoning, chatDisplay },
+    { autoExpandReasoning, chatDisplay, descriptiveToolCalls },
   );
 }
 
@@ -466,7 +498,12 @@ for (const autoExpandReasoning of [false, true]) {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });
-    await useThinkingDisplay(page, autoExpandReasoning, "collapseToolCalls");
+    await useThinkingDisplay(
+      page,
+      autoExpandReasoning,
+      "collapseToolCalls",
+      autoExpandReasoning ? undefined : false,
+    );
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "thinking-group-",
       title: "Thinking with tools",

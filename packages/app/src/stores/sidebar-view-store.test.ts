@@ -172,9 +172,14 @@ describe("sidebar view store", () => {
       projectFilters: ["project-a"],
       labelFilter: { labels: ["review"] },
     };
-    expect(migrateSidebarViewState(preferences)).toEqual({ ...preferences, showBackground: false });
+    expect(migrateSidebarViewState(preferences)).toEqual({
+      ...preferences,
+      workspaceSort: "manual",
+      showBackground: false,
+    });
     expect(migrateSidebarViewState({ ...preferences, showBackground: true })).toEqual({
       ...preferences,
+      workspaceSort: "manual",
       showBackground: true,
     });
   });
@@ -234,7 +239,7 @@ describe("sidebar view store", () => {
         },
       }),
     ).toEqual({
-      workspaceSort: "created",
+      workspaceSort: "manual",
       showBackground: false,
       groupMode: "status",
       workspaceSortMode: "status",
@@ -259,7 +264,7 @@ describe("sidebar view store", () => {
         hostFilter: "host-a",
       }),
     ).toEqual({
-      workspaceSort: "created",
+      workspaceSort: "manual",
       showBackground: false,
       groupMode: "status",
       workspaceSortMode: "status",
@@ -276,6 +281,7 @@ describe("sidebar view store", () => {
   it("keeps current persisted sidebar view state during version migration", () => {
     expect(
       migrateSidebarViewState({
+        workspaceSort: "created",
         groupMode: "status",
         sortMode: "status",
         projectVisibility: "unarchived",
@@ -435,7 +441,7 @@ describe("sidebar view store", () => {
         projectFilters: ["project-a", "project-b"],
       }),
     ).toEqual({
-      workspaceSort: "created",
+      workspaceSort: "manual",
       showBackground: false,
       groupMode: "project",
       workspaceSortMode: "custom",
@@ -451,7 +457,7 @@ describe("sidebar view store", () => {
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
-      workspaceSort: "created",
+      workspaceSort: "manual",
       showBackground: false,
       groupMode: "project",
       workspaceSortMode: "custom",
@@ -874,3 +880,25 @@ it("defaults to Manual and persists the Last prompt choice across migration", ()
 it("retains the manual sorting preference on reload", () => {
   expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
 });
+
+it.each(["created", "lastPrompt", "manual"])(
+  "roundtrips explicit %s sorting with all saved view preferences",
+  (workspaceSort) => {
+    const persisted = {
+      groupMode: "project",
+      workspaceSort,
+      showBackground: true,
+      workspaceSortMode: "name",
+      sortMode: "project",
+      projectVisibility: "unarchived",
+      groupEmptyProjects: false,
+      emptyProjectSortMode: "project",
+      hostFilters: ["host-a"],
+      projectFilters: ["project-a"],
+      labelFilter: { labels: ["review"] },
+    };
+    const migrated = migrateSidebarViewState(persisted);
+    expect(migrated).toEqual(persisted);
+    expect(migrateSidebarViewState(JSON.parse(JSON.stringify(migrated)))).toEqual(persisted);
+  },
+);

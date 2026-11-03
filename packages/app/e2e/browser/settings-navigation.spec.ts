@@ -11,6 +11,7 @@ import {
   closeSidebarDisplayPreferences,
   closeMobileAgentSidebar,
   expectMobileAgentSidebarVisible,
+  seedLegacyCompactTabSwitcher,
 } from "../support/helpers/sidebar";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -268,6 +269,7 @@ test.describe("Settings — compact master-detail", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test("the compact tab switcher reopens after Settings hides its workspace", async ({ page }) => {
+    await seedLegacyCompactTabSwitcher(page);
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "settings-tab-switcher-",
       title: "Compact tab switcher",
@@ -290,9 +292,11 @@ test.describe("Settings — compact master-detail", () => {
         .first()
         .dispatchEvent("click");
       await page.getByTestId("sidebar-settings").first().dispatchEvent("click");
-      await expectAppRoute(page, buildSettingsRoute());
+      await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
       await expect(newAgent).toHaveCount(0);
 
+      await goBackInSettings(page);
+      await expectAppRoute(page, buildSettingsRoute());
       await closeCompactSettings(page);
       await expect(switcher).toBeVisible();
       await expect(newAgent).toHaveCount(0);
@@ -922,7 +926,7 @@ test.describe("Settings sidebar navigation", () => {
 
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
     await page.keyboard.press(`${modifier}+,`);
-    await expect(page).toHaveURL(/\/settings\/general$/);
+    await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
     await page.screenshot({ path: testInfo.outputPath("settings-after-model-selector.png") });
     await expect(popover).toHaveCount(0);
 
@@ -956,7 +960,7 @@ test.describe("Settings sidebar navigation", () => {
 
       const modifier = process.platform === "darwin" ? "Meta" : "Control";
       await page.keyboard.press(`${modifier}+,`);
-      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
       await page.screenshot({
         path: testInfo.outputPath("settings-after-existing-model-selector.png"),
       });

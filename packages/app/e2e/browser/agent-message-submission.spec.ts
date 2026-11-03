@@ -1190,14 +1190,30 @@ test.describe("Agent message submission", () => {
         hasText: "I'll take a look at the scroll anchor behavior you described.",
       }),
     ).toBeVisible();
-    // Completed Read and search calls share the activity group in the default readable view.
+    // Full chat exposes each operation; require the submitted turn's first completed pair.
+    const readRow = page
+      .getByTestId("agent-chat-scroll")
+      .filter({ visible: true })
+      .locator('[data-history-row-id^="agent_tool_turn:"][data-history-row-id$="%3Aread%3A1"]');
+    await expect(readRow).toHaveCount(1, { timeout: 30_000 });
+    const readId = await readRow.getAttribute("data-history-row-id");
+    if (!readId) throw new Error("Completed Read row has no canonical identity");
+    const read = readRow.getByTestId("tool-call-badge");
+    await expect(read).toHaveCount(1);
+    await expect(read.getByText("Read", { exact: true })).toBeVisible();
     await expect(
-      page
-        .getByTestId("tool-call-group")
-        .filter({ visible: true })
-        .filter({ hasText: "1 file read and 1 search" })
-        .last(),
-    ).toBeVisible({ timeout: 30_000 });
+      read.getByText("packages/app/src/components/conversation-list.tsx", { exact: true }),
+    ).toBeVisible();
+    const searchId = readId.replace(/%3Aread%3A1$/, "%3Agrep%3A1");
+    const searchRow = page
+      .getByTestId("agent-chat-scroll")
+      .filter({ visible: true })
+      .locator(`[data-history-row-id="${searchId}"]`);
+    await expect(searchRow).toHaveCount(1);
+    const search = searchRow.getByTestId("tool-call-badge");
+    await expect(search).toHaveCount(1);
+    await expect(search.getByText("Searched", { exact: true })).toBeVisible();
+    await expect(search.getByText("scrollToEnd", { exact: true })).toBeVisible();
     await finishTimelineRowStabilityCheck();
   });
 

@@ -734,18 +734,37 @@ export async function expectOldestLoadedTurnPartial(
   prompts: readonly string[],
 ): Promise<string> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-  const oldestLoadedPrompt = await timeline
+  const ordinaryRows = originalTimelineRows(page);
+  const oldestLoadedPrompt = await ordinaryRows
     .getByTestId("user-message")
     .first()
     .evaluate((element) => element.textContent ?? "");
   const loadedIndex = prompts.findIndex((prompt) => oldestLoadedPrompt.includes(prompt));
   expect(loadedIndex, "oldest loaded prompt is a seeded turn").toBeGreaterThan(0);
-  const oldestRow = timeline.locator("[data-history-row-id]").first();
+  const oldestRow = ordinaryRows.first();
   await expect(oldestRow.getByTestId("user-message"), "rows above the oldest prompt").toHaveCount(
     0,
   );
   const partialPrompt = prompts[loadedIndex - 1]!;
-  await expectTimelinePromptNotMounted(page, partialPrompt);
+  // Certified paint is not loaded original membership. Preserve the missing-original
+  // proof while independently certifying the one actual recovered body and Text.
+  await expect(ordinaryRows.getByText(partialPrompt, { exact: true })).toHaveCount(0);
+  const retained = timeline
+    .locator("[data-retained-prompt-row]")
+    .filter({ hasText: partialPrompt });
+  await expect(retained).toHaveCount(1);
+  await expect(retained).toHaveAttribute("aria-hidden", "false");
+  await expect(retained).toHaveAttribute("data-prompt-pinned", "true");
+  const recoveredId = await retained.getAttribute("data-retained-prompt-row");
+  expect(recoveredId).not.toBeNull();
+  await expect(timeline.locator(`[data-history-row-id="${recoveredId}"]`)).toHaveCount(0);
+  await expect(retained.getByTestId("user-message")).toHaveCount(1);
+  await expect(retained.getByTestId("user-message-text")).toHaveText(partialPrompt);
+  await expect(
+    timeline
+      .locator("[data-actual-prompt-row], [data-retained-prompt-row]")
+      .filter({ hasText: partialPrompt }),
+  ).toHaveCount(1);
   return partialPrompt;
 }
 

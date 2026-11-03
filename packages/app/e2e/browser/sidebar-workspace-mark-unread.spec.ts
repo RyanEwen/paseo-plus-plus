@@ -8,7 +8,11 @@ import {
 } from "../support/helpers/mock-agent";
 import { expectOpenTabCount } from "../support/helpers/sheet";
 import { getServerId } from "../support/helpers/server-id";
-import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
+import {
+  closeMobileAgentSidebar,
+  openMobileAgentSidebar,
+  seedLegacyCompactTabSwitcher,
+} from "../support/helpers/sidebar";
 
 interface FinishedWorkspaces {
   subject: MockAgentWorkspace;
@@ -257,6 +261,7 @@ test("reopening a marked unread workspace restores only its agent tab and curren
 }) => {
   test.setTimeout(120_000);
   await test.step("open a finished chat with one main tab", async () => {
+    await seedLegacyCompactTabSwitcher(page);
     await openCompactWorkspace(page, workspaces.subject);
     await closeMobileAgentSidebar(page);
     await expectOpenTabCount(page, 1);

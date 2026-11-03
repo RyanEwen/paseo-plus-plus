@@ -187,6 +187,48 @@ function assertPendingClaudeQuerySnapshot(
   if (admission && existing) assertClaudeQueryAdmission(admission, existing);
 }
 
+/** Internal creation-runner proof, consumed only after the queued captured-record comparison. */
+export interface HistoryIntentRetryAdmission {
+  expected: StoredAgentRecord;
+  consume(): void;
+}
+
+export function isUncommittedCreatedIntent(
+  record: StoredAgentRecord | null | undefined,
+): record is StoredAgentRecord {
+  return (
+    !!record &&
+    record.providerHistory?.origin === "created" &&
+    record.providerHistory.registration === "intent" &&
+    record.providerHistory.sessionId === null &&
+    !record.persistence &&
+    !record.claudeFreshRewind &&
+    !record.archivedAt &&
+    !record.internal &&
+    (record.runtimeInfo?.sessionId === undefined || record.runtimeInfo.sessionId === null)
+  );
+}
+
+function matchesCreatedIntentRetry(
+  current: StoredAgentRecord,
+  requested: StoredAgentRecord,
+): boolean {
+  return (
+    isUncommittedCreatedIntent(current) &&
+    requested.providerHistory?.origin === "created" &&
+    requested.providerHistory.registration === "intent" &&
+    requested.providerHistory.sessionId === null &&
+    current.id === requested.id &&
+    current.provider === requested.provider &&
+    current.cwd === requested.cwd &&
+    current.workspaceId === requested.workspaceId &&
+    current.internal === requested.internal &&
+    digest(current.owner ?? null) === digest(requested.owner ?? null) &&
+    digest(current.config) === digest(requested.config) &&
+    digest(current.launchEnv ?? null) === digest(requested.launchEnv ?? null)
+  );
+}
+
 /** Optional ownership hooks run inside the existing writer, without changing ordinary snapshots. */
 export interface AgentSnapshotOperation {
   /** Resolve the current view when its queue entry runs; null skips this write and its callback. */
@@ -279,7 +321,10 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
-  async reserveHistoryIntent(record: StoredAgentRecord): Promise<StoredAgentRecord> {
+  async reserveHistoryIntent(
+    record: StoredAgentRecord,
+    retry?: HistoryIntentRetryAdmission,
+  ): Promise<StoredAgentRecord> {
     await this.load();
     let reserved = false;
     let selected = record;
@@ -288,6 +333,17 @@ export class AgentStorage {
       // their unknown provenance instead of retroactively calling the old session created.
       const legacyRetry = existing && !existing.persistence && !existing.providerHistory;
       const emptyRecreation = matchesEmptyClaudeRecreation(existing, record);
+      if (existing && retry) {
+        if (
+          digest(existing) !== digest(retry.expected) ||
+          !matchesCreatedIntentRetry(existing, record)
+        )
+          throw new HistoryIntentConflictError(record.id);
+        retry.consume();
+        reserved = true;
+        selected = existing;
+        return existing;
+      }
       if (existing && !legacyRetry && !emptyRecreation)
         throw new HistoryIntentConflictError(record.id);
       reserved = true;

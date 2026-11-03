@@ -9,6 +9,8 @@ import {
 } from "./actual-prompt-test-fixture";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFindViewport } from "./viewport.web";
+import { ChatFindModel } from "./model";
+import { SelectedMessage } from "./selection";
 import { revealFindOccurrence } from "./body-reveal.web";
 import { findMessageMatches } from "./ranges.web";
 import type { ChatFindProps } from "./types";
@@ -144,6 +146,8 @@ function actualPrompt(
     | "disableOuterSpacing"
     | "holdActionsVisible"
     | "onNavigate"
+    | "enabled"
+    | "wrapRow"
   > & { hostWidth?: number; hostHeight?: number } = {},
 ) {
   void i18n;
@@ -172,7 +176,7 @@ function actualPrompt(
       ),
     );
   }
-  render();
+  render(fixtureOptions.enabled ?? true);
   return { host, ref, render };
 }
 
@@ -2530,5 +2534,326 @@ it("keeps transcript geometry stationary after hovering actual prompt paint, act
       scroll.removeEventListener("pointerover", beginHoverObservation, true);
       outerScroll.mockRestore();
     }
+  }
+});
+
+/** Observe real ordinary allocation separately from the published flow extent. */
+function ordinaryPreviewGeometry(row: HTMLElement) {
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  const message = row.querySelector<HTMLElement>('[data-testid="user-message"]')!;
+  const clip = row.querySelector<HTMLElement>('[data-testid="user-message-preview-clip"]')!;
+  const bounds = row.getBoundingClientRect();
+  const style = getComputedStyle(row);
+  return {
+    flowHeight: Number(body.dataset.promptFlowHeight),
+    allocation:
+      bounds.height + Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom),
+    messageHeight: message.getBoundingClientRect().height,
+    clipHeight: clip.getBoundingClientRect().height,
+  };
+}
+
+function ordinaryPreviewToggle(row: HTMLElement, label: "Show more" | "Show less") {
+  return (
+    Array.from(row.querySelectorAll<HTMLElement>('[role="button"]')).find(
+      (button) => button.textContent === label,
+    ) ?? null
+  );
+}
+
+it("restores upstream preview allocation OFF and full natural allocation ON with one Text and attachment tree", async () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 2;
+  canvas.height = 2;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = "#356bd8";
+  context.fillRect(0, 0, 2, 2);
+  const image = await persistAttachmentFromDataUrl({
+    dataUrl: canvas.toDataURL("image/png"),
+    fileName: "ordinary-preview-transition.png",
+  });
+  try {
+    const prompt = Array.from(
+      { length: 48 },
+      (_, index) => `Full natural paragraph ${index}: preserve this exact wrapping and Text.`,
+    ).join("\n");
+    const fixture = actualPrompt(prompt, {
+      enabled: false,
+      successorText: "Following ordinary preview control",
+      hostWidth: 390,
+      images: [image],
+    });
+    await document.fonts.ready;
+    const row = fixture.host.querySelector<HTMLElement>(
+      `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+    )!;
+    await expect.poll(() => ordinaryPreviewToggle(row, "Show more")).not.toBeNull();
+    await expect
+      .poll(() =>
+        Array.from(row.querySelectorAll("img")).some(
+          (thumbnail) => thumbnail.complete && thumbnail.naturalWidth === 2,
+        ),
+      )
+      .toBe(true);
+    const message = row.querySelector<HTMLElement>('[data-testid="user-message"]')!;
+    const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+    const node = exactTextNodes(row, prompt)[0]!;
+    const thumbnail = row.querySelector("img")!;
+    const attachments = thumbnail.closest<HTMLElement>('[role="button"]')!;
+    expect(attachments).not.toBeNull();
+    const preview = row.querySelector<HTMLElement>('[data-testid="user-message-preview-clip"]')!;
+    const naturalText = naturalPromptText(text, node);
+    expect(naturalText.height).toBeGreaterThan(240);
+    readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+    await expect.poll(() => ordinaryPreviewGeometry(row).clipHeight).toBe(240);
+    await expect
+      .poll(() => {
+        const geometry = ordinaryPreviewGeometry(row);
+        return geometry.flowHeight - geometry.messageHeight;
+      })
+      .toBe(0);
+    const collapsed = ordinaryPreviewGeometry(row);
+    expect(collapsed.allocation).toBe(collapsed.messageHeight);
+    expect(preview.dataset.messagePreviewExpanded).toBe("false");
+    await userEvent.click(ordinaryPreviewToggle(row, "Show more")!);
+    await expect.poll(() => ordinaryPreviewToggle(row, "Show less")).not.toBeNull();
+    await expect.poll(() => ordinaryPreviewGeometry(row).clipHeight).toBeGreaterThan(240);
+    await expect
+      .poll(() => {
+        const geometry = ordinaryPreviewGeometry(row);
+        return geometry.flowHeight - geometry.messageHeight;
+      })
+      .toBe(0);
+    expect(ordinaryPreviewGeometry(row).allocation).toBeGreaterThan(collapsed.allocation);
+    await userEvent.click(ordinaryPreviewToggle(row, "Show less")!);
+    await expect.poll(() => ordinaryPreviewGeometry(row)).toEqual(collapsed);
+
+    fixture.render(true);
+    readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+    await expect.poll(() => preview.dataset.messagePreviewEnabled).toBe("false");
+    await expectCurrentPromptGeometry(fixture.host);
+    const naturalFlow = naturalPromptFlow(fixture.host);
+    expect(naturalFlow.flowHeight).toBeGreaterThan(collapsed.allocation);
+    expect(row.querySelector('[data-testid="user-message"]')).toBe(message);
+    expect(row.querySelector('[data-testid="user-message-text"]')).toBe(text);
+    expect(row.querySelector('[data-testid="user-message-preview-clip"]')).toBe(preview);
+    expect(thumbnail.closest('[role="button"]')).toBe(attachments);
+    expect(ordinaryPreviewToggle(row, "Show more")).toBeNull();
+    expect(ordinaryPreviewToggle(row, "Show less")).toBeNull();
+    expect(naturalPromptText(text, node)).toEqual(naturalText);
+    await readAtPromptHandoff(fixture.host);
+    await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+    const more = row.querySelector<HTMLElement>('[data-testid="user-message-disclosure"]')!;
+    await userEvent.click(more);
+    await expect.poll(() => more.getAttribute("aria-expanded")).toBe("true");
+    expect(naturalPromptFlow(fixture.host)).toEqual(naturalFlow);
+    await userEvent.click(more);
+    await expect.poll(() => more.getAttribute("aria-expanded")).toBe("false");
+    expect(naturalPromptFlow(fixture.host)).toEqual(naturalFlow);
+
+    fixture.render(false);
+    readAt(fixture.host, naturalPromptFlow(fixture.host).promptTop - 8);
+    await expect.poll(() => ordinaryPreviewGeometry(row)).toEqual(collapsed);
+    expect(preview.dataset.messagePreviewEnabled).toBe("true");
+    expect(preview.dataset.messagePreviewExpanded).toBe("false");
+    expect(row.querySelector('[data-testid="user-message"]')).toBe(message);
+    expect(row.querySelector('[data-testid="user-message-text"]')).toBe(text);
+    expect(row.querySelector('[data-testid="user-message-preview-clip"]')).toBe(preview);
+    expect(row.contains(attachments)).toBe(true);
+    expect(row.querySelector("img")).toBe(thumbnail);
+    expect(thumbnail.closest('[role="button"]')).toBe(attachments);
+    expect(exactTextNodes(fixture.host, prompt)).toEqual([node]);
+    expect(naturalPromptText(text, node)).toEqual(naturalText);
+  } finally {
+    act(() => actualRoot?.unmount());
+    actualRoot = null;
+    await deleteAttachments([image]);
+  }
+});
+
+/** Subscribe to the real Find model's canonical selection, as the production ChatFind does. */
+function PreviewFindSelection({
+  model,
+  children,
+}: React.PropsWithChildren<{ model: ChatFindModel }>) {
+  const state = React.useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
+  return React.createElement(SelectedMessage.Provider, { value: state.selectedItemId }, children);
+}
+
+async function expectOrdinaryFindRangeVisible(host: HTMLElement, text: HTMLElement, query: string) {
+  await expect
+    .poll(() => {
+      const ranges = highlightedRanges();
+      const range = ranges[0];
+      if (ranges.length !== 1 || !range || !text.contains(range.startContainer)) return false;
+      const scroll = host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+      const preview = text.closest<HTMLElement>('[data-testid="user-message-preview-clip"]')!;
+      const target = range.getBoundingClientRect();
+      const viewportBounds = scroll.getBoundingClientRect();
+      const previewBounds = preview.getBoundingClientRect();
+      return (
+        range.toString() === query &&
+        target.width > 0 &&
+        target.height > 0 &&
+        preview.dataset.messagePreviewExpanded === "true" &&
+        target.top >= Math.max(viewportBounds.top, previewBounds.top) - 1 &&
+        target.bottom <= Math.min(viewportBounds.bottom, previewBounds.bottom) + 1 &&
+        target.left >= Math.max(viewportBounds.left, previewBounds.left) - 1 &&
+        target.right <= Math.min(viewportBounds.right, previewBounds.right) + 1
+      );
+    })
+    .toBe(true);
+}
+
+it("reveals deep OFF preview Find ranges and releases temporary expansion without changing manual disclosure", async () => {
+  const query = "ordinary-preview-find-needle";
+  const replacement = "replacement-preview-find-needle";
+  const prompt = `Original preview\n${"Full unbounded text for original selection.\n".repeat(48)}${query}\n${replacement}`;
+  const successor = `Second preview\n${"Full unbounded text for successor selection.\n".repeat(36)}${query}`;
+  let fixture: ReturnType<typeof actualPrompt>;
+  const operations: NonNullable<Capture["occurrence"]>[] = [];
+  const load = vi.fn(async () => undefined);
+  const find = createFindViewport({
+    getBindings: () => ({
+      viewportRef: fixture.ref,
+      revealLoadedMessage: () => true,
+      visibleMessageIds: new Set([ACTUAL_PROMPT_ID, ACTUAL_SUCCESSOR_ID]),
+    }),
+    getRoot: () => fixture.host,
+    highlightName: "paseo-chat-find-test",
+  });
+  const model = new ChatFindModel({
+    async search(requested) {
+      return {
+        requestId: "preview-find-search",
+        agentId: "agent",
+        epoch: "preview-epoch",
+        locations:
+          requested === query
+            ? [
+                { seq: 1, role: "user" as const, count: 1 },
+                { seq: 2, role: "user" as const, count: 1 },
+              ]
+            : [{ seq: 1, role: "user" as const, count: 1 }],
+        nextCursor: null,
+        error: null,
+      };
+    },
+    load,
+    ...find,
+  });
+  const wrapRow = (content: React.ReactNode) =>
+    React.createElement(PreviewFindSelection, { model }, content);
+  fixture = actualPrompt(prompt, {
+    enabled: false,
+    successorText: successor,
+    hostWidth: 390,
+    wrapRow,
+  });
+  model.updateHistory("preview-epoch", [
+    {
+      id: ACTUAL_PROMPT_ID,
+      messageId: "provider-original",
+      kind: "user_message",
+      text: prompt,
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "preview-epoch", seq: 1 },
+    },
+    {
+      id: ACTUAL_SUCCESSOR_ID,
+      messageId: "provider-successor",
+      kind: "user_message",
+      text: successor,
+      timestamp: new Date(1),
+      timelineCursor: { epoch: "preview-epoch", seq: 2 },
+    },
+  ]);
+  await document.fonts.ready;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const nextRow = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_SUCCESSOR_ID}"]`,
+  )!;
+  await expect.poll(() => ordinaryPreviewToggle(row, "Show more")).not.toBeNull();
+  await expect.poll(() => ordinaryPreviewToggle(nextRow, "Show more")).not.toBeNull();
+  const text = row.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const nextText = nextRow.querySelector<HTMLElement>('[data-testid="user-message-text"]')!;
+  const node = exactTextNodes(row, prompt)[0]!;
+  const nextNode = exactTextNodes(nextRow, successor)[0]!;
+  const preview = row.querySelector<HTMLElement>('[data-testid="user-message-preview-clip"]')!;
+  const nextPreview = nextRow.querySelector<HTMLElement>(
+    '[data-testid="user-message-preview-clip"]',
+  )!;
+  expect(preview.getBoundingClientRect().height).toBe(240);
+  expect(
+    findMessageMatches(fixture.host, ACTUAL_PROMPT_ID, query)[0]!.getBoundingClientRect().top,
+  ).toBeGreaterThan(preview.getBoundingClientRect().bottom);
+  const handle = fixture.ref.current!;
+  const originalScroll = handle.scrollToMessage!;
+  handle.scrollToMessage = (id, occurrence, placement) => {
+    if (occurrence) operations.push(occurrence);
+    originalScroll(id, occurrence, placement);
+  };
+  try {
+    act(() => {
+      model.open();
+      model.setQuery(query);
+    });
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    expect(model.getSnapshot().selectedItemId).toBe(ACTUAL_PROMPT_ID);
+    await expectOrdinaryFindRangeVisible(fixture.host, text, query);
+    const first = operations.at(-1)!;
+    act(() => model.next());
+    await expect.poll(() => model.getSnapshot().selectedItemId).toBe(ACTUAL_SUCCESSOR_ID);
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    await expectOrdinaryFindRangeVisible(fixture.host, nextText, query);
+    expect(first.signal.aborted).toBe(true);
+    expect(first.targetTop()).toBeNull();
+    await expect.poll(() => preview.getBoundingClientRect().height).toBe(240);
+    await expect.poll(() => ordinaryPreviewToggle(row, "Show more")).not.toBeNull();
+    await userEvent.click(ordinaryPreviewToggle(row, "Show more")!);
+    await expect.poll(() => ordinaryPreviewToggle(row, "Show less")).not.toBeNull();
+    const selectedSuccessor = operations.at(-1)!;
+    act(() => model.setQuery(replacement));
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    expect(model.getSnapshot().selectedItemId).toBe(ACTUAL_PROMPT_ID);
+    await expectOrdinaryFindRangeVisible(fixture.host, text, replacement);
+    expect(selectedSuccessor.signal.aborted).toBe(true);
+    expect(selectedSuccessor.targetTop()).toBeNull();
+    const current = operations.at(-1)!;
+    act(() => model.setQuery(""));
+    expect(current.signal.aborted).toBe(true);
+    expect(current.targetTop()).toBeNull();
+    expect(model.getSnapshot().selectedItemId).toBeNull();
+    await expect.poll(() => ordinaryPreviewToggle(row, "Show less")).not.toBeNull();
+    await expect.poll(() => ordinaryPreviewToggle(nextRow, "Show more")).not.toBeNull();
+    act(() => model.setQuery(query));
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    await expectOrdinaryFindRangeVisible(fixture.host, text, query);
+    const reopened = operations.at(-1)!;
+    act(() => model.close());
+    expect(reopened.signal.aborted).toBe(true);
+    expect(reopened.targetTop()).toBeNull();
+    await expect.poll(() => ordinaryPreviewToggle(row, "Show less")).not.toBeNull();
+    await expect.poll(() => ordinaryPreviewToggle(nextRow, "Show more")).not.toBeNull();
+    expect(preview.dataset.messagePreviewExpanded).toBe("true");
+    expect(nextPreview.dataset.messagePreviewExpanded).toBe("false");
+    expect(nextPreview.getBoundingClientRect().height).toBe(240);
+    await userEvent.click(ordinaryPreviewToggle(row, "Show less")!);
+    await expect.poll(() => preview.getBoundingClientRect().height).toBe(240);
+    expect(exactTextNodes(fixture.host, prompt)).toEqual([node]);
+    expect(exactTextNodes(fixture.host, successor)).toEqual([nextNode]);
+    expect(row.querySelector('[data-testid="user-message-text"]')).toBe(text);
+    expect(nextRow.querySelector('[data-testid="user-message-text"]')).toBe(nextText);
+    expect(
+      fixture.host.querySelectorAll(`[data-history-row-id="${ACTUAL_PROMPT_ID}"]`),
+    ).toHaveLength(1);
+    expect(
+      fixture.host.querySelectorAll(`[data-history-row-id="${ACTUAL_SUCCESSOR_ID}"]`),
+    ).toHaveLength(1);
+    expect(load).not.toHaveBeenCalled();
+  } finally {
+    act(() => model.close());
   }
 });
