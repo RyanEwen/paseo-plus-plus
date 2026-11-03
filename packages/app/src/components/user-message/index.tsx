@@ -92,7 +92,7 @@ export function MessageSender({
 
 const styles = StyleSheet.create((theme) => ({
   body: { flexShrink: 0 },
-  sender: { paddingRight: 0, borderRightWidth: 0, maxWidth: "100%" },
+  sender: { pointerEvents: "auto", paddingRight: 0, borderRightWidth: 0, maxWidth: "100%" },
   senderText: { flexShrink: 1 },
   toggle: { alignSelf: "flex-start", paddingHorizontal: 0, minHeight: 0, borderWidth: 0 },
   expandedToggle: { marginTop: theme.spacing[2] },
