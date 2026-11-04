@@ -398,13 +398,16 @@ async function writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome,
     )}\n`,
   );
 
-  const desktopLog = readIfExists(path.join(userData, "logs", "main.log"));
-  if (desktopLog !== null) {
-    fs.writeFileSync(path.join(artifactDir, "desktop-main.log"), desktopLog);
-  }
-  const daemonLog = readIfExists(path.join(daemonHome, "daemon.log"));
-  if (daemonLog !== null) {
-    fs.writeFileSync(path.join(artifactDir, "daemon.log"), daemonLog);
+  const logs = [
+    { source: path.join(userData, "logs", "main.log"), name: "desktop-main.log" },
+    { source: path.join(daemonHome, "daemon.log"), name: "daemon.log" },
+    { source: path.join(daemonHome, "terminal-worker.log"), name: "terminal-worker.log" },
+  ];
+  for (const { source, name } of logs) {
+    const contents = readIfExists(source);
+    if (contents !== null) {
+      fs.writeFileSync(path.join(artifactDir, name), contents);
+    }
   }
 
   if (page) {
@@ -717,6 +720,7 @@ async function smokeCliShim({ appPath, env }) {
   assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
 }
 
+/** Preserve startup failure evidence before removing the cold CLI smoke profile. */
 async function smokeColdCliDaemonStart({ appPath }) {
   const home = createTempDir("paseo-smoke-cli-daemon-home-");
   const pidPath = path.join(home, "paseo.pid");
@@ -754,6 +758,19 @@ async function smokeColdCliDaemonStart({ appPath }) {
         });
       }
     }
+  } catch (error) {
+    // Cold CLI startup precedes the renderer smoke; save its logs before this home is removed.
+    await writeSmokeArtifacts({
+      page: null,
+      stdout: [],
+      stderr: [],
+      userData: home,
+      daemonHome: home,
+      error,
+    }).catch((artifactError) => {
+      console.warn(`Packaged desktop smoke: failed to save cold CLI diagnostics: ${artifactError}`);
+    });
+    throw error;
   } finally {
     if (fs.existsSync(pidPath)) {
       await runCliShimCommand({
@@ -1090,6 +1107,7 @@ module.exports = {
   getCliShimScript,
   hasTerminalSmokeMarker,
   smokePackagedDesktopApp,
+  smokeColdCliDaemonStart,
 };
 
 if (require.main === module) {

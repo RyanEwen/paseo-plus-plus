@@ -53,6 +53,7 @@ const {
   prepareTerminalHookSmokeCommand,
   getCliShimScript,
   hasTerminalSmokeMarker,
+  smokeColdCliDaemonStart,
 } = require(join(packageRoot, "e2e", "packaged-app-smoke.js"));
 
 function writeExecutable(filePath: string, contents: string): void {
@@ -104,6 +105,58 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("retains cold CLI worker logs and the original failure before removing its profile", async () => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-cold-cli-evidence-"));
+    const appPath = join(root, "Paseo.app");
+    const resources =
+      process.platform === "darwin"
+        ? join(appPath, "Contents", "Resources")
+        : join(appPath, "resources");
+    const bin = join(resources, "bin");
+    const artifactDir = join(root, "artifacts");
+    const program = join(bin, "cold-start.cjs");
+    const previousArtifactDir = process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR;
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      program,
+      [
+        'const fs = require("node:fs");',
+        'const path = require("node:path");',
+        'const home = process.argv[process.argv.indexOf("--home") + 1];',
+        'fs.writeFileSync(__filename + ".home", home);',
+        'fs.writeFileSync(path.join(home, "daemon.log"), "fixture daemon detail\\n");',
+        'fs.writeFileSync(path.join(home, "terminal-worker.log"), "fixture worker detail\\n");',
+        'process.stderr.write("fixture startup failure\\n");',
+        "process.exitCode = 17;",
+      ].join("\n"),
+    );
+    const windows = process.platform === "win32";
+    const shim = join(bin, windows ? "paseo.cmd" : "paseo");
+    writeExecutable(
+      shim,
+      windows
+        ? '@echo off\r\nnode "%~dp0cold-start.cjs" %*\r\nexit /b %errorlevel%\r\n'
+        : '#!/bin/sh\nexec node "$(dirname "$0")/cold-start.cjs" "$@"\n',
+    );
+    process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR = artifactDir;
+    try {
+      await expect(smokeColdCliDaemonStart({ appPath })).rejects.toThrow("fixture startup failure");
+      expect(existsSync(join(artifactDir, "terminal-worker.log"))).toBe(true);
+      expect(readFileSync(join(artifactDir, "terminal-worker.log"), "utf8")).toBe(
+        "fixture worker detail\n",
+      );
+      expect(readFileSync(join(artifactDir, "daemon.log"), "utf8")).toBe("fixture daemon detail\n");
+      expect(readFileSync(join(artifactDir, "failure.txt"), "utf8")).toContain(
+        "fixture startup failure",
+      );
+      expect(existsSync(readFileSync(program + ".home", "utf8"))).toBe(false);
+    } finally {
+      if (previousArtifactDir === undefined) delete process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR;
+      else process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR = previousArtifactDir;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires a successful bundled hook rather than its echoed terminal command", () => {
     const marker = "paseo-packaged-terminal-smoke-test";
     expect(hasTerminalSmokeMarker([`cwd>echo ${marker}`], marker)).toBe(false);
