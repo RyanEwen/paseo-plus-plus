@@ -1,3 +1,4 @@
+import type { CreationAgentAttempt } from "../creation/index.js";
 import { isBoundEmptyClaudeCreation } from "./agent-storage.js";
 import {
   registerProviderHistory,
@@ -80,7 +81,12 @@ import {
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import { toStoredAgentRecord, serializeAgentConfig } from "./agent-projections.js";
-import type { StoredAgentRecord, AgentStorage, AgentSnapshotOptions } from "./agent-storage.js";
+import type {
+  StoredAgentRecord,
+  AgentStorage,
+  AgentSnapshotOptions,
+  HistoryIntentRetryAdmission,
+} from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -358,6 +364,8 @@ type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
+  /** CreationService-only callback context; never read from user request data. */
+  creationAttempt?: CreationAgentAttempt;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -461,6 +469,7 @@ interface HistoryIntentInput {
   sessionId: string | null;
   workspaceId: string | undefined;
   launchEnv?: Record<string, string>;
+  owner?: AgentOwner;
 }
 
 interface ManagedAgentBase {
@@ -1953,7 +1962,11 @@ export class AgentManager {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     if (this.agents.has(resolvedAgentId))
       throw new Error(`Agent with id ${resolvedAgentId} already exists`);
-    const previousEmpty = await this.registry?.get(resolvedAgentId);
+    this.acknowledgeCreationAttempt(resolvedAgentId, options.creationAttempt);
+    const previousEmpty = await this.registry?.get(resolvedAgentId, {
+      includeHistoryIntents: true,
+    });
+    const expectedRetry = this.captureCreationRetry(previousEmpty, options.creationAttempt);
     const restoringEmpty = isBoundEmptyClaudeCreation(previousEmpty);
     if (this.pluginLifecycle && !config.internal && !restoringEmpty) {
       const request = await this.pluginLifecycle.before("agent.create.before", {
@@ -1972,14 +1985,11 @@ export class AgentManager {
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
-    const intent = await this.persistHistoryIntent({
-      agentId: resolvedAgentId,
-      config: storedConfig,
-      origin: "created",
-      sessionId: null,
-      launchEnv: options.env ? { ...options.env } : undefined,
-      workspaceId: options.workspaceId,
-    });
+    const intent = await this.persistHistoryIntent(
+      this.createdHistoryIntentInput(resolvedAgentId, storedConfig, options),
+      this.creationRetryAdmission(resolvedAgentId, expectedRetry, options.creationAttempt),
+    );
+    this.certifyCreatedHistoryIntent(resolvedAgentId, intent, options.creationAttempt);
     // A rejected reservation must retain the existing chat's view and committed timeline.
     if (!isBoundEmptyClaudeCreation(intent)) await this.deleteAgentState(resolvedAgentId);
     const launchContext = await this.buildLaunchContext(
@@ -2007,6 +2017,7 @@ export class AgentManager {
       record: intent,
     });
     this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
+    options.creationAttempt?.markProviderDispatch(resolvedAgentId);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
@@ -2019,6 +2030,7 @@ export class AgentManager {
       attention: options.attention,
       launchEnv: options.env ? { ...options.env } : undefined,
       historyPrimed: true,
+      ...this.creationRetryRegistrationOptions(intent, expectedRetry),
       ...this.emptyClaudeRestorationOptions(intent),
     });
     if (!agent.internal && !isBoundEmptyClaudeCreation(intent)) {
@@ -2027,6 +2039,69 @@ export class AgentManager {
       });
     }
     return agent;
+  }
+
+  /** Keep acknowledgment synchronous, before the first registry read or hook. */
+  private acknowledgeCreationAttempt(
+    agentId: string,
+    attempt: CreationAgentAttempt | undefined,
+  ): void {
+    attempt?.acknowledgeManager(agentId);
+  }
+
+  private captureCreationRetry(
+    record: StoredAgentRecord | null | undefined,
+    attempt: CreationAgentAttempt | undefined,
+  ) {
+    return attempt?.retryHistoryIntent && record ? structuredClone(record) : undefined;
+  }
+
+  private createdHistoryIntentInput(
+    agentId: string,
+    config: AgentSessionConfig,
+    options: CreateAgentOptions,
+  ): HistoryIntentInput {
+    return {
+      agentId,
+      config,
+      origin: "created",
+      sessionId: null,
+      launchEnv: options.env ? { ...options.env } : undefined,
+      workspaceId: options.workspaceId,
+      owner: options.owner,
+    };
+  }
+
+  private creationRetryAdmission(
+    agentId: string,
+    expected: StoredAgentRecord | undefined,
+    attempt: CreationAgentAttempt | undefined,
+  ): HistoryIntentRetryAdmission | undefined {
+    return expected && attempt
+      ? { expected, consume: () => attempt.consumeHistoryRetry(agentId) }
+      : undefined;
+  }
+
+  private certifyCreatedHistoryIntent(
+    agentId: string,
+    intent: StoredAgentRecord | undefined,
+    attempt: CreationAgentAttempt | undefined,
+  ): void {
+    // Entry alone cannot certify an unrelated hidden intention. Only this queued
+    // exclusive reservation (or consumed same-operation handoff) establishes ownership.
+    if (
+      intent?.providerHistory?.origin === "created" &&
+      intent.providerHistory.registration === "intent" &&
+      intent.providerHistory.sessionId === null
+    )
+      attempt?.certifyHistoryIntentReservation(agentId, intent.workspaceId);
+  }
+
+  private creationRetryRegistrationOptions(
+    record: StoredAgentRecord | undefined,
+    expectedRetry: StoredAgentRecord | undefined,
+  ) {
+    return expectedRetry && record ? { createdAt: new Date(record.createdAt) } : {};
   }
 
   private emptyClaudeRestorationOptions(record: StoredAgentRecord | undefined) {
@@ -2060,6 +2135,7 @@ export class AgentManager {
 
   private async persistHistoryIntent(
     input: HistoryIntentInput,
+    retry?: HistoryIntentRetryAdmission,
   ): Promise<StoredAgentRecord | undefined> {
     const { agentId, config, origin, sessionId, workspaceId } = input;
     if (!this.registry) return;
@@ -2068,20 +2144,29 @@ export class AgentManager {
       return;
     }
     const now = new Date().toISOString();
-    return this.registry.reserveHistoryIntent({
-      id: agentId,
-      provider: config.provider,
-      cwd: config.cwd,
-      workspaceId,
-      config: serializeAgentConfig(config),
-      launchEnv: input.launchEnv,
-      createdAt: now,
-      updatedAt: now,
-      lastStatus: "closed",
-      labels: {},
-      internal: config.internal,
-      providerHistory: { origin, registration: "intent", sessionId, storage: { kind: "unknown" } },
-    });
+    return this.registry.reserveHistoryIntent(
+      {
+        id: agentId,
+        provider: config.provider,
+        cwd: config.cwd,
+        workspaceId,
+        config: serializeAgentConfig(config),
+        launchEnv: input.launchEnv,
+        owner: input.owner,
+        createdAt: now,
+        updatedAt: now,
+        lastStatus: "closed",
+        labels: {},
+        internal: config.internal,
+        providerHistory: {
+          origin,
+          registration: "intent",
+          sessionId,
+          storage: { kind: "unknown" },
+        },
+      },
+      retry,
+    );
   }
 
   private async prepareHistoryLaunch(input: {

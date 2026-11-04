@@ -3,6 +3,7 @@ import { expect, type Page } from "@playwright/test";
 import {
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
+  workspaceDeckEntryLocator,
 } from "../support/helpers/workspace-ui";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { test } from "../support/fixtures";
@@ -258,6 +259,16 @@ test.describe("Archive tab reconciliation", () => {
     await openWorkspaceWithAgents(page, [archived, active]);
     await archiveAgentFromDaemon(client, archived.id);
     await expectWorkspaceTabHidden(page, archived.id);
+    // Route/tab readiness alone can leave the active pane loading when the host is dropped.
+    await expectAgentTabActive(page, active.id);
+    const activePane = workspaceDeckEntryLocator(page, getServerId(), workspaceId).getByTestId(
+      "workspace-pane-main",
+    );
+    const composer = activePane
+      .getByRole("textbox", { name: "Message agent...", exact: true })
+      .filter({ visible: true });
+    await expect(composer).toHaveCount(1);
+    await expect(composer).toBeEditable({ timeout: 15_000 });
     await gate.drop();
     await openReopenDialog(page);
     await expectReopenFailure(page);

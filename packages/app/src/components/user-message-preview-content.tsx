@@ -10,7 +10,8 @@ import { ScrollView } from "@/components/ui/scroll-view";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
-import { NaturalMessageFlowContext } from "./user-message-flow";
+import { NaturalMessageFlowContext, type UserMessageBodyPresentation } from "./user-message-flow";
+import { MessagePreview } from "./user-message/index";
 import { NativeMessageTextPaint } from "./user-message-native-flow";
 
 /** Keep one body ancestry in both disclosure states. The capped parent column
@@ -23,6 +24,8 @@ export function UserMessagePreviewContent({
   compact = false,
   hasText,
   bounded = false,
+  bodyPresentation = "actualPrompt",
+  forceExpanded = false,
 }: {
   children: ReactNode;
   action?: ReactNode;
@@ -30,6 +33,8 @@ export function UserMessagePreviewContent({
   compact?: boolean;
   hasText: boolean;
   bounded?: boolean;
+  bodyPresentation?: UserMessageBodyPresentation;
+  forceExpanded?: boolean;
 }) {
   const naturalFlow = useContext(NaturalMessageFlowContext);
   const contentStyle = useMemo(() => {
@@ -40,15 +45,26 @@ export function UserMessagePreviewContent({
   const dataSet = useMemo(() => ({ bodyExpanded: String(!compact) }), [compact]);
   if (naturalFlow) {
     return (
-      <NaturalMessageContent flow={naturalFlow} attachments={attachments} hasText={hasText}>
+      <NaturalMessageContent
+        flow={naturalFlow}
+        attachments={attachments}
+        hasText={hasText}
+        bodyPresentation={bodyPresentation}
+        forceExpanded={forceExpanded}
+      >
         {children}
       </NaturalMessageContent>
     );
   }
   const body = (
     <View style={contentStyle}>
-      {attachments}
-      <View style={compact ? styles.content : styles.fullContent}>{hasText && children}</View>
+      <MessagePreview
+        enabled={bodyPresentation === "ordinaryPreview"}
+        forceExpanded={forceExpanded}
+      >
+        {attachments}
+        <View style={compact ? styles.content : styles.fullContent}>{hasText && children}</View>
+      </MessagePreview>
     </View>
   );
   return (
@@ -81,6 +97,8 @@ interface NaturalMessageContentProps {
   attachments: ReactNode;
   hasText: boolean;
   children: ReactNode;
+  bodyPresentation: UserMessageBodyPresentation;
+  forceExpanded: boolean;
 }
 
 /** The one full body retains ordinary wrapping even when its painted prefix moves. */
@@ -89,6 +107,8 @@ function NaturalMessageContent({
   attachments,
   hasText,
   children,
+  bodyPresentation,
+  forceExpanded,
 }: NaturalMessageContentProps) {
   const registerContent = useCallback(
     (node: ComponentRef<typeof View> | null) => {
@@ -156,16 +176,21 @@ function NaturalMessageContent({
       onLayout={measureContent}
       collapsable={false}
     >
-      {attachments}
-      <View style={textFrameStyle} ref={registerText} onLayout={measureText} collapsable={false}>
-        {flow.nativePresentation ? (
-          <NativeMessageTextPaint driver={flow.nativePresentation}>
-            {naturalText}
-          </NativeMessageTextPaint>
-        ) : (
-          <View style={clipStyle}>{naturalText}</View>
-        )}
-      </View>
+      <MessagePreview
+        enabled={bodyPresentation === "ordinaryPreview"}
+        forceExpanded={forceExpanded}
+      >
+        {attachments}
+        <View style={textFrameStyle} ref={registerText} onLayout={measureText} collapsable={false}>
+          {flow.nativePresentation ? (
+            <NativeMessageTextPaint driver={flow.nativePresentation}>
+              {naturalText}
+            </NativeMessageTextPaint>
+          ) : (
+            <View style={clipStyle}>{naturalText}</View>
+          )}
+        </View>
+      </MessagePreview>
     </View>
   );
   // Keep web's existing inner padding cell. Only its full natural contents, not

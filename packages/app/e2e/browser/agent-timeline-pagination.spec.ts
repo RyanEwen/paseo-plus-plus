@@ -37,7 +37,6 @@ import {
   expectToolCallGroupPositionPreserved,
   rememberToolCallGroupPosition,
   seedItemPagedToolGroupTimeline,
-  useChatDisplay,
   userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
@@ -261,7 +260,16 @@ test.describe("Agent timeline pagination", () => {
     page,
   }) => {
     test.setTimeout(120_000);
-    await useChatDisplay(page, "collapseToolCalls");
+    // Name the action-style labels exactly, independent of readable-label defaults.
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({
+          chatDisplay: "collapseToolCalls",
+          paseoPlusPlus: { descriptiveToolCalls: false },
+        }),
+      );
+    });
     const agent = await seedItemPagedToolGroupTimeline();
     try {
       const history = await holdOlderHistoryPages(page, agent, { itemPagedHost: true });
@@ -335,6 +343,7 @@ test.describe("Agent timeline pagination", () => {
       let gate: Awaited<ReturnType<typeof holdAgentOlderTimelinePages>> | undefined;
       try {
         gate = await holdAgentOlderTimelinePages(page, agent.agentId, {
+          itemPagedHost: true,
           contextDelivery: "immediate",
         });
         await openAgentTimeline(page, agent);
@@ -458,7 +467,7 @@ test.describe("Agent timeline pagination", () => {
     try {
       // Hold only real canonical context responses. No scroll, reading publication,
       // main-window application or context injection is performed by this helper.
-      gate = await holdAgentOlderTimelinePages(page, agent.agentId);
+      gate = await holdAgentOlderTimelinePages(page, agent.agentId, { itemPagedHost: true });
       await openAgentTimeline(page, agent);
       const timeline = page.getByTestId("agent-chat-scroll").filter({ visible: true });
       await expect.poll(() => gate!.getWindowPages().some(isRemoteToolRunTail)).toBe(true);
@@ -594,6 +603,7 @@ test.describe("Agent timeline pagination", () => {
       // This unique agent has never been browser-opened. Context responses pass
       // through the existing validators immediately; no input or helper publishes an edge.
       const history = await holdOlderHistoryPages(page, agent, {
+        itemPagedHost: true,
         contextDelivery: "immediate",
       });
       observedHistory = history;
@@ -730,7 +740,7 @@ test.describe("Agent timeline pagination", () => {
     const observations: Record<string, unknown> = {};
     let observedHistory: Awaited<ReturnType<typeof holdOlderHistoryPages>> | undefined;
     try {
-      const history = await holdOlderHistoryPages(page, agent);
+      const history = await holdOlderHistoryPages(page, agent, { itemPagedHost: true });
       observedHistory = history;
       await openAgentTimeline(page, agent);
       const timeline = page.getByTestId("agent-chat-scroll").filter({ visible: true });

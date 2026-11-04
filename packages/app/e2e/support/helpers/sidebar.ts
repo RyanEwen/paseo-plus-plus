@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 import { projectEquivalenceViewKey } from "./project-view-key";
 
@@ -235,6 +235,11 @@ export async function openSidebarDisplayPage(page: Page, branchTestID: string): 
   await page.getByTestId(branchTestID).click();
 }
 
+/** Locate host-backed Sort, excluding the fork's separate project and workspace sort controls. */
+export function sidebarWorkspaceSortMenuItem(page: Page): Locator {
+  return page.getByRole("menuitem").filter({ has: page.getByText("Sort", { exact: true }) });
+}
+
 // The heading chooser owns local host/project filters even when the rich heading is off.
 export async function openSidebarProjectFilter(page: Page): Promise<void> {
   await page.getByTestId("sidebar-project-selector").click();
@@ -350,8 +355,31 @@ export async function expectMobileExplorerHidden(page: Page): Promise<void> {
 export async function revealSidebarProjectWorkspaces(
   page: Page,
   projectKey: string,
+  workspaceId: string,
 ): Promise<void> {
-  await page
-    .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(projectKey)}`)
-    .click();
+  const projectViewKey = projectEquivalenceViewKey(projectKey);
+  const target = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+  const showMore = page
+    .getByTestId(`sidebar-project-show-more-${projectViewKey}`)
+    .and(page.getByLabel("Show more", { exact: true }));
+  await expect(page.getByTestId(`sidebar-project-row-${projectViewKey}`)).toBeVisible();
+  await expect
+    .poll(async () => (await target.isVisible()) || (await showMore.isVisible()))
+    .toBe(true);
+  if (!(await target.isVisible())) await showMore.click();
+  await expect(target).toBeVisible();
+}
+
+export async function seedLegacyCompactTabSwitcher(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const settings = JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}");
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({
+        ...settings,
+        chatDisplay: settings.chatDisplay ?? "full",
+        paseoPlusPlus: { ...settings.paseoPlusPlus, mobileWorkspaceTabs: false },
+      }),
+    );
+  });
 }
