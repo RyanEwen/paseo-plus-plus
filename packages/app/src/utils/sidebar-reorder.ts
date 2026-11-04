@@ -22,32 +22,63 @@ export function hasVisibleOrderChanged(input: {
   return input.reorderedVisibleKeys.some((key, index) => currentVisible[index] !== key);
 }
 
-/**
- * Separate project pin drags from ordinary ordering. Return no ordinary update when only pins
- * moved, preserving both the selected sort mode and hidden siblings' saved positions.
- */
+/** Persist only the actual dragged sibling; passive visible overflow is not a move. */
 export function resolveProjectWorkspaceReorder(input: {
   currentVisibleKeys: string[];
   reorderedVisibleKeys: string[];
   projectPinnedKeys: ReadonlySet<string>;
   storedWorkspaceOrder: string[];
+  move: DragReorderMove;
 }): { projectPinKeys: string[]; workspaceOrder: string[] | null } {
-  const ordinaryKeys = input.reorderedVisibleKeys.filter(
-    (key) => !input.projectPinnedKeys.has(key),
+  if (!isProjectWorkspaceMoveValid(input)) return { projectPinKeys: [], workspaceOrder: null };
+  const projectPinKeys = input.reorderedVisibleKeys.filter((key) =>
+    input.projectPinnedKeys.has(key),
   );
-  const ordinaryOrderChanged = hasVisibleOrderChanged({
-    currentOrder: input.currentVisibleKeys.filter((key) => !input.projectPinnedKeys.has(key)),
-    reorderedVisibleKeys: ordinaryKeys,
-  });
+  if (input.projectPinnedKeys.has(input.move.activeKey))
+    return { projectPinKeys, workspaceOrder: null };
+  // Manual reconciliation owns new ranks. A stale ordinary gesture cannot invent their order.
+  const savedKeys = new Set(input.storedWorkspaceOrder);
+  if (input.currentVisibleKeys.some((key) => !savedKeys.has(key)))
+    return { projectPinKeys: [], workspaceOrder: null };
   return {
-    projectPinKeys: input.reorderedVisibleKeys.filter((key) => input.projectPinnedKeys.has(key)),
-    workspaceOrder: ordinaryOrderChanged
-      ? mergeWithRemainder({
-          currentOrder: input.storedWorkspaceOrder,
-          reorderedVisibleKeys: ordinaryKeys,
-        })
-      : null,
+    projectPinKeys,
+    workspaceOrder: moveProjectInFullOrder({
+      currentOrder: input.storedWorkspaceOrder,
+      knownProjectKeys: input.currentVisibleKeys,
+      move: input.move,
+    }),
   };
+}
+
+/** The actual list owns the indices and partition; absent or stale anchors cannot commit. */
+function isProjectWorkspaceMoveValid(input: {
+  currentVisibleKeys: string[];
+  reorderedVisibleKeys: string[];
+  projectPinnedKeys: ReadonlySet<string>;
+  move: DragReorderMove;
+}): boolean {
+  const { activeKey, overKey, from, to } = input.move;
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return false;
+  const reorderedSet = new Set(input.reorderedVisibleKeys);
+  if (reorderedSet.size !== input.reorderedVisibleKeys.length) return false;
+  const original = input.currentVisibleKeys.filter((key) => reorderedSet.has(key));
+  if (
+    original.length !== input.reorderedVisibleKeys.length ||
+    original[from] !== activeKey ||
+    original[to] !== overKey
+  )
+    return false;
+  const pinMove = input.projectPinnedKeys.has(activeKey);
+  if (
+    original
+      .slice(Math.min(from, to), Math.max(from, to) + 1)
+      .some((key) => input.projectPinnedKeys.has(key) !== pinMove)
+  )
+    return false;
+  const expected = original.slice();
+  expected.splice(from, 1);
+  expected.splice(to, 0, activeKey);
+  return expected.every((key, index) => key === input.reorderedVisibleKeys[index]);
 }
 
 /** Move only the dragged project relative to its actual anchor; all other siblings stay ordered. */

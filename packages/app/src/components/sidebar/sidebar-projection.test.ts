@@ -5,6 +5,8 @@ import {
 } from "./workspace-tree-attention";
 import {
   orderWorkspaceFamilies,
+  collectActiveWorkspaceKeys,
+  includeActiveWorkspaceFamily,
   resolveWorkspaceParents,
   summarizeWorkspaceChildren,
   workspaceCollapseKey,
@@ -16,6 +18,9 @@ import { summarizeSidebarProjectActivity } from "./sidebar-project-activity";
 import { setSectionsCollapsed } from "@/stores/sidebar-collapsed-sections-store/state";
 import { i18n } from "@/i18n/i18next";
 import { describe, expect, it } from "vitest";
+import { resolveProjectWorkspaceReorder } from "@/utils/sidebar-reorder";
+import { applyStoredOrdering } from "@/hooks/sidebar-workspaces-view-model";
+import { reorderItemsWithMove } from "@/components/drag-reorder/reorder-items";
 import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
@@ -65,6 +70,67 @@ function makeWorkspace(
   };
   return { placement, entry };
 }
+
+it("active descendants retain their whole family beyond a window without moving passive siblings or pin partitions", () => {
+  const rows = [
+    makeWorkspace("first"),
+    makeWorkspace("hidden"),
+    makeWorkspace("parent"),
+    makeWorkspace("child", "running"),
+    makeWorkspace("selected"),
+    makeWorkspace("selected-child"),
+  ];
+  const entries = new Map(rows.map((row) => [row.entry.workspaceKey, row.entry]));
+  const family = orderWorkspaceFamilies({
+    workspaces: rows.map((row) => row.placement),
+    parents: new Map([
+      ["srv:child", "srv:parent"],
+      ["srv:selected-child", "srv:selected"],
+    ]),
+  });
+  const roots = family.rows.filter((row) => !family.tree.get(row.workspaceKey)?.parentKey);
+  const rendered = includeActiveWorkspaceFamily({
+    roots,
+    visibleItems: roots.slice(0, 1),
+    tree: family.tree,
+    activeWorkspaceKey: "srv:selected-child",
+    activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+  });
+  expect(rendered.map((row) => row.workspaceKey)).toEqual([
+    "srv:first",
+    "srv:parent",
+    "srv:selected",
+  ]);
+  expect(family.tree.get("srv:parent")?.descendantKeys).toEqual(["srv:child"]);
+  expect(family.rows.map((row) => row.workspaceKey)).toEqual(
+    rows.map((row) => row.placement.workspaceKey),
+  );
+  // An independently pinned child is a separate family and cannot expose the ordinary parent.
+  const separated = orderWorkspaceFamilies({
+    workspaces: [rows[3]!.placement],
+    parents: new Map([["srv:child", "srv:parent"]]),
+  });
+  expect(
+    includeActiveWorkspaceFamily({
+      roots: separated.rows,
+      visibleItems: [],
+      tree: separated.tree,
+      activeWorkspaceKey: null,
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+    }).map((row) => row.workspaceKey),
+  ).toEqual(["srv:child"]);
+  const doneEntries = new Map(entries);
+  doneEntries.set("srv:child", { ...rows[3]!.entry, statusBucket: "done" });
+  expect(
+    includeActiveWorkspaceFamily({
+      roots,
+      visibleItems: roots.slice(0, 1),
+      tree: family.tree,
+      activeWorkspaceKey: null,
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(doneEntries),
+    }).map((row) => row.workspaceKey),
+  ).toEqual(["srv:first"]);
+});
 
 function makeProject(
   workspaces: SidebarWorkspacePlacement[],
@@ -170,7 +236,11 @@ describe("buildSidebarProjection", () => {
       { key: "needs_input", workspaceIds: ["second"] },
       { key: "running", workspaceIds: ["first", "third"] },
     ]);
-    expect(listItems().filter((item) => item.kind === "workspace")).toHaveLength(1);
+    expect(
+      listItems()
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual(["first", "third"]);
 
     // One workspace changes group, even when the destination's rows are collapsed.
     third.entry.statusBucket = "needs_input";
@@ -178,6 +248,11 @@ describe("buildSidebarProjection", () => {
       { key: "needs_input", workspaceIds: ["second", "third"] },
       { key: "running", workspaceIds: ["first"] },
     ]);
+    expect(
+      listItems()
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual(["first"]);
 
     // Global pins leave status membership; project pins above remained in their bucket.
     input.pinnedKeys.pinnedWorkspaceKeys = [third.entry.workspaceKey];
@@ -1285,21 +1360,50 @@ describe("workspace family projection", () => {
     expect(setSectionsCollapsed(collapsed, targets, false)).toEqual(state);
   });
 
-  it("keeps the active child family reachable outside the ordinary age window", () => {
+  it("keeps the selected child family reachable outside the ordinary age window", () => {
     const input = nestedProjectionInput("status");
+    const now = new Date("2026-10-22T12:00:00Z").getTime();
+    // Inactive old families isolate selection from the active-work exemption.
+    for (const entry of input.workspaceEntriesByKey.values()) {
+      entry.statusBucket = "done";
+      entry.statusEnteredAt = new Date(now - 2 * 86_400_000);
+    }
     const projection = buildSidebarProjection(input);
-    const items = buildStatusListItems({
+    const listOptions = {
       groups: projection.workspaceGroups,
       workspaceTree: projection.workspaceTree,
-      activeWorkspaceKey: "srv:grandchild",
-      collapsedGroupKeys: new Set(),
-      expandedGroupKeys: new Set(),
+      collapsedGroupKeys: new Set<string>(),
+      expandedGroupKeys: new Set<string>(),
       initialCount: 1,
-      updatedWithin: { days: 1, now: new Date("2026-10-22T12:00:00Z").getTime() },
+      updatedWithin: { days: 1, now },
+    };
+    const withoutSelection = buildStatusListItems(listOptions);
+    expect(
+      withoutSelection
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual([]);
+    const items = buildStatusListItems({
+      ...listOptions,
+      activeWorkspaceKey: "srv:grandchild",
     });
     expect(
       items.filter((item) => item.kind === "workspace").map((item) => item.workspace.workspaceId),
     ).toEqual(["parent"]);
+    const headers = items.filter((item) => item.kind === "header");
+    expect(headers.map((item) => item.group.key)).toEqual(["done"]);
+    expect(headers[0]!.group.rows.map((row) => row.workspaceId)).toEqual([
+      "independent",
+      "parent",
+      "child",
+      "grandchild",
+      "sibling",
+    ]);
+    expect(projection.workspaceTree.get("srv:parent")).toEqual({
+      parentKey: null,
+      childKeys: ["srv:child", "srv:sibling"],
+      descendantKeys: ["srv:child", "srv:grandchild", "srv:sibling"],
+    });
   });
 
   it("prunes collapsed children from keyboard traversal and transiently reveals an active descendant", () => {
@@ -1331,6 +1435,25 @@ describe("workspace family projection", () => {
   it("limits by whole families and admits one when any descendant is recent", () => {
     const input = nestedProjectionInput("status");
     const now = new Date("2026-10-22T12:00:00Z").getTime();
+    // Every family starts inactive and old so only descendant recency can admit it.
+    for (const entry of input.workspaceEntriesByKey.values()) {
+      entry.statusBucket = "done";
+      entry.statusEnteredAt = new Date(now - 2 * 86_400_000);
+    }
+    const oldProjection = buildSidebarProjection(input);
+    const oldItems = buildStatusListItems({
+      groups: oldProjection.workspaceGroups,
+      workspaceTree: oldProjection.workspaceTree,
+      collapsedGroupKeys: new Set(),
+      expandedGroupKeys: new Set(),
+      initialCount: 1,
+      updatedWithin: { days: 1, now },
+    });
+    expect(
+      oldItems
+        .filter((item) => item.kind === "workspace")
+        .map((item) => item.workspace.workspaceId),
+    ).toEqual([]);
     input.workspaceEntriesByKey.get("srv:grandchild")!.statusEnteredAt = new Date(now);
     const projection = buildSidebarProjection(input);
     const items = buildStatusListItems({
@@ -1346,18 +1469,25 @@ describe("workspace family projection", () => {
     ).toEqual(["parent"]);
     expect(
       items.filter((item) => item.kind === "header").map((item) => item.group.rows.length),
-    ).toEqual([1, 4]);
-    expect(projection.workspaceGroups[1].rows.map((row) => row.workspaceId)).toEqual([
+    ).toEqual([5]);
+    expect(projection.workspaceGroups.map((group) => group.key)).toEqual(["done"]);
+    expect(projection.workspaceGroups[0].rows.map((row) => row.workspaceId)).toEqual([
+      "independent",
       "parent",
       "child",
       "grandchild",
       "sibling",
     ]);
+    expect(projection.workspaceTree.get("srv:parent")).toEqual({
+      parentKey: null,
+      childKeys: ["srv:child", "srv:sibling"],
+      descendantKeys: ["srv:child", "srv:grandchild", "srv:sibling"],
+    });
     const expanded = buildStatusListItems({
       groups: projection.workspaceGroups,
       workspaceTree: projection.workspaceTree,
       collapsedGroupKeys: new Set(),
-      expandedGroupKeys: new Set(["attention", "done"]),
+      expandedGroupKeys: new Set(["done"]),
       initialCount: 1,
       updatedWithin: { days: 1, now },
     });
@@ -1688,5 +1818,97 @@ describe("child workspace authoritative attention", () => {
     expect(select({ ...foreignActive, srv: { agents: quietAgents, workspaces: omitted } })).toEqual(
       new Set(["foreign:child"]),
     );
+  });
+});
+
+describe("anchored project workspace drag projection", () => {
+  it("uses real pinned child indices without moving the parent or passive siblings", () => {
+    const parent = makeWorkspace("parent");
+    const a = makeWorkspace("a");
+    const b = makeWorkspace("b");
+    const childPin = makeWorkspace("child-pin");
+    const rootPin = makeWorkspace("root-pin");
+    const outside = makeWorkspace("outside");
+    childPin.entry.projectPinnedAt = "2026-10-22T12:00:00.000Z";
+    rootPin.entry.projectPinnedAt = "2026-10-22T12:00:00.000Z";
+    const all = [parent, a, b, childPin, rootPin, outside];
+    const input = {
+      ...projectionInput(),
+      projects: [makeProject(all.map((workspace) => workspace.placement))],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      pinnedWorkspaceOrder: ["srv:root-pin", "srv:child-pin"],
+      workspaceEntriesByKey: new Map(all.map(({ entry }) => [entry.workspaceKey, entry])),
+      workspaceParents: new Map(
+        [a, b, childPin].map(({ placement }) => [placement.workspaceKey, "srv:parent"]),
+      ),
+    };
+    const projection = buildSidebarProjection(input);
+    const project = projection.pinnedGroups.unpinnedProjects[0];
+    if (!project) throw new Error("Actual project projection missing");
+    const keys = project.workspaces.map((row) => row.workspaceKey);
+    expect(keys).toEqual([
+      "srv:root-pin",
+      "srv:parent",
+      "srv:child-pin",
+      "srv:a",
+      "srv:b",
+      "srv:outside",
+    ]);
+    const childKeys = projection.workspaceTree.get("srv:parent")?.childKeys;
+    expect(childKeys).toEqual(["srv:child-pin", "srv:a", "srv:b"]);
+    const children = project.workspaces.filter((row) => childKeys?.includes(row.workspaceKey));
+    expect(children.map((row) => row.workspaceKey)).toEqual(childKeys);
+    const pins = new Set(["srv:root-pin", "srv:child-pin"]);
+    const move = reorderItemsWithMove({
+      items: children,
+      activeId: "srv:a",
+      overId: "srv:b",
+      keyExtractor: (row) => row.workspaceKey,
+      getDragGroupKey: (row) => (pins.has(row.workspaceKey) ? "pins" : "ordinary"),
+    });
+    expect(move?.move).toEqual({ activeKey: "srv:a", overKey: "srv:b", from: 1, to: 2 });
+    if (!move) throw new Error("Actual sibling drag was not admitted");
+    const saved = all.map(({ placement }) => placement.workspaceKey);
+    const result = resolveProjectWorkspaceReorder({
+      currentVisibleKeys: keys,
+      reorderedVisibleKeys: move.items.map((row) => row.workspaceKey),
+      projectPinnedKeys: pins,
+      storedWorkspaceOrder: saved,
+      move: move.move,
+    });
+    expect(result).toEqual({
+      projectPinKeys: ["srv:child-pin"],
+      workspaceOrder: [
+        "srv:parent",
+        "srv:b",
+        "srv:a",
+        "srv:child-pin",
+        "srv:root-pin",
+        "srv:outside",
+      ],
+    });
+    if (!result.workspaceOrder) throw new Error("Actual sibling drag did not return an order");
+    const reprojected = buildSidebarProjection({
+      ...input,
+      projects: [
+        makeProject(
+          applyStoredOrdering({
+            items: input.projects[0]!.workspaces,
+            storedOrder: result.workspaceOrder,
+            getKey: (row) => row.workspaceKey,
+          }),
+        ),
+      ],
+    });
+    expect(reprojected.workspaceTree.get("srv:parent")?.childKeys).toEqual([
+      "srv:child-pin",
+      "srv:b",
+      "srv:a",
+    ]);
+    expect(reprojected.workspaceTree.get("srv:a")?.parentKey).toBe("srv:parent");
+    expect(
+      reprojected.pinnedGroups.unpinnedProjects[0]?.workspaces.map((row) => row.workspaceKey),
+    ).toEqual(["srv:root-pin", "srv:parent", "srv:child-pin", "srv:b", "srv:a", "srv:outside"]);
+    expect(saved).toEqual(all.map(({ placement }) => placement.workspaceKey));
   });
 });

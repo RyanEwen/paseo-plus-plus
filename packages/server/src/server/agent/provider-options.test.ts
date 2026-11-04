@@ -267,16 +267,24 @@ describe("configured provider options", () => {
         claude: { options: { sandbox: { network: { allowLocalBinding: "yes" } } } },
       },
     });
+    const client = registry.claude.createClient(logger);
+    const availability = vi.spyOn(client, "isAvailable").mockResolvedValue(true);
+    const creation = vi.spyOn(client, "createSession");
+    onTestFinished(() => {
+      availability.mockRestore();
+      creation.mockRestore();
+    });
     const manager = new AgentManager({
       logger,
-      clients: { claude: registry.claude.createClient(logger) },
+      clients: { claude: client },
       providerDefinitions: { claude: registry.claude },
     });
     await expect(
-      manager.createAgent({ provider: "claude", cwd: "/tmp", model: "sonnet" }, undefined, {
+      manager.createAgent({ provider: "claude", cwd: tmpdir(), model: "sonnet" }, undefined, {
         workspaceId: undefined,
       }),
     ).rejects.toThrow("providerOptions.sandbox.network.allowLocalBinding");
+    expect(creation).not.toHaveBeenCalled();
   });
 });
 

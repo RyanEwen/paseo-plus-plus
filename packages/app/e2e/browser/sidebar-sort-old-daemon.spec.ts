@@ -5,7 +5,10 @@ import { metroTest as test, expect } from "../support/fixtures";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { buildSeededHost } from "../support/helpers/daemon-registry";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import {
+  selectSidebarStatusGrouping,
+  sidebarWorkspaceSortMenuItem,
+} from "../support/helpers/sidebar";
 
 test("published old daemon keeps workspace navigation and gates sorting", async ({ page }) => {
   test.setTimeout(180_000);
@@ -61,9 +64,19 @@ async function openWorkspace(page: Page, serverId: string, workspaceId: string) 
   await expect(page).toHaveURL(new RegExp(workspaceId));
 }
 
+/** Click the single owned Display trigger for the current grouping without a bare-label fallback. */
+async function openDisplayPreferences(page: Page, grouping: "Project" | "Status") {
+  const trigger = page.getByTestId("sidebar-display-preferences-menu");
+  await expect(trigger).toHaveCount(1);
+  await expect(trigger).toHaveAttribute("aria-label", `${grouping}: Display preferences`);
+  await trigger.click();
+}
+
 async function expectSortingRequiresHostUpdate(page: Page) {
-  await page.getByLabel("Display preferences", { exact: true }).click();
-  await page.getByRole("menuitem", { name: /^Sort/ }).click();
+  await openDisplayPreferences(page, "Project");
+  const sort = sidebarWorkspaceSortMenuItem(page);
+  await expect(sort).toHaveCount(1);
+  await sort.click();
   await expect(
     page.getByRole("menuitem", { name: "Update hosts to sort workspaces" }),
   ).toBeVisible();
@@ -73,15 +86,16 @@ async function expectSortingRequiresHostUpdate(page: Page) {
   await expect(page.getByRole("menuitem", { name: "Created", exact: true })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Last prompt", exact: true })).toHaveCount(0);
   await page.getByRole("menuitem", { name: "Manual", exact: true }).click();
-  await page.getByLabel("Display preferences", { exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: /^Sort/ })).toContainText("Manual");
+  await openDisplayPreferences(page, "Project");
+  await expect(sort).toHaveCount(1);
+  await expect(sort).toContainText("Manual");
   await page.keyboard.press("Escape");
 }
 
 async function expectStatusHasNoSorting(page: Page) {
-  await page.getByLabel("Display preferences", { exact: true }).click();
+  await openDisplayPreferences(page, "Status");
   await expect(page.getByRole("menuitem", { name: "Update hosts to sort workspaces" })).toHaveCount(
     0,
   );
-  await expect(page.getByRole("menuitem", { name: /^Sort/ })).toHaveCount(0);
+  await expect(sidebarWorkspaceSortMenuItem(page)).toHaveCount(0);
 }

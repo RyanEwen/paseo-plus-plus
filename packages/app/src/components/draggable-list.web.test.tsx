@@ -55,6 +55,10 @@ function renderRow(info: DraggableRenderItemInfo<Item>) {
   return <Row dragHandleProps={info.dragHandleProps} />;
 }
 
+function renderOwnedRow() {
+  return <div data-testid="owned-row">row</div>;
+}
+
 function renderReplacementRow(info: DraggableRenderItemInfo<Item>) {
   return <Row dragHandleProps={info.dragHandleProps} />;
 }
@@ -77,6 +81,34 @@ afterEach(() => {
 });
 
 describe("DraggableList web row stability", () => {
+  it.each([false, true])(
+    "forwards list testID exactly once (scrollEnabled=%s)",
+    (scrollEnabled) => {
+      const render = () =>
+        act(() => {
+          root?.render(
+            <DraggableList
+              testID="owned-list"
+              scrollEnabled={scrollEnabled}
+              data={items}
+              keyExtractor={keyExtractor}
+              renderItem={renderOwnedRow}
+              onDragEnd={onDragEnd}
+            />,
+          );
+        });
+      render();
+      expect(container!.querySelectorAll('[data-testid="owned-list"]')).toHaveLength(1);
+      const list = container!.querySelector('[data-testid="owned-list"]')!;
+      const row = container!.querySelector('[data-testid="owned-row"]')!;
+      expect(list.contains(row)).toBe(true);
+      render();
+      expect(container!.querySelectorAll('[data-testid="owned-list"]')).toHaveLength(1);
+      expect(container!.querySelector('[data-testid="owned-list"]')).toBe(list);
+      expect(container!.querySelector('[data-testid="owned-row"]')).toBe(row);
+    },
+  );
+
   it("keeps drag handle props stable when the render callback changes", () => {
     act(() => {
       root?.render(

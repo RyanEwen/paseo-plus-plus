@@ -1804,6 +1804,7 @@ describe("passive indexed latest prompt content", () => {
         cursor: { epoch: "epoch-1", seq: 22 },
         limit: 40,
         projection: "projected",
+        wholeTurns: true,
         mergeWindow: true,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),

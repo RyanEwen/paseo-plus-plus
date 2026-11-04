@@ -1,3 +1,4 @@
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { openSettingsSection } from "../support/helpers/settings";
 import {
   captureVisibleActualPrompt,
@@ -1622,6 +1623,7 @@ for (const indexed of [true, false]) {
       title: "Sticky discovery",
     });
     const gate = await installDaemonWebSocketGate(page);
+    gate.stripWholeTurnTimeline();
     const prompt = "emit 85 assistant messages before synthetic user message";
     try {
       await agent.client.sendAgentMessage(agent.agentId, prompt);
@@ -1848,7 +1850,7 @@ test("reaches bottom through a very large last USER without a measurement update
   const prompt = Array.from(
     { length: 1500 },
     (_, index) =>
-      `Crash reproduction paragraph ${index}: ${"Keep this actual user message at its original inline size. ".repeat(3)}`,
+      `Crash reproduction paragraph ${index}: ${"Keep this actual user message at its original inline size. ".repeat(2)}`,
   )
     .join("\n")
     .trim();
@@ -1862,11 +1864,41 @@ test("reaches bottom through a very large last USER without a measurement update
     await agent.client.waitForFinish(agent.agentId, 15_000);
     await agent.client.sendAgentMessage(agent.agentId, prompt);
     await agent.client.waitForFinish(agent.agentId, 15_000);
+    // Verify the actual bounded daemon payload before browser mounting; this seed-side
+    // read does not count as a browser window page or bypass production acquisition.
+    const timelineClient = agent.client as typeof agent.client &
+      Pick<DaemonClient, "fetchAgentTimeline">;
+    const seededTimeline = await timelineClient.fetchAgentTimeline(agent.agentId, {
+      direction: "tail",
+      projection: "projected",
+      wholeTurns: true,
+      limit: 40,
+    });
+    expect(seededTimeline.error ?? null).toBeNull();
+    const latestUser = seededTimeline.entries.findLast(
+      (entry) => entry.item.type === "user_message",
+    )?.item;
+    if (latestUser?.type !== "user_message")
+      throw new Error("The large USER is missing from the actual timeline payload");
+    expect(latestUser.text).toBe(prompt);
+    expect(latestUser.text).toContain("Crash reproduction paragraph 1499:");
+    expect(latestUser.text).not.toContain("…[truncated");
     await page.setViewportSize(WIDE_VIEWPORT);
     await openAgentTimeline(page, agent);
     const timeline = page.getByTestId("agent-chat-scroll");
     const row = actualUserRow(page, "Crash reproduction paragraph 1499:");
     await expect(row).toHaveCount(1);
+    await expect
+      .poll(() =>
+        row.evaluate((node) =>
+          Number(
+            node
+              .querySelector("[data-actual-prompt-content]")
+              ?.getAttribute("data-prompt-flow-height"),
+          ),
+        ),
+      )
+      .toBeGreaterThan(30_000);
     await waitForTimelineGeometryToSettle(page);
     const text = await row.getByTestId("user-message-text").elementHandle();
     expect(text).not.toBeNull();
@@ -2059,6 +2091,7 @@ test("keeps the finished cold real transcript stationary after hover input stops
   let observation: JSHandle<ReturnType<typeof observeColdHoverTranscript>> | undefined;
   try {
     const history = await holdAgentOlderTimelinePages(page, agent.agentId, {
+      itemPagedHost: true,
       contextDelivery: "immediate",
     });
     observedHistory = history;
