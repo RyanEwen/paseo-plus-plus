@@ -38,7 +38,7 @@ interface WorkspaceTreeBranchProps<T extends SidebarWorkspacePlacement> {
   depth?: number;
   itemsByKey: ReadonlyMap<string, T>;
   renderRow: (row: DraggableRenderItemInfo<T>) => ReactElement;
-  onSiblingReorder: (rows: T[]) => void;
+  onSiblingReorder: (rows: T[], move: DragReorderMove) => void;
   getDragGroupKey?: (workspace: T) => string | null;
   manualPins?: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -102,7 +102,7 @@ export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>(
         })
       )
         return;
-      onSiblingReorder(rows);
+      onSiblingReorder(rows, move);
     },
     [children, childDragGroup, canCommit, manualPins, onSiblingReorder],
   );

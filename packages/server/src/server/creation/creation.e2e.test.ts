@@ -1,10 +1,15 @@
+import { WorkspaceAutoName } from "../workspace-auto-name.js";
 import { execFileSync } from "node:child_process";
 import type { z } from "zod";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { WebSocket } from "ws";
-import { SessionInboundMessageSchema, WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
+import {
+  SessionInboundMessageSchema,
+  WSOutboundMessageSchema,
+  CreationSnapshotSchema,
+} from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -573,3 +578,320 @@ test("Hub-shaped keyed agent worktree creation uses workspace setup and preserve
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
+
+test.each(["agent", "workspace", "existing-workspace"] as const)(
+  "keyed %s retry after a session-open failure preserves hidden intent and workspace",
+  async (kind) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-safe-retry-"));
+    const pluginDirectory = join(directory, "plugin");
+    await mkdir(pluginDirectory);
+    await writeFile(
+      join(pluginDirectory, "paseo-plugin.json"),
+      JSON.stringify({ id: "creation-safe-retry", requirements: { paseo: ">=0.14.0-beta.2" } }),
+    );
+    await writeFile(
+      join(pluginDirectory, "index.server.ts"),
+      `
+export default function contribute(server) {
+  let failed = false;
+  return server.addHook("agent.open.before", ({ request }) => {
+    if (request.workspaceId === null || request.purpose !== "interactive" || request.reason !== "create" || failed) return request;
+    failed = true;
+    throw new Error("wire pre-dispatch startup failure");
+  });
+}`,
+    );
+    let sessions = 0;
+    let prompts = 0;
+    const naming = vi.spyOn(WorkspaceAutoName.prototype, "scheduleForDirectory");
+    const daemon = await createCreationDaemon({
+      pluginsEnabled: true,
+      plugins: {
+        "creation-safe-retry": { source: "directory", path: pluginDirectory, enabled: true },
+      },
+      agentClients: createTestAgentClients({
+        beforeCreateSession: async (config) => {
+          if (!config.internal) sessions++;
+        },
+        onStartTurn: (_prompt, config) => {
+          if (!config.internal) prompts++;
+        },
+      }),
+    });
+    let client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const agentId = randomUUID();
+    const workspaceId = "wks_0123456789abcdef";
+    const snapshots: CreationSnapshot[] = [];
+    const agentInput = {
+      agentId,
+      provider: "codex",
+      cwd: directory,
+      env: { RETRY_ROUTE: "original" },
+      initialPrompt: "Start once after the hook recovers",
+      clientMessageId: "same-initial-prompt",
+    };
+    const submit = () =>
+      kind !== "workspace"
+        ? client.createAgent({
+            ...agentInput,
+            workspaceId: kind === "existing-workspace" ? workspaceId : undefined,
+            idempotencyKey: "wire-safe-retry",
+            onEvent: (snapshot) => snapshots.push(snapshot),
+          })
+        : client.createWorkspace({
+            workspaceId,
+            source: { kind: "directory", path: directory },
+            agent: agentInput,
+            idempotencyKey: "wire-safe-retry",
+            onEvent: (snapshot) => snapshots.push(snapshot),
+          });
+    try {
+      await client.connect();
+      await expect
+        .poll(async () =>
+          (await client.listPlugins()).find(({ id }) => id === "creation-safe-retry"),
+        )
+        .toMatchObject({ enabled: true, status: "running" });
+      if (kind === "existing-workspace") {
+        expect(
+          await client.createWorkspace({
+            workspaceId,
+            source: { kind: "directory", path: directory },
+          }),
+        ).toMatchObject({ error: null, workspace: { id: workspaceId } });
+      }
+      if (kind !== "workspace")
+        await expect(submit()).rejects.toThrow("wire pre-dispatch startup failure");
+      else
+        expect(await submit()).toMatchObject({
+          error:
+            "Plugin creation-safe-retry agent.open.before failed: wire pre-dispatch startup failure",
+          agent: undefined,
+        });
+      const intention = await daemon.daemon.agentStorage.get(agentId, {
+        includeHistoryIntents: true,
+      });
+      expect(intention).toMatchObject({
+        launchEnv: { RETRY_ROUTE: "original" },
+        providerHistory: { origin: "created", registration: "intent", sessionId: null },
+      });
+      expect(await daemon.daemon.agentStorage.get(agentId)).toBeNull();
+      const workspacesBefore = (await client.fetchWorkspaces()).entries;
+      expect(workspacesBefore).toHaveLength(1);
+      expect({ sessions, prompts }).toEqual({ sessions: 0, prompts: 0 });
+      const namingForOriginalWorkspace = () =>
+        naming.mock.calls.filter(([input]) => input.workspaceId === intention!.workspaceId);
+      expect(namingForOriginalWorkspace()).toHaveLength(kind === "workspace" ? 1 : 0);
+      // A new Session must recover the durable same-key receipt, not a closure-local bypass.
+      await client.close();
+      client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+      await client.connect();
+      const retried = await submit();
+      const expectedAgent = { id: agentId, workspaceId: intention!.workspaceId };
+      if (kind === "workspace") expect(retried).toMatchObject({ agent: expectedAgent });
+      else expect(retried).toMatchObject(expectedAgent);
+      expect((await client.fetchWorkspaces()).entries.map((entry) => entry.id)).toEqual(
+        workspacesBefore.map((entry) => entry.id),
+      );
+      expect((await client.fetchAgents()).entries.map((entry) => entry.agent.id)).toEqual([
+        agentId,
+      ]);
+      expect({ sessions, prompts }).toEqual({ sessions: 1, prompts: 1 });
+      expect(namingForOriginalWorkspace()).toHaveLength(kind === "existing-workspace" ? 0 : 1);
+      await submit();
+      expect({ sessions, prompts }).toEqual({ sessions: 1, prompts: 1 });
+      expect(namingForOriginalWorkspace()).toHaveLength(kind === "existing-workspace" ? 0 : 1);
+      expect(snapshots.at(-1)).toMatchObject({
+        phase: "completed",
+        agent: { id: agentId },
+        workspaceId: intention!.workspaceId,
+      });
+    } finally {
+      naming.mockRestore();
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  },
+  60_000,
+);
+
+test("a keyed SDK dispatch failure remains unknown across Session reconnect without another native call", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-unknown-retry-"));
+  let sessions = 0;
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients({
+      beforeCreateSession: async (config) => {
+        if (config.internal) return;
+        sessions++;
+        throw new Error("SDK may have allocated an external session");
+      },
+    }),
+  });
+  let client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const request = {
+    provider: "codex",
+    cwd: directory,
+    idempotencyKey: "unknown-dispatch",
+    agentId: randomUUID(),
+  };
+  try {
+    await client.connect();
+    await expect(client.createAgent(request)).rejects.toThrow(
+      "SDK may have allocated an external session",
+    );
+    await client.close();
+    client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    await client.connect();
+    await expect(client.createAgent(request)).rejects.toThrow(
+      "SDK may have allocated an external session",
+    );
+    expect(sessions).toBe(1);
+    expect(await daemon.daemon.agentStorage.get(request.agentId)).toBeNull();
+    expect(
+      await daemon.daemon.agentStorage.get(request.agentId, { includeHistoryIntents: true }),
+    ).toMatchObject({ providerHistory: { registration: "intent", sessionId: null } });
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("legacy worktree-target retry does not reprovision after failed startup cleanup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-worktree-retry-"));
+  await initializeSetupRepository(directory);
+  const pluginDirectory = join(directory, "failure-plugin");
+  await mkdir(pluginDirectory);
+  await writeFile(
+    join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "worktree-failure", requirements: { paseo: ">=0.14.0-beta.2" } }),
+  );
+  await writeFile(
+    join(pluginDirectory, "index.server.ts"),
+    `export default function(server) {
+    return server.addHook("agent.open.before", ({ request }) => {
+      if (request.workspaceId !== null && request.purpose === "interactive" && request.reason === "create") throw new Error("worktree startup failed before dispatch");
+      return request;
+    });
+  }`,
+  );
+  let sessions = 0;
+  const daemon = await createCreationDaemon({
+    pluginsEnabled: true,
+    plugins: { "worktree-failure": { source: "directory", path: pluginDirectory, enabled: true } },
+    agentClients: createTestAgentClients({
+      beforeCreateSession: async (config) => {
+        if (!config.internal) sessions++;
+      },
+    }),
+  });
+  const peer = await connectCreationPeer(daemon.port);
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const input = {
+    type: "create_agent_request" as const,
+    idempotencyKey: "legacy-worktree-retry",
+    config: { provider: "codex", cwd: directory },
+    worktree: { mode: "branch-off" as const, newBranch: "failed-worktree", base: "main" },
+    autoArchive: true,
+  };
+  try {
+    await client.connect();
+    await expect
+      .poll(async () =>
+        (await client.listPlugins()).find(({ id: pluginId }) => pluginId === "worktree-failure"),
+      )
+      .toMatchObject({ enabled: true, status: "running" });
+    expect(await peer.request({ ...input, requestId: "first" })).toMatchObject({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        error:
+          "Plugin worktree-failure agent.open.before failed: worktree startup failed before dispatch",
+      },
+    });
+    const readOwnReceipt = async () => {
+      const records = await Promise.all(
+        (await readdir(join(daemon.paseoHome, "creations")))
+          .filter((name) => name.endsWith(".json"))
+          .map(async (name) => {
+            const record = JSON.parse(
+              await readFile(join(daemon.paseoHome, "creations", name), "utf8"),
+            );
+            return {
+              snapshot: CreationSnapshotSchema.parse(record.snapshot),
+              preDispatchAgentFailure: record.preDispatchAgentFailure,
+            };
+          }),
+      );
+      const matching = records.filter(
+        (record) =>
+          record.snapshot.kind === "agent" &&
+          record.snapshot.idempotencyKey === input.idempotencyKey,
+      );
+      expect(matching).toHaveLength(1);
+      return matching[0]!;
+    };
+    const firstReceipt = await readOwnReceipt();
+    const assignedAgentId = firstReceipt.snapshot.agentId;
+    const originalWorkspaceId = firstReceipt.snapshot.workspaceId;
+    if (assignedAgentId === null || originalWorkspaceId === null)
+      throw new Error("Expected canonical reserved creation identities");
+    expect(assignedAgentId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(originalWorkspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
+    const original = structuredClone(
+      await daemon.daemon.agentStorage.get(assignedAgentId, { includeHistoryIntents: true }),
+    );
+    expect(original).toMatchObject({
+      id: assignedAgentId,
+      workspaceId: originalWorkspaceId,
+      providerHistory: { origin: "created", registration: "intent", sessionId: null },
+    });
+    const before = {
+      worktrees: execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: directory,
+        encoding: "utf8",
+      }),
+      workspaces: (await client.fetchWorkspaces()).entries,
+    };
+    const retry = await peer.request({ ...input, requestId: "retry" });
+    expect(retry).toMatchObject({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        error: expect.stringMatching(/original workspace|cannot retry after cleanup/),
+      },
+    });
+    expect({
+      worktrees: execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: directory,
+        encoding: "utf8",
+      }),
+      workspaces: (await client.fetchWorkspaces()).entries,
+    }).toEqual(before);
+    expect(
+      await daemon.daemon.agentStorage.get(assignedAgentId, { includeHistoryIntents: true }),
+    ).toEqual(original);
+    expect(sessions).toBe(0);
+    const receipt = await readOwnReceipt();
+    expect(receipt.snapshot.revision).toBeGreaterThan(firstReceipt.snapshot.revision);
+    expect(receipt).toMatchObject({
+      snapshot: {
+        kind: "agent",
+        idempotencyKey: input.idempotencyKey,
+        agentId: assignedAgentId,
+        workspaceId: originalWorkspaceId,
+        failedStage: "agent",
+        outcomeUnknown: true,
+      },
+    });
+    expect(receipt.preDispatchAgentFailure).toBeUndefined();
+  } finally {
+    peer.close();
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60_000);

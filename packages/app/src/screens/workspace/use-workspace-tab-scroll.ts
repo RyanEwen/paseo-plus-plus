@@ -3,6 +3,12 @@ import { ScrollView, type LayoutChangeEvent, type LayoutRectangle } from "react-
 import type { SharedValue } from "react-native-reanimated";
 import { resolveWorkspaceTabScrollOffset } from "./workspace-tab-layout";
 
+interface CommittedTabScrollInput {
+  activeTabKey: string | undefined;
+  enabled: boolean;
+  offset: SharedValue<number>;
+}
+
 /**
  * Reveal the selected tab after native measurements, selection, or viewport changes.
  * The shared scroll offset follows user scrolling without a React update for every frame.
@@ -19,26 +25,36 @@ export function useWorkspaceTabScroll({
   const scrollRef = useRef<ScrollView>(null);
   const geometry = useRef({ viewportWidth: 0, contentWidth: 0 });
   const tabFrames = useRef(new Map<string, { x: number; width: number }>());
+  const committed = useRef<CommittedTabScrollInput | null>(null);
 
   const revealActiveTab = useCallback(() => {
-    if (!enabled || !activeTabKey) {
+    const selection = committed.current;
+    if (!selection?.enabled || !selection.activeTabKey) {
       return;
     }
-    const frame = tabFrames.current.get(activeTabKey);
+    const frame = tabFrames.current.get(selection.activeTabKey);
     if (!frame) {
       return;
     }
 
     const nextOffset = resolveWorkspaceTabScrollOffset({
       ...geometry.current,
-      offset: offset.value,
+      offset: selection.offset.value,
       tabStart: frame.x,
       tabWidth: frame.width,
     });
     scrollRef.current?.scrollTo({ x: nextOffset, animated: false });
-  }, [activeTabKey, enabled, offset]);
+  }, []);
 
-  useLayoutEffect(revealActiveTab, [revealActiveTab]);
+  useLayoutEffect(() => {
+    // Native measurement delivery may retain an older callback across a selection commit.
+    // Publish only committed inputs, so even that callback reveals the current selection.
+    committed.current = { activeTabKey, enabled, offset };
+    revealActiveTab();
+    return () => {
+      committed.current = null;
+    };
+  }, [activeTabKey, enabled, offset, revealActiveTab]);
 
   const onLayout = useCallback(
     (event: LayoutChangeEvent) => {

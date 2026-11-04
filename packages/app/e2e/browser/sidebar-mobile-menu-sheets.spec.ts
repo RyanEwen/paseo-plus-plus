@@ -31,6 +31,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
       "Expand one project at a time",
       "Workspace limits",
       /^Sort projects/,
+      "SortManual",
       /^Sort workspaces/,
       /^Empty projects/,
       /^Title/,
