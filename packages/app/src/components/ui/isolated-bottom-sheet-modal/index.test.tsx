@@ -542,6 +542,22 @@ describe("IsolatedBottomSheetModal explicit web overlap lifetime", () => {
 // provider queue, portal reducer or publication effects under test.
 vi.mock("react-native-reanimated", () => ({
   useSharedValue: (value: unknown) => React.useRef({ value }).current,
+  makeMutable: <T,>(initial: T) => {
+    let value = initial;
+    return {
+      get value() {
+        return value;
+      },
+      set value(next: T) {
+        value = next;
+      },
+      get: () => value,
+      modify: (update: (current: T) => T) => {
+        value = update(value);
+      },
+    };
+  },
+  useAnimatedReaction: () => {},
   Easing: { exp: (value: number) => value, out: (fn: (value: number) => number) => fn },
 }));
 vi.mock("@gorhom/bottom-sheet/lib/module/hooks/index", async () => {

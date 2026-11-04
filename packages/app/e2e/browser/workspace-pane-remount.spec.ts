@@ -221,7 +221,11 @@ test("tab move menus and divider presets preserve workspace tabs", async ({ page
     });
     await openWorkspaceWithAgents(page, [first, second]);
     const main = page.getByTestId("workspace-pane-main");
-    const originalComposer = await captureRenderedNode(main.getByTestId("message-input-root"));
+    const activeConversation = main.getByTestId(`workspace-tab-agent_${second.id}`);
+    await expect(activeConversation).toHaveAttribute("aria-selected", "true");
+    const composer = main.getByTestId("message-input-root").filter({ visible: true });
+    await expect(composer).toHaveCount(1);
+    const originalComposer = await captureRenderedNode(composer);
     const countBefore = await main.getByRole("tab").count();
     await main.getByTestId("workspace-new-tab-button").click();
     await page.getByTestId("workspace-new-tab-split-agent").click();
@@ -235,7 +239,9 @@ test("tab move menus and divider presets preserve workspace tabs", async ({ page
     await expect.poll(() => readSplitDraft(page, workspace.workspaceId)).not.toBeNull();
     const draft = await readSplitDraft(page, workspace.workspaceId);
     if (!draft?.paneId) throw new Error("Expected new draft in its own split");
-    await expectSameRenderedNode(originalComposer, main.getByTestId("message-input-root"));
+    await expect(activeConversation).toHaveAttribute("aria-selected", "true");
+    await expect(composer).toHaveCount(1);
+    await expectSameRenderedNode(originalComposer, composer);
     await expect(page.getByTestId(`workspace-pane-${draft.paneId}`)).toBeVisible();
     await page.getByTestId(`workspace-tab-${draft.draftId}`).hover();
     await page.getByTestId(`workspace-draft-close-${draft.draftId}`).click();
