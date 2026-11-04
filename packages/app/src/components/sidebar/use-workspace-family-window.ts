@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { SidebarWorkspacePlacement } from "@/hooks/use-sidebar-workspaces-list";
 import { useLimitedSidebarGroup } from "./use-limited-sidebar-group";
 import {
+  collectActiveWorkspaceKeys,
   includeActiveWorkspaceFamily,
   workspaceFamilyRoots,
   workspaceFamilyUpdatedAt,
@@ -13,10 +14,14 @@ export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
   items: readonly T[],
   getStatusEnteredAt: (item: T) => Date | null,
 ) {
-  const { tree, activeWorkspaceKey } = useSidebarWorkspaceTree();
+  const { tree, activeWorkspaceKey, entries } = useSidebarWorkspaceTree();
   const itemsByKey = useMemo(
     () => new Map(items.map((item) => [item.workspaceKey, item])),
     [items],
+  );
+  const activeWorkspaceKeys = useMemo(
+    () => collectActiveWorkspaceKeys(entries, itemsByKey.keys()),
+    [entries, itemsByKey],
   );
   const roots = useMemo(() => workspaceFamilyRoots(items, tree), [items, tree]);
   const getFamilyDate = useCallback(
@@ -37,6 +42,9 @@ export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
     visibleItems: window.visibleItems,
     tree,
     activeWorkspaceKey,
+    activeWorkspaceKeys,
   });
-  return { ...window, visibleItems, itemsByKey };
+  // Already-visible active overflow needs no Show more; an expanded window keeps Show less.
+  const canToggle = window.canToggle && (window.expanded || visibleItems.length < roots.length);
+  return { ...window, visibleItems, canToggle, itemsByKey };
 }

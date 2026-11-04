@@ -297,7 +297,7 @@ export function DraggableList<T>({
   );
 
   return (
-    <View style={wrapperStyle}>
+    <View style={wrapperStyle} testID={scrollEnabled ? undefined : testID}>
       {scrollEnabled ? (
         <ScrollView
           testID={testID}

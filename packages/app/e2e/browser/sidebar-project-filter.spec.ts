@@ -189,6 +189,7 @@ test.describe("Sidebar project filter", () => {
         "Expand one project at a time",
         "Workspace limits",
         /^Sort projects/,
+        "SortManual",
         /^Sort workspaces/,
         /^Empty projects/,
         /^Title/,

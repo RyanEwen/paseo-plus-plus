@@ -1744,7 +1744,11 @@ function ProjectBlock({
   onToggleCollapsed: (projectViewKey: string) => void;
   onWorkspacePress?: () => void;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
+  onWorkspaceReorder: (
+    projectViewKey: string,
+    workspaces: SidebarWorkspacePlacement[],
+    move: DragReorderMove,
+  ) => void;
   useNestable: boolean;
   dragGestureHostActive?: boolean;
   manualSort: boolean;
@@ -1861,7 +1865,8 @@ function ProjectBlock({
     [renderWorkspaceRow],
   );
   const reorderFamilySiblings = useCallback(
-    (rows: SidebarWorkspacePlacement[]) => onWorkspaceReorder(project.viewKey, rows),
+    (rows: SidebarWorkspacePlacement[], move: DragReorderMove) =>
+      onWorkspaceReorder(project.viewKey, rows, move),
     [onWorkspaceReorder, project.viewKey],
   );
   const renderWorkspace = useCallback(
@@ -1906,7 +1911,7 @@ function ProjectBlock({
         })
       )
         return;
-      onWorkspaceReorder(project.viewKey, workspaces);
+      onWorkspaceReorder(project.viewKey, workspaces, move);
     },
     [
       onWorkspaceReorder,
@@ -2613,7 +2618,11 @@ function ProjectModeList({
   );
 
   const handleWorkspaceReorder = useCallback(
-    (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+    (
+      projectViewKey: string,
+      reorderedWorkspaces: SidebarWorkspacePlacement[],
+      move: DragReorderMove,
+    ) => {
       const project = unpinnedProjects.find((entry) => entry.viewKey === projectViewKey);
       const projectPinnedKeys = new Set(
         reorderedWorkspaces
@@ -2629,6 +2638,7 @@ function ProjectModeList({
         reorderedVisibleKeys: reorderedWorkspaces.map((workspace) => workspace.workspaceKey),
         projectPinnedKeys,
         storedWorkspaceOrder: getWorkspaceOrder(projectViewKey),
+        move,
       });
       if (result.projectPinKeys.length > 0) {
         onPinnedWorkspaceReorder(

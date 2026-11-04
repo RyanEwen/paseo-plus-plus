@@ -11,6 +11,7 @@ import { PromptNavigationActions, PromptNavigationContext } from "./prompt-navig
 import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
 import { ActualPromptRowsContext, ActualPromptFlowGeometryContext } from "./actual-prompt-rows";
 import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import { useChatFindSelectedMessageId } from "./chat-find/selection";
 
 /** Attach viewport-owned navigation without changing the shared message renderer's identity. */
 export const PromptUserMessage = memo(function PromptUserMessage({
@@ -20,6 +21,7 @@ export const PromptUserMessage = memo(function PromptUserMessage({
   const presentation = useActualPromptPresentation(timelineMessageId, props);
   const nativeLayout = useContext(NativeStickyLayoutContext);
   const actualRows = useContext(ActualPromptRowsContext);
+  const selectedFindMessageId = useChatFindSelectedMessageId();
   const webGeometry = useContext(ActualPromptFlowGeometryContext);
   const reportNaturalGeometry = useCallback(
     (geometry: NaturalMessageGeometry | null) => {
@@ -63,6 +65,8 @@ export const PromptUserMessage = memo(function PromptUserMessage({
       navigationActions={actions}
       keepActionsVisible={navigation?.actionVisibleMessageId === timelineMessageId}
       {...presentation}
+      bodyPresentation={actualRows ? "actualPrompt" : "ordinaryPreview"}
+      forceOrdinaryPreviewExpanded={selectedFindMessageId === timelineMessageId}
       onNaturalFlowGeometry={
         webGeometry || (nativeLayout && actualRows) ? reportNaturalGeometry : undefined
       }

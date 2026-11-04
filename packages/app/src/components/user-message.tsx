@@ -9,6 +9,7 @@ import {
   NaturalMessageFlowContext,
   UserMessageFlow,
   type NaturalMessageGeometry,
+  type UserMessageBodyPresentation,
 } from "./user-message-flow";
 import { WebUserMessageFlow } from "./user-message-web-flow";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
@@ -49,6 +50,9 @@ import {
 } from "./message-layout";
 import { TurnCopyButton } from "./turn-copy-button";
 interface UserMessageProps {
+  /** Shared fallback callers retain natural layout unless the chat owner opts into previews. */
+  bodyPresentation?: UserMessageBodyPresentation;
+  forceOrdinaryPreviewExpanded?: boolean;
   sender?: AgentMessage["sender"];
   /** An optional measured viewport retains the one ordinary body's natural flow. */
   onNaturalFlowGeometry?: (geometry: NaturalMessageGeometry | null) => void;
@@ -398,6 +402,8 @@ function userMessageFlowConfiguration(
 }
 
 export const UserMessage = memo(function UserMessage({
+  bodyPresentation,
+  forceOrdinaryPreviewExpanded,
   sender,
   onNaturalFlowGeometry,
   naturalFlowMaximumHeight,
@@ -587,6 +593,8 @@ export const UserMessage = memo(function UserMessage({
         contentTarget
       )}
       <UserMessagePreviewContent
+        bodyPresentation={bodyPresentation}
+        forceExpanded={forceOrdinaryPreviewExpanded}
         action={inlineContentAction}
         compact={compactPreview}
         bounded={bodyViewportHeight !== undefined}
@@ -670,6 +678,7 @@ export const UserMessage = memo(function UserMessage({
   const Flow = flowConfiguration.Flow;
   const content = onNaturalFlowGeometry ? (
     <Flow
+      bodyPresentation={bodyPresentation}
       driver={nativeDriver}
       trailing={trailingContent}
       controls={inlineContentAction}
