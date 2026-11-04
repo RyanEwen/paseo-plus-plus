@@ -5,6 +5,9 @@ import { ExpandableBadge } from "@/components/message";
 import { useOverviewSummaryLabel } from "@/tool-calls/detail-level/overview/label";
 import type { CollapsedTurn } from "./model";
 
+// Only the real summary control reclaims hits from the sticky lane.
+const summaryHitStyle = { pointerEvents: "auto" } as const;
+
 /**
  * The row a collapsed turn leaves under its user message, styled like a tool-call group.
  * Pressing it opens the turn's rows beneath it.
@@ -26,6 +29,7 @@ export const TurnSummaryLine = memo(function TurnSummaryLine({
   return (
     <ExpandableBadge
       testID="turn-summary"
+      style={summaryHitStyle}
       label={label}
       icon={Summary}
       isExpanded={turn.expanded}

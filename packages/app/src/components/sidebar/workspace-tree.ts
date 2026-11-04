@@ -138,20 +138,35 @@ export function workspaceFamilyRoots<T extends SidebarWorkspacePlacement>(
   return workspaces.filter((workspace) => !tree.get(workspace.workspaceKey)?.parentKey);
 }
 
-/** Add the selected family to a limited window without changing any saved display preference. */
+/** Collect authoritative non-Done buckets within this collection, avoiding a host-wide scan per group. */
+export function collectActiveWorkspaceKeys(
+  entries: ReadonlyMap<string, Pick<SidebarWorkspaceEntry, "statusBucket">>,
+  workspaceKeys: Iterable<string> = entries.keys(),
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const key of workspaceKeys) {
+    const entry = entries.get(key);
+    if (entry && entry.statusBucket !== "done") keys.add(key);
+  }
+  return keys;
+}
+
+/** Keep selected and active-work families reachable without changing canonical sibling order. */
 export function includeActiveWorkspaceFamily<T extends SidebarWorkspacePlacement>(input: {
   roots: readonly T[];
   visibleItems: readonly T[];
   tree: ReadonlyMap<string, WorkspaceTreeNode>;
   activeWorkspaceKey: string | null;
+  activeWorkspaceKeys?: ReadonlySet<string>;
 }): T[] {
   const visibleKeys = new Set(input.visibleItems.map((workspace) => workspace.workspaceKey));
+  const requiredKeys = new Set(input.activeWorkspaceKeys);
+  if (input.activeWorkspaceKey !== null) requiredKeys.add(input.activeWorkspaceKey);
   return input.roots.filter((workspace) => {
-    if (visibleKeys.has(workspace.workspaceKey)) return true;
-    if (input.activeWorkspaceKey === null) return false;
-    if (workspace.workspaceKey === input.activeWorkspaceKey) return true;
+    if (visibleKeys.has(workspace.workspaceKey) || requiredKeys.has(workspace.workspaceKey))
+      return true;
     const node = input.tree.get(workspace.workspaceKey);
-    return node !== undefined && node.descendantKeys.includes(input.activeWorkspaceKey);
+    return node !== undefined && node.descendantKeys.some((key) => requiredKeys.has(key));
   });
 }
 

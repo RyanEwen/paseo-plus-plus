@@ -252,6 +252,138 @@ describe("AgentStorage", () => {
     expect(await reloaded.get(next.id, { includeHistoryIntents: true })).toEqual(next);
   });
 
+  function retryIntent(id: string): StoredAgentRecord {
+    return {
+      id,
+      provider: "codex",
+      cwd: tmpDir,
+      workspaceId: "retry-workspace",
+      labels: {},
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      lastStatus: "closed",
+      config: { model: "model-a" },
+      launchEnv: { ROUTE: "one" },
+      providerHistory: {
+        origin: "created",
+        registration: "intent",
+        sessionId: null,
+        storage: {
+          kind: "configured-home",
+          provider: "codex",
+          home: path.join(tmpDir, "profile"),
+          sqliteHome: path.join(tmpDir, "db"),
+        },
+      },
+    };
+  }
+
+  test("a one-shot admitted retry preserves its original configured intention and timestamps", async () => {
+    const original = retryIntent("retry-once");
+    await storage.reserveHistoryIntent(original);
+    const expected = structuredClone(original);
+    let consumed = false;
+    const admission = {
+      expected,
+      consume() {
+        if (consumed) throw new Error("already consumed");
+        consumed = true;
+      },
+    };
+    const requested = {
+      ...original,
+      createdAt: "2026-02-02T00:00:00Z",
+      updatedAt: "2026-02-02T00:00:00Z",
+      providerHistory: { ...original.providerHistory!, storage: { kind: "unknown" as const } },
+    };
+    expect(await storage.reserveHistoryIntent(requested, admission)).toEqual(original);
+    await expect(storage.reserveHistoryIntent(requested, admission)).rejects.toThrow(
+      "already consumed",
+    );
+    expect(
+      await new AgentStorage(storagePath, logger).get(original.id, { includeHistoryIntents: true }),
+    ).toEqual(original);
+  });
+
+  test.each(["config", "env", "cwd", "workspace", "owner", "internal"])(
+    "retry rejects changed requested %s without consuming authority",
+    async (field) => {
+      const original = retryIntent("requested-drift");
+      await storage.reserveHistoryIntent(original);
+      const requested = structuredClone(original);
+      if (field === "config") requested.config = { model: "model-b" };
+      if (field === "env") requested.launchEnv = { ROUTE: "two" };
+      if (field === "cwd") requested.cwd += "/changed";
+      if (field === "workspace") requested.workspaceId = "other-workspace";
+      if (field === "internal") requested.internal = true;
+      if (field === "owner")
+        requested.owner = {
+          kind: "daemon",
+          daemonId: "other-daemon",
+          executionId: "other-execution",
+        };
+      const consume = vi.fn();
+      await expect(
+        storage.reserveHistoryIntent(requested, { expected: structuredClone(original), consume }),
+      ).rejects.toMatchObject({ code: "HISTORY_INTENT_CONFLICT" });
+      expect(consume).not.toHaveBeenCalled();
+      expect(await storage.get(original.id, { includeHistoryIntents: true })).toEqual(original);
+    },
+  );
+
+  test.each(["config", "env", "registration", "native", "runtime", "archive", "fresh", "binding"])(
+    "queued retry rejects intervening %s changes without overwriting durable state",
+    async (field) => {
+      const original = retryIntent("queued-drift");
+      await storage.reserveHistoryIntent(original);
+      const expected = structuredClone(original);
+      const changed = structuredClone(original);
+      if (field === "config") changed.config = { model: "model-b" };
+      if (field === "env") changed.launchEnv = { ROUTE: "two" };
+      if (field === "registration") changed.providerHistory!.registration = "registered";
+      if (field === "native") changed.providerHistory!.sessionId = "committed-native";
+      if (field === "runtime")
+        changed.runtimeInfo = { provider: "codex", sessionId: "native-runtime" };
+      if (field === "archive") changed.archivedAt = "2026-02-02T00:00:00Z";
+      if (field === "fresh") changed.claudeFreshRewind = { operationId: "fresh-intent" };
+      if (field === "binding") changed.providerHistory!.storage = { kind: "unknown" };
+      const mutation = storage.update(original.id, () => changed);
+      const consume = vi.fn();
+      const retry = storage.reserveHistoryIntent(original, { expected, consume });
+      await mutation;
+      await expect(retry).rejects.toMatchObject({ code: "HISTORY_INTENT_CONFLICT" });
+      expect(consume).not.toHaveBeenCalled();
+      expect(
+        await new AgentStorage(storagePath, logger).get(original.id, {
+          includeHistoryIntents: true,
+        }),
+      ).toEqual(changed);
+    },
+  );
+
+  test.each(["imported", "registered", "native", "runtime", "archive", "fresh"])(
+    "captured %s records cannot use creation retry even when CAS matches",
+    async (field) => {
+      const original = retryIntent("inadmissible-retry");
+      await storage.reserveHistoryIntent(original);
+      const invalid = structuredClone(original);
+      if (field === "imported") invalid.providerHistory!.origin = "imported";
+      if (field === "registered") invalid.providerHistory!.registration = "registered";
+      if (field === "native") invalid.providerHistory!.sessionId = "native-known";
+      if (field === "runtime")
+        invalid.runtimeInfo = { provider: "codex", sessionId: "native-known" };
+      if (field === "archive") invalid.archivedAt = "2026-02-02T00:00:00Z";
+      if (field === "fresh") invalid.claudeFreshRewind = { operationId: "fresh-operation" };
+      await storage.update(original.id, () => invalid);
+      const consume = vi.fn();
+      await expect(
+        storage.reserveHistoryIntent(original, { expected: structuredClone(invalid), consume }),
+      ).rejects.toMatchObject({ code: "HISTORY_INTENT_CONFLICT" });
+      expect(consume).not.toHaveBeenCalled();
+      expect(await storage.get(original.id, { includeHistoryIntents: true })).toEqual(invalid);
+    },
+  );
+
   test("configured intent binding is durable, hidden and immutable across older snapshots", async () => {
     const agent = createManagedAgent({ id: "bound-intent", provider: "codex-work" });
     const record = toStoredAgentRecord(agent);

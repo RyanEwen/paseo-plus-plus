@@ -19,6 +19,11 @@ function areFindRowsReadyForReveal(rows: readonly HTMLElement[]): boolean {
   const actualPrompt = body?.closest<HTMLElement>("[data-actual-prompt-content]");
   const awaitingOriginal = actualPrompt && rows.some((row) => row.dataset.promptPinned !== "false");
   if (
+    rows.some((row) =>
+      row.querySelector(
+        '[data-message-preview-enabled="true"][data-message-preview-expanded="false"]',
+      ),
+    ) ||
     body?.dataset.bodyExpanded === "false" ||
     awaitingOriginal ||
     actualPrompt?.style.position === "sticky"
