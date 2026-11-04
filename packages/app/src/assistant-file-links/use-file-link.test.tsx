@@ -214,6 +214,20 @@ describe("useFileLink", () => {
     },
   );
 
+  it("opens HTTP links externally when the preference is on but no owning opener is available", async () => {
+    preferenceState.workspaceChatLinks = true;
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const source = { href: "https://example.invalid/no-owning-opener" };
+    const { result } = renderHook(() => useFileLink(source), {
+      wrapper: createWrapper({ client: { getDirectorySuggestions }, openedFiles }),
+    });
+    act(() => result.current.onPress());
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(source.href));
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+    expect(openedFiles).toEqual([]);
+  });
+
   it("retains the explicit browser opener and updates menu metadata when primary opening is off", async () => {
     const onOpenHttpUrl = vi.fn(async () => {});
     const { result, rerender } = renderHook(() => useAssistantFileLinkResolverContext(), {

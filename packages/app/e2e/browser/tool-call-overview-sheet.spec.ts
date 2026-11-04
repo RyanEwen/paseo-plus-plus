@@ -468,7 +468,10 @@ for (const compact of [false, true]) {
           const settings = descriptive
             ? { toolCallDetailLevel: "overview" }
             : { toolCallDetailLevel: "overview", paseoPlusPlus: { descriptiveToolCalls: false } };
-          localStorage.setItem("@paseo:app-settings", JSON.stringify(settings));
+          localStorage.setItem(
+            "@paseo:app-settings",
+            JSON.stringify({ ...settings, autoExpandReasoning: true }),
+          );
         }, enabled);
         const agent = await seedMockAgentWorkspace({
           repoPrefix: "readable-tool-activity-",

@@ -1,3 +1,5 @@
+import { validateBeforeRequest, validateBeforeResult } from "../plugins/lifecycle/index.js";
+import { CreationService, type CreationInput } from "../creation/index.js";
 import { previewProviderHistory } from "./provider-history/preview.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
@@ -17562,3 +17564,207 @@ test("an out-of-band command racing idle cleanup waits for the resumed runtime",
   expect(h.commands).toEqual(["/maintenance"]);
   expect(h.prompts).toEqual([]);
 });
+
+test.each(["same", "changed-env", "changed-config"])(
+  "keyed pre-dispatch startup retry admits only %s resolved intent",
+  async (mode) => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-creation-retry-"));
+    const storage = new AgentStorage(join(directory, "agents"), logger);
+    const id = randomUUID();
+    let providerCalls = 0;
+    let openCalls = 0;
+    class CountingClient extends TestAgentClient {
+      override async createSession(...args: Parameters<TestAgentClient["createSession"]>) {
+        providerCalls++;
+        return super.createSession(...args);
+      }
+    }
+    const manager = new AgentManager({
+      clients: { codex: new CountingClient() },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        wait: async () => {},
+        emit() {},
+        before: async (name, request) => {
+          if (name === "agent.open.before" && ++openCalls === 1)
+            throw new Error("fixture-session-open-failure");
+          if (name === "agent.create.before" && openCalls > 0 && mode !== "same") {
+            const original = validateBeforeRequest("agent.create.before", request);
+            const result =
+              mode === "changed-env"
+                ? { ...original, env: { ROUTE: "two" } }
+                : { ...original, config: { ...original.config, model: "different-model" } };
+            return validateBeforeResult(name, validateBeforeRequest(name, request), result);
+          }
+          return request;
+        },
+      },
+    });
+    const receiptDirectory = join(directory, "receipts");
+    const input: CreationInput = {
+      kind: "agent",
+      key: "same-request",
+      request: { config: { provider: "codex", cwd: directory }, env: { ROUTE: "one" } },
+      agentId: id,
+      hasAgent: true,
+      hasPrompt: false,
+      exists: async (_kind, agentId) =>
+        manager.getAgent(agentId) != null || (await storage.get(agentId)) !== null,
+      readAgent: async (agentId) => {
+        const current = manager.getAgent(agentId);
+        return current ? toAgentPayload(current) : null;
+      },
+      createAgent: async (agentId, _workspace, onReady, creationAttempt) => {
+        const created = await manager.createAgent({ provider: "codex", cwd: directory }, agentId, {
+          workspaceId: "original-workspace",
+          env: { ROUTE: "one" },
+          creationAttempt,
+        });
+        const payload = toAgentPayload(created);
+        await onReady(payload);
+        return { agent: payload, initialPromptStarted: false };
+      },
+    };
+    try {
+      expect(await new CreationService(receiptDirectory, logger).create(input)).toMatchObject({
+        phase: "failed",
+        outcomeUnknown: false,
+        error: "fixture-session-open-failure",
+      });
+      const intention = structuredClone(await storage.get(id, { includeHistoryIntents: true }));
+      expect(intention).toMatchObject({
+        workspaceId: "original-workspace",
+        launchEnv: { ROUTE: "one" },
+        providerHistory: { origin: "created", registration: "intent", sessionId: null },
+      });
+      expect(await storage.get(id)).toBeNull();
+      expect(providerCalls).toBe(0);
+      const retried = await new CreationService(receiptDirectory, logger).create(input);
+      if (mode === "same") {
+        expect(retried).toMatchObject({
+          phase: "completed",
+          error: null,
+          agent: { id, workspaceId: "original-workspace" },
+        });
+        expect(providerCalls).toBe(1);
+        expect(manager.getAgent(id)?.createdAt.toISOString()).toBe(intention!.createdAt);
+        expect((await new AgentStorage(join(directory, "agents"), logger).get(id))?.createdAt).toBe(
+          intention!.createdAt,
+        );
+        expect(manager.getAgent(id)?.launchEnv).toEqual({ ROUTE: "one" });
+      } else {
+        expect(retried).toMatchObject({ phase: "failed", errorCode: "HISTORY_INTENT_CONFLICT" });
+        expect(providerCalls).toBe(0);
+        expect(await storage.get(id, { includeHistoryIntents: true })).toEqual(intention);
+      }
+    } finally {
+      if (manager.getAgent(id)) await manager.closeAgent(id);
+      await manager.flush();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["reservation-conflict", "pre-reservation-hook"])(
+  "a new keyed request cannot certify a live unclaimed intention after %s",
+  async (mode) => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-unowned-creation-"));
+    const storage = new AgentStorage(join(directory, "agents"), logger);
+    const durable = new RecordingTimelineStore();
+    const retained = new InMemoryAgentTimelineStore();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const id = randomUUID();
+    let providerCalls = 0;
+    let keyedCallbacks = 0;
+    class HeldClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        providerCalls++;
+        if (providerCalls === 1) {
+          entered.resolve();
+          await release.promise;
+        }
+        return super.createSession(config);
+      }
+    }
+    const manager = new AgentManager({
+      clients: { codex: new HeldClient() },
+      registry: storage,
+      logger,
+      durableTimelineStore: durable,
+      timelineStore: retained,
+      pluginLifecycle: {
+        wait: async () => {},
+        emit() {},
+        before: async (name, request) => {
+          if (
+            mode === "pre-reservation-hook" &&
+            providerCalls === 1 &&
+            name === "agent.create.before"
+          )
+            throw new Error("B hook failed before ownership");
+          return request;
+        },
+      },
+    });
+    const config: AgentSessionConfig = { provider: "codex", cwd: directory };
+    const options = { workspaceId: "original-workspace", env: { ROUTE: "one" } };
+    const direct = manager.createAgent(config, id, options);
+    void direct.catch(() => {});
+    try {
+      await entered.promise;
+      const original = structuredClone(await storage.get(id, { includeHistoryIntents: true }));
+      await durable.appendCommitted(id, { type: "assistant_message", text: "A durable timeline" });
+      retained.initialize(id, { items: [{ type: "assistant_message", text: "A retained view" }] });
+      const before = { durable: await durable.getCommittedRows(id), retained: retained.fetch(id) };
+      const receiptDirectory = join(directory, "keyed-receipts");
+      const input: CreationInput = {
+        kind: "agent",
+        key: "B-fresh-key",
+        request: { config, ...options },
+        agentId: id,
+        workspaceId: options.workspaceId,
+        hasAgent: true,
+        hasPrompt: false,
+        exists: async () => manager.getAgent(id) != null || (await storage.get(id)) !== null,
+        readAgent: async () => null,
+        createAgent: async (agentId, _workspace, _onReady, creationAttempt) => {
+          keyedCallbacks++;
+          const managed = await manager.createAgent(config, agentId, {
+            ...options,
+            creationAttempt,
+          });
+          return { agent: toAgentPayload(managed), initialPromptStarted: false };
+        },
+      };
+      const failed = await new CreationService(receiptDirectory, logger).create(input);
+      expect(failed).toMatchObject({ phase: "failed", failedStage: "agent", outcomeUnknown: true });
+      expect(await new CreationService(receiptDirectory, logger).create(input)).toEqual(failed);
+      expect(keyedCallbacks).toBe(1);
+      expect(providerCalls).toBe(1);
+      const receiptFiles = (await fs.readdir(receiptDirectory)).filter((name) =>
+        name.endsWith(".json"),
+      );
+      expect(receiptFiles).toHaveLength(1);
+      expect(
+        JSON.parse(await fs.readFile(join(receiptDirectory, receiptFiles[0]), "utf8"))
+          .preDispatchAgentFailure,
+      ).toBeUndefined();
+      expect(await storage.get(id, { includeHistoryIntents: true })).toEqual(original);
+      expect({ durable: await durable.getCommittedRows(id), retained: retained.fetch(id) }).toEqual(
+        before,
+      );
+      release.resolve();
+      expect((await direct).id).toBe(id);
+      expect(manager.getAgent(id)?.workspaceId).toBe("original-workspace");
+      expect(providerCalls).toBe(1);
+    } finally {
+      release.resolve();
+      await direct.catch(() => {});
+      if (manager.getAgent(id)) await manager.closeAgent(id);
+      await manager.flush();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);

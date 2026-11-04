@@ -1581,6 +1581,7 @@ describe("workspace family store transitions", () => {
         reorderedVisibleKeys: [transitionKey("b"), transitionKey("a")],
         projectPinnedKeys: new Set(),
         storedWorkspaceOrder: order.getWorkspaceOrder(TRANSITION_SCOPE),
+        move: { activeKey: transitionKey("a"), overKey: transitionKey("b"), from: 0, to: 1 },
       });
       if (result.workspaceOrder !== null)
         order.setWorkspaceOrder(TRANSITION_SCOPE, result.workspaceOrder);
@@ -1644,6 +1645,7 @@ describe("workspace family store transitions", () => {
     const wire = JSON.parse(
       JSON.stringify({
         ...child,
+        createdAt: child.createdAt?.toISOString(),
         activityAt: null,
         humanAttentionRequired: input.humanAttentionRequired,
       }),
@@ -1710,6 +1712,59 @@ describe("workspace family store transitions", () => {
     if (!(element instanceof HTMLElement)) throw new Error(`Missing ${prefix} for ${id}`);
     return element;
   }
+
+  it.each(["project", "pinned"] as const)(
+    "active families outlive the count window and return after Done (%s)",
+    (mode) => {
+      const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "animate");
+      const cancel = vi.fn();
+      Object.defineProperty(HTMLElement.prototype, "animate", {
+        configurable: true,
+        value: vi.fn(() => ({ cancel })),
+      });
+      try {
+        act(() => {
+          renderLayout(mode);
+          const current = useSidebarViewStore.getState();
+          useSidebarViewStore.setState({
+            initialWorkspaceCount: 1,
+            modeProfilesInitialized: true,
+            modeProfiles: {
+              ...current.modeProfiles,
+              project: { ...current.modeProfiles.project, initialWorkspaceCount: 1 },
+            },
+          });
+        });
+        expect(useSidebarViewStore.getState().initialWorkspaceCount).toBe(1);
+        const outsideSelector = `[data-testid="sidebar-workspace-row-${transitionKey("outside")}"]`;
+        expect(container.querySelector(outsideSelector)).toBeNull();
+        const updateStatus = (status: WorkspaceDescriptor["status"]) => {
+          const store = useSessionStore.getState();
+          const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
+          const outside = workspaces.get("outside");
+          if (!outside) throw new Error("Missing outside workspace");
+          workspaces.set("outside", {
+            ...outside,
+            status,
+            statusEnteredAt: new Date("2020-01-01T00:00:00Z"),
+          });
+          store.setWorkspaces(SERVER_ID, workspaces);
+        };
+        act(() => updateStatus("running"));
+        const runningRow = layoutElement("sidebar-workspace-row", "outside");
+        expect(container.querySelectorAll(outsideSelector)).toHaveLength(1);
+        act(() => updateStatus("attention"));
+        expect(layoutElement("sidebar-workspace-row", "outside")).toBe(runningRow);
+        act(() => updateStatus("done"));
+        expect(container.querySelector(outsideSelector)).toBeNull();
+        expect(cancel).toHaveBeenCalled();
+      } finally {
+        if (originalAnimate)
+          Object.defineProperty(HTMLElement.prototype, "animate", originalAnimate);
+        else Reflect.deleteProperty(HTMLElement.prototype, "animate");
+      }
+    },
+  );
 
   it.each(["project", "status", "pinned"] as const)(
     "T53 family row layout restores roots and indents only content (%s)",
@@ -1909,7 +1964,7 @@ describe("workspace family store transitions", () => {
     act(freshDrop);
     expect(writes).toHaveBeenCalledExactlyOnceWith(
       TRANSITION_SCOPE,
-      ["b", "a", "parent", "other-parent", "other-child", "outside"].map((id) => transitionKey(id)),
+      ["parent", "b", "a", "other-parent", "other-child", "outside"].map((id) => transitionKey(id)),
     );
     expectVisible(["parent", "b", "a", "other-parent", "other-child", "outside"]);
   });
