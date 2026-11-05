@@ -76,6 +76,9 @@ export function OverlayScrollbar({
       if (nextOffset < lastRequestedOffsetRef.current && !reportedUpwardIntentRef.current) {
         reportedUpwardIntentRef.current = true;
         onUserScrollUp?.();
+      } else if (nextOffset > lastRequestedOffsetRef.current) {
+        // A later upward turn in this drag is new intent: the owner may have reattached below.
+        reportedUpwardIntentRef.current = false;
       }
       lastRequestedOffsetRef.current = nextOffset;
       onScrollToOffset(nextOffset);

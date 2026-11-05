@@ -2857,3 +2857,126 @@ it("reveals deep OFF preview Find ranges and releases temporary expansion withou
     act(() => model.close());
   }
 });
+
+/** Older rows tall enough to scroll, so the viewport follows output from a real offset. */
+function pagedTranscript() {
+  const onNearHistoryStart = vi.fn(() => true);
+  const olderHistory = Array.from({ length: 30 }, (_, index) => ({
+    kind: "user_message" as const,
+    id: `older-${index}`,
+    text: `Older prompt ${index}`,
+    timestamp: new Date(index + 10),
+  }));
+  const fixture = actualPrompt("Newest", {
+    historyPlacement: "normal",
+    olderHistory,
+    onNearHistoryStart,
+  });
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  return { ...fixture, scroll, onNearHistoryStart };
+}
+
+/** Sends real browser wheel input until the viewport reaches its start, recording event gaps. */
+async function wheelToHistoryStart(scroll: HTMLElement) {
+  const gaps: number[] = [];
+  let lastWheelAt: number | null = null;
+  const recordWheel = () => {
+    lastWheelAt = performance.now();
+  };
+  const recordScroll = (event: Event) => {
+    if (event.target === scroll && lastWheelAt !== null) {
+      gaps.push(performance.now() - lastWheelAt);
+      lastWheelAt = null;
+    }
+  };
+  window.addEventListener("wheel", recordWheel, { capture: true, passive: true });
+  window.addEventListener("scroll", recordScroll, { capture: true, passive: true });
+  try {
+    while (scroll.scrollTop > 0) {
+      const before = scroll.scrollTop;
+      await userEvent.wheel(scroll, { delta: { y: -400 } });
+      await expect.poll(() => scroll.scrollTop < before).toBe(true);
+    }
+  } finally {
+    window.removeEventListener("wheel", recordWheel, { capture: true });
+    window.removeEventListener("scroll", recordScroll, { capture: true });
+  }
+  return gaps;
+}
+
+async function settleInitialBottomAnchor(scroll: HTMLElement) {
+  await expect.poll(() => scroll.scrollTop).toBeGreaterThan(400);
+  await settleDisclosurePaint();
+}
+
+it("detaches and requests older history from real wheel input on an idle main thread", async () => {
+  const { scroll, onNearHistoryStart } = pagedTranscript();
+  await settleInitialBottomAnchor(scroll);
+
+  const gaps = await wheelToHistoryStart(scroll);
+  console.info("T72 idle wheel-to-scroll gaps (ms, test listeners)", gaps);
+
+  await expect.poll(() => scroll.style.overflowAnchor).toBe("none");
+  await expect.poll(() => onNearHistoryStart.mock.calls.length).toBe(1);
+});
+
+// Intervention, not natural scheduling: a test listener blocks the main thread after the app's
+// wheel listener. The wheel and its scroll event stay browser-delivered. This shows the viewport's
+// behavior under a stalled frame in real Chromium. It does not show that CI took this path.
+it("detaches and requests older history when a stalled frame delays the wheel's scroll event", async () => {
+  const { scroll, onNearHistoryStart } = pagedTranscript();
+  await settleInitialBottomAnchor(scroll);
+  const stallMainThread = () => {
+    const until = performance.now() + 150;
+    while (performance.now() < until) {
+      // Busy-wait: a timer would yield and let the browser publish the scroll first.
+    }
+  };
+  document.addEventListener("wheel", stallMainThread, { passive: true });
+  let gaps: number[];
+  try {
+    gaps = await wheelToHistoryStart(scroll);
+  } finally {
+    document.removeEventListener("wheel", stallMainThread);
+  }
+  console.info("T72 stalled wheel-to-scroll gaps (ms, test listeners)", gaps);
+
+  // The intervention only counts if it separated the two events past the clock window.
+  expect(gaps.length).toBeGreaterThan(0);
+  expect(
+    gaps.every((gap) => gap > 100),
+    JSON.stringify(gaps),
+  ).toBe(true);
+  await expect.poll(() => scroll.style.overflowAnchor).toBe("none");
+  await expect.poll(() => onNearHistoryStart.mock.calls.length).toBe(1);
+});
+
+it("re-detaches when one overlay thumb drag returns to the bottom and moves up again", async () => {
+  const { host, scroll } = pagedTranscript();
+  await settleInitialBottomAnchor(scroll);
+  const grab = host.querySelector<HTMLElement>('[data-testid="workspace-overlay-scrollbar-grab"]')!;
+  const startY = grab.getBoundingClientRect().top + 4;
+  const drag = async (clientY: number) => {
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { clientY }));
+    });
+    await settleDisclosurePaint();
+  };
+
+  act(() => {
+    grab.dispatchEvent(new PointerEvent("pointerdown", { clientY: startY, bubbles: true }));
+  });
+  await settleDisclosurePaint();
+  await drag(startY - 80);
+  await expect.poll(() => scroll.style.overflowAnchor).toBe("none");
+
+  // Back to the bottom reattaches through the viewport's own rule.
+  await drag(startY);
+  await expect.poll(() => scroll.style.overflowAnchor).toBe("auto");
+
+  await drag(startY - 80);
+  await expect.poll(() => scroll.style.overflowAnchor).toBe("none");
+  act(() => {
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+});

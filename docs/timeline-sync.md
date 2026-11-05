@@ -88,6 +88,8 @@ the anchored page still leaves the viewport at history start, as with short or c
 that case pagination continues as one loading operation until the page fills the viewport or history
 is exhausted.
 
+Upward input that asks a scrollable chat viewport to move takes effect at input time: the reader stops following output and paging arms. The browser publishes the scroll asynchronously, so a stalled frame can deliver it long after the input. Waiting for it leaves following on, which blocks paging and lets new output pull the reader back to the bottom. Scrolling that no input explains neither detaches nor arms. A latch is released only by input at the start edge, so momentum inside the threshold cannot chain pages.
+
 ## Prompt navigation
 
 The Chat outline and sticky user-message surface share the viewed timeline's prompt index and
