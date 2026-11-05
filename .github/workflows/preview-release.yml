@@ -25,7 +25,7 @@ on:
         default: false
         type: boolean
       windows_powershell_probe:
-        description: "Diagnostic only: measure PowerShell on Windows ARM64. Builds and publishes nothing, and is not release qualification"
+        description: "Diagnostic only: measure process identity tools on Windows. Builds and publishes nothing, and is not release qualification"
         default: false
         type: boolean
 
@@ -414,10 +414,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Each fresh VM gives its first PowerShell 5.1 spawn to a different command.
-        cold_first: [query, startup]
-    runs-on: windows-11-arm
-    timeout-minutes: 20
+        # Each fresh VM gives its first spawn to a different tool. ARM64 query and startup orders
+        # were measured in run 42082415144, so only the JScript order runs there.
+        include:
+          - runner: windows-11-arm
+            arch: arm64
+            cold_first: jscript
+          - runner: windows-2025
+            arch: x64
+            cold_first: jscript
+          - runner: windows-2025
+            arch: x64
+            cold_first: query
+          - runner: windows-2025
+            arch: x64
+            cold_first: startup
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -434,14 +447,14 @@ jobs:
         with:
           # The packaged app's Electron runs Node 24.
           node-version: "24"
-          architecture: arm64
-      - name: Measure PowerShell startup, process query and exit
+          architecture: ${{ matrix.arch }}
+      - name: Measure process identity tools
         shell: bash
         run: node scripts/preview-release/windows-powershell-probe.mjs "${{ matrix.cold_first }}" "$RUNNER_TEMP/powershell-probe/results.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: windows-powershell-probe-${{ matrix.cold_first }}
+          name: windows-powershell-probe-${{ matrix.arch }}-${{ matrix.cold_first }}
           path: ${{ runner.temp }}/powershell-probe
           if-no-files-found: warn
           retention-days: 14
