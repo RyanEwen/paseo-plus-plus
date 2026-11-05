@@ -1,12 +1,11 @@
 import { readFile } from "node:fs/promises";
-import { z } from "zod";
 import { execCommand } from "../utils/spawn.js";
 import {
   createSystemManagedProcessTable,
   type ManagedProcessCommandRunner,
   type ManagedProcessInspection,
-  windowsPowerShellPath,
 } from "../server/managed-processes/managed-processes.js";
+import { listWindowsProcessTable } from "../server/managed-processes/windows-process-identity.js";
 
 // Process inspection for terminal worker ownership. Birth times are compared as the strings
 // `ps -o lstart` and Win32_Process.CreationDate print, so every reader must print them the same
@@ -36,14 +35,6 @@ export interface TerminalWorkerProcessInspector {
    */
   readEnvironment(pid: number): Promise<string[] | null>;
 }
-
-const WindowsProcessListSchema = z.array(
-  z.object({
-    ProcessId: z.number().int(),
-    ParentProcessId: z.number().int().nullable().optional(),
-    CreationDate: z.string().nullable().optional(),
-  }),
-);
 
 function createLocaleNeutralCommandRunner(): ManagedProcessCommandRunner {
   return {
@@ -124,28 +115,13 @@ async function listPosixProcesses(
 async function listWindowsProcesses(
   commandRunner: ManagedProcessCommandRunner,
 ): Promise<ProcessTableEntry[]> {
-  const command =
-    "@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate) | ConvertTo-Json -Compress";
-  const { stdout } = await commandRunner.exec(windowsPowerShellPath(), [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    command,
-  ]);
-  const parsed: unknown = JSON.parse(stdout.trim());
-  const rows = WindowsProcessListSchema.parse(Array.isArray(parsed) ? parsed : [parsed]);
-  return rows.flatMap((row) =>
-    row.CreationDate
-      ? [
-          {
-            pid: row.ProcessId,
-            ppid: row.ParentProcessId ?? 0,
-            startedAt: row.CreationDate,
-            sessionId: null,
-          },
-        ]
-      : [],
-  );
+  const rows = await listWindowsProcessTable(commandRunner);
+  return rows.map((row) => ({
+    pid: row.pid,
+    ppid: row.ppid,
+    startedAt: row.startedAt,
+    sessionId: null,
+  }));
 }
 
 /**

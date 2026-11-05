@@ -1,4 +1,5 @@
-// Bundles the terminal worker into one file with its shell integration beside it. The daemon
+// Bundles the terminal worker into one file with its shell integration and Windows process
+// identity script beside it. The daemon
 // copies this directory (plus node-pty) into $PASEO_HOME/terminal-worker/ and launches the worker
 // from the copy, so a worker that outlives an upgrade never loads files from the installation
 // that replaced the one it came from. See docs/terminal-worker.md.
@@ -15,6 +16,8 @@ import { build } from "esbuild";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
 export const TERMINAL_WORKER_BUNDLE_NAME = "terminal-worker.mjs";
+// Must match WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME in windows-process-identity.ts; a test checks.
+export const WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME = "windows-process-identity-script.js";
 
 export async function buildTerminalWorkerBundle({ outDir }) {
   await rm(outDir, { recursive: true, force: true });
@@ -39,6 +42,11 @@ export async function buildTerminalWorkerBundle({ outDir }) {
     path.join(packageRoot, "src/terminal/shell-integration"),
     path.join(outDir, "shell-integration"),
     { recursive: true },
+  );
+  // windows-process-identity.ts resolves its script the same way.
+  await cp(
+    path.join(packageRoot, "src/server/managed-processes", WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME),
+    path.join(outDir, WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME),
   );
 }
 

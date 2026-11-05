@@ -263,29 +263,71 @@ test("the PowerShell probe fails closed on any mix with a release option", () =>
   }
 });
 
-test("the PowerShell probe measures the inspector's exact command against its own parent pid", () => {
-  const inspector = readFileSync(
-    new URL("packages/server/src/server/managed-processes/managed-processes.ts", repoRoot),
-    "utf8",
-  );
-  const [queryPart, outputPart] = exactSelfQuery("${pid}").split("; if ");
-  assert.ok(inspector.includes(`\`${queryPart};\``), "query text drifted");
-  assert.ok(inspector.includes(`"if ${outputPart}"`), "output text drifted");
-  assert.match(inspector, /"-NoProfile",\s+"-NonInteractive",\s+"-Command",\s+command,/);
+/**
+ * The PowerShell identity commands production ran before the JScript backend replaced them, copied
+ * from managed-processes.ts and terminal-worker-processes.ts at commit 37ad7748c. They are frozen:
+ * the probe measures them as the known baseline, so they must not follow later production changes.
+ */
+const PRE_SWITCH_POWERSHELL_INSPECTOR = {
+  commit: "37ad7748c",
+  selfQuery: [
+    "$process = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}';",
+    "if ($process) { $process | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress }",
+  ].join(" "),
+  processList:
+    "@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate) | ConvertTo-Json -Compress",
+  hostArguments: '"-NoProfile", "-NonInteractive", "-Command"',
+};
+
+/** The production identity sources that replaced the frozen PowerShell baseline. */
+function readCurrentIdentityBackend() {
+  const read = (path) => readFileSync(new URL(path, repoRoot), "utf8");
+  return {
+    script: read("packages/server/src/server/managed-processes/windows-process-identity-script.js"),
+    module: read("packages/server/src/server/managed-processes/windows-process-identity.ts"),
+    callers: [
+      read("packages/server/src/server/managed-processes/managed-processes.ts"),
+      read("packages/server/src/terminal/terminal-worker-processes.ts"),
+    ],
+  };
+}
+
+test("the PowerShell probe measures the frozen pre-switch inspector command against its own parent pid", () => {
+  assert.equal(exactSelfQuery("${pid}"), PRE_SWITCH_POWERSHELL_INSPECTOR.selfQuery);
+  assert.equal(EXACT_PROCESS_LIST, PRE_SWITCH_POWERSHELL_INSPECTOR.processList);
+  assert.doesNotMatch(exactSelfQuery(4242), /\$PID/i);
 
   const script = readFileSync(
     new URL("scripts/preview-release/windows-powershell-probe.mjs", repoRoot),
     "utf8",
   );
   assert.match(script, /self: process\.pid/);
-  const processes = readFileSync(
-    new URL("packages/server/src/terminal/terminal-worker-processes.ts", repoRoot),
-    "utf8",
+  assert.ok(
+    script.includes(`[${PRE_SWITCH_POWERSHELL_INSPECTOR.hostArguments}, entry.command]`),
+    "PowerShell host arguments drifted from the baseline",
   );
-  assert.ok(processes.includes(`"${EXACT_PROCESS_LIST}"`), "process list text drifted");
-  assert.doesNotMatch(exactSelfQuery(4242), /\$PID/i);
+
+  // The baseline is historical: production no longer runs PowerShell for identity.
+  for (const source of readCurrentIdentityBackend().callers) {
+    assert.doesNotMatch(source, /Get-CimInstance|powershell\.exe/i);
+  }
 });
 
+test("the probe's JScript candidate reads WMI exactly as the production identity script does", () => {
+  const { script: production } = readCurrentIdentityBackend();
+  const quoteFunction = /function quote\(value\) \{[\s\S]*?return out \+ '"';\n\}/;
+  const moniker = /GetObject\("[^"]+"\)/;
+  const wql = (source) => source.match(/"SELECT [^"]+"/g);
+
+  assert.ok(
+    production.match(quoteFunction) && production.match(moniker),
+    "production script shape",
+  );
+  assert.equal(JSCRIPT_WMI_SOURCE.match(quoteFunction)?.[0], production.match(quoteFunction)?.[0]);
+  assert.equal(JSCRIPT_WMI_SOURCE.match(moniker)?.[0], production.match(moniker)?.[0]);
+  assert.deepEqual(wql(JSCRIPT_WMI_SOURCE), wql(production));
+  assert.equal(wql(production)?.length, 2);
+});
 test("each identity probe order gives its tool the first spawn, and pwsh 7 runs last", () => {
   const targets = { self: 11, ascii: 22, unicode: 33, gone: 44 };
   const plans = new Map(
@@ -822,7 +864,7 @@ test("a PowerShell probe times a real process and retains no output", async () =
   assert.equal(missing.spawnErrorCode, "ENOENT");
 });
 
-test("a PowerShell probe matches its own pid through surrounding whitespace, as the inspector parses", async () => {
+test("a probe matches its own pid through surrounding whitespace, as both identity backends parse", async () => {
   // A real child writes these bytes. This covers the parsing only, and is not PowerShell output.
   const writes = (pid) =>
     `process.stdout.write("\\uFEFF \\r\\n" + JSON.stringify({ ProcessId: ${pid} }) + " \\r\\n");`;
@@ -836,11 +878,9 @@ test("a PowerShell probe matches its own pid through surrounding whitespace, as 
 
   assert.equal((await probe(4242)).matchedOwnPid, true);
   assert.equal((await probe(4243)).matchedOwnPid, false);
-  const inspector = readFileSync(
-    new URL("packages/server/src/server/managed-processes/managed-processes.ts", repoRoot),
-    "utf8",
-  );
-  assert.match(inspector, /const trimmed = stdout\.trim\(\);[\s\S]*JSON\.parse\(trimmed\)/);
+  // The pre-switch PowerShell inspector trimmed before JSON.parse at 37ad7748c, and the current
+  // JScript backend still does.
+  assert.match(readCurrentIdentityBackend().module, /JSON\.parse\(stdout\.trim\(\)\)/);
 });
 
 test("a PowerShell probe stops only its own still-running child at the ceiling", async () => {

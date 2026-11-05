@@ -6,6 +6,10 @@ The planned transition to normal releases needs one final prerelease updater bri
 
 Paseo++ desktop and Android apps keep their own settings and identities, separate from upstream Paseo. Set up your hosts and preferences independently in each app. The desktop app also keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790, separate from the standalone daemon. Existing desktop profiles that saved port 6767 retain that setting; changing the packaged default does not rewrite saved addresses. Desktop and Android previews use fresh Paseo++ installations and settings; set up connections again when moving from the former Debug builds.
 
+## Windows
+
+Terminals on Windows need Windows Script Host to be allowed to run Paseo++'s identity script. See [Windows terminal startup](fork-features/windows-terminal-startup.md) for why, and what to allow if the daemon cannot start.
+
 ## Standalone daemon (Linux and WSL)
 
 Install Node.js 22 or newer and at least one agent CLI. Download the matching `paseo-daemon-<version>-linux-<arch>.tgz` from [Paseo++ releases](https://github.com/RyanEwen/paseo-plus-plus/releases). Use `x64` for Intel/AMD or `arm64` for ARM. Linux packages require glibc; Alpine/musl is unsupported.

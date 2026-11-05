@@ -74,10 +74,11 @@ export function requireDiagnosticOnly({ probe, publish, releaseKind, verifyDaemo
 }
 
 /**
- * The exact command the inspector runs (`inspectWindows` in managed-processes.ts). A contract test
- * compares this text with that source, so this measurement cannot silently drift from it. The
- * worker asks PowerShell about the worker's own pid, its parent, and not PowerShell's $PID. The
- * probe matches that by passing this long-lived Node process's pid.
+ * The PowerShell baseline: the exact command `inspectWindows` in managed-processes.ts ran before
+ * the JScript backend replaced it at 37ad7748c. A contract test pins this text to a frozen copy of
+ * that command, so later production changes cannot move the baseline. The worker asked PowerShell
+ * about the worker's own pid, its parent, and not PowerShell's $PID. The probe matches that by
+ * passing this long-lived Node process's pid.
  * @param {number | string} pid process id, or a template placeholder in that test
  */
 export function exactSelfQuery(pid) {
@@ -87,7 +88,7 @@ export function exactSelfQuery(pid) {
   ].join(" ");
 }
 
-/** The inspector's exact process list command (`listWindowsProcesses`), pinned by the same test. */
+/** The pre-switch process list command (`listWindowsProcesses`), frozen by the same test. */
 export const EXACT_PROCESS_LIST =
   "@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate) | ConvertTo-Json -Compress";
 
@@ -412,7 +413,7 @@ export function summarizeCompatibility({ self, sentinelAscii, sentinelUnicode, l
   return { holds: blockers.length === 0, blockers };
 }
 
-/** Parses retained output as the inspector does. Empty means not found, and is distinct from bad JSON. */
+/** Parses retained output as both identity backends do. Empty means not found, distinct from bad JSON. */
 function parseOutput(stdout) {
   const trimmed = (stdout ?? "").trim();
   if (trimmed === "") return { empty: true, value: null };
@@ -492,8 +493,8 @@ export function sanitizeErrorLine(text) {
 }
 
 /**
- * Whether inspector output names this exact process, parsed as the inspector parses it: trimmed
- * first, which also removes a leading byte order mark. The output itself is never retained.
+ * Whether baseline output names this exact process, parsed as the pre-switch inspector parsed it:
+ * trimmed first, which also removes a leading byte order mark. The output itself is never retained.
  */
 function outputNamesPid(stdout, pid) {
   try {

@@ -15,12 +15,14 @@ import { access, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensurePrivateDirectory } from "../server/private-files.js";
+import { WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME } from "../server/managed-processes/windows-process-identity.js";
 import { listTerminalWorkerRecords, terminalWorkerDirectory } from "./terminal-worker-record.js";
 
 // A terminal worker outlives the installation that started it. An npm or desktop update
 // replaces that installation's files, so a worker launched from them would fail its next
 // terminal create (node-pty's spawn-helper, the zsh integration). A built daemon therefore
-// copies the worker bundle, its shell integration and node-pty into
+// copies the worker bundle, its shell integration, its Windows process identity script and
+// node-pty into
 // $PASEO_HOME/terminal-worker/<paseoVersion>-<content hash>/ and launches the worker from there.
 // The hash keeps two builds of one version (a local rebuild) from sharing a copy. A copy is
 // removed once no worker record names it: after a worker drains, after a kill cleanup, and at
@@ -98,6 +100,8 @@ function runtimeName(input: {
 }): string {
   const hash = createHash("sha256");
   hash.update(readFileSync(path.join(input.bundleDirectory, TERMINAL_WORKER_BUNDLE_NAME)));
+  // The script can change without the bundle changing, and a stale copy would keep the old one.
+  hash.update(readFileSync(path.join(input.bundleDirectory, WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME)));
   hash.update(readFileSync(path.join(input.nodePtyDirectory, "package.json")));
   hash.update(`${process.platform}-${process.arch}`);
   const version = input.paseoVersion.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -143,7 +147,8 @@ function isCompleteRuntime(directory: string): boolean {
 }
 
 /**
- * Copies the worker bundle, its shell integration and node-pty into this home, unless a finished
+ * Copies the worker bundle, its shell integration, its Windows process identity script and
+ * node-pty into this home, unless a finished
  * copy of the same content is already there. Returns the entry to launch from the copy.
  */
 export function prepareTerminalWorkerRuntime(input: {
@@ -175,6 +180,10 @@ export function prepareTerminalWorkerRuntime(input: {
     copyTree(
       path.join(input.bundleDirectory, "shell-integration"),
       path.join(temporary, "shell-integration"),
+    );
+    copyTree(
+      path.join(input.bundleDirectory, WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME),
+      path.join(temporary, WINDOWS_PROCESS_IDENTITY_SCRIPT_NAME),
     );
     copyNodePty(input.nodePtyDirectory, path.join(temporary, "node_modules", "node-pty"));
     writeFileSync(
