@@ -11,10 +11,5 @@
   "arrowParens": "always",
   "bracketSameLine": false,
   "bracketSpacing": true,
-  "ignorePatterns": [
-    "*.lock",
-    "**/*.gen.ts",
-    "**/*.gen.tsx",
-    "packages/server/src/server/managed-processes/windows-process-identity-script.js"
-  ]
+  "ignorePatterns": ["*.lock", "**/*.gen.ts", "**/*.gen.tsx"]
 }

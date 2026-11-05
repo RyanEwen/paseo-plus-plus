@@ -362,14 +362,6 @@ describe("desktop packaging", () => {
     );
   });
 
-  it("unpacks the Windows process identity script, which cscript cannot read inside app.asar", () => {
-    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
-
-    expect(config).toContain(
-      "node_modules/@getpaseo/server/dist/server/server/managed-processes/windows-process-identity-script.js",
-    );
-  });
-
   it("excludes package debug/source files from the packaged app", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 

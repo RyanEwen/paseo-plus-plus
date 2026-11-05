@@ -6,7 +6,20 @@ import { z } from "zod";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import { execCommand } from "../../utils/spawn.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../utils/tree-kill.js";
-import { readWindowsProcessIdentity } from "./windows-process-identity.js";
+
+/**
+ * Windows PowerShell by its install path. Process identity must not depend on the caller's
+ * PATH: a daemon or terminal worker can run with a PATH that does not reach System32.
+ */
+export function windowsPowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.win32.join(
+    env.SystemRoot ?? env.SYSTEMROOT ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
 
 const MANAGED_PROCESS_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MANAGED_PROCESS_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -30,6 +43,12 @@ const ManagedProcessRecordSchema = z.object({
     startedAt: z.string().nullable(),
   }),
   createdAt: z.string().min(1),
+});
+
+const WindowsProcessSnapshotSchema = z.object({
+  ProcessId: z.number().int().positive(),
+  CommandLine: z.string().nullable().optional(),
+  CreationDate: z.string().nullable().optional(),
 });
 
 export interface ManagedProcessSnapshot {
@@ -174,8 +193,30 @@ class SystemManagedProcessTable implements ManagedProcessTable {
   }
 
   private async inspectWindows(pid: number): Promise<ManagedProcessInspection> {
-    const identity = await readWindowsProcessIdentity(this.commandRunner, pid);
-    return identity ? { status: "alive", snapshot: identity } : { status: "not-found" };
+    const command = [
+      `$process = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}';`,
+      "if ($process) { $process | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress }",
+    ].join(" ");
+    const { stdout } = await this.commandRunner.exec(windowsPowerShellPath(), [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      command,
+    ]);
+    const trimmed = stdout.trim();
+    if (!trimmed) {
+      return { status: "not-found" };
+    }
+
+    const parsed = WindowsProcessSnapshotSchema.parse(JSON.parse(trimmed));
+    return {
+      status: "alive",
+      snapshot: {
+        pid,
+        commandLine: parsed.CommandLine ?? null,
+        startedAt: parsed.CreationDate ?? null,
+      },
+    };
   }
 }
 

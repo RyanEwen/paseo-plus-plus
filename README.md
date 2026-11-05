@@ -72,7 +72,6 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 
 - [Workspace pickers, status and child workspaces](docs/fork-features/workspace-pickers-and-status.md)
 - [Independent fork installations](docs/fork-features/independent-fork-installations.md)
-- [Windows terminal startup](docs/fork-features/windows-terminal-startup.md)
 
 <!-- fork-overview:end -->
 

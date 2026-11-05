@@ -47,7 +47,6 @@ function makeSources(bundleSource = "export {};\n"): {
   writeFileSync(path.join(bundleDirectory, "terminal-worker.mjs"), bundleSource);
   mkdirSync(path.join(bundleDirectory, "shell-integration", "zsh"), { recursive: true });
   writeFileSync(path.join(bundleDirectory, "shell-integration", "zsh", ".zshenv"), "# zsh\n");
-  writeFileSync(path.join(bundleDirectory, "windows-process-identity-script.js"), "// script\n");
   const nodePtyDirectory = makeDir("tw-node-pty-");
   writeFileSync(path.join(nodePtyDirectory, "package.json"), '{"version":"1.2.3"}\n');
   mkdirSync(path.join(nodePtyDirectory, "lib"));
@@ -92,10 +91,6 @@ describe("terminal worker runtime copy", () => {
     expect(entry.scriptPath).toBe(path.join(directory, "terminal-worker.mjs"));
     expect(entry.execArgv).toEqual([]);
     expect(existsSync(path.join(directory, "shell-integration", "zsh", ".zshenv"))).toBe(true);
-    // The worker resolves its Windows identity script beside the bundle it runs from.
-    expect(readFileSync(path.join(directory, "windows-process-identity-script.js"), "utf8")).toBe(
-      "// script\n",
-    );
     const nodePty = path.join(directory, "node_modules", "node-pty");
     expect(existsSync(path.join(nodePty, "lib", "index.js"))).toBe(true);
     expect(readdirSync(path.join(nodePty, "prebuilds"))).toEqual([
@@ -132,50 +127,6 @@ describe("terminal worker runtime copy", () => {
     expect(again.runtime).toBe(first.runtime);
     expect(statSync(marker).size).toBe("// the running copy\n".length);
     expect(rebuilt.runtime).not.toBe(first.runtime);
-  });
-
-  it("makes a new copy when only the Windows identity script changed", () => {
-    const home = makeDir("tw-runtime-home-");
-    const sources = makeSources();
-    const first = prepareTerminalWorkerRuntime({
-      paseoHome: home,
-      paseoVersion: "1.0.0",
-      ...sources,
-    });
-    writeFileSync(
-      path.join(sources.bundleDirectory, "windows-process-identity-script.js"),
-      "// changed\n",
-    );
-    const next = prepareTerminalWorkerRuntime({
-      paseoHome: home,
-      paseoVersion: "1.0.0",
-      ...sources,
-    });
-
-    expect(next.runtime).not.toBe(first.runtime);
-    expect(
-      readFileSync(
-        path.join(
-          terminalWorkerDirectory(home),
-          next.runtime!,
-          "windows-process-identity-script.js",
-        ),
-        "utf8",
-      ),
-    ).toBe("// changed\n");
-  });
-
-  it("refuses a bundle without its Windows identity script instead of copying it", () => {
-    const home = makeDir("tw-runtime-home-");
-    const sources = makeSources();
-    rmSync(path.join(sources.bundleDirectory, "windows-process-identity-script.js"));
-
-    expect(() =>
-      prepareTerminalWorkerRuntime({ paseoHome: home, paseoVersion: "1.0.0", ...sources }),
-    ).toThrow();
-    expect(
-      readdirSync(terminalWorkerDirectory(home)).filter((name) => !name.startsWith(".")),
-    ).toEqual([]);
   });
 
   it("replaces a copy an earlier run left unfinished", () => {
@@ -269,16 +220,5 @@ describe("terminal worker bundle", () => {
       packages.map(() => "node-pty"),
     );
     expect(existsSync(path.join(outDir, "shell-integration", "zsh"))).toBe(true);
-    expect(readFileSync(path.join(outDir, "windows-process-identity-script.js"), "utf8")).toBe(
-      readFileSync(
-        fileURLToPath(
-          new URL(
-            "../server/managed-processes/windows-process-identity-script.js",
-            import.meta.url,
-          ),
-        ),
-        "utf8",
-      ),
-    );
   });
 });
