@@ -24,6 +24,10 @@ on:
         description: "Publish after every build and validation passes (otherwise keep a draft)"
         default: false
         type: boolean
+      windows_powershell_probe:
+        description: "Diagnostic only: measure PowerShell on Windows ARM64. Builds and publishes nothing, and is not release qualification"
+        default: false
+        type: boolean
 
 concurrency:
   group: fork-preview-release
@@ -41,7 +45,7 @@ env:
 
 jobs:
   source:
-    if: github.repository == 'RyanEwen/paseo' || github.repository == 'RyanEwen/paseo-plus-plus'
+    if: ${{ !inputs.windows_powershell_probe && (github.repository == 'RyanEwen/paseo' || github.repository == 'RyanEwen/paseo-plus-plus') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -97,7 +101,7 @@ jobs:
         run: node scripts/preview-release/publication-policy.mjs
 
   desktop:
-    if: ${{ !inputs.verify_daemon_updates_only }}
+    if: ${{ !inputs.verify_daemon_updates_only && !inputs.windows_powershell_probe }}
     needs: source
     strategy:
       fail-fast: false
@@ -199,7 +203,7 @@ jobs:
           retention-days: 7
 
   android:
-    if: ${{ !inputs.verify_daemon_updates_only }}
+    if: ${{ !inputs.verify_daemon_updates_only && !inputs.windows_powershell_probe }}
     needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -308,6 +312,7 @@ jobs:
           retention-days: 7
 
   daemon:
+    if: ${{ !inputs.windows_powershell_probe }}
     needs: source
     strategy:
       fail-fast: false
@@ -370,7 +375,7 @@ jobs:
           retention-days: 7
 
   release:
-    if: ${{ !inputs.verify_daemon_updates_only }}
+    if: ${{ !inputs.verify_daemon_updates_only && !inputs.windows_powershell_probe }}
     needs: [source, desktop, android, daemon]
     runs-on: ubuntu-24.04
     permissions:
@@ -400,3 +405,43 @@ jobs:
           PASEO_PREVIEW_PUBLISH: ${{ inputs.publish }}
           PASEO_PREVIEW_RELEASE_KIND: ${{ inputs.release_kind }}
         run: node scripts/preview-release/publish.mjs preview-release-assets
+
+  # Diagnostic only, and never part of a release: this job has no path to the jobs above, uses no
+  # signing or publishing credentials (checkout uses the job's read-only token and does not persist
+  # it), and its artifact name stays outside the preview-* pattern the release job collects.
+  windows-powershell-probe:
+    if: ${{ inputs.windows_powershell_probe && (github.repository == 'RyanEwen/paseo' || github.repository == 'RyanEwen/paseo-plus-plus') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each fresh VM gives its first PowerShell 5.1 spawn to a different command.
+        cold_first: [query, startup]
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      PASEO_PROBE_ENABLED: ${{ inputs.windows_powershell_probe }}
+      PASEO_PROBE_PUBLISH: ${{ inputs.publish }}
+      PASEO_PROBE_RELEASE_KIND: ${{ inputs.release_kind }}
+      PASEO_PROBE_VERIFY_DAEMON: ${{ inputs.verify_daemon_updates_only }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # The packaged app's Electron runs Node 24.
+          node-version: "24"
+          architecture: arm64
+      - name: Measure PowerShell startup, process query and exit
+        shell: bash
+        run: node scripts/preview-release/windows-powershell-probe.mjs "${{ matrix.cold_first }}" "$RUNNER_TEMP/powershell-probe/results.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: windows-powershell-probe-${{ matrix.cold_first }}
+          path: ${{ runner.temp }}/powershell-probe
+          if-no-files-found: warn
+          retention-days: 14

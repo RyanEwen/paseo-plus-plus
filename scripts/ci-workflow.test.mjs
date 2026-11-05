@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { relative as relativePath } from "node:path";
@@ -19,6 +19,14 @@ import {
   resolvePublicationPolicy,
   updaterBridgeMarker,
 } from "./preview-release/publication-policy.mjs";
+import {
+  buildProbePlan,
+  COLD_FIRST_ORDERS,
+  exactSelfQuery,
+  requireDiagnosticOnly,
+  runProbe,
+  sanitizeErrorLine,
+} from "./preview-release/windows-powershell-probe.mjs";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
@@ -121,6 +129,330 @@ test("Codex documentation hooks are project-local and preserve the original repo
   );
 });
 
+/** Reads a job's own `if:` and `needs:` so a test can evaluate them as GitHub would. */
+function jobGate(lines) {
+  const condition = lines.find((line) => /^ {4}if: /.test(line))?.replace(/^ {4}if: /, "");
+  const needs = lines.find((line) => /^ {4}needs: /.test(line))?.replace(/^ {4}needs: /, "") ?? "";
+  return {
+    condition: condition?.replace(/^\$\{\{\s*/, "").replace(/\s*\}\}$/, "") ?? "true",
+    needs: needs
+      .replace(/[[\]\s]/g, "")
+      .split(",")
+      .filter(Boolean),
+  };
+}
+
+test("the PowerShell probe input decides exactly which workflow jobs run", () => {
+  const source = readFileSync(new URL(".github/workflows/preview-release.yml", repoRoot), "utf8");
+  const jobs = jobBlocks(source);
+  const gates = new Map([...jobs].map(([name, lines]) => [name, jobGate(lines)]));
+
+  /** Which jobs run: its own condition holds and every job it needs ran, the implicit success(). */
+  const runningJobs = (inputs) => {
+    const running = new Set();
+    const github = { repository: "RyanEwen/paseo-plus-plus" };
+    for (const [name, gate] of gates) {
+      const ownCondition = runInNewContext(gate.condition, { inputs, github });
+      if (ownCondition && gate.needs.every((need) => running.has(need))) running.add(name);
+    }
+    return [...running].sort();
+  };
+
+  const releaseJobs = ["android", "daemon", "desktop", "release", "source"];
+  for (const inputs of [
+    {},
+    { windows_powershell_probe: false },
+    { windows_powershell_probe: false, publish: true, release_kind: "latest" },
+  ]) {
+    assert.deepEqual(runningJobs(inputs), releaseJobs, JSON.stringify(inputs));
+  }
+  assert.deepEqual(
+    runningJobs({ windows_powershell_probe: false, verify_daemon_updates_only: true }),
+    ["daemon", "source"],
+  );
+  // Every release job stays excluded whatever else is set; the probe's own guard then fails it.
+  for (const inputs of [
+    {},
+    { publish: true },
+    { release_kind: "bridge" },
+    { release_kind: "latest" },
+    { verify_daemon_updates_only: true },
+    { publish: true, release_kind: "latest", verify_daemon_updates_only: true },
+  ]) {
+    assert.deepEqual(
+      runningJobs({ ...inputs, windows_powershell_probe: true }),
+      ["windows-powershell-probe"],
+      JSON.stringify(inputs),
+    );
+  }
+});
+
+test("the PowerShell probe mode cannot reach release jobs, credentials or release artifacts", () => {
+  const source = readFileSync(new URL(".github/workflows/preview-release.yml", repoRoot), "utf8");
+  const trigger = source.split("jobs:", 1)[0];
+  assert.match(
+    trigger,
+    /windows_powershell_probe:\n\s+description: "Diagnostic only[^\n]*\n\s+default: false\n\s+type: boolean/,
+  );
+  const jobs = jobBlocks(source);
+  const probe = jobs.get("windows-powershell-probe").join("\n");
+  assert.match(probe, /runs-on: windows-11-arm/);
+  assert.match(probe, /timeout-minutes: 20/);
+  assert.match(probe, /permissions:\n\s+contents: read\n/);
+  assert.match(probe, /persist-credentials: false/);
+  assert.doesNotMatch(probe, /^\s+needs:/m);
+  assert.doesNotMatch(probe, /secrets\.|vars\.|GH_TOKEN|GITHUB_TOKEN|AZURE|KEYSTORE/);
+  assert.doesNotMatch(probe, /npm-retry|build:desktop|publish\.mjs|gh release|printenv|env \|/);
+
+  // The release job collects preview-*, and this artifact must never match that pattern.
+  assert.match(jobs.get("release").join("\n"), /pattern: preview-\*/);
+  assert.match(probe, /name: windows-powershell-probe-\$\{\{ matrix\.cold_first \}\}/);
+  for (const coldFirst of COLD_FIRST_ORDERS) {
+    assert.equal(`windows-powershell-probe-${coldFirst}`.startsWith("preview-"), false);
+  }
+  for (const job of ["source", "desktop", "android", "daemon", "release"]) {
+    assert.doesNotMatch(jobs.get(job).join("\n"), /windows-powershell-probe/, job);
+  }
+  assert.match(source, /group: fork-preview-release\n/);
+  assert.match(source, /^name: Fork Preview Release$/m);
+});
+
+test("the PowerShell probe fails closed on any mix with a release option", () => {
+  const diagnostic = {
+    probe: "true",
+    publish: "false",
+    releaseKind: "preview",
+    verifyDaemon: "false",
+  };
+  assert.doesNotThrow(() => requireDiagnosticOnly(diagnostic));
+  for (const invalid of [
+    { probe: "false" },
+    { probe: undefined },
+    { publish: "true" },
+    { publish: undefined },
+    { releaseKind: "bridge" },
+    { releaseKind: "latest" },
+    { releaseKind: undefined },
+    { verifyDaemon: "true" },
+    { verifyDaemon: undefined },
+  ]) {
+    assert.throws(
+      () => requireDiagnosticOnly({ ...diagnostic, ...invalid }),
+      JSON.stringify(invalid),
+    );
+  }
+});
+
+test("the PowerShell probe measures the inspector's exact command against its own parent pid", () => {
+  const inspector = readFileSync(
+    new URL("packages/server/src/server/managed-processes/managed-processes.ts", repoRoot),
+    "utf8",
+  );
+  const [queryPart, outputPart] = exactSelfQuery("${pid}").split("; if ");
+  assert.ok(inspector.includes(`\`${queryPart};\``), "query text drifted");
+  assert.ok(inspector.includes(`"if ${outputPart}"`), "output text drifted");
+  assert.match(inspector, /"-NoProfile",\s+"-NonInteractive",\s+"-Command",\s+command,/);
+
+  const script = readFileSync(
+    new URL("scripts/preview-release/windows-powershell-probe.mjs", repoRoot),
+    "utf8",
+  );
+  assert.match(script, /buildProbePlan\(\{ coldFirst, pid: process\.pid \}\)/);
+  assert.doesNotMatch(exactSelfQuery(4242), /\$PID/i);
+});
+
+test("each PowerShell probe leg gives a different command the first spawn, and pwsh 7 runs last", () => {
+  const plans = COLD_FIRST_ORDERS.map((coldFirst) => buildProbePlan({ coldFirst, pid: 4242 }));
+  assert.equal(plans[0][0].name, "self-query-stdin-open");
+  assert.equal(plans[1][0].name, "exit0-stdin-open");
+  for (const plan of plans) {
+    assert.deepEqual(
+      plan.map((entry) => entry.warmth),
+      plan.map((_, index) => (index === 0 ? "first-powershell51-spawn" : "warm")),
+    );
+    assert.equal(plan.at(-1).shell, "pwsh7");
+    assert.equal(plan.filter((entry) => entry.shell === "pwsh7").length, 1);
+    assert.equal(new Set(plan.map((entry) => entry.name)).size, plan.length);
+    for (const name of ["exit0-stdin-closed", "import-cimcmdlets", "self-query-stdin-closed"]) {
+      assert.ok(
+        plan.some((entry) => entry.name === name),
+        name,
+      );
+    }
+    const explicit = plan.find((entry) => entry.name === "self-query-explicit-exit");
+    assert.equal(explicit.command, `${exactSelfQuery(4242)}; exit 0`);
+  }
+  assert.throws(() => buildProbePlan({ coldFirst: "other", pid: 1 }));
+});
+
+test("the PowerShell probe sanitizes errors down to one short line without paths", () => {
+  assert.equal(
+    sanitizeErrorLine("\r\nCannot load C:\\Users\\runner\\secret\\mod.psm1 here\r\nsecond line"),
+    "Cannot load <path> here",
+  );
+  assert.equal(
+    sanitizeErrorLine("failed at \\\\host\\share\\x and /home/me/y"),
+    "failed at <path> and <path>",
+  );
+  assert.equal(sanitizeErrorLine("x".repeat(500)).length, 200);
+  assert.equal(sanitizeErrorLine(""), "");
+});
+
+test("a PowerShell probe times a real process and retains no output", async () => {
+  const script =
+    "process.stderr.write('bad /secret/path\\n'); process.stdout.write(JSON.stringify({ ProcessId: 4242, CommandLine: 'private' }));";
+  const result = await runProbe({
+    command: process.execPath,
+    args: ["-e", script],
+    stdin: "closed",
+    ownPid: 4242,
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.terminated, false);
+  assert.equal(result.matchedOwnPid, true);
+  assert.ok(result.firstStdoutMs !== null && result.exitMs !== null && result.closeMs !== null);
+  assert.ok(result.spawnedMs <= result.closeMs);
+  assert.ok(result.stdoutBytes > 0);
+  assert.equal(result.stderrFirstLine, "bad <path>");
+  assert.doesNotMatch(JSON.stringify(result), /private|secret/);
+
+  const missing = await runProbe({ command: "/nonexistent/probe", args: [], stdin: "open" });
+  assert.equal(missing.spawnErrorCode, "ENOENT");
+});
+
+test("a PowerShell probe matches its own pid through surrounding whitespace, as the inspector parses", async () => {
+  // A real child writes these bytes. This covers the parsing only, and is not PowerShell output.
+  const writes = (pid) =>
+    `process.stdout.write("\\uFEFF \\r\\n" + JSON.stringify({ ProcessId: ${pid} }) + " \\r\\n");`;
+  const probe = (pid) =>
+    runProbe({
+      command: process.execPath,
+      args: ["-e", writes(pid)],
+      stdin: "closed",
+      ownPid: 4242,
+    });
+
+  assert.equal((await probe(4242)).matchedOwnPid, true);
+  assert.equal((await probe(4243)).matchedOwnPid, false);
+  const inspector = readFileSync(
+    new URL("packages/server/src/server/managed-processes/managed-processes.ts", repoRoot),
+    "utf8",
+  );
+  assert.match(inspector, /const trimmed = stdout\.trim\(\);[\s\S]*JSON\.parse\(trimmed\)/);
+});
+
+test("a PowerShell probe stops only its own still-running child at the ceiling", async () => {
+  // Exits only when stdin ends, so the two stdin modes must produce different outcomes.
+  const readsStdin = "process.stdin.resume(); process.stdin.on('end', () => process.exit(0));";
+  const closed = await runProbe({
+    command: process.execPath,
+    args: ["-e", readsStdin],
+    stdin: "closed",
+    timeoutMs: 10_000,
+  });
+  assert.equal(closed.timedOut, false);
+  assert.equal(closed.terminated, false);
+  assert.equal(closed.exitCode, 0);
+
+  const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  try {
+    const terminated = [];
+    const open = await runProbe({
+      command: process.execPath,
+      args: ["-e", readsStdin],
+      stdin: "open",
+      timeoutMs: 500,
+      terminate: (child) => {
+        terminated.push(child.pid);
+        child.kill("SIGKILL");
+      },
+    });
+    assert.equal(open.timedOut, true);
+    assert.equal(open.terminated, true);
+    assert.equal(open.signal, "SIGKILL");
+    assert.equal(terminated.length, 1);
+    assert.notEqual(terminated[0], bystander.pid);
+    assert.equal(bystander.exitCode, null);
+    assert.doesNotThrow(() => process.kill(bystander.pid, 0));
+  } finally {
+    bystander.kill("SIGKILL");
+  }
+});
+
+test("a PowerShell probe never signals a child that already exited but left its pipes held", async () => {
+  // The child exits at once while a detached grandchild keeps the stdout pipe open.
+  const holdsPipes = `
+    const { spawn } = require("node:child_process");
+    const held = spawn(process.execPath, ["-e", "setTimeout(() => {}, 4000)"], {
+      detached: true,
+      stdio: "inherit",
+    });
+    held.unref();
+    process.exit(0);
+  `;
+  const terminated = [];
+  const result = await runProbe({
+    command: process.execPath,
+    args: ["-e", holdsPipes],
+    stdin: "closed",
+    timeoutMs: 1_000,
+    terminate: (child) => terminated.push(child.pid),
+  });
+  assert.deepEqual(terminated, []);
+  assert.equal(result.exitCode, 0);
+  assert.notEqual(result.exitMs, null);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.terminated, false);
+});
+
+test("the PowerShell probe command refuses without its guard and writes only allowed fields", () => {
+  const script = new URL("scripts/preview-release/windows-powershell-probe.mjs", repoRoot).pathname;
+  const directory = mkdtempSync(join(tmpdir(), "powershell-probe-"));
+  try {
+    const output = join(directory, "results.json");
+    const refused = spawnSync(process.execPath, [script, "query", output], {
+      encoding: "utf8",
+      env: { ...process.env, PASEO_PROBE_ENABLED: "true", PASEO_PROBE_PUBLISH: "true" },
+    });
+    assert.notEqual(refused.status, 0);
+
+    // No PowerShell exists here, so every probe reports a spawn error. Nothing here runs on Windows.
+    const completed = spawnSync(process.execPath, [script, "query", output], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PASEO_PROBE_ENABLED: "true",
+        PASEO_PROBE_PUBLISH: "false",
+        PASEO_PROBE_RELEASE_KIND: "preview",
+        PASEO_PROBE_VERIFY_DAEMON: "false",
+        PROBE_TEST_SENTINEL: "sentinel-value",
+      },
+    });
+    assert.equal(completed.status, 0, completed.stderr);
+    const text = readFileSync(output, "utf8");
+    const results = JSON.parse(text);
+    assert.equal(results.diagnosticOnly, true);
+    assert.deepEqual(Object.keys(results.runtime), [
+      "node",
+      "platform",
+      "arch",
+      "osRelease",
+      "image",
+      "imageVersion",
+    ]);
+    assert.equal(results.probes.length, buildProbePlan({ coldFirst: "query", pid: 1 }).length);
+    for (const printed of [text, completed.stdout]) {
+      assert.doesNotMatch(printed, /sentinel-value|Get-CimInstance|ConvertTo-Json|powershell\.exe/);
+      assert.ok(!printed.includes(directory));
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("preview releases build one checked commit and require every approved platform before publishing", () => {
   const source = readFileSync(new URL(".github/workflows/preview-release.yml", repoRoot), "utf8");
   const trigger = source.split("jobs:", 1)[0];
@@ -131,7 +463,10 @@ test("preview releases build one checked commit and require every approved platf
   assert.match(source, /run: node scripts\/preview-release\/source\.mjs/);
   const jobs = jobBlocks(source);
   for (const job of ["desktop", "android", "release"]) {
-    assert.match(jobs.get(job).join("\n"), /if: \$\{\{ !inputs\.verify_daemon_updates_only \}\}/);
+    assert.match(
+      jobs.get(job).join("\n"),
+      /if: \$\{\{ !inputs\.verify_daemon_updates_only && !inputs\.windows_powershell_probe \}\}/,
+    );
   }
   const daemonJob = jobs.get("daemon").join("\n");
   assert.match(daemonJob, /daemon\.mjs --smoke/);

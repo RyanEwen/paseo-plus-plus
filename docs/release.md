@@ -311,6 +311,8 @@ It checks retained workspace state and another terminal command before stopping 
 This mode builds no app installers and publishes no release. Its log artifacts are the update
 acceptance evidence for both Linux architectures.
 
+`windows_powershell_probe=true` is a diagnostic mode for Windows ARM64. It runs only the `windows-powershell-probe` job, which measures Windows PowerShell startup, the terminal worker's exact self-query and exit, and uploads timings as `windows-powershell-probe-*` artifacts. Every release job is excluded, and the job fails on any mix with `publish`, `bridge`, `latest` or daemon verification. It uses no signing or publishing credentials, builds nothing and creates no tag, draft or asset. Checkout uses the job's read-only `github.token` and does not persist it. It is not release qualification: it runs standalone Node without the release job's build load, so a clean result does not clear the packaged app. Each run consumes a `run_number`, which leaves a gap in preview numbers.
+
 ### Signing configuration
 
 Windows uses electron-builder's Azure Trusted Signing integration, with PrintStream's existing
