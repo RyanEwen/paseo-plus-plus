@@ -1,3 +1,4 @@
+import { DEFAULT_PASEO_PLUS_PLUS_PREFERENCES } from "@/paseo-plus-plus/preferences";
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
@@ -44,6 +45,104 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each(Object.keys(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES))(
+    "normalizes missing or malformed %s to its default while retaining explicit choices",
+    async (feature) => {
+      for (const value of [undefined, null, "false", 0, false, true]) {
+        const deps = makeDeps({
+          storage: createInMemoryKeyValueStorage({
+            [APP_SETTINGS_KEY]: JSON.stringify({ paseoPlusPlus: { [feature]: value } }),
+          }),
+        });
+        const settings = await loadAppSettingsFromStorage(deps);
+        expect(settings.paseoPlusPlus[feature]).toBe(
+          typeof value === "boolean" ? value : DEFAULT_PASEO_PLUS_PLUS_PREFERENCES[feature],
+        );
+      }
+    },
+  );
+
+  it("keeps effective fork choices unchanged when persistence fails", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const current = await loadAppSettingsFromStorage(deps);
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, current);
+    deps.storage.setItem = async () => {
+      throw new Error("storage unavailable");
+    };
+    await expect(
+      saveAppSettings({
+        queryClient,
+        deps,
+        updates: (settings) => ({
+          paseoPlusPlus: { ...settings.paseoPlusPlus, previousAgents: false },
+        }),
+      }),
+    ).rejects.toThrow("storage unavailable");
+    expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toEqual(current);
+  });
+
+  it("defaults fork opt-outs independently and retains unknown future choices", async () => {
+    const defaults = await loadAppSettingsFromStorage(makeDeps());
+    expect(defaults.paseoPlusPlus).toEqual({
+      workspaceChatLinks: true,
+      sidebarHostUpdates: true,
+      mobileWorkspaceTabs: true,
+      widerWorkspaceTabs: true,
+      explorerIconOnlyTabs: false,
+      splitLayoutPresets: true,
+      descriptiveToolCalls: true,
+      stickyUserPrompts: true,
+      previousAgents: true,
+      sidebarActivityChips: true,
+      sidebarProjectEmphasis: true,
+      sidebarBulkActions: true,
+      projectPinning: true,
+      sidebarWorkspaceTransitions: true,
+      androidAutomaticUpdateChecks: true,
+    });
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          paseoPlusPlus: {
+            previousAgents: false,
+            sidebarBulkActions: "invalid",
+            futureFeature: false,
+            sidebarProjectSelector: false,
+          },
+        }),
+      }),
+    });
+    const restored = await loadAppSettingsFromStorage(deps);
+    expect(restored.paseoPlusPlus.previousAgents).toBe(false);
+    expect(restored.paseoPlusPlus.sidebarBulkActions).toBe(true);
+    expect(restored.paseoPlusPlus.stickyUserPrompts).toBe(true);
+    expect(restored.paseoPlusPlus.futureFeature).toBe(false);
+    // Retired label preferences remain harmless stored data, like unknown future keys.
+    expect(restored.paseoPlusPlus.sidebarProjectSelector).toBe(false);
+    await saveAppSettings({ queryClient: new QueryClient(), deps, updates: { language: "fr" } });
+    expect((await loadAppSettingsFromStorage(deps)).paseoPlusPlus.futureFeature).toBe(false);
+  });
+
+  it("persists independent fork choices without clearing existing preferences", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    await saveAppSettings({ queryClient, deps, updates: { language: "fr" } });
+    for (const previousAgents of [false, true]) {
+      await saveAppSettings({
+        queryClient,
+        deps,
+        updates: (current) => ({
+          paseoPlusPlus: { ...current.paseoPlusPlus, previousAgents, stickyUserPrompts: false },
+        }),
+      });
+      const restored = await loadAppSettingsFromStorage(deps);
+      expect(restored.paseoPlusPlus.previousAgents).toBe(previousAgents);
+      expect(restored.paseoPlusPlus.stickyUserPrompts).toBe(false);
+      expect(restored.paseoPlusPlus.projectPinning).toBe(true);
+      expect(restored.language).toBe("fr");
+    }
+  });
   it("persists file panel associations, including panels absent from this host", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
