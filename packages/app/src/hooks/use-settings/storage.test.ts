@@ -1,3 +1,8 @@
+import {
+  applyDeviceAppSettingsUpdate,
+  deviceAppSettingsUpdate,
+} from "@/settings-sync/device-settings";
+import { SYNC_APP_SETTING_KEYS } from "@getpaseo/protocol/app-settings";
 import { DEFAULT_PASEO_PLUS_PLUS_PREFERENCES } from "@/paseo-plus-plus/preferences";
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
@@ -1258,6 +1263,22 @@ describe("content max width", () => {
   });
 });
 
+it("registers every shared app preference for daemon sync and excludes device settings", () => {
+  const sharedKeys = Object.keys(DEFAULT_CLIENT_SETTINGS).filter(
+    (key) => key !== "filePanelAssociations",
+  );
+  // The fork-base registry also lists keys of feature layers that may be absent from this build,
+  // so require every stored shared key rather than exact equality.
+  expect(SYNC_APP_SETTING_KEYS).toEqual(expect.arrayContaining(sharedKeys));
+  // Optional legacy wire keys remain accepted after their client preference is replaced.
+  expect(SYNC_APP_SETTING_KEYS).toEqual(
+    expect.arrayContaining(["toolCallDetailLevel", "useLegacyTerminalRenderer"]),
+  );
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("filePanelAssociations");
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("manageBuiltInDaemon");
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("releaseChannel");
+});
+
 describe("font family CSS safety", () => {
   it.each(["'foo", '"foo', "Menlo, 'foo", "foo\\", "foo/*", "foo(", "foo["])(
     "rejects unfinished CSS syntax: %s",
@@ -1287,4 +1308,60 @@ describe("font family CSS safety", () => {
       expect(await loadAppSettingsFromStorage(deps)).toMatchObject({ [field]: "" });
     },
   );
+});
+
+it("merges a queued device toggle with the newest durable shared fork settings", async () => {
+  const backing = createInMemoryKeyValueStorage({
+    [APP_SETTINGS_KEY]: JSON.stringify(DEFAULT_CLIENT_SETTINGS),
+  });
+  let release!: () => void;
+  let notifyStarted!: () => void;
+  const heldWrite = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    notifyStarted = resolve;
+  });
+  let firstWrite = true;
+  const deps: SettingsDeps = {
+    desktop: createFakeDesktopBridge(),
+    storage: {
+      getItem: (key) => backing.getItem(key),
+      removeItem: (key) => backing.removeItem(key),
+      async setItem(key, value) {
+        if (firstWrite) {
+          firstWrite = false;
+          notifyStarted();
+          await heldWrite;
+        }
+        await backing.setItem(key, value);
+      },
+    },
+  };
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+  const remote = saveAppSettings({
+    queryClient,
+    deps,
+    updates: (current) => ({
+      paseoPlusPlus: { ...current.paseoPlusPlus, stickyUserPrompts: false },
+    }),
+  });
+  await started;
+  const updates = deviceAppSettingsUpdate(DEFAULT_CLIENT_SETTINGS, {
+    ...DEFAULT_CLIENT_SETTINGS,
+    paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, widerWorkspaceTabs: false },
+  });
+  const local = saveAppSettings({
+    queryClient,
+    deps,
+    updates: (current) => applyDeviceAppSettingsUpdate(updates, current),
+  });
+  release();
+  await Promise.all([remote, local]);
+  expect((await loadAppSettingsFromStorage(deps)).paseoPlusPlus).toMatchObject({
+    stickyUserPrompts: false,
+    widerWorkspaceTabs: false,
+  });
+  queryClient.clear();
 });
