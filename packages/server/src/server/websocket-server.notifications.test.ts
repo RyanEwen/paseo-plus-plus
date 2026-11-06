@@ -397,7 +397,7 @@ it("attention preference committed host config refreshes both devices without at
       enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
     });
-    const { server, agentManager, pushNotifications } = createServer(undefined, undefined, store);
+    const { server, agentManager, pushNotifications } = createServer(undefined, store);
     const firstRefresh = vi.fn(async () => {});
     const secondRefresh = vi.fn(async () => {});
     const first = connectClient(server, null, { refreshAttention: firstRefresh });
