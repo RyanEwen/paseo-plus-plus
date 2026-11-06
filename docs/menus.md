@@ -24,7 +24,7 @@ flipping every menu in the app to sheets at once is not a change anyone can revi
 when you have actually looked at it on a phone.
 
 `ContextMenu` is the exception: it defaults to `compactMode="sheet"` and enables native long press.
-Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead.
+Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead. Workspace tabs keep their context menu on the tab itself; compact tabs do not need a separate menu button.
 
 ## When the items differ per form factor
 
