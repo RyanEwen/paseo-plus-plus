@@ -90,6 +90,28 @@ is exhausted.
 
 Upward input that asks a scrollable chat viewport to move takes effect at input time: the reader stops following output and paging arms. The browser publishes the scroll asynchronously, so a stalled frame can deliver it long after the input. Waiting for it leaves following on, which blocks paging and lets new output pull the reader back to the bottom. Scrolling that no input explains neither detaches nor arms. A latch is released only by input at the start edge, so momentum inside the threshold cannot chain pages.
 
+## Prompt navigation
+
+The Chat outline and sticky user-message surface share the viewed timeline's prompt index and
+window loading. Keep scrolling inside that owner: an indexed prompt may sit outside the loaded
+window, and a loaded row may sit outside the mounted presentation window. Resolve presentation
+rows to authoritative timeline positions before selecting prompts; Markdown blocks and plugin
+cards do not share the canonical row IDs. Child transcripts use their own history pagination.
+
+An assistant-only tail may need a separate canonical context read to recover its preceding user row. Cached history may paint before synchronization finishes. Keep its locally proven prompt visible, and admit remote prompt lookup only after authoritative history acceptance. Keep that isolated coverage separate from the viewed window, and pass the row through the same presentation as ordinary history. A retained context row does not prove that the gap before it is loaded, even when its canonical revision is cached but remains outside the current local presentation window. On web, recovered context must not add ordinary rows, inline space, virtual size or reading-anchor candidates. An ordinary web row hands off only when its natural bottom reaches the reading edge plus its independently prepared compact paint height. More must not change that threshold, and no trailing space is added to make it reachable. Recovered paint has no invented original position and keeps its certified context authority. Keep one actual body through materialization and preserve its full ordinary allocation through More/Less. Retained leases support reuse, but only the context certified for the current reading source may own sticky paint. Original reveal and arrow navigation must materialize the target through the ordinary history owner before claiming a landing.
+
+Index-free discovery checks projected display-anchor progress and stops with usable feedback on exhaustion, failure, cancellation, or its work budget. A projected row can have later updates beyond the backward cursor; its first source position owns pagination. Passive context reads keep an available prompt visible. A validated USER boundary with no ordinary rendered body stays neutral; do not report a load failure, claim the whole conversation is prompt-free, or cross it to display an older prompt. When no prompt is available, the sticky rail shows a muted system placeholder and owns any actionable retry. Explicit navigation failures retain their own feedback and retry. An explicit retry can continue past the
+budget; streamed cursor advances cannot restart that budget. A transcript change during an
+isolated read can also require an explicit retry. Scrolling through already proven context
+reuses its user row. Split panes retain their own reading context, including while hidden or
+with pinning disabled.
+
+Cancel obsolete navigation at the window-acceptance boundary as well as the scroll boundary.
+Returning to bottom, sending, or starting manual reading must invalidate delayed page application,
+errors, and animation callbacks without cancelling unrelated shared reads or weakening epoch and
+request fences. Native index recovery must include the measured live-header extent in its estimate
+and retain a bounded progress budget across retries.
+
 ## Durable item anchors
 
 Provider message IDs are not guaranteed for every displayed item. Paseo-generated system errors are one example. Rendered item indices are not durable either because pagination and projection can merge source rows.
