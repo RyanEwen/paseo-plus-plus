@@ -20,6 +20,10 @@ export interface PaseoSubagentRow {
   status: Agent["status"];
   turn: Agent["turn"];
   requiresAttention: Agent["requiresAttention"];
+  humanAttentionRequired?: Agent["humanAttentionRequired"];
+  attentionMessage?: Agent["attentionMessage"];
+  attentionReason?: Agent["attentionReason"];
+  pendingPermissionCount?: number;
   createdAt: Agent["createdAt"];
 }
 
@@ -67,6 +71,10 @@ function toSubagentRow(agent: Agent): SubagentRow {
     status: agent.status,
     turn: agent.turn,
     requiresAttention: agent.requiresAttention,
+    humanAttentionRequired: agent.humanAttentionRequired,
+    attentionMessage: agent.attentionMessage,
+    attentionReason: agent.attentionReason,
+    pendingPermissionCount: agent.pendingPermissions.length,
     createdAt: agent.createdAt,
   };
 }
