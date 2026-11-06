@@ -4400,7 +4400,10 @@ export class AgentManager {
       const now = new Date();
       if (session.claudeFreshRewind) {
         await this.deleteCommittedTimeline(resolvedAgentId);
-        this.resetReloadedHistory(resolvedAgentId);
+        this.timelineStore.delete(resolvedAgentId);
+        for (const event of this.providerSubagents.deleteParent(resolvedAgentId)) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
         options = {
           ...options,
           timeline: [],
