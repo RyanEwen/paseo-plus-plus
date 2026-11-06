@@ -740,6 +740,15 @@ function parseFileChangePath(
 }
 
 function parseFileChangeKind(entry: Record<string, unknown>): string | undefined {
+  // App-server v2 uses a tagged object; legacy patch events used a string.
+  if (
+    typeof entry.kind === "object" &&
+    entry.kind !== null &&
+    "type" in entry.kind &&
+    typeof entry.kind.type === "string"
+  ) {
+    return entry.kind.type;
+  }
   return (
     (typeof entry.kind === "string" && entry.kind) ||
     (typeof entry.type === "string" && entry.type) ||
