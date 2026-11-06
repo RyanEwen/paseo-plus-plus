@@ -2,6 +2,15 @@ import { expect, test, type Page } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
+import { buildSettingsSectionRoute } from "@/utils/host-routes";
+import { renameModalInput } from "../support/helpers/rename";
+import {
+  mainWorkspaceTabRow,
+  chooserTabLabel,
+  readWorkspaceTabSnapshot,
+} from "../support/helpers/workspace-tabs";
+import { getServerId } from "../support/helpers/server-id";
+
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 async function openMockAgentAtMobileBreakpoint(page: Page) {
@@ -13,7 +22,7 @@ async function openMockAgentAtMobileBreakpoint(page: Page) {
     model: "ten-second-stream",
   });
   await openAgentRoute(page, session);
-  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toBeVisible({
+  await expect(page.getByTestId(`workspace-tab-agent_${session.agentId}`)).toBeVisible({
     timeout: 30_000,
   });
   await expectComposerVisible(page);
@@ -72,9 +81,12 @@ async function closeBottomSheetWithBackdrop(page: Page) {
   await expect(backdrop).not.toBeVisible({ timeout: 1_000 });
 }
 
-async function openTabSwitcher(page: Page) {
-  const trigger = page.getByRole("button", { name: /Switch tabs/ });
-  await trigger.click();
+async function openTabActions(page: Page) {
+  await page
+    .getByTestId("workspace-tabs-scroll")
+    .getByRole("tab")
+    .first()
+    .click({ button: "right" });
   await expectBottomSheetOpen(page);
 }
 
@@ -98,10 +110,10 @@ async function dismissStackedModelPickerWithBackdrop(page: Page) {
   await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
 }
 
-async function openAndCloseTabSwitcherTwice(page: Page) {
-  await openTabSwitcher(page);
+async function openAndCloseTabActionsTwice(page: Page) {
+  await openTabActions(page);
   await closeBottomSheetWithBackdrop(page);
-  await openTabSwitcher(page);
+  await openTabActions(page);
   await closeBottomSheetWithBackdrop(page);
 }
 
@@ -116,8 +128,8 @@ test.describe("mobile bottom sheet reopen", () => {
   test("sheets reopen and model search returns to configuration", async ({ page }) => {
     const session = await openMockAgentAtMobileBreakpoint(page);
     try {
-      await test.step("tab switcher opens, closes, and reopens", async () => {
-        await openAndCloseTabSwitcherTwice(page);
+      await test.step("tab actions open, close, and reopen", async () => {
+        await openAndCloseTabActionsTwice(page);
       });
 
       await test.step("model selector opens, closes, and reopens", async () => {
@@ -143,6 +155,61 @@ test.describe("mobile bottom sheet reopen", () => {
         await expect(page.getByTestId("agent-controls-model")).toContainText("Ten second stream");
         await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeInViewport();
       });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("legacy chooser and nested session actions reopen after canceling rename", async ({
+    page,
+  }) => {
+    const session = await openMockAgentAtMobileBreakpoint(page);
+    try {
+      const deck = page
+        .getByTestId(`workspace-deck-entry-${getServerId()}:${session.workspaceId}`)
+        .filter({ visible: true });
+      const before = await readWorkspaceTabSnapshot(page, session.workspaceId);
+      const agentTab = before.tabs.find(
+        (tab) => tab.target.kind === "agent" && tab.target.agentId === session.agentId,
+      );
+      if (!agentTab) throw new Error("Expected the selected fixture agent tab");
+      expect(before.focusedTabId).toBe(agentTab.tabId);
+      const workspacePath = new URL(page.url()).pathname;
+      await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+      const control = page.getByTestId("paseo-plus-plus-mobileWorkspaceTabs").getByRole("switch");
+      await expect(control).toBeChecked();
+      await control.click();
+      await expect(control).not.toBeChecked();
+      await expect(control).toBeEnabled();
+      await page.goto(workspacePath);
+      const chooser = deck.getByTestId("workspace-tab-switcher-trigger");
+      await expect(chooser).toBeVisible();
+      await expect(chooser).toHaveText("1");
+      await expect(chooser).toHaveAccessibleName("Switch tabs (1 open)");
+      await expect(
+        mainWorkspaceTabRow({ page, deck }).getByTestId("workspace-tabs-scroll"),
+      ).toHaveCount(0);
+      expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await chooser.click();
+        await expectBottomSheetOpen(page);
+        const actions = page.getByTestId(`workspace-tab-menu-${agentTab.tabId}-trigger`);
+        await actions.click();
+        await page.getByTestId(`workspace-tab-menu-${agentTab.tabId}-rename`).click();
+        await expect(
+          renameModalInput(page, `workspace-tab-rename-modal-agent-${session.agentId}`),
+        ).toBeVisible();
+        await page.getByRole("button", { name: "Cancel", exact: true }).click();
+        await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
+        await expect(
+          chooserTabLabel(page, agentTab.tabId, "Bottom sheet reopen e2e"),
+        ).toBeVisible();
+        await closeBottomSheetWithBackdrop(page);
+      }
+      await expect(chooser).toHaveText("1");
+      await expect(chooser).toHaveAccessibleName("Switch tabs (1 open)");
+      expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
+      await expectComposerVisible(page);
     } finally {
       await session.cleanup();
     }

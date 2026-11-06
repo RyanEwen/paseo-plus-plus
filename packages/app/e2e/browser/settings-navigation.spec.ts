@@ -5,7 +5,10 @@ import {
   captureSidebarControlsExample,
   captureWorkspacePositionsExample,
 } from "../support/helpers/settings-example-scenes";
-import { openMobileAgentSidebar } from "../support/helpers/sidebar";
+import {
+  openMobileAgentSidebar,
+  seedLegacyCompactTabSwitcher,
+} from "../support/helpers/sidebar";
 import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
@@ -202,6 +205,7 @@ test.describe("Settings — compact master-detail", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test("the compact tab switcher reopens after Settings hides its workspace", async ({ page }) => {
+    await seedLegacyCompactTabSwitcher(page);
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "settings-tab-switcher-",
       title: "Compact tab switcher",
