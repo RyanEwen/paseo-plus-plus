@@ -224,8 +224,13 @@ function matchesCreatedIntentRetry(
   );
 }
 
+export interface AgentSnapshotOptions {
   /** Manager registration only: atomically publish a created Claude chat before its lazy first native ID. */
   registerClaudeEmptyCreation?: boolean;
+  title?: string | null;
+  internal?: boolean;
+}
+
 interface AgentStorageReadOptions {
   includeHistoryIntents?: boolean;
 }
@@ -574,17 +579,14 @@ export class AgentStorage {
     this.pathsById.delete(agentId);
   }
 
-  async applySnapshot(
-    agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent, options?: AgentSnapshotOptions): Promise<void> {
     await this.load();
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, (existing) => {
-        assertPendingClaudeQuerySnapshot(current, existing);
+        assertPendingClaudeQuerySnapshot(agent, existing);
       const record = toStoredAgentRecord(agent, {
         title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
         createdAt: existing?.createdAt,
@@ -594,7 +596,7 @@ export class AgentStorage {
         // Older adapters and snapshots do not own daemon history provenance.
         record.providerHistory = snapshotHistoryBinding(
           existing,
-          current,
+          agent,
           record,
           options?.registerClaudeEmptyCreation,
         );
@@ -607,7 +609,7 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
-        record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, current);
+        record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, agent);
       return record;
     });
   }

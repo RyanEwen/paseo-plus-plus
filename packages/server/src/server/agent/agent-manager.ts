@@ -4851,7 +4851,7 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: AgentSnapshotOptions,
   ): Promise<void> {
     if (!this.registry) {
       return;
