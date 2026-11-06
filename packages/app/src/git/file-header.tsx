@@ -346,7 +346,9 @@ export const FileHeader = memo(function FileHeader({
     >
       <ContextMenu>
         <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+          <TooltipTrigger asChild triggerRefProp={interactive ? "triggerRef" : "ref"}>
+            {trigger}
+          </TooltipTrigger>
           <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
             <Text style={styles.tooltip}>{file.path}</Text>
           </TooltipContent>
