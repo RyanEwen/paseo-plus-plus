@@ -8,6 +8,13 @@ import { join, relative } from "node:path";
 // workspace root live in their workspace's own node_modules, and patch-package resolves
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
+  // 57.0.23 has no own-notification dismissal hook. Remove when Expo supplies an
+  // explicit-dismiss event or a supported app-owned deleteIntent receiver extension.
+  {
+    nodeModulesPath: "packages/app/node_modules/expo-notifications",
+    patchPrefix: "expo-notifications+",
+    cwd: "packages/app",
+  },
   // Backport for expo-modules-core 57.0.23: https://github.com/expo/expo/pull/49634.
   // Remove when the installed Expo SDK includes the Activity recreation fix.
   {
