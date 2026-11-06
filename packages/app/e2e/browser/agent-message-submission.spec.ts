@@ -351,11 +351,21 @@ async function selectSendBehaviorInSettings(
     .toBe(stored);
 }
 
+/** These streaming races exercise detailed tool cards, independently of the fork default. */
+async function seedDetailedToolCalls(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const key = "@paseo:app-settings";
+    const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
+    localStorage.setItem(key, JSON.stringify({ ...settings, toolCallDetailLevel: "detailed" }));
+  });
+}
+
 async function replaySteeredSleepTurnInBrowser(
   page: Page,
   testInfo: { workerIndex: number },
   shape: "claude" | "codex",
 ): Promise<void> {
+  await seedDetailedToolCalls(page);
   const gate = await installDaemonWebSocketGate(page);
   gate.holdNextShellToolCall("completed");
   await gotoAppShell(page);
@@ -662,6 +672,7 @@ async function expectStaleCanonicalPagePreservesNewerLiveOutput(
   page: Page,
   testInfo: { workerIndex: number },
 ): Promise<void> {
+  await seedDetailedToolCalls(page);
   const gate = await installDaemonWebSocketGate(page);
   const agent = await seedMockAgentWorkspace({
     repoPrefix: `submission-stale-canonical-${testInfo.workerIndex}-`,
@@ -1172,7 +1183,30 @@ test.describe("Agent message submission", () => {
         hasText: "I'll take a look at the scroll anchor behavior you described.",
       }),
     ).toBeVisible();
-    await awaitToolCall(page, "Read");
+    // Full chat exposes each operation; require the submitted turn's first completed pair.
+    const readRow = page
+      .getByTestId("agent-chat-scroll")
+      .filter({ visible: true })
+      .locator('[data-history-row-id^="agent_tool_turn:"][data-history-row-id$="%3Aread%3A1"]');
+    await expect(readRow).toHaveCount(1, { timeout: 30_000 });
+    const readId = await readRow.getAttribute("data-history-row-id");
+    if (!readId) throw new Error("Completed Read row has no canonical identity");
+    const read = readRow.getByTestId("tool-call-badge");
+    await expect(read).toHaveCount(1);
+    await expect(read.getByText("Read", { exact: true })).toBeVisible();
+    await expect(
+      read.getByText("packages/app/src/components/conversation-list.tsx", { exact: true }),
+    ).toBeVisible();
+    const searchId = readId.replace(/%3Aread%3A1$/, "%3Agrep%3A1");
+    const searchRow = page
+      .getByTestId("agent-chat-scroll")
+      .filter({ visible: true })
+      .locator(`[data-history-row-id="${searchId}"]`);
+    await expect(searchRow).toHaveCount(1);
+    const search = searchRow.getByTestId("tool-call-badge");
+    await expect(search).toHaveCount(1);
+    await expect(search.getByText("Searched", { exact: true })).toBeVisible();
+    await expect(search.getByText("scrollToEnd", { exact: true })).toBeVisible();
     await finishTimelineRowStabilityCheck();
   });
 
