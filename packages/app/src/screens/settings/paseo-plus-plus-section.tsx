@@ -1,6 +1,7 @@
 import { DEVICE_LOCAL_FORK_SETTING_KEYS } from "@/paseo-plus-plus/device-local-settings";
 import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
+import { ExplorerSection } from "@/screens/settings/paseo-plus-plus/explorer-section";
 import { useQueryClient } from "@tanstack/react-query";
 import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
 import { Alert } from "@/components/ui/alert";
@@ -100,6 +101,7 @@ export function PaseoPlusPlusSection() {
           ))}
         </SettingsCard>
       </SettingsSection>
+      <ExplorerSection />
       <SettingsSection title={t("paseoPlusPlus.preferences")}>
         <SettingsCard>
           <SettingsRow
