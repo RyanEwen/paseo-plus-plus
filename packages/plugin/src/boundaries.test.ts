@@ -116,17 +116,23 @@ describe("plugin SDK import boundaries", () => {
     ).toEqual([]);
   });
 
-  it("typechecks a 0.12 reveal-hook consumer without exposing the hook on current UI", () => {
+  it("typechecks the fork reveal hook through current UI and the 0.12 entrypoint", () => {
     expect(
       typeErrors(`
       import { useRevealedText, Icon } from "@getpaseo/plugin/client/react-native";
       import { StreamedText } from "@getpaseo/plugin/client/ui";
-      // @ts-expect-error the legacy hook is not part of the current UI API
       import { useRevealedText as currentHook } from "@getpaseo/plugin/client/ui";
       import { Text } from "react-native";
+      const currentSignature: typeof useRevealedText = currentHook;
+      const legacySignature: typeof currentHook = useRevealedText;
+      // @ts-expect-error both entries retain the streaming/complete phase contract
+      currentHook("text", "unknown");
+      // @ts-expect-error the legacy entry retains the same phase contract
+      useRevealedText("text", "unknown");
       function LegacyRow({ text, phase }: { text: string; phase: "streaming" | "complete" }) {
         const revealed: string = useRevealedText(text, phase);
-        return <Text>{revealed}</Text>;
+        const current: string = currentHook(text, phase);
+        return <Text>{revealed}{current}</Text>;
       }
     `),
     ).toEqual([]);

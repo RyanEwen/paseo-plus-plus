@@ -62,6 +62,8 @@ export type IconProps = Partial<PluginIconProps> &
 export declare const Icon: ComponentType<IconProps>;
 export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
+/** Retained for installed plugins that own streaming text rendering. */
+export declare function useRevealedText(text: string, phase: "streaming" | "complete"): string;
 export interface StreamedTextProps extends Omit<TextProps, "children"> {
   text: string;
   phase: "streaming" | "complete";

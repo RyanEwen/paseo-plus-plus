@@ -1180,6 +1180,8 @@ the source row, so updates to one streaming item do not remount its renderer. Re
 `@getpaseo/plugin/client/ui` for plain text paced like Paseo's assistant rows. It accepts React Native
 `Text` props (including `style`) and supplies assistant typography and foreground color by default.
 Completion displays the full text immediately; the host owns pacing while streaming. Requires Paseo 0.13 or later.
+Paseo++ also retains `useRevealedText(text, phase)` on `client/ui` for installed renderers that own
+their text layout. The deprecated `client/react-native` entry exposes the same hook and signature.
 
 Chat find (Ctrl or Cmd+F) finds and highlights text in replacement rows when the query also
 matches the original message. The host searches the original prompt text or the assistant reply
