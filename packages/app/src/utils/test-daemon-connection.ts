@@ -1,3 +1,5 @@
+import { DaemonConnectionTestError } from "./daemon-connection-error";
+import { createSshTransportFactory } from "@/hosts/ssh/ssh-transport";
 import {
   DaemonAuthenticationError,
   DaemonClient,
@@ -32,6 +34,7 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createDesktopTransportFactory(): DaemonClientConfig["transportFactory"] | null;
+  createSshTransportFactory?(): DaemonClientConfig["transportFactory"] | null;
   buildDesktopTransportUrl(input: DesktopDaemonTransportTarget): string;
   createClient(config: DaemonClientConfig): TClient;
 }
@@ -40,6 +43,7 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   getClientId: getOrCreateClientId,
   resolveAppVersion,
   createDesktopTransportFactory: createDesktopDaemonTransportFactory,
+  createSshTransportFactory,
   buildDesktopTransportUrl: buildDesktopDaemonTransportUrl,
   createClient: (config) => new DaemonClient(config),
 };
@@ -51,7 +55,7 @@ function buildRemoteSshClientConfig(input: {
   buildDesktopTransportUrl: (target: DesktopDaemonTransportTarget) => string;
 }): DaemonClientConfig {
   if (!input.desktopTransportFactory) {
-    throw new Error("Remote SSH is only available in the desktop app.");
+    throw new Error("Remote SSH is unavailable in this app build.");
   }
   return {
     ...input.base,
@@ -91,26 +95,7 @@ function pickBestReason(reason: string | null, lastError: string | null): string
   return "Unable to connect";
 }
 
-export class DaemonConnectionTestError extends Error {
-  reason: string | null;
-  lastError: string | null;
-  authFailureReason: DaemonAuthFailureReason | null;
-
-  constructor(
-    message: string,
-    details: {
-      reason: string | null;
-      lastError: string | null;
-      authFailureReason?: DaemonAuthFailureReason | null;
-    },
-  ) {
-    super(message);
-    this.name = "DaemonConnectionTestError";
-    this.reason = details.reason;
-    this.lastError = details.lastError;
-    this.authFailureReason = details.authFailureReason ?? null;
-  }
-}
+export { DaemonConnectionTestError } from "./daemon-connection-error";
 
 export function getConnectionAuthFailureReason(error: unknown): DaemonAuthFailureReason | null {
   if (error instanceof DaemonConnectionTestError) return error.authFailureReason;
@@ -145,6 +130,7 @@ export async function buildClientConfig(
     | "getClientId"
     | "resolveAppVersion"
     | "createDesktopTransportFactory"
+    | "createSshTransportFactory"
     | "buildDesktopTransportUrl"
   > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
@@ -183,7 +169,9 @@ export async function buildClientConfig(
     return buildRemoteSshClientConfig({
       connection,
       base,
-      desktopTransportFactory,
+      desktopTransportFactory: deps.createSshTransportFactory
+        ? deps.createSshTransportFactory()
+        : desktopTransportFactory,
       buildDesktopTransportUrl: deps.buildDesktopTransportUrl,
     });
   }
