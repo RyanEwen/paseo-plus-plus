@@ -8,6 +8,13 @@ import { join, relative } from "node:path";
 // workspace root live in their workspace's own node_modules, and patch-package resolves
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
+  // 29.7.0 reports terminal thread failures before retiring their queue slot.
+  // Remove when the installed release retires before dispatch callbacks and the
+  // queued-terminal-exit regression passes without this patch.
+  {
+    nodeModulesPath: "node_modules/jest-worker",
+    patchPrefix: "jest-worker+",
+  },
   // 57.0.23 has no own-notification dismissal hook. Remove when Expo supplies an
   // explicit-dismiss event or a supported app-owned deleteIntent receiver extension.
   {
