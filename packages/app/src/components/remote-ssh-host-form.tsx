@@ -11,7 +11,7 @@ import type { HostMutations } from "@/runtime/host-runtime";
 import { Button } from "@/components/ui/button";
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { Field, FormTextInput } from "@/components/ui/form-field";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
 
@@ -37,19 +37,19 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
     },
-    // Boxed adornment next to the field: same height and radius as the field
-    // chrome of the active form size. ToolbarButton owns interaction feedback.
-    iconButtonSm: {
-      height: CONTROL_HEIGHTS.compact,
-      width: CONTROL_HEIGHTS.compact,
+    // Boxed adornment next to the field: same height and radius as the md field
+    // chrome in each layout. ToolbarButton owns interaction feedback.
+    iconButtonWide: {
+      height: controlHeightForLayout("md", false),
+      width: controlHeightForLayout("md", false),
       alignItems: "center",
       justifyContent: "center",
       borderRadius: theme.borderRadius.md,
       backgroundColor: theme.colors.surface2,
     },
-    iconButtonMd: {
-      height: CONTROL_HEIGHTS.field,
-      width: CONTROL_HEIGHTS.field,
+    iconButtonCompact: {
+      height: controlHeightForLayout("md", true),
+      width: controlHeightForLayout("md", true),
       alignItems: "center",
       justifyContent: "center",
       borderRadius: theme.borderRadius.lg,
@@ -165,7 +165,7 @@ function OpenRemoteSshHostForm({
         testID="remote-ssh-target"
       >
         <FormTextInput
-          size={isCompact ? "md" : "sm"}
+          size="md"
           testID="remote-ssh-target-input"
           accessibilityLabel={t("pairing.remoteSsh.fields.target")}
           initialValue=""
@@ -191,7 +191,7 @@ function OpenRemoteSshHostForm({
         <View style={styles.passwordRow}>
           <View style={styles.passwordInputWrap}>
             <FormTextInput
-              size={isCompact ? "md" : "sm"}
+              size="md"
               testID="remote-ssh-password-input"
               accessibilityLabel={t("pairing.remoteSsh.fields.password")}
               initialValue=""
@@ -206,7 +206,7 @@ function OpenRemoteSshHostForm({
             />
           </View>
           <ToolbarButton
-            style={isCompact ? styles.iconButtonMd : styles.iconButtonSm}
+            style={isCompact ? styles.iconButtonCompact : styles.iconButtonWide}
             compact={isCompact}
             onPress={model.togglePasswordVisibility}
             disabled={isSaving}

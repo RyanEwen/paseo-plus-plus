@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
-import { useIsCompactFormFactor } from "@/constants/layout";
 
 interface SshKeyImportFieldsProps {
   keyName: string | null;
@@ -22,7 +21,6 @@ export function SshKeyImportFields({
   onPassphraseChange,
 }: SshKeyImportFieldsProps) {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
   return (
     <>
       <Field label={t("pairing.remoteSsh.keyImport.key")} testID="ssh-private-key">
@@ -32,7 +30,7 @@ export function SshKeyImportFields({
       </Field>
       <Field label={t("pairing.remoteSsh.keyImport.passphrase")}>
         <FormTextInput
-          size={isCompact ? "md" : "sm"}
+          size="md"
           initialValue=""
           onChangeText={onPassphraseChange}
           secureTextEntry
