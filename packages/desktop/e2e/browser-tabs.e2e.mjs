@@ -1424,9 +1424,8 @@ async function main() {
         } finally {
           browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
           page = await waitForAppPage(browser, expoPort);
-          appPage = page;
         }
-        return appPage;
+        return page;
       },
       callerAgentId,
       typingAgent,
