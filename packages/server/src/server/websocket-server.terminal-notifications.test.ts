@@ -119,6 +119,9 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
+    setAttentionHost: vi.fn(),
+    setAttentionPresentationEnabled: vi.fn(),
+    agentAwareAttentionEnabled: true,
     subscribe: vi.fn(() => () => {}),
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),
@@ -133,6 +136,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     })),
   };
   const daemonConfigStore = {
+    get: () => ({ notifications: { agentAwareAttention: true } }),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };

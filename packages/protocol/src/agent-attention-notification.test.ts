@@ -117,3 +117,21 @@ describe("findLatestPermissionRequest", () => {
     expect(findLatestPermissionRequest(pending)?.id).toBe("second");
   });
 });
+
+it("shows the explicit intervention reason and routes to the escalating child's exact chat", () => {
+  const payload = buildAgentAttentionNotificationPayload({
+    reason: "finished",
+    serverId: "host",
+    workspaceId: "worker-workspace",
+    agentId: "worker",
+    workspaceName: "Worker checkout",
+    attentionMessage: "Choose which account to use",
+    assistantMessage: "Unrelated routine output",
+  });
+  expect(payload.body).toBe("Agent needs attention\nChoose which account to use");
+  expect(payload.data).toMatchObject({
+    serverId: "host",
+    workspaceId: "worker-workspace",
+    agentId: "worker",
+  });
+});

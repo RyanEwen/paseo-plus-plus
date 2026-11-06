@@ -263,6 +263,7 @@ function createServer(options?: {
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
+    get: () => ({ notifications: { agentAwareAttention: true } }),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
@@ -274,6 +275,9 @@ function createServer(options?: {
     createStub<AgentManager>({
       subscribe: vi.fn(() => () => {}),
       setAgentAttentionCallback: vi.fn(),
+      setAttentionHost: vi.fn(),
+      setAttentionPresentationEnabled: vi.fn(),
+      agentAwareAttentionEnabled: true,
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
         totalAgents: 0,
@@ -1155,6 +1159,7 @@ describe("relay external socket reconnect behavior", () => {
 
     expect(serverInfo.features?.stableProjectIdentity).toBe(true);
     expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
+    expect(serverInfo.features?.agentAudienceAttentionSettings).toBe(true);
     expect(serverInfo.features?.providersSnapshotCwd).toBe(true);
     expect(serverInfo.features?.hopliteProvider).toBe(false);
     expect(serverInfo.features?.pluginLogs).toBe(true);

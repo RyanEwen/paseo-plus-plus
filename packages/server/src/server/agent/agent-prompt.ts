@@ -1,5 +1,6 @@
 import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 import type { Logger } from "pino";
+import { randomUUID } from "node:crypto";
 
 import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
@@ -7,6 +8,24 @@ import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import type { AttentionAdmission } from "./attention/objectives.js";
+
+/** Classify at the daemon-owned prompt entrypoint, before provider text encoding loses provenance. */
+function promptAttention(
+  source: AgentPromptSource | undefined,
+  requestId: string,
+): AttentionAdmission {
+  if (!source) return { kind: "human", requestId };
+  return {
+    kind: "agent",
+    requestId,
+    requester: {
+      agentId: source.agentId,
+      ...(source.serverId ? { serverId: source.serverId } : {}),
+    },
+    attention: source.attention,
+  };
+}
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -320,9 +339,13 @@ export async function sendPromptToAgent(
   return sendPreparedPromptToAgent({
     ...params,
     prompt: delivery.prompt,
-    runOptions: delivery.messageId
-      ? { ...params.runOptions, clientMessageId: delivery.messageId }
-      : params.runOptions,
+    runOptions: {
+      ...params.runOptions,
+      ...(delivery.messageId ? { clientMessageId: delivery.messageId } : {}),
+      attention: params.runOptions?.attention ?? [
+        promptAttention(source, delivery.messageId ?? params.messageId ?? randomUUID()),
+      ],
+    },
   });
 }
 
@@ -386,14 +409,20 @@ export async function startCreatedAgentInitialPrompt(
   const delivery = prepareAgentMessage(
     params.prompt,
     await resolvePromptSource(params.source, params.agentManager, params.agentStorage),
-    params.runOptions?.clientMessageId,
+    params.source?.attention?.requesterObjective?.requestId ?? params.runOptions?.clientMessageId,
   );
   const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
     delivery.prompt,
     params.logger,
-    { runOptions: { ...params.runOptions, clientMessageId: delivery.messageId } },
+    {
+      runOptions: {
+        ...params.runOptions,
+        clientMessageId: delivery.messageId,
+        attention: [promptAttention(params.source, delivery.messageId ?? randomUUID())],
+      },
+    },
   );
 
   if (dispatchResult.disposition === "turn_started") {

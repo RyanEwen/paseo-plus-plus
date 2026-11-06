@@ -38,15 +38,10 @@ export function useAgentDescriptor(
       const session = state.sessions[context.serverId];
       const agent =
         session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
-      return {
-        provider: agent?.provider ?? "codex",
-        title: agent?.title ?? null,
-        status: agent?.status ?? null,
-        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
-        requiresAttention: agent?.requiresAttention ?? false,
-        attentionReason: agent?.attentionReason ?? null,
-        isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
-      };
+      return agentDescriptorFields(
+        agent,
+        selectAgentTurnPresentation(session, target.agentId).isActive,
+      );
     }),
   );
   const icon = useProviderIcon(descriptorState.provider, context.serverId);
@@ -60,6 +55,7 @@ export function buildAgentDescriptor(input: {
   pendingPermissionCount: number;
   requiresAttention: boolean;
   attentionReason: Agent["attentionReason"];
+  attentionMessage?: Agent["attentionMessage"];
   isTurnActive: boolean;
   icon: PanelDescriptor["icon"];
 }): PanelDescriptor {
@@ -78,7 +74,21 @@ export function buildAgentDescriptor(input: {
           pendingPermissionCount: input.pendingPermissionCount,
           requiresAttention: input.requiresAttention,
           attentionReason: input.attentionReason,
+          attentionMessage: input.attentionMessage,
         })
       : null,
+  };
+}
+
+function agentDescriptorFields(agent: Agent | null, isTurnActive: boolean) {
+  return {
+    provider: agent?.provider ?? "codex",
+    title: agent?.title ?? null,
+    status: agent?.status ?? null,
+    pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
+    requiresAttention: agent?.requiresAttention ?? false,
+    attentionReason: agent?.attentionReason ?? null,
+    attentionMessage: agent?.attentionMessage ?? null,
+    isTurnActive: isTurnActive,
   };
 }

@@ -1,6 +1,7 @@
 import { setTimeout as pause } from "node:timers/promises";
 import { HostObservationError } from "../host-operations/index.js";
 import { randomUUID } from "node:crypto";
+import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import type { Logger } from "pino";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
 import type { FinishObservationResult } from "./internal/observation-buffer.js";
@@ -20,6 +21,9 @@ export interface FinishSubscription {
   serverId?: string;
   /** Creation subscriptions stop reporting after the child is detached. */
   requireParentOwnership?: boolean;
+  /** Correlated callbacks consume only this request's immutable outcomes. */
+  attention?: AgentAttentionRequestQuery;
+  pendingAcknowledgement?: { outcomeId: string; terminal: boolean };
 }
 export interface FinishSubscriptionStore {
   list(): Promise<FinishSubscription[]>;
@@ -31,6 +35,16 @@ export interface FinishObservationSession {
   close(): Promise<void>;
 }
 export interface FinishObservation {
+  deliverExact?(
+    record: FinishSubscription,
+    result: WaitForFinishResult,
+    signal: AbortSignal,
+  ): Promise<{ outcomeId: string; terminal: boolean }>;
+  acknowledgeExact?(
+    record: FinishSubscription,
+    outcomeId: string,
+    signal: AbortSignal,
+  ): Promise<void>;
   open(subscription: FinishSubscription, signal: AbortSignal): Promise<FinishObservationSession>;
 }
 interface Dependencies extends FinishObservation {
@@ -59,6 +73,7 @@ export interface FinishSubscriptions {
 }
 interface Watch {
   records: FinishSubscription[];
+  acknowledgedOutcomes: Set<string>;
   controller: AbortController;
   decision: Promise<boolean>;
   decide(accepted: boolean): void;
@@ -66,7 +81,12 @@ interface Watch {
   task?: Promise<void>;
 }
 function key(record: FinishSubscription): string {
-  return JSON.stringify([record.callerAgentId, record.childAgentId, record.serverId]);
+  return JSON.stringify([
+    record.callerAgentId,
+    record.childAgentId,
+    record.serverId,
+    record.attention?.link.requestId,
+  ]);
 }
 
 /** Owns durable intent, live observation, supersession, and dispatch acknowledgment. */
@@ -90,7 +110,14 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     const decision = new Promise<boolean>((resolve) => {
       decide = resolve;
     });
-    const watch: Watch = { records, controller: new AbortController(), pending, decision, decide };
+    const watch: Watch = {
+      records,
+      acknowledgedOutcomes: new Set(),
+      controller: new AbortController(),
+      pending,
+      decision,
+      decide,
+    };
     const group = watches.get(key(records[0]!)) ?? new Set<Watch>();
     group.add(watch);
     watches.set(key(records[0]!), group);
@@ -151,7 +178,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     result?: WaitForFinishResult,
   ): Promise<boolean> {
     if (!(await deps.callerIsActive(record.callerAgentId))) return true;
-    if (!record.requireParentOwnership || !result?.final) return false;
+    if (record.attention || !record.requireParentOwnership || !result?.final) return false;
     const parent = getParentAddressFromLabels(
       result.final.labels,
       record.serverId ?? deps.serverId,
@@ -214,6 +241,44 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     if (reason !== "needs permission") return true;
     return false;
   }
+  async function acknowledgePending(
+    record: FinishSubscription,
+    watch: Watch,
+    group: Set<Watch>,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const cursor = record.pendingAcknowledgement;
+    if (!record.attention || !cursor) return false;
+    if (!deps.acknowledgeExact) throw new Error("Exact finish acknowledgment is unavailable");
+    if (!watch.acknowledgedOutcomes.has(cursor.outcomeId)) {
+      await deps.acknowledgeExact(record, cursor.outcomeId, signal);
+      watch.acknowledgedOutcomes.add(cursor.outcomeId);
+    }
+    if (signal.aborted) return true;
+    if (cursor.terminal) {
+      await remove(watch);
+      stop(watch, group);
+      return true;
+    }
+    for (const captured of watch.records)
+      await deps.store.put({ ...captured, pendingAcknowledgement: undefined });
+    record.pendingAcknowledgement = undefined;
+    watch.acknowledgedOutcomes.delete(cursor.outcomeId);
+    return false;
+  }
+  async function captureExactAcknowledgement(
+    record: FinishSubscription,
+    watch: Watch,
+    result: FinishObservationResult,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!deps.deliverExact) throw new Error("Exact finish delivery is unavailable");
+    const cursor = await deps.deliverExact(record, result, signal);
+    if (signal.aborted) return;
+    for (const captured of watch.records)
+      await deps.store.put({ ...captured, pendingAcknowledgement: cursor });
+    record.pendingAcknowledgement = cursor;
+  }
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
     const signal = watch.controller.signal;
     if (!(await watch.decision) || signal.aborted) return;
@@ -261,6 +326,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             stop(watch, group);
             return;
           }
+          if (await acknowledgePending(record, watch, group, signal)) return;
           if (!pending) pending = await observeNext();
           if (!pending) {
             await delay(signal, retries++);
@@ -273,6 +339,11 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             await remove(watch);
             stop(watch, group);
             return;
+          }
+          if (record.attention && !pending.reason) {
+            await captureExactAcknowledgement(record, watch, pending, signal);
+            pending = undefined;
+            continue;
           }
           if (!acknowledged) acknowledged = await deliver(record, pending, permissions, signal);
           if (acknowledged) {
@@ -331,6 +402,17 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           serverId: input.serverId === deps.serverId ? undefined : input.serverId,
           id: randomUUID(),
         };
+        const existing = watches.get(key(record));
+        if (
+          record.attention &&
+          existing &&
+          [...existing].some((watch) =>
+            watch.records.some(
+              (prior) => JSON.stringify(prior.attention) !== JSON.stringify(record.attention),
+            ),
+          )
+        )
+          throw new Error("Finish request correlation does not match its existing registration");
         await deps.store.put(record);
         const group = watches.get(key(record)) ?? new Set<Watch>();
         const predecessors = [...group];
@@ -348,11 +430,12 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
               deps.logger.error({ err: error }, "Failed to remove superseded finish subscriptions"),
             );
           },
-          reject: () =>
-            serialize(async () => {
-              await remove(watch);
-              stop(watch, actualGroup);
-            }),
+          reject: () => {
+            // Retire admission synchronously; a queued intent removal must not let
+            // an in-flight reservation enqueue a callback after its owner stopped.
+            stop(watch, actualGroup);
+            return serialize(() => remove(watch));
+          },
         };
         if (!pendingDispatch) registration.accept();
         return registration;

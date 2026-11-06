@@ -8238,6 +8238,52 @@ test("initial acquisition preserves structured transport failures and ordinary o
   });
 });
 
+test.each([false, true])(
+  "objective metadata requires host audience capability = %s",
+  async (supported) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "audience",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({
+      features: { agentAudienceAttention: supported, agentMessageProvenance: true },
+    });
+    await connecting;
+    const agentAttention = {
+      continuation: {
+        objectiveId: "objective",
+        token: "capability",
+        requestId: "original-request",
+      },
+    };
+    if (!supported) {
+      await expect(
+        client.sendAgentMessage("worker", "report", { sourceAgentId: "caller", agentAttention }),
+      ).rejects.toThrow("Update the Paseo host");
+      expect(transport.sent).toHaveLength(0);
+      return;
+    }
+    const send = client.sendAgentMessage("worker", "report", {
+      sourceAgentId: "caller",
+      agentAttention,
+    });
+    const request = parseSentFrame(transport.sent[0]);
+    expect(request.agentAttention).toEqual(agentAttention);
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: { requestId: request.requestId, agentId: "worker", accepted: true, error: null },
+      }),
+    );
+    await send;
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Relay endpoint security through the real secure channel
 // ---------------------------------------------------------------------------
