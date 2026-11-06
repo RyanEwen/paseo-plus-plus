@@ -13,6 +13,12 @@ import {
   openWorkspaceWithAgents,
 } from "./archive-tab";
 import { ensureExplorerSidebar, openChangesTreePanel } from "./workspace-tabs";
+import { seedMockAgentWorkspace } from "./mock-agent";
+import {
+  openAgentTimeline,
+  expectTimelinePromptVisible,
+  scrollTimelinePastPrompt,
+} from "./timeline-pagination";
 import { recordSettingsExample } from "./settings-example-capture";
 
 /** Capture the real closed-agent picker in its own bounded fixture, independent of other scenes. */
@@ -98,6 +104,43 @@ export async function captureExplorerExample(page: Page, directory: string) {
     });
   } finally {
     await workspace.cleanup();
+  }
+}
+
+/** Capture the qualified single-copy sticky surface after a real transcript scroll. */
+export async function captureStickyExample(page: Page, directory: string) {
+  const prompt = "Keep the current request visible while reading the response.";
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "settings-sticky-example-",
+    title: "Sticky request example",
+    initialPrompt: prompt,
+    featureValues: {
+      mockStreamingAssistantResponse: Array.from(
+        { length: 30 },
+        (_, index) =>
+          `Paragraph ${index + 1}. Review the workspace controls and preserve saved preferences.`,
+      ).join("\n\n"),
+      mockStreamingAssistantIntervalMs: 1,
+    },
+  });
+  try {
+    await openAgentTimeline(page, agent);
+    await expectTimelinePromptVisible(page, prompt);
+    await expect(page.getByText("Paragraph 30.", { exact: false }).last()).toBeVisible();
+    await scrollTimelinePastPrompt(page, prompt);
+    const sticky = page
+      .getByTestId("agent-chat-scroll")
+      .locator('[data-actual-prompt-row][data-prompt-pinned="true"]');
+    await expect(sticky).toContainText(prompt);
+    await recordSettingsExample(page, {
+      id: "sticky-user-prompts",
+      directory,
+      regions: [sticky.locator("[data-actual-prompt-content]")],
+      description:
+        "The actual single-copy pinned request above a scrolled response. Physical native paint is not tested.",
+    });
+  } finally {
+    await agent.cleanup();
   }
 }
 
