@@ -1928,6 +1928,11 @@ export const ShutdownServerRequestMessageSchema = z.object({
   keepTerminals: z.boolean().optional(),
 });
 
+export const DaemonUpdateAvailabilityRequestMessageSchema = z.object({
+  type: z.literal("daemon.update.check_availability.request"),
+  requestId: z.string(),
+});
+
 export const DaemonUpdateRequestMessageSchema = z.object({
   type: z.literal("daemon.update.request"),
   requestId: z.string(),
@@ -3379,6 +3384,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CancelAgentRequestMessageSchema,
   ShutdownServerRequestMessageSchema,
   RestartServerRequestMessageSchema,
+  DaemonUpdateAvailabilityRequestMessageSchema,
   DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
   AgentTimelineSearchRequestMessageSchema,
@@ -6725,6 +6731,18 @@ export const TerminalAttentionRequiredSchema = z.object({
   }),
 });
 
+export const DaemonUpdateAvailabilityResponseSchema = z.object({
+  type: z.literal("daemon.update.check_availability.response"),
+  payload: z.object({
+    requestId: z.string(),
+    version: z.string().nullable(),
+    reason: z.string().nullable(),
+  }),
+});
+export type DaemonUpdateAvailabilityResponse = z.infer<
+  typeof DaemonUpdateAvailabilityResponseSchema
+>;
+
 export const DaemonUpdateResponseSchema = z.object({
   type: z.literal("daemon.update.response"),
   payload: z.object({
@@ -7295,6 +7313,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
+  DaemonUpdateAvailabilityResponseSchema,
   DaemonUpdateResponseSchema,
 ]);
 
