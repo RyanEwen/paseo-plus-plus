@@ -5,6 +5,7 @@ import {
   captureSidebarControlsExample,
   captureWorkspacePositionsExample,
 } from "../support/helpers/settings-example-scenes";
+import { openMobileAgentSidebar } from "../support/helpers/sidebar";
 import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
@@ -73,167 +74,7 @@ async function openWorkspace(
   await expect(page.getByTestId("menu-button")).toBeVisible();
 }
 
-test.describe("Settings sidebar scroll position", () => {
-  test.use({ viewport: { width: 1000, height: 500 } });
-
-  test("clamps after resizing and starts a fresh visit at the top", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    await scrollSettingsSidebarToEnd(page);
-    await page.setViewportSize({ width: 1000, height: 1100 });
-    await expectSettingsSidebarScrollOffset(page, 0);
-    await page.setViewportSize({ width: 1000, height: 500 });
-    await openSettingsSection(page, "appearance");
-    await expectSettingsSidebarScrollOffset(page, 0);
-    await scrollSettingsSidebarToEnd(page);
-    await clickSettingsBackToWorkspace(page);
-    await openSettings(page);
-    await expectSettingsSidebarScrollOffset(page, 0);
-  });
-
-  test("keeps the sidebar position through interface font changes", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsSection(page, "appearance");
-    const offset = await scrollSettingsSidebarToEnd(page);
-    await changeSettingsInterfaceFontSize(page, 20);
-    await expectSettingsSidebarScrollOffset(page, offset);
-    await openSettingsHostSection(page, getServerId(), "providers");
-    await expectSettingsSidebarScrollOffset(page, offset);
-  });
-
-  test("scrolls the sidebar and detail pane independently", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    const sidebarOffset = await scrollSettingsSidebarToEnd(page);
-    await openSettingsHostSection(page, getServerId(), "providers");
-    await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
-    const detailOffset = await scrollSettingsDetailDown(page);
-    await expectSettingsSidebarScrollOffset(page, sidebarOffset);
-
-    await scrollSettingsSidebarUp(page, 60);
-    await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
-    await expectSettingsDetailScrollOffset(page, detailOffset);
-  });
-
-  test("keeps the sidebar position after rapid consecutive selections", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-
-    const scrollTop = await scrollSettingsSidebarToEnd(page);
-
-    await selectSettingsHostSectionsRapidly(page);
-    await expectSettingsSidebarScrollOffset(page, scrollTop);
-
-    await expectSettingsSidebarScrollSettled(page, scrollTop);
-  });
-
-  test("keeps the sidebar position when switching between app and host sections", async ({
-    page,
-  }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-
-    const hostScrollTop = await scrollSettingsSidebarToEnd(page);
-    await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
-
-    for (const section of [
-      "providers",
-      "terminals",
-      "providers",
-      "terminals",
-      "providers",
-    ] as const) {
-      await openSettingsHostSection(page, getServerId(), section);
-      await expect(page.getByTestId("page-title")).toHaveText(
-        section === "providers" ? "Providers" : "Terminals",
-      );
-      await expectSettingsSidebarScrollOffset(page, hostScrollTop);
-    }
-
-    const sidebar = page.getByTestId("settings-sidebar");
-    const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
-    await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
-
-    await openSettingsSection(page, "about");
-    await expectAboutContent(page);
-    await expectSettingsSidebarScrollOffset(page, appScrollTop);
-
-    await openSettingsSection(page, "diagnostics");
-    await expectDiagnosticsContent(page);
-    await expectSettingsSidebarScrollOffset(page, appScrollTop);
-  });
-});
-
 test.describe("Settings sidebar navigation", () => {
-  test("opening Settings closes the composer model selector until it is opened again", async ({
-    page,
-    withWorkspace,
-  }, testInfo) => {
-    const workspace = await withWorkspace({ prefix: "settings-model-selector-" });
-    await gotoWorkspace(page, workspace.workspaceId);
-    await clickNewChat(page);
-
-    const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
-    const popover = page.getByTestId("combobox-desktop-container");
-    await selector.click();
-    await expect(popover).toBeVisible();
-
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+,`);
-    await expect(page).toHaveURL(/\/settings\/general$/);
-    await page.screenshot({ path: testInfo.outputPath("settings-after-model-selector.png") });
-    await expect(popover).toHaveCount(0);
-
-    await clickSettingsBackToWorkspace(page);
-    await expect(selector).toBeVisible();
-    await expect(popover).toHaveCount(0);
-
-    await selector.click();
-    await expect(popover).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(popover).toHaveCount(0);
-  });
-
-  test("opening Settings closes an existing chat's model selector until it is opened again", async ({
-    page,
-  }, testInfo) => {
-    const workspace = await seedMockAgentWorkspace({
-      repoPrefix: "settings-existing-model-",
-      title: "Settings model selector",
-    });
-    try {
-      await openAgentRoute(page, {
-        workspaceId: workspace.workspaceId,
-        agentId: workspace.agentId,
-      });
-
-      const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
-      const popover = page.getByTestId("combobox-desktop-container");
-      await selector.click();
-      await expect(popover).toBeVisible();
-
-      const modifier = process.platform === "darwin" ? "Meta" : "Control";
-      await page.keyboard.press(`${modifier}+,`);
-      await expect(page).toHaveURL(/\/settings\/general$/);
-      await page.screenshot({
-        path: testInfo.outputPath("settings-after-existing-model-selector.png"),
-      });
-      await expect(popover).toHaveCount(0);
-
-      await clickSettingsBackToWorkspace(page);
-      await expect(selector).toBeVisible();
-      await expect(popover).toHaveCount(0);
-
-      await selector.click();
-      await expect(popover).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(popover).toHaveCount(0);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
   test("clicking a sidebar section updates the URL and renders the section", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
@@ -383,9 +224,11 @@ test.describe("Settings — compact master-detail", () => {
         .first()
         .dispatchEvent("click");
       await page.getByTestId("sidebar-settings").first().dispatchEvent("click");
-      await expectAppRoute(page, buildSettingsRoute());
+      await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
       await expect(newAgent).toHaveCount(0);
 
+      await goBackInSettings(page);
+      await expectAppRoute(page, buildSettingsRoute());
       await closeCompactSettings(page);
       await expect(switcher).toBeVisible();
       await expect(newAgent).toHaveCount(0);
@@ -436,9 +279,14 @@ test.describe("Settings — compact master-detail", () => {
     const workspaceRoute = buildHostWorkspaceRoute(getServerId(), workspace.workspaceId);
 
     await openWorkspace(page, workspace);
-    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await openMobileAgentSidebar(page);
     await page.getByTestId("sidebar-hosts-trigger").click();
-    await page.getByRole("button", { name: /Open .* settings/ }).click();
+    await page
+      .getByTestId(`sidebar-host-row-${getServerId()}`)
+      // Host selection and settings are sibling controls in the host row.
+      .locator("../..")
+      .getByRole("button", { name: "Open localhost settings", exact: true })
+      .click();
 
     await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
     await expect(page.getByText("Overview", { exact: true })).toBeVisible();
@@ -614,4 +462,166 @@ test("docked navigation keeps its density and Settings preserves reading width",
   await page.setViewportSize({ width: 599, height: 951 });
   await expectSettingsSidebarHidden(page);
   await expectAppearanceContent(page);
+});
+
+test.describe("Settings sidebar scroll position", () => {
+  test.use({ viewport: { width: 1000, height: 500 } });
+
+  test("clamps after resizing and starts a fresh visit at the top", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await scrollSettingsSidebarToEnd(page);
+    await page.setViewportSize({ width: 1000, height: 1100 });
+    await expectSettingsSidebarScrollOffset(page, 0);
+    await page.setViewportSize({ width: 1000, height: 500 });
+    await openSettingsSection(page, "appearance");
+    await expectSettingsSidebarScrollOffset(page, 0);
+    await scrollSettingsSidebarToEnd(page);
+    await clickSettingsBackToWorkspace(page);
+    await openSettings(page);
+    await expectSettingsSidebarScrollOffset(page, 0);
+  });
+
+  test("keeps the sidebar position through interface font changes", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    const offset = await scrollSettingsSidebarToEnd(page);
+    await changeSettingsInterfaceFontSize(page, 20);
+    await expectSettingsSidebarScrollOffset(page, offset);
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await expectSettingsSidebarScrollOffset(page, offset);
+  });
+
+  test("scrolls the sidebar and detail pane independently", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    const sidebarOffset = await scrollSettingsSidebarToEnd(page);
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
+    const detailOffset = await scrollSettingsDetailDown(page);
+    await expectSettingsSidebarScrollOffset(page, sidebarOffset);
+
+    await scrollSettingsSidebarUp(page, 60);
+    await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
+    await expectSettingsDetailScrollOffset(page, detailOffset);
+  });
+
+  test("keeps the sidebar position after rapid consecutive selections", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    const scrollTop = await scrollSettingsSidebarToEnd(page);
+
+    await selectSettingsHostSectionsRapidly(page);
+    await expectSettingsSidebarScrollOffset(page, scrollTop);
+
+    await expectSettingsSidebarScrollSettled(page, scrollTop);
+  });
+
+  test("keeps the sidebar position when switching between app and host sections", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    const hostScrollTop = await scrollSettingsSidebarToEnd(page);
+    await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
+
+    for (const section of [
+      "providers",
+      "terminals",
+      "providers",
+      "terminals",
+      "providers",
+    ] as const) {
+      await openSettingsHostSection(page, getServerId(), section);
+      await expect(page.getByTestId("page-title")).toHaveText(
+        section === "providers" ? "Providers" : "Terminals",
+      );
+      await expectSettingsSidebarScrollOffset(page, hostScrollTop);
+    }
+
+    const sidebar = page.getByTestId("settings-sidebar");
+    const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
+    await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
+
+    await openSettingsSection(page, "about");
+    await expectAboutContent(page);
+    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+
+    await openSettingsSection(page, "diagnostics");
+    await expectDiagnosticsContent(page);
+    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+  });
+});
+
+test.describe("Settings sidebar navigation", () => {
+  test("opening Settings closes the composer model selector until it is opened again", async ({
+    page,
+    withWorkspace,
+  }, testInfo) => {
+    const workspace = await withWorkspace({ prefix: "settings-model-selector-" });
+    await gotoWorkspace(page, workspace.workspaceId);
+    await clickNewChat(page);
+
+    const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
+    const popover = page.getByTestId("combobox-desktop-container");
+    await selector.click();
+    await expect(popover).toBeVisible();
+
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    await page.keyboard.press(`${modifier}+,`);
+    await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
+    await page.screenshot({ path: testInfo.outputPath("settings-after-model-selector.png") });
+    await expect(popover).toHaveCount(0);
+
+    await clickSettingsBackToWorkspace(page);
+    await expect(selector).toBeVisible();
+    await expect(popover).toHaveCount(0);
+
+    await selector.click();
+    await expect(popover).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(popover).toHaveCount(0);
+  });
+
+  test("opening Settings closes an existing chat's model selector until it is opened again", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "settings-existing-model-",
+      title: "Settings model selector",
+    });
+    try {
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+
+      const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
+      const popover = page.getByTestId("combobox-desktop-container");
+      await selector.click();
+      await expect(popover).toBeVisible();
+
+      const modifier = process.platform === "darwin" ? "Meta" : "Control";
+      await page.keyboard.press(`${modifier}+,`);
+      await expectAppRoute(page, buildSettingsSectionRoute("paseo-plus-plus"));
+      await page.screenshot({
+        path: testInfo.outputPath("settings-after-existing-model-selector.png"),
+      });
+      await expect(popover).toHaveCount(0);
+
+      await clickSettingsBackToWorkspace(page);
+      await expect(selector).toBeVisible();
+      await expect(popover).toHaveCount(0);
+
+      await selector.click();
+      await expect(popover).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(popover).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
