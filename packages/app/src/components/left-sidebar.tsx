@@ -579,6 +579,8 @@ function MobileSidebar({
           firstRowTrailing={closeButton}
         />
 
+        {workspacesSectionHeaderElement}
+
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
@@ -601,7 +603,6 @@ function MobileSidebar({
             onImportSession={handleImportSession}
             parentGestureRef={closeGestureRef}
             dragGestureHostActive={active}
-            listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
@@ -761,6 +762,8 @@ function DesktopSidebar({
           <SidebarNavRows style={sidebarHeaderGroupStyle} />
         </View>
 
+        {workspacesSectionHeaderElement}
+
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
@@ -780,7 +783,6 @@ function DesktopSidebar({
             onRefresh={handleRefresh}
             onAddProject={handleOpenProject}
             onImportSession={handleImportSession}
-            listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
@@ -830,7 +832,7 @@ function WorkspacesSectionHeader() {
   );
 }
 
-// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
+// Stable element above the scrollable list keeps header controls anchored across
 // renders (WorkspacesSectionHeader takes no props).
 const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 
