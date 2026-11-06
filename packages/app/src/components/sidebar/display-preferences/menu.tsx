@@ -3,6 +3,8 @@ import {
   WorkspaceListPage,
   WorkspaceUpdatedWithinPage,
 } from "./workspace-list";
+import { useAppSettings } from "@/hooks/use-settings";
+import { useSidebarBulkCollapse } from "../use-sidebar-bulk-collapse";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   isSidebarTrailingItemEnabled,
@@ -209,7 +211,9 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
 export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
+  const { settings } = useAppSettings();
   const { projects, workspaceSortSupported } = useSidebarModel();
+  const { expandAll, collapseAll } = useSidebarBulkCollapse();
   const isCompact = useIsCompactFormFactor();
   const { labels } = useWorkspaceLabelProjection();
   const [managerOpen, setManagerOpen] = useState(false);
@@ -398,6 +402,17 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             sheetTitle={`${t(`sidebar.display.grouping.${preferences.grouping}`)}: ${t("sidebar.display.heading")}`}
             testID="sidebar-display-preferences-content"
           >
+            {isCompact && settings.paseoPlusPlus.sidebarBulkActions ? (
+              <>
+                <MenuItem onSelect={expandAll} testID="sidebar-expand-all">
+                  {t("sidebar.display.expandAll")}
+                </MenuItem>
+                <MenuItem onSelect={collapseAll} testID="sidebar-collapse-all">
+                  {t("sidebar.display.collapseAll")}
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
             {preferences.preferencesDisabledReason ? (
               <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
             ) : null}
