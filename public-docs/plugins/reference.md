@@ -1020,6 +1020,24 @@ API is needed for OS Paste. Avoid DOM clipboard code in native plugins and the d
 The runnable [modal UI example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)
 contains a padded form, full-width rows, a virtualized list, horizontal tabs, and a copy/paste input.
 
+### Encoded video on Android
+
+`EncodedVideo` from `@getpaseo/plugin/client/react-native` provides a host-owned Android canvas
+for raw WebCodecs chunks. Use the SDK containing this API and rebuild the Android app before
+adopting it. The renderer receives encoded bytes through the existing plugin RPC transport;
+it does not open a media URL or require another port. Other platforms report unsupported.
+
+Wait for `onReady` before configuring the decoder. Keep at most four submitted chunks awaiting
+`onDequeue`, and release every `onFrame` result after presenting or discarding it. `present(id)`
+resolves after that frame is drawn. Reset and unmount reject pending presentations and release
+retained frames. Surface `onError` to the user; older Android System WebView versions may lack
+WebCodecs or the source codec.
+
+Keep remote input outside the canvas. Revoke the previous frame's input authority before calling
+`present`, then recheck source identity and mutation epoch after it resolves. Receiving or decoding
+a packet does not establish that its pixels are displayed. Suspend reads and reset the decoder when
+the app or retained panel becomes inactive; resume with a fresh keyframe.
+
 ### Toasts
 
 `useToast()` returns two methods:
