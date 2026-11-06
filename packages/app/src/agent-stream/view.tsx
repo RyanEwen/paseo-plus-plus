@@ -1,3 +1,4 @@
+import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -398,6 +399,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
 
+    const openHttpUrl = useWorkspaceBrowserOpening(resolvedServerId, context.workspaceId);
     const workspaceRoot = context.cwd?.trim() || "";
     const { revealDirectory } = useFileExplorerActions({
       serverId: resolvedServerId,
@@ -766,6 +768,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             serverId={resolvedServerId}
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={handleInlinePathPress}
+            onOpenHttpUrl={openHttpUrl}
             toast={toast}
           >
             <ChatFindExpansion messageId={getStreamItemMessageId(item)}>
@@ -786,7 +789,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [agentId, client, handleInlinePathPress, openHttpUrl, resolvedServerId, toast, workspaceRoot],
     );
 
     const renderThoughtItem = useCallback(

@@ -1,3 +1,6 @@
+import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
+import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
+import { WorkspaceBrowserScope } from "@/workspace/browser/context";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -769,16 +772,20 @@ function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
 function WorkspaceContentProviders({
   children,
   workspaceKey,
+  openBrowserUrl,
   sheetPaneHost,
 }: {
   children: ReactNode;
   workspaceKey: string | null;
+  openBrowserUrl?: OpenWorkspaceBrowserUrl;
   sheetPaneHost: SheetPaneHost | null;
 }) {
   return (
     <WorkspaceFocusProvider workspaceKey={workspaceKey}>
       <DiffDocumentWorkspaceCacheProvider>
-        <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
+        <WorkspaceBrowserScope openUrl={openBrowserUrl}>
+          <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
+        </WorkspaceBrowserScope>
       </DiffDocumentWorkspaceCacheProvider>
     </WorkspaceFocusProvider>
   );
@@ -1859,19 +1866,14 @@ function WorkspaceScreenContent({
     [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
   );
 
+  const openOwnedBrowser = useWorkspaceBrowserOpening(normalizedServerId, normalizedWorkspaceId);
   const handleOpenUrlInBrowserTab = useCallback(
     (url: string) => {
-      if (!persistenceKey || !getIsElectron()) {
-        return;
+      if (openOwnedBrowser) {
+        return openOwnedBrowser(url);
       }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        FOCUSED_PANE_PLACEMENT,
-      );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openOwnedBrowser],
   );
 
   useDesktopBrowserNewTabRequests({
@@ -3776,6 +3778,7 @@ function WorkspaceScreenContent({
     <WorkspaceContentProviders
       key={persistenceKey}
       workspaceKey={persistenceKey}
+      openBrowserUrl={handleOpenUrlInBrowserTab}
       sheetPaneHost={sheetPaneHost}
     >
       <AssistantFileLinkResolverProvider
@@ -3783,6 +3786,7 @@ function WorkspaceScreenContent({
         serverId={normalizedServerId}
         workspaceRoot={workspaceDirectory ?? undefined}
         onOpenWorkspaceFile={openMarkdownPath}
+        onOpenHttpUrl={openOwnedBrowser}
         toast={toast}
       >
         {renderedWorkspaceScreen}
