@@ -354,10 +354,7 @@ describe("project archive discovery", () => {
         pageInfo: { hasMore: true, nextCursor: "workspaces-next", prevCursor: null },
       })
       .mockResolvedValueOnce({
-        entries: [
-          descriptor(),
-          descriptor({ id: "hidden", background: true, projectPinnedAt: "2026-10-21T00:00:00Z" }),
-        ],
+        entries: [descriptor(), descriptor({ id: "hidden", background: true })],
         pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
       });
     first.fetchAgentHistory
