@@ -20,7 +20,7 @@ import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
   createWindowsAgentNotificationOpener,
-  shouldRetainWindowsNotification,
+  classifyWindowsNotificationClose,
 } from "./windows-agent-notification.js";
 
 interface NotificationInput {
@@ -369,7 +369,22 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     });
 
     notification.on("close", (closeEvent) => {
-      if (process.platform === "win32" && shouldRetainWindowsNotification(closeEvent.reason)) {
+      const disposition = classifyWindowsNotificationClose({
+        reason: closeEvent.reason,
+        programmatic: programmaticDismissals.delete(notification),
+      });
+      if (disposition === "acknowledge") {
+        try {
+          if (receipts().dismissed(notificationId)) {
+            for (const window of BrowserWindow.getAllWindows())
+              window.webContents.send("paseo:event:notification-dismissals-changed", {});
+          }
+        } catch (error) {
+          console.warn("[notifications] Could not preserve explicit dismissal", error);
+        }
+      }
+
+      if (process.platform === "win32" && disposition === "retain") {
         // getHistory() is macOS-only and returns an empty list on Windows.
         // Keep this reference so foreground Center taps retain their listener.
         return;

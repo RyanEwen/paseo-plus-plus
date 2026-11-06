@@ -1,3 +1,4 @@
+import type { NotificationCloseEventParams } from "electron";
 import { NotificationReceiptDataSchema } from "@getpaseo/protocol/notification-receipts";
 import { buildAgentDeepLink, parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 
@@ -87,9 +88,21 @@ export function openWindowsAgentNotification(
   openAgentLink(link);
 }
 
-/** A timed-out Windows banner is still available to click in Notification Center. */
-export function shouldRetainWindowsNotification(reason: string | undefined): boolean {
-  return reason === "timedOut";
+interface WindowsNotificationCloseInput {
+  reason: NotificationCloseEventParams["reason"];
+  programmatic: boolean;
+}
+
+type WindowsNotificationCloseDisposition = "retain" | "acknowledge" | "release";
+
+/** Classify an observed native callback; this policy cannot guarantee that Windows emits one. */
+export function classifyWindowsNotificationClose(
+  input: WindowsNotificationCloseInput,
+): WindowsNotificationCloseDisposition {
+  // A timed-out banner remains clickable in Notification Center, so retain its listener.
+  if (input.reason === "timedOut") return "retain";
+  if (!input.programmatic && input.reason === "userCanceled") return "acknowledge";
+  return "release";
 }
 
 interface WindowsNotificationActivation {
