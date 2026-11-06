@@ -7,6 +7,7 @@ import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
   createMockIdleAgent,
+  expectArchivedAgentFocused,
   expectWorkspaceTabHidden,
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
@@ -615,4 +616,28 @@ test.describe("Workspace navigation regression", () => {
       await firstWorkspace.cleanup();
     }
   });
+});
+
+test("agent links open archived notification targets without unarchiving them", async ({
+  page,
+}) => {
+  const serverId = getServerId();
+  const workspace = await seedWorkspace({ repoPrefix: "notification-archived-target-" });
+  try {
+    const agent = await createMockIdleAgent(workspace.client, {
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "Archived notification target",
+    });
+    const archived = await workspace.client.archiveAgent(agent.id);
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await page.goto(buildHostAgentDetailRoute(serverId, agent.id));
+    await expectAppRoute(page, buildHostWorkspaceRoute(serverId, workspace.workspaceId));
+    await expectArchivedAgentFocused(page, agent.id);
+    const record = await workspace.client.fetchAgent({ agentId: agent.id });
+    expect(record?.agent.archivedAt).toBe(archived.archivedAt);
+  } finally {
+    await workspace.cleanup();
+  }
 });
