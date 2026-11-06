@@ -175,8 +175,6 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
-  }
-
   /** Apply a domain mutation to the current record inside its existing write queue. */
   async update(
     agentId: string,
