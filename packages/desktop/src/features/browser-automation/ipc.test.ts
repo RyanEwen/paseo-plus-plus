@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
-import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
+import { adaptWebContents as adaptContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import { getGuestCdpTransport } from "./cdp-transport.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
@@ -52,6 +52,9 @@ class FakeDebugger {
       await new Promise<void>((resolve) => {
         this.blockedCommands.push(resolve);
       });
+    }
+    if (command === "Page.getLayoutMetrics") {
+      return { cssLayoutViewport: { clientWidth: 640, clientHeight: 480 } };
     }
     if (command === "Runtime.evaluate" && typeof params?.expression === "string") {
       if (params.expression.includes("state.prompts.splice(0)")) {
@@ -113,6 +116,10 @@ type ConsoleMessageListener = (
 ) => void;
 
 class FakeWebContents {
+  public zoomFactor = 1;
+  public getZoomFactor(): number {
+    return this.zoomFactor;
+  }
   public backgroundThrottling = true;
   public getBackgroundThrottling(): boolean {
     return this.backgroundThrottling;
@@ -236,7 +243,20 @@ class FakeWebContents {
   }
 }
 
+function adaptWebContents(contents: FakeWebContents) {
+  return adaptContents(contents, { getScaleFactor: () => 2 });
+}
+
 describe("browser automation IPC adapter", () => {
+  test("reserves physical scale from host displays and zoom rather than page DPR", () => {
+    const contents = new FakeWebContents(9001);
+    const tab = adaptWebContents(contents);
+    expect(tab.getCaptureScaleFactor()).toBe(2);
+    contents.zoomFactor = 1.5;
+    expect(tab.getCaptureScaleFactor()).toBe(3);
+    contents.zoomFactor = 0.5;
+    expect(tab.getCaptureScaleFactor()).toBe(2);
+  });
   test("isolates snapshot refs by host window and releases them on destruction", () => {
     const registry = new HostSnapshotEngineRegistry();
     const firstHost = new FakeHostWebContents(1);
