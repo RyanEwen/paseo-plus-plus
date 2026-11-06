@@ -107,5 +107,4 @@ describe("one project at a time", () => {
     const next = toggleProjectCollapsed(initial, projectKeys[1], { ...policy, projectKeys });
     expect(next.collapsedProjectKeys.size).toBe(0);
   });
-
 });

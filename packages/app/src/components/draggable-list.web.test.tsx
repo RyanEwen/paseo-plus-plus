@@ -338,6 +338,7 @@ it.each(["project", "status"] as const)(
         renderItem={renderPinnedRow}
         onDragEnd={dropped}
       />
+    );
     try {
       await act(() => root?.render(renderPins(original)));
       await act(() => pinnedDndContext!.onDragStart!(dragEvents.start));

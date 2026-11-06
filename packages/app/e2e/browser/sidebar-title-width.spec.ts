@@ -153,7 +153,6 @@ test("desktop hover and shortcut hints preserve title width", async ({ page }, t
   await expectShortcutHintsKeepTitleWidth(page, width, testInfo);
   await expectDisablingStatsExpandsTitle(page, width);
 });
-});
 
 test("last activity and diff stats can be shown together and toggled independently", async ({
   page,

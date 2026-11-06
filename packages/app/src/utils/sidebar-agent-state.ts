@@ -70,7 +70,6 @@ export function compareSidebarStatusRecency(a: Date | null, b: Date | null): num
   return 0;
 }
 
-
 /** Summarize known children without presenting empty or partly unavailable projects as done. */
 export function aggregateKnownSidebarStateBuckets(
   buckets: Iterable<SidebarStateBucket | null>,

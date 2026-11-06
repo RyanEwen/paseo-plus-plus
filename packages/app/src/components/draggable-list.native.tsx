@@ -133,10 +133,7 @@ export function DraggableList<T>({
     () => (getDragGroupKey ? data.map(getDragGroupKey) : undefined),
     [data, getDragGroupKey],
   );
-  const listExtraData = useMemo(
-    () => [extraData, disabled],
-    [extraData, disabled],
-  );
+  const listExtraData = useMemo(() => [extraData, disabled], [extraData, disabled]);
 
   return (
     <ListComponent
