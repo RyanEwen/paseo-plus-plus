@@ -237,18 +237,18 @@ export function sidebarWorkspaceSortMenuItem(page: Page): Locator {
 
 // The heading chooser owns local host/project filters even when the rich heading is off.
 export async function openSidebarProjectFilter(page: Page): Promise<void> {
-  await openSidebarDisplayPage(page, "sidebar-display-project-filter");
+  await page.getByTestId("sidebar-project-selector").click();
 }
 
 // The filter rows are keyed by the project's sidebar view key. A project seeded from its own temp
 // repo has a `projectKey` unique on the host, so the view key IS that key — see
 // `buildWorkspaceStructureProjects`.
 export async function toggleProjectFilter(page: Page, projectViewKey: string): Promise<void> {
-  await page.getByTestId(`sidebar-project-filter-${projectViewKey}`).click();
+  await page.getByTestId(`sidebar-project-selector-root-${projectViewKey}-checkbox`).click();
 }
 
 export async function selectAllProjectsFilter(page: Page): Promise<void> {
-  await page.getByTestId("sidebar-project-filter-all").click();
+  await page.getByTestId("sidebar-project-selector-all").click();
 }
 
 /** Dismiss the compact sheet through its backdrop, or the desktop popover with Escape. */
