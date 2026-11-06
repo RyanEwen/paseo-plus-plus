@@ -185,6 +185,8 @@ function ExplorerTabStripContextMenu({
 }
 
 const DROPDOWN_WIDTH = 220;
+/** Compact tab chips and the compact new-tab button keep the full touch-target height. */
+const COMPACT_TAB_CONTROL_HEIGHT = controlHeightForLayout("md", true);
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
 const PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING = 2;
 const PANE_SPLIT_ACTIONS_OUTER_MARGIN =
@@ -1274,7 +1276,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     let actionsReservedWidth = 0;
     if (!fillAvailableWidth) {
       const newTabWidth = isCompact
-        ? CONTROL_HEIGHTS.field
+        ? controlHeightForLayout("md", isCompact)
         : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH;
       actionsReservedWidth = Math.max(
         0,
@@ -1872,21 +1874,21 @@ function ResolvedWorkspaceTabChip({
 
 const styles = StyleSheet.create((theme) => ({
   compactTabsContainer: {
-    height: CONTROL_HEIGHTS.field + 8,
+    height: COMPACT_TAB_CONTROL_HEIGHT + 8,
     borderBottomWidth: 0,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
   compactTab: {
-    height: CONTROL_HEIGHTS.field,
+    height: COMPACT_TAB_CONTROL_HEIGHT,
   },
   compactTabFrame: {
     flexDirection: "row",
     alignItems: "center",
   },
   compactNewTabButton: {
-    width: CONTROL_HEIGHTS.field,
-    height: CONTROL_HEIGHTS.field,
+    width: COMPACT_TAB_CONTROL_HEIGHT,
+    height: COMPACT_TAB_CONTROL_HEIGHT,
   },
   tabsContainer: {
     minWidth: 0,
