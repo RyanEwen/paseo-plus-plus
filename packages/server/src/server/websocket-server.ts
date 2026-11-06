@@ -1,3 +1,4 @@
+import type { AttachmentStore } from "./attachments/store.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -135,6 +136,7 @@ import {
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
 export interface ExternalSocketMetadata {
+  acknowledgedBinary?: boolean;
   transport: "relay" | "hub";
   externalSessionKey?: string;
   relayConnectionId?: string;
@@ -549,6 +551,8 @@ function requireWebSocketServices(params: {
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
 export class VoiceAssistantWebSocketServer {
+  private readonly attachmentStore: AttachmentStore | undefined;
+  private readonly acknowledgedBinarySockets = new WeakSet<object>();
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
@@ -693,7 +697,9 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    attachmentStore?: AttachmentStore,
   ) {
+    this.attachmentStore = attachmentStore;
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
@@ -1280,7 +1286,7 @@ export class VoiceAssistantWebSocketServer {
 
   private sendHelloResponse(ws: WebSocketLike, session: Session, hello: WSHelloMessage): void {
     // The peer learns our support from this ordinary response before receiving chunks.
-    this.sendToClient(ws, this.createServerInfoMessage(session));
+    this.sendToClient(ws, this.createServerInfoMessage(session, ws));
     this.chunkedSocket(ws).enabled = hello.capabilities?.[CLIENT_CAPS.binaryChunkingV1] === true;
   }
 
@@ -1370,7 +1376,7 @@ export class VoiceAssistantWebSocketServer {
     if (!this.sessions.get(ws)?.session.delivery.permitsBinary(ws, frame)) {
       this.incrementRuntimeCounter("applicationBinaryRejected");
       this.logger.warn({ bytes: frame.byteLength }, "ws_application_binary_delivery_denied");
-      return;
+      throw new Error("Binary transfer delivery is unauthorized");
     }
     try {
       await this.sendSocketFrame(ws, frame, frame.byteLength, true);
@@ -1481,6 +1487,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    if (request || metadata?.acknowledgedBinary === true) this.acknowledgedBinarySockets.add(ws);
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
@@ -1630,6 +1637,9 @@ export class VoiceAssistantWebSocketServer {
       },
       sourceId: options.sourceId,
       browserToolsBroker: this.browserToolsBroker,
+      attachmentStore: this.attachmentStore,
+      supportsAttachmentOriginals: (source) =>
+        this.acknowledgedBinarySockets.has(source) && this.sessions.has(source as WebSocketLike),
       clientId: options.clientId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
@@ -1987,7 +1997,10 @@ export class VoiceAssistantWebSocketServer {
     connection.session.setHostSource(sourceId);
   }
 
-  private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
+  private buildServerInfoStatusPayload(
+    session: Session,
+    source: WebSocketLike,
+  ): ServerInfoStatusPayload {
     return {
       status: "server_info",
       protocolVersion: WS_PROTOCOL_VERSION,
@@ -1999,7 +2012,17 @@ export class VoiceAssistantWebSocketServer {
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
+      ...(this.attachmentStore
+        ? {
+            attachmentStorage: {
+              writable: this.attachmentStore.writable,
+              originalReads: this.acknowledgedBinarySockets.has(source),
+              writeError: this.attachmentStore.writeError,
+            },
+          }
+        : {}),
       features: {
+        ...(this.attachmentStore ? { durableAttachments: true } : {}),
         appSettingsSync: true,
         appSettingsAccentColor: true,
         appSettingsChatPreferences: true,
@@ -2198,12 +2221,12 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
-  private createServerInfoMessage(session: Session): WSOutboundMessage {
+  private createServerInfoMessage(session: Session, ws: WebSocketLike): WSOutboundMessage {
     return {
       type: "session",
       message: {
         type: "status",
-        payload: this.buildServerInfoStatusPayload(session),
+        payload: this.buildServerInfoStatusPayload(session, ws),
       },
     };
   }
@@ -2220,16 +2243,13 @@ export class VoiceAssistantWebSocketServer {
 
   private broadcastCapabilitiesUpdate(): void {
     for (const connection of new Set(this.sessions.values())) {
-      if (
-        ![...connection.sockets].some((socket) =>
-          connection.session.wantsSourceEvent(socket, "status.server_info"),
-        )
-      )
-        continue;
-      connection.session.publish({
-        type: "status",
-        payload: this.buildServerInfoStatusPayload(connection.session),
-      });
+      for (const socket of connection.sockets) {
+        if (!connection.session.wantsSourceEvent(socket, "status.server_info")) continue;
+        connection.session.publishToSource(socket, {
+          type: "status",
+          payload: this.buildServerInfoStatusPayload(connection.session, socket),
+        });
+      }
     }
   }
 
