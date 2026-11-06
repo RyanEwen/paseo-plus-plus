@@ -50,7 +50,7 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { isNative, isWeb } from "@/constants/platform";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { Theme } from "@/styles/theme";
@@ -69,6 +69,9 @@ import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
+
+/** Touch target for compact and native controls: the compact-layout md control height (44 px). */
+const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 
 const PreferencesDisabledContext = createContext(false);
 
@@ -794,7 +797,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
   },
-  compactTrigger: { minWidth: CONTROL_HEIGHTS.field, minHeight: CONTROL_HEIGHTS.field },
+  compactTrigger: { minWidth: TOUCH_TARGET_SIZE, minHeight: TOUCH_TARGET_SIZE },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

@@ -5,11 +5,14 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { iconButtonChromeStyle } from "@/components/ui/icon-button-chrome";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSidebarDisplayPreferences } from "./display-preferences/model";
 import type { Theme } from "@/styles/theme";
+
+/** Touch target for compact and native controls: the compact-layout md control height (44 px). */
+const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 
 const BellIcon = withUnistyles(Bell);
 const outline = (theme: Theme) => ({ color: theme.colors.foregroundMuted, fill: "transparent" });
@@ -62,6 +65,6 @@ export function SidebarViewModeButton() {
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  touchTarget: { minWidth: CONTROL_HEIGHTS.field, minHeight: CONTROL_HEIGHTS.field },
+  touchTarget: { minWidth: TOUCH_TARGET_SIZE, minHeight: TOUCH_TARGET_SIZE },
   label: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.base },
 }));

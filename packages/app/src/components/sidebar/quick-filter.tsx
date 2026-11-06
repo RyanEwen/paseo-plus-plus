@@ -7,12 +7,15 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { iconButtonChromeStyle } from "@/components/ui/icon-button-chrome";
 import { SearchField } from "@/components/ui/search-field";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { Theme } from "@/styles/theme";
+
+/** Touch target for compact and native controls: the compact-layout md control height (44 px). */
+const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 
 const FilterIcon = withUnistyles(Filter);
 const muted = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -79,7 +82,7 @@ export function SidebarQuickFilterInput() {
         onChangeText={handleChange}
         autoFocus
         onEscape={handleClose}
-        clearTouchTargetSize={isNative || compact ? CONTROL_HEIGHTS.field : undefined}
+        clearTouchTargetSize={isNative || compact ? TOUCH_TARGET_SIZE : undefined}
         placeholder={t("sidebar.quickFilter.placeholder")}
         clearAccessibilityLabel={t("sidebar.quickFilter.clear")}
         testID="sidebar-quick-filter-input"
@@ -89,7 +92,7 @@ export function SidebarQuickFilterInput() {
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  touchTarget: { minWidth: CONTROL_HEIGHTS.field, minHeight: CONTROL_HEIGHTS.field },
+  touchTarget: { minWidth: TOUCH_TARGET_SIZE, minHeight: TOUCH_TARGET_SIZE },
   inputRow: {
     flexDirection: "row",
     paddingHorizontal: theme.spacing[4],
