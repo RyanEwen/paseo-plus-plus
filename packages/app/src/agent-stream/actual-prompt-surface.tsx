@@ -39,15 +39,7 @@ export interface StickyPromptHandle {
 
 /** Own prompt navigation and its loading feedback around the timeline. */
 export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function StickyPrompt(
-  {
-    agentId,
-    client,
-    contextPageReader,
-    retainedContext,
-    contentMaxWidth,
-    children,
-    ...input
-  },
+  { agentId, client, contextPageReader, retainedContext, contentMaxWidth, children, ...input },
   ref,
 ) {
   const readPrompt = useStableEvent(async (seq: number) => {
