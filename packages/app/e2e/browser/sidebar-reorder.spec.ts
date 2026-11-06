@@ -808,6 +808,119 @@ test("collapsed destinations preserve drafts, collapse choices and conditional r
   }
 });
 
+test("project and child status moves count ancestor motion once, including a later child move", async ({
+  page,
+}, testInfo) => {
+  const subject = await seedWorkspace({ repoPrefix: "sidebar-nested-motion-subject-" });
+  const other = await seedWorkspace({ repoPrefix: "sidebar-nested-motion-other-" });
+  async function finishedAgent(workspaceId: string, cwd: string, client: typeof subject.client) {
+    const agent = await client.createAgent({
+      provider: "mock",
+      cwd,
+      workspaceId,
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+      initialPrompt: "Finish.",
+    });
+    await client.waitForFinish(agent.id, 20_000);
+    await client.clearWorkspaceAttention(workspaceId);
+  }
+  try {
+    await finishedAgent(subject.workspaceId, subject.repoPath, subject.client);
+    const sibling = await subject.client.createWorkspace({
+      source: { kind: "directory", path: subject.repoPath, projectId: subject.projectId },
+      title: "Sibling",
+    });
+    if (!sibling.workspace) throw new Error(sibling.error ?? "No sibling workspace");
+    await finishedAgent(sibling.workspace.id, subject.repoPath, subject.client);
+    await finishedAgent(other.workspaceId, other.repoPath, other.client);
+    await seedSidebarMotionPreferences({ page, enabled: true, groupMode: "project" });
+    await gotoAppShell(page);
+    const subjectProjectId = `sidebar-project-row-${subject.projectKey}`;
+    const otherProjectId = `sidebar-project-row-${other.projectKey}`;
+    const projects = page.locator(
+      `[data-testid="${subjectProjectId}"], [data-testid="${otherProjectId}"]`,
+    );
+    await expect(projects).toHaveCount(2);
+    await openSidebarDisplayPage(page, "sidebar-display-sorting");
+    await page.getByTestId("sidebar-sorting-custom").click();
+    if ((await rowTestIds(projects))[0] === subjectProjectId)
+      await quickDragFirstRowAfterSecond(projects, pressProjectRow);
+    await openSidebarDisplayPage(page, "sidebar-display-sorting");
+    await page.getByTestId("sidebar-sorting-status").click();
+    await closeSidebarDisplayPreferences(page);
+    const rowTestId = `sidebar-workspace-row-${getServerId()}:${subject.workspaceId}`;
+    const siblingTestId = `sidebar-workspace-row-${getServerId()}:${sibling.workspace.id}`;
+    const row = page.getByTestId(rowTestId);
+    await expect(row).toBeVisible();
+    const before = (await row.boundingBox())!.y;
+    await page.screenshot({ path: testInfo.outputPath("nested-motion-before.png") });
+    await startSidebarMotionProbe({ page, rowTestId, freeze: true });
+    await subject.client.markWorkspaceUnread(subject.workspaceId);
+    await expectSidebarMotionPaused(page);
+    await page.screenshot({ path: testInfo.outputPath("nested-motion-middle.png") });
+    await resumeSidebarMotion(page);
+    await expect
+      .poll(async () =>
+        row.evaluate(
+          (node) => node.closest("[data-position-transition]")?.getAnimations().length ?? 0,
+        ),
+      )
+      .toBe(0);
+    await expect.poll(() => rowTestIds(projects)).toEqual([subjectProjectId, otherProjectId]);
+    const after = (await row.boundingBox())!.y;
+    await page.screenshot({ path: testInfo.outputPath("nested-motion-after.png") });
+    const frames = await stopSidebarMotionProbe(page);
+    expect(after).toBeLessThan(before - 10);
+    expect(Math.min(...frames.map((frame) => frame.top))).toBeGreaterThanOrEqual(after - 2);
+    expect(Math.max(...frames.map((frame) => frame.top))).toBeLessThanOrEqual(before + 2);
+    expect(frames.every((frame) => frame.sameNode && frame.connected)).toBe(true);
+    await testInfo.attach("nested-motion-frames.json", {
+      body: JSON.stringify(frames),
+      contentType: "application/json",
+    });
+
+    await other.client.markWorkspaceUnread(other.workspaceId);
+    await expect.poll(() => rowTestIds(projects)).toEqual([otherProjectId, subjectProjectId]);
+    await expect
+      .poll(async () =>
+        page
+          .getByTestId(subjectProjectId)
+          .evaluate(
+            (node) => node.closest("[data-position-transition]")?.getAnimations().length ?? 0,
+          ),
+      )
+      .toBe(0);
+    const beforeChildMove = (await row.boundingBox())!.y;
+    await startSidebarMotionProbe({ page, rowTestId });
+    await subject.client.markWorkspaceUnread(sibling.workspace.id);
+    await expect
+      .poll(() =>
+        rowTestIds(page.locator(`[data-testid="${rowTestId}"], [data-testid="${siblingTestId}"]`)),
+      )
+      .toEqual([siblingTestId, rowTestId]);
+    await expect
+      .poll(async () =>
+        row.evaluate(
+          (node) => node.closest("[data-position-transition]")?.getAnimations().length ?? 0,
+        ),
+      )
+      .toBe(0);
+    const afterChildMove = (await row.boundingBox())!.y;
+    const childFrames = await stopSidebarMotionProbe(page);
+    expect(afterChildMove).toBeGreaterThan(beforeChildMove + 10);
+    expect(Math.min(...childFrames.map((frame) => frame.top))).toBeGreaterThanOrEqual(
+      beforeChildMove - 2,
+    );
+    expect(Math.max(...childFrames.map((frame) => frame.top))).toBeLessThanOrEqual(
+      afterChildMove + 2,
+    );
+  } finally {
+    await subject.cleanup();
+    await other.cleanup();
+  }
+});
+
 for (const destination of ["collapsed", "limit"] as const) {
   test(`a header clipped above the sidebar scrollport cannot receive focus for a ${destination} destination`, async ({
     page,
