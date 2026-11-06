@@ -1,4 +1,5 @@
 import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
+import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -31,7 +32,12 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
-import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import {
+  resolveProjectDisplayName,
+  resolveWorkspaceDisplayName,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
@@ -94,6 +100,7 @@ import {
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
+  withNotificationWorkspaceContext,
 } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -569,6 +576,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly creationService: CreationService;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly notificationReceipts: WorkspaceNotificationReceipts;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
@@ -756,6 +764,24 @@ export class VoiceAssistantWebSocketServer {
     );
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.notificationReceipts = new WorkspaceNotificationReceipts(
+      this.workspaceRegistry,
+      async (workspaceId) => {
+        await Promise.all(
+          this.listSessions().map(async (session) => {
+            try {
+              await session.emitWorkspaceUpdatesForExternalWorkspaceIds([workspaceId]);
+            } catch (error) {
+              // The receipt is already durable. A failed subscriber catches up from its next snapshot.
+              this.logger.warn(
+                { error, workspaceId },
+                "Could not publish notification receipts to a session",
+              );
+            }
+          }),
+        );
+      },
+    );
     this.workspaceLabelService = workspaceLabelService ?? null;
     const requiredServices = requireWebSocketServices({
       scheduleService,
@@ -1693,6 +1719,20 @@ export class VoiceAssistantWebSocketServer {
         );
       },
       publishScriptStatusUpdate: (message) => this.publishScriptStatusUpdate(message),
+      publishStoredAgentAttentionCleared: async (record, workspaceId) => {
+        await Promise.all(
+          this.listSessions().map(async (session) => {
+            try {
+              await session.forwardStoredAgentAttentionCleared(record, workspaceId);
+            } catch (error) {
+              this.logger.warn(
+                { error, workspaceId },
+                "Could not publish stored attention clear to a session",
+              );
+            }
+          }),
+        );
+      },
       downloadTokenStore: this.downloadTokenStore,
       pushNotifications: this.pushNotifications,
       paseoHome: this.paseoHome,
@@ -1713,6 +1753,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceRuntimeStore: this.workspaceRuntimeStore,
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
+      notificationReceipts: this.notificationReceipts,
       pluginRuntime: this.pluginRuntime,
       orchestrationSkills: this.orchestrationSkills,
       mcpBaseUrl: this.mcpBaseUrl,
@@ -2923,6 +2964,14 @@ export class VoiceAssistantWebSocketServer {
     if (!agent?.workspaceId) {
       return;
     }
+    const observedAttention = agent.attention.requiresAttention
+      ? { agentId: agent.id, timestamp: agent.attention.attentionTimestamp.toISOString() }
+      : undefined;
+    // Reserve in callback order before message preparation can let a later event overtake this one.
+    const notificationSequence = await this.notificationReceipts.issue(
+      agent.workspaceId,
+      observedAttention,
+    );
     const clientEntries: Array<{
       ws: WebSocketLike;
       state: ClientPresenceState;
@@ -2947,7 +2996,9 @@ export class VoiceAssistantWebSocketServer {
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
     const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
+    const context = await this.resolveNotificationWorkspaceContext(agent.workspaceId);
     const notification = buildAgentAttentionNotificationPayload({
+      ...context,
       reason: params.reason,
       serverId: this.serverId,
       workspaceId: agent.workspaceId,
@@ -2956,6 +3007,10 @@ export class VoiceAssistantWebSocketServer {
       attentionMessage: params.message,
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
+    if (notificationSequence !== undefined) {
+      notification.data.notificationSequence = notificationSequence;
+      if (observedAttention) notification.data.attentionTimestamp = observedAttention.timestamp;
+    }
 
     const plan = computeNotificationPlan({
       allStates,
@@ -3013,6 +3068,19 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  /** Read identity from the registry relation, never from an agent's working directory. */
+  private async resolveNotificationWorkspaceContext(workspaceId: string | undefined) {
+    const workspace = workspaceId ? await this.workspaceRegistry.get(workspaceId) : null;
+    if (!workspace) {
+      return { workspaceName: null, projectName: null };
+    }
+    const project = await this.projectRegistry.get(workspace.projectId);
+    return {
+      workspaceName: resolveWorkspaceDisplayName(workspace),
+      projectName: project ? resolveProjectDisplayName(project) : null,
+    };
+  }
+
   private async broadcastTerminalAttention(params: {
     terminalId: string;
     cwd: string;
@@ -3051,6 +3119,9 @@ export class VoiceAssistantWebSocketServer {
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
     const workspaceId = params.workspaceId;
+    const notificationSequence = workspaceId
+      ? await this.notificationReceipts.issue(workspaceId)
+      : undefined;
 
     const plan = computeNotificationPlan({
       allStates,
@@ -3059,8 +3130,14 @@ export class VoiceAssistantWebSocketServer {
       nowMs,
     });
 
-    const title = terminalAttentionTitle(params.reason);
-    const body = params.terminalName;
+    const context = await this.resolveNotificationWorkspaceContext(workspaceId);
+    const { title, body } = withNotificationWorkspaceContext(
+      {
+        title: terminalAttentionTitle(params.reason),
+        body: params.terminalName,
+      },
+      context,
+    );
 
     if (plan.shouldPush) {
       void this.pushNotificationSender
@@ -3070,6 +3147,7 @@ export class VoiceAssistantWebSocketServer {
           data: {
             serverId: this.serverId,
             terminalId: params.terminalId,
+            ...(notificationSequence !== undefined ? { notificationSequence } : {}),
             cwd: params.cwd,
             ...(workspaceId ? { workspaceId } : {}),
           },
@@ -3091,6 +3169,7 @@ export class VoiceAssistantWebSocketServer {
         payload: {
           serverId: this.serverId,
           terminalId: params.terminalId,
+          ...(notificationSequence !== undefined ? { notificationSequence } : {}),
           cwd: params.cwd,
           ...(workspaceId ? { workspaceId } : {}),
           reason: params.reason,

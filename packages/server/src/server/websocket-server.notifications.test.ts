@@ -1,3 +1,5 @@
+import { NotificationReceipts } from "@getpaseo/protocol/notification-receipts";
+import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -15,8 +17,17 @@ import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 
 const WORKSPACE_ID = "workspace-1";
 
@@ -56,6 +67,7 @@ interface WebSocketServerInternals {
     reason: string;
     preview?: string;
     providerId?: string;
+    provider?: string;
     timestamp?: string;
   }): Promise<void>;
 }
@@ -89,6 +101,7 @@ class RecordingPushNotificationSender implements PushNotificationSender {
 
 function createServer(
   agentManagerOverrides?: Record<string, unknown>,
+  registries?: { projects: ProjectRegistry; workspaces: WorkspaceRegistry },
   configStore?: DaemonConfigStore,
 ) {
   let attentionMode = true;
@@ -103,7 +116,12 @@ function createServer(
     get agentAwareAttentionEnabled() {
       return attentionMode;
     },
-    getAgent: vi.fn(() => ({ workspaceId: WORKSPACE_ID, pendingPermissions: new Map() })),
+    getAgent: vi.fn(() => ({
+      id: "agent-1",
+      workspaceId: WORKSPACE_ID,
+      pendingPermissions: new Map(),
+      attention: { requiresAttention: false },
+    })),
     getLastAssistantMessage: vi.fn(async () => null),
     getMetricsSnapshot: vi.fn(() => ({
       total: 0,
@@ -141,8 +159,8 @@ function createServer(
     undefined,
     "1.2.3-test",
     undefined,
-    undefined,
-    undefined,
+    registries?.projects,
+    registries?.workspaces,
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
@@ -243,6 +261,164 @@ function readAttentionRequiredMessage(ws: ReturnType<typeof createOpenSocket>) {
 }
 
 describe("VoiceAssistantWebSocketServer notification payloads", () => {
+  it("reserves attention receipts before overlapping message preparation finishes out of order", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-notification-overlap-"));
+    let releaseFirst!: () => void;
+    let signalFirstRead!: () => void;
+    const firstPreparation = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstReadStarted = new Promise<void>((resolve) => {
+      signalFirstRead = resolve;
+    });
+    try {
+      const logger = createStub<pino.Logger>(createLogger());
+      const projects = new FileBackedProjectRegistry(join(directory, "projects.json"), logger);
+      const workspaces = new FileBackedWorkspaceRegistry(
+        join(directory, "workspaces.json"),
+        logger,
+      );
+      const firstTimestamp = "2026-10-21T12:00:00.000Z";
+      const secondTimestamp = "2026-10-21T12:00:01.000Z";
+      await workspaces.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId: WORKSPACE_ID,
+          projectId: "project-1",
+          cwd: directory,
+          kind: "directory",
+          displayName: "Overlap",
+          createdAt: firstTimestamp,
+          updatedAt: firstTimestamp,
+        }),
+      );
+      const agent = {
+        id: "agent-1",
+        workspaceId: WORKSPACE_ID,
+        pendingPermissions: new Map(),
+        attention: { requiresAttention: true, attentionTimestamp: new Date(firstTimestamp) },
+      };
+      let messageReads = 0;
+      const { server, pushNotifications } = createServer(
+        {
+          getAgent: () => agent,
+          getLastAssistantMessage: async () => {
+            messageReads++;
+            if (messageReads === 1) {
+              signalFirstRead();
+              await firstPreparation;
+              return "Earlier completion";
+            }
+            return "Later completion";
+          },
+        },
+        { projects, workspaces },
+      );
+      const broadcaster = asInternals<WebSocketServerInternals>(server);
+      const earlier = broadcaster.broadcastAgentAttention({
+        agentId: agent.id,
+        reason: "finished",
+        provider: "codex",
+      });
+      await firstReadStarted;
+      agent.attention = { requiresAttention: true, attentionTimestamp: new Date(secondTimestamp) };
+      await broadcaster.broadcastAgentAttention({
+        agentId: agent.id,
+        reason: "finished",
+        provider: "codex",
+      });
+      releaseFirst();
+      await earlier;
+
+      // Preparation finishes B then A, while receipt identity stays in original callback order.
+      expect(
+        pushNotifications.sent.map((notification) => ({
+          sequence: notification.data?.notificationSequence,
+          timestamp: notification.data?.attentionTimestamp,
+        })),
+      ).toEqual([
+        { sequence: 2, timestamp: secondTimestamp },
+        { sequence: 1, timestamp: firstTimestamp },
+      ]);
+      const stored = await workspaces.get(WORKSPACE_ID);
+      expect(stored?.notificationReceipts?.attentionEvents?.[agent.id]).toEqual({
+        sequence: 2,
+        timestamp: secondTimestamp,
+      });
+      const receipts = new WorkspaceNotificationReceipts(workspaces, async () => {});
+      await receipts.acknowledge(WORKSPACE_ID, {
+        kind: "workspace",
+        acknowledgementId: "opened-before-second",
+        observedReadId: null,
+        throughSequence: 1,
+        attention: [{ agentId: agent.id, timestamp: firstTimestamp }],
+      });
+      const acknowledged = new NotificationReceipts(
+        (await workspaces.get(WORKSPACE_ID))?.notificationReceipts,
+      );
+      expect(acknowledged.includes(1)).toBe(true);
+      expect(acknowledged.includes(2)).toBe(false);
+      expect(acknowledged.snapshot().attentionEvents?.[agent.id]).toEqual({
+        sequence: 2,
+        timestamp: secondTimestamp,
+      });
+    } finally {
+      releaseFirst();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses renamed workspace and project records for push and desktop recipients", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-notification-context-"));
+    try {
+      const logger = createStub<pino.Logger>(createLogger());
+      const projects = new FileBackedProjectRegistry(join(directory, "projects.json"), logger);
+      const workspaces = new FileBackedWorkspaceRegistry(
+        join(directory, "workspaces.json"),
+        logger,
+      );
+      await projects.initialize();
+      await workspaces.initialize();
+      const timestamp = new Date().toISOString();
+      await projects.upsert(
+        createPersistedProjectRecord({
+          projectId: "project-1",
+          rootPath: directory,
+          kind: "git",
+          displayName: "Derived project",
+          customName: "Chosen project",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+      await workspaces.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId: WORKSPACE_ID,
+          projectId: "project-1",
+          cwd: directory,
+          kind: "worktree",
+          displayName: "branch-name",
+          title: "Chosen workspace",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+      const { server, pushNotifications } = createServer(undefined, { projects, workspaces });
+      const socket = connectClient(server, null);
+      await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        reason: "finished",
+        provider: "claude",
+      });
+      const notification = readAttentionRequiredMessage(socket).notification;
+      expect(notification.title).toBe("Chosen workspace · Chosen project");
+      expect(notification.body).toBe("Agent finished\nFinished working.");
+      expect(notification.data.workspaceId).toBe(WORKSPACE_ID);
+      expect(pushNotifications.sent).toEqual([notification]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -277,10 +453,12 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     );
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-1",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });
@@ -310,11 +488,13 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const getLastAssistantMessage = vi.fn(async () => "Done.");
     const { server, pushNotifications } = createServer({
       getAgent: vi.fn(() => ({
+        id: "agent-2",
         config: { title: null },
         cwd: "/tmp/worktree",
         workspaceId: WORKSPACE_ID,
         labels: {},
         pendingPermissions: new Map(),
+        attention: { requiresAttention: false },
       })),
       getLastAssistantMessage,
     });
@@ -397,7 +577,7 @@ it("attention preference committed host config refreshes both devices without at
       enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
     });
-    const { server, agentManager, pushNotifications } = createServer(undefined, store);
+    const { server, agentManager, pushNotifications } = createServer(undefined, undefined, store);
     const firstRefresh = vi.fn(async () => {});
     const secondRefresh = vi.fn(async () => {});
     const first = connectClient(server, null, { refreshAttention: firstRefresh });
