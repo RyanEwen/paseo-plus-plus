@@ -1,3 +1,5 @@
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -136,7 +138,6 @@ import {
   type SidebarProjectIconTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import {
   getCurrentProjectRemoveReadiness,
@@ -295,6 +296,7 @@ interface WorkspaceRowInnerProps {
 }
 
 export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewStyle> }) {
+  const { openPrimary } = useWorkspaceLinkOpeningContext();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
 
@@ -305,9 +307,9 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
-      void openExternalUrl(hint.url);
+      void openPrimary(hint.url);
     },
-    [hint.url],
+    [hint.url, openPrimary],
   );
 
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
@@ -331,28 +333,30 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const presentation = getForgePresentation(normalizeForge(hint.forge));
 
   return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={t("workspace.git.pr.accessibility.pullRequest", {
-        number: hint.number,
-        context: presentation.changeRequestContext,
-      })}
-      hitSlop={4}
-      onPressIn={handlePressIn}
-      onPress={handlePress}
-      onHoverIn={handleHoverIn}
-      onHoverOut={handleHoverOut}
-      style={pressableStyle}
-    >
-      {isHovered ? (
-        <ThemedExternalLink size={12} uniProps={foregroundColorMapping} />
-      ) : (
-        <PullRequestStateIcon state={hint.state} size={12} />
-      )}
-      <Text style={textStyle} numberOfLines={1}>
-        {hint.number}
-      </Text>
-    </Pressable>
+    <WorkspaceHttpLinkMenu url={hint.url}>
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={t("workspace.git.pr.accessibility.pullRequest", {
+          number: hint.number,
+          context: presentation.changeRequestContext,
+        })}
+        hitSlop={4}
+        onPressIn={handlePressIn}
+        onPress={handlePress}
+        onHoverIn={handleHoverIn}
+        onHoverOut={handleHoverOut}
+        style={pressableStyle}
+      >
+        {isHovered ? (
+          <ThemedExternalLink size={12} uniProps={foregroundColorMapping} />
+        ) : (
+          <PullRequestStateIcon state={hint.state} size={12} />
+        )}
+        <Text style={textStyle} numberOfLines={1}>
+          {hint.number}
+        </Text>
+      </Pressable>
+    </WorkspaceHttpLinkMenu>
   );
 }
 

@@ -1,3 +1,5 @@
+import { WorkspaceBrowserOpeningProvider } from "@/workspace/browser/context";
+import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -53,6 +55,7 @@ export function SidebarWorkspaceRowFrame({
     hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
+  const openInPaseo = useWorkspaceBrowserOpening(workspace.serverId, workspace.workspaceId);
   const [isHovered, setIsHovered] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const handlePointerEnter = useCallback(() => {
@@ -69,19 +72,21 @@ export function SidebarWorkspaceRowFrame({
   );
 
   return (
-    <WorkspaceHoverCard
-      workspace={workspace}
-      prHint={workspace.prHint}
-      isDragging={isDragging}
-      disabled={contextMenuOpen}
-    >
-      {children({
-        isHovered: isHovered && !contextMenuOpen && !isDragging,
-        contextMenuOpen,
-        onContextMenuOpenChange: handleContextMenuOpenChange,
-        hoverHandlers,
-      })}
-    </WorkspaceHoverCard>
+    <WorkspaceBrowserOpeningProvider value={openInPaseo}>
+      <WorkspaceHoverCard
+        workspace={workspace}
+        prHint={workspace.prHint}
+        isDragging={isDragging}
+        disabled={contextMenuOpen}
+      >
+        {children({
+          isHovered: isHovered && !contextMenuOpen && !isDragging,
+          contextMenuOpen,
+          onContextMenuOpenChange: handleContextMenuOpenChange,
+          hoverHandlers,
+        })}
+      </WorkspaceHoverCard>
+    </WorkspaceBrowserOpeningProvider>
   );
 }
 
