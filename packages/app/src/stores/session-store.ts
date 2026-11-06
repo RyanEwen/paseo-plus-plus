@@ -1,3 +1,4 @@
+import type { WorkspaceNotificationReceipts } from "@getpaseo/protocol/notification-receipts";
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -105,6 +106,7 @@ export interface Agent {
 }
 
 export interface WorkspaceDescriptor {
+  notificationReceipts?: WorkspaceNotificationReceipts;
   createdAt: Date | null;
   lastUserMessageAt: Date | null;
   id: string;
@@ -144,6 +146,7 @@ export function normalizeWorkspaceDescriptor(
       ? new Date(statusEnteredAtRaw)
       : null;
   return {
+    notificationReceipts: payload.notificationReceipts,
     // COMPAT(workspaceSortTimes): added in v0.13.0, remove after 2027-04-22.
     createdAt: payload.createdAt ? new Date(payload.createdAt) : null,
     lastUserMessageAt: payload.lastUserMessageAt ? new Date(payload.lastUserMessageAt) : null,

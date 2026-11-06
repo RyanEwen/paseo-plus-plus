@@ -1,3 +1,4 @@
+import type { NotificationAcknowledgement } from "@getpaseo/protocol/notification-receipts";
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import {
   ChunkedTransport,
@@ -2460,6 +2461,18 @@ export class DaemonClient {
     if (!response.success) {
       throw new Error(response.error ?? "Failed to clear workspace attention");
     }
+  }
+
+  /** Acknowledge only events captured by the caller; reconnect never widens this boundary. */
+  async acknowledgeWorkspaceNotifications(
+    workspaceId: string,
+    notification: NotificationAcknowledgement,
+  ): Promise<void> {
+    const response =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.clear_attention.response">({
+        message: { type: "workspace.clear_attention.request", workspaceId, notification },
+      });
+    if (!response.success) throw new Error(response.error ?? "Failed to acknowledge notifications");
   }
 
   async markWorkspaceUnread(workspaceId: string, requestId?: string): Promise<void> {
