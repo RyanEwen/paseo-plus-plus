@@ -1,3 +1,4 @@
+import { ACCENT_OPTIONS } from "@/styles/accent";
 import { DEFAULT_PASEO_PLUS_PLUS_PREFERENCES } from "@/paseo-plus-plus/preferences";
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
@@ -45,6 +46,32 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each([undefined, null, "unknown", 4])(
+    "defaults invalid accent %s without changing theme",
+    async (accentColor) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ accentColor, theme: "pureBlack" }),
+        }),
+      });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.accentColor).toBe("default");
+      expect(settings.theme).toBe("pureBlack");
+    },
+  );
+
+  it.each(ACCENT_OPTIONS)(
+    "retains accent %s through unrelated saves and reload",
+    async (accentColor) => {
+      const deps = makeDeps();
+      const queryClient = new QueryClient();
+      await saveAppSettings({ deps, queryClient, updates: { accentColor } });
+      await saveAppSettings({ deps, queryClient, updates: { theme: "light" } });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.accentColor).toBe(accentColor);
+      expect(settings.theme).toBe("light");
+    },
+  );
   it.each(Object.keys(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES))(
     "normalizes missing or malformed %s to its default while retaining explicit choices",
     async (feature) => {
