@@ -53,6 +53,7 @@ vi.mock("react-native-reanimated", async (importOriginal) => {
     useDerivedValue: (factory: () => unknown) => ({ value: factory() }),
     withTiming: (value: unknown) => value,
   };
+});
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
