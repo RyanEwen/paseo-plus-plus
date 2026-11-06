@@ -486,6 +486,10 @@ ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     return false;
   }
+  const host = BrowserWindow.fromWebContents(event.sender);
+  if (!host || host.webContents !== event.sender || !host.isFocused() || host.isMinimized()) {
+    return false;
+  }
   const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
   if (!contents) {
     return false;
@@ -555,7 +559,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: getPaseoBrowserWebContentsForHostWindow,
+  findGuest: (browserId, hostId) => getPaseoBrowserWebContentsForHostWindow(browserId, hostId),
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
