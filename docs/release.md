@@ -151,6 +151,23 @@ development on `main`:
 Delete the release branch once the PR merges. The tag is the record of shipped source; Paseo
 maintains no release track besides `main`.
 
+## Fork overview review
+
+In RyanEwen/paseo-plus-plus, the opening README section owns the list of user-visible differences from
+upstream. Review it when you add or change a feature and when you merge upstream changes. Remove
+an addition from the list once upstream includes it. Keep each entry to the feature or change name and a link to its guide. Put usage, examples, limits and settings details in the owning guide, not inline in the README. Link to the integrated guide on `main`; the guide can also link to its maintained feature branch. Branch deletion must not break the README.
+
+Review **Settings → Paseo++** in the same pass. Remove inventory rows and redundant controls when upstream provides the same behavior, while preserving saved preferences unless their removal is explicitly part of the change. Update localized help and examples when behavior changes. Describe available behavior; label planned distribution separately until builds are published.
+
+The `fork-overview` check runs on pull requests to `main`, `ryan/dev`, and `ryan/preview`. A code or
+build change must update the marked README section, or check the fork overview review box in the
+PR template and explain why the list remains accurate. Documentation-only changes still validate
+that the section exists at the top of the README. Pushes validate its presence too.
+
+Make `fork-overview` a required status check in the fork's branch protection to block unreviewed
+PR merges. Direct local merges still require the review above. CI can require that review; it
+cannot determine whether a feature description is accurate.
+
 ## ACP catalog updates
 
 ACP catalog work enters a release through an explicit user request:
@@ -433,6 +450,32 @@ For the `Release Mobile` EAS workflow, these jobs must pass:
 Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
 
 To confirm the submission landed, inspect the EAS workflow with `npx eas workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
+
+## Released feature workspaces
+
+For `RyanEwen/paseo-plus-plus`, Ryan has authorized archiving completed feature workspaces after their
+changes are published. This is a post-release coordination step, not an automatic archive hook.
+Do not archive the main coordination or integration workspace.
+
+Before archiving an owner:
+
+- The exact published release passed every applicable completion gate and contains the owner's
+  released work. Record the release, source commit, workspace ID, branch, and branch head.
+- The branch and source repository remain available for recovery. Keep the branch; archival does
+  not authorize deleting refs, making commits, or pushing changes.
+- No unfinished source changes, new user work, running validation, or active dependency references
+  need that directory. Skip the owner if its next feature iteration has already started.
+- Required handoff and release evidence is retained outside any directory that archive will remove.
+  Explicitly protected backups and unfinished review evidence must remain untouched.
+
+Archive the eligible workspace through Paseo and verify the result. Record whether its directory
+was removed; manually adopted directories may remain and need separate approved cleanup. Do not
+call a visibility change a disk-space saving.
+
+When Ryan requests more work on that feature, inspect recovery, restore or unarchive the existing
+workspace, and resume its existing agent. Qualify its dependency and runtime environment again
+before checks. Do not assume restoration runs dependency setup or recovers unsaved files; see
+[archive and recovery limits](agent-lifecycle.md#archive).
 
 ## Release completion and heartbeat
 

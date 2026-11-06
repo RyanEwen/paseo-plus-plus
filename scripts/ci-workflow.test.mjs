@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { checkForkOverviewReview, getForkOverview } from "./check-fork-overview.mjs";
+import { hookDecision, runHook, stateKey } from "./codex-docs-hook.mjs";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
@@ -14,6 +16,168 @@ const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
+
+test("Codex documentation hook supplies context and allows only one Stop continuation", () => {
+  assert.match(
+    hookDecision({ hook_event_name: "SessionStart" }, []).hookSpecificOutput.additionalContext,
+    /README overview/,
+  );
+  assert.deepEqual(hookDecision({ hook_event_name: "Stop" }, []), {});
+  const paths = ["packages/app/src/agent-stream/feature.ts"];
+  assert.match(
+    hookDecision({ hook_event_name: "PostToolUse" }, paths).hookSpecificOutput.additionalContext,
+    /docs\/timeline-sync.md/,
+  );
+  assert.deepEqual(hookDecision({ hook_event_name: "PostToolUse" }, paths, true), {});
+  assert.equal(hookDecision({ hook_event_name: "Stop" }, paths).decision, "block");
+  assert.deepEqual(hookDecision({ hook_event_name: "Stop", stop_hook_active: true }, paths), {});
+  assert.deepEqual(hookDecision({ hook_event_name: "Stop" }, paths, false, true), {});
+  assert.notEqual(
+    stateKey({ session_id: "parent", transcript_path: "child-a" }, "/repo"),
+    stateKey({ session_id: "parent", transcript_path: "child-b" }, "/repo"),
+  );
+  assert.notEqual(
+    stateKey({ session_id: "parent" }, "/worktree-a"),
+    stateKey({ session_id: "parent" }, "/worktree-b"),
+  );
+});
+
+test("Codex documentation hook preserves pre-existing dirty work and notices actual later edits", () => {
+  const root = mkdtempSync(join(tmpdir(), "paseo-codex-docs-"));
+  const code = "packages/app/src/feature.ts";
+  const runGit = (args) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    mkdirSync(join(root, "packages/app/src"), { recursive: true });
+    mkdirSync(join(root, "empty-hooks"));
+    writeFileSync(join(root, ".gitignore"), ".dev/\n");
+    writeFileSync(join(root, code), "original\n");
+    runGit(["init", "--quiet"]);
+    runGit(["add", "."]);
+    runGit([
+      "-c",
+      "user.name=Hook fixture",
+      "-c",
+      "user.email=hook@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      `core.hooksPath=${join(root, "empty-hooks")}`,
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    ]);
+    writeFileSync(join(root, code), "existing user work\n");
+    const event = { session_id: "fixture", cwd: root, turn_id: "first" };
+    runHook({ ...event, hook_event_name: "SessionStart" });
+    assert.deepEqual(runHook({ ...event, hook_event_name: "Stop" }), {});
+    writeFileSync(join(root, code), "agent edit\n");
+    assert.match(
+      runHook({ ...event, hook_event_name: "PostToolUse" }).hookSpecificOutput.additionalContext,
+      /feature.ts/,
+    );
+    assert.deepEqual(runHook({ ...event, hook_event_name: "PostToolUse" }), {});
+    assert.equal(runHook({ ...event, hook_event_name: "Stop" }).decision, "block");
+    assert.deepEqual(runHook({ ...event, hook_event_name: "Stop", stop_hook_active: true }), {});
+    assert.deepEqual(runHook({ ...event, turn_id: "second", hook_event_name: "Stop" }), {});
+    writeFileSync(join(root, "README.md"), "New user-visible feature description.\n");
+    assert.equal(
+      runHook({ ...event, turn_id: "second", hook_event_name: "Stop" }).decision,
+      "block",
+    );
+    assert.match(runGit(["status", "--porcelain"]).toString(), /feature.ts/);
+    assert.doesNotMatch(runGit(["status", "--porcelain"]).toString(), /codex-doc-review/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex documentation hooks are project-local and preserve the original repository check", () => {
+  const hooks = JSON.parse(readFileSync(new URL(".codex/hooks.json", repoRoot), "utf8"));
+  for (const event of ["SessionStart", "PostToolUse", "Stop"]) {
+    const command = hooks.hooks[event][0].hooks[0];
+    assert.match(command.command, /git rev-parse --show-toplevel/);
+    assert.match(command.command, /scripts\/codex-docs-hook.mjs/);
+    assert.match(command.commandWindows, /codex-docs-hook.mjs/);
+  }
+  assert.doesNotMatch(
+    readFileSync(new URL("lefthook.yml", repoRoot), "utf8"),
+    /fork-documentation/,
+  );
+  assert.match(
+    readFileSync(new URL(".github/workflows/fork-overview.yml", repoRoot), "utf8"),
+    /check-fork-overview.mjs/,
+  );
+});
+
+test("fork code changes require a README update or an explicit review with a reason", () => {
+  const readme = readFileSync(new URL("README.md", repoRoot), "utf8");
+  const input = {
+    before: readme,
+    after: readme,
+    changedFiles: ["packages/app/src/screens/workspace/workspace-screen.tsx"],
+    reviewBody: "",
+  };
+  assert.throws(() => checkForkOverviewReview(input), /Update the opening README/);
+  assert.throws(
+    () => checkForkOverviewReview({ ...input, after: `${readme}\nAn unrelated upstream edit.\n` }),
+    /Update the opening README/,
+  );
+
+  checkForkOverviewReview({
+    ...input,
+    after: readme.replace("# Paseo++", "# Paseo++\n\nA new fork feature."),
+  });
+  checkForkOverviewReview({
+    ...input,
+    reviewBody:
+      "- [x] Fork overview reviewed: no change to the listed differences.\n\n" +
+      "Fork overview unchanged because: This fixes a regression in the already listed sidebar controls.",
+  });
+  checkForkOverviewReview({ ...input, changedFiles: ["docs/release.md"] });
+  checkForkOverviewReview({ ...input, before: "# Upstream README" });
+
+  for (const reviewBody of [
+    "- [ ] Fork overview reviewed: no change to the listed differences.",
+    "- [x] Fork overview reviewed: no change to the listed differences.\n\n" +
+      "Fork overview unchanged because: <!-- Explain why this remains accurate. -->",
+    "<!-- - [x] Fork overview reviewed: no change to the listed differences. -->\n\n" +
+      "Fork overview unchanged because: This fixes an existing sidebar regression.",
+  ]) {
+    assert.throws(
+      () => checkForkOverviewReview({ ...input, reviewBody }),
+      /Update the opening README/,
+    );
+  }
+});
+
+test("fork overview cannot disappear, move below upstream content, or gain duplicate markers", () => {
+  const readme = readFileSync(new URL("README.md", repoRoot), "utf8");
+  assert.match(getForkOverview(readme), /^# Paseo\+\+/);
+  const historicalReadme = readme.replace("# Paseo++", "## Ryan's Paseo fork");
+  assert.match(getForkOverview(historicalReadme), /^## Ryan's Paseo fork/);
+  assert.equal(getForkOverview(readme.replaceAll("\n", "\r\n")), getForkOverview(readme));
+  for (const invalid of [
+    readme.replace("<!-- fork-overview:start -->", ""),
+    readme.replace("<!-- fork-overview:end -->", ""),
+    `# Upstream\n${readme}`,
+    `${readme}\n<!-- fork-overview:start -->`,
+    `${readme}\n<!-- fork-overview:end -->`,
+    "<!-- fork-overview:start -->\n<!-- fork-overview:end -->",
+  ]) {
+    assert.throws(() => getForkOverview(invalid), /fork overview/);
+  }
+});
+
+test("fork overview review reruns on PR edits and has no write permissions", () => {
+  const source = readFileSync(new URL(".github/workflows/fork-overview.yml", repoRoot), "utf8");
+  assert.match(source, /branches: \[main, ryan\/dev, ryan\/preview\]/);
+  assert.match(source, /types: \[opened, synchronize, reopened, edited, ready_for_review\]/);
+  assert.match(source, /github\.repository == 'RyanEwen\/paseo'/);
+  assert.match(source, /github\.repository == 'RyanEwen\/paseo-plus-plus'/);
+  assert.match(source, /contents: read/);
+  assert.doesNotMatch(source, /pull_request_target|: write|secrets\./);
+});
 
 const gatedCiJobs = new Map([
   ["quality", { name: "quality", contracts: ["format", "quality", "relay", "sdk"] }],
@@ -24,10 +188,7 @@ const gatedCiJobs = new Map([
     "server-integration-windows",
     { name: "server-integration (windows-latest)", contract: "server" },
   ],
-  [
-    "server-tests-macos",
-    { name: "server-tests (macos-latest, file observation)", contract: "server" },
-  ],
+  ["server-tests-macos", { name: "server-tests (macos-15, file observation)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -664,14 +825,15 @@ test("workflows avoid retired macOS 14 runners", () => {
   }
 });
 
-test("macOS jobs use latest runners while preserving release architectures", () => {
-  for (const [workflow, jobId] of [
-    [ciWorkflowPath, "server-tests-macos"],
-    [nixWorkflowPath, "build-desktop-darwin"],
+test("macOS jobs retain the file-observer runner pin and release architectures", () => {
+  for (const [workflow, jobId, runner] of [
+    // Keep the supported file-observation baseline independent of latest-image changes.
+    [ciWorkflowPath, "server-tests-macos", "macos-15"],
+    [nixWorkflowPath, "build-desktop-darwin", "macos-latest"],
   ]) {
     assert.match(
       jobBlocks(readFileSync(workflow, "utf8")).get(jobId).join("\n"),
-      /^    runs-on: macos-latest$/m,
+      new RegExp(`^    runs-on: ${runner}$`, "m"),
     );
   }
   const release = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");

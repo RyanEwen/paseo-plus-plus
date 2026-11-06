@@ -1,8 +1,86 @@
+<!-- fork-overview:start -->
+
+# Paseo++
+
+Paseo++ is [RyanEwen/paseo-plus-plus](https://github.com/RyanEwen/paseo-plus-plus), an experimental fork of [Paseo](https://github.com/getpaseo/paseo). It includes upstream improvements alongside the features and fixes below.
+
+For fork development and integration, follow the [worktree guide](docs/worktree-development.md#fork-branches-and-ownership). Published builds follow the [fork release process](docs/release.md#fork-preview-distribution).
+
+[Install Paseo++](docs/fork-installation.md) · [Feature settings](docs/fork-features/settings.md)
+
+## Optional features
+
+- [Keep user prompts in view](docs/fork-features/keep-user-prompts-in-view.md) — full messages and sticky prompts when enabled; standard collapsed previews when off.
+- [Readable tool activity](docs/fork-features/readable-tool-activity.md)
+
+- [Previous agents](docs/fork-features/previous-agents.md)
+
+- [Project activity chips](docs/fork-features/project-activity-chips.md)
+- [Bold project names](docs/fork-features/bold-project-names.md)
+
+- [Expand and collapse all](docs/fork-features/expand-and-collapse-all.md)
+- [Pin workspaces within projects](docs/fork-features/pin-workspaces-within-projects.md)
+
+- [Animate workspace moves](docs/fork-features/animate-workspace-moves.md)
+- [Status group counts](docs/fork-features/status-group-counts.md)
+
+- [Automatic Android update checks](docs/fork-features/automatic-android-update-checks.md)
+- [Sidebar host updates](docs/fork-features/sidebar-host-updates.md)
+
+## Display and reading preferences
+
+- [Workspace tab widths](docs/fork-features/workspace-tab-widths.md)
+
+- [Split layout controls](docs/fork-features/split-layout-controls.md)
+- [Mobile workspace tabs](docs/fork-features/mobile-workspace-tabs.md)
+
+- [Accent colors](docs/fork-features/accent-colors.md)
+- [Sidebar display options](docs/fork-features/sidebar-display-options.md)
+
+- [Explorer and Changes](docs/fork-features/explorer-and-changes.md)
+
+## Other additions
+
+- [Project selector](docs/fork-features/project-selector.md)
+- [Desktop browser and extensions](docs/fork-features/desktop-browser-and-extensions.md)
+
+- [Sync app settings while keeping device preferences local](docs/fork-features/sync-app-settings.md)
+- [Android SSH hosts](docs/fork-features/android-ssh-hosts.md)
+
+- [Restore archived workspaces](docs/fork-features/restore-archived-workspaces.md)
+- [Branch and worktree choices](docs/fork-features/branch-and-worktree-choices.md)
+
+- [Android plugin video](docs/fork-features/android-plugin-video.md)
+- [Standalone Linux and WSL daemons](docs/fork-features/standalone-linux-and-wsl-daemons.md)
+
+## Fixes and fork essentials
+
+- [Paseo++ links](docs/fork-features/paseo-links.md)
+- [Workspace browser links](docs/fork-features/workspace-browser-links.md)
+
+- [Background browser automation](docs/fork-features/background-browser-automation.md)
+- [Screenshot originals and capture guards](docs/fork-features/screenshot-originals-and-capture-guards.md)
+
+- [Codex async questions](docs/fork-features/codex-async-questions.md)
+- [Workspace notifications](docs/fork-features/workspace-notifications.md)
+- [Agent-aware attention](docs/fork-features/agent-aware-attention.md)
+
+- [Prompt and history recovery](docs/fork-features/steadier-reading.md)
+- [Configured provider profiles, migration guidance and history preview](docs/fork-features/provider-history-preview.md)
+- [Mobile navigation](docs/fork-features/mobile-navigation.md)
+
+- [Workspace pickers, status and child workspaces](docs/fork-features/workspace-pickers-and-status.md)
+- [Independent fork installations](docs/fork-features/independent-fork-installations.md)
+
+<!-- fork-overview:end -->
+
+---
+
 <p align="center">
   <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
 </p>
 
-<h1 align="center">Paseo</h1>
+<h1 align="center">Upstream Paseo</h1>
 
 <p align="center">
   <a href="README.md">English</a> ·
