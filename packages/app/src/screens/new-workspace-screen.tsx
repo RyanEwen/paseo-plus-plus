@@ -1134,9 +1134,10 @@ export function NewWorkspaceScreen({
         currentTargetId,
         nextTargetId,
       });
-      if (nextAttachments === chatDraft.attachments) return;
-      chatDraft.setAttachments(nextAttachments);
+      if (currentTargetId === nextTargetId) return;
+      // Branch selections belong to a repository even when no PR attachment needs clearing.
       dispatchPickerSelection({ type: "target-changed" });
+      if (nextAttachments !== chatDraft.attachments) chatDraft.setAttachments(nextAttachments);
     },
     [chatDraft],
   );
