@@ -1,5 +1,5 @@
 import { lstatSync } from "node:fs";
-import { downloadForkPreview, resolveForkPreview } from "./fork-preview.js";
+import { downloadForkPreview } from "./fork-preview.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { z } from "zod";
 import { execCommand } from "../../../utils/spawn.js";
