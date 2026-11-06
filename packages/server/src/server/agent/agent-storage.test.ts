@@ -150,6 +150,7 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   test.each([
     ["completed human", "idle", "human", false],

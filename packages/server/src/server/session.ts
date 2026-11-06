@@ -1537,6 +1537,8 @@ export class Session {
 
   clearWorkspaceArchivingForExternalMutation(workspaceIds: Iterable<string>): void {
     this.clearWorkspaceArchiving(workspaceIds);
+  }
+
   /** Publish a stored attention mutation through each receiver's existing directory filters. */
   async forwardStoredAgentAttentionCleared(
     record: StoredAgentRecord,

@@ -174,6 +174,8 @@ export class AgentStorage {
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     await this.queueRecordWrite(record);
+  }
+
   /** Clear only the observed attention event inside the existing per-agent write queue. */
   async clearAttentionIfUnchanged(
     agentId: string,
