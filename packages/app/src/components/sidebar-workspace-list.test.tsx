@@ -27,7 +27,7 @@ vi.mock("@/components/adaptive-modal-sheet", async () => ({
     testID,
   }: AdaptiveModalSheetProps) =>
     visible ? (
-      <div role="dialog" aria-label={header.title} data-testid={testID}>
+      <div role="dialog" aria-label={header?.title} data-testid={testID}>
         {children}
         {footer}
         <button type="button" data-testid="project-archive-dismiss" onClick={onClose}>
