@@ -356,7 +356,11 @@ It keeps cumulative milestones and permanent IDs under an operation kind and ide
 key. Reconnect subscribes to that key; retries
 join active work or reuse committed stages. A persisted resource alone cannot prove
 that a provider accepted its initial prompt. Interrupted side effects with no conclusive
-receipt return an unknown outcome instead of being repeated.
+receipt return an unknown outcome instead of being repeated. Failed agent startup retries require durable
+proof that this operation reserved its intention and never dispatched provider creation. An SDK can create external state before returning, so absence from the agent list
+does not establish safety. Old or unclassified
+failures remain unknown. A proven safe retry retains its original workspace and creation time;
+legacy agent worktree-target cleanup is not resumed automatically.
 
 Agent registration commits creation. Rejecting the first prompt is a turn error on that
 agent; reporting creation failure leaves an orphaned agent and invites another Create.
