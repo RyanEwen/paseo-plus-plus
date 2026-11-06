@@ -12,6 +12,19 @@ const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
+const isPreviewBuild = process.env.PASEO_PREVIEW_BUILD === "1";
+const previewExpoProject = {
+  projectId: process.env.PASEO_PREVIEW_EXPO_PROJECT_ID,
+  owner: process.env.PASEO_PREVIEW_EXPO_OWNER,
+  slug: process.env.PASEO_PREVIEW_EXPO_SLUG,
+};
+
+if (isPreviewBuild && appVariant !== "development") {
+  throw new Error("Fork preview builds require APP_VARIANT=development");
+}
+if (isPreviewBuild && Object.values(previewExpoProject).some((value) => !value?.trim())) {
+  throw new Error("Fork previews require their own Expo project ID, owner, and slug");
+}
 
 const buildProfile = isFdroidBuild
   ? {
@@ -68,6 +81,14 @@ function resolveSecretFile(params) {
 }
 
 const variants = {
+  preview: {
+    name: "Paseo++",
+    packageId: "sh.paseo.plusplus",
+    googleServicesFile: resolveSecretFile({
+      envKey: "GOOGLE_SERVICES_FILE_PREVIEW",
+      fallbackRelativePath: "./.secrets/google-services.preview.json",
+    }),
+  },
   production: {
     name: "Paseo",
     packageId: "sh.paseo",
@@ -94,17 +115,17 @@ const variants = {
   },
 };
 
-const variant = variants[appVariant] ?? variants.production;
+const variant = isPreviewBuild ? variants.preview : (variants[appVariant] ?? variants.production);
 const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 
 export default {
   expo: {
-    name: variant.name,
-    slug: "voice-mobile",
+    name: isPreviewBuild ? "Paseo++" : variant.name,
+    slug: isPreviewBuild ? previewExpoProject.slug : "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "default",
     icon: "./assets/images/icon.png",
-    scheme: "paseo",
+    scheme: isPreviewBuild ? "paseo-plus-plus" : "paseo",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -192,14 +213,17 @@ export default {
     extra: {
       fdroidBuild: isFdroidBuild,
       profileBuild: isProfileBuild,
+      previewBuild: isPreviewBuild,
       watchdogBuild: isWatchdogBuild,
       diagnosticRevision: process.env.PASEO_DIAGNOSTIC_REVISION,
       diagnosticBuildTime: process.env.PASEO_DIAGNOSTIC_BUILD_TIME,
       router: {},
       eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
+        projectId: isPreviewBuild
+          ? previewExpoProject.projectId
+          : "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "getpaseo",
+    owner: isPreviewBuild ? previewExpoProject.owner : "getpaseo",
   },
 };
