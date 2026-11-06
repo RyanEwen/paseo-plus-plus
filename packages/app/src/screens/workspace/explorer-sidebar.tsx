@@ -7,10 +7,10 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { WorkspacePanelHost } from "@/screens/workspace/workspace-panel-host";
 import { deriveWorkspacePaneState } from "@/screens/workspace/workspace-pane-state";
 import {
-  WorkspaceDesktopTabsRow,
-  type WorkspaceDesktopTabRowItem,
-  type WorkspaceDesktopTabsRowProps,
-} from "@/screens/workspace/workspace-desktop-tabs-row";
+  WorkspaceTabsRow,
+  type WorkspaceTabRowItem,
+  type WorkspaceTabsRowProps,
+} from "@/screens/workspace/workspace-tabs-row";
 import type { WorkspacePaneContentModel } from "@/screens/workspace/workspace-pane-content";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SplitPane } from "@/stores/workspace-layout-store";
@@ -18,7 +18,7 @@ import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { WindowChromeRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
 
 interface ExplorerSidebarDockProps extends Pick<
-  WorkspaceDesktopTabsRowProps,
+  WorkspaceTabsRowProps,
   | "setHoveredCloseTabKey"
   | "onCopyResumeCommand"
   | "onCopyAgentId"
@@ -80,7 +80,7 @@ export function ExplorerSidebarDock({
   const paneState = useMemo(() => deriveWorkspacePaneState({ pane, tabs: uiTabs }), [pane, uiTabs]);
   const tabs = useMemo(() => paneState.tabs.map((tab) => tab.descriptor), [paneState.tabs]);
   const activeTabId = paneState.activeTabId;
-  const tabItems = useMemo<WorkspaceDesktopTabRowItem[]>(
+  const tabItems = useMemo<WorkspaceTabRowItem[]>(
     () =>
       tabs.map((tab) => ({
         tab,
@@ -124,7 +124,7 @@ export function ExplorerSidebarDock({
           <WindowChromeSafeArea placement="inline" style={styles.tabRail}>
             <TitlebarDragRegion />
             <View style={styles.tabRow}>
-              <WorkspaceDesktopTabsRow
+              <WorkspaceTabsRow
                 host="explorer"
                 launchPurpose="supporting"
                 isFocused={isWorkspaceFocused}
