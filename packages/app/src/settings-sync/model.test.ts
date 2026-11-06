@@ -12,8 +12,6 @@ import {
   getSettingsReadAvailable,
   subscribeSettingsReadAvailable,
   installSettingsSyncSaveHandler,
-  getSettingsEditingBlocked,
-  setSettingsEditingBlocked,
 } from "./save-handler";
 import { bindSettingsHost } from "./binding";
 import { createSettingsHostTransport } from "./transport";

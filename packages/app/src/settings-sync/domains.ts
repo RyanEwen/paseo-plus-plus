@@ -45,10 +45,13 @@ export interface SettingsSyncDomain {
 
 const RESERVED_DOMAIN_IDS = new Set(["app"]);
 const domains = new Map<string, SettingsSyncDomain>();
+const listeners = new Set<() => void>();
 
 /**
- * Register a feature adapter. Call it at module load, before the settings sync bootstrap mounts:
- * edit observers install when the bootstrap starts, so a later registration misses them.
+ * Register a feature adapter from an effect or startup hook, never at module import: Fast Refresh
+ * re-runs modules, and a second registration of the same id throws. Mount the registering
+ * component before <SettingsSyncBootstrap /> so its initialize() runs before the first load;
+ * edit observers follow registrations made at any time.
  *
  * Returns an unregister function. Throws for a duplicate or reserved id, so two features cannot
  * silently write the same domain.
@@ -61,14 +64,29 @@ export function registerSettingsSyncDomain(domain: SettingsSyncDomain): () => vo
     throw new Error(`Settings sync domain "${domain.id}" is already registered`);
   }
   domains.set(domain.id, domain);
+  notifyRegistration();
   return () => {
-    if (domains.get(domain.id) === domain) domains.delete(domain.id);
+    if (domains.get(domain.id) !== domain) return;
+    domains.delete(domain.id);
+    notifyRegistration();
   };
 }
 
 /** Registered adapters in registration order. */
 export function listSettingsSyncDomains(): readonly SettingsSyncDomain[] {
   return [...domains.values()];
+}
+
+/** Notify the listener after every registration or removal; return an unsubscribe function. */
+export function subscribeSettingsSyncDomains(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function notifyRegistration(): void {
+  for (const listener of listeners) listener();
 }
 
 /** Initialize adapters one at a time; the first rejection stops and propagates. */
@@ -124,25 +142,41 @@ export async function applyDomainValues(
 }
 
 /**
- * Install every adapter's edit observer. Returns one stop function that stops them in reverse
- * order. If an install throws, observers installed so far are stopped before rethrowing.
+ * Keep one edit observer per registered adapter while the sync owner runs, following adapters
+ * registered or removed later. The returned function stops every observer it started, newest
+ * first. If an install throws, the error propagates to whoever triggered the change.
  */
-export function observeDomainEdits(
-  list: readonly SettingsSyncDomain[],
-  sync: SettingsSyncModel,
-): () => void {
-  const stops: (() => void)[] = [];
+export function trackDomainEdits(sync: SettingsSyncModel): () => void {
+  const active = new Map<SettingsSyncDomain, () => void>();
+
+  const reconcile = () => {
+    const current = new Set(listSettingsSyncDomains());
+    for (const [domain, stop] of active) {
+      if (current.has(domain)) continue;
+      active.delete(domain);
+      stop();
+    }
+    for (const domain of current) {
+      if (!domain.observeEdits || active.has(domain)) continue;
+      active.set(domain, domain.observeEdits(sync));
+    }
+  };
+
   const stopAll = () => {
-    for (const stop of stops.splice(0).reverse()) stop();
+    const stops = [...active.values()].toReversed();
+    active.clear();
+    for (const stop of stops) stop();
   };
 
   try {
-    for (const domain of list) {
-      if (domain.observeEdits) stops.push(domain.observeEdits(sync));
-    }
+    reconcile();
   } catch (error) {
     stopAll();
     throw error;
   }
-  return stopAll;
+  const unsubscribe = subscribeSettingsSyncDomains(reconcile);
+  return () => {
+    unsubscribe();
+    stopAll();
+  };
 }

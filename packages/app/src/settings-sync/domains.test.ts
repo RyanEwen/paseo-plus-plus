@@ -6,9 +6,9 @@ import {
   filterDomainAppExport,
   initializeDomains,
   listSettingsSyncDomains,
-  observeDomainEdits,
   ownedDomainAppKeys,
   registerSettingsSyncDomain,
+  trackDomainEdits,
   type SettingsSyncContext,
   type SettingsSyncDomain,
 } from "./domains";
@@ -106,32 +106,62 @@ describe("settings sync domain composition", () => {
     await expect(initializeDomains(list)).rejects.toThrow("local store unavailable");
     expect(calls).toEqual(["apply first 1", "init first"]);
   });
+});
 
-  it("stops edit observers in reverse order, and stops installed ones when an install fails", () => {
-    const calls: string[] = [];
-    const observer = (id: string): SettingsSyncDomain => ({
+describe("settings sync domain edit tracking", () => {
+  /** An adapter whose edit observer records its start and stop in calls. */
+  function recordingObserver(id: string, calls: string[]): SettingsSyncDomain {
+    return {
       id,
       observeEdits: () => {
         calls.push(`start ${id}`);
         return () => calls.push(`stop ${id}`);
       },
-    });
+    };
+  }
 
-    const stop = observeDomainEdits([observer("a"), observer("b")], sync);
-    stop();
-    stop();
-    expect(calls).toEqual(["start a", "start b", "stop b", "stop a"]);
+  it("follows later registrations and removals, and stops the rest newest first", () => {
+    const calls: string[] = [];
+    const unregisterA = registerSettingsSyncDomain(recordingObserver("test-track-a", calls));
+    const stop = trackDomainEdits(sync);
+    const unregisterB = registerSettingsSyncDomain(recordingObserver("test-track-b", calls));
+    const unregisterC = registerSettingsSyncDomain(recordingObserver("test-track-c", calls));
+    try {
+      unregisterB();
+      stop();
+      stop();
+      // Removal after stop no longer reaches an observer.
+      unregisterC();
+    } finally {
+      unregisterA();
+      unregisterB();
+      unregisterC();
+    }
+    expect(calls).toEqual([
+      "start test-track-a",
+      "start test-track-b",
+      "start test-track-c",
+      "stop test-track-b",
+      "stop test-track-c",
+      "stop test-track-a",
+    ]);
+  });
 
-    calls.length = 0;
-    const failing: SettingsSyncDomain = {
-      id: "broken",
+  it("stops installed observers when an initial install fails", () => {
+    const calls: string[] = [];
+    const unregisterA = registerSettingsSyncDomain(recordingObserver("test-fail-a", calls));
+    const unregisterBroken = registerSettingsSyncDomain({
+      id: "test-fail-broken",
       observeEdits: () => {
         throw new Error("committer unavailable");
       },
-    };
-    expect(() => observeDomainEdits([observer("a"), failing], sync)).toThrow(
-      "committer unavailable",
-    );
-    expect(calls).toEqual(["start a", "stop a"]);
+    });
+    try {
+      expect(() => trackDomainEdits(sync)).toThrow("committer unavailable");
+    } finally {
+      unregisterA();
+      unregisterBroken();
+    }
+    expect(calls).toEqual(["start test-fail-a", "stop test-fail-a"]);
   });
 });

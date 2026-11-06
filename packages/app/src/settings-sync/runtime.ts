@@ -29,8 +29,8 @@ import {
   filterDomainAppExport,
   initializeDomains,
   listSettingsSyncDomains,
-  observeDomainEdits,
   ownedDomainAppKeys,
+  trackDomainEdits,
   type SettingsSyncContext,
 } from "./domains";
 import { useSessionStore } from "@/stores/session-store";
@@ -53,9 +53,9 @@ export async function initializeSettingsSyncDomains(): Promise<void> {
   await initializeDomains(listSettingsSyncDomains());
 }
 
-/** Start every registered domain's edit committer; the returned function stops them all. */
+/** Run every registered domain's edit committer, including later registrations; returns stop. */
 export function observeSettingsSyncDomainEdits(): () => void {
-  return observeDomainEdits(listSettingsSyncDomains(), settingsSync);
+  return trackDomainEdits(settingsSync);
 }
 
 /**
