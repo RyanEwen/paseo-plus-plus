@@ -32,11 +32,13 @@ import {
   waitForWorkspaceTabsVisible,
 } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { buildDefaultSettingsRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
+import { expectAppRoute } from "../support/helpers/route-assertions";
+import { openSettingsSection } from "../support/helpers/settings";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { rememberTimelineRequestCounts } from "../support/helpers/timeline-resume";
 import {
@@ -336,6 +338,9 @@ async function selectSendBehaviorInSettings(
   behaviorLabel: string,
   stored: string,
 ): Promise<void> {
+  // Shortcut and button entry paths share one explicit route to the General field.
+  await expectAppRoute(page, buildDefaultSettingsRoute());
+  await openSettingsSection(page, "general");
   await page.getByRole("button", { name: /^Default send: / }).click();
   await page.getByRole("menuitem", { name: behaviorLabel, exact: true }).click();
   await expect

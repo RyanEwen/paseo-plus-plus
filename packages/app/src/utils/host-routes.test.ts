@@ -8,7 +8,10 @@ import {
   buildOpenProjectRoute,
   resolveKnownHostRoute,
   buildSessionsRoute,
+  buildDefaultSettingsRoute,
   buildSettingsAddHostRoute,
+  buildSettingsRoute,
+  buildSettingsSectionRoute,
   buildProjectSettingsRoute,
   buildProjectsSettingsRoute,
   decodeFilePathFromPathSegment,
@@ -193,6 +196,11 @@ describe("projects settings routes", () => {
     expect(buildSettingsAddHostRoute("retry 1")).toBe("/settings/general?addHost=retry%201");
   });
 
+  it("opens fork preferences by default without changing explicit routes or the navigation root", () => {
+    expect(buildDefaultSettingsRoute()).toBe("/settings/paseo-plus-plus");
+    expect(buildSettingsRoute()).toBe("/settings");
+    expect(buildSettingsSectionRoute("general")).toBe("/settings/general");
+  });
   it("buildProjectsSettingsRoute scopes the list to a host", () => {
     expect(buildProjectsSettingsRoute("host a")).toBe("/settings/hosts/host%20a/projects");
   });

@@ -1,10 +1,16 @@
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
-import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
+import {
+  buildDefaultSettingsRoute,
+  buildHostAgentDetailRoute,
+  buildHostWorkspaceRoute,
+} from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
 import { waitForTabBar, expectAgentTabActive } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { expectAppRoute } from "../support/helpers/route-assertions";
+import { openSettingsSection } from "../support/helpers/settings";
 
 async function pressSettingsToggleShortcut(page: import("@playwright/test").Page) {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
@@ -133,7 +139,8 @@ test.describe("Settings toggle tab regression", () => {
       await expectAgentTabActive(page, secondAgent.id);
 
       await pressSettingsToggleShortcut(page);
-      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expectAppRoute(page, buildDefaultSettingsRoute());
+      await openSettingsSection(page, "general");
 
       const defaultSendTrigger = page.getByRole("button", {
         name: "Default send: Steer",
@@ -201,7 +208,7 @@ test.describe("Settings toggle tab regression", () => {
 
       await startComposerFrameCapture(page);
       await pressSettingsToggleShortcut(page);
-      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expectAppRoute(page, buildDefaultSettingsRoute());
       await pressSettingsToggleShortcut(page);
       await expect(page).not.toHaveURL(/\/settings(\/|$)/);
       await expect(input).toHaveValue("Keep this short draft in the composer");
@@ -281,6 +288,7 @@ async function selectSendingOption(
   setting: string,
   option: string,
 ) {
+  await openSettingsSection(page, "general");
   await page.getByRole("button", { name: new RegExp(`^${setting}:`) }).click();
   await page.getByRole("menuitem", { name: option, exact: true }).click();
   await expect(
@@ -324,6 +332,7 @@ test("send shortcut selection persists and controls the composer", async ({ page
     });
     await test.step("choose the explicit modifier shortcut and retain it after reload", async () => {
       await pressSettingsToggleShortcut(page);
+      await openSettingsSection(page, "general");
       await expect(
         page.getByRole("button", { name: "Send shortcut: Enter", exact: true }),
       ).toBeVisible();
