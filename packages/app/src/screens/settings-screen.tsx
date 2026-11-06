@@ -1,3 +1,4 @@
+import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { PaseoPlusPlusSection } from "@/screens/settings/paseo-plus-plus-section";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
