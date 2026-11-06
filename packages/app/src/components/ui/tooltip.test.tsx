@@ -11,8 +11,10 @@ vi.mock("@/constants/platform", () => ({
   isNative: false,
 }));
 
+const layout = vi.hoisted(() => ({ compact: false }));
+
 vi.mock("@/constants/layout", () => ({
-  useIsCompactFormFactor: () => false,
+  useIsCompactFormFactor: () => layout.compact,
 }));
 
 vi.mock("@gorhom/portal", () => ({
@@ -63,6 +65,7 @@ afterEach(() => {
   }
   root = null;
   container = null;
+  layout.compact = false;
   vi.unstubAllGlobals();
 });
 
@@ -112,5 +115,42 @@ describe("TooltipTrigger", () => {
     pressTrigger();
 
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TooltipTrigger tap mode", () => {
+  it("ignores touch hover boundaries and keeps a tapped tooltip open", () => {
+    layout.compact = true;
+    const onOpenChange = vi.fn();
+    act(() => {
+      root?.render(
+        <Tooltip enabledOnMobile onOpenChange={onOpenChange}>
+          <TooltipTrigger asChild>
+            <Pressable testID="trigger">
+              <Text>Help</Text>
+            </Pressable>
+          </TooltipTrigger>
+        </Tooltip>,
+      );
+    });
+    const trigger = container?.querySelector('[data-testid="trigger"]');
+    expect(trigger).not.toBeNull();
+    // Touch emits pointer boundaries around a tap; only the press may open or close.
+    const touchBoundary = (type: string, relatedTarget: EventTarget | null = null) => {
+      const event = new window.MouseEvent(type, { bubbles: true, relatedTarget });
+      Object.defineProperty(event, "pointerType", { value: "touch" });
+      act(() => {
+        trigger?.dispatchEvent(event);
+      });
+    };
+
+    touchBoundary("pointerover");
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    pressTrigger();
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+    touchBoundary("pointerout", document.body);
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
   });
 });
