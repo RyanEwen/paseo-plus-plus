@@ -8,6 +8,7 @@ import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspac
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { replaceCodeMirrorContent } from "../support/helpers/code-mirror";
 import {
   openFileExplorer,
   openFileFromExplorer,
@@ -84,10 +85,15 @@ async function chooseRichMarkdown(page: Page) {
   await page.getByRole("radio", { name: "Rich Markdown — markdown-panel", exact: true }).click();
   await page.getByRole("checkbox", { name: "Don't ask me again", exact: true }).click();
   await page.getByRole("button", { name: "Use", exact: true }).click();
+  // The closing modal retains its focus scope through the exit animation.
+  // Visible editor content behind it does not yet own keyboard input.
+  await expect(page.getByTestId("file-panel-picker")).toHaveCount(0);
 }
 
 async function replaceMarkdown(page: Page, text: string) {
-  await page.getByRole("textbox", { name: "Rich Markdown editor", exact: true }).fill(text);
+  const editor = page.getByRole("textbox", { name: "Rich Markdown editor", exact: true });
+  await replaceCodeMirrorContent({ editor, content: text });
+  await expect(editor.locator(".cm-line")).toHaveText(text.split("\n"));
 }
 
 async function openWithFromTabMenu(page: Page, name: string, option: string) {

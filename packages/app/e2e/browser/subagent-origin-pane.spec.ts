@@ -183,6 +183,10 @@ test("a preferred chat file link still opens beside its right-pane agent", async
 test("MCP delegates to self and B and opens both qualified children in ordinary conversations", async ({
   page,
 }) => {
+  await page.addInitScript((key) => {
+    const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
+    localStorage.setItem(key, JSON.stringify({ ...settings, chatDisplay: "full" }));
+  }, SETTINGS_KEY);
   const fleet = await delegateFleetThroughMcp();
   let appSockets = 0;
   let routeOpens = 0;
@@ -243,12 +247,40 @@ test("MCP delegates to self and B and opens both qualified children in ordinary 
       workspaceId: fleet.workspace.workspaceId,
       agentId: fleet.parent.id,
     });
-    await expect(
-      page.getByRole("button", { name: /Agent finished.*MCP child on A/ }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /Agent finished.*MCP child on B/ }),
-    ).toBeVisible();
+    await expect(page.getByTestId(`workspace-tab-agent_${fleet.parent.id}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const completionTimeline = await fleet.a.fetchAgentTimeline(fleet.parent.id, {
+      direction: "tail",
+      limit: 100,
+    });
+    for (const child of [fleet.local, fleet.remote]) {
+      const completions = completionTimeline.entries
+        .flatMap(({ item }) =>
+          item.type === "tool_call" && item.agentMessage ? [item.agentMessage] : [],
+        )
+        .filter(
+          (message) =>
+            message.event === "finished" &&
+            message.sender.id === child.agentId &&
+            message.text.includes(`Server: ${child.serverId}`),
+        );
+      expect(completions).toHaveLength(1);
+      const completion = completions[0];
+      if (!completion) throw new Error(`Missing qualified completion for ${child.agentId}`);
+      const button = page.getByRole("button", {
+        name: `Agent finished ${child.title}`,
+        exact: true,
+      });
+      const row = page.getByTestId("tool-call-badge").filter({ has: button });
+      await expect(row).toHaveCount(1);
+      await expect(button).toBeVisible();
+      await button.click();
+      await expect(row).toContainText(`From agent: ${child.agentId}`);
+      await expect(row).toContainText(`Server: ${child.serverId}`);
+      await expect(row).toContainText(completion.text);
+    }
     const owners = await page.evaluate(() => {
       const runtime = Reflect.get(globalThis, "__paseoHostRuntimeStore") as {
         getHosts(): Array<{ serverId: string }>;

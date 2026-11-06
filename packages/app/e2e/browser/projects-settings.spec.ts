@@ -2,6 +2,7 @@ import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test as base, type Page } from "../support/fixtures";
 import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client";
+import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
@@ -165,6 +166,7 @@ async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<
   return readFile(path.join(project.path, "paseo.json"), "utf8");
 }
 
+/** Add through the UI and return its equivalence view key, which is not the daemon project ID. */
 async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
   await openAddProjectFlow(page);
   await chooseAddProjectMethod(page, "directory-search");
@@ -184,16 +186,16 @@ async function addProjectFromSidebar(page: Page, projectPath: string): Promise<s
   return testId!.replace("sidebar-project-row-", "");
 }
 
-async function openProjectSettingsFromSidebar(page: Page, projectId: string): Promise<void> {
-  const projectRow = page.getByTestId(`sidebar-project-row-${projectId}`);
+async function openProjectSettingsFromSidebar(page: Page, projectViewKey: string): Promise<void> {
+  const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`);
   await expect(projectRow).toBeVisible({ timeout: 30_000 });
   await projectRow.hover();
 
-  const kebab = page.getByTestId(`sidebar-project-kebab-${projectId}`);
+  const kebab = page.getByTestId(`sidebar-project-kebab-${projectViewKey}`);
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
 
-  const openSettingsItem = page.getByTestId(`sidebar-project-menu-open-settings-${projectId}`);
+  const openSettingsItem = page.getByTestId(`sidebar-project-menu-open-settings-${projectViewKey}`);
   await expect(openSettingsItem).toBeVisible({ timeout: 10_000 });
   await openSettingsItem.click();
 }
@@ -201,32 +203,48 @@ async function openProjectSettingsFromSidebar(page: Page, projectId: string): Pr
 test.describe("Projects settings", () => {
   test("freshly-added project with no workspace is editable from the sidebar without a reload", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const repo = await createTempGitRepo("projects-settings-empty-");
     const client = await connectSeedClient();
-    let projectViewKey: string | null = null;
+    let projectId: string | null = null;
 
     try {
       await gotoAppShell(page);
 
-      projectViewKey = await addProjectFromSidebar(page, repo.path);
+      const projectViewKey = await addProjectFromSidebar(page, repo.path);
+      // UI equivalence keys can span hosts; cleanup requires the daemon's registry identity.
+      const matches = (await client.listProjects()).projects.filter(
+        (project) =>
+          project.projectKey && projectEquivalenceViewKey(project.projectKey) === projectViewKey,
+      );
+      expect(matches).toHaveLength(1);
+      const descriptor = matches[0];
+      if (!descriptor) throw new Error(`Added project descriptor missing for ${projectViewKey}`);
+      projectId = descriptor.projectId;
+      await testInfo.attach("added-project-identity", {
+        body: JSON.stringify({ projectViewKey, descriptor }),
+        contentType: "application/json",
+      });
       await openProjectSettingsFromSidebar(page, projectViewKey);
 
       await expectProjectSettingsFormVisible(page);
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
     } finally {
-      if (projectViewKey) {
-        const project = (await client.listProjects()).projects.find(
-          (entry) => entry.projectKey === projectViewKey,
-        );
-        expect(project).toBeDefined();
-        await client.removeProject(project!.projectId);
-        expect(
-          (await client.listProjects()).projects.map((entry) => entry.projectKey),
-        ).not.toContain(projectViewKey);
+      try {
+        if (projectId) {
+          await client.removeProject(projectId);
+          const remaining = (await client.listProjects()).projects.map(
+            (project) => project.projectId,
+          );
+          expect(remaining).not.toContain(projectId);
+        }
+      } finally {
+        try {
+          await client.close();
+        } finally {
+          await repo.cleanup();
+        }
       }
-      await client.close().catch(() => undefined);
-      await repo.cleanup().catch(() => undefined);
     }
   });
 
