@@ -1741,12 +1741,12 @@ function ProjectBlock({
   const renderWorkspace = useCallback(
     ({
       item,
-      drag: workspaceDrag,
+      drag: workspaceRowDrag,
       isActive,
       dragHandleProps: workspaceDragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
       return renderWorkspaceRow(item, {
-        drag: workspaceDrag,
+        drag: workspaceRowDrag,
         isDragging: isActive,
         dragHandleProps: workspaceDragHandleProps,
       });
