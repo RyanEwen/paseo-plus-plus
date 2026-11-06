@@ -814,7 +814,7 @@ describe("deriveProjectStatusBucket", () => {
     ).toBe("needs_input");
   });
 
-  it("keeps a working project on running when a finished workspace also awaits review", () => {
+  it("surfaces ready work while another workspace is running", () => {
     expect(
       deriveProjectStatusBucket({
         workspaces: [
@@ -830,7 +830,7 @@ describe("deriveProjectStatusBucket", () => {
           }),
         },
       }),
-    ).toBe("running");
+    ).toBe("attention");
   });
 
   it("surfaces needs_input over a concurrently running workspace", () => {
