@@ -112,6 +112,10 @@ hydration before opening the tab. Keep the stable agent URL free of a workspace
 hint. [Notifications](notifications.md) owns tap delivery and native lifecycle
 constraints.
 
+Explicit tab navigation also reveals the compact workspace pane. Selecting a tab alone
+leaves the workspace list or explorer in front of it. Deferred route intents reveal
+the pane again when the destination consumes them after layout hydration.
+
 When a workspace target cannot open yet, `navigateToWorkspace()` records a
 pending open in the layout model under that host and workspace key. The owning
 workspace screen consumes it once after hydration. Archived-workspace recovery

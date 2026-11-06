@@ -1,5 +1,4 @@
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
-import { usePanelStore } from "@/stores/panel-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
@@ -17,6 +16,7 @@ import {
   type NavigateToWorkspaceInput,
 } from "./navigation";
 import { useSessionStore } from "@/stores/session-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
@@ -45,6 +45,7 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
+    revealWorkspaceContent: () => usePanelStore.getState().showMobileAgent(),
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
     deferOpenTab: (input) => useWorkspaceLayoutStore.getState().deferOpenTab(input),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
