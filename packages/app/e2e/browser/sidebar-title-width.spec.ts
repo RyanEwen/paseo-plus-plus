@@ -65,12 +65,20 @@ async function toggleTrailing(page: Page, label: "Diff stats" | "Last activity",
 
 async function expectTouchTitleWidth(page: Page) {
   const row = workspaceRow(page);
-  const withDiff = await titleWidth(row);
+  // Compact rows now show explicitly enabled metadata, just like desktop rows.
+  if (!(await row.getByTestId("sidebar-workspace-diff-stat").count())) {
+    await toggleTrailing(page, "Diff stats", true);
+  }
+  if (!(await row.getByTestId("sidebar-workspace-timestamp").count())) {
+    await toggleTrailing(page, "Last activity", true);
+  }
+  const withBoth = await titleWidth(row);
   await toggleTrailing(page, "Diff stats", true);
-  const withoutStats = await titleWidth(row);
-  expect(withDiff).toBeCloseTo(withoutStats, 0);
+  const withoutDiff = await titleWidth(row);
+  expect(withoutDiff).toBeGreaterThan(withBoth);
   await toggleTrailing(page, "Last activity", true);
-  expect(await titleWidth(row)).toBeCloseTo(withoutStats, 0);
+  expect(await titleWidth(row)).toBeGreaterThan(withoutDiff);
+  await toggleTrailing(page, "Last activity", true);
   await toggleTrailing(page, "Diff stats", true);
 }
 
@@ -113,12 +121,14 @@ async function openDesktopWorkspaceList(page: Page) {
   return titleWidth(row);
 }
 
-async function expectHoverKeepsTitleWidth(page: Page, width: number, testInfo: TestInfo) {
+async function expectHoverUsesActionSpace(page: Page, width: number, testInfo: TestInfo) {
   const row = workspaceRow(page);
   await row.hover();
   await expect(row.getByLabel("Workspace actions", { exact: true })).toBeVisible();
-  expect(await titleWidth(row)).toBeCloseTo(width, 0);
+  await expect.poll(() => titleWidth(row)).toBeLessThan(width - 20);
   await page.screenshot({ path: testInfo.outputPath("desktop-hover.png") });
+  await page.mouse.move(0, 0);
+  await expect.poll(() => titleWidth(row)).toBeCloseTo(width, 0);
 }
 
 async function expectShortcutHintsKeepTitleWidth(page: Page, width: number, testInfo: TestInfo) {
@@ -136,7 +146,7 @@ async function expectDisablingStatsExpandsTitle(page: Page, width: number) {
   expect(await titleWidth(workspaceRow(page))).toBeGreaterThan(width);
 }
 
-test("touch titles use the space occupied by hidden stats in every grouping", async ({
+test("touch titles reclaim space when visible stats are disabled in every grouping", async ({
   page,
 }, testInfo) => {
   await openTouchWorkspaceList(page, testInfo);
@@ -147,9 +157,11 @@ test("touch titles use the space occupied by hidden stats in every grouping", as
   await expectTouchTitleWidth(page);
 });
 
-test("desktop hover and shortcut hints preserve title width", async ({ page }, testInfo) => {
+test("desktop idle titles reclaim hover-action space and shortcut hints preserve width", async ({
+  page,
+}, testInfo) => {
   const width = await openDesktopWorkspaceList(page);
-  await expectHoverKeepsTitleWidth(page, width, testInfo);
+  await expectHoverUsesActionSpace(page, width, testInfo);
   await expectShortcutHintsKeepTitleWidth(page, width, testInfo);
   await expectDisablingStatsExpandsTitle(page, width);
 });
@@ -189,7 +201,7 @@ test("last activity and diff stats can be shown together and toggled independent
   await toggleTrailing(page, "Diff stats");
   await expect(diff).toHaveText("+12.3k-1");
   const width = await titleWidth(row);
-  await expectHoverKeepsTitleWidth(page, width, testInfo);
+  await expectHoverUsesActionSpace(page, width, testInfo);
   await expectShortcutHintsKeepTitleWidth(page, width, testInfo);
   await page.mouse.move(0, 0);
   await page.reload();
