@@ -9,6 +9,7 @@ import { darkPureBlackTheme, darkTheme, lightTheme } from "@/styles/theme";
 import {
   MIN_WORKSPACE_TAB_WIDTH,
   workspaceTabMinimumWidth,
+  resolveWorkspaceTabScrollOffset,
   computeWorkspaceTabLayout,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
@@ -26,7 +27,93 @@ const metrics = {
   closeButtonWidth: 0,
 };
 
+const compactFillMetrics = {
+  ...metrics,
+  actionsReservedWidth: 0,
+  rowPaddingHorizontal: 0,
+  tabGap: 0,
+};
+
 describe("computeWorkspaceTabLayout", () => {
+  it.each([
+    { tabCount: 2, width: 150, scrolling: false },
+    { tabCount: 4, width: 75, scrolling: false },
+    { tabCount: 5, width: 64, scrolling: true },
+  ])("fills a 300px compact track with $tabCount equal tabs", ({ tabCount, width, scrolling }) => {
+    const result = computeWorkspaceTabLayout({
+      compact: true,
+      fillAvailableWidth: true,
+      viewportWidth: 300,
+      tabLabelWidths: Array.from({ length: tabCount }, (_, index) => index * 200),
+      metrics: compactFillMetrics,
+    });
+
+    expect(result.items).toEqual(
+      Array.from({ length: tabCount }, () => ({ width, showLabel: true })),
+    );
+    expect(result.requiresHorizontalScrollFallback).toBe(scrolling);
+    expect(result.closeButtonPolicy).toBe("none");
+  });
+
+  it("uses measured track padding and both outer half-gaps at the compact minimum boundary", () => {
+    const input = {
+      compact: true,
+      fillAvailableWidth: true,
+      viewportWidth: 220,
+      tabLabelWidths: [0, 400, 800],
+      metrics: { ...compactFillMetrics, rowPaddingHorizontal: 8, tabGap: 4 },
+    };
+    const exact = computeWorkspaceTabLayout(input);
+    const overflow = computeWorkspaceTabLayout({ ...input, viewportWidth: 219 });
+
+    expect(exact.items.map((item) => item.width)).toEqual([64, 64, 64]);
+    expect(exact.requiresHorizontalScrollFallback).toBe(false);
+    expect(overflow.items).toEqual(exact.items);
+    expect(overflow.requiresHorizontalScrollFallback).toBe(true);
+  });
+
+  it("fills a single compact tab beyond the title ceiling regardless of the wider-tabs preference", () => {
+    const input = {
+      compact: true,
+      fillAvailableWidth: true,
+      viewportWidth: 500,
+      tabLabelWidths: [800],
+      metrics: compactFillMetrics,
+    };
+    const result = computeWorkspaceTabLayout(input);
+
+    expect(result.items).toEqual([{ width: 500, showLabel: true }]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(computeWorkspaceTabLayout({ ...input, widerTabs: true })).toEqual(result);
+  });
+
+  it("keeps fractional compact shares within the measured width", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: true,
+      fillAvailableWidth: true,
+      viewportWidth: 301,
+      tabLabelWidths: [0, 100, 800],
+      metrics: compactFillMetrics,
+    });
+
+    expect(result.items.map((item) => item.width)).toEqual([301 / 3, 301 / 3, 301 / 3]);
+    expect(result.items.reduce((sum, item) => sum + item.width, 0)).toBeCloseTo(301);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+
+  it("retains desktop natural-width sizing when compact fill is requested", () => {
+    const input = {
+      compact: false,
+      viewportWidth: 1000,
+      tabLabelWidths: [29, 400],
+      metrics,
+    };
+
+    expect(computeWorkspaceTabLayout({ ...input, fillAvailableWidth: true })).toEqual(
+      computeWorkspaceTabLayout(input),
+    );
+  });
+
   it("exempts Explorer from workspace minimum widths on wide and compact layouts", () => {
     expect(workspaceTabMinimumWidth("main", false)).toBe(96);
     expect(workspaceTabMinimumWidth("main", true)).toBe(64);
@@ -385,5 +472,38 @@ describe("resolveWorkspaceTabChipBackdrop", () => {
     expect(
       resolveWorkspaceTabChipBackdrop({ rail: "surface", isActiveFocused: false, isFilled: false }),
     ).toBe("surface0");
+  });
+});
+
+describe("selected workspace tab visibility", () => {
+  const geometry = {
+    offset: 0,
+    viewportWidth: 300,
+    contentWidth: 800,
+    tabStart: 440,
+    tabWidth: 140,
+  };
+
+  it("reveals an offscreen selected or newly opened tab", () => {
+    expect(resolveWorkspaceTabScrollOffset(geometry)).toBe(280);
+  });
+
+  it("keeps a fully visible selection at the user's current offset", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, offset: 400 })).toBe(400);
+  });
+
+  it("reveals an earlier tab after selecting it", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, offset: 500 })).toBe(440);
+  });
+
+  it("updates visibility after rotation and clamps after closing tabs", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, viewportWidth: 160 })).toBe(420);
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, offset: 500, contentWidth: 600 })).toBe(
+      300,
+    );
+  });
+
+  it("waits for usable native measurements", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, viewportWidth: 0 })).toBe(0);
   });
 });
