@@ -87,7 +87,9 @@ The composer Changes pill is a two-stage desktop action: it first reveals Explor
 routes later presses to the working diff through the shared diff preference.
 
 The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
-that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
+that pane from the workspace split tree and docks it separately. Resolve its id with
+`selectExplorerSidebarPaneId`: fresh layouts contain Explorer before its registration is saved.
+Reading only the registration map renders the same pane in both shells. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
 Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
