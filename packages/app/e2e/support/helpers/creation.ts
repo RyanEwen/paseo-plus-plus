@@ -283,7 +283,7 @@ export async function createCreationScenario(page: Page) {
         });
       }
       await expect(workspaceDeckEntryLocator(page, getServerId(), workspaceId)).toHaveCount(0);
-      await revealSidebarProjectWorkspaces(page, project.projectKey);
+      await revealSidebarProjectWorkspaces(page, project.projectKey, workspaceId);
       await switchWorkspaceViaSidebar({ page, serverId: getServerId(), workspaceId });
       await page
         .getByTestId(draftTestId!)

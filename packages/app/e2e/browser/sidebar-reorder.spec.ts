@@ -1,10 +1,17 @@
 import type { Locator, Page } from "@playwright/test";
+import { defaultSidebarModeProfiles } from "../../src/stores/sidebar-mode-preferences";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import {
+  openSidebarDisplayPage,
+  selectSidebarStatusGrouping,
+  selectSidebarProjectGrouping,
+  sidebarWorkspaceSortMenuItem,
+  closeSidebarDisplayPreferences,
+} from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 async function rowTestIds(rows: Locator) {
@@ -58,26 +65,21 @@ async function quickDragFirstRowAfterSecond(
   await expect.poll(() => rowTestIds(rows)).toEqual([before[1], before[0]]);
 }
 
-async function finishSidebarDrag(page: Page): Promise<void> {
-  await page.mouse.up();
-  // dnd-kit's pointer sensor keeps its document click blocker for 50 ms after drop.
-  // Row order updates before that blocker is removed; wait before the next user action.
-  await page.waitForTimeout(60);
-}
-
-async function dragWithoutReordering(rows: Locator): Promise<void> {
+/** Attempt the same physical gesture while sorting owns order; disabled rows have no drag feedback. */
+async function expectSortedDragBlocked(rows: Locator) {
+  await expect(rows).toHaveCount(2);
   const before = await rowTestIds(rows);
   const source = await visibleBoundingBox(rows.nth(0));
   const target = await visibleBoundingBox(rows.nth(1));
   const page = rows.page();
   await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
   await page.mouse.down();
-  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 5 });
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 });
   await finishSidebarDrag(page);
   await expect.poll(() => rowTestIds(rows)).toEqual(before);
 }
 
-test("projects and pinned chats reorder while ordinary workspaces stay newest first", async ({
+test("projects, workspaces, and pinned chats reorder with an immediate mouse drag", async ({
   page,
 }) => {
   const firstProject = await seedWorkspace({ repoPrefix: "sidebar-reorder-first-" });
@@ -113,8 +115,17 @@ test("projects and pinned chats reorder while ordinary workspaces stay newest fi
     await expect
       .poll(() => rowTestIds(ordinaryRows))
       .toEqual([secondWorkspaceTestId, firstWorkspaceTestId]);
+    await selectWorkspaceSort(page, "Manual");
+    await quickDragFirstRowAfterSecond(ordinaryRows, pressWorkspaceRow);
+    await quickDragFirstRowAfterSecond(ordinaryRows, pressWorkspaceRow);
+    await selectWorkspaceSort(page, "Created");
+    await expect
+      .poll(() => rowTestIds(ordinaryRows))
+      .toEqual([secondWorkspaceTestId, firstWorkspaceTestId]);
     await dragWithoutReordering(ordinaryRows);
 
+    await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+    await page.getByTestId("sidebar-workspace-sorting-name").click();
     await firstProject.client.setWorkspacePinned(firstProject.workspaceId, true);
     await secondProject.client.setWorkspacePinned(secondProject.workspaceId, true);
     const secondProjectWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondProject.workspaceId}`;
@@ -130,9 +141,247 @@ test("projects and pinned chats reorder while ordinary workspaces stay newest fi
   }
 });
 
+test("project sorting restores custom drag order and is hidden in status grouping", async ({
+  page,
+}, testInfo) => {
+  const zeta = await seedWorkspace({ repoPrefix: "sidebar-sort-zeta-", title: "Zeta work" });
+  const alpha = await seedWorkspace({ repoPrefix: "sidebar-sort-alpha-", title: "Alpha work" });
+  const alphaId = `sidebar-project-row-${projectEquivalenceViewKey(alpha.projectKey)}`;
+  const zetaId = `sidebar-project-row-${projectEquivalenceViewKey(zeta.projectKey)}`;
+  try {
+    await zeta.client.renameProject(zeta.projectId, "Zeta");
+    await alpha.client.renameProject(alpha.projectId, "Alpha");
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    const rows = page.locator(`[data-testid="${alphaId}"], [data-testid="${zetaId}"]`);
+    await expect(rows).toHaveCount(2);
+    await openSidebarDisplayPage(page, "sidebar-display-sorting");
+    await page.getByTestId("sidebar-sorting-project").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await expectSortedDragBlocked(rows);
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-sorting")).toContainText("Project name");
+    await closeSidebarDisplayPreferences(page);
+    await openSidebarDisplayPage(page, "sidebar-display-sorting");
+    await page.getByTestId("sidebar-sorting-custom").click();
+    if ((await rowTestIds(rows))[0] !== alphaId)
+      await quickDragFirstRowAfterSecond(rows, pressProjectRow);
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await quickDragFirstRowAfterSecond(rows, pressProjectRow);
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-sorting")).toContainText("Custom order");
+    await closeSidebarDisplayPreferences(page);
+    await openSidebarDisplayPage(page, "sidebar-display-sorting");
+    await page.getByTestId("sidebar-sorting-project").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await openSidebarDisplayPage(page, "sidebar-display-sorting");
+    await page.getByTestId("sidebar-sorting-custom").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
+    await selectSidebarStatusGrouping(page);
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-sorting")).toHaveCount(0);
+    await closeSidebarDisplayPreferences(page);
+    await selectSidebarProjectGrouping(page);
+    await page.reload();
+    await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-sorting")).toContainText("Custom order");
+    await page.screenshot({ path: testInfo.outputPath("sidebar-display-preferences.png") });
+  } finally {
+    await alpha.cleanup();
+    await zeta.cleanup();
+  }
+});
+
+test("empty-project sorting is contextual and restores custom drag order in status grouping", async ({
+  page,
+}) => {
+  const zeta = await seedWorkspace({ repoPrefix: "empty-sort-zeta-" });
+  const alpha = await seedWorkspace({ repoPrefix: "empty-sort-alpha-" });
+  const occupied = await seedWorkspace({ repoPrefix: "empty-sort-occupied-" });
+  const alphaId = `sidebar-project-row-${projectEquivalenceViewKey(alpha.projectKey)}`;
+  const zetaId = `sidebar-project-row-${projectEquivalenceViewKey(zeta.projectKey)}`;
+  try {
+    await zeta.client.renameProject(zeta.projectId, "Zeta");
+    await alpha.client.renameProject(alpha.projectId, "Alpha");
+    await zeta.client.archiveWorkspace(zeta.workspaceId);
+    await alpha.client.archiveWorkspace(alpha.workspaceId);
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await selectSidebarStatusGrouping(page);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-workspaces");
+    await page.getByTestId("sidebar-empty-workspaces-group").click();
+    const rows = page.locator(`[data-testid="${alphaId}"], [data-testid="${zetaId}"]`);
+    await expect(rows).toHaveCount(2);
+    const statusRows = page
+      .getByTestId("sidebar-status-group-rows-done")
+      .locator('[data-testid^="sidebar-workspace-row-"]');
+    const initialWorkspaceOrder = await rowTestIds(statusRows);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-project-sorting");
+    await expect(page.getByTestId("sidebar-empty-project-sorting-status")).toHaveCount(0);
+    await page.getByTestId("sidebar-empty-project-sorting-project").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await expectSortedDragBlocked(rows);
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-empty-project-sorting")).toContainText(
+      "Project name",
+    );
+    await closeSidebarDisplayPreferences(page);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-project-sorting");
+    await page.getByTestId("sidebar-empty-project-sorting-custom").click();
+    if ((await rowTestIds(rows))[0] !== alphaId)
+      await quickDragFirstRowAfterSecond(rows, pressProjectRow);
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await quickDragFirstRowAfterSecond(rows, pressProjectRow);
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-empty-project-sorting")).toContainText(
+      "Custom order",
+    );
+    await expect(page.getByTestId("sidebar-display-sorting")).toHaveCount(0);
+    await closeSidebarDisplayPreferences(page);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-project-sorting");
+    await page.getByTestId("sidebar-empty-project-sorting-project").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await page.reload();
+    await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-project-sorting");
+    await page.getByTestId("sidebar-empty-project-sorting-custom").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
+    await expect.poll(() => rowTestIds(statusRows)).toEqual(initialWorkspaceOrder);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-workspaces");
+    await page.getByTestId("sidebar-empty-workspaces-show").click();
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-empty-project-sorting")).toHaveCount(0);
+    await closeSidebarDisplayPreferences(page);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-workspaces");
+    await page.getByTestId("sidebar-empty-workspaces-group").click();
+    await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
+    await openSidebarDisplayPage(page, "sidebar-display-empty-workspaces");
+    await page.getByTestId("sidebar-empty-workspaces-hide").click();
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByTestId("sidebar-display-empty-project-sorting")).toHaveCount(0);
+    await closeSidebarDisplayPreferences(page);
+  } finally {
+    await occupied.cleanup();
+    await alpha.cleanup();
+    await zeta.cleanup();
+  }
+});
+
+/** Seed two workspace rows whose names expose alphabetical and saved drag order. */
+async function seedSortableWorkspaceRows(page: Page) {
+  const first = await seedWorkspace({ repoPrefix: "sidebar-workspace-sort-", title: "Zeta" });
+  try {
+    const created = await first.client.createWorkspace({
+      source: { kind: "directory", path: first.repoPath, projectId: first.projectId },
+      title: "Alpha",
+    });
+    if (!created.workspace) throw new Error(created.error ?? "Failed to create workspace");
+    const zetaId = `sidebar-workspace-row-${getServerId()}:${first.workspaceId}`;
+    const alphaId = `sidebar-workspace-row-${getServerId()}:${created.workspace.id}`;
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    return {
+      rows: page.locator(`[data-testid="${alphaId}"], [data-testid="${zetaId}"]`),
+      alphaId,
+      zetaId,
+      cleanup: first.cleanup,
+    };
+  } catch (error) {
+    await first.cleanup();
+    throw error;
+  }
+}
+
+/** Verify that alphabetical sorting leaves drag order available and saved across reloads. */
+async function expectWorkspaceSortingRestoresCustomOrder(
+  page: Page,
+  { rows, alphaId, zetaId }: Awaited<ReturnType<typeof seedSortableWorkspaceRows>>,
+) {
+  await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+  await page.getByTestId("sidebar-workspace-sorting-name").click();
+  await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+  await expectSortedDragBlocked(rows);
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await expect(page.getByTestId("sidebar-display-workspace-sorting")).toContainText(
+    "Workspace name",
+  );
+  await closeSidebarDisplayPreferences(page);
+  await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+  await page.getByTestId("sidebar-workspace-sorting-custom").click();
+  if ((await rowTestIds(rows))[0] !== alphaId)
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+  await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+  await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await expect(page.getByTestId("sidebar-display-workspace-sorting")).toContainText("Custom order");
+  await closeSidebarDisplayPreferences(page);
+  await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+  await page.getByTestId("sidebar-workspace-sorting-name").click();
+  await expect.poll(() => rowTestIds(rows)).toEqual([alphaId, zetaId]);
+  await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+  await page.getByTestId("sidebar-workspace-sorting-custom").click();
+  await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
+  await page.reload();
+  await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
+}
+
+test("workspace sorting restores custom drag order in project grouping", async ({ page }) => {
+  const seeded = await seedSortableWorkspaceRows(page);
+  try {
+    await expectWorkspaceSortingRestoresCustomOrder(page, seeded);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("workspace sorting restores custom drag order in status grouping", async ({ page }) => {
+  const seeded = await seedSortableWorkspaceRows(page);
+  try {
+    await selectSidebarStatusGrouping(page);
+    await expectWorkspaceSortingRestoresCustomOrder(page, seeded);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("status sorting puts the newest matching workspace first in project grouping", async ({
+  page,
+}, testInfo) => {
+  const seeded = await seedSortableWorkspaceRows(page);
+  try {
+    await selectSidebarProjectGrouping(page);
+    // Alpha was created second. Save the older Zeta first to distinguish recency from drag order.
+    await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+    await page.getByTestId("sidebar-workspace-sorting-name").click();
+    await expect.poll(() => rowTestIds(seeded.rows)).toEqual([seeded.alphaId, seeded.zetaId]);
+    await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+    await page.getByTestId("sidebar-workspace-sorting-custom").click();
+    if ((await rowTestIds(seeded.rows))[0] !== seeded.alphaId)
+      await quickDragFirstRowAfterSecond(seeded.rows, pressWorkspaceRow);
+    await expect.poll(() => rowTestIds(seeded.rows)).toEqual([seeded.alphaId, seeded.zetaId]);
+    await quickDragFirstRowAfterSecond(seeded.rows, pressWorkspaceRow);
+    await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+    await page.getByTestId("sidebar-workspace-sorting-status").click();
+    await expect.poll(() => rowTestIds(seeded.rows)).toEqual([seeded.alphaId, seeded.zetaId]);
+    await page.screenshot({ path: testInfo.outputPath("project-status-newest-first.png") });
+    await page.reload();
+    await expect.poll(() => rowTestIds(seeded.rows)).toEqual([seeded.alphaId, seeded.zetaId]);
+    await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+    await page.getByTestId("sidebar-workspace-sorting-custom").click();
+    await expect.poll(() => rowTestIds(seeded.rows)).toEqual([seeded.zetaId, seeded.alphaId]);
+    await selectSidebarStatusGrouping(page);
+    await openSidebarDisplayPage(page, "sidebar-display-workspace-sorting");
+    await page.getByTestId("sidebar-workspace-sorting-status").click();
+    await expect.poll(() => rowTestIds(seeded.rows)).toEqual([seeded.alphaId, seeded.zetaId]);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
 async function selectWorkspaceSort(page: Page, name: "Manual" | "Created" | "Last prompt") {
-  await page.getByLabel("Display preferences", { exact: true }).click();
-  await page.getByRole("menuitem", { name: /^Sort/ }).click();
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await sidebarWorkspaceSortMenuItem(page).click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 
@@ -142,8 +391,8 @@ async function reconnectSidebar(page: Page): Promise<void> {
 }
 
 async function expectNoWorkspaceSortChoice(page: Page): Promise<void> {
-  await page.getByLabel("Display preferences", { exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: /^Sort/ })).toHaveCount(0);
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await expect(sidebarWorkspaceSortMenuItem(page)).toHaveCount(0);
 }
 
 async function promptWorkspace(seed: Awaited<ReturnType<typeof seedWorkspace>>, agentId: string) {
@@ -240,12 +489,6 @@ async function revealWorkspaces(list: Locator, action: "Show more" | "Show less"
   await list.getByLabel(action, { exact: true }).click();
 }
 
-async function selectProjectGrouping(page: Page) {
-  await page.getByLabel("Display preferences", { exact: true }).click();
-  await page.getByRole("menuitem", { name: /^Group/ }).click();
-  await page.getByTestId("sidebar-grouping-project").click();
-}
-
 type CompactProject = Awaited<ReturnType<typeof seedCompactProject>>;
 
 function compactProjectRows(page: Page, seed: CompactProject["seed"]) {
@@ -255,6 +498,22 @@ function compactProjectRows(page: Page, seed: CompactProject["seed"]) {
     group: list.locator(".."),
     project: page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(seed.projectKey)}`),
   };
+}
+
+/** Configure the fixed-seven fixture without changing default sidebar profiles. */
+async function seedSevenWorkspaceScene(page: Page, includeStatus: boolean) {
+  const modeProfiles = defaultSidebarModeProfiles();
+  modeProfiles.project.initialWorkspaceCount = 7;
+  if (includeStatus) modeProfiles.status.initialWorkspaceCount = 7;
+  await page.addInitScript((profiles) => {
+    localStorage.setItem(
+      "sidebar-view",
+      JSON.stringify({
+        version: 12,
+        state: { groupMode: "project", workspaceSort: "created", modeProfiles: profiles },
+      }),
+    );
+  }, modeProfiles);
 }
 
 async function expectActiveOverflowTransitions(page: Page, { seed, ids, agent }: CompactProject) {
@@ -311,7 +570,10 @@ async function expectStatusBucketsRetainActiveOverflow(
   const done = page.getByTestId("sidebar-status-group-rows-done");
   const doneRows = done.locator('[data-testid^="sidebar-workspace-row-"]');
   await expect(doneRows).toHaveCount(7);
-  await revealWorkspaces(done, "Show more");
+  const doneToggle = page.getByTestId("sidebar-status-group-show-more-done");
+  await expect(doneToggle).toHaveCount(1);
+  await expect(doneToggle).toHaveAttribute("aria-label", "Show more");
+  await doneToggle.click();
   await expect(doneRows).toHaveCount(12);
   await seed.client.sendAgentMessage(agent.id, "status overflow");
   await seed.client.waitForFinish(agent.id, 15_000);
@@ -323,7 +585,9 @@ async function expectStatusBucketsRetainActiveOverflow(
   await expect(doneRows).toHaveCount(11);
   await seed.client.clearWorkspaceAttention(seed.workspaceId);
   await expect(doneRows).toHaveCount(12);
-  await revealWorkspaces(done, "Show less");
+  await expect(doneToggle).toHaveCount(1);
+  await expect(doneToggle).toHaveAttribute("aria-label", "Show less");
+  await doneToggle.click();
   await expect(doneRows).toHaveCount(7);
   const activeAgents: Array<{ id: string }> = [];
   for (const workspaceId of ids.slice(0, 8)) {
@@ -344,10 +608,10 @@ async function expectStatusBucketsRetainActiveOverflow(
   await Promise.all(activeAgents.map((item) => seed.client.waitForFinish(item.id, 15_000)));
   const attention = page.getByTestId("sidebar-status-group-rows-attention");
   await expect(attention.locator('[data-testid^="sidebar-workspace-row-"]')).toHaveCount(8);
-  await expect(attention.getByLabel("Show more", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-status-group-show-more-attention")).toHaveCount(0);
   for (const workspaceId of ids.slice(0, 8)) await seed.client.clearWorkspaceAttention(workspaceId);
   await expect(doneRows).toHaveCount(7);
-  await selectProjectGrouping(page);
+  await selectSidebarProjectGrouping(page);
   await expectWorkspaceOrder(rows, ids.slice(0, 7));
 }
 
@@ -355,6 +619,7 @@ test("compact groups retain active overflow and reveal the current ordered rows"
   page,
 }) => {
   test.setTimeout(120_000);
+  await seedSevenWorkspaceScene(page, true);
   const fixture = await seedCompactProject();
   try {
     await gotoAppShell(page);
@@ -406,6 +671,8 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
     await restorePreBetaOrder(page, projectEquivalenceViewKey(seed.projectKey), keys);
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await selectWorkspaceSort(page, "Created");
     await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
     await selectWorkspaceSort(page, "Manual");
     await expect.poll(() => rowTestIds(rows)).toEqual(ids);
@@ -442,6 +709,7 @@ test("collapsed groups lead with the open workspace instead of hiding it behind 
   page,
 }) => {
   test.setTimeout(120_000);
+  await seedSevenWorkspaceScene(page, false);
   const { seed, ids } = await seedCompactProject();
   try {
     await gotoAppShell(page);
@@ -453,12 +721,12 @@ test("collapsed groups lead with the open workspace instead of hiding it behind 
     await openWorkspaceRow(page, ids[9]!);
     await expectWorkspaceOrder(rows, ids);
     await revealWorkspaces(group, "Show less");
-    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[9]!]);
     await expect(
       page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
     ).toHaveAttribute("aria-selected", "true");
     await reconnectSidebar(page);
-    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[9]!]);
     await expect(
       page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
     ).toHaveAttribute("aria-selected", "true");
@@ -476,6 +744,17 @@ test("a Manual drag in a collapsed group keeps the open workspace's saved place"
   page,
 }) => {
   test.setTimeout(120_000);
+  const profiles = defaultSidebarModeProfiles();
+  profiles.project.initialWorkspaceCount = 7;
+  await page.addInitScript((modeProfiles) => {
+    localStorage.setItem(
+      "sidebar-view",
+      JSON.stringify({
+        version: 12,
+        state: { groupMode: "project", workspaceSort: "manual", modeProfiles },
+      }),
+    );
+  }, profiles);
   const { seed, ids } = await seedCompactProject();
   try {
     await gotoAppShell(page);
@@ -493,14 +772,36 @@ test("a Manual drag in a collapsed group keeps the open workspace's saved place"
     await toggle.click();
     await openWorkspaceRow(page, ids[9]!);
     await toggle.click();
-    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expectWorkspaceOrder(rows, [...ids.slice(0, 7), ids[9]!]);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
+    ).toHaveAttribute("aria-selected", "true");
     await quickDragFirstRowAfterSecond(workspaceRows(page, [ids[0]!, ids[1]!]), pressWorkspaceRow);
-    await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
+    await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2, 7), ids[9]!]);
     await reconnectSidebar(page);
-    await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
+    await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2, 7), ids[9]!]);
     await toggle.click();
     await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2)]);
   } finally {
     await seed.cleanup();
   }
 });
+
+async function finishSidebarDrag(page: Page): Promise<void> {
+  await page.mouse.up();
+  // dnd-kit's pointer sensor keeps its document click blocker for 50 ms after drop.
+  // Row order updates before that blocker is removed; wait before the next user action.
+  await page.waitForTimeout(60);
+}
+
+async function dragWithoutReordering(rows: Locator): Promise<void> {
+  const before = await rowTestIds(rows);
+  const source = await visibleBoundingBox(rows.nth(0));
+  const target = await visibleBoundingBox(rows.nth(1));
+  const page = rows.page();
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 5 });
+  await finishSidebarDrag(page);
+  await expect.poll(() => rowTestIds(rows)).toEqual(before);
+}
