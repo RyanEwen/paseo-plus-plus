@@ -7,6 +7,7 @@ import { router, type Href } from "expo-router";
 import {
   encodeWorkspaceIdForPathSegment,
   getHostWorkspaceOpenParamFromPathname,
+  getHostWorkspaceRecoveryParamFromPathname,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 
@@ -131,6 +132,7 @@ function dispatchHostWorkspacePopTo(
           serverId: selection.serverId,
           workspaceId: encodeWorkspaceIdForPathSegment(selection.workspaceId),
           ...(open ? { open } : {}),
+          recover: getHostWorkspaceRecoveryParamFromPathname(route),
         },
         // React Navigation consumes this nested hint when resolving the host child screen.
         // The browser-route canonicalizer strips the resulting ?pop=true URL artifact.

@@ -275,6 +275,7 @@ interface WorkspaceScreenProps {
   serverId: string;
   workspaceId: string;
   isRouteFocused?: boolean;
+  recoveryRequested?: boolean;
 }
 
 type WorkspaceScreenContentProps = WorkspaceScreenProps & {
@@ -421,6 +422,7 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   serverId,
   workspaceId,
   isRouteFocused,
+  recoveryRequested,
 }: WorkspaceScreenProps) {
   // Every reader of the panel registry renders inside the workspace screen, so it registers the
   // panels before any of them renders. A reader importing the registration instead would import
@@ -438,6 +440,7 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
       serverId={serverId}
       workspaceId={workspaceId}
       isRouteFocused={isRouteFocused ?? navigationFocused}
+      recoveryRequested={recoveryRequested}
     />
   );
 });
@@ -753,8 +756,13 @@ function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
   pendingOpenTarget: WorkspaceTabTarget | null,
+  recoveryRequested: boolean,
 ): boolean {
-  return pendingOpenTarget?.kind === "agent" && hasHydratedWorkspaces && workspace === null;
+  return (
+    (recoveryRequested || pendingOpenTarget?.kind === "agent") &&
+    hasHydratedWorkspaces &&
+    workspace === null
+  );
 }
 
 function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
@@ -1017,6 +1025,7 @@ function WorkspaceScreenContent({
   serverId,
   workspaceId,
   isRouteFocused,
+  recoveryRequested = false,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
@@ -1147,6 +1156,7 @@ function WorkspaceScreenContent({
       hasHydratedWorkspaces,
       workspaceDescriptor,
       pendingOpenTarget,
+      recoveryRequested,
     ),
   });
 
