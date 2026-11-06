@@ -43,6 +43,8 @@ interface SidebarModel extends SidebarWorkspacesListResult {
    * narrowing the filter deletes the rows that would undo it.
    */
   allProjects: SidebarProjectEntry[];
+  /** Entries before project, label and background filters, for complete project-choice summaries. */
+  allWorkspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   /** The project filter as it is actually being applied — see `resolveActiveProjectFilters`. */
   resolvedProjectFilters: readonly string[];
   hasProjectsBeforeFilter: boolean;
@@ -266,6 +268,7 @@ export function SidebarModelProvider({
       ...list,
       projects: textFiltered.projects,
       allProjects: list.projects,
+      allWorkspaceEntriesByKey: workspaceEntriesByKey,
       resolvedProjectFilters,
       hasProjectsBeforeFilter: list.projects.length > 0,
       workspaceEntriesByKey: textFiltered.entries,
@@ -285,6 +288,7 @@ export function SidebarModelProvider({
       textFiltered,
       projection,
       toggleProjectCollapsed,
+      workspaceEntriesByKey,
     ],
   );
 
