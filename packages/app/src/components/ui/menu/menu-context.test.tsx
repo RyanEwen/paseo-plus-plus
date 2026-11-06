@@ -62,6 +62,25 @@ describe("useMenuState selectItem elsewhere", () => {
   });
 });
 
+describe("useMenuState submenu lifecycle", () => {
+  it("ignores a delayed hover callback after closing, even before the closing render", () => {
+    const { result } = renderHook(() => useMenuState({ defaultOpen: true }));
+    const delayedHover = result.current.openSub;
+
+    act(() => {
+      result.current.openSub({ id: "show", depth: 0 });
+      result.current.setOpen(false);
+      delayedHover({ id: "show", depth: 0 });
+    });
+    expect(result.current.path).toEqual([]);
+
+    act(() => result.current.setOpen(true));
+    expect(result.current.path).toEqual([]);
+    act(() => result.current.openSub({ id: "show", depth: 0 }));
+    expect(result.current.path).toEqual(["show"]);
+  });
+});
+
 describe("useMenuState pages", () => {
   it("pops the open page on Back and leaves Back at the root to the surface", () => {
     const { result } = renderHook(() => useMenuState({ defaultOpen: true }));
