@@ -22,6 +22,15 @@ const visibleHistoryStart: HistoryStartPaginationInput = {
 };
 
 describe("history start pagination", () => {
+  it("releases a latch only for input at the start edge, while always arming a dormant pager", () => {
+    const dormant = createHistoryStartPaginationState();
+    expect(rearmHistoryStartPagination(dormant, false)).toEqual({ status: "ready" });
+
+    const latched = { status: "latched" } as const;
+    expect(rearmHistoryStartPagination(latched, false)).toBe(latched);
+    expect(rearmHistoryStartPagination(latched)).toEqual({ status: "ready" });
+  });
+
   it("treats locally revealed history as progress before remote pagination", () => {
     const first = evaluateHistoryStartPagination(
       createArmedHistoryStartPaginationState(),

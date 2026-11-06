@@ -138,6 +138,36 @@ function isUpwardViewportScrollKey(event: KeyboardEvent): boolean {
   );
 }
 
+/**
+ * Whether a wheel event asks this viewport to move up. Sub-pixel deltas and horizontal gestures
+ * stay out because they may not move it, and following must not end without movement.
+ */
+function isVerticalUpwardWheel(event: WheelEvent): boolean {
+  if (event.defaultPrevented || event.shiftKey) {
+    return false;
+  }
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    return false;
+  }
+  return event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+    ? event.deltaY < -USER_SCROLL_DELTA_EPSILON
+    : event.deltaY < 0;
+}
+
+/**
+ * Whether a key press on the viewport itself asks it to move up. A focused control inside the
+ * transcript may keep the key, and modified keys and Shift+Space have other browser meanings.
+ */
+function isViewportUpwardKeyPress(event: KeyboardEvent, scrollContainer: HTMLElement): boolean {
+  if (event.target !== scrollContainer || event.defaultPrevented) {
+    return false;
+  }
+  if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+    return false;
+  }
+  return event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home";
+}
+
 function canNestedScrollerConsumeUpwardInput(
   target: EventTarget | null,
   scrollContainer: HTMLElement,
@@ -524,10 +554,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     );
     applyHistoryStartPaginationTransition(transition);
   });
-  const rearmHistoryStartFromUserIntent = useStableEvent(() => {
-    const rearmed = rearmHistoryStartPagination(historyStartPaginationStateRef.current);
-    if (rearmed === historyStartPaginationStateRef.current) {
-      return;
+  /**
+   * Arms the pager for user input, then evaluates even when the state did not change. Input at
+   * the start edge publishes no scroll event, so an evaluation blocked earlier gets no other
+   * chance. Evaluating keeps the existing fences: a loading or settling pager cannot load again.
+   */
+  const rearmHistoryStartFromUserIntent = useStableEvent((releaseLatch: boolean = true) => {
+    const current = historyStartPaginationStateRef.current;
+    const rearmed = rearmHistoryStartPagination(current, releaseLatch);
+    if (rearmed !== current) {
+      historyStartPaginationStateRef.current = rearmed;
+      setHistoryStartPaginationState(rearmed);
     }
     historyStartPaginationStateRef.current = rearmed;
     setHistoryStartPaginationState(rearmed);
@@ -781,12 +818,26 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reconcileReadingPosition,
   ]);
 
+  /**
+   * The one owner of upward user intent: reading takes over from following, and the pager arms
+   * whether or not this reader was following. Only real input reaches this, never geometry.
+   */
   const stopFollowingOutputFromUserIntent = useStableEvent(() => {
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
       setFollowOutput(false);
     }
-    rearmHistoryStartFromUserIntent();
+    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+    rearmHistoryStartFromUserIntent(scrollTop <= USER_SCROLL_DELTA_EPSILON);
+  });
+
+  /** Upward input can only move this viewport when it scrolls and has a range to move through. */
+  const canUserMoveViewport = useStableEvent(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollEnabled || !scrollContainer) {
+      return false;
+    }
+    return scrollContainer.scrollHeight - scrollContainer.clientHeight > USER_SCROLL_DELTA_EPSILON;
   });
 
   const handleDomScroll = useCallback(() => {
@@ -801,6 +852,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const scrolledDown =
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
     const mouseGesture = mouseScrollGestureRef.current;
+    // Covers input that does not state its intent up front: a held scrollbar, autoscroll, and
+    // ambiguous input such as sub-pixel wheels, whose movement must land inside this window.
     const hasUpwardInputEvidence =
       mouseGesture?.kind === "scrollbar" ||
       (mouseGesture?.kind === "autoscroll" && mouseGesture.hasUpwardEvidence) ||
@@ -808,7 +861,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     if (!followOutputRef.current && isAtBottom && scrolledDown && !isJumpSettling()) {
       setFollowOutput(true);
-    } else if (followOutputRef.current && scrolledUp && hasUpwardInputEvidence) {
+    } else if (scrolledUp && hasUpwardInputEvidence) {
       stopFollowingOutputFromUserIntent();
     }
 
@@ -1026,9 +1079,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
 
-    const markUpwardViewportInput = () => {
+    /**
+     * Records upward input. Input that clearly asks this viewport to move takes effect now, as a
+     * thumb drag does. The browser publishes the resulting scroll asynchronously, so waiting for
+     * it would leave a late scroll looking like geometry, keep following on, and block paging.
+     */
+    const markUpwardViewportInput = (asksViewportToMove: boolean) => {
       markUpwardInputEvidence();
-      if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
+      if (asksViewportToMove && canUserMoveViewport()) {
+        stopFollowingOutputFromUserIntent();
+      } else if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
         rearmHistoryStartFromUserIntent();
       }
     };
@@ -1038,7 +1098,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         event.deltaY < 0 &&
         !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardViewportInput();
+        markUpwardViewportInput(isVerticalUpwardWheel(event));
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1048,7 +1108,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)) {
         return;
       }
-      markUpwardViewportInput();
+      markUpwardViewportInput(isViewportUpwardKeyPress(event, scrollContainer));
     };
     const handlePointerDown = (event: PointerEvent) => {
       clearMouseScrollGesture();
@@ -1121,7 +1181,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         touch.clientY > previousTouchY + 1 &&
         !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardViewportInput();
+        // A canceled move does not scroll, and a second finger is a pinch, which zooms instead.
+        markUpwardViewportInput(event.touches.length === 1 && !event.defaultPrevented);
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -1161,6 +1222,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
   }, [
     clearMouseScrollGesture,
+    canUserMoveViewport,
     clearUpwardInputEvidence,
     handleDomScroll,
     isActive,

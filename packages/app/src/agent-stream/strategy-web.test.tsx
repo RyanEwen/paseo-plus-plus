@@ -1078,6 +1078,560 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
+  /**
+   * Mounts a settled tail with older history available, so each test drives the real wheel,
+   * scroll and pagination admission path. Returns controls for the browser-owned timing.
+   */
+  async function mountPagedTail(overrides: Partial<StreamRenderInput> = {}) {
+    HTMLElement.prototype.scrollTo = vi.fn(function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number,
+      y?: number,
+    ) {
+      this.scrollTop = typeof options === "object" ? (options.top ?? 0) : (y ?? 0);
+    });
+    const readRealClock = window.performance.now.bind(window.performance);
+    let elapsedMs = 0;
+    vi.spyOn(window.performance, "now").mockImplementation(() => readRealClock() + elapsedMs);
+
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const onNearHistoryStart = vi.fn().mockReturnValue(true);
+    const onReadingPositionChange = vi.fn<(position: PromptReadingPosition) => void>();
+    const baseInput: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [],
+        historyMounted: Array.from({ length: 20 }, (_, index) => userMessage(index)),
+        liveHead: [],
+      },
+      boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: false },
+      renderers: createRenderers(vi.fn()),
+      listEmptyComponent: null,
+      viewportRef: React.createRef<StreamViewportHandle>(),
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onReadingPositionChange,
+      onNearHistoryStart,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: true,
+      olderHistoryProgressKey: "epoch-1:20",
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      ...overrides,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root?.render(strategy.render(baseInput));
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    if (!(scrollContainer instanceof HTMLElement)) {
+      throw new Error("Expected agent chat scroll container");
+    }
+    // JSDOM has no layout; reading samples require a real positive viewport extent.
+    scrollContainer.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 756, left: 0, right: 500, width: 500, height: 756 }) as DOMRect;
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 756 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2274 });
+    scrollContainer.scrollTop = 1518;
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+
+    return {
+      scrollContainer,
+      onNearHistoryStart,
+      advanceClock: (ms: number) => {
+        elapsedMs += ms;
+      },
+      rerender: (next: Partial<StreamRenderInput>) => {
+        act(() => {
+          root?.render(strategy.render({ ...baseInput, ...next }));
+        });
+      },
+      readFollowing: () => onReadingPositionChange.mock.lastCall?.[0].following,
+      handle: baseInput.viewportRef,
+      scrollTo: HTMLElement.prototype.scrollTo,
+    };
+  }
+
+  /** Delivers one upward wheel, then the scroll event it caused after the given main-thread gap. */
+  async function wheelUpTo(
+    viewport: Awaited<ReturnType<typeof mountPagedTail>>,
+    scrollTop: number,
+    scrollEventDelayMs: number,
+  ) {
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+    viewport.advanceClock(scrollEventDelayMs);
+    viewport.scrollContainer.scrollTop = scrollTop;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+  }
+
+  it("requests older history once when prompt wheel scrolls reach the history start", async () => {
+    const viewport = await mountPagedTail();
+
+    await wheelUpTo(viewport, 518, 16);
+    await wheelUpTo(viewport, 0, 16);
+
+    expect({
+      loads: viewport.onNearHistoryStart.mock.calls.length,
+      following: viewport.readFollowing(),
+    }).toEqual({ loads: 1, following: false });
+  });
+
+  it("requests older history when each wheel's scroll event is published after a stalled frame", async () => {
+    const viewport = await mountPagedTail();
+
+    await wheelUpTo(viewport, 518, 150);
+    await wheelUpTo(viewport, 0, 150);
+
+    expect({
+      loads: viewport.onNearHistoryStart.mock.calls.length,
+      following: viewport.readFollowing(),
+    }).toEqual({ loads: 1, following: false });
+  });
+
+  it("does not pull a reader to the bottom when output arrives before the wheel's scroll event", async () => {
+    const viewport = await mountPagedTail();
+    vi.mocked(viewport.scrollTo).mockClear();
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+    viewport.rerender({
+      segments: {
+        historyVirtualized: [],
+        historyMounted: Array.from({ length: 20 }, (_, index) => userMessage(index)),
+        liveHead: [userMessage(20)],
+      },
+      boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: true },
+    });
+
+    expect(viewport.scrollTo).not.toHaveBeenCalled();
+    expect(viewport.readFollowing()).toBe(false);
+  });
+
+  it("recovers paging when a later wheel arrives at the start of a still-following viewport", async () => {
+    const viewport = await mountPagedTail();
+    // A scroll that no input explains leaves the viewport following at the history start.
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+    await act(async () => Promise.resolve());
+
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+    expect(viewport.readFollowing()).toBe(false);
+  });
+
+  it("re-evaluates an already armed pager when upward input arrives at the history start", async () => {
+    const viewport = await mountPagedTail();
+    await wheelUpTo(viewport, 518, 16);
+    act(() => {
+      viewport.handle.current?.scrollToBottom();
+    });
+    // No input explains this later movement, so evaluation stays blocked while following.
+    viewport.advanceClock(150);
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+    await act(async () => Promise.resolve());
+
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms the pager from upward input while a held reader is not following output", async () => {
+    const viewport = await mountPagedTail();
+    act(() => {
+      viewport.handle.current?.holdReadingPosition();
+    });
+
+    await wheelUpTo(viewport, 518, 16);
+    await wheelUpTo(viewport, 0, 16);
+
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms the pager from a native scrollbar drag while a held reader is not following output", async () => {
+    const viewport = await mountPagedTail();
+    Object.defineProperty(viewport.scrollContainer, "offsetWidth", {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(viewport.scrollContainer, "clientWidth", {
+      configurable: true,
+      value: 488,
+    });
+    act(() => {
+      viewport.handle.current?.holdReadingPosition();
+    });
+
+    act(() => {
+      const press = new MouseEvent("pointerdown", { button: 0, clientX: 496 });
+      Object.defineProperties(press, {
+        pointerType: { value: "mouse" },
+        isPrimary: { value: true },
+        pointerId: { value: 1 },
+      });
+      viewport.scrollContainer.dispatchEvent(press);
+    });
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["ArrowUp", {}],
+    ["PageUp", {}],
+    ["Home", {}],
+  ])("detaches at %s keydown when its scroll event is published late", async (key, init) => {
+    const viewport = await mountPagedTail();
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new KeyboardEvent("keydown", { key, ...init }));
+    });
+    viewport.advanceClock(150);
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+
+    expect(viewport.readFollowing()).toBe(false);
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("detaches at an upward touch drag when its scroll event is published late", async () => {
+    const viewport = await mountPagedTail();
+    const touch = (type: string, clientY: number) => {
+      const event = new Event(type);
+      Object.defineProperty(event, "touches", { value: [{ clientY }] });
+      act(() => {
+        viewport.scrollContainer.dispatchEvent(event);
+      });
+    };
+
+    touch("touchstart", 100);
+    touch("touchmove", 160);
+    viewport.advanceClock(150);
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+
+    expect(viewport.readFollowing()).toBe(false);
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "a modified arrow key",
+      (target: HTMLElement) => {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", ctrlKey: true }));
+      },
+    ],
+    [
+      "Shift+Space, which can activate a focused control",
+      (target: HTMLElement) => {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: " ", shiftKey: true }));
+      },
+    ],
+    [
+      "a sub-pixel wheel delta",
+      (target: HTMLElement) => {
+        target.dispatchEvent(new WheelEvent("wheel", { deltaY: -0.5 }));
+      },
+    ],
+    [
+      "a horizontal-dominant wheel",
+      (target: HTMLElement) => {
+        target.dispatchEvent(new WheelEvent("wheel", { deltaX: 200, deltaY: -5 }));
+      },
+    ],
+    [
+      "a Shift+wheel, which browsers treat as horizontal",
+      (target: HTMLElement) => {
+        target.dispatchEvent(new WheelEvent("wheel", { deltaY: -200, shiftKey: true }));
+      },
+    ],
+    [
+      "an arrow key on a focused control in the transcript",
+      (target: HTMLElement) => {
+        const control = document.createElement("button");
+        target.appendChild(control);
+        control.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        control.remove();
+      },
+    ],
+    [
+      "an arrow key in an editable field",
+      (target: HTMLElement) => {
+        const field = document.createElement("textarea");
+        target.appendChild(field);
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        field.remove();
+      },
+    ],
+    [
+      "an arrow key another handler already consumed",
+      (target: HTMLElement) => {
+        const consume = (event: Event) => event.preventDefault();
+        target.addEventListener("keydown", consume, { capture: true });
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", cancelable: true }));
+        target.removeEventListener("keydown", consume, { capture: true });
+      },
+    ],
+    [
+      "a downward touch drag",
+      (target: HTMLElement) => {
+        for (const [type, clientY] of [
+          ["touchstart", 160],
+          ["touchmove", 100],
+        ] as const) {
+          const event = new Event(type);
+          Object.defineProperty(event, "touches", { value: [{ clientY }] });
+          target.dispatchEvent(event);
+        }
+      },
+    ],
+    [
+      "a wheel another handler already consumed",
+      (target: HTMLElement) => {
+        const child = document.createElement("div");
+        target.appendChild(child);
+        child.addEventListener("wheel", (event) => event.preventDefault());
+        child.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: -1000, bubbles: true, cancelable: true }),
+        );
+        child.remove();
+      },
+    ],
+    [
+      "a two-finger touch",
+      (target: HTMLElement) => {
+        for (const [type, clientY] of [
+          ["touchstart", 100],
+          ["touchmove", 160],
+        ] as const) {
+          const event = new Event(type);
+          Object.defineProperty(event, "touches", {
+            value: [{ clientY }, { clientY: clientY + 40 }],
+          });
+          target.dispatchEvent(event);
+        }
+      },
+    ],
+  ])("keeps following output after %s that moved nothing", async (_label, send) => {
+    const viewport = await mountPagedTail();
+
+    act(() => {
+      send(viewport.scrollContainer);
+    });
+    await act(async () => Promise.resolve());
+
+    expect(viewport.readFollowing()).toBe(true);
+    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
+  });
+
+  it("keeps following output when scrolling is disabled for the viewport", async () => {
+    const viewport = await mountPagedTail({ scrollEnabled: false });
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+
+    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
+  });
+
+  it("keeps following output when the content has no range to scroll", async () => {
+    const viewport = await mountPagedTail();
+    Object.defineProperty(viewport.scrollContainer, "scrollHeight", {
+      configurable: true,
+      value: 756,
+    });
+    viewport.scrollContainer.scrollTop = 0;
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+
+    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
+  });
+
+  it("neither detaches nor pages when a descendant cancels a single-finger upward touch", async () => {
+    const viewport = await mountPagedTail();
+    // Start at the history edge, where a wrongly accepted intent would also request a page.
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    const child = document.createElement("div");
+    viewport.scrollContainer.appendChild(child);
+    child.addEventListener("touchmove", (event) => event.preventDefault());
+    const touch = (type: string, clientY: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: [{ clientY }] });
+      act(() => {
+        child.dispatchEvent(event);
+      });
+    };
+
+    touch("touchstart", 100);
+    touch("touchmove", 160);
+    await act(async () => Promise.resolve());
+
+    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
+    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
+  });
+
+  it("does not read a finger handoff as upward intent", async () => {
+    const viewport = await mountPagedTail();
+    const send = (type: string, touches: readonly { clientY: number }[]) => {
+      const event = new Event(type);
+      Object.defineProperty(event, "touches", { value: touches });
+      act(() => {
+        viewport.scrollContainer.dispatchEvent(event);
+      });
+    };
+
+    // The first finger lifts, so the second becomes touches[0] at a much lower position.
+    send("touchstart", [{ clientY: 100 }]);
+    send("touchstart", [{ clientY: 100 }, { clientY: 400 }]);
+    send("touchend", [{ clientY: 400 }]);
+    send("touchmove", [{ clientY: 400 }]);
+    await act(async () => Promise.resolve());
+
+    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
+  });
+
+  it("neither detaches nor arms when only geometry moves the viewport up", async () => {
+    const viewport = await mountPagedTail();
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
+    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
+
+    act(() => {
+      viewport.handle.current?.holdReadingPosition();
+    });
+    viewport.scrollContainer.scrollTop = 40;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    viewport.scrollContainer.scrollTop = 0;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
+  });
+
+  it("issues one request across repeated input while a page is outstanding", async () => {
+    const viewport = await mountPagedTail();
+    await wheelUpTo(viewport, 518, 16);
+    await wheelUpTo(viewport, 0, 16);
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+
+    const wheelAtTop = async () => {
+      act(() => {
+        viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+      });
+      await act(async () => Promise.resolve());
+    };
+    // The request has started but the in-flight flag has not rendered yet.
+    await wheelAtTop();
+    viewport.rerender({ isLoadingOlderHistory: true });
+    await wheelAtTop();
+    await wheelAtTop();
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+
+    // A response that advances the cursor settles without another request from that progress.
+    viewport.rerender({ isLoadingOlderHistory: false, olderHistoryProgressKey: "epoch-1:40" });
+    await act(async () => Promise.resolve());
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not release a latched pager from upward input away from the start edge", async () => {
+    const viewport = await mountPagedTail();
+    await wheelUpTo(viewport, 518, 16);
+    await wheelUpTo(viewport, 0, 16);
+    viewport.rerender({ isLoadingOlderHistory: true });
+    viewport.rerender({ isLoadingOlderHistory: false });
+    await act(async () => Promise.resolve());
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+
+    // A short page can leave the reader inside the threshold, as its wheel momentum continues.
+    viewport.scrollContainer.scrollTop = 60;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -10 }));
+    });
+    viewport.scrollContainer.scrollTop = 50;
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => Promise.resolve());
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("latches a request that completes without advancing history until new upward input", async () => {
+    const viewport = await mountPagedTail();
+    await wheelUpTo(viewport, 518, 16);
+    await wheelUpTo(viewport, 0, 16);
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+
+    viewport.rerender({ isLoadingOlderHistory: true });
+    expect(
+      viewport.scrollContainer.querySelector('[data-testid="load-older-history-spinner"]'),
+    ).not.toBeNull();
+
+    // The response settled with the same cursor: the spinner ends and nothing retries by itself.
+    viewport.rerender({ isLoadingOlderHistory: false });
+    await act(async () => Promise.resolve());
+    expect(
+      viewport.scrollContainer.querySelector('[data-testid="load-older-history-spinner"]'),
+    ).toBeNull();
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
+    });
+    await act(async () => Promise.resolve());
+    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(2);
+  });
+
   it("reattaches follow-output when a small scroll range returns to bottom", async () => {
     const scrollTo = vi.fn(function (
       this: HTMLElement,

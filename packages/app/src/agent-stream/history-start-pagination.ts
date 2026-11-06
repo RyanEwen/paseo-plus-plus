@@ -28,10 +28,19 @@ export function isHistoryStartLoadingOperation(state: HistoryStartPaginationStat
   return state.status === "loading" || state.status === "settling";
 }
 
+/**
+ * Applies upward user input to the pager. A latch is released only by input at the start edge,
+ * so momentum inside the threshold cannot chain pages after a short page lands. Pass
+ * `releaseLatch: false` for input that arrives away from that edge.
+ */
 export function rearmHistoryStartPagination(
   state: HistoryStartPaginationState,
+  releaseLatch = true,
 ): HistoryStartPaginationState {
-  return state.status === "dormant" || state.status === "latched" ? { status: "ready" } : state;
+  if (state.status === "dormant" || (state.status === "latched" && releaseLatch)) {
+    return { status: "ready" };
+  }
+  return state;
 }
 
 export function abandonHistoryStartPaginationRequest(
