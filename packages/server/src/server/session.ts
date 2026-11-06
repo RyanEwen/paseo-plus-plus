@@ -140,6 +140,7 @@ import {
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import { clearStoredAttentionEvent } from "./agent/attention/stored-read.js";
 import {
   ImportSessionsRequestError,
   importProviderSession,
@@ -7736,13 +7737,8 @@ export class Session {
           ) {
             continue;
           }
-          const nextRecord: StoredAgentRecord = {
-            ...record,
-            updatedAt: new Date().toISOString(),
-            requiresAttention: false,
-            attentionReason: null,
-            attentionTimestamp: null,
-          };
+          // Recompute human attention so a stored-only read cannot leave a stale Ready badge.
+          const nextRecord = clearStoredAttentionEvent(record);
           await this.agentStorage.upsert(nextRecord);
           const agent = this.buildStoredAgentPayload(nextRecord);
           const project = await this.buildProjectPlacementForWorkspace(workspace);
