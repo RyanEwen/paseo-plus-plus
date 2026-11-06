@@ -127,7 +127,7 @@ describe("loadAppSettingsFromStorage", () => {
   it("persists independent fork choices without clearing existing preferences", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
-    await saveAppSettings({ queryClient, deps, updates: { language: "fr" } });
+    await saveAppSettings({ queryClient, deps, updates: { explorerDiffScope: "single" } });
     for (const previousAgents of [false, true]) {
       await saveAppSettings({
         queryClient,
@@ -140,9 +140,58 @@ describe("loadAppSettingsFromStorage", () => {
       expect(restored.paseoPlusPlus.previousAgents).toBe(previousAgents);
       expect(restored.paseoPlusPlus.stickyUserPrompts).toBe(false);
       expect(restored.paseoPlusPlus.projectPinning).toBe(true);
-      expect(restored.language).toBe("fr");
+      expect(restored.explorerDiffScope).toBe("single");
     }
   });
+
+  it.each(["base", "all"] as const)(
+    "defaults Explorer preferences and preserves persisted %s",
+    async (comparison) => {
+      const defaults = await loadAppSettingsFromStorage(makeDeps());
+      expect(defaults.autoOpenExplorerSidebar).toBe(false);
+      expect(defaults.paseoPlusPlus.explorerIconOnlyTabs).toBe(false);
+      expect(defaults.explorerDiffScope).toBe("all");
+      expect(defaults.workingDiffDefaultComparison).toBe("uncommitted");
+      expect(defaults.workingDiffAutoSwitch).toBe(false);
+
+      const deps = makeDeps();
+      const queryClient = new QueryClient();
+      await saveAppSettings({
+        queryClient,
+        updates: {
+          autoOpenExplorerSidebar: true,
+          paseoPlusPlus: { ...DEFAULT_CLIENT_SETTINGS.paseoPlusPlus, explorerIconOnlyTabs: true },
+          explorerDiffScope: "single",
+          workingDiffDefaultComparison: comparison,
+          workingDiffAutoSwitch: true,
+        },
+        deps,
+      });
+      const restored = await loadAppSettingsFromStorage(deps);
+      expect(restored.autoOpenExplorerSidebar).toBe(true);
+      expect(restored.paseoPlusPlus.explorerIconOnlyTabs).toBe(true);
+      expect(restored.explorerDiffScope).toBe("single");
+      expect(restored.workingDiffDefaultComparison).toBe(comparison);
+      expect(restored.workingDiffAutoSwitch).toBe(true);
+    },
+  );
+
+  it("uses Explorer defaults when stored values are invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          autoOpenExplorerSidebar: "yes",
+          paseoPlusPlus: { explorerIconOnlyTabs: "yes" },
+          explorerDiffScope: "future",
+        }),
+      }),
+    });
+    const restored = await loadAppSettingsFromStorage(deps);
+    expect(restored.autoOpenExplorerSidebar).toBe(false);
+    expect(restored.paseoPlusPlus.explorerIconOnlyTabs).toBe(false);
+    expect(restored.explorerDiffScope).toBe("all");
+  });
+
   it("persists file panel associations, including panels absent from this host", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
