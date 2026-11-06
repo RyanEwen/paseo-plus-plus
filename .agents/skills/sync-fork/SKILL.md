@@ -1,6 +1,6 @@
 ---
 name: sync-fork
-description: Sync upstream into the fork layers (fix/upstream-bugs, fork-base, feature branches) and integrate accepted feature tips into main. Use for /sync-fork or a request to perform this fork synchronization workflow.
+description: Sync the newest tagged upstream release (betas included, never upstream main) into the fork layers (fix/upstream-bugs, fork-base, feature branches) and integrate accepted feature tips into main. Use for /sync-fork or a request to perform this fork synchronization workflow.
 ---
 
 # Sync fork
