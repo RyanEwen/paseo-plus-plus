@@ -503,7 +503,8 @@ export class AgentStorage {
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
+    onCommitted?: () => void,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -512,7 +513,9 @@ export class AgentStorage {
       }
 
       const record = mutate(this.cache.get(agentId) ?? null);
+      if (!record) return undefined;
       await this.writeRecord(record);
+      onCommitted?.();
       return undefined;
     });
 
