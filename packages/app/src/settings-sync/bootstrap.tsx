@@ -8,6 +8,8 @@ import { registerSettingsEditingBlocker } from "@/hooks/use-settings/editing-blo
 import { createSyncedAppSettingsSave } from "./app-edits";
 import {
   settingsSync,
+  initializeSettingsSyncDomains,
+  observeSettingsSyncDomainEdits,
   saveLocalUsageHost,
   saveLocalDeviceSettings,
 } from "./runtime";
@@ -65,7 +67,11 @@ export function SettingsSyncBootstrap() {
     };
     updateGate();
     const stopGate = settingsSync.subscribe(updateGate);
+    const stopDomainEdits = observeSettingsSyncDomainEdits();
     const initialize = async () => {
+      // A domain whose local store fails to load keeps editing blocked until Retry succeeds.
+      await initializeSettingsSyncDomains();
+      if (!active || !uninstall.isCurrent()) return;
       await settingsSync.load(owner.signal);
       if (!active || !uninstall.isCurrent()) return;
       hydrated = true;
@@ -99,6 +105,7 @@ export function SettingsSyncBootstrap() {
       unregisterBlocker();
       stopGate();
       stopRetry();
+      stopDomainEdits();
     };
   }, []);
 

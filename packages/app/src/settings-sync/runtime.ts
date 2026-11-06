@@ -23,6 +23,16 @@ import { loadAppSettingsFromStorage } from "@/hooks/use-settings";
 import { DEFAULT_DESKTOP_SETTINGS } from "@/desktop/settings/desktop-settings";
 import { isSettingsObject } from "@getpaseo/protocol/app-settings-values";
 import { SettingsSyncModel } from "./model";
+import {
+  applyDomainValues,
+  collectDomainDeviceValues,
+  filterDomainAppExport,
+  initializeDomains,
+  listSettingsSyncDomains,
+  observeDomainEdits,
+  ownedDomainAppKeys,
+  type SettingsSyncContext,
+} from "./domains";
 import { useSessionStore } from "@/stores/session-store";
 
 const STORAGE_KEY = "app-settings-sync";
@@ -38,9 +48,20 @@ const deps: SettingsDeps = {
   },
 };
 
+/** Let every registered domain load its local state before sync reads or replaces it. */
+export async function initializeSettingsSyncDomains(): Promise<void> {
+  await initializeDomains(listSettingsSyncDomains());
+}
+
+/** Start every registered domain's edit committer; the returned function stops them all. */
+export function observeSettingsSyncDomainEdits(): () => void {
+  return observeDomainEdits(listSettingsSyncDomains(), settingsSync);
+}
+
 /**
  * Read known preferences, excluding credentials, host selection, layouts and drafts.
  * Backup preserves every choice; publish alone omits a field unsupported by the chosen host.
+ * Registered domains add their own values and publication filters.
  */
 export async function getDeviceSettingsValues(
   purpose: "backup" | "publish" = "backup",
@@ -49,22 +70,38 @@ export async function getDeviceSettingsValues(
   const settings =
     queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage());
+  const domains = listSettingsSyncDomains();
+  await initializeDomains(domains);
+
+  // Plain app preferences. Keys a domain projects itself are left to that domain.
+  const owned = ownedDomainAppKeys(domains);
   const app: Record<string, unknown> = {};
   // Registry keys of feature layers absent from this build have no stored value to send.
   const stored: Record<string, unknown> = { ...settings };
   for (const key of SYNC_APP_SETTING_KEYS) {
-    if (WIRE_ONLY_APP_KEYS.has(key)) continue;
+    if (WIRE_ONLY_APP_KEYS.has(key) || owned.has(key)) continue;
     if (Object.hasOwn(stored, key)) app[key] = stored[key];
   }
   app.usage = { displayAs: settings.usage.displayAs, pins: settings.usage.pins };
-  if (purpose === "backup") return { app };
+
+  const context: SettingsSyncContext = {
+    purpose,
+    selectedHost: settingsSync.getState().selectedHost,
+  };
+  const domainValues = await collectDomainDeviceValues(domains, context);
+  if (purpose === "backup") return { ...domainValues, app };
+
+  // Publication: drop device-only and host-unsupported fields, then apply domain filters.
   const chatSupported = selectChatPreferencesSupport(
     useSessionStore.getState(),
-    settingsSync.getState().selectedHost,
+    context.selectedHost,
   );
-  return {
-    app: exportSupportedChatPreferences(exportSharedAppSettings(app), chatSupported, purpose),
-  };
+  const shared = exportSupportedChatPreferences(
+    exportSharedAppSettings(app),
+    chatSupported,
+    purpose,
+  );
+  return { ...domainValues, app: filterDomainAppExport(domains, shared, context) };
 }
 
 /** Project host values through the existing normalization and durable app write path. */
@@ -78,6 +115,8 @@ async function applyValues(values: Record<string, unknown>): Promise<void> {
     updates: (current) => preserveDeviceAppSettings(app, current),
     deps,
   });
+  // Domains project their own values only after the app preferences are durable.
+  await applyDomainValues(listSettingsSyncDomains(), values, app);
 }
 
 export const settingsSync = new SettingsSyncModel({
