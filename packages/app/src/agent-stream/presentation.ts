@@ -15,6 +15,8 @@ import type { ReadingRowReplacements } from "./reading-anchor";
 
 interface PresentationInput {
   tail: StreamItem[];
+  /** Canonical display context is projected without entering ordinary grouping or layout. */
+  retained?: StreamItem[];
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
   display: ChatDisplay;
@@ -26,6 +28,7 @@ interface PresentationInput {
 }
 
 export interface StreamPresentation extends ToolCallDetailProjection {
+  retained: StreamItem[];
   turns: Omit<TurnCollapse, "tail">;
   readingRowReplacements: ReadingRowReplacements;
 }
@@ -107,7 +110,7 @@ export function createStreamPresentation() {
   function collapse(
     projection: ToolCallDetailProjection,
     input: PresentationInput,
-  ): Omit<StreamPresentation, "readingRowReplacements"> {
+  ): Omit<StreamPresentation, "readingRowReplacements" | "retained"> {
     if (input.display !== "collapseTurns") {
       return { ...projection, turns: NO_COLLAPSED_TURNS };
     }
@@ -156,7 +159,9 @@ export function createStreamPresentation() {
     };
   }
 
-  return (input: PresentationInput): StreamPresentation => {
+  let previousInput: PresentationInput | undefined;
+  let previous: Omit<StreamPresentation, "retained"> | undefined;
+  function project(input: PresentationInput): Omit<StreamPresentation, "retained"> {
     const level: ToolCallDetailLevel = input.display === "full" ? "detailed" : "overview";
     // Retained history is not reprojected or regrouped on each live text update.
     if (historySource !== input.tail || historyTransform !== input.transform) {
@@ -213,6 +218,30 @@ export function createStreamPresentation() {
           );
         },
       },
+    };
+  }
+  return (input: PresentationInput): StreamPresentation => {
+    if (
+      !previous ||
+      !previousInput ||
+      previousInput.tail !== input.tail ||
+      previousInput.head !== input.head ||
+      previousInput.transform !== input.transform ||
+      previousInput.display !== input.display ||
+      previousInput.autoExpandReasoning !== input.autoExpandReasoning ||
+      previousInput.expandedTurnHostIds !== input.expandedTurnHostIds ||
+      previousInput.isTurnActive !== input.isTurnActive ||
+      previousInput.activeTurnId !== input.activeTurnId
+    ) {
+      previous = project(input);
+      previousInput = { ...input };
+    }
+    return {
+      ...previous,
+      retained: projectPluginTimelineItems(
+        input.retained ?? [],
+        input.transform,
+      ).flatMap<StreamItem>(presentRows),
     };
   };
 }

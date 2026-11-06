@@ -6,6 +6,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { ActualPromptRowsProvider } from "./actual-prompt-rows";
 import { PromptDiscoverySurface } from "./prompt-navigation-surface";
 import { PromptNavigationContext } from "./prompt-navigation-actions";
 import { usePromptNavigationControls } from "./use-prompt-navigation-controls";
@@ -26,8 +27,10 @@ type Props = Parameters<typeof useStickyPrompt>[0] & {
     ReturnType<typeof useCanonicalPromptContext>,
     "loading" | "error" | "exhausted" | "limited" | "cancelled" | "cancel" | "retry"
   >;
+  serverId: string;
   agentId: string;
   client: DaemonClient | null;
+  availableHeight: number;
   contentMaxWidth: number;
   children: ReactNode;
 };
@@ -37,9 +40,19 @@ export interface StickyPromptHandle {
   reviewReading(): void;
 }
 
-/** Own prompt navigation and its loading feedback around the timeline. */
+/** Own navigation/disclosure; the viewport pins its actual loaded message row. */
 export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function StickyPrompt(
-  { agentId, client, contextPageReader, retainedContext, contentMaxWidth, children, ...input },
+  {
+    serverId,
+    agentId,
+    client,
+    contextPageReader,
+    retainedContext,
+    availableHeight,
+    contentMaxWidth,
+    children,
+    ...input
+  },
   ref,
 ) {
   const readPrompt = useStableEvent(async (seq: number) => {
@@ -117,18 +130,24 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
     [topOverlayInset],
   );
   return (
-    <PromptNavigationContext.Provider value={input.enabled === false ? null : controls}>
-      <View style={styles.timeline} testID="sticky-prompt-timeline">
-        {children}
-        {input.enabled !== false && (
-          <View style={feedbackStyle} pointerEvents="box-none">
-            <View style={rail} pointerEvents="box-none">
-              <PromptDiscoverySurface navigation={feedbackNavigation} />
+    <ActualPromptRowsProvider
+      enabled={input.enabled !== false}
+      scope={`${serverId}:${agentId}:${input.epoch ?? "pending"}`}
+      availableHeight={availableHeight}
+    >
+      <PromptNavigationContext.Provider value={input.enabled === false ? null : controls}>
+        <View style={styles.timeline} testID="sticky-prompt-timeline">
+          {children}
+          {input.enabled !== false && (
+            <View style={feedbackStyle} pointerEvents="box-none">
+              <View style={rail} pointerEvents="box-none">
+                <PromptDiscoverySurface navigation={feedbackNavigation} />
+              </View>
             </View>
-          </View>
-        )}
-      </View>
-    </PromptNavigationContext.Provider>
+          )}
+        </View>
+      </PromptNavigationContext.Provider>
+    </ActualPromptRowsProvider>
   );
 });
 

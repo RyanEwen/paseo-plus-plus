@@ -35,6 +35,7 @@ import {
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
+  type LayoutChangeEvent,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -292,6 +293,7 @@ export interface AgentStreamViewHandle {
 }
 
 export interface AgentStreamViewProps {
+  nativeViewportPlacement?: "docked" | "standalone";
   agentId: string;
   serverId?: string;
   context: AgentScreenAgent;
@@ -497,6 +499,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
+      nativeViewportPlacement,
       historyPagination,
     },
     ref,
@@ -701,11 +704,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isActive,
         isAuthoritativeHistoryReady,
       });
+    const retainedWebSource = useMemo(
+      () => (isWeb ? mergeRetainedPrompts([], retainedContext.contexts, sourceItems) : []),
+      [retainedContext.contexts, sourceItems],
+    );
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
       () =>
         presentStream({
           tail: isWeb ? effectiveStreamItems : canonicalTail,
+          retained: retainedWebSource,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
           display: chatDisplay,
@@ -718,6 +726,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         presentStream,
         canonicalTail,
         effectiveStreamItems,
+        retainedWebSource,
         effectiveStreamHead,
         transformTimelineItem,
         chatDisplay,
@@ -761,6 +770,41 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       historyWindowStart,
       retainedPositions,
     ]);
+    // Paint retention never extends ordinary presentation, local history, or virtual size.
+    const retainedWebPrompt = useMemo(() => {
+      if (!isWeb || !stickyEnabled) return undefined;
+      const prompt = retainedContext.currentContext?.prompt;
+      if (!prompt) return undefined;
+      const ordinary = [...baseRenderModel.history, ...baseRenderModel.segments.liveHead];
+      const presented = [...presentation.tail, ...presentation.head, ...presentation.retained].find(
+        (item) =>
+          item.kind === "user_message" &&
+          item.timelineCursor?.epoch === prompt.timelineCursor?.epoch &&
+          item.timelineCursor?.seq === prompt.timelineCursor?.seq,
+      );
+      return presented && !ordinary.some((item) => item.id === presented.id)
+        ? presented
+        : undefined;
+    }, [
+      stickyEnabled,
+      retainedContext.currentContext,
+      baseRenderModel.history,
+      baseRenderModel.segments.liveHead,
+      presentation.tail,
+      presentation.head,
+      presentation.retained,
+    ]);
+    const retainedWebLayout = useMemo(
+      () =>
+        layoutStream({
+          strategy: streamRenderStrategy,
+          isTurnActive: false,
+          history: retainedWebPrompt ? [retainedWebPrompt] : [],
+          liveHead: [],
+          timingByItemId: baseRenderModel.turnTiming.byItemId,
+        }),
+      [retainedWebPrompt, streamRenderStrategy, baseRenderModel.turnTiming.byItemId],
+    );
     const viewportContextOnlyIds = useMemo(
       () => (isWeb ? undefined : contextOnlyIds),
       [contextOnlyIds],
@@ -837,6 +881,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [followLatestPrompt],
     );
 
+    const [availableChatHeight, setAvailableChatHeight] = useState(0);
+    const measureChatHeight = useStableEvent((event: LayoutChangeEvent) => {
+      setAvailableChatHeight(event.nativeEvent.layout.height);
+    });
     const scrollToBottom = useCallback(() => {
       followLatestPrompt();
       if (!isTimelineDetached) {
@@ -1285,11 +1333,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const layoutHistoryItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
-      for (const item of streamLayout.history) {
+      for (const item of [...retainedWebLayout.history, ...streamLayout.history]) {
         itemById.set(item.item.id, item);
       }
       return itemById;
-    }, [streamLayout.history]);
+    }, [streamLayout.history, retainedWebLayout.history]);
 
     const layoutLiveHeadItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
@@ -1424,7 +1472,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         visibleMessageIds={mountedMessageIds}
       >
         <ToolCallSheetProvider>
-          <AssistantSelectionCopySurface style={stylesheet.container}>
+          <AssistantSelectionCopySurface style={stylesheet.container} onLayout={measureChatHeight}>
             <StickyPrompt
               key={`${resolvedServerId}:${agentId}`}
               enabled={stickyEnabled}
@@ -1440,8 +1488,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               contextPageReader={resolveContextPageReader(historyPagination)}
               retainedContext={retainedContext}
               jumpToLoaded={jumpToStickyMessage}
+              serverId={resolvedServerId}
               client={client}
               ref={stickyPromptRef}
+              availableHeight={availableChatHeight}
               contentMaxWidth={contentMaxWidth}
               agentId={agentId}
               reading={promptReading}
@@ -1452,6 +1502,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     readingRowReplacements: presentation.readingRowReplacements,
                     agentId,
                     segments: renderModel.segments,
+                    retainedPrompt: retainedWebPrompt,
                     contextOnlyIds: viewportContextOnlyIds,
                     historyRowRevision,
                     liveHeadRowRevision: expandedToolCallGroups,
@@ -1485,17 +1536,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             />
             {(!isNearBottom || isTimelineDetached) && (
               <View style={scrollToBottomContainerStyle} pointerEvents="box-none">
-                <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
-                  <Pressable
-                    style={stylesheet.scrollToBottomButton}
+                <View style={stylesheet.scrollToBottomContent} pointerEvents="box-none">
+                  <ScrollToBottomButton
                     onPress={scrollToBottom}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("agentStream.scrollToBottom")}
-                    testID="scroll-to-bottom-button"
-                  >
-                    <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
-                  </Pressable>
-                </Animated.View>
+                    entering={scrollIndicatorFadeIn}
+                    exiting={scrollIndicatorFadeOut}
+                  />
+                </View>
               </View>
             )}
           </AssistantSelectionCopySurface>
@@ -1504,6 +1551,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
   },
 );
+
+/** Keep the shared floating button inside the centered composer rail. */
+function ScrollToBottomButton({
+  onPress,
+  entering,
+  exiting,
+}: { onPress: () => void } & Pick<ComponentProps<typeof Animated.View>, "entering" | "exiting">) {
+  const { t } = useTranslation();
+  return (
+    <Animated.View entering={entering} exiting={exiting}>
+      <Pressable
+        style={stylesheet.scrollToBottomButton}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={t("agentStream.scrollToBottom")}
+        testID="scroll-to-bottom-button"
+      >
+        <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+      </Pressable>
+    </Animated.View>
+  );
+}
 
 function agentCapabilityFlagsEqual(
   left: AgentCapabilityFlags | undefined,
@@ -1638,6 +1707,8 @@ function agentStreamViewPropsEqual(
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
+  if (left.nativeViewportPlacement !== right.nativeViewportPlacement)
+    reasons.push("nativeViewportPlacement");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
   }
@@ -2062,6 +2133,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     alignItems: "center",
+    paddingHorizontal: theme.spacing[4],
+  },
+  // Match Composer's outer padding and centered content rail, including narrow panes.
+  scrollToBottomContent: {
+    width: "100%",
+    maxWidth: theme.contentMaxWidth,
+    alignItems: "flex-end",
   },
   scrollToBottomButton: {
     width: 48,

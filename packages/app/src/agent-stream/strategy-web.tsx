@@ -1,7 +1,22 @@
+import { PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
+import { uniqueStreamSegments, precedingPromptIndex } from "./actual-row-collection";
+import {
+  ActualPinnedRowContext,
+  ActualPromptRowsContext,
+  ActualPromptFlowGeometryContext,
+} from "./actual-prompt-rows";
+import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import {
+  getOriginalPromptTop,
+  getNaturalPromptRowHeight,
+  syncActualPromptPin,
+  reconcilePromptFlow,
+} from "./actual-prompt-pin.web";
 import { resolvePromptHandoffProgress, type PromptHandoff } from "./prompt-handoff";
 import React, {
   type CSSProperties,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -44,7 +59,10 @@ import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
 } from "./history-start-settle-scheduler";
-import { useChatFindSelectedMessageId } from "@/agent-stream/chat-find";
+import {
+  useChatFindOriginalMessage,
+  useChatFindSelectedMessageId,
+} from "@/agent-stream/chat-find/selection";
 import { useScrollToMessage } from "./use-scroll-to-message.web";
 
 interface CreateWebStreamStrategyInput {
@@ -325,9 +343,305 @@ const StreamRowContent = React.memo(function StreamRowContent({
   return render(item, index, items);
 });
 
+interface MeasuredStreamRowGeometry {
+  width: number;
+  height: number;
+  /** Last natural publication committed by the existing ordinary measurement owner. */
+  promptFlowHeight?: string;
+}
+
+interface RowGeometryChange {
+  synchronous: boolean;
+  natural: boolean;
+}
+
+/** The painted child's resize is not evidence that its ordinary allocation changed. */
+function hasNaturalRowChanges(
+  entries: readonly ResizeObserverEntry[],
+  content: HTMLElement,
+  measurements: ReadonlyMap<string, MeasuredStreamRowGeometry>,
+): boolean {
+  const width = content.getBoundingClientRect().width;
+  for (const entry of entries) {
+    const row = entry.target.closest<HTMLElement>("[data-history-row-id]");
+    // Departed cells and retained-only paint never enter the ordinary adapter.
+    if (!row || !content.contains(row)) continue;
+    const previous = measurements.get(row.dataset.historyRowId!);
+    if (!previous || previous.width !== width) return true;
+    if (row.matches("[data-actual-prompt-row]")) {
+      const flow = row.querySelector<HTMLElement>("[data-actual-prompt-content]")?.dataset
+        .promptFlowHeight;
+      if (flow !== previous.promptFlowHeight) return true;
+      // Before preparation the one body is ordinary layout. Once prepared, only
+      // its natural publication owns height; the visual ResizeObserver may run
+      // before that publication's matching paint size has been delivered.
+      if (flow !== undefined) continue;
+    }
+    if (previous.height !== getNaturalPromptRowHeight(row)) return true;
+  }
+  return false;
+}
+
+interface ActualPromptFlowOwner {
+  scope: string | undefined;
+  node: HTMLDivElement | null;
+  geometry: NaturalMessageGeometry | null;
+}
+
+/** Keep the natural reservation on the untransformed row, while CSS sticky sees
+ * only this child's current paint extent. Ref departure retires the exact owner.
+ */
+function ActualRowContent({
+  pinned,
+  isPrompt,
+  bodyRef,
+  onFlowGeometryChange,
+  onPaintGeometryChange,
+  children,
+}: {
+  pinned: boolean;
+  isPrompt: boolean;
+  bodyRef?: React.RefCallback<HTMLDivElement>;
+  onFlowGeometryChange(): void;
+  onPaintGeometryChange(): void;
+  children: React.ReactNode;
+}) {
+  const scope = useContext(ActualPromptRowsContext)?.scope;
+  const owner = useMemo<ActualPromptFlowOwner>(
+    () => ({ scope, node: null, geometry: null }),
+    [scope],
+  );
+  const applyGeometry = useCallback(() => {
+    const node = owner.node;
+    if (!node) return;
+    const flow = owner.geometry ? String(owner.geometry.flowHeight) : undefined;
+    const visual = owner.geometry ? String(owner.geometry.visualHeight) : undefined;
+    const compact =
+      owner.geometry?.compactHeight === undefined
+        ? undefined
+        : String(owner.geometry.compactHeight);
+    const bounded =
+      owner.geometry?.bounded === undefined ? undefined : String(owner.geometry.bounded);
+    const naturalChanged = node.dataset.promptFlowHeight !== flow;
+    if (
+      !naturalChanged &&
+      node.dataset.promptVisualHeight === visual &&
+      node.dataset.promptCompactHeight === compact &&
+      node.dataset.promptBounded === bounded
+    )
+      return;
+    if (flow === undefined || visual === undefined) {
+      delete node.dataset.promptFlowHeight;
+      delete node.dataset.promptVisualHeight;
+    } else {
+      node.dataset.promptFlowHeight = flow;
+      node.dataset.promptVisualHeight = visual;
+    }
+    if (compact === undefined) delete node.dataset.promptCompactHeight;
+    else node.dataset.promptCompactHeight = compact;
+    if (bounded === undefined) delete node.dataset.promptBounded;
+    else node.dataset.promptBounded = bounded;
+    if (naturalChanged) onFlowGeometryChange();
+    else onPaintGeometryChange();
+  }, [owner, onFlowGeometryChange, onPaintGeometryChange]);
+  const reportGeometry = useCallback(
+    (geometry: NaturalMessageGeometry | null) => {
+      owner.geometry = geometry;
+      applyGeometry();
+    },
+    [owner, applyGeometry],
+  );
+  const registerBody = useCallback(
+    (node: HTMLDivElement | null) => {
+      owner.node = node;
+      if (!node) return;
+      applyGeometry();
+      const release = bodyRef?.(node);
+      return () => {
+        if (owner.node === node) owner.node = null;
+        if (typeof release === "function") release();
+        else bodyRef?.(null);
+      };
+    },
+    [owner, bodyRef, applyGeometry],
+  );
+  return (
+    <div ref={registerBody} data-actual-prompt-content style={streamRowStyle}>
+      <ActualPromptFlowGeometryContext.Provider value={isPrompt ? reportGeometry : null}>
+        <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
+      </ActualPromptFlowGeometryContext.Provider>
+    </div>
+  );
+}
+
+/** Derive Find's temporary original-row owner and the real rows it must retain. */
+function useFindRowOwnership(
+  owner: { scope: string } | null,
+  agentId: string,
+  active: boolean,
+  historyVirtualized: readonly StreamItem[],
+) {
+  const { messageId: originalFindMessageId, select: selectFindOriginalMessage } =
+    useChatFindOriginalMessage(owner?.scope ?? agentId, active);
+  const selectedFindMessageId = useChatFindSelectedMessageId();
+  const chatFindMessageId = originalFindMessageId ?? selectedFindMessageId;
+  // Chat find counts and highlights occurrences from the DOM, so every block row of
+  // the message it selected has to be mounted even when the scroll window is nowhere
+  // near it. Without this a hit in a far paragraph is invisible to the count and Next
+  // walks off to the following message.
+  const chatFindRowIndexes = useMemo(() => {
+    if (!chatFindMessageId) return null;
+    const indexes = historyVirtualized.flatMap((item, index) =>
+      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
+    );
+    return indexes.length > 0 ? indexes : null;
+  }, [chatFindMessageId, historyVirtualized]);
+  return { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes };
+}
+
+const retainedPromptStyle: CSSProperties = {
+  ...streamRowStyle,
+  position: "absolute",
+  left: 0,
+  top: 0,
+  height: 0,
+  overflow: "hidden",
+  visibility: "hidden",
+  pointerEvents: "none",
+  zIndex: 2,
+};
+
+interface RetainedPromptPaintInput {
+  content: HTMLElement;
+  viewport: HTMLElement;
+  prompt: StreamItem | undefined;
+  ordinary: StreamItem[];
+  virtualPrompts: readonly { id: string; top: number }[];
+  enabled: boolean;
+}
+
+/** Place the one retained body at the paint edge, without claiming an original row top. */
+function positionRetainedPrompt({
+  content,
+  viewport,
+  prompt,
+  ordinary,
+  virtualPrompts,
+  enabled,
+}: RetainedPromptPaintInput): string | null {
+  const row = content.querySelector<HTMLElement>("[data-retained-prompt-row]");
+  const host = content.querySelector<HTMLElement>("[data-stream-rows-host]");
+  if (!row || !host) return null;
+  row.style.visibility = "hidden";
+  row.setAttribute("aria-hidden", "true");
+  row.dataset.promptPinned = "false";
+  if (!enabled || !prompt || row.dataset.retainedPromptRow !== prompt.id) return null;
+  const viewportBounds = viewport.getBoundingClientRect();
+  const nextIds = new Set(
+    ordinary.flatMap((item) =>
+      item.kind === "user_message" &&
+      item.timelineCursor?.epoch === prompt.timelineCursor?.epoch &&
+      item.timelineCursor !== undefined &&
+      prompt.timelineCursor !== undefined &&
+      item.timelineCursor.seq > prompt.timelineCursor.seq
+        ? [item.id]
+        : [],
+    ),
+  );
+  let nextTop = Infinity;
+  for (const candidate of virtualPrompts) {
+    if (nextIds.has(candidate.id)) nextTop = Math.min(nextTop, candidate.top - viewport.scrollTop);
+  }
+  for (const candidate of content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]")) {
+    if (nextIds.has(candidate.dataset.historyRowId!))
+      nextTop = Math.min(nextTop, candidate.getBoundingClientRect().top - viewportBounds.top);
+  }
+  if (nextTop <= 0) return null;
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
+  if (!body) return null;
+  const collision = Math.min(0, nextTop - body.getBoundingClientRect().height);
+  row.style.top = `${viewportBounds.top - host.getBoundingClientRect().top + collision}px`;
+  // Clip all descendant overflow at the actual viewport end, including preparation.
+  // This is a paint bound, never a synthetic inline allocation or virtual estimate.
+  row.style.height = `${viewport.clientHeight}px`;
+  row.style.visibility = "visible";
+  row.setAttribute("aria-hidden", "false");
+  row.dataset.promptPinned = "true";
+  return prompt.id;
+}
+
+/** Retained-only paint changes are not transcript mutations for upstream bottom following. */
+function isRetainedPromptMutation(record: MutationRecord): boolean {
+  const target = record.target instanceof Element ? record.target : record.target.parentElement;
+  if (target?.closest("[data-retained-prompt-row]")) return true;
+  const changed = [...record.addedNodes, ...record.removedNodes];
+  return (
+    changed.length > 0 &&
+    changed.every((node) => node instanceof Element && node.matches("[data-retained-prompt-row]"))
+  );
+}
+
+const promptPaintMutationSelector = [
+  '[data-testid="user-message-disclosure"]',
+  '[data-testid="user-message-content-target"]',
+  '[data-testid="user-message-action-backdrop"]',
+  '[data-testid="user-message-prefix-mask"]',
+  '[data-testid="user-message-suffix-mask"]',
+  "[data-user-message-compact-occlusion]",
+  "[data-user-message-paint-backdrop]",
+].join(",");
+
+/** Only declared sticky paint is excluded; original body mutations still follow. */
+function isPromptPaintMutation(record: MutationRecord): boolean {
+  if (isRetainedPromptMutation(record)) return true;
+  const target = record.target instanceof Element ? record.target : record.target.parentElement;
+  if (!target?.closest('[data-testid="user-message"]')) return false;
+  if (target.closest(promptPaintMutationSelector)) return true;
+  const changed = [...record.addedNodes, ...record.removedNodes];
+  return (
+    changed.length > 0 &&
+    changed.every((node) => node instanceof Element && node.matches(promptPaintMutationSelector))
+  );
+}
+
+interface RetainedPromptRowInput {
+  item: StreamItem | undefined;
+  pinnedRowId: string | null;
+  onGeometryChange(): void;
+  render: StreamRenderInput["renderers"]["renderHistoryMountedRow"];
+}
+
+/** Return the same keyed wrapper/child ancestry used by ordinary mounted and virtual rows. */
+function renderRetainedPromptRow({
+  item,
+  pinnedRowId,
+  onGeometryChange,
+  render,
+}: RetainedPromptRowInput) {
+  if (!item) return null;
+  return (
+    <div
+      key={item.id}
+      data-retained-prompt-row={item.id}
+      aria-hidden="true"
+      style={retainedPromptStyle}
+    >
+      <ActualRowContent
+        onFlowGeometryChange={onGeometryChange}
+        onPaintGeometryChange={onGeometryChange}
+        isPrompt
+        pinned={pinnedRowId === item.id}
+      >
+        <StreamRowContent item={item} index={0} items={[item]} render={render} />
+      </ActualRowContent>
+    </div>
+  );
+}
+
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
     segments: inputSegments,
+    retainedPrompt,
     contextOnlyIds,
     historyRowRevision,
     liveHeadRowRevision,
@@ -353,10 +667,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const historyMounted = useRevisedHistoryRows(inputSegments.historyMounted, historyRowRevision);
   const segments = useMemo(
-    () => ({ ...inputSegments, historyVirtualized, historyMounted }),
+    () => uniqueStreamSegments({ ...inputSegments, historyVirtualized, historyMounted }),
     [historyMounted, historyVirtualized, inputSegments],
   );
+  const actualRows = useContext(ActualPromptRowsContext);
+  const [pinnedRowId, setPinnedRowId] = useState<string | null>(null);
   const isActive = useRetainedPanelActive();
+  const { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes } =
+    useFindRowOwnership(actualRows, props.agentId, isActive, segments.historyVirtualized);
   const isActiveRef = useRef(isActive);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -398,7 +716,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const historyStartPaginationStateRef = useRef(historyStartPaginationState);
   const readingAnchor = useMemo(createReadingAnchor, []);
-  const measuredRowHeights = useRef(new Map<string, { width: number; height: number }>());
+  const measuredRowHeights = useRef(new Map<string, MeasuredStreamRowGeometry>());
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
   const lastActiveFollowOutputLayoutRef = useRef<ActiveFollowOutputLayout | null>(null);
   const lastObservedViewportGeometryRef = useRef<ObservedViewportGeometry | null>(null);
@@ -420,18 +738,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
   const isActivationReady = !hasRouteBottomAnchorRequest || isAuthoritativeHistoryReady;
 
-  // Chat find counts and highlights occurrences from the DOM, so every block row of
-  // the message it selected has to be mounted even when the scroll window is nowhere
-  // near it. Without this a hit in a far paragraph is invisible to the count and Next
-  // walks off to the following message.
-  const chatFindMessageId = useChatFindSelectedMessageId();
-  const chatFindRowIndexes = useMemo(() => {
-    if (!chatFindMessageId) return null;
-    const indexes = segments.historyVirtualized.flatMap((item, index) =>
-      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
-    );
-    return indexes.length > 0 ? indexes : null;
-  }, [chatFindMessageId, segments.historyVirtualized]);
+  const virtualUserIndices = useMemo(
+    () =>
+      segments.historyVirtualized.flatMap((item, index) =>
+        item.kind === "user_message" ? [index] : [],
+      ),
+    [segments.historyVirtualized],
+  );
   const rowVirtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(null);
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
@@ -468,20 +781,29 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         if (first && last)
           visibleRange = { ...range, startIndex: first.index, endIndex: last.index };
       }
+      // Retain only the one preceding actual user row outside the ordinary
+      // virtual range. Its outer measurement stays at its original position.
+      const precedingVirtualPromptIndex =
+        actualRows && correctedOffset !== undefined
+          ? precedingPromptIndex(virtualUserIndices, virtualizer.measurementsCache, correctedOffset)
+          : -1;
       return [
         ...new Set([
           ...defaultRangeExtractor(visibleRange),
+          ...(precedingVirtualPromptIndex < 0 ? [] : [precedingVirtualPromptIndex]),
           ...(chatFindRowIndexes ?? []),
           ...(anchorIndex < 0 ? [] : [anchorIndex]),
         ]),
       ].sort((left, right) => left - right);
     },
     [
+      actualRows,
       props.readingRowReplacements,
       chatFindRowIndexes,
       contextOnlyIds,
       readingAnchor,
       segments.historyVirtualized,
+      virtualUserIndices,
     ],
   );
   const virtualOffsetListener = useRef<((offset: number, scrolling: boolean) => void) | null>(null);
@@ -497,6 +819,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const rowVirtualizer = useVirtualizer({
     count: segments.historyVirtualized.length,
     enabled: shouldUseVirtualizer,
+    // Attaching this adapter must start at the viewport's existing physical offset.
+    initialOffset: () => scrollContainerRef.current?.scrollTop ?? 0,
     initialRect: {
       width: scrollContainerRef.current?.clientWidth ?? 0,
       height: scrollContainerRef.current?.clientHeight ?? 0,
@@ -529,6 +853,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       !followOutputRef.current || isScrollContainerNearBottom(scrollContainer);
     return {
       distanceFromHistoryStart: scrollContainer.scrollTop,
+      contentHeight: scrollContainer.scrollHeight,
+      viewportHeight: scrollContainer.clientHeight,
       hasOlderHistory,
       isLoadingOlderHistory,
       // An explicit jump owns the landing position. Revealing another local
@@ -586,8 +912,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       historyStartPaginationStateRef.current = rearmed;
       setHistoryStartPaginationState(rearmed);
     }
-    historyStartPaginationStateRef.current = rearmed;
-    setHistoryStartPaginationState(rearmed);
     evaluateHistoryStart();
   });
   const scheduleHistoryStartPrependSettle = useStableEvent(() => {
@@ -625,7 +949,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       "[data-history-row-id][data-index]",
     ) ?? []) {
       const index = Number(element.dataset.index);
-      const height = measureVirtualElement(element, undefined, rowVirtualizer);
+      const height = element.matches("[data-actual-prompt-row]")
+        ? getNaturalPromptRowHeight(element)
+        : measureVirtualElement(element, undefined, rowVirtualizer);
       if (rowVirtualizer.measurementsCache[index]?.size === height) continue;
       rowVirtualizer.resizeItem(index, height);
       resized = true;
@@ -633,27 +959,37 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return resized;
   });
 
-  // Measure the committed DOM rather than queued observer entries: flushSync can
-  // also commit an image's pending intrinsic dimensions, invalidating those entries.
-  const virtualRowObserver = useMemo(
+  const onRowGeometryChangeRef = useRef<(change: RowGeometryChange) => void>(() => {});
+  // Natural publication and visual paint share this owner, but only actual
+  // ordinary layout changes may enter measurement/reading reconciliation.
+  const onFlowGeometryChange = useCallback(
+    () => onRowGeometryChangeRef.current({ synchronous: false, natural: true }),
+    [],
+  );
+  const onPaintGeometryChange = useCallback(
+    () => onRowGeometryChangeRef.current({ synchronous: false, natural: false }),
+    [],
+  );
+  const naturalRowObserver = useMemo(
     () =>
-      new ResizeObserver(() => {
-        if (!isActiveRef.current) return;
-        flushSync(() => {
-          measureVirtualizedRows();
+      new ResizeObserver((entries) => {
+        if (!isActiveRef.current || !contentRef.current) return;
+        onRowGeometryChangeRef.current({
+          synchronous: true,
+          natural: hasNaturalRowChanges(entries, contentRef.current, measuredRowHeights.current),
         });
       }),
-    [measureVirtualizedRows],
+    [],
   );
-  const measureVirtualizedRowElement = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      virtualRowObserver.observe(node, { box: "border-box" });
-      return () => virtualRowObserver.unobserve(node);
+  const observeActualRowBody = useCallback(
+    (body: HTMLDivElement | null) => {
+      if (!body) return;
+      naturalRowObserver.observe(body, { box: "border-box" });
+      return () => naturalRowObserver.unobserve(body);
     },
-    [virtualRowObserver],
+    [naturalRowObserver],
   );
-  useEffect(() => () => virtualRowObserver.disconnect(), [virtualRowObserver]);
+  useEffect(() => () => naturalRowObserver.disconnect(), [naturalRowObserver]);
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -746,7 +1082,56 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   // Rows are laid out in DOM order, virtualized block first, so the first row whose bottom
   // clears the reading line is the one the reader is looking at.
+  const updatePinnedRow = useStableEvent(() => {
+    const container = scrollContainerRef.current;
+    const content = contentRef.current;
+    if (!container || !content || !isActiveRef.current) return;
+    const widget = content
+      .closest('[data-chat-find-root="true"]')
+      ?.querySelector<HTMLElement>('[data-chat-find-widget="true"]');
+    const clearance = widget ? widget.getBoundingClientRect().height + 8 : 0;
+    actualRows?.reportViewportHeight(
+      Math.max(0, container.clientHeight - clearance - PROMPT_JUMP_TOP_INSET_PX),
+    );
+    reconcilePromptFlow(content, actualRows !== null);
+    const virtualPrompts = virtualUserIndices.flatMap((index) => {
+      const item = segments.historyVirtualized[index];
+      const measurement = rowVirtualizer.measurementsCache[index];
+      return item && measurement ? [{ id: item.id, top: measurement.start }] : [];
+    });
+    const host = content.querySelector<HTMLElement>("[data-stream-rows-host]");
+    const virtualEnd = host
+      ? host.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop +
+        rowVirtualizer.getTotalSize()
+      : 0;
+    const retained = positionRetainedPrompt({
+      content,
+      viewport: container,
+      prompt: retainedPrompt,
+      ordinary: [...segments.historyVirtualized, ...segments.historyMounted, ...segments.liveHead],
+      virtualPrompts,
+      enabled:
+        actualRows !== null && !isJumpSettling() && originalFindMessageId !== retainedPrompt?.id,
+    });
+    const next = syncActualPromptPin(
+      content,
+      container,
+      actualRows !== null,
+      virtualPrompts,
+      virtualEnd,
+      originalFindMessageId,
+      retained !== null,
+    );
+    const owner = retained ?? next;
+    setPinnedRowId((current) => (current === owner ? current : owner));
+  });
+
+  const onRetainedFlowGeometryChange = useCallback(() => updatePinnedRow(), [updatePinnedRow]);
+
   const reportReadingPosition = useStableEvent(() => {
+    updatePinnedRow();
     if (!isActiveRef.current) {
       return;
     }
@@ -772,8 +1157,18 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     for (const bubble of props.trackPromptHandoff === false
       ? []
       : contentNode.querySelectorAll<HTMLElement>('[data-testid="user-message"]')) {
+      if (bubble.closest("[data-retained-prompt-row]")) continue;
       const body = bubble.querySelector<HTMLElement>('[data-testid="user-message-bubble"]');
-      const bounds = (body ?? bubble).getBoundingClientRect();
+      const renderedBounds = (body ?? bubble).getBoundingClientRect();
+      const originalTop = getOriginalPromptTop(body ?? bubble);
+      const bounds = {
+        ...renderedBounds,
+        top: originalTop,
+        bottom: originalTop + renderedBounds.height,
+        width: renderedBounds.width,
+        height: renderedBounds.height,
+        left: renderedBounds.left,
+      };
       const id = bubble.closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
       if (id && bounds.width > 0 && bounds.height > 0) {
         if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) visibleUsers.push(id);
@@ -834,6 +1229,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const container = scrollContainerRef.current;
     const content = contentRef.current;
     if (!isActiveRef.current || !container || !content) return;
+    reconcilePromptFlow(content, actualRows !== null);
     const viewportTop = container.getBoundingClientRect().top;
     const scrollTop = container.scrollTop;
     const width = content.getBoundingClientRect().width;
@@ -844,8 +1240,18 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       (element) => {
         const bounds = element.getBoundingClientRect();
         const id = element.dataset.historyRowId!;
-        measuredRowHeights.current.set(id, { width, height: bounds.height });
-        return { id, top: bounds.top - viewportTop + scrollTop, height: bounds.height };
+        const naturalHeight = getNaturalPromptRowHeight(element);
+        measuredRowHeights.current.set(id, {
+          width,
+          height: naturalHeight,
+          promptFlowHeight: element.querySelector<HTMLElement>("[data-actual-prompt-content]")
+            ?.dataset.promptFlowHeight,
+        });
+        return {
+          id,
+          top: bounds.top - viewportTop + scrollTop,
+          height: naturalHeight,
+        };
       },
     ).filter((row) => !contextOnlyIds?.has(row.id));
     const anchorRowId = readingAnchor.getRowId();
@@ -871,6 +1277,25 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
   });
 
+  onRowGeometryChangeRef.current = ({ synchronous, natural }) => {
+    if (!isActiveRef.current) return;
+    if (!natural) {
+      updatePinnedRow();
+      return;
+    }
+    const content = contentRef.current;
+    if (content) reconcilePromptFlow(content, actualRows !== null);
+    if (synchronous)
+      flushSync(() => {
+        measureVirtualizedRows();
+      });
+    else if (measureVirtualizedRows()) return;
+    reconcileReadingPosition();
+    updatePinnedRow();
+    updateScrollMetrics();
+    if (followOutputRef.current) scheduleStickToBottom();
+  };
+
   // Apply row positions and their scroll correction in the same paint, including
   // the ordinary-to-virtualized handoff and measurements of newly mounted rows.
   useLayoutEffect(() => {
@@ -878,7 +1303,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     // Child layout can change during this commit, ahead of ResizeObserver delivery.
     if (!isActive || measureVirtualizedRows()) return;
     reconcileReadingPosition();
+    updatePinnedRow();
   }, [
+    updatePinnedRow,
+    originalFindMessageId,
+    retainedPrompt,
+    actualRows?.scope,
     contentWidth,
     contextOnlyIds,
     isActive,
@@ -1123,7 +1553,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     // Paced reveal commits inside a message without rerendering this viewport.
     // Observe those commits too, so the next frame sees the grown content at the
     // bottom instead of waiting for the resize notification after animation frames.
-    const contentChanges = new MutationObserver(() => {
+    const contentChanges = new MutationObserver((records) => {
+      if (records.every(isPromptPaintMutation)) return;
       if (isActiveRef.current && followOutputRef.current) forceStickToBottom();
     });
     if (contentNode)
@@ -1332,6 +1763,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
+      expandMessageForFind: selectFindOriginalMessage,
       holdReadingPosition: () => {
         cancelPendingStickToBottom();
         setFollowOutput(false);
@@ -1350,6 +1782,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     cancelPendingStickToBottom,
     forceStickToBottom,
+    selectFindOriginalMessage,
     cancelScrollToMessage,
     readingAnchor,
     scheduleStickToBottom,
@@ -1403,12 +1836,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const renderVirtualRowStyle = useCallback(
     (start: number): CSSProperties => ({
       position: "absolute",
-      top: 0,
+      top: start - VIRTUALIZER_SCROLL_MARGIN_PX,
       left: 0,
       display: "flex",
       flexDirection: "column",
       width: "100%",
-      transform: `translateY(${start - VIRTUALIZER_SCROLL_MARGIN_PX}px)`,
     }),
     [],
   );
@@ -1418,37 +1850,76 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         key={item.id}
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
+        data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
-        <StreamRowContent
-          item={item}
-          index={index}
-          items={segments.historyMounted}
-          render={renderHistoryMountedRow}
-        />
+        <ActualRowContent
+          bodyRef={observeActualRowBody}
+          onFlowGeometryChange={onFlowGeometryChange}
+          onPaintGeometryChange={onPaintGeometryChange}
+          isPrompt={item.kind === "user_message"}
+          pinned={pinnedRowId === item.id}
+        >
+          <StreamRowContent
+            item={item}
+            index={index}
+            items={segments.historyMounted}
+            render={renderHistoryMountedRow}
+          />
+        </ActualRowContent>
       </div>
     ));
-  }, [renderHistoryMountedRow, segments.historyMounted]);
+  }, [
+    observeActualRowBody,
+    onFlowGeometryChange,
+    onPaintGeometryChange,
+    pinnedRowId,
+    renderHistoryMountedRow,
+    segments.historyMounted,
+  ]);
   const liveHeadRows = useMemo(() => {
     return segments.liveHead.map((item, index) => (
       <div
         key={item.id}
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
+        data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
-        <StreamRowContent
-          item={item}
-          index={index}
-          items={segments.liveHead}
-          revision={liveHeadRowRevision}
-          render={renderLiveHeadRow}
-        />
+        <ActualRowContent
+          bodyRef={observeActualRowBody}
+          onFlowGeometryChange={onFlowGeometryChange}
+          onPaintGeometryChange={onPaintGeometryChange}
+          isPrompt={item.kind === "user_message"}
+          pinned={pinnedRowId === item.id}
+        >
+          <StreamRowContent
+            item={item}
+            index={index}
+            items={segments.liveHead}
+            revision={liveHeadRowRevision}
+            render={renderLiveHeadRow}
+          />
+        </ActualRowContent>
       </div>
     ));
-  }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
+  }, [
+    observeActualRowBody,
+    onFlowGeometryChange,
+    onPaintGeometryChange,
+    pinnedRowId,
+    liveHeadRowRevision,
+    renderLiveHeadRow,
+    segments.liveHead,
+  ]);
+  const retainedPromptRow = renderRetainedPromptRow({
+    item: retainedPrompt,
+    pinnedRowId,
+    onGeometryChange: onRetainedFlowGeometryChange,
+    render: renderHistoryMountedRow,
+  });
   const mountedRows = useMemo(
     () => [...mountedHistoryRows, ...liveHeadRows],
     [liveHeadRows, mountedHistoryRows],
@@ -1487,7 +1958,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       >
         <div ref={handleContentRef} style={contentContainerStyle}>
           {historyStartSlot}
-          <div style={streamRowsHostStyle}>
+          <div data-stream-rows-host style={streamRowsHostStyle}>
             <div style={virtualRowsContainerStyle} />
             {[
               ...virtualRows.map((virtualRow) => {
@@ -1495,27 +1966,38 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                 if (!item) return null;
                 return (
                   <div
-                    key={virtualRow.key}
+                    key={item.id}
                     data-index={virtualRow.index}
                     data-history-row-id={item.id}
                     data-message-id={getStreamItemMessageId(item)}
+                    data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
                     data-plugin-row={item.kind === "plugin" ? "true" : undefined}
-                    ref={measureVirtualizedRowElement}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >
-                    <StreamRowContent
-                      item={item}
-                      index={virtualRow.index}
-                      items={segments.historyVirtualized}
-                      render={renderHistoryVirtualizedRow}
-                    />
+                    <ActualRowContent
+                      bodyRef={observeActualRowBody}
+                      onFlowGeometryChange={onFlowGeometryChange}
+                      onPaintGeometryChange={onPaintGeometryChange}
+                      isPrompt={item.kind === "user_message"}
+                      pinned={pinnedRowId === item.id}
+                    >
+                      <StreamRowContent
+                        item={item}
+                        index={virtualRow.index}
+                        items={segments.historyVirtualized}
+                        render={renderHistoryVirtualizedRow}
+                      />
+                    </ActualRowContent>
                   </div>
                 );
               }),
               ...mountedRows,
+              retainedPromptRow,
             ]}
           </div>
-          {liveAuxiliary}
+          <div data-stream-auxiliary style={streamRowStyle}>
+            {liveAuxiliary}
+          </div>
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>
