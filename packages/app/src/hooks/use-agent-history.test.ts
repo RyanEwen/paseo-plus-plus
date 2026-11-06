@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { resolveClosedAgentDialogState, selectPreviousAgents } from "./previous-agents";
+import { beforeAll, describe, expect, it } from "vitest";
 import type {
   DaemonClient,
   FetchAgentHistoryEntry,
   FetchAgentHistoryOptions,
 } from "@getpaseo/client/internal/daemon-client";
-import type { AgentHistoryClient, AgentHistoryHost } from "./use-agent-history";
+import type { AgentHistoryClient, AgentHistoryHost } from "./agent-history-fetch";
 import { allAgentHistoryQueryKey } from "./agent-history-query-key";
 
 (
@@ -13,8 +14,18 @@ import { allAgentHistoryQueryKey } from "./agent-history-query-key";
   }
 ).__DEV__ = false;
 
-const { fetchAgentHistoryBatch, fetchAgentHistoryPage, collectAgentHistoryHostErrors } =
-  await import("./use-agent-history");
+type UseAgentHistoryModule = typeof import("./agent-history-fetch");
+
+let fetchAgentHistoryBatch: UseAgentHistoryModule["fetchAgentHistoryBatch"];
+let fetchAgentHistoryPage: UseAgentHistoryModule["fetchAgentHistoryPage"];
+let collectAgentHistoryHostErrors: UseAgentHistoryModule["collectAgentHistoryHostErrors"];
+
+beforeAll(async () => {
+  const module = await import("./agent-history-fetch");
+  fetchAgentHistoryBatch = module.fetchAgentHistoryBatch;
+  fetchAgentHistoryPage = module.fetchAgentHistoryPage;
+  collectAgentHistoryHostErrors = module.collectAgentHistoryHostErrors;
+});
 
 type FetchAgentHistory = DaemonClient["fetchAgentHistory"];
 type FetchAgentHistoryResult = Awaited<ReturnType<FetchAgentHistory>>;
@@ -634,4 +645,137 @@ describe("fetchAgentHistoryPage", () => {
       }),
     ).rejects.toThrow("No connected hosts could load agent history");
   });
+});
+
+it("scopes every history page by workspace identity before pagination", async () => {
+  const client = createClient([historyPayload({ entries: [], hasMore: true, nextCursor: "next" })]);
+  await fetchAgentHistoryBatch({
+    hosts: [{ serverId: "host-a", serverLabel: "A", client }],
+    cursorByServerId: null,
+    workspaceId: "workspace-a",
+  });
+  await fetchAgentHistoryBatch({
+    hosts: [{ serverId: "host-a", serverLabel: "A", client }],
+    cursorByServerId: { "host-a": "next" },
+    workspaceId: "workspace-a",
+  });
+  expect(client.calls.map((call) => call.workspaceId)).toEqual(["workspace-a", "workspace-a"]);
+  expect(client.calls[1].page?.cursor).toBe("next");
+});
+
+it("lists hidden live agents and archived conversations once without confusing runtime status with tabs", async () => {
+  const entries = ["open", "hidden", "archived"].map((id) =>
+    historyEntry({
+      id,
+      cwd: "/shared",
+      updatedAt: "2026-10-11T12:00:00Z",
+      archivedAt: id === "archived" ? "2026-10-11T12:01:00Z" : null,
+    }),
+  );
+  entries[1].agent.status = "running";
+  entries[1].agent.labels = { "paseo.parent-agent-id": "parent" };
+  const page = await fetchAgentHistoryPage({
+    client: createClient([historyPayload({ entries })]),
+    serverId: "host",
+    cursor: null,
+  });
+  const previous = selectPreviousAgents(
+    [...page.agents, ...page.agents],
+    [{ tabId: "tab", createdAt: 0, target: { kind: "agent", agentId: "open" } }],
+  );
+  expect(previous.map((agent) => agent.id)).toEqual(["hidden", "archived"]);
+  expect(previous[0].status).toBe("running");
+  expect(previous[0].labels["paseo.parent-agent-id"]).toBe("parent");
+});
+
+describe("closed-agent dialog failure precedence", () => {
+  const offline = [{ serverId: "host-a", serverName: "A" }];
+  const ready = { hasMore: true, isError: false, hostErrors: [], isInitialLoad: false };
+
+  it("stops cached all-open page scanning during disconnect and resumes after reconnect", () => {
+    expect(
+      resolveClosedAgentDialogState({
+        closedAgentCount: 0,
+        history: { ...ready, hostErrors: offline },
+      }),
+    ).toEqual({ failed: true, scanningOpenPages: false, showLoading: false });
+    expect(resolveClosedAgentDialogState({ closedAgentCount: 0, history: ready })).toEqual({
+      failed: false,
+      scanningOpenPages: true,
+      showLoading: true,
+    });
+  });
+
+  it("shows failure when a held initial fetch loses its host", () => {
+    expect(
+      resolveClosedAgentDialogState({
+        closedAgentCount: 0,
+        history: { ...ready, hasMore: false, isInitialLoad: true, hostErrors: offline },
+      }),
+    ).toEqual({ failed: true, scanningOpenPages: false, showLoading: false });
+  });
+
+  it("shows fresh offline failure without inventing progress", () => {
+    expect(
+      resolveClosedAgentDialogState({
+        closedAgentCount: 0,
+        history: { ...ready, hasMore: false, hostErrors: offline },
+      }),
+    ).toEqual({ failed: true, scanningOpenPages: false, showLoading: false });
+  });
+
+  it("keeps cached closed rows visible during failure and reconnect", () => {
+    expect(
+      resolveClosedAgentDialogState({
+        closedAgentCount: 1,
+        history: { ...ready, hostErrors: offline },
+      }),
+    ).toEqual({ failed: true, scanningOpenPages: false, showLoading: false });
+  });
+});
+
+// Existing helper interfaces: explicitly supplied invalid scope must reach the SDK validator.
+it("preserves explicitly empty workspace scope on a direct history page", async () => {
+  const client = createClient([historyPayload({ entries: [] })]);
+  await fetchAgentHistoryPage({
+    client,
+    serverId: "host-a",
+    cursor: null,
+    workspaceId: "",
+  });
+
+  expect(client.calls).toEqual([
+    {
+      workspaceId: "",
+      filter: { includeArchived: true, includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200 },
+    } satisfies FetchAgentHistoryOptions,
+  ]);
+});
+
+it("preserves explicitly empty workspace scope through every batch page", async () => {
+  const client = createClient([historyPayload({ entries: [], hasMore: true, nextCursor: "next" })]);
+  const hosts = [{ serverId: "host-a", serverLabel: "A", client }];
+  await fetchAgentHistoryBatch({ hosts, cursorByServerId: null, workspaceId: "" });
+  await fetchAgentHistoryBatch({
+    hosts,
+    cursorByServerId: { "host-a": "next" },
+    workspaceId: "",
+  });
+
+  expect(client.calls).toEqual([
+    {
+      workspaceId: "",
+      filter: { includeArchived: true, includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200 },
+    },
+    {
+      workspaceId: "",
+      filter: { includeArchived: true, includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200, cursor: "next" },
+    },
+  ] satisfies FetchAgentHistoryOptions[]);
 });
