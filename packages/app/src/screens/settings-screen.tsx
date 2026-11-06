@@ -1,3 +1,4 @@
+import { PaseoPlusPlusSection } from "@/screens/settings/paseo-plus-plus-section";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
@@ -163,6 +164,12 @@ interface SidebarSectionItem {
 }
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
+  {
+    id: "paseo-plus-plus",
+    labelKey: "paseoPlusPlus.title",
+    icon: PaseoLogo,
+    Content: PaseoPlusPlusSection,
+  },
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
   {
     id: "appearance",

@@ -34,6 +34,11 @@ Paseo uses **file-based JSON persistence** instead of a traditional database. Al
 
 All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 
+Paseo++ missing or malformed feature choices enable the feature; only an explicit saved `false`
+disables it. Disabling changes presentation or automatic work without deleting saved configuration
+or user data. Keep fork fixes, installation identity and verification outside these opt-outs.
+The canonical preference schema lives in `packages/app/src/paseo-plus-plus/preferences.ts`.
+
 ## Store Surface Rules
 
 Store APIs own persistence atomicity and should not make services coordinate raw reads and writes. A good store method maps cleanly to one SQL statement or one SQL transaction, even when the current implementation is JSON files. If a caller needs a queue, lock, read-merge-write loop, or uniqueness race workaround, that behavior belongs behind the store surface.
