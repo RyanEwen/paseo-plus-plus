@@ -756,10 +756,11 @@ function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
   pendingOpenTarget: WorkspaceTabTarget | null,
-  recoveryRequested: boolean,
+  // Optional so WorkspaceScreenContent passes its prop through without a default branch.
+  recoveryRequested: boolean | undefined,
 ): boolean {
   return (
-    (recoveryRequested || pendingOpenTarget?.kind === "agent") &&
+    (recoveryRequested === true || pendingOpenTarget?.kind === "agent") &&
     hasHydratedWorkspaces &&
     workspace === null
   );
@@ -1025,7 +1026,7 @@ function WorkspaceScreenContent({
   serverId,
   workspaceId,
   isRouteFocused,
-  recoveryRequested = false,
+  recoveryRequested,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
