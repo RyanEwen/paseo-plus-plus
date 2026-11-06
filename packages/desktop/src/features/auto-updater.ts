@@ -6,6 +6,12 @@ import { UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import {
+  desktopDistribution,
+  desktopDebugBuild,
+  resolveDesktopUpdateChannel,
+  shouldEnableDesktopUpdates,
+} from "../distribution.js";
+import {
   createAppUpdateService,
   type AppUpdateCheckResult,
   type AppUpdateInstallRequest,
@@ -150,8 +156,12 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     // Electron's built-in handler would install an older download without checking
     // whether a newer release has superseded it.
     autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.allowPrerelease = input.releaseChannel === "beta";
-    autoUpdater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
+    const updateChannel = resolveDesktopUpdateChannel(
+      desktopDistribution.isPreview,
+      input.releaseChannel,
+    );
+    autoUpdater.allowPrerelease = updateChannel.allowPrerelease;
+    autoUpdater.channel = updateChannel.channel;
     autoUpdater.allowDowngrade = false;
     autoUpdater.isUserWithinRollout = async (info) => {
       try {
@@ -224,7 +234,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
 const appUpdateService = createAppUpdateService({
   runtime: new ElectronAppUpdateRuntime(),
-  isPackaged: () => app.isPackaged,
+  isPackaged: () => shouldEnableDesktopUpdates(app.isPackaged, desktopDebugBuild),
   now: () => Date.now(),
   bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
   reportCheckError: (error) => {

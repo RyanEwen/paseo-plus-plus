@@ -10,10 +10,41 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveDaemonDistribution } from "../../../server/src/server/daemon-distribution.js";
 import { describe, expect, it } from "vitest";
+import {
+  resolveDesktopDistribution,
+  resolveDesktopUpdateChannel,
+  shouldEnableDesktopUpdates,
+} from "../distribution.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+it.each([{ paseoPreview: true }, { paseoDebug: true }, { paseoPreview: true, paseoDebug: true }])(
+  "agrees with the bundled daemon defaults for %j",
+  (metadata) => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-desktop-defaults-"));
+    try {
+      const asar = join(root, "app.asar");
+      const server = join(asar, "node_modules", "@getpaseo", "server");
+      mkdirSync(server, { recursive: true });
+      writeFileSync(
+        join(asar, "package.json"),
+        JSON.stringify({ name: "paseo-plus-plus", ...metadata }),
+      );
+      const daemon = resolveDaemonDistribution(
+        pathToFileURL(join(server, "dist", "daemon-distribution.js")).href,
+      );
+      const desktop = resolveDesktopDistribution(metadata);
+      expect(`127.0.0.1:${daemon.defaultPort}`).toBe(desktop.daemonListen);
+      expect(daemon.defaultHome).toBe(`~/${desktop.daemonHomeName}`);
+      expect(daemon.cliPackage).toBe("@getpaseo/cli");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 function writeExecutable(filePath: string, contents: string): void {
   writeFileSync(filePath, contents, "utf8");
@@ -40,6 +71,7 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   );
 
   mkdirSync(dirname(shimPath), { recursive: true });
+  writeFileSync(join(resourcesPath, "paseo-executable-name"), "Paseo\n");
   mkdirSync(dirname(mainPath), { recursive: true });
   copyFileSync(join(packageRoot, "bin", "paseo"), shimPath);
   chmodSync(shimPath, 0o755);
@@ -63,6 +95,105 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("isolates the debug artifact even when launched without its logging shortcut", () => {
+    expect(resolveDesktopDistribution({ paseoPreview: true, paseoDebug: true })).toEqual({
+      isPreview: true,
+      appName: "Paseo++ Debug",
+      windowsAppUserModelId: null,
+      userDataName: "Paseo++ Debug",
+      desktopName: "paseo-plus-plus-debug.desktop",
+      daemonHomeName: ".paseo-plus-plus-debug-desktop",
+      daemonListen: "127.0.0.1:6791",
+    });
+    expect(shouldEnableDesktopUpdates(true, true)).toBe(false);
+    expect(shouldEnableDesktopUpdates(true, false)).toBe(true);
+    expect(shouldEnableDesktopUpdates(false, false)).toBe(false);
+  });
+
+  it("keeps fork settings and the local daemon isolated while pinning preview updates", () => {
+    expect(resolveDesktopDistribution({ paseoPreview: true })).toEqual({
+      isPreview: true,
+      appName: "Paseo++",
+      windowsAppUserModelId: "sh.paseo.plusplus.desktop",
+      userDataName: "Paseo++",
+      desktopName: "paseo-plus-plus.desktop",
+      daemonHomeName: ".paseo-plus-plus-desktop",
+      daemonListen: "127.0.0.1:6790",
+    });
+    expect(resolveDesktopUpdateChannel(true, "stable")).toEqual({
+      allowPrerelease: true,
+      channel: "preview",
+    });
+    expect(resolveDesktopUpdateChannel(true, "beta")).toEqual({
+      allowPrerelease: true,
+      channel: "preview",
+    });
+    expect(resolveDesktopUpdateChannel(false, "stable")).toEqual({
+      allowPrerelease: false,
+      channel: "latest",
+    });
+    expect(resolveDesktopUpdateChannel(false, "beta")).toEqual({
+      allowPrerelease: true,
+      channel: "beta",
+    });
+  });
+
+  it("runs the bundled preview CLI against its own daemon and honors explicit overrides", () => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-preview-cli-"));
+    try {
+      const resources = join(root, "resources");
+      const isWindows = process.platform === "win32";
+      const shimName = isWindows ? "paseo.cmd" : "paseo";
+      const shim = join(resources, "bin", shimName);
+      mkdirSync(dirname(shim), { recursive: true });
+      copyFileSync(join(packageRoot, "bin", shimName), shim);
+      chmodSync(shim, 0o755);
+      writeFileSync(join(resources, "paseo-executable-name"), "Paseo++\n");
+      writeFileSync(join(resources, "paseo-daemon-home-name"), ".paseo-plus-plus-desktop\n");
+      writeFileSync(join(resources, "paseo-daemon-listen"), "127.0.0.1:6790\n");
+      const printEnvironment =
+        "require('node:fs').writeSync(1, JSON.stringify([process.env.PASEO_HOME, process.env.PASEO_LISTEN]));";
+      if (isWindows) {
+        // Use a real PE with a tiny runner so this exercises cmd.exe's bundled shim.
+        copyFileSync(process.execPath, join(root, "Paseo++.exe"));
+        const runner = join(
+          resources,
+          "app.asar.unpacked",
+          "dist",
+          "daemon",
+          "node-entrypoint-runner.js",
+        );
+        mkdirSync(dirname(runner), { recursive: true });
+        writeFileSync(runner, printEnvironment);
+      } else {
+        writeExecutable(join(root, "Paseo++.bin"), `#!${process.execPath}\n${printEnvironment}\n`);
+      }
+      const env = { ...process.env, HOME: root, USERPROFILE: root };
+      delete env.PASEO_HOME;
+      delete env.PASEO_LISTEN;
+      const command = isWindows ? (process.env.ComSpec ?? "cmd.exe") : "sh";
+      const args = isWindows ? ["/d", "/s", "/c", `""${shim}" ls"`] : [shim, "ls"];
+      const defaults = spawnSync(command, args, {
+        encoding: "utf8",
+        env,
+        windowsVerbatimArguments: isWindows,
+      });
+      expect(defaults.status, defaults.stderr).toBe(0);
+      expect(JSON.parse(defaults.stdout)).toEqual([
+        join(root, ".paseo-plus-plus-desktop"),
+        "127.0.0.1:6790",
+      ]);
+      const overridden = spawnSync(command, args, {
+        encoding: "utf8",
+        windowsVerbatimArguments: isWindows,
+        env: { ...env, PASEO_HOME: "/custom-preview", PASEO_LISTEN: "127.0.0.1:12345" },
+      });
+      expect(overridden.status, overridden.stderr).toBe(0);
+      expect(JSON.parse(overridden.stdout)).toEqual(["/custom-preview", "127.0.0.1:12345"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("uses an Electron runtime whose Squirrel handoff explicitly wakes ShipIt", () => {
     const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
       devDependencies?: Record<string, string>;
@@ -189,4 +320,18 @@ it("installs the Linux helper as root-owned 4755 regardless of root's namespace 
   expect(installer).toContain("chown root:root '/opt/${sanitizedProductName}/chrome-sandbox'");
   expect(installer).toContain("chmod 4755 '/opt/${sanitizedProductName}/chrome-sandbox'");
   expect(installer).not.toContain("chmod 0755");
+});
+
+// The packaged identity must agree with the existing NSIS registration.
+describe("Windows packaged notification identity", () => {
+  it("uses the installer AUMID for the fork notification process", () => {
+    expect(resolveDesktopDistribution({ paseoPreview: true })).toMatchObject({
+      windowsAppUserModelId: "sh.paseo.plusplus.desktop",
+    });
+    const config = readFileSync(join(packageRoot, "electron-builder.preview.yml"), "utf8");
+    const installerAppId = config.match(/^appId:\s*(\S+)\s*$/m)?.[1];
+    expect(installerAppId).toBe(
+      resolveDesktopDistribution({ paseoPreview: true }).windowsAppUserModelId,
+    );
+  });
 });
