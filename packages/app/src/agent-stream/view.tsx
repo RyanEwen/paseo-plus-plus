@@ -1501,6 +1501,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   {streamRenderStrategy.render({
                     readingRowReplacements: presentation.readingRowReplacements,
                     agentId,
+                    nativeViewportPlacement,
                     segments: renderModel.segments,
                     retainedPrompt: retainedWebPrompt,
                     contextOnlyIds: viewportContextOnlyIds,

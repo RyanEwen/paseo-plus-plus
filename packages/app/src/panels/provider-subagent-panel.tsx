@@ -317,6 +317,7 @@ function ProviderSubagentPanel() {
       {subtitle ? <PaneSubtitle text={subtitle} testID="provider-subagent-pane-subtitle" /> : null}
       <View style={styles.stream}>
         <AgentStreamView
+          nativeViewportPlacement="standalone"
           agentId={streamId}
           serverId={serverId}
           context={streamContext}
