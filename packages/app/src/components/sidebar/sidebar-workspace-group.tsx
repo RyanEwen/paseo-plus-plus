@@ -113,22 +113,20 @@ export function SidebarWorkspaceGroupHeader({
 
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => (
-      <>
-        <View style={styles.statusGroupRowLeft}>
-          <View style={styles.statusGroupLeadingVisualSlot}>
-            <StatusGroupLeadingVisual
-              leading={group.leading}
-              collapsed={collapsed}
-              showChevron={hovered || platformIsNative || isCompact}
-            />
-          </View>
-          <View style={styles.statusGroupTitleGroup}>
-            <Text style={styles.statusGroupTitle} numberOfLines={1}>
-              {group.label}
-            </Text>
-          </View>
+      <View style={styles.statusGroupRowLeft}>
+        <View style={styles.statusGroupLeadingVisualSlot}>
+          <StatusGroupLeadingVisual
+            leading={group.leading}
+            collapsed={collapsed}
+            showChevron={hovered || platformIsNative || isCompact}
+          />
         </View>
-      </>
+        <View style={styles.statusGroupTitleGroup}>
+          <Text style={styles.statusGroupTitle} numberOfLines={1}>
+            {group.label}
+          </Text>
+        </View>
+      </View>
     ),
     [collapsed, group.leading, group.label, isCompact],
   );
