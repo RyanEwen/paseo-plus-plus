@@ -4014,8 +4014,7 @@ export class AgentManager {
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     this.resolveRewindMessageId(agentId, messageId);
-    if (this.hasInFlightRun(agentId))
-      await this.cancelAgentRunBefore(agentId, "rewind");
+    if (this.hasInFlightRun(agentId)) await this.cancelAgentRunBefore(agentId, "rewind");
     // Reserve synchronously before the first await so immediate prompts see the rewind barrier.
     const lock = this.runs.createPendingRun(agentId);
     try {

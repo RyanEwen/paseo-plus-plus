@@ -586,22 +586,22 @@ export class AgentStorage {
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, (existing) => {
-        assertPendingClaudeQuerySnapshot(agent, existing);
+      assertPendingClaudeQuerySnapshot(agent, existing);
       const record = toStoredAgentRecord(agent, {
         title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
         createdAt: existing?.createdAt,
         internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
       });
 
-        // Older adapters and snapshots do not own daemon history provenance.
-        record.providerHistory = snapshotHistoryBinding(
-          existing,
-          agent,
-          record,
-          options?.registerClaudeEmptyCreation,
-        );
-        // Only the explicit rewind queue operation can create/consume this recovery intent.
-        record.claudeFreshRewind = existing?.claudeFreshRewind;
+      // Older adapters and snapshots do not own daemon history provenance.
+      record.providerHistory = snapshotHistoryBinding(
+        existing,
+        agent,
+        record,
+        options?.registerClaudeEmptyCreation,
+      );
+      // Only the explicit rewind queue operation can create/consume this recovery intent.
+      record.claudeFreshRewind = existing?.claudeFreshRewind;
 
       // Preserve soft-delete/archive status across snapshot flushes. The
       // projection runs inside the per-agent write queue so it cannot commit a
@@ -609,7 +609,7 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
-        record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, agent);
+      record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, agent);
       return record;
     });
   }
