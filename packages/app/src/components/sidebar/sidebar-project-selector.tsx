@@ -5,7 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -32,6 +32,8 @@ import { SidebarProjectMenuItem } from "./sidebar-project-menu-item";
 import { resolveSidebarProjectLabels } from "./sidebar-project-filter";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
+// Touch layouts keep the full 44 px target the release uses for compact controls.
+const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /** Filter workspace rows by project and host, with the active filter visible in the heading. */
@@ -189,9 +191,9 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     gap: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
-    minHeight: CONTROL_HEIGHTS.tight,
+    minHeight: CONTROL_HEIGHTS.sm,
   },
-  touchTrigger: { minHeight: CONTROL_HEIGHTS.field },
+  touchTrigger: { minHeight: TOUCH_TARGET_SIZE },
   triggerHovered: { backgroundColor: theme.colors.surfaceSidebarHover },
   title: {
     flexShrink: 1,
