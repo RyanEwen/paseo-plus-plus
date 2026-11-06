@@ -2245,13 +2245,7 @@ export class AgentManager {
         restoring: true,
       });
     } catch (error) {
-      if (closedExisting) {
-        this.emitClosedAgent(closedExisting, { persist: false });
-      } else if (this.agents.get(agentId) === existing) {
-        existing.lifecycle = "error";
-        existing.lastError = error instanceof Error ? error.message : String(error);
-        this.emitState(existing);
-      }
+      this.reportReloadFailure({ agentId, existing, closedExisting, error });
       throw error;
     } finally {
       if (!handedToRegistration) {
@@ -2265,6 +2259,23 @@ export class AgentManager {
           await this.closeUnregisteredSession(session);
         }
       }
+    }
+  }
+
+  /** Report the failed reload's current owner without changing its rethrow or resource cleanup. */
+  private reportReloadFailure(input: {
+    agentId: string;
+    existing: ActiveManagedAgent;
+    closedExisting: ManagedAgentClosed | undefined;
+    error: unknown;
+  }): void {
+    const { agentId, existing, closedExisting, error } = input;
+    if (closedExisting) {
+      this.emitClosedAgent(closedExisting, { persist: false });
+    } else if (this.agents.get(agentId) === existing) {
+      existing.lifecycle = "error";
+      existing.lastError = error instanceof Error ? error.message : String(error);
+      this.emitState(existing);
     }
   }
 
