@@ -1,5 +1,7 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
+  createContext,
+  useContext,
   Fragment,
   useCallback,
   useEffect,
@@ -47,7 +49,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
@@ -94,7 +96,88 @@ import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
+import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import { useSessionStore } from "@/stores/session-store";
+
+interface ExplorerTabDisplayControl {
+  enabled: boolean;
+  disabled: boolean;
+  pending: boolean;
+  failed: boolean;
+  toggle(): void;
+}
+const ExplorerTabDisplayContext = createContext<ExplorerTabDisplayControl | null>(null);
+
+function ExplorerIconOnlyMenuItem({ separator = false }: { separator?: boolean }) {
+  const control = useContext(ExplorerTabDisplayContext);
+  const { t } = useTranslation();
+  if (!control) return null;
+  return (
+    <>
+      {separator ? <ContextMenuSeparator /> : null}
+      <ContextMenuItem
+        selected={control.enabled}
+        showSelectedCheck
+        disabled={control.disabled}
+        status={control.pending ? "pending" : "idle"}
+        tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
+        closeOnSelect={false}
+        onSelect={control.toggle}
+        testID="explorer-icon-only-tabs-menu-item"
+      >
+        {t("explorerTabs.iconOnlyLabel")}
+      </ContextMenuItem>
+    </>
+  );
+}
+
+function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl {
+  const { settings, save, pending, failed, isLoading, error } =
+    useSettingsSave<"explorerIconOnlyTabs">();
+  const iconOnly = host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
+  const toggleIconOnly = useCallback(() => {
+    void save("explorerIconOnlyTabs", (current) => ({
+      paseoPlusPlus: {
+        ...current.paseoPlusPlus,
+        explorerIconOnlyTabs: !current.paseoPlusPlus.explorerIconOnlyTabs,
+      },
+    }));
+  }, [save]);
+  return useMemo<ExplorerTabDisplayControl>(
+    () => ({
+      enabled: iconOnly,
+      disabled: isLoading || error !== null || pending !== null,
+      pending: pending !== null,
+      failed: failed !== null,
+      toggle: toggleIconOnly,
+    }),
+    [iconOnly, isLoading, error, pending, failed, toggleIconOnly],
+  );
+}
+
+function ExplorerTabStripContextMenu({
+  host,
+  control,
+  children,
+}: {
+  host: PaneHost;
+  control: ExplorerTabDisplayControl;
+  children: React.ReactNode;
+}) {
+  if (host !== "explorer") return children;
+  return (
+    <ExplorerTabDisplayContext.Provider value={control}>
+      <ContextMenu>
+        <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
+          {children}
+        </ContextMenuTrigger>
+        <ContextMenuContent width={DROPDOWN_WIDTH} testID="explorer-tab-strip-menu">
+          <ExplorerIconOnlyMenuItem />
+        </ContextMenuContent>
+      </ContextMenu>
+    </ExplorerTabDisplayContext.Provider>
+  );
+}
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -689,7 +772,10 @@ function TabHandleContent({
   );
 
   return (
-    <View style={styles.tabHandle} dataSet={tabHandleDataSet}>
+    <View
+      style={showLabel ? styles.tabHandle : styles.iconOnlyTabHandle}
+      dataSet={tabHandleDataSet}
+    >
       <View style={styles.tabIcon}>
         <WorkspaceTabIcon presentation={presentation} active={isHighlighted} backdrop={backdrop} />
       </View>
@@ -795,6 +881,7 @@ function TabChip({
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
+      !showLabel && styles.iconOnlyTab,
       isFilled && styles.tabFill(chipBackdrop),
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
@@ -803,7 +890,7 @@ function TabChip({
         maxWidth: resolvedTabWidth,
       },
     ],
-    [chipBackdrop, isDragging, isFilled, resolvedTabWidth],
+    [chipBackdrop, isDragging, isFilled, resolvedTabWidth, showLabel],
   );
 
   const handleTabPointerEnter = useCallback(() => {
@@ -947,6 +1034,7 @@ function TabChip({
           pages={openWith.pages}
           testID={contextMenuTestId}
         >
+          <ExplorerIconOnlyMenuItem />
           {menuEntries.map((entry) => {
             if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
             if (entry.kind === "file-panel-open-with") {
@@ -1060,6 +1148,8 @@ function ResolvedWorkspaceDesktopTabsRow({
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
+  const explorerDisplay = useExplorerTabDisplay(host);
+  const iconOnly = explorerDisplay.enabled;
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const [labelMeasurements, setLabelMeasurements] = useState(
     () => new Map<string, WorkspaceTabLabelMeasurement>(),
@@ -1223,7 +1313,14 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
+  // Icon-only tabs match the adjacent new-tab control: 28 on desktop, the 44 touch height on compact.
+  const iconOnlyTabWidth = useMemo(
+    () => controlHeightForLayout(isCompact ? "md" : "sm", isCompact),
+    [isCompact],
+  );
   const { layout } = useWorkspaceTabLayout({
+    host,
+    iconOnlyTabWidth,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
@@ -1291,7 +1388,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       isActive,
     }: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => {
       const shouldShowCloseButton =
-        layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
+        !iconOnly && layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
       const layoutItem = layout.items[index] ?? null;
       const resolvedTabWidth = layoutItem?.width ?? 150;
       const showLabel = layoutItem?.showLabel ?? true;
@@ -1337,6 +1434,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     [
       activeDragTabId,
       isFocused,
+      iconOnly,
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,
@@ -1459,7 +1557,13 @@ function ResolvedWorkspaceDesktopTabsRow({
     </View>
   );
 
-  return <RenderProfile id="WorkspaceDesktopTabsRow">{row}</RenderProfile>;
+  return (
+    <RenderProfile id="WorkspaceDesktopTabsRow">
+      <ExplorerTabStripContextMenu host={host} control={explorerDisplay}>
+        {row}
+      </ExplorerTabStripContextMenu>
+    </RenderProfile>
+  );
 }
 function ResolvedDesktopTabChip({
   serverId,
@@ -1674,6 +1778,15 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     overflow: "visible",
     marginHorizontal: TAB_CHIP_GAP / 2,
+  },
+  stripContextHost: { flex: 1, minWidth: 0 },
+  iconOnlyTab: { paddingHorizontal: 0, justifyContent: "center" },
+  iconOnlyTabHandle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flex: 1,
+    minWidth: 0,
   },
   tabHandle: {
     flexDirection: "row",

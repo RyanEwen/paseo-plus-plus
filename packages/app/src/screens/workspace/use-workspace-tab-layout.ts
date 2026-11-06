@@ -1,3 +1,4 @@
+import type { PaneHost } from "@/panels/panel-manifest";
 import { useMemo } from "react";
 import { useWindowDimensions } from "react-native";
 import { useSettings } from "@/hooks/use-settings";
@@ -12,6 +13,8 @@ interface UseWorkspaceTabLayoutInput {
   viewportWidthOverride?: number | null;
   metrics: WorkspaceTabLayoutMetrics;
   compact: boolean;
+  host?: PaneHost;
+  iconOnlyTabWidth?: number;
 }
 
 interface UseWorkspaceTabLayoutResult {
@@ -24,6 +27,7 @@ export function useWorkspaceTabLayout(
   const { width: viewportWidth } = useWindowDimensions();
   const { settings } = useSettings();
   const widerTabs = settings.paseoPlusPlus.widerWorkspaceTabs;
+  const iconOnly = input.host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
   const resolvedViewportWidth =
     typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
       ? input.viewportWidthOverride
@@ -37,8 +41,18 @@ export function useWorkspaceTabLayout(
         metrics: input.metrics,
         compact: input.compact,
         widerTabs,
+        iconOnly,
+        iconOnlyTabWidth: input.iconOnlyTabWidth,
       }),
-    [input.compact, input.metrics, input.tabLabelWidths, resolvedViewportWidth, widerTabs],
+    [
+      input.compact,
+      input.metrics,
+      input.tabLabelWidths,
+      resolvedViewportWidth,
+      widerTabs,
+      iconOnly,
+      input.iconOnlyTabWidth,
+    ],
   );
 
   return {

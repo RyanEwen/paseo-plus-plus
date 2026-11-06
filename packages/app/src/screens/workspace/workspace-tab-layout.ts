@@ -34,6 +34,8 @@ export interface WorkspaceTabLayoutInput {
   compact: boolean;
   /** Raise only the title-width ceiling; short tabs stay content-driven. */
   widerTabs?: boolean;
+  iconOnly?: boolean;
+  iconOnlyTabWidth?: number;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -93,6 +95,14 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
   const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
+  if (input.iconOnly) {
+    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      closeButtonPolicy,
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
