@@ -1,5 +1,11 @@
 "use dom";
 
+import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useTranslation } from "react-i18next";
+import { openExternalUrl } from "@/utils/open-external-url";
+import { isHttpUrl } from "@/utils/http-url";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
+
 import type {
   TerminalFindHandle,
   TerminalFindResult,
@@ -34,7 +40,6 @@ import type {
 } from "../terminal/local-links/terminal-local-link-provider";
 import type { TerminalClipboardWriter } from "../terminal/native-renderer/terminal-selection";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
-import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
 
 export interface TerminalEmulatorHandle {
@@ -178,6 +183,8 @@ export default function TerminalEmulator({
   focusRequestToken = 0,
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
+  const { openPrimary, openInPaseo, reportError } = useWorkspaceLinkOpeningContext();
+  const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalEmulatorRuntime | null>(null);
@@ -205,6 +212,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onOpenExternalUrl: openPrimary,
     onFilePaste,
   });
   mountCallbacksRef.current = {
@@ -217,6 +225,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onOpenExternalUrl: openPrimary,
     onFilePaste,
   };
   const pendingModifiersRef = useRef(pendingModifiers);
@@ -450,10 +459,7 @@ export default function TerminalEmulator({
     const runtime = new TerminalEmulatorRuntime();
     runtimeRef.current = runtime;
     runtime.setCallbacks({
-      callbacks: {
-        ...mountCallbacksRef.current,
-        onOpenExternalUrl: openExternalUrl,
-      },
+      callbacks: mountCallbacksRef.current,
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
     runtime.setCharacterWidths({ widths: characterWidthsRef.current });
@@ -488,11 +494,12 @@ export default function TerminalEmulator({
         onInputModeChange,
         onResolveLocalFileLink,
         onOpenLocalFileLink,
+        onOpenExternalUrl: openPrimary,
         onFilePaste,
-        onOpenExternalUrl: openExternalUrl,
       },
     });
   }, [
+    openPrimary,
     onFindRequest,
     onFilePaste,
     onFindResult,
@@ -540,18 +547,38 @@ export default function TerminalEmulator({
     runtimeRef.current?.resize({ forceClaim: false, shouldClaim: false });
   }, [resizeRequestToken]);
 
-  const showTerminalContextMenu = useCallback(() => {
+  const showTerminalContextMenu = useCallback(async () => {
     const showContextMenu = window.paseoDesktop?.menu?.showContextMenu;
     if (typeof showContextMenu !== "function") {
       return;
     }
-
+    // Capture URL and owning opener before the asynchronous native menu can outlive a tab switch.
+    const hoveredUrl = runtimeRef.current?.getHoveredLinkUrl();
+    const linkUrl = hoveredUrl && isHttpUrl(hoveredUrl) ? hoveredUrl : null;
+    const link = linkUrl
+      ? {
+          url: linkUrl,
+          openInPaseo: Boolean(openInPaseo),
+          labels: {
+            internal: t("workspace.browser.openInPaseo"),
+            external: t("workspace.browser.openExternally"),
+            copy: t("workspace.browser.copyLink"),
+          },
+        }
+      : undefined;
     const hasSelection = Boolean(window.getSelection()?.toString());
-    void showContextMenu({
-      kind: "terminal",
-      hasSelection,
-    });
-  }, []);
+    const action = await showContextMenu({ kind: "terminal", hasSelection, link });
+    if (!linkUrl) {
+      return;
+    }
+    if (action === "open-internal" && openInPaseo) {
+      await openInPaseo(linkUrl);
+    } else if (action === "open-external") {
+      await openExternalUrl(linkUrl);
+    } else if (action === "copy-link") {
+      await copyToClipboard(linkUrl);
+    }
+  }, [openInPaseo, t]);
 
   const handleRootPointerDown = useCallback(() => {
     onFocus?.();
@@ -561,9 +588,9 @@ export default function TerminalEmulator({
   const handleRootContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
-      showTerminalContextMenu();
+      void showTerminalContextMenu().catch(reportError ?? console.error);
     },
-    [showTerminalContextMenu],
+    [showTerminalContextMenu, reportError],
   );
 
   const rootDivStyle = useMemo<CSSProperties>(
