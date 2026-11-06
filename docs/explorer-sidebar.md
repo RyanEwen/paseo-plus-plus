@@ -72,14 +72,9 @@ the sheet's tab into a pane, and edits the autosave has not started writing are 
 
 ## Explorer sidebar
 
-`packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection.
-One Explorer host stays beside the center column across compact overlays and docks. Keep its
-providers and gesture roots at the same React position when width or appearance changes. The
-workspace route preserves panel ancestry during appearance updates. Appearance-dependent leaves
-subscribe to theme changes; the file editor reconfigures its existing editor theme compartment.
-Ordinary leaf routes retain the stack appearance policy.
-The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
-never read or modify that width.
+`packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection. One Explorer host stays beside the center column across compact overlays and docks. Keep its providers and gesture roots at the same React position when width or appearance changes. The workspace route preserves panel ancestry during appearance updates. Appearance-dependent leaves subscribe to theme changes; the file editor reconfigures its existing editor theme compartment. Ordinary leaf routes retain the stack appearance policy.
+
+The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits never read or modify that width.
 
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching workspace tab in Explorer. Desktop Changes opens

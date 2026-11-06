@@ -45,6 +45,8 @@ const testTheme = {
     xs: 12,
     sm: 14,
     base: 16,
+    // The authored web message ramp, used by actual message-renderer geometry tests.
+    content: 15,
   },
   fontFamily: {
     ui: "sans-serif",
@@ -137,6 +139,13 @@ function resolveStyles<T>(styles: T): T {
 }
 
 export const StyleSheet = {
+  absoluteFill: {
+    position: "absolute" as const,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  },
   create: <T>(styles: T | StyleFactory<T>): T =>
     resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
 };
