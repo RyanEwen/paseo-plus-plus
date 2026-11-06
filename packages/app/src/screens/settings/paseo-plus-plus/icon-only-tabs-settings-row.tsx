@@ -10,10 +10,7 @@ import {
 function IconOnlyTabsSettingsRow() {
   const { t } = useTranslation();
   return (
-    <SettingsRow
-      label={t("explorerTabs.iconOnlyLabel")}
-      hint={t("explorerTabs.iconOnlyHint")}
-    />
+    <SettingsRow label={t("explorerTabs.iconOnlyLabel")} hint={t("explorerTabs.iconOnlyHint")} />
   );
 }
 
