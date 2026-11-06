@@ -321,7 +321,7 @@ export function createPromptRetryScenario(
         .toBeGreaterThan(0);
       expect(gate.getClientRequests("agent.create.request").at(-1)).toEqual(firstMessage);
       expect(gate.getClientRequestCount("send_agent_message_request")).toBe(0);
-      await expect(page.getByTestId("user-message").filter({ visible: true })).toHaveCount(1);
+      await expect(originalUserMessages(page).filter({ visible: true })).toHaveCount(1);
     },
   };
 }
