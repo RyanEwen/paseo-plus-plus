@@ -301,7 +301,9 @@ export class AgentStorage {
           record.archivedAt = existing.archivedAt;
         }
         record.resumeOnStartup =
-          existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+          existing?.resumeOnStartup &&
+          current.lifecycle !== "idle" &&
+          current.lifecycle !== "error";
         return record;
       },
       options?.operation?.onCommitted,
