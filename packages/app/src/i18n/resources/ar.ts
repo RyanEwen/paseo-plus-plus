@@ -2,6 +2,217 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "علامات تبويب بالأيقونات فقط",
+    iconOnlyHint:
+      "انقر بزر الماوس الأيمن على علامة تبويب للمستكشف أو المساحة الفارغة في شريط علامات التبويب واختر علامات تبويب بالأيقونات فقط. تظل الأسماء متاحة في تلميحات الأدوات.",
+  },
+  settingsSync: {
+    title: "مزامنة الإعدادات",
+    hint: "زامن تفضيلات التطبيق وظهور عناصر الشريط الجانبي عبر مضيف تختاره. تبقى مرشحات المضيف والمشروع وترتيب مساحات العمل والمجموعات المطوية محلية. تُحمّل الإعدادات قبل تحريرها عند التبديل.",
+    host: "مضيف الإعدادات",
+    deviceOnly: "هذا الجهاز فقط",
+    unavailableHost: "المضيف المحدد غير متاح",
+    status: "الحالة",
+    publish: "استخدام إعدادات هذا الجهاز",
+    publishHint: "لا توجد إعدادات محفوظة على هذا المضيف. ينقل النشر تفضيلاتك الحالية إليه.",
+    useHost: "استخدام إعدادات المضيف",
+    keepDevice: "نشر تغييراتي",
+    keepDeviceHint:
+      "استبدل صراحةً التفضيلات المتعارضة على {{host}} بتغييراتك المعلقة. تبقى التفضيلات الأخرى محفوظة.",
+    restore: "استعادة إعدادات الجهاز",
+    restoreHint: "أوقف المزامنة واستعد التفضيلات المحفوظة قبل اختيار هذا المضيف.",
+    conflictHint:
+      "تغيّرت هذه التفضيلات على عميل آخر. استخدم إعدادات {{host}} لإلغاء التغييرات المعلقة الخاصة به فقط.",
+    retryHint: "أعد الاتصال واقرأ الإعدادات مجدداً. تبقى التغييرات المعلقة مرتبطة بمضيفها الأصلي.",
+    states: {
+      loading: "جارٍ تحميل إعدادات المزامنة",
+      local: "تُحفظ التفضيلات على هذا الجهاز",
+      reading: "بانتظار إعدادات المضيف المحدد",
+      ready: "متصل. التغييرات المعلقة: {{count}}",
+      offline: "غير متصل. التغييرات المعلقة: {{count}}",
+      empty: "لم تُنشر إعدادات على هذا المضيف",
+      unsupported: "حدّث هذا المضيف لمزامنة إعدادات التطبيق",
+      error: "تعذرت المزامنة. احتُفظ بتغييراتك المعلقة.",
+      conflict: "تحتاج التغييرات المتعارضة إلى اختيارك",
+      readonly: "يمكن لهذا الاتصال قراءة الإعدادات دون تغييرها",
+    },
+  },
+  paseoPlusPlus: {
+    accent: {
+      title: "لون التمييز",
+      hint: "يُستخدم لعناصر التحكم الرئيسية ورسائلك",
+      updateHost: "حدّث مضيف الإعدادات المحدد لتغيير لون التمييز",
+      preview: "هكذا ستظهر رسائلك",
+      options: {
+        default: "الافتراضي",
+        blue: "أزرق",
+        green: "أخضر",
+        purple: "بنفسجي",
+        rose: "وردي",
+        orange: "برتقالي",
+        teal: "فيروزي",
+      },
+    },
+    workspaceLimit: {
+      save: "حفظ",
+      title: "حدود مساحات العمل",
+      label: "العرض الأولي لكل مجموعة",
+      limited: "محدود",
+      all: "عرض الكل",
+      count: "عدد مساحات العمل",
+      invalid: "أدخل عددًا صحيحًا موجبًا.",
+    },
+    examples: {
+      annotated: "تشير الأسهم إلى الميزة المعروضة.",
+      before: "قبل تغيّر الحالة",
+      after: "بعد تغيّر الحالة",
+      imageLabel: "مثال على {{title}}",
+      positions: "مواضع ثابتة قبل تغيير الحالة وبعده. هذه الصور لا تعرض توقيت الحركة.",
+      explorer: "مثال على قائمة التغييرات والفروق في نسخة العمل.",
+      workspaceLimit: "اختر عدداً أولياً لكل مجموعة أو إظهار الكل. تبقى المجموعات التي وسعتها موسعة.",
+    },
+    loadFailed: "تعذر تحميل التفضيلات المحفوظة. أعد المحاولة قبل تغيير الميزات.",
+    saving: "جارٍ الحفظ...",
+    title: "Paseo++",
+    optional: "ميزات اختيارية",
+    optionalHint:
+      "تبدأ مفاتيح الميزات الاختيارية مفعّلة. لتفضيلات العرض قيم افتراضية مستقلة؛ ويبدأ خيار توسيع مشروع واحد في كل مرة معطّلًا. تتبع الاختيارات مضيف الإعدادات المحدد عند تفعيل المزامنة. تعطيل الميزة يحفظ بياناتها وتفضيلاتها.",
+    preferences: "إعدادات الشريط الجانبي لمساحات العمل",
+    fixes: "إصلاحات وأساسيات النسخة",
+    fixesHint: "تبقى هذه التحسينات مفعلة",
+    additions: "إضافات أخرى",
+    additionsHint: "تبقى هذه العمليات متاحة",
+    saveFailed: "تعذر الحفظ. حاول مرة أخرى.",
+    features: {
+      workspaceChatLinks: {
+        label: "روابط مساحة العمل",
+        hint: "افتح روابط الويب الخاصة بمساحة العمل في علامات تبويب جديدة بمتصفحها على سطح المكتب، بما فيها الطرفية والدردشة وGit. عطّل الخيار لفتحها خارجيًا. تبقى إجراءات المتصفح الصريحة متاحة في القوائم.",
+      },
+      sidebarHostUpdates: {
+        label: "تحديثات المضيف في الشريط الجانبي",
+        hint: "اعرض إجراءات التحديث في قائمة المضيفين. تبقى إعدادات المضيف متاحة عند تعطيل هذا الخيار.",
+      },
+      splitLayoutPresets: {
+        label: "عناصر تقسيم التخطيط",
+        hint: "انقر المنطقة المطلوبة في مخطط التقسيم لفتح علامة تبويب أو نقلها إليها. في 60/40 تحصل المنطقة اليمنى أو السفلية على 40٪. تغيّر إعدادات الفاصل حجم الأجزاء الحالية. أوقف الخيار لإخفاء عناصر التحكم دون تغيير التخطيط.",
+      },
+      mobileWorkspaceTabs: {
+        label: "علامات تبويب مساحات العمل على الهاتف",
+        hint: "اعرض علامات تبويب متساوية العرض على الشاشات الصغيرة، مع التمرير عند الحاجة فقط. عطّل الخيار لاستخدام محدد علامات التبويب دون تغيير علامة التبويب المحددة.",
+      },
+      widerWorkspaceTabs: {
+        label: "علامات تبويب أوسع لمساحة العمل",
+        hint: "اسمح لعناوين علامات التبويب الطويلة بعرض أكبر بنسبة تصل إلى 50٪. تتقاسم علامات تبويب مساحة العمل على الهاتف العرض المتاح بالتساوي دائمًا.",
+      },
+
+      descriptiveToolCalls: {
+        label: "نشاط أدوات واضح",
+        hint: "يصف العمليات المعروفة ويحفظ الأوامر والمخرجات الدقيقة في التفاصيل. أوقفه لاستعادة التسميات السابقة.",
+      },
+
+      stickyUserPrompts: {
+        label: "إبقاء رسائل المستخدم ظاهرة",
+        hint: "ثبّت رسالة مختصرة مع إمكانية توسيعها والتنقل إلى السابقة والتالية. تبقى الرسائل العادية موسّعة، ولا يغطي مؤشر التحميل رسالة متاحة.",
+      },
+      previousAgents: {
+        label: "الوكلاء السابقون",
+        hint: "يفتح المحادثات المغلقة أو المؤرشفة من قائمة + في مساحة العمل",
+      },
+      sidebarActivityChips: {
+        label: "مؤشرات نشاط المشاريع",
+        hint: "يعرض النشاط وعدد مساحات العمل النشطة",
+      },
+      sidebarProjectEmphasis: {
+        label: "أسماء المشاريع بخط عريض",
+        hint: "يبرز عناوين المشاريع في الشريط الجانبي",
+      },
+      sidebarBulkActions: {
+        label: "توسيع وطي الكل",
+        hint: "يعرض عناصر التحكم لكل المجموعات الظاهرة",
+      },
+      projectPinning: {
+        label: "تثبيت المساحات داخل المشاريع",
+        hint: "احتفظ بمساحات العمل المختارة في بداية مشروعها مع دبوس بجوار الاسم. تعود التثبيتات المحفوظة عند إعادة التفعيل.",
+      },
+      sidebarWorkspaceTransitions: {
+        label: "تحريك انتقال المساحات",
+        hint: "يستخدم انتقالات سريعة عند تغير مواقع المساحات في الشريط الجانبي",
+      },
+      androidAutomaticUpdateChecks: {
+        label: "فحص تحديثات Android تلقائيًا",
+        hint: "يفحص الإصدارات التجريبية عند البدء والاستئناف. يبقى الفحص والتثبيت اليدوي متاحًا.",
+      },
+    },
+    links: {
+      sidebar: {
+        label: "الأوضاع والمرشحات والعرض",
+        hint: "استخدم الجرس في الشريط الجانبي للتبديل بين وضعَي المشروع والحالة. تفتح أيقونة التصفية بحثًا نصيًا سريعًا. في العرض، تضبط حدود مساحات العمل العدد والعمر بشكل مستقل، وتتيح المشاريع الفارغة الإظهار أو التجميع أو الإخفاء. يحتفظ كل وضع بتفضيلاته.",
+      },
+    },
+    fixesList: {
+      forkLinks: {
+        label: "روابط Paseo++",
+        hint: "افتح مستودع النسخة وملاحظات الإصدارات المنشورة. أزيلت إجراءات المشكلات والرعاية وDiscord الأصلية.",
+      },
+      backgroundBrowser: {
+        label: "أتمتة المتصفح في الخلفية",
+        hint: "يمكن لوكلاء سطح المكتب استخدام التبويبات مع لوحة مخفية أو نافذة مصغرة أو غير نشطة",
+      },
+      notifications: {
+        label: "وجهات الإشعارات",
+        hint: "يفتح مساحة العمل والمحادثة الصحيحة حتى بعد إعادة تشغيل سطح المكتب",
+      },
+      reading: {
+        label: "قراءة أكثر استقرارًا",
+        hint: "يحافظ تغيير حجم الصور على النص الظاهر في سطح المكتب والويب ويستعيد تحميل الرسائل والسجل",
+      },
+      mobile: {
+        label: "التنقل على الهاتف",
+        hint: "رجوع أكثر أمانًا على Android وإشعارات تطوير منفصلة",
+      },
+      pickers: {
+        label: "اختيار المساحات وحالتها",
+        hint: "ترتيب إعداد واضح وتلميحات كاملة وحالات حديثة وحفظ خيارات طي الشريط",
+      },
+      identity: {
+        label: "تثبيتات مستقلة للنسخة",
+        hint: "هويات وإعدادات وتحديثات مستقلة لتطبيق Paseo++ وخادمه وتنزيلات Android موثقة",
+      },
+    },
+    additionsList: {
+      ssh: {
+        label: "مضيفو SSH على Android",
+        hint: "استورد المفاتيح وتحقق من البصمات واحفظ بيانات اعتماد مشفرة للاتصال المباشر",
+      },
+      worktrees: {
+        label: "اختيارات الفروع وworktree",
+        hint: "أنشئ أو استخدم worktree بأسماء صريحة على المضيفين المتوافقين؛ تحتفظ إعادة المحاولة بالعمل",
+      },
+      video: {
+        label: "فيديو إضافات Android",
+        hint: "تشغّل الإضافات المتوافقة الفيديو المشفر مع استعادة المفكك. تتطلب إضافة توفر الفيديو.",
+      },
+    },
+  },
+
+  androidUpdates: {
+    title: "تحديث التطبيق",
+    idle: "تحقق من إصدارات المعاينة الجديدة لهذا الفرع.",
+    checking: "جارٍ البحث عن تحديثات…",
+    current: "لديك أحدث إصدار معاينة منشور.",
+    available: "إصدار المعاينة {{version}} متاح.",
+    downloading: "جارٍ تنزيل التحديث والتحقق منه…",
+    downloadProgress: "جارٍ التنزيل {{percent}}% ({{downloaded}} / {{total}})",
+    downloadBytes: "تم تنزيل {{downloaded}}…",
+    verifying: "جارٍ التحقق من التحديث الذي تم تنزيله…",
+    permission:
+      "اسمح بالتحديثات من هذا التطبيق في إعدادات Android، ثم ارجع واضغط على تثبيت التحديث مرة أخرى.",
+    installer:
+      "أكمل التثبيت في Android. إذا ألغيت العملية، فاضغط على تثبيت التحديث للمحاولة مرة أخرى.",
+    install: "تثبيت التحديث",
+    failed: "تعذر التحديث. حاول مرة أخرى.",
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",
@@ -233,6 +444,23 @@ export const ar: TranslationResources = {
       mode: "تغيير الوضع",
     },
   },
+  stickyPrompt: {
+    goToMessage: "الانتقال إلى هذه الرسالة",
+    more: "المزيد…",
+    less: "أقل…",
+    none: "لا توجد رسائل للمستخدم في هذه المحادثة.",
+    cancelled: "تم إلغاء التحميل.",
+    moreHistory: "يتوفر المزيد من السجل. أعد المحاولة لمتابعة البحث.",
+
+    latest: "أحدث رسالة للمستخدم",
+    selected: "رسالة المستخدم",
+    expand: "توسيع رسالة المستخدم",
+    collapse: "طي رسالة المستخدم",
+    previous: "رسالة المستخدم السابقة",
+    next: "رسالة المستخدم التالية",
+    failed: "تعذر تحميل رسائل المستخدم.",
+    attachments: "{{count}} مرفقات",
+  },
   agentStream: {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
@@ -280,6 +508,10 @@ export const ar: TranslationResources = {
     },
   },
   sessions: {
+    previousTitle: "إعادة فتح وكيل مغلق",
+    previousEmpty: "لا يوجد وكلاء سابقون في مساحة العمل هذه",
+    workspaceHistoryUpdateRequired: "حدّث هذا المضيف لعرض وكلاء مساحة العمل السابقين.",
+
     title: "السجل",
     empty: "لا توجد جلسات بعد",
     noMatches: "لا توجد جلسات مطابقة",
@@ -440,6 +672,22 @@ export const ar: TranslationResources = {
     },
   },
   workspace: {
+    splits: {
+      openRegion: "فتح {{item}}: {{side}}، {{percent}}٪",
+      moveRegion: "نقل علامة التبويب: {{side}}، {{percent}}٪",
+      openToSide: "فتح {{item}} إلى الجانب",
+      chooseRatio: "اختيار نسبة التقسيم",
+      ratio: "استخدام تقسيم {{ratio}}",
+      moveTab: "نقل علامة التبويب",
+      left: "يسار",
+      right: "يمين",
+      top: "أعلى",
+      bottom: "أسفل",
+      columns: "يسار / يمين",
+      rows: "أعلى / أسفل",
+      pane: "اللوحة {{index}}",
+    },
+
     route: {
       loading: "جارٍ تحميل مساحة العمل",
       connecting: "الاتصال",
@@ -576,12 +824,17 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      openInPaseo: "فتح في متصفح Paseo",
+      openExternally: "فتح في متصفح خارجي",
+      copyLink: "نسخ الرابط",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
       },
       session: "جلسة المتصفح{{browserId}}",
       controls: {
+        pageZoom: "تكبير الصفحة",
+        zoomFailed: "تعذر تغيير تكبير الصفحة",
         back: "خلف",
         forward: "إلى الأمام",
         stopLoading: "توقف عن التحميل",
@@ -603,6 +856,17 @@ export const ar: TranslationResources = {
         placeholder: "رسالة إلى الوكيل حول هذا العنصر…",
         submit: "إرفاق",
         cancel: "إلغاء",
+      },
+      extensions: {
+        label: "الإضافات",
+        empty: "لا توجد إضافات مفعّلة.",
+        noPopup: "لا تتوفر نافذة منبثقة",
+        loading: "جارٍ تحميل الإضافات...",
+        manage: "إدارة الإضافات",
+        openFailed: "تعذر فتح الإضافة",
+        pin: "تثبيت {{name}} في شريط الأدوات",
+        unpin: "إلغاء تثبيت {{name}} من شريط الأدوات",
+        pinFailed: "تعذر حفظ تثبيت الإضافة",
       },
       devices: {
         label: "حجم الجهاز",
@@ -930,6 +1194,7 @@ export const ar: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "حدّث هذا المضيف لفتح مقارنة ملف واحد.",
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
@@ -1158,15 +1423,67 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    projectSelector: {
+      noKnownProjects: "لا توجد مشاريع معروفة لهذا المضيف بعد.",
+      selectOnlyProject: "عرض {{project}} فقط",
+      includeProject: "تضمين {{project}}",
+      workspaces: "مساحات العمل",
+      all: "الكل",
+      allWorkspaces: "كل مساحات العمل",
+      projectWorkspaces: "مساحات عمل {{project}}",
+      multipleWorkspaces_one: "مساحات عمل {{count}} مشروع",
+      multipleWorkspaces_other: "مساحات عمل {{count}} مشاريع",
+      title: "المشاريع",
+    },
+    workspaceTree: {
+      expand: "إظهار مساحات العمل الفرعية لـ {{name}}",
+      collapse: "طي مساحات العمل الفرعية لـ {{name}}",
+      activeChild: "تحتوي على مساحة العمل النشطة.",
+      summary_one: "مساحة عمل فرعية ({{count}}): {{status}}",
+      summary_other: "مساحات العمل الفرعية ({{count}}): {{status}}",
+      humanAttention_one: "مساحة عمل فرعية تحتاج إلى انتباهك ({{count}})",
+      humanAttention_other: "مساحات عمل فرعية تحتاج إلى انتباهك ({{count}})",
+      unknownStatus: "الحالة غير متاحة",
+    },
     statusGroupAccessibility: "مجموعة {{label}}",
     statusBucket: {
+      workingCount: "{{count}} قيد العمل",
       needsInput: "تحتاج إدخالاً",
       failed: "فشل",
       readyToReview: "جاهزة للمراجعة",
       working: "قيد العمل",
       done: "تم",
     },
+    quickFilter: {
+      open: "تصفية المشاريع ومساحات العمل",
+      close: "إغلاق التصفية السريعة ومسحها",
+      placeholder: "تصفية المشاريع أو مساحات العمل…",
+      clear: "مسح التصفية السريعة",
+      emptyTitle: "لا توجد مشاريع أو مساحات عمل مطابقة",
+      emptyDescription: "جرّب اسمًا آخر أو امسح التصفية السريعة لهذا الوضع.",
+      guidance:
+        "استخدم رمز التصفية للبحث في الأسماء والفروع الظاهرة بهذا الوضع. تظل حدود العدد والعمر سارية؛ يعرض إظهار المزيد جميع النتائج المطابقة.",
+    },
     display: {
+      modeToggle: "عرض {{current}}. التبديل إلى عرض {{next}}.",
+      workspaceList: {
+        countLimit: "حد العدد",
+        updatedWithin: "تم التحديث خلال",
+        day: "يوم واحد",
+        twoDays: "يومان",
+        threeDays: "3 أيام",
+        fiveDays: "5 أيام",
+        week: "أسبوع واحد",
+        twoWeeks: "أسبوعين",
+        month: "شهر واحد (30 يومًا)",
+        twoMonths: "شهران (60 يومًا)",
+        threeMonths: "3 أشهر (90 يومًا)",
+      },
+      expandAll: "توسيع الكل",
+      collapseAll: "طي الكل",
+      oneProjectAtATime: "توسيع مشروع واحد في كل مرة",
+      reorderGuidance:
+        "السحب لإعادة الترتيب متاح فقط مع الفرز المخصص. تحتفظ المشاريع المنقولة أثناء التصفية بنفس الجار قبلها أو بعدها عند إظهار جميع المشاريع. ترتيب العناصر المثبتة يدوي دائمًا.",
       showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
       heading: "العرض",
@@ -1182,6 +1499,28 @@ export const ar: TranslationResources = {
         project: "المشروع",
         status: "الحالة",
         labels: "التسميات",
+        emptyProjects: "تجميع المشاريع الفارغة بشكل منفصل",
+      },
+      sorting: {
+        label: "ترتيب المشاريع",
+        workspaces: "ترتيب مساحات العمل",
+        workspaceName: "اسم مساحة العمل",
+        project: "اسم المشروع",
+        status: "الحالة",
+        custom: "ترتيب مخصص",
+        emptyProjects: "ترتيب المشاريع الفارغة",
+      },
+      emptyWorkspaces: {
+        label: "المشاريع الفارغة",
+        show: "إظهار",
+        group: "تجميع",
+        hide: "إخفاء",
+      },
+      projectVisibility: {
+        label: "التصفية",
+        all: "كل المشاريع",
+        unarchived: "إخفاء المشاريع الفارغة",
+        emptyGroup: "المشاريع الفارغة",
       },
       titleSource: {
         label: "العنوان",
@@ -1206,7 +1545,7 @@ export const ar: TranslationResources = {
         none: "مخفي",
       },
       hostFilter: {
-        label: "المضيف",
+        label: "المضيفون",
         all: "كل المضيفين",
       },
       projectFilter: {
@@ -1260,6 +1599,38 @@ export const ar: TranslationResources = {
       openProjectSettings: "افتح إعدادات المشروع",
     },
     project: {
+      archive: {
+        action: "أرشفة الكل",
+        title: "هل تريد أرشفة مساحات عمل المشروع؟",
+        message:
+          'المشروع: "{{projectName}}"\nمساحات العمل: {{workspaceCount}}\nالوكلاء: {{agentCount}} (قيد التشغيل: {{runningAgentCount}})\nالمضيفون: {{hostCount}}\n\nسيتوقف الوكلاء قيد التشغيل ومهام مساحات العمل. قد تُزال أشجار العمل التي يديرها Paseo. سيبقى المشروع.',
+        includeBackground: "أرشفة مساحات العمل في الخلفية أيضًا ({{count}})",
+        backgroundWarning: "يؤدي تضمين مساحات العمل في الخلفية إلى إيقاف وكلائها ومهامها أيضًا.",
+        discovering: "جارٍ حساب مساحات العمل والوكلاء...",
+        progress: "أرشفة مساحات العمل: {{completed}} من {{total}}",
+        completed: "مساحات العمل المؤرشفة: {{count}}",
+        failed:
+          'تمت أرشفة {{completed}} من مساحات العمل. توقفت العملية عند "{{workspace}}" على {{host}}: {{error}}. لم تتم محاولة أرشفة: {{unprocessed}}. عالج المشكلة ثم أعد محاولة أرشفة الكل.',
+        empty: "لا توجد مساحات عمل نشطة في هذا المشروع",
+        projectChanged: "تغيّر المشروع أثناء التأكيد. راجع الأعداد ثم أعد محاولة أرشفة الكل.",
+        hostDisconnected: "المضيف {{host}} غير متصل. اتصل بجميع مضيفي المشروع ثم أعد المحاولة.",
+        updateRequired: "حدّث المضيف {{host}} لأرشفة مساحات عمل المشروع بأمان.",
+        alreadyArchiving:
+          'تجري أرشفة مساحة العمل "{{workspace}}" بالفعل. انتظر حتى تنتهي ثم أعد المحاولة.',
+        incompleteDiscovery: "تعذّر حساب جميع مساحات عمل المشروع ووكلائه. أعد محاولة أرشفة الكل.",
+        verificationFailed:
+          'تعذّر التحقق من أرشفة مساحة العمل "{{workspace}}". افتح السجل لفحص حالتها قبل إعادة المحاولة.',
+        agentsRemaining:
+          'لا يزال لدى مساحة العمل "{{workspace}}" وكلاء نشطون. افتح السجل لفحص الأرشفة غير المكتملة.',
+        agentNotArchived: "تعذّر التحقق من أرشفة الوكيل {{agent}} وإيقافه. افتح السجل لفحص حالته.",
+      },
+      restore: {
+        title: "استعادة مساحة عمل مؤرشفة",
+        search: "البحث في مساحات العمل المؤرشفة",
+        empty: "لا توجد مساحات عمل مؤرشفة في هذا المشروع",
+        updateRequired: "حدّث المضيف لاستعراض مساحات العمل المؤرشفة",
+        loadFailed: "تعذّر تحميل مساحات العمل المؤرشفة",
+      },
       actions: {
         menu: "إجراءات المشروع",
         openSettings: "افتح إعدادات المشروع",
@@ -1310,7 +1681,9 @@ export const ar: TranslationResources = {
         copyPath: "نسخ المسار",
         copyBranchName: "انسخ اسم الفرع",
         rename: "إعادة تسمية مساحة العمل",
-        pin: "تثبيت في الأعلى",
+        pin: "تثبيت أعلى الشريط الجانبي",
+        pinInProject: "تثبيت داخل المشروع",
+        unpinInProject: "إلغاء التثبيت داخل المشروع",
         unpin: "إلغاء التثبيت",
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
@@ -1331,6 +1704,7 @@ export const ar: TranslationResources = {
         invalidBranchName: "اسم الفرع غير صالح",
       },
       toasts: {
+        updateHostToPinInProject: "حدّث هذا المضيف لتثبيت مساحات العمل داخل مشروع.",
         workspacePathUnavailable: "مسار Workspace غير متوفر",
         pathCopied: "تم نسخ المسار",
         branchNameCopied: "تم نسخ اسم الفرع",
@@ -1362,9 +1736,11 @@ export const ar: TranslationResources = {
       selectModel: "اختر نموذجا",
     },
     tooltips: {
+      branchChoice: "أنشئ فرعًا جديدًا أو استخدم فرعًا موجودًا",
+      baseBranch: "اختر الفرع الذي سيستند إليه الفرع الجديد",
       project: "Choose the project",
       host: "Choose the host",
-      isolation: "Choose the isolation level",
+      isolation: "استخدم المجلد المحلي أو اختر شجرة عمل",
       startingRef: "اختر من أين تبدأ",
       launch: "Choose what to launch",
     },
@@ -1792,7 +2168,7 @@ export const ar: TranslationResources = {
       },
       remoteSsh: {
         title: "SSH عن بُعد",
-        description: "الاتصال عبر عميل SSH لسطح المكتب.",
+        description: "الاتصال عبر SSH.",
       },
       scanQr: {
         title: "مسح رمز QR",
@@ -1849,6 +2225,15 @@ export const ar: TranslationResources = {
     remoteSsh: {
       title: "SSH عن بُعد",
       helper: "الاتصال بخادم Paseo يعمل على المضيف البعيد.",
+      keyImport: {
+        key: "المفتاح الخاص",
+        import: "استيراد مفتاح خاص",
+        passphrase: "عبارة مرور المفتاح (اختياري)",
+        fingerprint: "بصمة الخادم",
+        verify: "قارن هذه البصمة ببصمة الخادم قبل الوثوق به.",
+        trustAndConnect: "الوثوق والاتصال",
+        required: "استورد مفتاحًا خاصًا للاتصال.",
+      },
       fields: {
         target: "مضيف SSH",
         password: "كلمة مرور الدايمون",
@@ -2075,6 +2460,69 @@ export const ar: TranslationResources = {
     input: "مدخل",
     output: "الإخراج",
   },
+  toolActivity: {
+    files: { intent: "تغيير الملفات", running: "جارٍ تغيير الملفات", completed: "تم تغيير الملفات" },
+    read: {
+      intent: "قراءة الملفات",
+      running: "جارٍ قراءة الملفات",
+      completed: "تمت قراءة الملفات",
+    },
+    edit: {
+      intent: "تعديل الملفات",
+      running: "جارٍ تعديل الملفات",
+      completed: "تم تعديل الملفات",
+    },
+    write: {
+      intent: "كتابة الملفات",
+      running: "جارٍ كتابة الملفات",
+      completed: "تمت كتابة الملفات",
+    },
+    create: {
+      intent: "إنشاء الملفات",
+      running: "جارٍ إنشاء الملفات",
+      completed: "تم إنشاء الملفات",
+    },
+    delete: {
+      intent: "حذف الملفات",
+      running: "جارٍ حذف الملفات",
+      completed: "تم حذف الملفات",
+    },
+    search: {
+      intent: "بحث",
+      running: "جارٍ البحث",
+      completed: "تم البحث",
+    },
+    list: {
+      intent: "عرض الملفات",
+      running: "جارٍ عرض الملفات",
+      completed: "تم عرض الملفات",
+    },
+    command: {
+      intent: "تشغيل أمر",
+      running: "جارٍ تشغيل الأمر",
+      completed: "تم تشغيل الأمر",
+    },
+    script: {
+      intent: "تشغيل نص برمجي",
+      running: "جارٍ تشغيل النص البرمجي",
+      completed: "تم تشغيل النص البرمجي",
+    },
+    activity: {
+      intent: "تنفيذ العمليات",
+      running: "جارٍ تنفيذ العمليات",
+      completed: "تم تنفيذ العمليات",
+    },
+    failed: "فشل: {{action}}",
+    canceled: "أُلغي: {{action}}",
+    counts: {
+      editedFiles: { one: "عمليات الملفات: {{count}}", other: "عمليات الملفات: {{count}}" },
+      commands: { one: "الأوامر: {{count}}", other: "الأوامر: {{count}}" },
+      readFiles: { one: "قراءات الملفات: {{count}}", other: "قراءات الملفات: {{count}}" },
+      searches: { one: "عمليات البحث: {{count}}", other: "عمليات البحث: {{count}}" },
+      otherTools: { one: "العمليات الأخرى: {{count}}", other: "العمليات الأخرى: {{count}}" },
+      paseoCalls: { one: "استدعاءات Paseo: {{count}}", other: "استدعاءات Paseo: {{count}}" },
+    },
+  },
   turnSummary: {
     details: "عرض تفاصيل الجولة",
     sentBy: "أرسلها {{name}}",
@@ -2293,7 +2741,32 @@ export const ar: TranslationResources = {
       diagnostics: "التشخيص",
       about: "عن",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      explorer: {
+        title: "المستكشف",
+        comparison: {
+          label: "المقارنة الافتراضية",
+          description: "تُستخدم عندما لا تحتوي مساحة العمل على مقارنة محفوظة.",
+          options: { uncommitted: "غير مثبّتة", base: "مثبّتة" },
+        },
+        autoSwitch: {
+          label: "تبديل المقارنة تلقائيًا",
+          description:
+            "عرض التغييرات غير المثبّتة عند وجود تغييرات محلية والمثبّتة خلاف ذلك. أوقف هذا الخيار لتذكر اختيارك.",
+        },
+        autoOpen: {
+          label: "فتح الشريط الجانبي لمساحات العمل الجديدة",
+          description:
+            "عرض الشريط الجانبي للمستكشف تلقائيًا في مساحات العمل الجديدة على سطح المكتب.",
+        },
+        diffScope: {
+          label: "عند النقر على ملف في التغييرات",
+          description: "اختر الملفات المعدلة التي تظهر في عرض الفروقات.",
+          options: { all: "جميع الملفات المعدلة", single: "الملف المحدد فقط" },
+        },
+      },
+    },
     editor: {
       title: "المحرر",
       vimKeybindings: "اختصارات Vim",
@@ -2309,6 +2782,17 @@ export const ar: TranslationResources = {
     },
     notifications: {
       title: "الإشعارات",
+      chooseHost: "اختر مضيف الإعدادات لضبط التنبيهات على جميع أجهزته.",
+      hostTitle: "الإشعارات على {{host}}",
+      agentAware: "تنبيهات تراعي عمل الوكلاء",
+      agentAwareHint:
+        "أبقِ النتائج المعتادة بين الوكلاء صامتة، وأظهر شارات «جاهزة للمراجعة» عندما تحتاج إلى التدخل. يسري هذا على كل جهاز متصل بـ {{host}}. تظل طلبات التدخل البشري وتنبيهات الأمان متاحة عند تعطيل هذا الخيار.",
+      updateHost: "حدّث هذا المضيف لتغيير التنبيهات التي تراعي عمل الوكلاء.",
+      readOnly: "يلزم إذن إدارة هذا المضيف لتغيير هذا الإعداد.",
+      unavailable: "اتصل بمضيف مدعوم مع إذن الإدارة قبل الحفظ.",
+      notSaved: "لم يحفظ المضيف تفضيل التنبيهات هذا. حاول مجددًا.",
+      loadFailed: "تعذّر تحميل تفضيل إشعارات المضيف.",
+      saving: "جارٍ الحفظ...",
       permission: "إذن الإشعارات",
       refreshAccessibility: "تحديث إذن الإشعارات",
       playSound: "تشغيل صوت",
@@ -2421,6 +2905,25 @@ export const ar: TranslationResources = {
         description: "أعد المرور على المظهر والمزوّدين والمشاريع وإقران الهاتف",
         action: "إظهار الإعداد مجددًا",
       },
+      browserExtensions: {
+        title: "الإضافات",
+        compatibility: "بعض ميزات إضافات Chrome غير مدعومة. لا يتم تحديث الإضافات تلقائيًا.",
+        store: "Chrome Web Store",
+        openStore: "فتح المتجر",
+        refresh: "تحديث",
+        enable: "تفعيل",
+        disable: "تعطيل",
+        retry: "إعادة المحاولة",
+        remove: "إزالة",
+        removeTitle: "إزالة {{name}}؟",
+        removeMessage:
+          "سيؤدي هذا إلى إزالة الإضافة من Paseo. يتم الاحتفاظ بمجلدات المصدر غير المضغوطة.",
+        loading: "جارٍ تحميل الإضافات...",
+        empty: "لا توجد إضافات مثبتة.",
+        unpackedHint: "حمّل إضافة من مجلد يحتوي على manifest.json.",
+        loadUnpacked: "تحميل إضافة غير مضغوطة",
+        unavailable: "الإضافات غير متاحة. حدّث تطبيق سطح المكتب.",
+      },
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
@@ -2477,6 +2980,7 @@ export const ar: TranslationResources = {
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
       },
       chatDisplay: {
+        updateHost: "حدّث مضيف الإعدادات المحدد لتغيير تفضيلات الدردشة",
         label: "عرض المحادثة",
         description: "مقدار عمل الوكيل الذي تعرضه المحادثة",
         options: {
@@ -2555,6 +3059,21 @@ export const ar: TranslationResources = {
       },
     },
     appearance: {
+      accent: {
+        title: "لون التمييز",
+        hint: "يُستخدم لعناصر التحكم الرئيسية ورسائلك",
+        updateHost: "حدّث مضيف الإعدادات المحدد لتغيير لون التمييز",
+        preview: "هكذا ستظهر رسائلك",
+        options: {
+          default: "الافتراضي",
+          blue: "أزرق",
+          green: "أخضر",
+          purple: "بنفسجي",
+          rose: "وردي",
+          orange: "برتقالي",
+          teal: "فيروزي",
+        },
+      },
       theme: {
         title: "سمة",
         accessibilityLabel: "الموضوع:{{value}}",
@@ -3003,6 +3522,10 @@ export const ar: TranslationResources = {
       addErrorTitle: "Unable to add provider",
       updateErrorTitle: "غير قادر على تحديث الموفر",
       actions: {
+        copyMigrationPrompt: "نسخ تعليمات الترحيل",
+        migrationPrompt: "تعليمات الترحيل",
+        copying: "جارٍ النسخ...",
+        copyFailed: "تعذّر نسخ تعليمات الترحيل",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

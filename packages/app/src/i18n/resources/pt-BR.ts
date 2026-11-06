@@ -2,6 +2,223 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "Abas somente com ícones",
+    iconOnlyHint:
+      "Clique com o botão direito em uma aba do Explorador ou no espaço vazio da barra e escolha Abas somente com ícones. Os nomes continuam disponíveis nas dicas.",
+  },
+  settingsSync: {
+    title: "Sincronização de configurações",
+    hint: "Sincronize as preferências e a visibilidade da barra lateral por um host escolhido. Filtros de host/projeto, ordem dos espaços e grupos recolhidos continuam locais. A troca carrega as configurações antes de editá-las.",
+    host: "Host de configurações",
+    deviceOnly: "Somente este dispositivo",
+    unavailableHost: "Host selecionado indisponível",
+    status: "Status",
+    publish: "Usar configurações deste dispositivo",
+    publishHint:
+      "Este host não tem configurações salvas. A publicação copia suas preferências atuais para ele.",
+    useHost: "Usar configurações do host",
+    keepDevice: "Publicar minhas alterações",
+    keepDeviceHint:
+      "Substitua explicitamente as preferências em conflito em {{host}} pelas suas alterações pendentes. As outras preferências são preservadas.",
+    restore: "Restaurar configurações do dispositivo",
+    restoreHint:
+      "Pare a sincronização e restaure as preferências salvas antes de escolher este host.",
+    conflictHint:
+      "Estas preferências mudaram em outro cliente. Use as configurações de {{host}} para descartar apenas suas alterações pendentes.",
+    retryHint:
+      "Reconecte e leia as configurações novamente. As alterações pendentes permanecem no host original.",
+    states: {
+      loading: "Carregando configuração",
+      local: "Preferências salvas neste dispositivo",
+      reading: "Aguardando configurações do host selecionado",
+      ready: "Conectado. Alterações pendentes: {{count}}",
+      offline: "Offline. Alterações pendentes: {{count}}",
+      empty: "Nenhuma configuração publicada neste host",
+      unsupported: "Atualize este host para sincronizar configurações",
+      error: "Não foi possível sincronizar. Suas alterações pendentes foram preservadas.",
+      conflict: "As alterações em conflito precisam da sua escolha",
+      readonly: "Esta conexão pode ler configurações, mas não alterá-las",
+    },
+  },
+  paseoPlusPlus: {
+    accent: {
+      title: "Cor de destaque",
+      hint: "Usada nos controles principais e nas suas mensagens",
+      updateHost: "Atualize o host de configurações selecionado para alterar a cor de destaque",
+      preview: "Suas mensagens terão esta aparência",
+      options: {
+        default: "Padrão",
+        blue: "Azul",
+        green: "Verde",
+        purple: "Roxo",
+        rose: "Rosa",
+        orange: "Laranja",
+        teal: "Verde-azulado",
+      },
+    },
+    workspaceLimit: {
+      save: "Salvar",
+      title: "Limites de espaços de trabalho",
+      label: "Exibir inicialmente por grupo",
+      limited: "Limitado",
+      all: "Mostrar todos",
+      count: "Quantidade de espaços de trabalho",
+      invalid: "Insira um número inteiro positivo.",
+    },
+    examples: {
+      annotated: "As setas destacam o recurso.",
+      before: "Antes da mudança de status",
+      after: "Depois da mudança de status",
+      imageLabel: "Exemplo de {{title}}",
+      positions:
+        "Posições finais antes e depois de uma mudança de estado. Estas imagens não mostram a duração da animação.",
+      explorer: "Exemplo da lista de alterações e das diferenças da cópia de trabalho.",
+      workspaceLimit:
+        "Escolha uma quantidade inicial por grupo ou Mostrar tudo. Os grupos que você expandiu continuam expandidos.",
+    },
+    loadFailed:
+      "Não foi possível carregar as preferências. Tente novamente antes de alterar recursos.",
+    saving: "Salvando...",
+    title: "Paseo++",
+    optional: "Recursos opcionais",
+    optionalHint:
+      "Os interruptores dos recursos opcionais começam ativados. As preferências de Exibição têm padrões independentes; Expandir um projeto por vez começa desativado. As opções seguem o host de configurações selecionado ao sincronizar. Desativar um recurso preserva seus dados e preferências.",
+    preferences: "Controles da barra lateral de espaços de trabalho",
+    fixes: "Correções e itens essenciais",
+    fixesHint: "Estas melhorias permanecem ativas",
+    additions: "Outras melhorias",
+    additionsHint: "Estas funções continuam disponíveis",
+    saveFailed: "Não foi possível salvar. Tente novamente.",
+    features: {
+      workspaceChatLinks: {
+        label: "Links do espaço de trabalho",
+        hint: "Abrir links web do espaço de trabalho em novas abas do navegador no desktop, incluindo terminal, chat e Git. Desative para abrir externamente. As opções explícitas continuam disponíveis nos menus.",
+      },
+      sidebarHostUpdates: {
+        label: "Atualizações de hosts na barra lateral",
+        hint: "Mostrar ações de atualização no menu de hosts. As configurações do host continuam disponíveis quando esta opção está desativada.",
+      },
+      splitLayoutPresets: {
+        label: "Controles de divisão",
+        hint: "Clique na região do diagrama onde deseja abrir ou mover uma aba. Em 60/40, a região direita ou inferior ocupa 40%. As opções do divisor redimensionam os painéis existentes. Desative para ocultar os controles sem alterar o layout.",
+      },
+      mobileWorkspaceTabs: {
+        label: "Abas de espaços no celular",
+        hint: "Mostrar abas com a mesma largura em telas compactas, com rolagem apenas quando necessário. Desative para usar o seletor de abas sem mudar a aba selecionada.",
+      },
+      widerWorkspaceTabs: {
+        label: "Abas do espaço de trabalho mais largas",
+        hint: "Permita até 50% mais largura para títulos longos. No celular, as abas do espaço de trabalho sempre dividem igualmente a largura disponível.",
+      },
+
+      descriptiveToolCalls: {
+        label: "Atividade de ferramentas legível",
+        hint: "Descreve operações conhecidas e mantém comandos e saídas exatos nos detalhes. Desative para restaurar os rótulos clássicos.",
+      },
+
+      stickyUserPrompts: {
+        label: "Manter mensagens visíveis",
+        hint: "Fixa uma mensagem compacta com expansão e navegação anterior/próxima. As mensagens normais ficam expandidas, e o carregamento nunca cobre uma mensagem disponível.",
+      },
+      previousAgents: {
+        label: "Agentes anteriores",
+        hint: "Reabre conversas fechadas ou arquivadas pelo menu + do espaço de trabalho",
+      },
+      sidebarActivityChips: {
+        label: "Indicadores de atividade dos projetos",
+        hint: "Mostra atividade e quantidade de espaços trabalhando",
+      },
+      sidebarProjectEmphasis: {
+        label: "Nomes dos projetos em negrito",
+        hint: "Destaca os títulos dos projetos na barra lateral",
+      },
+      sidebarBulkActions: {
+        label: "Expandir e recolher tudo",
+        hint: "Mostra controles para todos os grupos visíveis",
+      },
+      projectPinning: {
+        label: "Fixar espaços nos projetos",
+        hint: "Mantenha os espaços de trabalho selecionados no início do projeto e marque-os com um alfinete ao lado do nome. As fixações salvas retornam ao reativar.",
+      },
+      sidebarWorkspaceTransitions: {
+        label: "Animar movimentos",
+        hint: "Usa transições rápidas nas mudanças de posição da barra lateral",
+      },
+      androidAutomaticUpdateChecks: {
+        label: "Verificações automáticas no Android",
+        hint: "Busca prévias ao iniciar e retomar. A verificação e instalação manuais continuam disponíveis.",
+      },
+    },
+    links: {
+      sidebar: {
+        label: "Modos, filtros e exibição",
+        hint: "Use o sino da barra lateral para alternar entre Projeto e Status. O ícone de filtro abre o filtro rápido de texto. Em Exibição, Limites de espaços de trabalho ajusta a quantidade e a idade separadamente; Projetos vazios permite mostrar, agrupar ou ocultar. Cada modo mantém suas preferências.",
+      },
+    },
+    fixesList: {
+      forkLinks: {
+        label: "Links do Paseo++",
+        hint: "Abra o repositório do fork e as notas publicadas. As ações originais de problemas, patrocínio e Discord foram removidas.",
+      },
+      backgroundBrowser: {
+        label: "Automação em segundo plano",
+        hint: "Agentes desktop usam abas mesmo com painel oculto ou janela minimizada",
+      },
+      notifications: {
+        label: "Destinos das notificações",
+        hint: "Abre o espaço e chat corretos, inclusive após reiniciar o desktop",
+      },
+      reading: {
+        label: "Leitura estável",
+        hint: "O redimensionamento de imagens preserva o texto visível no desktop e web; mensagens e histórico recuperam o carregamento",
+      },
+      mobile: {
+        label: "Navegação móvel",
+        hint: "Voltar mais seguro no Android e notificações de desenvolvimento separadas",
+      },
+      pickers: {
+        label: "Seletores e estados dos espaços",
+        hint: "Ordem clara, dicas completas, estados recentes e grupos recolhidos preservados",
+      },
+      identity: {
+        label: "Instalações independentes",
+        hint: "Identidades, configurações e atualizações próprias do Paseo++; downloads Android verificados",
+      },
+    },
+    additionsList: {
+      ssh: {
+        label: "Hosts SSH no Android",
+        hint: "Importe chaves, verifique impressões digitais e salve credenciais criptografadas para conectar diretamente",
+      },
+      worktrees: {
+        label: "Branches e worktrees",
+        hint: "Crie ou adote worktrees com nomes explícitos em hosts compatíveis; novas tentativas preservam o trabalho",
+      },
+      video: {
+        label: "Vídeo de plugins Android",
+        hint: "Plugins compatíveis reproduzem vídeo codificado com recuperação do decodificador. É necessário um plugin que forneça vídeo.",
+      },
+    },
+  },
+
+  androidUpdates: {
+    title: "Atualização do aplicativo",
+    idle: "Verifique novas prévias do fork.",
+    checking: "Verificando atualizações…",
+    current: "Você tem a prévia publicada mais recente.",
+    available: "A prévia {{version}} está disponível.",
+    downloading: "Baixando e verificando a atualização…",
+    downloadProgress: "Baixando {{percent}}% ({{downloaded}} / {{total}})",
+    downloadBytes: "Baixando {{downloaded}}…",
+    verifying: "Verificando a atualização baixada…",
+    permission:
+      "Permita atualizações deste aplicativo nas configurações do Android, volte e toque em Instalar atualização novamente.",
+    installer:
+      "Conclua a instalação no Android. Se você cancelou, toque em Instalar atualização para tentar novamente.",
+    install: "Instalar atualização",
+    failed: "Não foi possível atualizar. Tente novamente.",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
@@ -234,6 +451,23 @@ export const ptBR: TranslationResources = {
       mode: "Alterar modo de permissão",
     },
   },
+  stickyPrompt: {
+    goToMessage: "Ir para esta mensagem",
+    more: "mais…",
+    less: "menos…",
+    none: "Não há mensagens do usuário neste chat.",
+    cancelled: "Carregamento cancelado.",
+    moreHistory: "Há mais histórico disponível. Tente novamente para continuar procurando.",
+
+    latest: "Última mensagem do usuário",
+    selected: "Mensagem do usuário",
+    expand: "Expandir mensagem do usuário",
+    collapse: "Recolher mensagem do usuário",
+    previous: "Mensagem anterior do usuário",
+    next: "Próxima mensagem do usuário",
+    failed: "Não foi possível carregar as mensagens do usuário.",
+    attachments: "{{count}} anexos",
+  },
   agentStream: {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
@@ -284,6 +518,11 @@ export const ptBR: TranslationResources = {
     },
   },
   sessions: {
+    previousTitle: "Reabrir agente fechado",
+    previousEmpty: "Não há agentes anteriores neste espaço de trabalho",
+    workspaceHistoryUpdateRequired:
+      "Atualize este host para ver os agentes anteriores do espaço de trabalho.",
+
     title: "Histórico de agentes",
     empty: "Nenhuma sessão ainda",
     noMatches: "Nenhuma sessão corresponde",
@@ -444,6 +683,22 @@ export const ptBR: TranslationResources = {
     },
   },
   workspace: {
+    splits: {
+      openRegion: "Abrir {{item}}: {{side}}, {{percent}}%",
+      moveRegion: "Mover aba: {{side}}, {{percent}}%",
+      openToSide: "Abrir {{item}} ao lado",
+      chooseRatio: "Escolher proporção",
+      ratio: "Usar {{ratio}}",
+      moveTab: "Mover aba",
+      left: "Esquerda",
+      right: "Direita",
+      top: "Acima",
+      bottom: "Abaixo",
+      columns: "Esquerda / direita",
+      rows: "Acima / abaixo",
+      pane: "Painel {{index}}",
+    },
+
     route: {
       loading: "Carregando workspace",
       connecting: "Conectando",
@@ -581,12 +836,17 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      openInPaseo: "Abrir no navegador do Paseo",
+      openExternally: "Abrir em um navegador externo",
+      copyLink: "Copiar link",
       unavailable: {
         title: "O navegador é exclusivo do desktop",
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
       },
       session: "Sessão do navegador {{browserId}}",
       controls: {
+        pageZoom: "Zoom da página",
+        zoomFailed: "Não foi possível alterar o zoom da página",
         back: "Voltar",
         forward: "Avançar",
         stopLoading: "Parar carregamento",
@@ -608,6 +868,17 @@ export const ptBR: TranslationResources = {
         placeholder: "Mensagem ao agente sobre este elemento…",
         submit: "Anexar",
         cancel: "Cancelar",
+      },
+      extensions: {
+        label: "Extensões",
+        empty: "Nenhuma extensão ativada.",
+        noPopup: "Nenhuma janela fornecida",
+        loading: "Carregando extensões...",
+        manage: "Gerenciar extensões",
+        openFailed: "Não foi possível abrir a extensão",
+        pin: "Fixar {{name}}",
+        unpin: "Desafixar {{name}}",
+        pinFailed: "Não foi possível salvar a extensão fixada",
       },
       devices: {
         label: "Tamanho do dispositivo",
@@ -953,6 +1224,7 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "Atualize este host para abrir a comparação de um único arquivo.",
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
@@ -1184,15 +1456,67 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    projectSelector: {
+      noKnownProjects: "Ainda não há projetos conhecidos neste host.",
+      selectOnlyProject: "Mostrar apenas {{project}}",
+      includeProject: "Incluir {{project}}",
+      workspaces: "Espaços de trabalho",
+      all: "Todos",
+      allWorkspaces: "Todos os espaços",
+      projectWorkspaces: "Espaços de {{project}}",
+      multipleWorkspaces_one: "Espaços de {{count}} projeto",
+      multipleWorkspaces_other: "Espaços de {{count}} projetos",
+      title: "Projetos",
+    },
+    workspaceTree: {
+      expand: "Expandir os espaços de trabalho filhos de {{name}}",
+      collapse: "Recolher os espaços de trabalho filhos de {{name}}",
+      activeChild: "Contém o espaço de trabalho ativo.",
+      summary_one: "{{count}} espaço de trabalho filho: {{status}}",
+      summary_other: "{{count}} espaços de trabalho filhos: {{status}}",
+      humanAttention_one: "{{count}} espaço de trabalho filho precisa da sua atenção",
+      humanAttention_other: "{{count}} espaços de trabalho filhos precisam da sua atenção",
+      unknownStatus: "Status indisponível",
+    },
     statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
+      workingCount: "{{count}} trabalhando",
       needsInput: "Precisa de resposta",
       failed: "Com falha",
       readyToReview: "Para revisar",
       working: "Em execução",
       done: "Concluído",
     },
+    quickFilter: {
+      open: "Filtrar projetos e espaços de trabalho",
+      close: "Fechar e limpar filtro rápido",
+      placeholder: "Filtrar projetos ou espaços de trabalho…",
+      clear: "Limpar filtro rápido",
+      emptyTitle: "Nenhum projeto ou espaço de trabalho correspondente",
+      emptyDescription: "Tente outro nome ou limpe o filtro rápido deste modo.",
+      guidance:
+        "Use o ícone de filtro para buscar nomes e branches visíveis neste modo. Os limites de quantidade e idade continuam ativos; Mostrar mais revela todas as correspondências.",
+    },
     display: {
+      modeToggle: "Visualização {{current}}. Alternar para {{next}}.",
+      workspaceList: {
+        countLimit: "Limite de quantidade",
+        updatedWithin: "Atualizado nos últimos",
+        day: "1 dia",
+        twoDays: "2 dias",
+        threeDays: "3 dias",
+        fiveDays: "5 dias",
+        week: "1 semana",
+        twoWeeks: "2 semanas",
+        month: "1 mês (30 dias)",
+        twoMonths: "2 meses (60 dias)",
+        threeMonths: "3 meses (90 dias)",
+      },
+      expandAll: "Expandir tudo",
+      collapseAll: "Recolher tudo",
+      oneProjectAtATime: "Expandir um projeto por vez",
+      reorderGuidance:
+        "Arraste para reordenar apenas na ordenação Personalizada. Projetos filtrados mantêm o mesmo vizinho anterior ou posterior ao mostrar todos os projetos. Itens fixados sempre usam ordem manual.",
       showBackground: "Mostrar espaços em segundo plano",
       trigger: "Preferências de exibição",
       heading: "Exibição",
@@ -1208,6 +1532,28 @@ export const ptBR: TranslationResources = {
         project: "Projeto",
         status: "Status",
         labels: "Etiquetas",
+        emptyProjects: "Agrupar projetos vazios separadamente",
+      },
+      sorting: {
+        label: "Ordenar projetos",
+        workspaces: "Ordenar espaços de trabalho",
+        workspaceName: "Nome do espaço de trabalho",
+        project: "Nome do projeto",
+        status: "Status",
+        custom: "Ordem personalizada",
+        emptyProjects: "Ordenar projetos vazios",
+      },
+      emptyWorkspaces: {
+        label: "Projetos vazios",
+        show: "Mostrar",
+        group: "Agrupar",
+        hide: "Ocultar",
+      },
+      projectVisibility: {
+        label: "Filtro",
+        all: "Todos os projetos",
+        unarchived: "Ocultar projetos vazios",
+        emptyGroup: "Projetos vazios",
       },
       titleSource: {
         label: "Título",
@@ -1232,7 +1578,7 @@ export const ptBR: TranslationResources = {
         none: "Oculto",
       },
       hostFilter: {
-        label: "Host",
+        label: "Hosts",
         all: "Todos os hosts",
       },
       projectFilter: {
@@ -1286,6 +1632,44 @@ export const ptBR: TranslationResources = {
       openProjectSettings: "Abrir configurações do projeto",
     },
     project: {
+      archive: {
+        action: "Arquivar tudo",
+        title: "Arquivar os espaços de trabalho do projeto?",
+        message:
+          'Projeto: "{{projectName}}"\nEspaços de trabalho: {{workspaceCount}}\nAgentes: {{agentCount}} (em execução: {{runningAgentCount}})\nHosts: {{hostCount}}\n\nOs agentes em execução e as tarefas dos espaços de trabalho serão interrompidos. As árvores de trabalho gerenciadas pelo Paseo poderão ser removidas. O projeto será mantido.',
+        includeBackground: "Arquivar também os espaços de trabalho em segundo plano ({{count}})",
+        backgroundWarning:
+          "Incluir os espaços de trabalho em segundo plano também interrompe seus agentes e tarefas.",
+        discovering: "Contando espaços de trabalho e agentes...",
+        progress: "Arquivando espaços de trabalho: {{completed}} de {{total}}",
+        completed: "Espaços de trabalho arquivados: {{count}}",
+        failed:
+          '{{completed}} espaços de trabalho foram arquivados. A operação parou em "{{workspace}}" no host {{host}}: {{error}}. Não tentados: {{unprocessed}}. Resolva o problema e tente Arquivar tudo novamente.',
+        empty: "Não há espaços de trabalho ativos neste projeto",
+        projectChanged:
+          "O projeto mudou durante a confirmação. Confira as contagens e tente Arquivar tudo novamente.",
+        hostDisconnected:
+          "O host {{host}} está desconectado. Conecte todos os hosts do projeto e tente novamente.",
+        updateRequired:
+          "Atualize o host {{host}} para arquivar os espaços de trabalho do projeto com segurança.",
+        alreadyArchiving:
+          'O espaço de trabalho "{{workspace}}" já está sendo arquivado. Aguarde a conclusão e tente novamente.',
+        incompleteDiscovery:
+          "Não foi possível contar todos os espaços de trabalho e agentes do projeto. Tente Arquivar tudo novamente.",
+        verificationFailed:
+          'Não foi possível verificar se o espaço de trabalho "{{workspace}}" está arquivado. Abra o Histórico de agentes para conferir seu estado antes de tentar novamente.',
+        agentsRemaining:
+          'O espaço de trabalho "{{workspace}}" ainda tem agentes ativos. Abra o Histórico de agentes para conferir o arquivamento incompleto.',
+        agentNotArchived:
+          "Não foi possível verificar se o agente {{agent}} está arquivado e parado. Abra o Histórico de agentes para conferir seu estado.",
+      },
+      restore: {
+        title: "Restaurar espaço de trabalho arquivado",
+        search: "Buscar espaços de trabalho arquivados",
+        empty: "Nenhum espaço de trabalho arquivado neste projeto",
+        updateRequired: "Atualize o host para ver os espaços de trabalho arquivados",
+        loadFailed: "Não foi possível carregar os espaços de trabalho arquivados",
+      },
       actions: {
         menu: "Ações do projeto",
         openSettings: "Abrir configurações do projeto",
@@ -1336,7 +1720,9 @@ export const ptBR: TranslationResources = {
         copyPath: "Copiar caminho",
         copyBranchName: "Copiar nome da branch",
         rename: "Renomear workspace",
-        pin: "Fixar no topo",
+        pin: "Fixar no topo da barra lateral",
+        pinInProject: "Fixar no projeto",
+        unpinInProject: "Desafixar do projeto",
         unpin: "Desafixar",
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
@@ -1357,6 +1743,8 @@ export const ptBR: TranslationResources = {
         invalidBranchName: "Nome de branch inválido",
       },
       toasts: {
+        updateHostToPinInProject:
+          "Atualize este host para fixar espaços de trabalho em um projeto.",
         workspacePathUnavailable: "Caminho do workspace indisponível",
         pathCopied: "Caminho copiado",
         branchNameCopied: "Nome da branch copiado",
@@ -1388,9 +1776,11 @@ export const ptBR: TranslationResources = {
       selectModel: "Selecione um modelo",
     },
     tooltips: {
+      branchChoice: "Crie uma nova branch ou use uma existente",
+      baseBranch: "Escolha a branch que servirá de base para a nova branch",
       project: "Choose the project",
       host: "Choose the host",
-      isolation: "Choose the isolation level",
+      isolation: "Use Local ou escolha uma árvore de trabalho",
       startingRef: "Escolha de onde começar",
       launch: "Choose what to launch",
     },
@@ -1824,7 +2214,7 @@ export const ptBR: TranslationResources = {
       },
       remoteSsh: {
         title: "SSH remoto",
-        description: "Conecte-se pelo cliente SSH do desktop.",
+        description: "Conecte-se via SSH.",
       },
       scanQr: {
         title: "Escanear QR code",
@@ -1881,6 +2271,15 @@ export const ptBR: TranslationResources = {
     remoteSsh: {
       title: "SSH remoto",
       helper: "Conecte-se a um daemon Paseo no host remoto.",
+      keyImport: {
+        key: "Chave privada",
+        import: "Importar chave privada",
+        passphrase: "Senha da chave (opcional)",
+        fingerprint: "Impressão digital do servidor",
+        verify: "Compare esta impressão digital com a do servidor antes de confiar nele.",
+        trustAndConnect: "Confiar e conectar",
+        required: "Importe uma chave privada para conectar.",
+      },
       fields: {
         target: "Host SSH",
         password: "Senha do daemon",
@@ -2109,6 +2508,76 @@ export const ptBR: TranslationResources = {
     input: "Entrada",
     output: "Saída",
   },
+  toolActivity: {
+    files: {
+      intent: "Alterar arquivos",
+      running: "Alterando arquivos",
+      completed: "Arquivos alterados",
+    },
+    read: {
+      intent: "Ler arquivos",
+      running: "Lendo arquivos",
+      completed: "Arquivos lidos",
+    },
+    edit: {
+      intent: "Editar arquivos",
+      running: "Editando arquivos",
+      completed: "Arquivos editados",
+    },
+    write: {
+      intent: "Escrever arquivos",
+      running: "Escrevendo arquivos",
+      completed: "Arquivos escritos",
+    },
+    create: {
+      intent: "Criar arquivos",
+      running: "Criando arquivos",
+      completed: "Arquivos criados",
+    },
+    delete: {
+      intent: "Excluir arquivos",
+      running: "Excluindo arquivos",
+      completed: "Arquivos excluídos",
+    },
+    search: {
+      intent: "Pesquisar",
+      running: "Pesquisando",
+      completed: "Pesquisa realizada",
+    },
+    list: {
+      intent: "Listar arquivos",
+      running: "Listando arquivos",
+      completed: "Arquivos listados",
+    },
+    command: {
+      intent: "Executar comando",
+      running: "Executando comando",
+      completed: "Comando executado",
+    },
+    script: {
+      intent: "Executar script",
+      running: "Executando script",
+      completed: "Script executado",
+    },
+    activity: {
+      intent: "Executar operações",
+      running: "Executando operações",
+      completed: "Operações executadas",
+    },
+    failed: "Falhou: {{action}}",
+    canceled: "Cancelado: {{action}}",
+    counts: {
+      editedFiles: {
+        one: "{{count}} operação de arquivos",
+        other: "{{count}} operações de arquivos",
+      },
+      commands: { one: "{{count}} comando", other: "{{count}} comandos" },
+      readFiles: { one: "{{count}} leitura de arquivo", other: "{{count}} leituras de arquivos" },
+      searches: { one: "{{count}} pesquisa", other: "{{count}} pesquisas" },
+      otherTools: { one: "{{count}} outra operação", other: "{{count}} outras operações" },
+      paseoCalls: { one: "{{count}} chamada ao Paseo", other: "{{count}} chamadas ao Paseo" },
+    },
+  },
   turnSummary: {
     details: "Ver detalhes do turno",
     sentBy: "Enviado por {{name}}",
@@ -2291,7 +2760,35 @@ export const ptBR: TranslationResources = {
       diagnostics: "Diagnósticos",
       about: "Sobre",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      explorer: {
+        title: "Explorador",
+        comparison: {
+          label: "Comparação padrão",
+          description: "Usada quando este espaço de trabalho não tem uma comparação salva.",
+          options: { uncommitted: "Não commitado", base: "Commitado" },
+        },
+        autoSwitch: {
+          label: "Alternar comparação automaticamente",
+          description:
+            "Mostrar alterações não commitadas quando houver alterações locais e commitadas caso contrário. Desative para lembrar sua seleção.",
+        },
+        autoOpen: {
+          label: "Abrir a barra lateral em novos espaços de trabalho",
+          description:
+            "Mostrar automaticamente a barra lateral do Explorador em novos espaços de trabalho no desktop.",
+        },
+        diffScope: {
+          label: "Ao clicar em um arquivo em Alterações",
+          description: "Escolha quantos arquivos alterados aparecem no diff.",
+          options: {
+            all: "Todos os arquivos alterados",
+            single: "Somente o arquivo selecionado",
+          },
+        },
+      },
+    },
     editor: {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
@@ -2307,6 +2804,19 @@ export const ptBR: TranslationResources = {
     },
     notifications: {
       title: "Notificações",
+      chooseHost:
+        "Escolha um host de configurações para ajustar os alertas em todos os dispositivos dele.",
+      hostTitle: "Notificações de {{host}}",
+      agentAware: "Alertas conforme o destinatário",
+      agentAwareHint:
+        "Mantenha silenciosos os resultados rotineiros entre agentes e mostre o indicador «Para revisar» quando você precisar agir. Aplica-se a todos os dispositivos conectados a {{host}}. Os pedidos de intervenção humana e os alertas de segurança continuam disponíveis quando desativado.",
+      updateHost: "Atualize este host para alterar os alertas conforme o destinatário.",
+      readOnly: "É necessária permissão para administrar este host para alterar esta configuração.",
+      unavailable:
+        "Conecte-se a um host compatível com permissão de administração antes de salvar.",
+      notSaved: "O host não salvou esta preferência de alertas. Tente novamente.",
+      loadFailed: "Não foi possível carregar a preferência de notificações do host.",
+      saving: "Salvando...",
       permission: "Permissão de notificações",
       refreshAccessibility: "Atualizar permissão de notificações",
       playSound: "Reproduzir som",
@@ -2419,6 +2929,26 @@ export const ptBR: TranslationResources = {
         description: "Rever aparência, provedores, projetos e pareamento do celular",
         action: "Mostrar configuração novamente",
       },
+      browserExtensions: {
+        title: "Extensões",
+        compatibility:
+          "Alguns recursos das extensões do Chrome não são compatíveis. As extensões não são atualizadas automaticamente.",
+        store: "Chrome Web Store",
+        openStore: "Abrir Web Store",
+        refresh: "Atualizar",
+        enable: "Ativar",
+        disable: "Desativar",
+        retry: "Tentar novamente",
+        remove: "Remover",
+        removeTitle: "Remover {{name}}?",
+        removeMessage:
+          "Isso remove a extensão do Paseo. As pastas de origem sem compactação são mantidas.",
+        loading: "Carregando extensões...",
+        empty: "Nenhuma extensão instalada.",
+        unpackedHint: "Carregue uma extensão de uma pasta que contenha manifest.json.",
+        loadUnpacked: "Carregar sem compactação",
+        unavailable: "As extensões não estão disponíveis. Atualize o aplicativo para desktop.",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",
@@ -2479,6 +3009,8 @@ export const ptBR: TranslationResources = {
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
       },
       chatDisplay: {
+        updateHost:
+          "Atualize o host de configurações selecionado para alterar as preferências do chat",
         label: "Exibição do chat",
         description: "Quanto do trabalho do agente o chat mostra",
         options: {
@@ -2557,6 +3089,21 @@ export const ptBR: TranslationResources = {
       },
     },
     appearance: {
+      accent: {
+        title: "Cor de destaque",
+        hint: "Usada nos controles principais e nas suas mensagens",
+        updateHost: "Atualize o host de configurações selecionado para alterar a cor de destaque",
+        preview: "Suas mensagens terão esta aparência",
+        options: {
+          default: "Padrão",
+          blue: "Azul",
+          green: "Verde",
+          purple: "Roxo",
+          rose: "Rosa",
+          orange: "Laranja",
+          teal: "Verde-azulado",
+        },
+      },
       theme: {
         title: "Tema",
         accessibilityLabel: "Tema: {{value}}",
@@ -3012,6 +3559,10 @@ export const ptBR: TranslationResources = {
       addErrorTitle: "Não foi possível adicionar provedor",
       updateErrorTitle: "Não foi possível atualizar provedor",
       actions: {
+        copyMigrationPrompt: "Copiar prompt de migração",
+        migrationPrompt: "prompt de migração",
+        copying: "Copiando...",
+        copyFailed: "Não foi possível copiar o prompt de migração",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",

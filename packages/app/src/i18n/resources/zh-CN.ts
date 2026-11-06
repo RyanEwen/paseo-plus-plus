@@ -2,6 +2,213 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  explorerTabs: {
+    iconOnlyLabel: "仅图标标签页",
+    iconOnlyHint:
+      "右键点击资源管理器标签页或标签栏的空白区域，选择“仅图标标签页”。标签名称仍会显示在工具提示中。",
+  },
+  settingsSync: {
+    title: "设置同步",
+    hint: "通过所选主机同步应用偏好和侧边栏项目可见性。主机/项目筛选、工作区顺序和折叠分组保留在本地。切换后先加载设置，再允许编辑。",
+    host: "设置主机",
+    deviceOnly: "仅此设备",
+    unavailableHost: "所选主机不可用",
+    status: "状态",
+    publish: "使用此设备的设置",
+    publishHint: "此主机尚无已保存的应用设置。发布会将当前偏好复制到主机。",
+    useHost: "使用主机设置",
+    keepDevice: "发布我的更改",
+    keepDeviceHint: "将 {{host}} 上冲突的偏好明确替换为你的待处理更改。其他偏好保持不变。",
+    restore: "恢复设备设置",
+    restoreHint: "停止同步并恢复选择此主机前保存的偏好。",
+    conflictHint: "这些偏好已在另一个客户端更改。使用 {{host}} 的设置，仅放弃该主机的待处理更改。",
+    retryHint: "重新连接并读取设置。待处理更改始终属于原主机。",
+    states: {
+      loading: "正在加载同步配置",
+      local: "偏好保存在此设备",
+      reading: "等待加载所选主机",
+      ready: "已连接。待处理更改：{{count}}",
+      offline: "离线。待处理更改：{{count}}",
+      empty: "此主机尚未发布设置",
+      unsupported: "更新此主机以同步应用设置",
+      error: "无法同步设置。待处理更改已保留。",
+      conflict: "请选择如何处理冲突",
+      readonly: "此连接可读取设置，但不能修改",
+    },
+  },
+  paseoPlusPlus: {
+    accent: {
+      title: "强调色",
+      hint: "用于主要控件和你发送的消息",
+      updateHost: "请更新所选的设置主机以更改强调色",
+      preview: "你的消息将呈现此效果",
+      options: {
+        default: "默认",
+        blue: "蓝色",
+        green: "绿色",
+        purple: "紫色",
+        rose: "玫瑰色",
+        orange: "橙色",
+        teal: "青色",
+      },
+    },
+    workspaceLimit: {
+      save: "保存",
+      title: "工作区显示限制",
+      label: "每组初始显示",
+      limited: "限制数量",
+      all: "显示全部",
+      count: "工作区数量",
+      invalid: "请输入正整数。",
+    },
+    examples: {
+      annotated: "箭头标出对应功能。",
+      before: "状态更改前",
+      after: "状态更改后",
+      imageLabel: "{{title}} 示例",
+      positions: "状态更改前后的最终位置。这些静态图片不展示动画时长。",
+      explorer: "更改列表和工作副本差异的示例。",
+      workspaceLimit: "选择每组的初始显示数量或显示全部。已展开的组会保持展开。",
+    },
+    loadFailed: "无法加载已保存的偏好。更改功能前请重试。",
+    saving: "正在保存...",
+    title: "Paseo++",
+    optional: "可选功能",
+    optionalHint:
+      "可选功能开关默认开启。显示偏好各有独立默认值；每次只展开一个项目默认关闭。启用同步后，选项跟随所选设置主机。关闭功能会保留已保存的数据和偏好。",
+    preferences: "工作区侧边栏设置",
+    fixes: "修复和分支基本功能",
+    fixesHint: "这些改进始终启用",
+    additions: "其他新增功能",
+    additionsHint: "这些工作流程仍然可用",
+    saveFailed: "无法保存。请重试。",
+    features: {
+      workspaceChatLinks: {
+        label: "工作区链接",
+        hint: "在桌面端，将终端、聊天和 Git 等工作区网页链接在所属工作区浏览器的新标签页中打开。关闭后在外部浏览器中打开。菜单中的显式操作仍然可用。",
+      },
+      sidebarHostUpdates: {
+        label: "侧边栏中的主机更新",
+        hint: "在主机菜单中显示更新操作。关闭后仍可使用主机设置。",
+      },
+      splitLayoutPresets: {
+        label: "分屏布局控件",
+        hint: "点击分割图中所需的区域，在那里打开或移动标签页。60/40 中右侧或下方区域占 40%。分隔线预设调整现有窗格的大小。关闭后隐藏这些控件，但不更改布局。",
+      },
+      mobileWorkspaceTabs: {
+        label: "移动端工作区标签页",
+        hint: "在紧凑屏幕上显示等宽标签页，仅在放不下时滚动。关闭后使用标签选择器，并保留当前选中的标签。",
+      },
+      widerWorkspaceTabs: {
+        label: "更宽的工作区标签页",
+        hint: "将长标题标签页的最大宽度增加 50%。手机上的工作区标签页始终均分可用宽度。",
+      },
+
+      descriptiveToolCalls: {
+        label: "易读的工具活动",
+        hint: "描述已知操作，并在详情中保留准确命令和输出。关闭后恢复经典标签。",
+      },
+
+      stickyUserPrompts: {
+        label: "保持用户消息可见",
+        hint: "固定当前消息的简洁预览，支持展开和前后导航。普通消息始终完整展开，加载提示不会遮挡已有消息。",
+      },
+      previousAgents: {
+        label: "历史智能体",
+        hint: "从工作区 + 菜单重新打开已关闭或归档的对话",
+      },
+      sidebarActivityChips: {
+        label: "项目活动标记",
+        hint: "显示项目活动和正在工作的工作区数量",
+      },
+      sidebarProjectEmphasis: {
+        label: "加粗项目名称",
+        hint: "突出显示侧边栏中的项目标题",
+      },
+      sidebarBulkActions: {
+        label: "全部展开和折叠",
+        hint: "显示所有可见侧边栏分组的控件",
+      },
+      projectPinning: {
+        label: "在项目内置顶工作区",
+        hint: "将选定的工作区保留在项目顶部，并在名称旁显示图钉。重新启用后会恢复已保存的置顶状态。",
+      },
+      sidebarWorkspaceTransitions: {
+        label: "工作区移动动画",
+        hint: "侧边栏工作区位置变化时使用快速过渡",
+      },
+      androidAutomaticUpdateChecks: {
+        label: "自动检查 Android 更新",
+        hint: "启动和恢复时检查预览版本。手动检查和安装仍可使用。",
+      },
+    },
+    links: {
+      sidebar: {
+        label: "模式、筛选和显示",
+        hint: "用侧边栏的铃铛切换项目和状态模式。筛选图标可打开快速文本筛选。在显示菜单中，工作区限制分别设置数量和更新期限，空项目可选择显示、分组或隐藏。每种模式各自保留偏好。",
+      },
+    },
+    fixesList: {
+      forkLinks: {
+        label: "Paseo++ 链接",
+        hint: "打开分支仓库和已发布的发行说明。已移除上游问题、赞助和 Discord 操作。",
+      },
+      backgroundBrowser: {
+        label: "后台浏览器自动化",
+        hint: "即使面板隐藏、应用失焦或窗口最小化，桌面智能体仍可使用标签页",
+      },
+      notifications: {
+        label: "通知目标",
+        hint: "通知打开所属工作区和聊天，桌面重启后仍然有效",
+      },
+      reading: {
+        label: "稳定阅读",
+        hint: "图像缩放时保持桌面和网页中的可见文本位置，并恢复消息及历史加载",
+      },
+      mobile: {
+        label: "移动导航",
+        hint: "更安全的 Android 返回行为及独立的开发通知",
+      },
+      pickers: {
+        label: "工作区选择器和状态",
+        hint: "清晰的设置顺序、完整值提示、按状态更新排序和保留侧边栏折叠选择",
+      },
+      identity: {
+        label: "独立的分支安装",
+        hint: "独立的 Paseo++ 应用和守护进程身份、设置及更新；验证 Android 下载",
+      },
+    },
+    additionsList: {
+      ssh: {
+        label: "Android SSH 主机",
+        hint: "导入密钥、验证指纹并保存加密凭据，以便从 Android 直接连接",
+      },
+      worktrees: {
+        label: "分支和 worktree 选择",
+        hint: "在支持的主机上用明确名称创建或采用 worktree；重试保留现有工作",
+      },
+      video: {
+        label: "Android 插件视频",
+        hint: "兼容插件可播放编码视频并恢复解码器。需要提供视频的插件。",
+      },
+    },
+  },
+
+  androidUpdates: {
+    title: "应用更新",
+    idle: "检查此分支的新预览版本。",
+    checking: "正在检查更新…",
+    current: "你使用的是最新发布的预览版本。",
+    available: "预览版本 {{version}} 已可用。",
+    downloading: "正在下载并验证更新…",
+    downloadProgress: "正在下载 {{percent}}%（{{downloaded}} / {{total}}）",
+    downloadBytes: "正在下载 {{downloaded}}…",
+    verifying: "正在验证下载的更新…",
+    permission: "在 Android 设置中允许此应用安装更新，然后返回并再次点击安装更新。",
+    installer: "请在 Android 中完成安装。如果已取消，请点击安装更新重试。",
+    install: "安装更新",
+    failed: "无法更新。请重试。",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
@@ -233,6 +440,23 @@ export const zhCN: TranslationResources = {
       mode: "更改模式",
     },
   },
+  stickyPrompt: {
+    goToMessage: "跳转到此消息",
+    more: "更多…",
+    less: "收起…",
+    none: "此聊天中没有用户消息。",
+    cancelled: "加载已取消。",
+    moreHistory: "还有更多历史记录。重试以继续查找。",
+
+    latest: "最新用户消息",
+    selected: "用户消息",
+    expand: "展开用户消息",
+    collapse: "收起用户消息",
+    previous: "上一条用户消息",
+    next: "下一条用户消息",
+    failed: "无法加载用户消息。",
+    attachments: "{{count}} 个附件",
+  },
   agentStream: {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
@@ -280,6 +504,10 @@ export const zhCN: TranslationResources = {
     },
   },
   sessions: {
+    previousTitle: "重新打开已关闭的代理",
+    previousEmpty: "此工作区中没有以前的代理",
+    workspaceHistoryUpdateRequired: "请更新此主机以查看以前的工作区代理。",
+
     title: "历史",
     empty: "还没有会话",
     noMatches: "没有匹配的会话",
@@ -440,6 +668,22 @@ export const zhCN: TranslationResources = {
     },
   },
   workspace: {
+    splits: {
+      openRegion: "打开 {{item}}：{{side}}，{{percent}}%",
+      moveRegion: "移动标签页：{{side}}，{{percent}}%",
+      openToSide: "在侧边打开{{item}}",
+      chooseRatio: "选择分屏比例",
+      ratio: "使用 {{ratio}} 分屏",
+      moveTab: "移动标签页",
+      left: "左侧",
+      right: "右侧",
+      top: "上方",
+      bottom: "下方",
+      columns: "左 / 右",
+      rows: "上 / 下",
+      pane: "窗格 {{index}}",
+    },
+
     route: {
       loading: "正在加载 workspace",
       connecting: "正在连接",
@@ -576,12 +820,17 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      openInPaseo: "在 Paseo 浏览器中打开",
+      openExternally: "在外部浏览器中打开",
+      copyLink: "复制链接",
       unavailable: {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
       },
       session: "浏览器会话 {{browserId}}",
       controls: {
+        pageZoom: "页面缩放",
+        zoomFailed: "无法更改页面缩放",
         back: "后退",
         forward: "前进",
         stopLoading: "停止加载",
@@ -603,6 +852,17 @@ export const zhCN: TranslationResources = {
         placeholder: "给智能体关于此元素的留言…",
         submit: "附加",
         cancel: "取消",
+      },
+      extensions: {
+        label: "扩展程序",
+        empty: "没有已启用的扩展程序。",
+        noPopup: "未提供弹出窗口",
+        loading: "正在加载扩展程序...",
+        manage: "管理扩展程序",
+        openFailed: "无法打开扩展程序",
+        pin: "固定 {{name}}",
+        unpin: "取消固定 {{name}}",
+        pinFailed: "无法保存扩展程序固定状态",
       },
       devices: {
         label: "设备尺寸",
@@ -922,6 +1182,7 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        updateHostFileDiff: "请更新此主机以打开单文件差异。",
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
@@ -1150,15 +1411,67 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    projectSelector: {
+      noKnownProjects: "尚无此主机的已知项目。",
+      selectOnlyProject: "仅显示 {{project}}",
+      includeProject: "包含 {{project}}",
+      workspaces: "工作区",
+      all: "全部",
+      allWorkspaces: "所有工作区",
+      projectWorkspaces: "{{project}} 工作区",
+      multipleWorkspaces_one: "{{count}} 个项目的工作区",
+      multipleWorkspaces_other: "{{count}} 个项目的工作区",
+      title: "项目",
+    },
+    workspaceTree: {
+      expand: "展开 {{name}} 的子工作区",
+      collapse: "折叠 {{name}} 的子工作区",
+      activeChild: "包含当前工作区。",
+      summary_one: "{{count}} 个子工作区：{{status}}",
+      summary_other: "{{count}} 个子工作区：{{status}}",
+      humanAttention_one: "{{count}} 个子工作区需要你处理",
+      humanAttention_other: "{{count}} 个子工作区需要你处理",
+      unknownStatus: "状态不可用",
+    },
     statusGroupAccessibility: "{{label}} 分组",
     statusBucket: {
+      workingCount: "{{count}} 个正在工作",
       needsInput: "需要输入",
       failed: "失败",
       readyToReview: "待查看",
       working: "运行中",
       done: "已完成",
     },
+    quickFilter: {
+      open: "筛选项目和工作区",
+      close: "关闭并清除快速筛选",
+      placeholder: "筛选项目或工作区…",
+      clear: "清除快速筛选",
+      emptyTitle: "没有匹配的项目或工作区",
+      emptyDescription: "请尝试其他名称或清除此模式的快速筛选。",
+      guidance:
+        "使用筛选图标搜索此模式中的名称和可见分支。数量和时间限制仍然有效；显示更多可查看所有匹配项。",
+    },
     display: {
+      modeToggle: "当前为{{current}}视图。切换到{{next}}视图。",
+      workspaceList: {
+        countLimit: "数量限制",
+        updatedWithin: "最近更新时间",
+        day: "1天",
+        twoDays: "2 天",
+        threeDays: "3天",
+        fiveDays: "5天",
+        week: "1周",
+        twoWeeks: "2周",
+        month: "1个月（30天）",
+        twoMonths: "2个月（60天）",
+        threeMonths: "3个月（90天）",
+      },
+      expandAll: "全部展开",
+      collapseAll: "全部折叠",
+      oneProjectAtATime: "一次只展开一个项目",
+      reorderGuidance:
+        "仅在自定义排序下可拖动调整顺序。显示所有项目后，筛选时移动的项目仍位于同一相邻项目之前或之后。置顶项目始终使用手动排序。",
       showBackground: "显示后台工作区",
       trigger: "显示偏好",
       heading: "显示",
@@ -1174,6 +1487,28 @@ export const zhCN: TranslationResources = {
         project: "项目",
         status: "状态",
         labels: "标签",
+        emptyProjects: "单独分组空项目",
+      },
+      sorting: {
+        label: "项目排序",
+        workspaces: "工作区排序",
+        workspaceName: "工作区名称",
+        project: "项目名称",
+        status: "状态",
+        custom: "自定义顺序",
+        emptyProjects: "空项目排序",
+      },
+      emptyWorkspaces: {
+        label: "空项目",
+        show: "显示",
+        group: "分组",
+        hide: "隐藏",
+      },
+      projectVisibility: {
+        label: "筛选",
+        all: "所有项目",
+        unarchived: "隐藏空项目",
+        emptyGroup: "空项目",
       },
       titleSource: {
         label: "标题",
@@ -1251,6 +1586,36 @@ export const zhCN: TranslationResources = {
       openProjectSettings: "打开 project 设置",
     },
     project: {
+      archive: {
+        action: "全部归档",
+        title: "归档项目工作区？",
+        message:
+          "项目：“{{projectName}}”\n工作区：{{workspaceCount}}\n代理：{{agentCount}}（运行中：{{runningAgentCount}}）\n主机：{{hostCount}}\n\n正在运行的代理和工作区任务将停止。Paseo 管理的工作树可能会被移除。项目将保留。",
+        includeBackground: "同时归档后台工作区（{{count}}）",
+        backgroundWarning: "包含后台工作区也会停止其中的代理和任务。",
+        discovering: "正在统计工作区和代理...",
+        progress: "正在归档工作区：{{completed}} / {{total}}",
+        completed: "已归档工作区：{{count}}",
+        failed:
+          "已归档 {{completed}} 个工作区。操作在主机 {{host}} 的“{{workspace}}”处停止：{{error}}。尚未尝试：{{unprocessed}}。解决问题后，请重试“全部归档”。",
+        empty: "此项目中没有活动工作区",
+        projectChanged: "项目在确认期间发生了变化。请核对数量，然后重试“全部归档”。",
+        hostDisconnected: "主机 {{host}} 已断开连接。请连接项目的所有主机后重试。",
+        updateRequired: "请更新主机 {{host}}，以安全归档项目工作区。",
+        alreadyArchiving: "工作区“{{workspace}}”已在归档中。请等待完成后重试。",
+        incompleteDiscovery: "无法统计项目的所有工作区和代理。请重试“全部归档”。",
+        verificationFailed:
+          "无法确认工作区“{{workspace}}”是否已归档。重试前，请打开“历史”检查其状态。",
+        agentsRemaining: "工作区“{{workspace}}”中仍有活动代理。请打开“历史”检查未完成的归档。",
+        agentNotArchived: "无法确认代理 {{agent}}是否已归档并停止。请打开“历史”检查其状态。",
+      },
+      restore: {
+        title: "恢复已归档工作区",
+        search: "搜索已归档工作区",
+        empty: "此项目中没有已归档的工作区",
+        updateRequired: "更新主机以浏览已归档工作区",
+        loadFailed: "无法加载已归档工作区",
+      },
       actions: {
         menu: "Project 操作",
         openSettings: "打开 project 设置",
@@ -1300,7 +1665,9 @@ export const zhCN: TranslationResources = {
         copyPath: "复制路径",
         copyBranchName: "复制分支名称",
         rename: "重命名 workspace",
-        pin: "置顶",
+        pin: "固定到侧边栏顶部",
+        pinInProject: "在项目中固定",
+        unpinInProject: "取消项目内固定",
         unpin: "取消置顶",
         archive: "归档",
         archiveWorkspace: "归档工作区",
@@ -1320,6 +1687,7 @@ export const zhCN: TranslationResources = {
         invalidBranchName: "无效的分支名称",
       },
       toasts: {
+        updateHostToPinInProject: "请更新此主机以在项目中固定工作区。",
         workspacePathUnavailable: "Workspace 路径不可用",
         pathCopied: "路径已复制",
         branchNameCopied: "分支名称已复制",
@@ -1351,9 +1719,11 @@ export const zhCN: TranslationResources = {
       selectModel: "请选择模型",
     },
     tooltips: {
+      branchChoice: "创建新分支或检出现有分支",
+      baseBranch: "选择新分支的基础分支",
       project: "Choose the project",
       host: "Choose the host",
-      isolation: "Choose the isolation level",
+      isolation: "使用本地目录或选择工作树",
       startingRef: "选择起始位置",
       launch: "Choose what to launch",
     },
@@ -1773,7 +2143,7 @@ export const zhCN: TranslationResources = {
       },
       remoteSsh: {
         title: "远程 SSH",
-        description: "通过桌面 SSH 客户端连接。",
+        description: "通过 SSH 连接。",
       },
       scanQr: {
         title: "扫描二维码",
@@ -1828,6 +2198,15 @@ export const zhCN: TranslationResources = {
     remoteSsh: {
       title: "远程 SSH",
       helper: "连接到远程主机上运行的 Paseo 守护进程。",
+      keyImport: {
+        key: "私钥",
+        import: "导入私钥",
+        passphrase: "密钥口令（可选）",
+        fingerprint: "服务器指纹",
+        verify: "信任前，请将此指纹与服务器的指纹进行比较。",
+        trustAndConnect: "信任并连接",
+        required: "请导入私钥以连接。",
+      },
       fields: {
         target: "SSH 主机",
         password: "守护进程密码",
@@ -2052,6 +2431,69 @@ export const zhCN: TranslationResources = {
     input: "输入",
     output: "输出",
   },
+  toolActivity: {
+    files: { intent: "更改文件", running: "正在更改文件", completed: "已更改文件" },
+    read: {
+      intent: "读取文件",
+      running: "正在读取文件",
+      completed: "已读取文件",
+    },
+    edit: {
+      intent: "编辑文件",
+      running: "正在编辑文件",
+      completed: "已编辑文件",
+    },
+    write: {
+      intent: "写入文件",
+      running: "正在写入文件",
+      completed: "已写入文件",
+    },
+    create: {
+      intent: "创建文件",
+      running: "正在创建文件",
+      completed: "已创建文件",
+    },
+    delete: {
+      intent: "删除文件",
+      running: "正在删除文件",
+      completed: "已删除文件",
+    },
+    search: {
+      intent: "搜索",
+      running: "正在搜索",
+      completed: "已搜索",
+    },
+    list: {
+      intent: "列出文件",
+      running: "正在列出文件",
+      completed: "已列出文件",
+    },
+    command: {
+      intent: "运行命令",
+      running: "正在运行命令",
+      completed: "已运行命令",
+    },
+    script: {
+      intent: "运行脚本",
+      running: "正在运行脚本",
+      completed: "已运行脚本",
+    },
+    activity: {
+      intent: "执行操作",
+      running: "正在执行操作",
+      completed: "已执行操作",
+    },
+    failed: "失败：{{action}}",
+    canceled: "已取消：{{action}}",
+    counts: {
+      editedFiles: { one: "{{count}} 项文件操作", other: "{{count}} 项文件操作" },
+      commands: { one: "{{count}} 条命令", other: "{{count}} 条命令" },
+      readFiles: { one: "{{count}} 项文件读取", other: "{{count}} 项文件读取" },
+      searches: { one: "{{count}} 次搜索", other: "{{count}} 次搜索" },
+      otherTools: { one: "{{count}} 项其他操作", other: "{{count}} 项其他操作" },
+      paseoCalls: { one: "{{count}} 次 Paseo 调用", other: "{{count}} 次 Paseo 调用" },
+    },
+  },
   turnSummary: {
     details: "查看轮次详情",
     sentBy: "由 {{name}} 发送",
@@ -2234,7 +2676,30 @@ export const zhCN: TranslationResources = {
       diagnostics: "诊断",
       about: "关于",
     },
-    layout: en.settings.layout,
+    layout: {
+      ...en.settings.layout,
+      explorer: {
+        title: "资源管理器",
+        comparison: {
+          label: "默认比较",
+          description: "工作区没有保存的比较选择时使用。",
+          options: { uncommitted: "未提交", base: "已提交" },
+        },
+        autoSwitch: {
+          label: "自动切换比较",
+          description: "有本地更改时显示未提交的更改，否则显示已提交的更改。关闭后记住您的选择。",
+        },
+        autoOpen: {
+          label: "为新工作区打开侧边栏",
+          description: "在新的桌面工作区中自动显示资源管理器侧边栏。",
+        },
+        diffScope: {
+          label: "点击更改中的文件时",
+          description: "选择在差异视图中显示哪些已更改的文件。",
+          options: { all: "所有已更改的文件", single: "仅选中的文件" },
+        },
+      },
+    },
     editor: {
       title: "编辑器",
       vimKeybindings: "Vim 键位",
@@ -2250,6 +2715,17 @@ export const zhCN: TranslationResources = {
     },
     notifications: {
       title: "通知",
+      chooseHost: "选择设置所用的主机，为其连接的所有设备配置提醒。",
+      hostTitle: "{{host}} 上的通知",
+      agentAware: "智能体感知提醒",
+      agentAwareHint:
+        "智能体之间的常规结果保持静默，需要你处理时显示“待查看”徽章。此设置适用于连接到 {{host}} 的所有设备。关闭后，人工介入请求和安全提醒仍然可用。",
+      updateHost: "请更新此主机以更改智能体感知提醒。",
+      readOnly: "更改此设置需要该主机的管理权限。",
+      unavailable: "保存前，请连接到受支持且具有管理权限的主机。",
+      notSaved: "主机未保存此提醒偏好设置，请重试。",
+      loadFailed: "无法加载主机的通知偏好设置。",
+      saving: "正在保存...",
       permission: "通知权限",
       refreshAccessibility: "刷新通知权限",
       playSound: "播放声音",
@@ -2361,6 +2837,24 @@ export const zhCN: TranslationResources = {
         description: "重新设置外观、提供方、项目和手机配对",
         action: "再次显示设置",
       },
+      browserExtensions: {
+        title: "扩展程序",
+        compatibility: "部分 Chrome 扩展功能不受支持。扩展程序不会自动更新。",
+        store: "Chrome 应用商店",
+        openStore: "打开应用商店",
+        refresh: "刷新",
+        enable: "启用",
+        disable: "停用",
+        retry: "重试",
+        remove: "移除",
+        removeTitle: "移除 {{name}}？",
+        removeMessage: "这会从 Paseo 中移除扩展程序。未打包的源文件夹将保留。",
+        loading: "正在加载扩展程序...",
+        empty: "尚未安装扩展程序。",
+        unpackedHint: "从包含 manifest.json 的文件夹加载扩展程序。",
+        loadUnpacked: "加载未打包的扩展",
+        unavailable: "扩展功能不可用。请更新桌面应用。",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
@@ -2414,6 +2908,7 @@ export const zhCN: TranslationResources = {
         description: "默认情况下完全展开 AI 的思考和推理过程",
       },
       chatDisplay: {
+        updateHost: "更新所选设置主机以更改聊天偏好设置",
         label: "聊天显示",
         description: "聊天中显示多少智能体的工作",
         options: {
@@ -2492,6 +2987,21 @@ export const zhCN: TranslationResources = {
       },
     },
     appearance: {
+      accent: {
+        title: "强调色",
+        hint: "用于主要控件和你发送的消息",
+        updateHost: "请更新所选的设置主机以更改强调色",
+        preview: "你的消息将呈现此效果",
+        options: {
+          default: "默认",
+          blue: "蓝色",
+          green: "绿色",
+          purple: "紫色",
+          rose: "玫瑰色",
+          orange: "橙色",
+          teal: "青色",
+        },
+      },
       theme: {
         title: "主题",
         accessibilityLabel: "主题：{{value}}",
@@ -2932,6 +3442,10 @@ export const zhCN: TranslationResources = {
       addErrorTitle: "无法添加 Provider",
       updateErrorTitle: "无法更新 Provider",
       actions: {
+        copyMigrationPrompt: "复制迁移提示词",
+        migrationPrompt: "迁移提示词",
+        copying: "正在复制...",
+        copyFailed: "无法复制迁移提示词",
         menu: "{{name}} actions",
         remove: "Remove provider",
         removing: "Removing...",
