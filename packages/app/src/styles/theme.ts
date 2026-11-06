@@ -282,6 +282,9 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     accent: tint.accent,
     accentBright: tint.accentBright,
     accentForeground: tint.accentForeground ?? tint.surface0,
+    userMessageBackground: tint.surface3,
+    userMessageForeground: tint.foreground,
+    userMessageMutedForeground: tint.foregroundMuted,
 
     destructive: tint.destructive,
     destructiveForeground: tint.surface0,
@@ -413,6 +416,9 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accent: tint.accent,
     accentBright: tint.accentBright,
     accentForeground: tint.accentForeground ?? "#ffffff",
+    userMessageBackground: tint.surface3,
+    userMessageForeground: foreground,
+    userMessageMutedForeground: tint.foregroundMuted,
 
     destructive: tint.destructive,
     destructiveForeground: "#ffffff",

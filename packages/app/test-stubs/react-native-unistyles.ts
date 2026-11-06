@@ -23,6 +23,8 @@ const testTheme = {
     accentForeground: "#ffffff",
     destructive: "#dc2626",
     destructiveForeground: "#ffffff",
+    userMessageBackground: "#e4e4e7",
+    userMessageForeground: "#111111",
     surface1: "#fafafa",
     surface2: "#f4f4f5",
     surface3: "#e4e4e7",
