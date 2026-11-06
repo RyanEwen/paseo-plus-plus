@@ -1,3 +1,8 @@
+import { useAppSettings } from "@/hooks/use-settings";
+import { useShallow } from "zustand/react/shallow";
+import { useSessionStore, type DaemonServerInfo } from "@/stores/session-store";
+import type { HostProfile } from "@/types/host-connection";
+import { HostUpdateAction, HostUpdateSheet } from "@/components/hosts/host-update-action";
 import { router } from "expo-router";
 import {
   CircleGauge,
@@ -8,7 +13,16 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useReducer,
+  type RefObject,
+} from "react";
 import {
   Pressable,
   StyleSheet as RNStyleSheet,
@@ -331,6 +345,33 @@ function FooterIconButton({
   );
 }
 
+interface HostUpdatePresentation {
+  host: HostProfile | null;
+  busy: boolean;
+  attempt: number;
+}
+
+type HostUpdatePresentationAction =
+  | { type: "start"; host: HostProfile }
+  | { type: "finished" }
+  | { type: "close" };
+
+/** Keep dismissed operations mounted until settled; each retry owns a fresh confirmation flow. */
+function reduceHostUpdate(
+  state: HostUpdatePresentation,
+  action: HostUpdatePresentationAction,
+): HostUpdatePresentation {
+  switch (action.type) {
+    case "start":
+      if (state.busy) return state;
+      return { host: action.host, busy: true, attempt: state.attempt + 1 };
+    case "finished":
+      return { ...state, busy: false };
+    case "close":
+      return { ...state, host: null };
+  }
+}
+
 function SidebarHostPicker({
   label,
   onAddHost,
@@ -340,9 +381,59 @@ function SidebarHostPicker({
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
+  const { settings, isLoading: settingsLoading, error: settingsError } = useAppSettings();
+  const showHostUpdates =
+    !settingsLoading && settingsError === null && settings.paseoPlusPlus.sidebarHostUpdates;
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+
+  const [update, dispatchUpdate] = useReducer(reduceHostUpdate, {
+    host: null,
+    busy: false,
+    attempt: 0,
+  });
+  // The collection owns the hot session subscription; action rows receive stable server-info facts.
+  const selectHostInfo = useMemo(() => {
+    let previousSessions: ReturnType<typeof useSessionStore.getState>["sessions"] | null = null;
+    let previousInfo: Array<DaemonServerInfo | null> = [];
+    return (state: ReturnType<typeof useSessionStore.getState>) => {
+      if (state.sessions === previousSessions) return previousInfo;
+      previousSessions = state.sessions;
+      previousInfo = hosts.map((host) => state.sessions[host.serverId]?.serverInfo);
+      return previousInfo;
+    };
+  }, [hosts]);
+  const hostInfo = useSessionStore(useShallow(selectHostInfo));
+  const finishUpdate = useCallback(() => dispatchUpdate({ type: "finished" }), []);
+  const closeUpdate = useCallback(() => dispatchUpdate({ type: "close" }), []);
+  const beginUpdate = useCallback((host: HostProfile) => {
+    setIsOpen(false);
+    dispatchUpdate({ type: "start", host });
+  }, []);
+  const renderHostAction = useCallback(
+    (serverId: string) => {
+      // Unmount availability observers without interrupting an already-started update sheet.
+      if (!showHostUpdates) return null;
+      const index = hosts.findIndex((host) => host.serverId === serverId);
+      const host = hosts[index];
+      if (!host) return null;
+      const info = hostInfo[index];
+      return (
+        <HostUpdateAction
+          host={host}
+          // COMPAT(daemonUpdateAvailability): added after v0.11.2, remove gate after 2027-04-14.
+          supportsAvailability={info?.features?.daemonUpdateAvailability === true}
+          legacyManualUpdate={info != null && info.features?.daemonUpdateAvailability === undefined}
+          daemonVersion={info?.version ?? null}
+          enabled={isOpen}
+          busy={update.busy}
+          onUpdate={beginUpdate}
+        />
+      );
+    },
+    [hosts, hostInfo, isOpen, update.busy, beginUpdate, showHostUpdates],
+  );
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -354,33 +445,44 @@ function SidebarHostPicker({
   const handleOpen = useCallback(() => setIsOpen(true), []);
 
   return (
-    <HostPicker
-      hosts={hosts}
-      value=""
-      onSelect={handleSelect}
-      open={isOpen}
-      onOpenChange={setIsOpen}
-      anchorRef={triggerRef}
-      includeAddHost
-      onAddHost={onAddHost}
-      showActiveConnection
-      onOpenHostSettings={onOpenHostSettings}
-      searchable
-      desktopPlacement="top-start"
-      desktopMinWidth={240}
-      addHostTestID="sidebar-host-add"
-      hostOptionTestID={sidebarHostOptionTestID}
-    >
-      <FooterIconButton
-        buttonRef={triggerRef}
-        onPress={handleOpen}
-        testID="sidebar-hosts-trigger"
-        label={label}
-        icon={Server}
-        // Server's two boxes fill more of the square than the other glyphs.
-        iconSizeAdjustment={-1}
-      />
-    </HostPicker>
+    <>
+      <HostPicker
+        hosts={hosts}
+        value=""
+        onSelect={handleSelect}
+        open={isOpen}
+        onOpenChange={setIsOpen}
+        anchorRef={triggerRef}
+        includeAddHost
+        onAddHost={onAddHost}
+        showActiveConnection
+        onOpenHostSettings={onOpenHostSettings}
+        renderHostAction={renderHostAction}
+        searchable
+        desktopPlacement="top-start"
+        desktopMinWidth={240}
+        addHostTestID="sidebar-host-add"
+        hostOptionTestID={sidebarHostOptionTestID}
+      >
+        <FooterIconButton
+          buttonRef={triggerRef}
+          onPress={handleOpen}
+          testID="sidebar-hosts-trigger"
+          label={label}
+          icon={Server}
+          // Server's two boxes fill more of the square than the other glyphs.
+          iconSizeAdjustment={-1}
+        />
+      </HostPicker>
+      {update.host ? (
+        <HostUpdateSheet
+          key={update.attempt}
+          host={update.host}
+          onFinished={finishUpdate}
+          onClose={closeUpdate}
+        />
+      ) : null}
+    </>
   );
 }
 
