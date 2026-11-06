@@ -1,3 +1,5 @@
+import { AgentAttentionObjectives } from "./agent/attention/objectives.js";
+import { buildStoredAgentPayload } from "./agent/agent-projections.js";
 import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
 import {
   createWorkspaceRuntimeStore,

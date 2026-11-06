@@ -1672,26 +1672,11 @@ it("fills every cached workspace beneath a workspace accepted during the SQLite 
     version: "test",
     features: { workspaceMultiplicity: true },
   });
-  directory.setAgentRouteDemand(["agent"]);
-  await directory.refreshDemand();
   let updated = false;
   holdRead(async () => {
     if (updated) return;
     updated = true;
-    client.emit({
-      type: "workspace_update",
-      payload: {
-        kind: "upsert",
-        workspace: {
-          ...workspaces[0],
-          createdAt: undefined,
-          lastUserMessageAt: null,
-          name: "Live",
-          activityAt: null,
-          statusEnteredAt: null,
-        },
-      },
-    });
+    directory.acceptWorkspaces([{ ...workspaces[0], name: "Live" }]);
   });
   await directory.restoreCachedDirectory();
   const session = useSessionStore.getState().sessions[serverId];
