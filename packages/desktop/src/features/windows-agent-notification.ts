@@ -1,3 +1,4 @@
+import { NotificationReceiptDataSchema } from "@getpaseo/protocol/notification-receipts";
 import { buildAgentDeepLink, parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 
 interface WindowsAgentNotificationInput {
@@ -46,11 +47,14 @@ export function buildWindowsAgentNotificationArguments(
   }
 
   // The tag correlates instance clicks with durable activations.
-  return new URLSearchParams({
+  const parameters = new URLSearchParams({
     type: "click",
     tag: input.notificationId,
     paseoAgent: buildAgentDeepLink({ serverId, agentId }),
-  }).toString();
+  });
+  const receipt = NotificationReceiptDataSchema.safeParse(input.data);
+  if (receipt.success) parameters.set("paseoReceipt", JSON.stringify(receipt.data));
+  return parameters.toString();
 }
 
 /** Embed the stable chat URL in the toast so activation survives renderer reloads and app restarts. */
