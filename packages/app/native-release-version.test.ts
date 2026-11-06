@@ -19,7 +19,7 @@ describe("native release version", () => {
     { variant: "production", preview: false, fdroid: true },
     { variant: "development", preview: true, fdroid: false },
   ])(
-    "keeps the fork preview app identity separate ($variant, preview=$preview, fdroid=$fdroid)",
+    "enables APK installation only in a fork preview ($variant, preview=$preview, fdroid=$fdroid)",
     ({ variant, preview, fdroid }) => {
       const output = execFileSync(
         process.execPath,
@@ -30,6 +30,7 @@ describe("native release version", () => {
         const { exp } = getConfig(process.cwd());
         process.stdout.write(JSON.stringify({
           enabled: exp.extra.previewBuild,
+          canInstall: exp.android.permissions.includes("android.permission.REQUEST_INSTALL_PACKAGES"),
           appName: exp.name,
           packageId: exp.android.package,
           scheme: exp.scheme,
@@ -44,6 +45,7 @@ describe("native release version", () => {
             APP_VARIANT: variant,
             PASEO_PREVIEW_BUILD: preview ? "1" : "0",
             PASEO_FDROID_BUILD: fdroid ? "1" : "0",
+            PASEO_PREVIEW_BUILD_NUMBER: "14",
             PASEO_PREVIEW_EXPO_PROJECT_ID: "00000000-0000-0000-0000-000000000000",
             PASEO_PREVIEW_EXPO_OWNER: "validation",
             PASEO_PREVIEW_EXPO_SLUG: "validation",
@@ -52,6 +54,7 @@ describe("native release version", () => {
       );
       expect(JSON.parse(output)).toEqual({
         enabled: preview,
+        canInstall: preview,
         ...identities[preview ? "preview" : (variant as "production" | "development")],
       });
     },

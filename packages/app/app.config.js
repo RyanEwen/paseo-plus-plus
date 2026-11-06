@@ -150,7 +150,10 @@ export default {
       softwareKeyboardLayoutMode: "resize",
       // Allow HTTP connections for local network hosts (required for release builds)
       usesCleartextTraffic: true,
-      permissions: buildProfile.androidPermissions,
+      permissions: [
+        ...buildProfile.androidPermissions,
+        ...(isPreviewBuild ? ["android.permission.REQUEST_INSTALL_PACKAGES"] : []),
+      ],
       package: variant.packageId,
       versionCode: nativeReleaseVersion.androidVersionCode,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
