@@ -182,6 +182,14 @@ function FileHeaderMenu({
   );
 }
 
+/**
+ * Names the prop a tooltip trigger uses to receive the header's anchor ref. Interactive headers
+ * render a ContextMenuTrigger, which owns its Pressable ref and exposes it as `triggerRef`.
+ */
+function tooltipTriggerRefProp(interactive: boolean): "triggerRef" | "ref" {
+  return interactive ? "triggerRef" : "ref";
+}
+
 export const FileHeader = memo(function FileHeader({
   file,
   workspaceFileDragScope,
@@ -346,7 +354,7 @@ export const FileHeader = memo(function FileHeader({
     >
       <ContextMenu>
         <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild triggerRefProp={interactive ? "triggerRef" : "ref"}>
+          <TooltipTrigger asChild triggerRefProp={tooltipTriggerRefProp(interactive)}>
             {trigger}
           </TooltipTrigger>
           <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
