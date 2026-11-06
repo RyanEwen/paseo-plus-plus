@@ -40,6 +40,12 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions. Never gate an established request on a new enhancement: negotiate the optional enhancement at the client boundary and preserve the existing request for older hosts. Whole-turn pagination can require a capability; reading conversation history cannot.
 
+The `appSettingsSidebarModeProfiles` capability also belongs to the selected settings host.
+Without it, keep the existing view readable and local host/project filters usable, but disable
+mode and synchronized display edits with an update instruction. Explicit initialization omits
+mode profiles on an unsupported host. Legacy flat fields remain accepted for older clients;
+new clients write canonical profiles without mirroring every edit into the old representation.
+
 The `appSettingsChatPreferences` capability covers chat display and send shortcut writes on the
 selected settings host. Older hosts retain their stored tool-detail preferences; disable these
 new synchronized edits with an update instruction. Device-only choices remain available, and

@@ -1,34 +1,32 @@
 import { useCallback, useMemo, useState } from "react";
-import {
-  selectSidebarGroupVisibility,
-  type SidebarGroupItem,
-  type SidebarGroupVisibility,
-  type SidebarGroupVisibilityPolicy,
-} from "./sidebar-group-visibility";
-import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { useSidebarRecencyClock } from "./workspace-recency-clock";
+import { limitSidebarWorkspaces } from "./workspace-limit";
 
-const PINNED_POLICY = { kind: "pinned" } as const;
-
-interface LimitedSidebarGroupInput<T> {
-  items: readonly T[];
-  selection: ActiveWorkspaceSelection | null;
-  policy?: SidebarGroupVisibilityPolicy<T>;
-}
-
-export function useLimitedSidebarGroup<T extends SidebarGroupItem>({
-  items,
-  selection,
-  policy = PINNED_POLICY,
-}: LimitedSidebarGroupInput<T>): SidebarGroupVisibility<T> & {
-  expanded: boolean;
-  toggleExpanded: () => void;
-} {
-  const [expanded, setExpanded] = useState(false);
-  const visibility = useMemo(
-    () => selectSidebarGroupVisibility({ items, expanded, policy, selection }),
-    [expanded, items, policy, selection],
+export function useLimitedSidebarGroup<T>(
+  items: readonly T[],
+  getStatusEnteredAt: (item: T) => Date | null,
+) {
+  const mode = useSidebarViewStore((state) => state.groupMode);
+  const [expandedModes, setExpandedModes] = useState({ project: false, status: false });
+  const expanded = expandedModes[mode];
+  const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
+  const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
+  const now = useSidebarRecencyClock();
+  const { visibleItems, canToggle } = useMemo(
+    () =>
+      limitSidebarWorkspaces({
+        items,
+        initialCount,
+        expanded,
+        updatedWithin: days === null ? undefined : { days, now, getStatusEnteredAt },
+      }),
+    [expanded, items, initialCount, days, now, getStatusEnteredAt],
   );
-  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
+  const toggleExpanded = useCallback(
+    () => setExpandedModes((current) => ({ ...current, [mode]: !current[mode] })),
+    [mode],
+  );
 
-  return { ...visibility, expanded, toggleExpanded };
+  return { visibleItems, canToggle, expanded, toggleExpanded };
 }

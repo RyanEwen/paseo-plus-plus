@@ -15,6 +15,18 @@ import {
 } from "./save-handler";
 import { bindSettingsHost } from "./binding";
 import { createSettingsHostTransport } from "./transport";
+import { normalizeRemoteSidebarModes } from "./sidebar-values";
+import { createSyncedSidebarSettingsSave } from "./sidebar-edits";
+import {
+  exportLegacySidebarPresentation,
+  defaultSidebarModeProfiles,
+  defaultSidebarLocalModeFilters,
+} from "@/stores/sidebar-mode-preferences";
+import {
+  useSidebarViewStore,
+  projectSidebarMode,
+  type SidebarViewStoreState,
+} from "@/stores/sidebar-view-store";
 import { ServerInfoStatusPayloadSchema } from "@getpaseo/protocol/messages";
 import { QueryClient } from "@tanstack/react-query";
 import {
@@ -548,6 +560,271 @@ it("never publishes or sends an edit when the durable outbox write fails", async
   await model.flush();
   expect(a.writes).toHaveLength(1);
   expect(applied).toEqual({ app: { theme: "light" } });
+});
+
+describe("sidebar mode command transactions", () => {
+  function sidebarHarness() {
+    let sidebar = {
+      ...useSidebarViewStore.getState(),
+      ...projectSidebarMode({
+        groupMode: "project",
+        modeProfiles: defaultSidebarModeProfiles(),
+        localModeFilters: defaultSidebarLocalModeFilters(),
+      }),
+      modeProfilesInitialized: true,
+    };
+    let writer: () => Promise<void> = async () => {};
+    let supported = true;
+    const model = new SettingsSyncModel({
+      readLocal: async () => null,
+      writeLocal: async () => writer(),
+      getDeviceValues: async () => ({
+        sidebar: { groupMode: sidebar.groupMode, modeProfiles: sidebar.modeProfiles },
+      }),
+      applyValues: async (values) => {
+        const projected = normalizeRemoteSidebarModes(values.sidebar, DEFAULT_CLIENT_SETTINGS);
+        sidebar = {
+          ...sidebar,
+          ...projectSidebarMode({ ...projected, localModeFilters: sidebar.localModeFilters }),
+          modeProfilesInitialized: true,
+        };
+      },
+    });
+    const store = {
+      getState: () => sidebar,
+      setState: (patch: Partial<SidebarViewStoreState>) => {
+        sidebar = { ...sidebar, ...patch };
+      },
+    };
+    return {
+      model,
+      store,
+      save: createSyncedSidebarSettingsSave(model, store, () => supported),
+      setWriter: (next: () => Promise<void>) => {
+        writer = next;
+      },
+      setSupported: (next: boolean) => {
+        supported = next;
+      },
+    };
+  }
+  it("syncs the accordion choice only in the project profile and retains it on remote normalization", async () => {
+    const harness = sidebarHarness();
+    const remote = host(snapshot("dark"));
+    await harness.model.load();
+    await harness.model.selectHost("A");
+    await harness.model.connect("A", remote.transport);
+    await harness.save((current) => ({ oneProjectAtATime: !current.oneProjectAtATime }), "project");
+    expect(remote.read().values).toMatchObject({
+      sidebar: {
+        modeProfiles: {
+          project: { oneProjectAtATime: true },
+          status: { oneProjectAtATime: false },
+        },
+      },
+    });
+    const normalized = normalizeRemoteSidebarModes(
+      remote.read().values.sidebar,
+      DEFAULT_CLIENT_SETTINGS,
+    );
+    expect(normalized.modeProfiles.project.oneProjectAtATime).toBe(true);
+    expect(normalized.modeProfiles.status.oneProjectAtATime).toBe(false);
+  });
+
+  it("keeps queued old-visible-mode preferences attached to their original mode", async () => {
+    const { model, save, store } = sidebarHarness();
+    await model.load();
+    await Promise.all([
+      save({ groupMode: "status" }),
+      save({ sortMode: "project", initialWorkspaceCount: 7 }),
+    ]);
+    expect(store.getState()).toMatchObject({
+      groupMode: "status",
+      sortMode: "status",
+      initialWorkspaceCount: 20,
+    });
+    expect(store.getState().modeProfiles.project).toMatchObject({
+      sortMode: "project",
+      initialWorkspaceCount: 7,
+    });
+  });
+  it("durably materializes both profiles before projection and preserves filters changed during the write", async () => {
+    const harness = sidebarHarness();
+    const remote = host({
+      ...snapshot("dark"),
+      values: { sidebar: { groupMode: "project", sortMode: "custom" } },
+    });
+    await harness.model.load();
+    await harness.model.selectHost("A");
+    await harness.model.connect("A", remote.transport);
+    const held = deferred<void>();
+    const writing = deferred<void>();
+    harness.setWriter(async () => {
+      writing.resolve();
+      await held.promise;
+    });
+    const saving = harness.save({ groupMode: "status" });
+    await writing.promise;
+    expect(harness.store.getState().groupMode).toBe("project");
+    const current = harness.store.getState();
+    harness.store.setState({
+      localModeFilters: {
+        ...current.localModeFilters,
+        status: { hostFilters: ["offline-host"], projectFilters: ["opaque"] },
+      },
+    });
+    held.resolve();
+    await saving;
+    expect(harness.store.getState()).toMatchObject({
+      groupMode: "status",
+      hostFilters: ["offline-host"],
+      projectFilters: ["opaque"],
+    });
+    expect(remote.writes[0].patches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: ["sidebar", "groupMode"], value: "status" }),
+        expect.objectContaining({
+          path: ["sidebar", "modeProfiles", "project", "initialWorkspaceCount"],
+          value: 20,
+        }),
+        expect.objectContaining({
+          path: ["sidebar", "modeProfiles", "status", "initialWorkspaceCount"],
+          value: 20,
+        }),
+      ]),
+    );
+    expect(remote.writes[0].patches.some((patch) => patch.path.includes("hostFilters"))).toBe(
+      false,
+    );
+  });
+  it("a failed durable write never changes the selected mode or restores older local facets", async () => {
+    const harness = sidebarHarness();
+    await harness.model.load();
+    await harness.model.selectHost("A");
+    await harness.model.connect("A", host(snapshot("dark")).transport);
+    const failure = new Error("disk failed");
+    harness.setWriter(async () => {
+      throw failure;
+    });
+    const current = harness.store.getState();
+    harness.store.setState(
+      projectSidebarMode({
+        ...current,
+        localModeFilters: {
+          ...current.localModeFilters,
+          project: { hostFilters: ["new-choice"], projectFilters: [] },
+        },
+      }),
+    );
+    await expect(harness.save({ groupMode: "status" })).rejects.toBe(failure);
+    expect(harness.store.getState()).toMatchObject({
+      groupMode: "project",
+      hostFilters: ["new-choice"],
+    });
+  });
+  it("rejects unsupported authorities and stale queued edits after a host switch", async () => {
+    const harness = sidebarHarness();
+    await harness.model.load();
+    harness.setSupported(false);
+    await expect(harness.save({ groupMode: "status" })).rejects.toThrow("Update the settings host");
+    harness.setSupported(true);
+    const stale = harness.save({ groupMode: "status" });
+    const switched = harness.model.selectHost("B");
+    await expect(stale).rejects.toThrow("Settings host changed");
+    await switched;
+    expect(harness.store.getState().groupMode).toBe("project");
+  });
+  it("retains known profiles and unknown remote leaves through a subsequent edit", async () => {
+    const harness = sidebarHarness();
+    const modeProfiles = defaultSidebarModeProfiles();
+    modeProfiles.status.initialWorkspaceCount = 37;
+    const remote = host({
+      ...snapshot("dark"),
+      values: {
+        sidebar: {
+          groupMode: "status",
+          futureSibling: { keep: true },
+          modeProfiles: {
+            ...modeProfiles,
+            status: {
+              ...modeProfiles.status,
+              futureSetting: "keep",
+              sidebarRowItems: { ...modeProfiles.status.sidebarRowItems, futureItem: true },
+            },
+          },
+        },
+      },
+    });
+    await harness.model.load();
+    await harness.model.selectHost("A");
+    await harness.model.connect("A", remote.transport);
+    expect(harness.store.getState()).toMatchObject({
+      groupMode: "status",
+      initialWorkspaceCount: 37,
+    });
+    await harness.save({ initialWorkspaceCount: 7 });
+    expect(remote.read().values).toMatchObject({
+      sidebar: {
+        futureSibling: { keep: true },
+        modeProfiles: {
+          status: {
+            initialWorkspaceCount: 7,
+            futureSetting: "keep",
+            sidebarRowItems: { futureItem: true },
+          },
+        },
+      },
+    });
+  });
+  it("materializes a missing second profile while preserving the valid first profile and unknown leaves", async () => {
+    const harness = sidebarHarness();
+    const project = {
+      ...defaultSidebarModeProfiles().project,
+      initialWorkspaceCount: 37,
+      workspaceTitleSource: "branch",
+      futureSetting: true,
+    };
+    const remote = host({
+      ...snapshot("dark"),
+      values: { sidebar: { groupMode: "project", futureSibling: 1, modeProfiles: { project } } },
+    });
+    await harness.model.load();
+    await harness.model.selectHost("A");
+    await harness.model.connect("A", remote.transport);
+    expect(harness.store.getState()).toMatchObject({
+      initialWorkspaceCount: 37,
+      workspaceTitleSource: "branch",
+    });
+    await harness.save({ showBackground: true });
+    expect(remote.read().values).toMatchObject({
+      sidebar: {
+        futureSibling: 1,
+        modeProfiles: {
+          project: { initialWorkspaceCount: 37, futureSetting: true, showBackground: true },
+          status: { initialWorkspaceCount: 20 },
+        },
+      },
+    });
+  });
+  it.each([37, null])(
+    "exports the active canonical count %s to legacy hosts rather than stale globals",
+    (count) => {
+      const profile = {
+        ...defaultSidebarModeProfiles().status,
+        initialWorkspaceCount: count,
+        workspaceTitleSource: "branch" as const,
+      };
+      expect(DEFAULT_CLIENT_SETTINGS).toMatchObject({
+        sidebarInitialWorkspaceCount: 20,
+        workspaceTitleSource: "title",
+      });
+      expect(exportLegacySidebarPresentation(profile)).toMatchObject({
+        sidebarInitialWorkspaceCount: count,
+        workspaceTitleSource: "branch",
+      });
+      expect(exportLegacySidebarPresentation(profile)).not.toHaveProperty("modeProfiles");
+    },
+  );
 });
 
 describe("settings bootstrap load ownership", () => {

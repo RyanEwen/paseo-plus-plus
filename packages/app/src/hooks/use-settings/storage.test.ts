@@ -32,6 +32,8 @@ import {
 } from "@/components/sidebar/display-preferences/row-items";
 import { DEFAULT_CONTENT_MAX_WIDTH, THEME_OPTIONS } from "@/styles/theme";
 
+import { toggleSidebarTrailingItem } from "@/components/sidebar/workspace-trailing/selection";
+
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
 function makeDeps(
@@ -50,6 +52,34 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each([undefined, 0, -1, 1.5, "25", Number.MAX_SAFE_INTEGER + 1])(
+    "defaults malformed sidebar initial count %s to 20",
+    async (value) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ sidebarInitialWorkspaceCount: value }),
+        }),
+      });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.sidebarInitialWorkspaceCount).toBe(20);
+    },
+  );
+
+  it.each([1, 37, Number.MAX_SAFE_INTEGER, null])(
+    "retains sidebar initial count %s across save and reload",
+    async (value) => {
+      const deps = makeDeps();
+      const queryClient = new QueryClient();
+      await saveAppSettings({
+        deps,
+        queryClient,
+        updates: { sidebarInitialWorkspaceCount: value },
+      });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.sidebarInitialWorkspaceCount).toBe(value);
+    },
+  );
+
   it.each(Object.keys(DEFAULT_PASEO_PLUS_PLUS_PREFERENCES))(
     "normalizes missing or malformed %s to its default while retaining explicit choices",
     async (feature) => {
@@ -148,6 +178,38 @@ describe("loadAppSettingsFromStorage", () => {
       expect(restored.language).toBe("fr");
     }
   });
+
+  it.each(["diff", "timestamp", "both", "none"] as const)(
+    "preserves saved sidebar trailing mode %s",
+    async (mode) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ sidebarWorkspaceTrailing: mode }),
+        }),
+      });
+      expect((await loadAppSettingsFromStorage(deps)).sidebarWorkspaceTrailing).toBe(mode);
+    },
+  );
+
+  it("toggles sidebar stats independently and saves the combined choice", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const initial = await loadAppSettingsFromStorage(deps);
+    expect(initial.sidebarWorkspaceTrailing).toBe("timestamp");
+    const both = toggleSidebarTrailingItem({
+      trailing: initial.sidebarWorkspaceTrailing,
+      choice: "diff",
+    });
+    await saveAppSettings({ queryClient, updates: { sidebarWorkspaceTrailing: both }, deps });
+    expect((await loadAppSettingsFromStorage(deps)).sidebarWorkspaceTrailing).toBe("both");
+    const diffOnly = toggleSidebarTrailingItem({ trailing: both, choice: "timestamp" });
+    expect(diffOnly).toBe("diff");
+    expect(toggleSidebarTrailingItem({ trailing: both, choice: "diff" })).toBe("timestamp");
+    const neither = toggleSidebarTrailingItem({ trailing: diffOnly, choice: "diff" });
+    expect(neither).toBe("none");
+    expect(toggleSidebarTrailingItem({ trailing: neither, choice: "timestamp" })).toBe("timestamp");
+  });
+
   it("persists file panel associations, including panels absent from this host", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
