@@ -1,3 +1,4 @@
+import type { SplitSide } from "@/components/split-layout-presets";
 import {
   createContext,
   useCallback,
@@ -35,13 +36,15 @@ export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
 export type WorkspaceTabLaunchDestination =
   | { kind: "open"; paneId?: string }
-  | { kind: "replace"; tabId: string };
+  | { kind: "replace"; tabId: string }
+  | { kind: "split"; paneId?: string; position: SplitSide; firstPaneFraction: number };
 
 export interface NewTabLauncher {
   showChanges: boolean;
   showPullRequest: boolean;
   showBrowser: boolean;
   terminalDisabled: boolean;
+  canSplit?: boolean;
   launch: (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => void;
 }
 
@@ -75,6 +78,11 @@ export function NewTabLauncherProvider({
   children: ReactNode;
 }) {
   return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
+}
+
+/** Creation menus only expose split actions where the owning workspace can display panes. */
+export function useWorkspaceTabSplitLaunchEnabled(): boolean {
+  return useContext(NewTabLauncherContext)?.canSplit === true;
 }
 
 const BUILT_IN_SELECTIONS = {

@@ -1,3 +1,4 @@
+import { WorkspaceSplitMenuScope } from "@/screens/workspace/workspace-tab-split-menu";
 import { useWorkspaceTabDrag } from "./workspace-tab-drag-context";
 import {
   Fragment,
@@ -105,7 +106,7 @@ interface SplitContainerProps {
 
 interface SplitNodeViewProps extends Omit<
   SplitContainerProps,
-  "layout" | "onMoveTabToPane" | "onSelectTabInPane"
+  "layout" | "onMoveTabToPane" | "onSelectTabInPane" | "workspaceKey"
 > {
   node: SplitNode;
   uiTabs: WorkspaceTab[];
@@ -123,7 +124,6 @@ interface SplitNodeViewProps extends Omit<
 interface SplitPaneViewProps extends Omit<
   SplitNodeViewProps,
   | "node"
-  | "workspaceKey"
   | "focusedPaneId"
   | "activeDragTabId"
   | "showDropZones"
@@ -170,6 +170,7 @@ export function SplitContainer({
   onFocusPane,
   onSplitPane,
   onSplitPaneEmpty,
+  onMoveTabToPane,
   onResizeSplit,
   onReorderTabsInPane,
   focusModeEnabled,
@@ -188,9 +189,12 @@ export function SplitContainer({
     selectExplorerSidebarPaneId(state, workspaceKey),
   );
 
+  const storedSplitSizes = useWorkspaceLayoutStore(
+    (state) => state.splitSizesByWorkspace[workspaceKey],
+  );
   const mainRoot = useMemo(
-    () => removePaneFromSplitTree(layout.root, explorerSidebarPaneId),
-    [layout.root, explorerSidebarPaneId],
+    () => removePaneFromSplitTree(layout.root, explorerSidebarPaneId, storedSplitSizes),
+    [layout.root, explorerSidebarPaneId, storedSplitSizes],
   );
   const workspaceHasMultiplePanes = Boolean(mainRoot && hasMultipleVisiblePanes(mainRoot));
   useEffect(() => {
@@ -233,58 +237,64 @@ export function SplitContainer({
   const mainColumnStyle = styles.mainColumn;
   const renderRoot = useMemo(() => wrapRootPaneForStableMount(splitRoot.root), [splitRoot.root]);
   return (
-    <RenderProfile id="SplitContainer">
-      <View style={styles.workspaceShell}>
-        <WindowChromeRegion corners={mainColumnWindowChromeCorners}>
-          <View style={mainColumnStyle}>
-            {renderMainHeader?.()}
-            {splitRoot.usesFallbackStrip && <WindowChromeSafeArea placement="below" />}
-            {renderRoot ? (
-              <SplitNodeView
-                node={renderRoot}
-                workspaceKey={workspaceKey}
-                uiTabs={uiTabs}
-                focusedPaneId={layout.focusedPaneId}
-                normalizedServerId={normalizedServerId}
-                normalizedWorkspaceId={normalizedWorkspaceId}
-                isWorkspaceFocused={isWorkspaceFocused}
-                hoveredCloseTabKey={hoveredCloseTabKey}
-                setHoveredCloseTabKey={setHoveredCloseTabKey}
-                closingTabIds={closingTabIds}
-                onNavigateTab={onNavigateTab}
-                onCloseTab={onCloseTab}
-                onCopyResumeCommand={onCopyResumeCommand}
-                onCopyAgentId={onCopyAgentId}
-                onCopyTerminalId={onCopyTerminalId}
-                onCopyFilePath={onCopyFilePath}
-                onReloadAgent={onReloadAgent}
-                onRenameTab={onRenameTab}
-                onCloseTabsToLeft={onCloseTabsToLeft}
-                onCloseTabsToRight={onCloseTabsToRight}
-                onCloseOtherTabs={onCloseOtherTabs}
-                onCreateNewTab={onCreateNewTab}
-                buildPaneContentModel={buildPaneContentModel}
-                onFocusPane={onFocusPane}
-                onSplitPane={onSplitPane}
-                onSplitPaneEmpty={onSplitPaneEmpty}
-                onResizeSplit={onResizeSplit}
-                onReorderTabsInPane={onReorderTabsInPane}
-                activeDragTabId={activeDragTabId}
-                showDropZones={activeDragTabId !== null}
-                dropPreview={dropPreview}
-                tabDropPreview={tabDropPreview}
-                windowChromeCorners={splitRoot.usesFallbackStrip ? "none" : windowChromeCorners}
-                maximizedPaneId={maximizedPaneId}
-                workspaceHasMultiplePanes={workspaceHasMultiplePanes}
-                onTogglePaneMaximized={handleTogglePaneMaximized}
-                focusModeEnabled={focusModeEnabled}
-                onExitFocusMode={onExitFocusMode}
-              />
-            ) : null}
-          </View>
-        </WindowChromeRegion>
-      </View>
-    </RenderProfile>
+    <WorkspaceSplitMenuScope
+      root={mainRoot}
+      enabled={!focusModeEnabled}
+      onSplit={onSplitPane}
+      onMove={onMoveTabToPane}
+    >
+      <RenderProfile id="SplitContainer">
+        <View style={styles.workspaceShell}>
+          <WindowChromeRegion corners={mainColumnWindowChromeCorners}>
+            <View style={mainColumnStyle}>
+              {renderMainHeader?.()}
+              {splitRoot.usesFallbackStrip && <WindowChromeSafeArea placement="below" />}
+              {renderRoot ? (
+                <SplitNodeView
+                  node={renderRoot}
+                  uiTabs={uiTabs}
+                  focusedPaneId={layout.focusedPaneId}
+                  normalizedServerId={normalizedServerId}
+                  normalizedWorkspaceId={normalizedWorkspaceId}
+                  isWorkspaceFocused={isWorkspaceFocused}
+                  hoveredCloseTabKey={hoveredCloseTabKey}
+                  setHoveredCloseTabKey={setHoveredCloseTabKey}
+                  closingTabIds={closingTabIds}
+                  onNavigateTab={onNavigateTab}
+                  onCloseTab={onCloseTab}
+                  onCopyResumeCommand={onCopyResumeCommand}
+                  onCopyAgentId={onCopyAgentId}
+                  onCopyTerminalId={onCopyTerminalId}
+                  onCopyFilePath={onCopyFilePath}
+                  onReloadAgent={onReloadAgent}
+                  onRenameTab={onRenameTab}
+                  onCloseTabsToLeft={onCloseTabsToLeft}
+                  onCloseTabsToRight={onCloseTabsToRight}
+                  onCloseOtherTabs={onCloseOtherTabs}
+                  onCreateNewTab={onCreateNewTab}
+                  buildPaneContentModel={buildPaneContentModel}
+                  onFocusPane={onFocusPane}
+                  onSplitPane={onSplitPane}
+                  onSplitPaneEmpty={onSplitPaneEmpty}
+                  onResizeSplit={onResizeSplit}
+                  onReorderTabsInPane={onReorderTabsInPane}
+                  activeDragTabId={activeDragTabId}
+                  showDropZones={activeDragTabId !== null}
+                  dropPreview={dropPreview}
+                  tabDropPreview={tabDropPreview}
+                  windowChromeCorners={splitRoot.usesFallbackStrip ? "none" : windowChromeCorners}
+                  maximizedPaneId={maximizedPaneId}
+                  workspaceHasMultiplePanes={workspaceHasMultiplePanes}
+                  onTogglePaneMaximized={handleTogglePaneMaximized}
+                  focusModeEnabled={focusModeEnabled}
+                  onExitFocusMode={onExitFocusMode}
+                />
+              ) : null}
+            </View>
+          </WindowChromeRegion>
+        </View>
+      </RenderProfile>
+    </WorkspaceSplitMenuScope>
   );
 }
 
@@ -373,7 +383,6 @@ function isSplitNodeHidden(node: SplitNode): boolean {
 
 function SplitNodeView({
   node,
-  workspaceKey,
   uiTabs,
   focusedPaneId,
   normalizedServerId,
@@ -412,15 +421,9 @@ function SplitNodeView({
   onExitFocusMode,
 }: SplitNodeViewProps) {
   const [groupContainerSize, setGroupContainerSize] = useState(0);
-  const groupId = node.kind === "group" ? node.group.id : null;
   const groupDirection = node.kind === "group" ? node.group.direction : null;
-
-  const storedGroupSizes = useWorkspaceLayoutStore((state) =>
-    groupId ? state.splitSizesByWorkspace[workspaceKey]?.[groupId] : undefined,
-  );
   const groupChildren = node.kind === "group" ? node.group.children : EMPTY_SPLIT_NODES;
-  const groupSizes =
-    storedGroupSizes ?? (node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES);
+  const groupSizes = node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES;
   const visibleFlex = useMemo(
     () => resolveVisibleGroupFlex(groupChildren, groupSizes, maximizedPaneId),
     [groupChildren, groupSizes, maximizedPaneId],
@@ -513,7 +516,6 @@ function SplitNodeView({
           >
             <SplitNodeView
               node={child}
-              workspaceKey={workspaceKey}
               uiTabs={uiTabs}
               focusedPaneId={focusedPaneId}
               normalizedServerId={normalizedServerId}
@@ -557,6 +559,7 @@ function SplitNodeView({
           !isSplitNodeHiddenForPresentation(node.group.children[index + 1], maximizedPaneId) ? (
             <ResizeHandle
               testID="workspace-split-resize-handle"
+              showPresets
               direction={node.group.direction}
               groupId={node.group.id}
               index={index}
@@ -789,30 +792,40 @@ function wrapRootPaneForStableMount(node: SplitNode): SplitNode {
   };
 }
 
-function removePaneFromSplitTree(node: SplitNode, paneId: string | null): SplitNode | null {
-  if (!paneId) {
-    return node;
-  }
+/** Project layout and resize weights into the same ordinary child order before rendering or dragging. */
+function removePaneFromSplitTree(
+  node: SplitNode,
+  paneId: string | null,
+  storedSizes: Record<string, number[]> | undefined,
+): SplitNode | null {
   if (node.kind === "pane") {
     return node.pane.id === paneId ? null : node;
   }
 
-  const children = node.group.children.flatMap((child) => {
-    const nextChild = removePaneFromSplitTree(child, paneId);
-    return nextChild ? [nextChild] : [];
+  const retained = node.group.children.flatMap((child, sourceIndex) => {
+    const projected = removePaneFromSplitTree(child, paneId, storedSizes);
+    return projected ? [{ node: projected, sourceIndex }] : [];
   });
-  if (children.length === 0) {
+  if (retained.length === 0) {
     return null;
   }
-  if (children.length === 1) {
-    return children[0] ?? null;
+  if (retained.length === 1) {
+    return retained[0].node;
   }
+
+  const saved = storedSizes?.[node.group.id];
+  const fullSizes = saved?.length === node.group.children.length ? saved : node.group.sizes;
+  // Structural edits save the full group; ordinary divider commits already omit the dock.
+  const projectedSizes = retained.map(({ sourceIndex }, renderedIndex) =>
+    saved?.length === retained.length ? saved[renderedIndex] : fullSizes[sourceIndex],
+  );
+  const total = projectedSizes.reduce((sum, size) => sum + size, 0);
   return {
     kind: "group",
     group: {
       ...node.group,
-      children,
-      sizes: children.map(() => 1 / children.length),
+      children: retained.map((child) => child.node),
+      sizes: projectedSizes.map((size) => size / total),
     },
   };
 }
