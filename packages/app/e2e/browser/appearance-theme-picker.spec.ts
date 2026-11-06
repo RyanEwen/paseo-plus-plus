@@ -96,3 +96,52 @@ test("applies the interface font size to settings text", async ({ page }) => {
   await expect(contentSizeInput).toHaveValue("21");
   await expect(sectionTitle).toHaveCSS("font-size", "10px");
 });
+
+test("previews and retains accent colors independently of light and dark themes", async ({
+  page,
+}, testInfo) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("accent-test-seeded")) {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ theme: "light", accentColor: "default", contentMaxWidth: 1000 }),
+      );
+      localStorage.setItem("accent-test-seeded", "true");
+    }
+  });
+  await page.goto("/settings");
+  await openSettingsSection(page, "paseo-plus-plus");
+  const preview = page.getByTestId("accent-message-preview");
+  const bubble = preview.getByTestId("user-message-bubble");
+  const text = preview.getByTestId("user-message-text");
+  const blue = page
+    .getByTestId("accent-color-settings")
+    .getByRole("radio", { name: "Blue", exact: true });
+  await expect(bubble).toHaveCSS("background-color", "rgb(228, 228, 231)");
+  await blue.click();
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
+  await expect(text).toHaveCSS("color", "rgb(255, 255, 255)");
+  await page.reload();
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
+  await openSettingsSection(page, "appearance");
+  await page.getByLabel("Theme: Light", { exact: true }).click();
+  await page.getByText("Dark", { exact: true }).click();
+  const reset = page.getByRole("button", { name: "Reset content width to default", exact: true });
+  const resetText = reset.getByText("Reset", { exact: true });
+  await page.mouse.move(2, 2);
+  await expect(resetText).toHaveCSS("color", "rgb(161, 165, 164)");
+  await reset.hover();
+  await expect(resetText).toHaveCSS("color", "rgb(250, 250, 250)");
+  await openSettingsSection(page, "paseo-plus-plus");
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(155, 175, 197)");
+  await expect(text).toHaveCSS("color", "rgb(24, 24, 27)");
+  await page.screenshot({ path: testInfo.outputPath("accent-blue-dark.png"), fullPage: true });
+  await page
+    .getByTestId("accent-color-settings")
+    .getByRole("radio", { name: "Default", exact: true })
+    .click();
+  await expect(bubble).not.toHaveCSS("background-color", "rgb(155, 175, 197)");
+});

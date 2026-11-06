@@ -1,3 +1,4 @@
+import { AccentSection } from "./paseo-plus-plus/accent-section";
 import { DEVICE_LOCAL_FORK_SETTING_KEYS } from "@/paseo-plus-plus/device-local-settings";
 import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
@@ -100,6 +101,7 @@ export function PaseoPlusPlusSection() {
           ))}
         </SettingsCard>
       </SettingsSection>
+      <AccentSection />
       <SettingsSection title={t("paseoPlusPlus.preferences")}>
         <SettingsCard>
           <SettingsRow
