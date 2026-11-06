@@ -5,6 +5,8 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 import {
   type CollapsedProjectsState,
   type ProjectCollapseOptions,
+  type SidebarCollapseTargets,
+  setSectionsCollapsed,
   type PersistedCollapsedProjects,
   mergePersistedCollapsedProjects,
   PersistedCollapsedProjectsSchema,
@@ -16,6 +18,7 @@ import {
 } from "./state";
 
 interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
+  setSectionsCollapsed: (targets: SidebarCollapseTargets, collapsed: boolean) => void;
   toggleProjectCollapsed: (projectKey: string, options?: ProjectCollapseOptions) => void;
   setProjectCollapsed: (
     projectKey: string,
@@ -32,6 +35,8 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
       collapsedProjectKeys: new Set(),
       collapsedWorkspaceGroupKeys: new Set(),
       collapsedPinned: false,
+      setSectionsCollapsed: (targets, collapsed) =>
+        set((state) => setSectionsCollapsed(state, targets, collapsed)),
       toggleProjectCollapsed: (projectKey, options) =>
         set((state) => toggleProjectCollapsed(state, projectKey, options)),
       setProjectCollapsed: (projectKey, collapsed, options) =>
