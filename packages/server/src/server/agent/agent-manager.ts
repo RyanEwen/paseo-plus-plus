@@ -2225,12 +2225,7 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
 
       if (rehydrateFromDisk) {
-        // Wipe the in-memory timeline so registerSession mints a new epoch and
-        // hydrateTimelineFromProvider re-streams the freshly read provider history.
-        this.timelineStore.delete(agentId);
-        for (const event of this.providerSubagents.deleteParent(agentId)) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
+        this.resetReloadedHistory(agentId);
       }
 
       // Preserve existing labels and timeline during reload.
@@ -2270,6 +2265,14 @@ export class AgentManager {
           await this.closeUnregisteredSession(session);
         }
       }
+    }
+  }
+
+  /** Reset history before registration mints a new epoch and replays the provider's current history. */
+  private resetReloadedHistory(agentId: string): void {
+    this.timelineStore.delete(agentId);
+    for (const event of this.providerSubagents.deleteParent(agentId)) {
+      this.dispatch({ type: "provider_subagent", event });
     }
   }
 
@@ -4397,10 +4400,7 @@ export class AgentManager {
       const now = new Date();
       if (session.claudeFreshRewind) {
         await this.deleteCommittedTimeline(resolvedAgentId);
-        this.timelineStore.delete(resolvedAgentId);
-        for (const event of this.providerSubagents.deleteParent(resolvedAgentId)) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
+        this.resetReloadedHistory(resolvedAgentId);
         options = {
           ...options,
           timeline: [],
