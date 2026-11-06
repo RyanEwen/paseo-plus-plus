@@ -27,6 +27,7 @@ export {
   menuRowContentInset,
   type ActionStatus,
   type MenuItemProps,
+  type MenuItemSecondaryToggle,
 } from "./menu-item";
 export { MENU_ITEM_HEIGHT } from "./menu-geometry";
 export {
