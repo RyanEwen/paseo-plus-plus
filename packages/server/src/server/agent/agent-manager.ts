@@ -4191,7 +4191,7 @@ export class AgentManager {
     const providerMessageId = submittedRow?.providerMessageId ?? messageId;
 
     if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "rewind");
+      await this.cancelAgentRunBefore({ agentId, action: "rewind" });
     }
 
     const lock = this.runs.createPendingRun(agentId);
