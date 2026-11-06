@@ -100,7 +100,7 @@ export function PromptMessageSurface({
       expanded || hidesContent ? (
         <Button
           variant="ghost"
-          size={expanded ? size : "xs"}
+          size={expanded ? size : "sm"}
           hitSlop={expanded ? undefined : 8}
           style={expanded ? undefined : styles.inlineDisclosure}
           accessibilityLabel={expanded ? t("stickyPrompt.collapse") : t("stickyPrompt.expand")}

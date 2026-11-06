@@ -9,7 +9,7 @@ import {
 import { ScrollView } from "@/components/ui/scroll-view";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { NaturalMessageFlowContext, type UserMessageBodyPresentation } from "./user-message-flow";
 import { MessagePreview } from "./user-message/index";
 import { NativeMessageTextPaint } from "./user-message-native-flow";
@@ -214,7 +214,8 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: Math.round(theme.fontSize.content * 1.4) + theme.spacing[4] * 2,
   },
   action: {
-    minHeight: CONTROL_HEIGHTS.field,
+    // The 44 px field height the preview row has always reserved, at every width.
+    minHeight: controlHeightForLayout("md", true),
     justifyContent: "center",
     alignSelf: "center",
     flexShrink: 0,

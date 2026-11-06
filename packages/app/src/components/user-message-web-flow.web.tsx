@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ScrollView } from "./ui/scroll-view";
-import { CONTROL_HEIGHTS } from "./ui/control-geometry";
+import { controlHeightForLayout } from "./ui/control-geometry";
 import { SPACING } from "@/styles/theme";
 import {
   NaturalMessageFlowContext,
@@ -354,7 +354,8 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
       justifyContent: "center",
       width: "max-content",
       maxWidth: Math.max(0, width - padding * 2),
-      minHeight: props.controls ? CONTROL_HEIGHTS.field : 0,
+      // The 44 px field height reserved for the controls row, at every width.
+      minHeight: props.controls ? controlHeightForLayout("md", true) : 0,
       flexShrink: 0,
       visibility: bounded ? "visible" : "hidden",
       pointerEvents: bounded ? "auto" : "none",
