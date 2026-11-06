@@ -1,0 +1,21 @@
+diff --git a/node_modules/jest-worker/build/workers/NodeThreadsWorker.js b/node_modules/jest-worker/build/workers/NodeThreadsWorker.js
+--- a/node_modules/jest-worker/build/workers/NodeThreadsWorker.js
++++ b/node_modules/jest-worker/build/workers/NodeThreadsWorker.js
+@@ -206,6 +206,8 @@
+     this._workerReadyPromise = undefined;
+     this._resolveWorkerReady = undefined;
+     if (exitCode !== 0 && this.state === _types.WorkerStates.OUT_OF_MEMORY) {
++      // Retire before the callback can synchronously dispatch queued work.
++      this.state = _types.WorkerStates.SHUT_DOWN;
+       this._onProcessEnd(
+         new Error('Jest worker ran out of memory and crashed'),
+         null
+@@ -226,6 +228,8 @@
+       // error. This is unexpected and tests may not have run to completion.
+       const isRequestStillPending = !!this._request;
+       if (isRequestStillPending) {
++        // Retire before the callback can synchronously dispatch queued work.
++        this.state = _types.WorkerStates.SHUT_DOWN;
+         this._onProcessEnd(
+           new Error(
+             'A Jest worker thread exited unexpectedly before finishing tests for an unknown reason. One of the ways this can happen is if process.exit() was called in testing code.'
