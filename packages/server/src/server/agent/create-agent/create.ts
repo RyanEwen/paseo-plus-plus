@@ -1,3 +1,4 @@
+import type { CreationAgentAttempt } from "../../creation/index.js";
 import type { FinishSubscriptions } from "../finish-subscriptions/index.js";
 import type { AgentPromptSource } from "../agent-messages/index.js";
 import type { Logger } from "pino";
@@ -45,6 +46,7 @@ export type EnsureWorkspaceForCreate = (
 
 export interface CreateAgentFromSessionInput {
   kind: "session";
+  creationAttempt?: CreationAgentAttempt;
   onAgentReady?: (agent: ManagedAgent) => Promise<void>;
   agentId?: string;
   config: AgentSessionConfig;
@@ -247,6 +249,7 @@ async function resolveSessionCreateAgent(
   return {
     config: sessionConfig,
     createOptions: {
+      creationAttempt: input.creationAttempt,
       labels: input.labels,
       initialPrompt: trimmedPrompt,
       env: input.env,

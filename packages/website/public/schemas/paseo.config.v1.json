@@ -509,6 +509,16 @@
                   }
                 }
               },
+              "history": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["configured", "shared"]
+                  }
+                },
+                "required": ["mode"]
+              },
               "enabled": {
                 "type": "boolean"
               },

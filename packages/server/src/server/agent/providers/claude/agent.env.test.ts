@@ -1,6 +1,11 @@
+import { mkdtemp, mkdir, writeFile, symlink, link, rm } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { resolveConfiguredClaudeHistory } from "./history.js";
+import { claudeProjectDirSync } from "./project-dir.js";
 import { once } from "node:events";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../../agent-sdk-types.js";
@@ -223,4 +228,119 @@ describe("Claude SDK env", () => {
       expect(session.usageSession?.()).toBeNull();
     }
   });
+});
+
+describe("configured Claude admission", () => {
+  let root: string;
+  let home: string;
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), "paseo-claude-admission-"));
+    home = path.join(root, "configured");
+    await mkdir(home);
+    vi.stubEnv("HOME", root);
+  });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  });
+  function client(
+    env: Record<string, string> = {
+      CLAUDE_CONFIG_DIR: home + "/",
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: "",
+    },
+  ) {
+    return new ClaudeAgentClient({
+      logger: createTestLogger(),
+      historyPolicy: { mode: "configured" },
+      runtimeSettings: { env },
+      resolveBinary: async () => {
+        throw new Error("must not launch");
+      },
+    });
+  }
+  test("retains raw home/securestorage selectors and rejects launch drift before query", async () => {
+    const c = client();
+    const storage = await c.resolveHistoryStorage({
+      provider: "claude",
+      config: { provider: "claude", cwd: root },
+      operation: "create",
+    });
+    expect(storage).toEqual({ kind: "configured-home", provider: "claude", home: home + "/" });
+    const session = await c.createSession(
+      { provider: "claude", cwd: root },
+      { historyStorage: storage },
+    );
+    expect(session.usageSession?.()?.env.CLAUDE_CONFIG_DIR).toBe(home + "/");
+    expect(session.usageSession?.()?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe("");
+    await expect(session.startTurn("/clear")).rejects.toThrow("session-switch-command");
+    await session.close();
+    await expect(
+      c.createSession(
+        { provider: "claude", cwd: root },
+        { historyStorage: storage, env: { CLAUDE_CONFIG_DIR: root } },
+      ),
+    ).rejects.toThrow("launch-home-conflict");
+  });
+  test("legacy resume never adopts a newly configured profile; bound resume reads exact home", async () => {
+    const c = client();
+    const handle = {
+      provider: "claude",
+      sessionId: "original",
+      nativeHandle: "original",
+      metadata: { cwd: root },
+    };
+    await expect(c.resumeSession(handle)).rejects.toThrow("existing-route-unverified");
+    const dir = claudeProjectDirSync(root, { configDir: home });
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, "original.jsonl"),
+      JSON.stringify({
+        type: "user",
+        sessionId: "original",
+        uuid: "u",
+        message: { role: "user", content: "fixture" },
+      }) + "\n",
+    );
+    const storage = {
+      kind: "configured-home" as const,
+      provider: "claude" as const,
+      home: home + "/",
+    };
+    const session = await c.resumeSession(handle, undefined, { historyStorage: storage });
+    expect(session.describePersistence()?.sessionId).toBe("original");
+    await session.close();
+    await expect(
+      c.resumeSession(handle, undefined, { historyStorage: { ...storage, home: root } }),
+    ).rejects.toThrow("bound-storage-changed");
+  });
+  test.each(["symlink", "hardlink", "native", "missing", "namespace", "wrapper", "extraArgs"])(
+    "rejects %s route before subprocess",
+    async (kind) => {
+      let selected = home;
+      if (kind === "symlink") await symlink(root, path.join(home, "projects"));
+      if (kind === "hardlink") {
+        await writeFile(path.join(root, "source"), "fixture");
+        await link(path.join(root, "source"), path.join(home, "history.jsonl"));
+      }
+      if (kind === "native") selected = path.join(root, ".claude");
+      if (kind === "missing") selected = path.join(root, "missing");
+      expect(() =>
+        resolveConfiguredClaudeHistory({
+          policy: { mode: "configured" },
+          runtimeSettings: {
+            env: { CLAUDE_CONFIG_DIR: selected },
+            ...(kind === "wrapper"
+              ? { command: { mode: "replace" as const, argv: ["wrapper"] } }
+              : {}),
+          },
+          env: {
+            HOME: root,
+            CLAUDE_CONFIG_DIR: selected,
+            ...(kind === "namespace" ? { CLAUDE_CODE_PROJECT_DIR_NAME: "other" } : {}),
+          },
+          ...(kind === "extraArgs" ? { extraArgs: { resume: "other" } } : {}),
+        }),
+      ).toThrow();
+    },
+  );
 });

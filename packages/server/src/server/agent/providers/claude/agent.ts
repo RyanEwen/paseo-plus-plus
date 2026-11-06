@@ -1,3 +1,15 @@
+import {
+  HistoryStorageConflictError,
+  type ProviderHistoryStorage,
+  type ConfiguredClaudeHistoryStorage,
+} from "../../provider-history/binding.js";
+import {
+  checkClaudeHistoryRoute,
+  checkClaudeRewindHandle,
+  claudeHistoryHome,
+  resolveConfiguredClaudeHistory,
+} from "./history.js";
+import type { ProviderHistoryPolicy } from "../../provider-launch-config.js";
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import { validateProviderOptions } from "../../provider-options.js";
@@ -103,6 +115,10 @@ import {
   type AgentPermissionAction,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentRewindInput,
+  type ClaudeFreshRewindContext,
+  type ClaudeInitialHistoryContext,
+  type ResolveHistoryStorageInput,
   type AgentCreateSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
@@ -460,6 +476,7 @@ export interface ClaudeContentChunk {
 }
 
 interface ClaudeAgentClientOptions {
+  historyPolicy?: ProviderHistoryPolicy;
   discoverModels?: typeof discoverClaudeModels;
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
@@ -475,6 +492,9 @@ type ClaudeImportDescriptorResult =
   | { type: "unreadable"; error: Error };
 
 interface ClaudeAgentSessionOptions {
+  historyStorage?: ProviderHistoryStorage;
+  claudeFreshRewind?: ClaudeFreshRewindContext;
+  claudeInitialHistory?: ClaudeInitialHistoryContext;
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
   handle?: AgentPersistenceHandle;
@@ -1596,6 +1616,7 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
 }
 
 export class ClaudeAgentClient implements AgentClient {
+  private readonly historyPolicy?: ProviderHistoryPolicy;
   private readonly discoverModels: typeof discoverClaudeModels;
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1618,6 +1639,7 @@ export class ClaudeAgentClient implements AgentClient {
   });
 
   constructor(options: ClaudeAgentClientOptions) {
+    this.historyPolicy = options.historyPolicy;
     this.discoverModels = options.discoverModels ?? discoverClaudeModels;
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
@@ -1634,13 +1656,49 @@ export class ClaudeAgentClient implements AgentClient {
     return resolveConfiguredClaudeModel(model);
   }
 
+  async resolveHistoryStorage(
+    input: ResolveHistoryStorageInput,
+  ): Promise<ProviderHistoryStorage | undefined> {
+    return this.selectedHistory(
+      input.env,
+      input.previous?.storage,
+      input.operation === "resume" || input.operation === "reload",
+      this.assertConfig(input.config).providerOptions,
+    );
+  }
+
+  private selectedHistory(
+    env?: Record<string, string>,
+    previous?: ProviderHistoryStorage,
+    existingSession = false,
+    options?: ClaudeProviderOptions,
+  ): ConfiguredClaudeHistoryStorage | undefined {
+    return resolveConfiguredClaudeHistory({
+      policy: this.historyPolicy,
+      runtimeSettings: this.runtimeSettings,
+      env: this.buildProviderEnv(env),
+      previous,
+      existingSession,
+      extraArgs: options?.extraArgs,
+    });
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
+    const historyStorage = this.selectedHistory(
+      launchContext?.env,
+      launchContext?.historyStorage,
+      false,
+      claudeConfig.providerOptions,
+    );
     return new ClaudeAgentSession(claudeConfig, {
+      historyStorage,
+      claudeFreshRewind: launchContext?.claudeFreshRewind,
+      claudeInitialHistory: launchContext?.claudeInitialHistory,
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       agentId: launchContext?.agentId,
@@ -1669,7 +1727,16 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: merged.cwd,
     };
     const claudeConfig = this.assertConfig(mergedConfig);
+    const historyStorage = this.selectedHistory(
+      launchContext?.env,
+      launchContext?.historyStorage,
+      true,
+      claudeConfig.providerOptions,
+    );
     const session = new ClaudeAgentSession(claudeConfig, {
+      historyStorage,
+      claudeFreshRewind: launchContext?.claudeFreshRewind,
+      claudeInitialHistory: launchContext?.claudeInitialHistory,
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       handle,
@@ -1693,6 +1760,12 @@ export class ClaudeAgentClient implements AgentClient {
     _options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
+    const historyStorage = this.selectedHistory(
+      undefined,
+      undefined,
+      false,
+      _options.providerOptions as ClaudeProviderOptions | undefined,
+    );
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
     let claudeCodeVersion: string | undefined;
     try {
@@ -1708,6 +1781,7 @@ export class ClaudeAgentClient implements AgentClient {
       const advertisedModels = await runProviderRefreshActivity(context, "models", () =>
         this.discoverModels({
           resolveBinary: this.resolveBinary,
+          historyStorage,
           runtimeSettings: this.runtimeSettings,
           env,
           signal: context?.signal,
@@ -1767,7 +1841,10 @@ export class ClaudeAgentClient implements AgentClient {
     const deadline = AbortSignal.timeout(45_000);
     const signal = options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     signal.throwIfAborted();
-    const configDir = claudeConfigDir(this.buildProviderEnv());
+    const storage = this.selectedHistory();
+    const configDir = storage
+      ? claudeHistoryHome(storage)
+      : claudeConfigDir(this.buildProviderEnv());
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
       : path.join(configDir, "projects");
@@ -1835,10 +1912,18 @@ export class ClaudeAgentClient implements AgentClient {
     // survives the import. Only an explicit rename counts: agents are named
     // after their first prompt line since #1563, so adopting the generated
     // `ai-title` here would put that LLM summary back.
+    const storage = this.selectedHistory(
+      context.launchContext?.env,
+      context.launchContext?.historyStorage,
+      false,
+      this.assertConfig({ provider: "claude", cwd: input.cwd }).providerOptions,
+    );
     const renamedTitle = await readClaudeRenamedSessionTitle({
       cwd: input.cwd,
       sessionId: input.providerHandleId,
-      configDir: claudeConfigDir(this.buildProviderEnv(context.launchContext?.env)),
+      configDir: storage
+        ? claudeHistoryHome(storage)
+        : claudeConfigDir(this.buildProviderEnv(context.launchContext?.env)),
     });
     return importSessionFromPersistence({
       provider: "claude",
@@ -1850,6 +1935,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    this.selectedHistory();
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "claude",
@@ -1859,6 +1945,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
+    this.selectedHistory();
     try {
       const launch = await resolveProviderLaunch({
         commandConfig: this.runtimeSettings?.command,
@@ -2296,6 +2383,15 @@ class ClaudeAgentSession implements AgentSession {
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
   private processingSdkMessages = 0;
   private readonly harnessEnvironment: Record<string, string>;
+  private readonly boundHistory?: ConfiguredClaudeHistoryStorage;
+  private freshRewindContext?: ClaudeFreshRewindContext;
+  private freshRewindQuery: Query | null = null;
+  private initialHistoryContext?: ClaudeInitialHistoryContext;
+  private initialHistoryQuery: Query | null = null;
+  private historyAdoptionFailed = false;
+  private managedRewindInFlight = false;
+  private queryRetirement: Promise<void> | null = null;
+  private pendingIdentityMessages: SDKMessage[] = [];
   private readonly usageSessionKey = randomUUID();
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
@@ -2406,6 +2502,14 @@ class ClaudeAgentSession implements AgentSession {
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
     this.harnessEnvironment = this.buildSdkEnv();
+    if (options.historyStorage?.kind === "configured-home") {
+      if (options.historyStorage.provider !== "claude")
+        throw new HistoryStorageConflictError("bound-provider-conflict");
+      this.boundHistory = options.historyStorage;
+    }
+    this.freshRewindContext = options.claudeFreshRewind;
+    this.initialHistoryContext = options.claudeInitialHistory;
+    this.assertHistoryRoute();
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
@@ -2422,7 +2526,7 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.claudeSessionId = handle.sessionId;
       this.persistence = handle;
-      this.historySessionId = handle.sessionId;
+      if (!this.freshRewindContext) this.historySessionId = handle.sessionId;
     } else {
       this.claudeSessionId = null;
       this.persistence = null;
@@ -2498,10 +2602,23 @@ class ClaudeAgentSession implements AgentSession {
     return result;
   }
 
+  private assertHistoryPrompt(prompt: AgentPromptInput): void {
+    this.assertHistoryRoute();
+    if (this.historyAdoptionFailed)
+      throw new HistoryStorageConflictError("committed-identity-reload-required");
+    if (
+      this.boundHistory &&
+      typeof prompt === "string" &&
+      /^\s*\/(?:clear|new|fork|resume|rewind)(?:\s|$)/i.test(prompt)
+    )
+      throw new HistoryStorageConflictError("session-switch-command-use-managed-rewind");
+  }
+
   async startTurn(
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    this.assertHistoryPrompt(prompt);
     await this.ensureHistoryReady();
     if (this.closed) {
       throw new Error("Claude session is closed");
@@ -2565,7 +2682,7 @@ class ClaudeAgentSession implements AgentSession {
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
     try {
-      await this.ensureQuery();
+      const startingQuery = await this.ensureQuery();
       if (cancelIssued) {
         // Stopped while Claude was still starting up: withdrawn by never sending it.
         if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
@@ -2574,6 +2691,15 @@ class ClaudeAgentSession implements AgentSession {
       if (!this.input) {
         throw new Error("Claude session input stream not initialized");
       }
+      // Mark the first requested turn after any legitimate pre-query setting edits.
+      // The exact query pointer below owns the eventual actual-handle acknowledgment.
+      await this.initialHistoryContext?.admit();
+      await this.freshRewindContext?.admit();
+      if (cancelIssued || !this.ownsQuery(startingQuery)) {
+        if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
+        return { turnId };
+      }
+      this.assertHistoryRoute();
       this.activeForegroundQuery = this.query;
       this.activeForegroundInput = this.input;
       this.startQueryPump();
@@ -3009,7 +3135,12 @@ class ClaudeAgentSession implements AgentSession {
       "provider.claude.session_close.start",
     );
     this.closed = true;
-    await this.ensureHistoryReady();
+    // Detachment transfers cleanup ownership to retireQuery; a null pointer does
+    // not release the old writer. External close must join that cleanup first.
+    await this.queryRetirement;
+    // A failed durable adoption closes us from inside its rewind callback, after
+    // retirement completed. Awaiting that callback's own history barrier would cycle.
+    if (!this.managedRewindInFlight || this.query !== null) await this.ensureHistoryReady();
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
@@ -3045,7 +3176,8 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.childProcess = null;
     }
-    if (this.persistSession === false && this.claudeSessionId) {
+    if (this.persistSession === false && this.claudeSessionId && !this.freshRewindContext) {
+      this.assertHistoryRoute();
       // Claude Code currently ignores --no-session-persistence outside --print mode
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
       // in stream-json mode. Sweep the transcript ourselves so ephemeral runs
@@ -3093,25 +3225,102 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
+  async revertConversation(input: AgentRewindInput): Promise<void> {
+    this.assertHistoryRoute();
     await this.ensureHistoryReady();
+    if (!this.boundHistory) return this.revertReadyConversation(input);
+    // Cover retirement and the durable commit as well as replay. A concurrent reader
+    // or prompt must not enter the abandoned session while its old query is closing.
+    this.managedRewindInFlight = true;
+    const rewind = this.revertReadyConversation(input, Promise.resolve());
+    this.historyReady = rewind.catch((error) => {
+      this.logger.warn({ err: error }, "Configured Claude rewind did not complete");
+    });
+    try {
+      await rewind;
+    } finally {
+      this.managedRewindInFlight = false;
+    }
+  }
+
+  private async revertReadyConversation(
+    input: AgentRewindInput,
+    admittedHistoryReady?: Promise<void>,
+  ): Promise<void> {
+    if (this.boundHistory && !input.commitClaudeRewind)
+      throw new HistoryStorageConflictError("managed-rewind-required");
+    const previous = this.describePersistence();
+    if (this.boundHistory && (!previous || this.freshRewindContext))
+      throw new HistoryStorageConflictError("rewind-session-not-ready");
     const target = await this.resolveConversationRewindTarget(input.messageId);
     if (target.kind === "fresh-session") {
+      if (this.boundHistory && previous && input.commitClaudeRewind) {
+        await this.retireQuery();
+        await input.commitClaudeRewind({
+          previous,
+          storage: this.boundHistory,
+          assertCurrent: () => {
+            if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
+          },
+          adopt: (fresh) => {
+            if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
+            this.freshRewindContext = fresh;
+            this.persistence = previous;
+          },
+        });
+        this.clearRewoundHistory();
+        return;
+      }
       this.startFreshConversationSession();
       return;
     }
     const currentSessionId = this.claudeSessionId;
+    if (this.boundHistory) await this.retireQuery();
     await revertClaudeConversation({
       sdk: this.rewindSdk,
       sessionId: currentSessionId,
       transcriptPath: currentSessionId ? await this.resolveHistoryPath(currentSessionId) : null,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
-      setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
+      setSessionId: async (sessionId) => {
+        if (this.boundHistory && previous && input.commitClaudeRewind) {
+          const file = await this.resolveHistoryPath(sessionId);
+          if (!file) throw new HistoryStorageConflictError("rewind-transcript-missing");
+          checkClaudeRewindHandle(this.boundHistory, this.harnessEnvironment, file);
+          const next = { ...previous, sessionId, nativeHandle: sessionId };
+          try {
+            await input.commitClaudeRewind({
+              previous,
+              next,
+              storage: this.boundHistory,
+              assertCurrent: () => {
+                if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
+              },
+              adopt: () => {
+                if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
+                this.claudeSessionId = sessionId;
+                this.persistence = next;
+                this.cachedRuntimeInfo = null;
+              },
+            });
+          } catch (error) {
+            throw new Error(
+              `Claude rewind child ${sessionId} retained in ${this.boundHistory.home}; identity commit failed (${error instanceof HistoryStorageConflictError ? error.reason : "unavailable"})`,
+              { cause: error },
+            );
+          }
+        }
+        await this.rebindConversationSession(
+          sessionId,
+          currentSessionId ?? undefined,
+          admittedHistoryReady,
+        );
+      },
     });
   }
 
-  async revertFiles(input: { messageId: string }): Promise<void> {
+  async revertFiles(input: AgentRewindInput): Promise<void> {
+    this.assertHistoryRoute();
     await this.ensureHistoryReady();
     const messageId = await this.resolveClaudeMessageId(input.messageId);
     await revertClaudeFiles({
@@ -3120,9 +3329,16 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  async revertBoth(input: { messageId: string }): Promise<void> {
+  async revertBoth(input: AgentRewindInput): Promise<void> {
+    this.assertHistoryRoute();
+    if (this.boundHistory && !input.commitClaudeRewind)
+      throw new HistoryStorageConflictError("managed-rewind-required");
     await this.revertFiles(input);
-    await this.revertConversation(input);
+    try {
+      await this.revertConversation(input);
+    } catch (error) {
+      throw new Error("Claude files were rewound; conversation rewind failed", { cause: error });
+    }
   }
 
   private resolveSlashCommandInvocation(prompt: AgentPromptInput): SlashCommandInvocation | null {
@@ -3287,16 +3503,152 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
-  private rebindConversationSession(sessionId: string): Promise<void> {
-    const previousReady = this.ensureHistoryReady();
+  private clearRewoundHistory(): void {
+    this.persistedHistory = [];
+    this.persistedProviderSubagentEvents = [];
+    this.historyPending = false;
+    this.userMessageIds = [];
+    this.emittedUserMessageIds.clear();
+    this.rewindTurnAnchors.length = 0;
+    this.taskState.reset();
+    this.cachedRuntimeInfo = null;
+    this.queryRestartNeeded = true;
+    this.historySessionId = null;
+    this.historyReady = Promise.resolve();
+  }
+
+  private async acceptInitialHistoryIdentity(message: SDKMessage, query: Query): Promise<void> {
+    const context = this.initialHistoryContext;
+    if (!context || !this.boundHistory) return;
+    const id = extractSessionIdRaw(toObjectRecord(message) ?? {}).trim();
+    const file = await this.resolveHistoryPath(id);
+    if (
+      this.closed ||
+      this.query !== query ||
+      this.initialHistoryContext !== context ||
+      this.initialHistoryQuery !== query ||
+      this.claudeSessionId ||
+      !id ||
+      !file
+    )
+      throw new HistoryStorageConflictError("stale-initial-history-query");
+    const { providerOptions: _options, ...metadata } = this.config;
+    const next = { provider: "claude", sessionId: id, nativeHandle: id, metadata };
+    try {
+      checkClaudeRewindHandle(this.boundHistory, this.harnessEnvironment, file);
+      await context.commit({
+        storage: this.boundHistory,
+        next,
+        assertCurrent: () => {
+          if (
+            !this.ownsQuery(query) ||
+            (this.initialHistoryContext !== context && this.freshRewindContext !== context)
+          )
+            throw new HistoryStorageConflictError("stale-history-query");
+        },
+        adopt: () => {
+          if (!this.ownsQuery(query)) throw new HistoryStorageConflictError("stale-history-query");
+          this.claudeSessionId = id;
+          this.persistence = next;
+          this.initialHistoryContext = undefined;
+          this.initialHistoryQuery = null;
+          this.cachedRuntimeInfo = null;
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof HistoryStorageConflictError &&
+        error.reason.startsWith("rewind-committed-adoption-failed:")
+      ) {
+        this.historyAdoptionFailed = true;
+        throw new Error(
+          `Claude identity ${id} committed; runtime adoption failed; reload required`,
+          { cause: error },
+        );
+      }
+      throw new Error(
+        `Claude initial child ${id} retained in ${this.boundHistory.home}; binding failed (${error instanceof HistoryStorageConflictError ? error.reason : "unavailable"})`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async acceptFreshRewindIdentity(message: SDKMessage, query: Query): Promise<void> {
+    const context = this.freshRewindContext;
+    if (!context || !this.boundHistory) return;
+    const record = toObjectRecord(message) ?? {};
+    const id = extractSessionIdRaw(record).trim();
+    if (!id) return;
+    if (this.closed || this.query !== query || this.freshRewindQuery !== query)
+      throw new HistoryStorageConflictError("stale-fresh-rewind-query");
+    const previous = this.describePersistence();
+    const file = await this.resolveHistoryPath(id);
+    if (!previous || !file || id === previous.sessionId)
+      throw new HistoryStorageConflictError("fresh-rewind-handle-conflict");
+    if (
+      !this.ownsQuery(query) ||
+      this.freshRewindQuery !== query ||
+      this.freshRewindContext !== context
+    )
+      throw new HistoryStorageConflictError("stale-fresh-rewind-query");
+    const next = { ...previous, sessionId: id, nativeHandle: id };
+    try {
+      checkClaudeRewindHandle(this.boundHistory, this.harnessEnvironment, file);
+      await context.commit({
+        previous,
+        next,
+        storage: this.boundHistory,
+        assertCurrent: () => {
+          if (
+            !this.ownsQuery(query) ||
+            this.freshRewindQuery !== query ||
+            this.freshRewindContext !== context
+          )
+            throw new HistoryStorageConflictError("stale-fresh-rewind-query");
+        },
+        adopt: () => {
+          if (!this.ownsQuery(query))
+            throw new HistoryStorageConflictError("stale-fresh-rewind-query");
+          this.claudeSessionId = id;
+          this.persistence = next;
+          this.freshRewindContext = undefined;
+          this.freshRewindQuery = null;
+          this.cachedRuntimeInfo = null;
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof HistoryStorageConflictError &&
+        error.reason.startsWith("rewind-committed-adoption-failed:")
+      ) {
+        this.historyAdoptionFailed = true;
+        throw new Error(
+          `Claude identity ${id} committed; runtime adoption failed; reload required`,
+          { cause: error },
+        );
+      }
+      throw new Error(
+        `Claude fresh rewind child ${id} retained in ${this.boundHistory.home}; commit failed (${error instanceof HistoryStorageConflictError ? error.reason : "unavailable"})`,
+        { cause: error },
+      );
+    }
+  }
+
+  private rebindConversationSession(
+    sessionId: string,
+    previousSessionId?: string,
+    admittedHistoryReady?: Promise<void>,
+  ): Promise<void> {
+    // A managed rewind already owns the readiness barrier; never await it from itself.
+    const previousReady = admittedHistoryReady ?? this.ensureHistoryReady();
     const rebind = (async () => {
       await previousReady;
       await this.retireQuery();
       if (this.closed) return;
-      const oldSessionId = this.claudeSessionId;
+      const oldSessionId = previousSessionId ?? this.claudeSessionId;
       this.claudeSessionId = sessionId;
       this.pendingFreshSessionId = null;
-      this.persistence = null;
+      if (!this.boundHistory) this.persistence = null;
       this.cachedRuntimeInfo = null;
       this.queryRestartNeeded = true;
       this.persistedHistory = [];
@@ -3465,9 +3817,13 @@ class ClaudeAgentSession implements AgentSession {
     return { kind: "fresh-session" };
   }
 
-  private async retireQuery(): Promise<void> {
+  private retireQuery(): Promise<void> {
+    if (this.queryRetirement) return this.queryRetirement;
     const oldQuery = this.query;
-    if (!oldQuery) return;
+    this.initialHistoryQuery = null;
+    this.freshRewindQuery = null;
+    this.pendingIdentityMessages = [];
+    if (!oldQuery) return Promise.resolve();
     const oldInput = this.input;
     // Null out query/input BEFORE awaiting the old iterator's return so the
     // old pump sees this.query !== activeQuery and skips failActiveTurns.
@@ -3480,24 +3836,45 @@ class ClaudeAgentSession implements AgentSession {
     const retiredChild = this.childProcess;
     this.childProcess = null;
     if (retiredChild) this.failRunningRuntimeTasks();
-    oldInput?.end();
-    oldQuery.close?.();
+    const retirement = this.finishQueryRetirement(oldQuery, oldInput, retiredChild);
+    this.queryRetirement = retirement;
+    const clear = () => {
+      if (this.queryRetirement === retirement) this.queryRetirement = null;
+    };
+    void retirement.then(clear, clear);
+    return retirement;
+  }
+
+  private async finishQueryRetirement(
+    oldQuery: Query,
+    oldInput: AsyncMessageInput<SDKUserMessage> | null,
+    retiredChild: ChildProcess | null,
+  ): Promise<void> {
+    let failure: unknown;
+    try {
+      oldInput?.end();
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      oldQuery.close?.();
+    } catch (error) {
+      failure ??= error;
+    }
     try {
       await oldQuery.return?.();
     } catch {
-      /* ignore */
+      /* SDK control-plane shutdown is best effort. */
     }
-    // Tree-kill the old process tree now that the SDK has cleaned up.
-    // If we skip this, MCP children of the previous claude process can
-    // survive as orphans when the session spawns a replacement query.
+    // Keep this resource owned even if input/SDK close throws, so detached MCP
+    // children are cleaned before either replacement or external close can finish.
     if (retiredChild) {
       await terminateWithTreeKill(retiredChild, {
         gracefulTimeoutMs: 2_000,
         forceTimeoutMs: 2_000,
-      }).catch(() => {
-        /* process may already be dead */
-      });
+      }).catch(() => {});
     }
+    if (failure) throw failure;
   }
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
@@ -3514,7 +3891,8 @@ class ClaudeAgentSession implements AgentSession {
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
     // resume: sessionId and the new query continues the existing conversation.
-    this.persistence = null;
+    if (!this.freshRewindContext) this.persistence = null;
+    this.pendingIdentityMessages = [];
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     const options = await this.buildOptions(launchMode);
@@ -3528,6 +3906,7 @@ class ClaudeAgentSession implements AgentSession {
       {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
+        historyStorage: this.boundHistory,
         queryFactory: this.queryFactory,
         onChildProcess: (child) => {
           this.childProcess = child;
@@ -3535,6 +3914,8 @@ class ClaudeAgentSession implements AgentSession {
         },
       },
     );
+    if (this.freshRewindContext) this.freshRewindQuery = this.query;
+    if (this.initialHistoryContext) this.initialHistoryQuery = this.query;
     const fastMode = this.resolveFastModeSetting();
     if (fastMode !== null) {
       await this.query.applyFlagSettings({ fastMode });
@@ -3628,6 +4009,27 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
+  get claudeInitialHistory(): ClaudeInitialHistoryContext | undefined {
+    return this.initialHistoryContext;
+  }
+
+  get claudeFreshRewind(): ClaudeFreshRewindContext | undefined {
+    return this.freshRewindContext;
+  }
+
+  private assertHistoryRoute(): void {
+    if (this.boundHistory) checkClaudeHistoryRoute(this.boundHistory, this.harnessEnvironment);
+  }
+
+  get historyStorage(): ProviderHistoryStorage {
+    if (this.boundHistory) return this.boundHistory;
+    return {
+      kind: "unverified",
+      provider: "claude",
+      home: path.resolve(this.config.cwd, claudeConfigDir(this.harnessEnvironment)),
+    };
+  }
+
   usageSession() {
     if (this.closed) return null;
     return {
@@ -3651,7 +4053,38 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
+  private assertHistoryQueryReady(): void {
+    if (
+      this.boundHistory &&
+      !this.claudeSessionId &&
+      !this.initialHistoryContext &&
+      !this.config.internal &&
+      this.persistSession !== false
+    )
+      throw new HistoryStorageConflictError("durable-initial-binding-required");
+  }
+
+  private historySessionOptions(): Pick<ClaudeOptions, "resume" | "sessionId"> {
+    const sessionBinding: Pick<ClaudeOptions, "resume" | "sessionId"> = {};
+    if (this.freshRewindContext) {
+      // No native ID is fabricated: the marked new query supplies its actual handle.
+    } else if (this.pendingFreshSessionId) {
+      sessionBinding.sessionId = this.pendingFreshSessionId;
+    } else if (this.claudeSessionId) {
+      sessionBinding.resume = this.claudeSessionId;
+    }
+
+    return sessionBinding;
+  }
+
+  private releaseHistoryAdmission(): void {
+    this.initialHistoryContext?.release();
+    this.freshRewindContext?.release();
+  }
+
   private async buildOptions(permissionMode: PermissionMode): Promise<ClaudeOptions> {
+    this.assertHistoryRoute();
+    this.assertHistoryQueryReady();
     const { thinking, effort, ultracode } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
     const providerOptions = applyClaudeToolPolicy(
@@ -3673,12 +4106,7 @@ class ClaudeAgentSession implements AgentSession {
       },
       "Resolved Claude executable",
     );
-    const sessionBinding: Pick<ClaudeOptions, "resume" | "sessionId"> = {};
-    if (this.pendingFreshSessionId) {
-      sessionBinding.sessionId = this.pendingFreshSessionId;
-    } else if (this.claudeSessionId) {
-      sessionBinding.resume = this.claudeSessionId;
-    }
+    const sessionBinding = this.historySessionOptions();
 
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
@@ -3731,7 +4159,7 @@ class ClaudeAgentSession implements AgentSession {
       base.model = this.config.model;
     }
     this.lastOptionsModel = base.model ?? null;
-    if (this.claudeSessionId && !this.pendingFreshSessionId) {
+    if (this.claudeSessionId && !this.pendingFreshSessionId && !this.freshRewindContext) {
       base.resume = this.claudeSessionId;
     }
     if (this.runtimeSettings?.disallowedTools?.length) {
@@ -4189,11 +4617,30 @@ class ClaudeAgentSession implements AgentSession {
       this.processingSdkMessages++;
       try {
         this.runtimeSafety.observe(message);
+        if (this.freshRewindContext || this.initialHistoryContext) {
+          if (
+            message.type !== "system" ||
+            message.subtype !== "init" ||
+            (message as { parent_tool_use_id?: unknown }).parent_tool_use_id
+          ) {
+            this.pendingIdentityMessages.push(message);
+            if (this.pendingIdentityMessages.length > 100)
+              throw new HistoryStorageConflictError("identity-acknowledgment-limit");
+            return false;
+          }
+          await this.acceptInitialHistoryIdentity(message, activeQuery);
+          await this.acceptFreshRewindIdentity(message, activeQuery);
+        }
+        if (!this.ownsQuery(activeQuery)) return true;
         logRawMessage(message);
         consecutiveInterruptAbortRecoveries = 0;
         if (await this.handleMissingResumedConversation(message, activeQuery)) return true;
         if (!this.ownsQuery(activeQuery)) return true;
         await this.routeSdkMessageFromPump(message);
+        for (const pending of this.pendingIdentityMessages.splice(0)) {
+          if (!this.ownsQuery(activeQuery)) return true;
+          await this.routeSdkMessageFromPump(pending);
+        }
         return false;
       } finally {
         this.processingSdkMessages--;
@@ -4239,6 +4686,7 @@ class ClaudeAgentSession implements AgentSession {
       }
     } finally {
       if (this.query === activeQuery) {
+        this.releaseHistoryAdmission();
         this.query = null;
         this.input = null;
       }
@@ -5030,6 +5478,7 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingFreshSessionId = null;
       return { threadStartedSessionId: null, notice: null };
     }
+    if (this.boundHistory) throw new HistoryStorageConflictError("unexpected-session-id-change");
     const oldSessionId = this.claudeSessionId;
     // Session ID changed mid-stream (e.g. a hook caused Claude to restart
     // with a new session). Accept the new ID and continue — the turn should
@@ -5077,6 +5526,7 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingFreshSessionId = null;
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID unchanged (same value)");
     } else {
+      if (this.boundHistory) throw new HistoryStorageConflictError("unexpected-session-id-change");
       // Session ID changed in an init message (e.g. a hook restarted Claude
       // with a new session mid-turn). Accept the new ID and continue.
       this.logger.warn(
@@ -5386,6 +5836,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async loadPersistedHistory(sessionId: string): Promise<void> {
+    this.assertHistoryRoute();
+    if (this.freshRewindContext) return;
     let historyPath: string | null = null;
     this.replayingHistory = true;
     try {
@@ -5542,12 +5994,17 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async resolveHistoryPath(sessionId: string): Promise<string | null> {
+    this.assertHistoryRoute();
+    if (this.boundHistory && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId))
+      throw new HistoryStorageConflictError("invalid-session-id");
     const cwd = this.config.cwd;
     if (!cwd) return null;
     return claudeTranscriptPath({
       cwd,
       sessionId,
-      configDir: claudeConfigDir(this.harnessEnvironment),
+      configDir: this.boundHistory
+        ? claudeHistoryHome(this.boundHistory)
+        : claudeConfigDir(this.harnessEnvironment),
     });
   }
 

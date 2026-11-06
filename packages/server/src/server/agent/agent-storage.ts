@@ -1,3 +1,12 @@
+import {
+  HistoryIntentConflictError,
+  HistoryStorageConflictError,
+  sameHistoryStorage,
+  preserveSnapshotHistoryBinding,
+  ProviderHistoryBindingSchema,
+  type ProviderHistoryStorage,
+} from "./provider-history/binding.js";
+import { createHash } from "node:crypto";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -7,7 +16,7 @@ import { writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
-import type { AgentSessionConfig } from "./agent-sdk-types.js";
+import type { AgentPersistenceHandle, AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
@@ -77,6 +86,8 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  providerHistory: ProviderHistoryBindingSchema.optional(),
+  claudeFreshRewind: z.object({ operationId: z.string().min(1) }).optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -94,6 +105,139 @@ export type SerializableAgentConfig = Pick<
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
+}
+
+export function isBoundEmptyClaudeCreation(record: StoredAgentRecord | null | undefined): boolean {
+  const binding = record?.providerHistory;
+  return (
+    !!record &&
+    !record.persistence &&
+    !record.claudeFreshRewind &&
+    binding?.origin === "created" &&
+    binding.registration === "registered" &&
+    binding.sessionId === null &&
+    binding.storage.kind === "configured-home" &&
+    binding.storage.provider === "claude"
+  );
+}
+function matchesEmptyClaudeRecreation(
+  existing: StoredAgentRecord | null,
+  requested: StoredAgentRecord,
+): boolean {
+  return (
+    !!existing &&
+    isBoundEmptyClaudeCreation(existing) &&
+    requested.providerHistory?.origin === "created" &&
+    requested.providerHistory.sessionId === null &&
+    existing.provider === requested.provider &&
+    existing.cwd === requested.cwd &&
+    existing.workspaceId === requested.workspaceId &&
+    digest(existing.config) === digest(requested.config) &&
+    digest(existing.launchEnv ?? null) === digest(requested.launchEnv ?? null)
+  );
+}
+
+// The pending initial/fresh query protects routing identity, not activity/status metadata.
+function claudeQueryIdentity(record: StoredAgentRecord) {
+  return {
+    id: record.id,
+    provider: record.provider,
+    cwd: record.cwd,
+    workspaceId: record.workspaceId,
+    archivedAt: record.archivedAt,
+    config: record.config,
+    launchEnv: record.launchEnv,
+    persistence: record.persistence,
+    providerHistory: record.providerHistory,
+    claudeFreshRewind: record.claudeFreshRewind,
+  };
+}
+function assertClaudeQueryAdmission(expected: StoredAgentRecord, current: StoredAgentRecord): void {
+  if (digest(claudeQueryIdentity(expected)) !== digest(claudeQueryIdentity(current)))
+    throw new HistoryStorageConflictError("query-admission-identity-changed");
+}
+
+function assertClaudeRewindNext(
+  current: StoredAgentRecord,
+  next: AgentPersistenceHandle,
+  operationId: string | undefined,
+): void {
+  if (
+    next.provider !== current.provider ||
+    !next.sessionId ||
+    next.sessionId === current.providerHistory?.sessionId ||
+    next.nativeHandle !== next.sessionId ||
+    current.claudeFreshRewind?.operationId !== operationId
+  )
+    throw new HistoryStorageConflictError("rewind-handle-conflict");
+}
+function assertPendingClaudeQuerySnapshot(
+  current: ManagedAgent,
+  existing: StoredAgentRecord | null,
+): void {
+  const admission =
+    current.session?.claudeFreshRewind?.admission ??
+    current.session?.claudeInitialHistory?.admission ??
+    current.historyQueryAdmission;
+  if (admission && existing) assertClaudeQueryAdmission(admission, existing);
+}
+
+/** Internal creation-runner proof, consumed only after the queued captured-record comparison. */
+export interface HistoryIntentRetryAdmission {
+  expected: StoredAgentRecord;
+  consume(): void;
+}
+
+export function isUncommittedCreatedIntent(
+  record: StoredAgentRecord | null | undefined,
+): record is StoredAgentRecord {
+  return (
+    !!record &&
+    record.providerHistory?.origin === "created" &&
+    record.providerHistory.registration === "intent" &&
+    record.providerHistory.sessionId === null &&
+    !record.persistence &&
+    !record.claudeFreshRewind &&
+    !record.archivedAt &&
+    !record.internal &&
+    (record.runtimeInfo?.sessionId === undefined || record.runtimeInfo.sessionId === null)
+  );
+}
+
+function matchesCreatedIntentRetry(
+  current: StoredAgentRecord,
+  requested: StoredAgentRecord,
+): boolean {
+  return (
+    isUncommittedCreatedIntent(current) &&
+    requested.providerHistory?.origin === "created" &&
+    requested.providerHistory.registration === "intent" &&
+    requested.providerHistory.sessionId === null &&
+    current.id === requested.id &&
+    current.provider === requested.provider &&
+    current.cwd === requested.cwd &&
+    current.workspaceId === requested.workspaceId &&
+    current.internal === requested.internal &&
+    digest(current.owner ?? null) === digest(requested.owner ?? null) &&
+    digest(current.config) === digest(requested.config) &&
+    digest(current.launchEnv ?? null) === digest(requested.launchEnv ?? null)
+  );
+}
+
+  /** Manager registration only: atomically publish a created Claude chat before its lazy first native ID. */
+  registerClaudeEmptyCreation?: boolean;
+interface AgentStorageReadOptions {
+  includeHistoryIntents?: boolean;
+}
+
+function includeRecord(record: StoredAgentRecord, options?: AgentStorageReadOptions): boolean {
+  return (
+    options?.includeHistoryIntents === true || record.providerHistory?.registration !== "intent"
+  );
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 export class AgentStorage {
@@ -118,22 +262,23 @@ export class AgentStorage {
     await this.load();
   }
 
-  async list(): Promise<StoredAgentRecord[]> {
+  async list(options?: AgentStorageReadOptions): Promise<StoredAgentRecord[]> {
     await this.load();
-    return Array.from(this.cache.values());
+    return Array.from(this.cache.values()).filter((record) => includeRecord(record, options));
   }
 
-  async get(agentId: string): Promise<StoredAgentRecord | null> {
+  async get(agentId: string, options?: AgentStorageReadOptions): Promise<StoredAgentRecord | null> {
     await this.load();
-    return this.cache.get(agentId) ?? null;
+    const record = this.cache.get(agentId);
+    return record && includeRecord(record, options) ? record : null;
   }
 
   async listByProviderSession(
     provider: string,
     providerHandleId: string,
   ): Promise<StoredAgentRecord[]> {
-    await this.load();
-    return Array.from(this.cache.values()).filter(
+    const records = await this.list();
+    return records.filter(
       (record) =>
         record.persistence?.provider === provider &&
         (record.persistence.sessionId === providerHandleId ||
@@ -142,19 +287,209 @@ export class AgentStorage {
   }
 
   async listByWorkspace(workspaceId: string): Promise<StoredAgentRecord[]> {
-    await this.load();
-    return Array.from(this.cache.values()).filter((record) => record.workspaceId === workspaceId);
+    const records = await this.list();
+    return records.filter((record) => record.workspaceId === workspaceId);
   }
 
   async findByDaemonExecution(owner: DaemonAgentOwner): Promise<StoredAgentRecord | null> {
     await this.load();
     const agentId = this.daemonAgentIdsByExecution.get(daemonExecutionKey(owner));
-    return agentId ? (this.cache.get(agentId) ?? null) : null;
+    return agentId ? this.get(agentId) : null;
   }
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     await this.queueRecordWrite(record);
+  }
+
+  async reserveHistoryIntent(
+    record: StoredAgentRecord,
+    retry?: HistoryIntentRetryAdmission,
+  ): Promise<StoredAgentRecord> {
+    await this.load();
+    let reserved = false;
+    let selected = record;
+    await this.queueRecordMutation(record.id, (existing) => {
+      // Legacy startup failures already retry through createAgent with this ID. Preserve
+      // their unknown provenance instead of retroactively calling the old session created.
+      const legacyRetry = existing && !existing.persistence && !existing.providerHistory;
+      const emptyRecreation = matchesEmptyClaudeRecreation(existing, record);
+      if (existing && retry) {
+        if (
+          digest(existing) !== digest(retry.expected) ||
+          !matchesCreatedIntentRetry(existing, record)
+        )
+          throw new HistoryIntentConflictError(record.id);
+        retry.consume();
+        reserved = true;
+        selected = existing;
+        return existing;
+      }
+      if (existing && !legacyRetry && !emptyRecreation)
+        throw new HistoryIntentConflictError(record.id);
+      reserved = true;
+      if (legacyRetry || emptyRecreation) {
+        selected = existing!;
+        return existing;
+      }
+      return record;
+    });
+    if (!reserved) throw new HistoryIntentConflictError(record.id);
+    return selected;
+  }
+
+  async assertInternalAgentIdAvailable(agentId: string): Promise<void> {
+    await this.load();
+    let checked = false;
+    await this.queueRecordMutation(agentId, (existing) => {
+      // Ephemeral utilities cannot reuse canonical IDs, including hidden failed intentions.
+      if (existing) throw new HistoryIntentConflictError(agentId);
+      checked = true;
+      return null;
+    });
+    if (!checked) throw new HistoryIntentConflictError(agentId);
+  }
+
+  async bindHistoryIntent(agentId: string, storage: ProviderHistoryStorage): Promise<void> {
+    await this.load();
+    let bound = false;
+    await this.queueRecordMutation(agentId, (current) => {
+      if (!current?.providerHistory || current.providerHistory.registration !== "intent")
+        throw new HistoryIntentConflictError(agentId);
+      if (
+        current.providerHistory.storage.kind !== "unknown" &&
+        !sameHistoryStorage(current.providerHistory.storage, storage)
+      )
+        throw new HistoryStorageConflictError("intent-storage-already-bound");
+      bound = true;
+      return { ...current, providerHistory: { ...current.providerHistory, storage } };
+    });
+    if (!bound) throw new HistoryIntentConflictError(agentId);
+  }
+
+  async captureClaudeHistoryAdmission(agentId: string): Promise<StoredAgentRecord> {
+    await this.load();
+    let captured: StoredAgentRecord | undefined;
+    await this.queueRecordMutation(agentId, (current) => {
+      if (current) captured = structuredClone(current);
+      return null;
+    });
+    if (!captured) throw new HistoryStorageConflictError("history-admission-record-missing");
+    return captured;
+  }
+
+  async commitClaudeInitialHandle(input: {
+    expected: StoredAgentRecord;
+    next: AgentPersistenceHandle;
+    onCommitted(record: StoredAgentRecord): void;
+    assertCurrent?(): void;
+  }): Promise<void> {
+    await this.load();
+    let committed = false;
+    await this.queueRecordMutation(
+      input.expected.id,
+      (current) => {
+        input.assertCurrent?.();
+        const binding = current?.providerHistory;
+        if (!current) throw new HistoryStorageConflictError("initial-handle-binding-conflict");
+        assertClaudeQueryAdmission(input.expected, current);
+        if (
+          current.persistence ||
+          current.claudeFreshRewind ||
+          binding?.registration !== "registered" ||
+          binding.origin !== "created" ||
+          binding.sessionId !== null ||
+          binding.storage.kind !== "configured-home" ||
+          binding.storage.provider !== "claude" ||
+          !input.next.sessionId ||
+          input.next.provider !== current.provider ||
+          input.next.nativeHandle !== input.next.sessionId
+        )
+          throw new HistoryStorageConflictError("initial-handle-binding-conflict");
+        return {
+          ...current,
+          persistence: input.next,
+          providerHistory: { ...binding, sessionId: input.next.sessionId },
+          runtimeInfo: current.runtimeInfo
+            ? { ...current.runtimeInfo, sessionId: input.next.sessionId }
+            : undefined,
+        };
+      },
+      () => {
+        committed = true;
+        const record = this.cache.get(input.expected.id)!;
+        try {
+          input.onCommitted(record);
+        } catch {
+          throw new HistoryStorageConflictError(
+            `rewind-committed-adoption-failed:${record.persistence?.sessionId}`,
+          );
+        }
+      },
+    );
+    if (!committed) throw new HistoryStorageConflictError("history-identity-write-refused");
+  }
+
+  /** Deliberate manager-owned Claude rewind; ordinary snapshots cannot change native identity. */
+  async commitClaudeRewind(input: {
+    expected: StoredAgentRecord;
+    next?: AgentPersistenceHandle;
+    freshOperationId?: string;
+    onCommitted(record: StoredAgentRecord): void;
+    assertCurrent?(): void;
+  }): Promise<void> {
+    await this.load();
+    let committed = false;
+    // A marked fresh query starts a turn before its first native init. Activity/status
+    // snapshots may advance meanwhile; the exact route, recovery handle, config and intent may not.
+    await this.queueRecordMutation(
+      input.expected.id,
+      (current) => {
+        input.assertCurrent?.();
+        const binding = current?.providerHistory;
+        if (
+          !current ||
+          (input.freshOperationId && current.claudeFreshRewind
+            ? digest(claudeQueryIdentity(current)) !== digest(claudeQueryIdentity(input.expected))
+            : digest(current) !== digest(input.expected)) ||
+          !current.persistence ||
+          binding?.registration !== "registered" ||
+          binding.storage.kind !== "configured-home" ||
+          binding.storage.provider !== "claude" ||
+          binding.sessionId !== current.persistence.sessionId ||
+          current.persistence.provider !== current.provider
+        )
+          throw new HistoryStorageConflictError("rewind-canonical-record-changed");
+        if (input.next) {
+          const next = input.next;
+          assertClaudeRewindNext(current, next, input.freshOperationId);
+          return {
+            ...current,
+            persistence: next,
+            providerHistory: { ...binding, sessionId: next.sessionId },
+            runtimeInfo: current.runtimeInfo
+              ? { ...current.runtimeInfo, sessionId: next.sessionId }
+              : undefined,
+            claudeFreshRewind: undefined,
+          };
+        }
+        if (!input.freshOperationId || current.claudeFreshRewind)
+          throw new HistoryStorageConflictError("rewind-intent-conflict");
+        return { ...current, claudeFreshRewind: { operationId: input.freshOperationId } };
+      },
+      () => {
+        committed = true;
+        const record = this.cache.get(input.expected.id)!;
+        try {
+          input.onCommitted(record);
+        } catch {
+          throw new HistoryStorageConflictError(
+            `rewind-committed-adoption-failed:${record.persistence?.sessionId}`,
+          );
+        }
+      },
+    );
+    if (!committed) throw new HistoryStorageConflictError("history-identity-write-refused");
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
@@ -188,8 +523,8 @@ export class AgentStorage {
 
   private async writeRecord(record: StoredAgentRecord): Promise<void> {
     const agentId = record.id;
-    const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
+    const nextPath = this.buildRecordPath(record);
 
     await writeJsonFileAtomic(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
@@ -249,11 +584,22 @@ export class AgentStorage {
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, (existing) => {
+        assertPendingClaudeQuerySnapshot(current, existing);
       const record = toStoredAgentRecord(agent, {
         title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
         createdAt: existing?.createdAt,
         internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
       });
+
+        // Older adapters and snapshots do not own daemon history provenance.
+        record.providerHistory = snapshotHistoryBinding(
+          existing,
+          current,
+          record,
+          options?.registerClaudeEmptyCreation,
+        );
+        // Only the explicit rewind queue operation can create/consume this recovery intent.
+        record.claudeFreshRewind = existing?.claudeFreshRewind;
 
       // Preserve soft-delete/archive status across snapshot flushes. The
       // projection runs inside the per-agent write queue so it cannot commit a
@@ -261,8 +607,7 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
-      record.resumeOnStartup =
-        existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+        record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, current);
       return record;
     });
   }
@@ -431,6 +776,43 @@ export class AgentStorage {
   }
 }
 
+function claudeEmptyCreationBinding(
+  existing: StoredAgentRecord,
+  current: ManagedAgent,
+  record: StoredAgentRecord,
+): StoredAgentRecord["providerHistory"] {
+  const previous = existing.providerHistory!;
+  if (
+    previous.origin !== "created" ||
+    previous.sessionId !== null ||
+    record.persistence ||
+    existing.persistence ||
+    previous.storage.kind !== "configured-home" ||
+    previous.storage.provider !== "claude" ||
+    current.provider !== existing.provider ||
+    current.providerHistory?.origin !== "created" ||
+    !sameHistoryStorage(previous.storage, current.providerHistory.storage)
+  )
+    throw new HistoryStorageConflictError("empty-creation-registration-conflict");
+  return { ...previous, registration: "registered" };
+}
+
+function snapshotHistoryBinding(
+  existing: StoredAgentRecord | null,
+  current: ManagedAgent,
+  projected: StoredAgentRecord,
+  registerEmptyCreation = false,
+): StoredAgentRecord["providerHistory"] {
+  if (registerEmptyCreation && existing?.providerHistory?.registration === "intent")
+    return claudeEmptyCreationBinding(existing, current, projected);
+  const previous = existing?.providerHistory;
+  if (previous?.storage.kind === "configured-home") {
+    // Projection normalizes registration; validate the original observation first.
+    return preserveSnapshotHistoryBinding(previous, current.providerHistory, projected.persistence);
+  }
+  return projected.providerHistory ?? previous;
+}
+
 function projectDirNameFromCwd(cwd: string): string {
   // path.win32.parse handles drive letters, UNC roots, and Unix roots on all platforms
   const { root } = path.win32.parse(cwd);
@@ -442,4 +824,13 @@ function projectDirNameFromCwd(cwd: string): string {
     return sanitizedRoot || "root";
   }
   return prefix + withoutRoot.replace(/[\\/]+/g, "-");
+}
+
+function shouldResumeSnapshotOnStartup(
+  existing: StoredAgentRecord | null,
+  snapshot: { lifecycle: string },
+): boolean | undefined {
+  return (
+    existing?.resumeOnStartup && snapshot.lifecycle !== "idle" && snapshot.lifecycle !== "error"
+  );
 }
