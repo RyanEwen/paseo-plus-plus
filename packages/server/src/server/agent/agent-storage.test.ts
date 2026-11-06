@@ -6,6 +6,7 @@ import {
   preserveSnapshotHistoryBinding,
 } from "./provider-history/binding.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import { buildStoredAgentPayload } from "./agent-projections.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
