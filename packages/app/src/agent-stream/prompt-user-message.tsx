@@ -1,14 +1,37 @@
+import { useActualPromptPresentation } from "./use-actual-prompt-presentation";
 import type { TextLayoutEvent } from "react-native";
-import { PromptBubbleGeometryContext, type PromptBubbleNode } from "./prompt-bubble-geometry";
+import {
+  PromptBubbleGeometryContext,
+  PromptPixelOwnerContext,
+  type PromptBubbleNode,
+} from "./prompt-bubble-geometry";
 import { memo, useMemo, useCallback, useContext, type ComponentProps } from "react";
-import { UserMessage } from "@/components/message";
+import { UserMessage } from "@/components/user-message";
 import { PromptNavigationActions, PromptNavigationContext } from "./prompt-navigation-actions";
+import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
+import { ActualPromptRowsContext, ActualPromptFlowGeometryContext } from "./actual-prompt-rows";
+import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import { useChatFindSelectedMessageId } from "./chat-find/selection";
 
 /** Attach viewport-owned navigation without changing the shared message renderer's identity. */
 export const PromptUserMessage = memo(function PromptUserMessage({
   timelineMessageId,
   ...props
 }: ComponentProps<typeof UserMessage> & { timelineMessageId: string }) {
+  const presentation = useActualPromptPresentation(timelineMessageId, props);
+  const nativeLayout = useContext(NativeStickyLayoutContext);
+  const actualRows = useContext(ActualPromptRowsContext);
+  const selectedFindMessageId = useChatFindSelectedMessageId();
+  const webGeometry = useContext(ActualPromptFlowGeometryContext);
+  const reportNaturalGeometry = useCallback(
+    (geometry: NaturalMessageGeometry | null) => {
+      if (nativeLayout) nativeLayout.publishBody(geometry);
+      else webGeometry?.(geometry);
+    },
+    [nativeLayout, webGeometry],
+  );
+  const pixelOwner = useContext(PromptPixelOwnerContext);
+  const copyMask = pixelOwner?.id === timelineMessageId ? pixelOwner : undefined;
   const geometry = useContext(PromptBubbleGeometryContext);
   const registerBubble = useCallback(
     (node: PromptBubbleNode | null) => {
@@ -35,11 +58,19 @@ export const PromptUserMessage = memo(function PromptUserMessage({
   return (
     <UserMessage
       {...props}
+      copyMask={copyMask}
       onBubbleTextLayout={geometry ? onBubbleTextLayout : undefined}
       bubbleRef={geometry ? registerBubble : undefined}
       onBubbleLayout={geometry ? onBubbleLayout : undefined}
       navigationActions={actions}
       keepActionsVisible={navigation?.actionVisibleMessageId === timelineMessageId}
+      {...presentation}
+      bodyPresentation={actualRows ? "actualPrompt" : "ordinaryPreview"}
+      forceOrdinaryPreviewExpanded={selectedFindMessageId === timelineMessageId}
+      onNaturalFlowGeometry={
+        webGeometry || (nativeLayout && actualRows) ? reportNaturalGeometry : undefined
+      }
+      naturalFlowMaximumHeight={webGeometry ? actualRows?.bodyViewportHeight : undefined}
     />
   );
 });

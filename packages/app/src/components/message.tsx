@@ -1,45 +1,31 @@
-import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
-import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
-import {
-  AttachmentFrame,
-  AttachmentLabel,
-  AttachmentThumbnail,
-} from "@/components/attachment-pill";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
-import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { TaskListRow } from "@/components/task-list-row";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
-import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type { TaskActivity, TodoEntry } from "@/types/stream";
 import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
-import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
-import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Check,
   CheckSquare,
   ChevronRight,
   CircleDot,
-  Copy,
   FileSymlink,
   Info,
   MicVocal,
@@ -50,16 +36,7 @@ import {
 } from "lucide-react-native";
 import type { ComponentType, ReactNode } from "react";
 import * as React from "react";
-import {
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Pressable,
@@ -70,7 +47,6 @@ import {
   type GestureResponderEvent,
   type LayoutChangeEvent,
   type TextStyle,
-  type TextLayoutEvent,
 } from "react-native";
 import Animated, {
   Easing,
@@ -90,52 +66,15 @@ import { ToolCallDetailsContent } from "./tool-call-details";
 import { useToolCallSheet } from "./tool-call-sheet";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
-
-interface UserMessageProps {
-  sender?: AgentMessage["sender"];
-  serverId?: string;
-  agentId?: string;
-  messageId?: string;
-  message: string;
-  images?: UserMessageImageAttachment[];
-  attachments?: AgentAttachment[];
-  timestamp: number;
-  capabilities?: AgentCapabilityFlags;
-  client?: DaemonClient | null;
-  isFirstInGroup?: boolean;
-  isLastInGroup?: boolean;
-  isPending?: boolean;
-  disableOuterSpacing?: boolean;
-  /** Prompt navigation measures the original bubble and its text lines. */
-  bubbleRef?: React.Ref<React.ComponentRef<typeof View>>;
-  onBubbleLayout?: () => void;
-  onBubbleTextLayout?: (event: TextLayoutEvent) => void;
-  /** Prompt navigation controls shown beside the timestamp, rewind and copy actions. */
-  navigationActions?: ReactNode;
-  /** Explicit arrow navigation holds actions independently of actual pointer hover. */
-  keepActionsVisible?: boolean;
-}
-
-const MessageOuterSpacingContext = createContext(false);
-
-export function MessageOuterSpacingProvider({
-  disableOuterSpacing,
-  children,
-}: {
-  disableOuterSpacing: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <MessageOuterSpacingContext.Provider value={disableOuterSpacing}>
-      {children}
-    </MessageOuterSpacingContext.Provider>
-  );
-}
-
-function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
-  const contextValue = useContext(MessageOuterSpacingContext);
-  return disableOuterSpacing ?? contextValue;
-}
+export { UserMessage } from "./user-message";
+export { MessageOuterSpacingProvider, STREAM_METADATA_FONT_SIZE } from "./message-layout";
+export { TurnCopyButton } from "./turn-copy-button";
+import {
+  useDisableOuterSpacing,
+  STREAM_METADATA_FONT_SIZE,
+  MESSAGE_TEXT_DATASET,
+} from "./message-layout";
+import { TurnCopyButton } from "./turn-copy-button";
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
@@ -172,7 +111,6 @@ const SCROLL_EDGE_EPSILON = 0.5;
 
 // Font size for stream metadata (timestamps, durations, live elapsed timer).
 // Lives between theme.fontSize.sm (12) and theme.fontSize.base (14); no token.
-export const STREAM_METADATA_FONT_SIZE = 13;
 type ScrollAxis = "x" | "y";
 
 function ensureWebToolCallShimmerKeyframes() {
@@ -299,286 +237,6 @@ function shouldStopDetailWheelPropagation(detailRoot: HTMLElement, event: WheelE
   }
   return canScrollHorizontally;
 }
-
-const userMessageStylesheet = StyleSheet.create((theme) => ({
-  container: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    ...(isWeb ? { userSelect: "text" as const } : {}),
-  },
-  content: {
-    alignItems: "flex-end",
-    maxWidth: "100%",
-    cursor: "auto",
-  },
-  containerSpacing: {
-    marginBottom: theme.spacing[1],
-  },
-  containerFirstInGroup: {
-    marginTop: theme.spacing[4],
-  },
-  containerLastInGroup: {
-    marginBottom: theme.spacing[4],
-  },
-  bubble: {
-    backgroundColor: theme.colors.surface3,
-    borderRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius.sm,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-    minWidth: 0,
-    flexShrink: 1,
-  },
-  text: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.content,
-    ...(isWeb
-      ? {
-          lineHeight: Math.round(theme.fontSize.content * 1.4),
-          overflowWrap: "anywhere" as const,
-        }
-      : {}),
-  },
-  imagePreviewContainer: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    flexWrap: "wrap",
-  },
-  attachmentPreviewContainer: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    flexWrap: "wrap",
-  },
-  imagePreviewSpacing: {
-    marginBottom: theme.spacing[2],
-  },
-  copyButton: {
-    alignSelf: "center",
-    padding: theme.spacing[1],
-    paddingTop: theme.spacing[1],
-    marginTop: 0,
-    marginRight: -theme.spacing[1],
-  },
-  trailingRow: {
-    alignSelf: "flex-end",
-    flexDirection: "row",
-    alignItems: "center",
-    height: 24,
-    gap: theme.spacing[2],
-    marginTop: theme.spacing[2],
-  },
-  trailingRowHidden: {
-    opacity: 0,
-  },
-  trailingRowVisible: {
-    opacity: 1,
-  },
-  timestampText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
-  },
-}));
-
-interface UserMessageImagePillProps {
-  image: UserMessageImageAttachment;
-  onOpen: (image: UserMessageImageAttachment) => void;
-  accessibilityLabel: string;
-}
-
-function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessageImagePillProps) {
-  const handlePress = useCallback(() => {
-    onOpen(image);
-  }, [onOpen, image]);
-  return (
-    <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
-      <AttachmentThumbnail metadata={image} />
-    </AttachmentFrame>
-  );
-}
-
-const MESSAGE_TEXT_DATASET = { messageText: "true" };
-
-/** Touch actions remain available; desktop navigation visibility does not alter actual hover. */
-function areMessageActionsVisible(compact: boolean, hovered: boolean, navigationHeld?: boolean) {
-  return compact || isNative || hovered || navigationHeld === true;
-}
-
-export const UserMessage = memo(function UserMessage({
-  sender,
-  serverId,
-  agentId,
-  messageId,
-  message,
-  images = [],
-  attachments = [],
-  timestamp,
-  capabilities,
-  client,
-  isFirstInGroup = true,
-  isLastInGroup = true,
-  isPending = false,
-  disableOuterSpacing,
-  bubbleRef,
-  onBubbleLayout,
-  onBubbleTextLayout,
-  navigationActions,
-  keepActionsVisible,
-}: UserMessageProps) {
-  const isCompact = useIsCompactFormFactor();
-  const { t } = useTranslation();
-  const [isHovered, setIsHovered] = useState(false);
-  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
-  const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
-  const lightboxSource = useMemo<ImageLightboxSource | null>(
-    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
-    [lightboxMetadata],
-  );
-  const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
-  const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
-  const hasAttachments = attachments.length > 0;
-  const hasTrailingRow = hasText || !!navigationActions;
-  const showTrailingRow =
-    !isPending &&
-    hasTrailingRow &&
-    areMessageActionsVisible(isCompact, isHovered, keepActionsVisible);
-  const formattedTimestamp = useMemo(
-    () => formatMessageTimestamp(new Date(timestamp)),
-    [timestamp],
-  );
-  const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
-
-  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const getMessageContent = useCallback(() => message, [message]);
-  const handleRewind = useCallback(
-    (input: { mode: RewindMode; rewoundText: string }) => {
-      return rewindMutation.rewindAgent(input);
-    },
-    [rewindMutation],
-  );
-
-  const containerStyle = useMemo(
-    () => [
-      userMessageStylesheet.container,
-      !resolvedDisableOuterSpacing && [
-        isFirstInGroup ? userMessageStylesheet.containerFirstInGroup : null,
-        isLastInGroup ? userMessageStylesheet.containerLastInGroup : null,
-        !isFirstInGroup || !isLastInGroup ? userMessageStylesheet.containerSpacing : null,
-      ],
-    ],
-    [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup],
-  );
-  const imagePreviewContainerStyle = useMemo(
-    () => [
-      userMessageStylesheet.imagePreviewContainer,
-      hasText || hasAttachments ? userMessageStylesheet.imagePreviewSpacing : undefined,
-    ],
-    [hasAttachments, hasText],
-  );
-  const attachmentPreviewContainerStyle = useMemo(
-    () => [
-      userMessageStylesheet.attachmentPreviewContainer,
-      hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
-    ],
-    [hasText],
-  );
-  const trailingRowStyle = useMemo(
-    () => [
-      userMessageStylesheet.trailingRow,
-      showTrailingRow
-        ? userMessageStylesheet.trailingRowVisible
-        : userMessageStylesheet.trailingRowHidden,
-    ],
-    [showTrailingRow],
-  );
-
-  return (
-    <View style={containerStyle} testID="user-message" aria-busy={isPending}>
-      <View
-        style={userMessageStylesheet.content}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
-      >
-        {sender ? <MessageSender sender={sender} serverId={serverId} /> : null}
-        <View style={userMessageStylesheet.bubble} ref={bubbleRef} onLayout={onBubbleLayout}>
-          <MessagePreview>
-            {hasImages ? (
-              <View style={imagePreviewContainerStyle}>
-                {images.map((image) => (
-                  <UserMessageImagePill
-                    key={image.id}
-                    image={image}
-                    onOpen={setLightboxMetadata}
-                    accessibilityLabel={t("composer.attachments.openImage")}
-                  />
-                ))}
-              </View>
-            ) : null}
-            {hasAttachments ? (
-              <View style={attachmentPreviewContainerStyle}>
-                {attachments.map((attachment, index) => {
-                  const content = getAgentAttachmentPillContent(attachment, t);
-                  return (
-                    <AttachmentFrame
-                      key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                    >
-                      <AttachmentLabel
-                        icon={content.icon}
-                        title={content.title}
-                        subtitle={content.subtitle}
-                      />
-                    </AttachmentFrame>
-                  );
-                })}
-              </View>
-            ) : null}
-            {hasText ? (
-              <Text
-                selectable
-                style={userMessageStylesheet.text}
-                dataSet={MESSAGE_TEXT_DATASET}
-                onTextLayout={onBubbleTextLayout}
-              >
-                {message}
-              </Text>
-            ) : null}
-          </MessagePreview>
-        </View>
-        {hasTrailingRow ? (
-          <View
-            style={trailingRowStyle}
-            pointerEvents={showTrailingRow ? "auto" : "none"}
-            testID="user-message-trailing-row"
-          >
-            {hasText ? (
-              <>
-                <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
-                  {formattedTimestamp}
-                </Text>
-                {capabilities && messageId ? (
-                  <RewindMenu
-                    capabilities={capabilities}
-                    isPending={rewindMutation.isPending}
-                    rewoundText={message}
-                    onRewind={handleRewind}
-                  />
-                ) : null}
-                <TurnCopyButton
-                  getContent={getMessageContent}
-                  containerStyle={userMessageStylesheet.copyButton}
-                  accessibilityLabel={t("message.actions.copyMessage")}
-                />
-              </>
-            ) : null}
-            {navigationActions}
-          </View>
-        ) : null}
-      </View>
-      <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
-    </View>
-  );
-});
 
 interface AssistantTurnFooterProps {
   getContent?: () => string;
@@ -817,95 +475,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     textAlign: "center",
   },
 }));
-
-const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
-  container: {
-    alignSelf: "flex-start",
-    padding: theme.spacing[2],
-    paddingTop: 0,
-    marginTop: theme.spacing[2],
-  },
-  iconColor: {
-    color: theme.colors.foregroundMuted,
-  },
-  iconHoveredColor: {
-    color: theme.colors.foreground,
-  },
-}));
-
-interface TurnCopyButtonProps {
-  getContent: () => string;
-  containerStyle?: StyleProp<ViewStyle>;
-  accessibilityLabel?: string;
-  copiedAccessibilityLabel?: string;
-}
-
-export const TurnCopyButton = memo(function TurnCopyButton({
-  getContent,
-  containerStyle,
-  accessibilityLabel,
-  copiedAccessibilityLabel,
-}: TurnCopyButtonProps) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleCopy = useCallback(async () => {
-    const content = getContent();
-    if (!content) {
-      return;
-    }
-
-    await writeMarkdownToRichClipboard(content, getDefaultMarkdownClipboardEnvironment());
-    setCopied(true);
-
-    if (copyTimeoutRef.current) {
-      clearTimeout(copyTimeoutRef.current);
-    }
-
-    copyTimeoutRef.current = setTimeout(() => {
-      setCopied(false);
-      copyTimeoutRef.current = null;
-    }, 1500);
-  }, [getContent]);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const pressableStyle = useMemo(
-    () => [turnCopyButtonStylesheet.container, containerStyle],
-    [containerStyle],
-  );
-
-  return (
-    <Pressable
-      onPress={handleCopy}
-      style={pressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel={
-        copied
-          ? (copiedAccessibilityLabel ?? t("message.actions.copied"))
-          : (accessibilityLabel ?? t("message.actions.copyTurn"))
-      }
-    >
-      {({ hovered }) => {
-        const iconColor = hovered
-          ? turnCopyButtonStylesheet.iconHoveredColor.color
-          : turnCopyButtonStylesheet.iconColor.color;
-        return copied ? (
-          <Check size={ICON_SIZE.sm} color={iconColor} />
-        ) : (
-          <Copy size={ICON_SIZE.sm} color={iconColor} />
-        );
-      }}
-    </Pressable>
-  );
-});
 
 const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   container: {
