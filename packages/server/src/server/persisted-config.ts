@@ -1,3 +1,4 @@
+import { DaemonNotificationPreferencesSchema } from "@getpaseo/protocol/agent-attention";
 import { readFile } from "node:fs/promises";
 import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
@@ -273,6 +274,7 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        notifications: DaemonNotificationPreferencesSchema.optional(),
         autoArchiveAfterMerge: z.boolean().optional(),
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),

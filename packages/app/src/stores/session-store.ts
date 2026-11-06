@@ -94,6 +94,8 @@ export interface Agent {
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
+  humanAttentionRequired?: boolean;
+  attentionMessage?: string | null;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
@@ -123,6 +125,7 @@ export interface WorkspaceDescriptor {
   projectPinnedAt?: string | null;
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
+  humanAttentionRequired?: boolean;
   statusEnteredAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
@@ -168,6 +171,7 @@ export function normalizeWorkspaceDescriptor(
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
     status: payload.status,
+    humanAttentionRequired: payload.humanAttentionRequired,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
@@ -278,6 +282,8 @@ export interface DaemonServerInfo {
   version: string | null;
   desktopManaged?: boolean;
   capabilities?: ServerCapabilities;
+  /** Existing authenticated handshake permissions, used only to gate UI; the daemon still authorizes saves. */
+  permissions?: ServerInfoStatusPayload["permissions"];
   features?: ServerInfoStatusPayload["features"];
 }
 
@@ -290,6 +296,7 @@ export function toDaemonServerInfo(serverInfo: ServerInfoStatusPayload): DaemonS
       ? { desktopManaged: serverInfo.desktopManaged }
       : {}),
     ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
+    ...(serverInfo.permissions ? { permissions: [...serverInfo.permissions] } : {}),
     ...(serverInfo.features ? { features: serverInfo.features } : {}),
   };
 }
@@ -705,6 +712,7 @@ function isSessionServerInfoUnchanged(input: {
   nextVersion: string | null;
   nextDesktopManaged: boolean | undefined;
   nextCapabilities: ServerCapabilities | undefined;
+  nextPermissions: ServerInfoStatusPayload["permissions"];
   nextFeatures: ServerInfoStatusPayload["features"] | undefined;
   nextServerId: string;
 }): boolean {
@@ -714,6 +722,7 @@ function isSessionServerInfoUnchanged(input: {
     nextVersion,
     nextDesktopManaged,
     nextCapabilities,
+    nextPermissions,
     nextFeatures,
   } = input;
   const prevHostname = currentServerInfo?.hostname?.trim() || null;
@@ -724,6 +733,8 @@ function isSessionServerInfoUnchanged(input: {
     prevVersion === nextVersion &&
     currentServerInfo?.desktopManaged === nextDesktopManaged &&
     areServerCapabilitiesEqual(currentServerInfo?.capabilities, nextCapabilities) &&
+    JSON.stringify(currentServerInfo?.permissions ?? null) ===
+      JSON.stringify(nextPermissions ?? null) &&
     areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
   );
 }
@@ -861,6 +872,7 @@ export const useSessionStore = create<SessionStore>()(
           const nextVersion = info.version?.trim() || null;
           const nextDesktopManaged = info.desktopManaged;
           const nextCapabilities = info.capabilities;
+          const nextPermissions = info.permissions;
           const nextFeatures = info.features;
 
           if (
@@ -870,6 +882,7 @@ export const useSessionStore = create<SessionStore>()(
               nextVersion,
               nextDesktopManaged,
               nextCapabilities,
+              nextPermissions,
               nextFeatures,
               nextServerId: info.serverId,
             })
@@ -891,6 +904,7 @@ export const useSessionStore = create<SessionStore>()(
                     ? { desktopManaged: nextDesktopManaged }
                     : {}),
                   ...(nextCapabilities ? { capabilities: nextCapabilities } : {}),
+                  ...(nextPermissions ? { permissions: [...nextPermissions] } : {}),
                   ...(nextFeatures ? { features: nextFeatures } : {}),
                 },
               },
@@ -1897,6 +1911,8 @@ export const useSessionStore = create<SessionStore>()(
             provider: agent.provider,
             pendingPermissionCount: agent.pendingPermissions.length,
             requiresAttention: agent.requiresAttention ?? false,
+            humanAttentionRequired: agent.humanAttentionRequired,
+            attentionMessage: agent.attentionMessage,
             attentionReason: agent.attentionReason ?? null,
             attentionTimestamp: agent.attentionTimestamp ?? null,
             createdAt: agent.createdAt,

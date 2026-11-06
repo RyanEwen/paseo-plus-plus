@@ -6555,7 +6555,12 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
   expect(describeWorkspaceRecord).toHaveBeenCalledWith(workspace, project);
   expect(describeWorkspaceRecordWithGitData).not.toHaveBeenCalled();
   expect(descriptors).toEqual([
-    { ...baselineDescriptor, createdAt: workspace.createdAt, lastUserMessageAt: null },
+    {
+      ...baselineDescriptor,
+      createdAt: workspace.createdAt,
+      lastUserMessageAt: null,
+      humanAttentionRequired: false,
+    },
   ]);
 });
 

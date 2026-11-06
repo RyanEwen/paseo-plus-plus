@@ -1,9 +1,12 @@
+import { createJsonFinishSubscriptionStore } from "../agent/finish-subscriptions/index.js";
+import { randomUUID } from "node:crypto";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { z } from "zod";
 import pino from "pino";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { createHostClient, createHostChannelTransport } from "@getpaseo/client/node";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -1452,6 +1455,9 @@ test(
       serverId: directory.self.serverId,
       snapshot: { title: "Unrelated equal ID on A" },
     });
+    // This fixture invokes MCP as an idle legacy caller, after prior callback work has finished.
+    await aClient.waitForFinish(parent.id, 10000);
+    expect(await call("get_attention_context", {})).toMatchObject({ activeObjectiveIds: [] });
     const beforeFollowup = parentPrompts.filter((prompt) =>
       prompt.includes(`Agent ${remote.agentId}`),
     ).length;
@@ -1506,6 +1512,8 @@ test(
         serverId: directory.self.serverId,
         snapshot: { title: "Self child" },
       });
+      await aClient.waitForFinish(parent.id, 10000);
+      expect(await call("get_attention_context", {})).toMatchObject({ activeObjectiveIds: [] });
       const previous = parentPrompts.filter((prompt) =>
         prompt.includes(`Agent ${self.agentId}`),
       ).length;
@@ -1553,14 +1561,21 @@ test(
     cleanup.push(async () => {
       finishChild.resolve();
     });
+    const batchLogger = createTestLogger();
+    const batchErrors = vi.spyOn(batchLogger, "error");
     const a = await daemon({
-      logger: completionLogger(),
+      logger: batchLogger,
       agentClients: createTestAgentClients({
         onStartTurn: (prompt, config) => {
           if (config.title === "Batch parent")
             parentPrompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
         },
       }),
+    });
+    const startWaits = vi.spyOn(a.daemon.agentManager, "waitForAgentRunStart");
+    cleanup.push(async () => {
+      startWaits.mockRestore();
+      batchErrors.mockRestore();
     });
     const b = await daemon({
       agentClients: createTestAgentClients({
@@ -1685,6 +1700,60 @@ test(
         message: "Parent accepted the batch; waiting for durable receipt commits",
       })
       .toEqual(["completed", "completed"]);
+    interface StartWaitObservation {
+      status: "pending" | "fulfilled" | "rejected";
+      failure?: string;
+    }
+    function failureKind(error: unknown): string {
+      if (!(error instanceof Error)) return "non-error";
+      if (error.message.endsWith("has no pending run")) return "no-pending-run";
+      if (error.message.endsWith("run finished before starting"))
+        return "finished-before-start-observation";
+      if (error.message === "Active turn changed before steering could be delivered")
+        return "active-turn-changed";
+      if ("code" in error && ["EPERM", "EACCES", "ENOENT"].includes(String(error.code)))
+        return String(error.code);
+      return "unclassified";
+    }
+    const observedStarts: StartWaitObservation[] = [];
+    for (const [index, result] of startWaits.mock.results.entries()) {
+      if (startWaits.mock.calls[index]?.[0] !== parent.id || result.type !== "return") continue;
+      const observation: StartWaitObservation = { status: "pending" };
+      observedStarts.push(observation);
+      void result.value.then(
+        () => {
+          observation.status = "fulfilled";
+          return undefined;
+        },
+        (error: unknown) => {
+          observation.status = "rejected";
+          observation.failure = failureKind(error);
+          return undefined;
+        },
+      );
+    }
+    try {
+      await expect.poll(receiptStates, { timeout: 10000 }).toEqual(["completed", "completed"]);
+    } catch (error) {
+      const parentState = a.daemon.agentManager.getAgent(parent.id);
+      const failures = batchErrors.mock.calls.map(([details]) =>
+        failureKind(
+          typeof details === "object" && details !== null && "err" in details
+            ? details.err
+            : undefined,
+        ),
+      );
+      throw new Error(
+        `Recipient batch evidence: ${JSON.stringify({
+          starts: observedStarts,
+          failures,
+          lifecycle: parentState?.lifecycle,
+          active: !!parentState?.activeForegroundTurnId,
+          pendingReplacement: parentState?.pendingReplacement,
+        })}`,
+        { cause: error },
+      );
+    }
     const timeline = await origin.client.fetchAgentTimeline(parent.id);
     const messages = timeline.entries.flatMap((row) =>
       row.item.type === "tool_call" && row.item.agentMessage ? [row.item.agentMessage] : [],
@@ -1762,6 +1831,140 @@ test(
       "send_agent_message_request",
     ]);
     expect(requests[1]).not.toHaveProperty("sessionMode");
+  },
+);
+
+test(
+  "routed request rejection before observation cannot become an unrelated completion callback",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => {
+          if (JSON.stringify(prompt).includes("REJECT_BEFORE_ACCEPTANCE"))
+            throw new Error("Exact requested start failed");
+        },
+      }),
+    });
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const serverId = directory.hosts[0]?.serverId;
+    if (!serverId) throw new Error("Expected routed target host");
+    const routed = new DaemonClient({
+      url: "ws://attention-target/ws",
+      clientId: "attention-target",
+      transportFactory: createHostChannelTransport(
+        origin.client,
+        serverId,
+        "attention-target",
+        null,
+      ),
+      reconnect: { enabled: false },
+    });
+    cleanup.push(() => routed.close());
+    await routed.connect();
+    expect(routed.getLastServerInfoMessage()?.serverId).toBe(serverId);
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const worker = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Request correlation",
+    });
+    const requester = { agentId: randomUUID(), serverId: directory.self.serverId };
+    const link = { objectiveId: randomUUID(), requestId: randomUUID(), token: randomUUID() };
+    await routed.sendAgentMessage(worker.id, "REJECT_BEFORE_ACCEPTANCE", {
+      messageId: link.requestId,
+      sourceAgentId: requester.agentId,
+      sourceAgentServerId: requester.serverId,
+      agentAttention: { requesterObjective: link },
+    });
+    await destination.client.waitForFinish(worker.id, 10000);
+    await b.daemon.agentManager.reloadAgentSession(worker.id);
+    await routed.sendAgentMessage(worker.id, "UNRELATED_LATER_RESULT");
+    await routed.waitForFinish(worker.id, 10000);
+    // Attach only after the failed queue entry is gone and later work has completed.
+    const result = await routed.waitForAttentionOutcome({
+      agentId: worker.id,
+      attentionRequest: { requester, link },
+    });
+    expect(result.attentionOutcome).toMatchObject({
+      requestId: link.requestId,
+      kind: "rejected",
+      acceptedTurnId: null,
+      lastMessage: null,
+      error: "Exact requested start failed",
+    });
+    expect(result.lastMessage).toBeNull();
+  },
+);
+
+test(
+  "routed completed request keeps its exact outcome after a later accepted turn",
+  { timeout: 30000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon();
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const serverId = directory.hosts[0]?.serverId;
+    if (!serverId) throw new Error("Expected routed target host");
+    const routed = new DaemonClient({
+      url: "ws://attention-exact/ws",
+      clientId: "attention-exact",
+      transportFactory: createHostChannelTransport(
+        origin.client,
+        serverId,
+        "attention-exact",
+        null,
+      ),
+      reconnect: { enabled: false },
+    });
+    cleanup.push(() => routed.close());
+    await routed.connect();
+    expect(routed.getLastServerInfoMessage()?.serverId).toBe(serverId);
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const worker = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Exact request",
+    });
+    const requester = { agentId: randomUUID(), serverId: directory.self.serverId };
+    const link = { objectiveId: randomUUID(), requestId: randomUUID(), token: randomUUID() };
+    await routed.sendAgentMessage(worker.id, "Respond with exactly: EXACT_ACCEPTED_A", {
+      messageId: link.requestId,
+      sourceAgentId: requester.agentId,
+      sourceAgentServerId: requester.serverId,
+      agentAttention: { requesterObjective: link },
+    });
+    await routed.waitForFinish(worker.id, 10000);
+    expect(await b.daemon.agentManager.getLastAssistantMessage(worker.id)).toBe("EXACT_ACCEPTED_A");
+    await routed.sendAgentMessage(worker.id, "Respond with exactly: UNRELATED_B");
+    await routed.waitForFinish(worker.id, 10000);
+    expect(await b.daemon.agentManager.getLastAssistantMessage(worker.id)).toBe("UNRELATED_B");
+    const result = await routed.waitForAttentionOutcome({
+      agentId: worker.id,
+      attentionRequest: { requester, link },
+    });
+    expect(result.attentionOutcome).toMatchObject({
+      kind: "finished",
+      requestId: link.requestId,
+      requester,
+    });
+    expect(result.attentionOutcome?.acceptedTurnId).toBeTruthy();
+    expect(result.lastMessage).toContain("EXACT_ACCEPTED_A");
+    expect(result.lastMessage).not.toContain("UNRELATED_B");
+    const acknowledged = await routed.waitForAttentionOutcome({
+      agentId: worker.id,
+      attentionRequest: { requester, link, acknowledgeOutcomeId: result.attentionOutcome?.id },
+    });
+    expect(acknowledged.attentionOutcome).toBeNull();
   },
 );
 
@@ -1993,8 +2196,9 @@ test(
       arguments: { serverId, agentId: child.id, prompt: "Never sent" },
     });
     expect(response.isError).toBe(true);
-    const records = () =>
-      readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8").then(JSON.parse);
+    // A rejected preflight can precede the first subscription write. Read through
+    // the durable store, whose absent-file contract is an empty intent list.
+    const records = () => createJsonFinishSubscriptionStore(a.paseoHome).list();
     expect(await records()).toEqual([]);
     await origin.paseo.hosts.update(saved.registrationId, { enabled: true });
     await online(origin.paseo);

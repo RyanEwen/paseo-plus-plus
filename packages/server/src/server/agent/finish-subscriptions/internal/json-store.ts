@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { AgentAttentionRequestQuerySchema } from "@getpaseo/protocol/agent-attention";
 import { writeJsonFileAtomic } from "../../../atomic-file.js";
 import type { FinishSubscription, FinishSubscriptionStore } from "../index.js";
 
@@ -11,6 +12,10 @@ const recordsSchema = z.array(
     childAgentId: z.string().min(1),
     serverId: z.string().min(1).optional(),
     requireParentOwnership: z.boolean().optional(),
+    attention: AgentAttentionRequestQuerySchema.optional(),
+    pendingAcknowledgement: z
+      .object({ outcomeId: z.string().min(1), terminal: z.boolean() })
+      .optional(),
   }),
 );
 

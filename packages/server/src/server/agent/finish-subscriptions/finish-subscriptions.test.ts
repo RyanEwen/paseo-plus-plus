@@ -12,6 +12,7 @@ import {
   createFinishSubscriptions,
   createJsonFinishSubscriptionStore,
   type FinishObservation,
+  type FinishSubscription,
   type FinishSubscriptions,
 } from "./index.js";
 
@@ -25,21 +26,24 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 class Observation implements FinishObservation {
-  waits: Array<{ signal: AbortSignal; result: ReturnType<typeof deferred<WaitForFinishResult>> }> =
-    [];
+  waits: Array<{
+    record?: FinishSubscription;
+    signal: AbortSignal;
+    result: ReturnType<typeof deferred<WaitForFinishResult>>;
+  }> = [];
   permission = deferred<void>();
   opening: Promise<void> = Promise.resolve();
   openedSignals: AbortSignal[] = [];
-  async open(_record: unknown, signal: AbortSignal) {
+  async open(record: FinishSubscription, signal: AbortSignal) {
     this.openedSignals.push(signal);
     await this.opening;
-    return { next: () => this.wait(signal), close: async () => {} };
+    return { next: () => this.wait(signal, record), close: async () => {} };
   }
-  async wait(signal: AbortSignal) {
+  async wait(signal: AbortSignal, record?: FinishSubscription) {
     signal.throwIfAborted();
     const result = deferred<WaitForFinishResult>();
     signal.addEventListener("abort", () => result.reject(new Error("Stopped")), { once: true });
-    this.waits.push({ signal, result });
+    this.waits.push({ record, signal, result });
     return result.promise;
   }
   afterPermission() {
@@ -68,7 +72,12 @@ afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
-async function scenario(directory?: string, removalFailures = 0, retryDelayMs = 1) {
+async function scenario(
+  directory?: string,
+  removalFailures = 0,
+  retryDelayMs = 1,
+  exact: Pick<FinishObservation, "deliverExact" | "acknowledgeExact"> = {},
+) {
   const home = directory ?? (await mkdtemp(join(tmpdir(), "finish-recovery-")));
   if (!directory) homes.push(home);
   const durableStore = createJsonFinishSubscriptionStore(home);
@@ -89,6 +98,7 @@ async function scenario(directory?: string, removalFailures = 0, retryDelayMs = 
     store,
     messages: () => delivery,
     open: observation.open.bind(observation),
+    ...exact,
     callerIsActive: async () => active,
     serverId: "origin",
     logger: createTestLogger(),
@@ -496,4 +506,107 @@ test("finish recovery protects callers before durable intent has loaded", async 
   await starting;
   expect(recovered.hasPendingForCaller("parent")).toBe(true);
   expect(recovered.hasPendingForCaller("unrelated")).toBe(false);
+});
+
+function exactIntent(requestId: string) {
+  return {
+    ...intent,
+    serverId: "target",
+    attention: {
+      link: { objectiveId: "human", requestId, token: `capability-${requestId}` },
+      requester: { agentId: "parent", serverId: "origin" },
+    },
+  };
+}
+
+test("distinct exact requests for the same child coexist and settle in reverse order", async () => {
+  const delivered: string[] = [];
+  const acknowledged: string[] = [];
+  const h = await scenario(undefined, 0, 1, {
+    deliverExact: async (record) => {
+      const id = record.attention!.link.requestId;
+      delivered.push(id);
+      return { outcomeId: `outcome-${id}`, terminal: true };
+    },
+    acknowledgeExact: async (_record, outcomeId) => {
+      acknowledged.push(outcomeId);
+    },
+  });
+  await h.service.register(exactIntent("A"));
+  await h.service.register(exactIntent("B"));
+  await until(() => h.observation.waits.length === 2);
+  expect((await h.store.list()).map((record) => record.attention?.link.requestId)).toEqual([
+    "A",
+    "B",
+  ]);
+  h.observation.waits[1]!.result.resolve(outcome());
+  await until(() => acknowledged.length === 1);
+  expect(h.observation.waits[0]!.signal.aborted).toBe(false);
+  h.observation.waits[0]!.result.resolve(outcome());
+  await expect.poll(() => h.store.list()).toEqual([]);
+  expect(delivered).toEqual(["B", "A"]);
+  expect(acknowledged).toEqual(["outcome-B", "outcome-A"]);
+  expect(h.delivery.prompts).toEqual([]);
+});
+
+test("restart retries only target acknowledgment after exact source consumption", async () => {
+  let delivered = 0;
+  let ackAttempts = 0;
+  const first = await scenario(undefined, 0, 10000, {
+    deliverExact: async () => {
+      delivered += 1;
+      return { outcomeId: "immutable-outcome", terminal: true };
+    },
+    acknowledgeExact: async () => {
+      ackAttempts += 1;
+      throw new Error("Target disconnected after source consumption");
+    },
+  });
+  await first.service.register(exactIntent("request"));
+  await until(() => first.observation.waits.length === 1);
+  first.observation.waits[0]!.result.resolve(outcome());
+  await until(() => ackAttempts === 1);
+  expect((await first.store.list())[0]?.pendingAcknowledgement).toEqual({
+    outcomeId: "immutable-outcome",
+    terminal: true,
+  });
+  await first.service.close();
+  const acknowledgments: string[] = [];
+  const recovered = await scenario(first.home, 1, 1, {
+    deliverExact: async () => {
+      throw new Error("Consumed source must not enqueue another callback");
+    },
+    acknowledgeExact: async (_record, id) => {
+      acknowledgments.push(id);
+    },
+  });
+  await expect.poll(() => recovered.store.list()).toEqual([]);
+  expect(delivered).toBe(1);
+  expect(recovered.observation.waits).toEqual([]);
+  expect(recovered.delivery.prompts).toEqual([]);
+  expect(acknowledgments).toEqual(["immutable-outcome"]);
+});
+
+test("an exact permission checkpoint is acknowledged before observing the same request again", async () => {
+  const actions: string[] = [];
+  let read = 0;
+  const h = await scenario(undefined, 0, 1, {
+    deliverExact: async () => {
+      read += 1;
+      actions.push(`consumed-${read}`);
+      return { outcomeId: `outcome-${read}`, terminal: read === 2 };
+    },
+    acknowledgeExact: async (_record, id) => {
+      actions.push(`ack-${id}`);
+    },
+  });
+  await h.service.register(exactIntent("permission-then-final"));
+  await until(() => h.observation.waits.length === 1);
+  h.observation.waits[0]!.result.resolve({ ...outcome(), status: "permission" });
+  await until(() => h.observation.waits.length === 2);
+  expect(actions).toEqual(["consumed-1", "ack-outcome-1"]);
+  expect((await h.store.list())[0]?.attention?.link.requestId).toBe("permission-then-final");
+  h.observation.waits[1]!.result.resolve(outcome());
+  await expect.poll(() => h.store.list()).toEqual([]);
+  expect(actions).toEqual(["consumed-1", "ack-outcome-1", "consumed-2", "ack-outcome-2"]);
 });
