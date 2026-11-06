@@ -1,3 +1,4 @@
+import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { createProjectIconTarget, type ProjectIconTarget } from "@/projects/icon-target";
 
@@ -131,4 +132,15 @@ export function buildSidebarProjectRowModel(input: {
       input.preferredServerId,
     ),
   };
+}
+
+/** Keep the legacy collapsed icon status when chips are disabled; the chip owns working motion otherwise. */
+export function resolveSidebarProjectLeadingStatus(
+  bucket: SidebarStateBucket | null,
+  chipsEnabled: boolean,
+  collapsed: boolean,
+): SidebarStateBucket | null {
+  if (!chipsEnabled) return collapsed ? bucket : null;
+  if (bucket === "running") return null;
+  return bucket;
 }

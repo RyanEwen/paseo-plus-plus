@@ -10,7 +10,10 @@ import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import { useSessionStore } from "@/stores/session-store";
 import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
+import { ProjectActivityChip } from "./sidebar/project-activity-chip";
+import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
 import { useAppSettings } from "@/hooks/use-settings";
+import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -77,7 +80,6 @@ import {
 } from "@/utils/host-routes";
 import {
   shouldShowSidebarHostLabels,
-  useSidebarProjectStatusBucket,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
@@ -109,7 +111,7 @@ import {
   resolveProjectWorkspaceReorder,
 } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
@@ -153,6 +155,7 @@ import {
   resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
   type SidebarProjectIconTarget,
+  resolveSidebarProjectLeadingStatus,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -269,6 +272,7 @@ interface ProjectHeaderRowProps {
   displayName: string;
   iconDataUri: string | null;
   statusBucket: SidebarStateBucket | null;
+  workingWorkspaceCount: number;
   selected?: boolean;
   chevron: "expand" | "collapse" | null;
   onPress: () => void;
@@ -427,6 +431,10 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
   },
 }));
 
+const PROJECT_ACTION_SIZE = 24;
+const PROJECT_ACTION_GAP = 2;
+const PROJECT_ACTION_OPTICAL_OFFSET = 6;
+
 function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
@@ -453,32 +461,43 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const controlCount = Number(Boolean(worktreeTarget)) + Number(Boolean(onRemoveProject));
+  const actionsWidth =
+    controlCount * PROJECT_ACTION_SIZE +
+    Math.max(0, controlCount - 1) * PROJECT_ACTION_GAP -
+    PROJECT_ACTION_OPTICAL_OFFSET;
   return (
-    <View style={styles.projectTrailingActions}>
-      {worktreeTarget ? (
-        <NewWorktreeButton
-          displayName={displayName}
-          onPress={onBeginWorkspaceSetup}
-          visible={actionsVisible}
-          showShortcutHint={isProjectActive}
-          testID={`sidebar-project-new-worktree-${projectViewKey}`}
-        />
-      ) : null}
-      {onRemoveProject ? (
-        <View
-          style={!actionsVisible && styles.projectKebabButtonHidden}
-          pointerEvents={actionsVisible ? "auto" : "none"}
-        >
-          <ProjectKebabMenu
-            projectViewKey={projectViewKey}
-            settingsTarget={settingsTarget}
-            projectPath={projectPath}
-            onRemoveProject={onRemoveProject}
-            removeProjectStatus={removeProjectStatus}
+    <HoverRevealActions
+      visible={actionsVisible}
+      width={Math.max(0, actionsWidth)}
+      height={PROJECT_ACTION_SIZE}
+    >
+      <View style={styles.projectTrailingActions}>
+        {worktreeTarget ? (
+          <NewWorktreeButton
+            displayName={displayName}
+            onPress={onBeginWorkspaceSetup}
+            visible={actionsVisible}
+            showShortcutHint={isProjectActive}
+            testID={`sidebar-project-new-worktree-${projectViewKey}`}
           />
-        </View>
-      ) : null}
-    </View>
+        ) : null}
+        {onRemoveProject ? (
+          <View
+            style={!actionsVisible && styles.projectKebabButtonHidden}
+            pointerEvents={actionsVisible ? "auto" : "none"}
+          >
+            <ProjectKebabMenu
+              projectViewKey={projectViewKey}
+              settingsTarget={settingsTarget}
+              projectPath={projectPath}
+              onRemoveProject={onRemoveProject}
+              removeProjectStatus={removeProjectStatus}
+            />
+          </View>
+        ) : null}
+      </View>
+    </HoverRevealActions>
   );
 }
 
@@ -885,6 +904,7 @@ function ProjectHeaderRow({
   displayName,
   iconDataUri,
   statusBucket,
+  workingWorkspaceCount,
   selected = false,
   chevron,
   onPress,
@@ -902,6 +922,8 @@ function ProjectHeaderRow({
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
+  const { settings } = useAppSettings();
+  const { sidebarActivityChips } = settings.paseoPlusPlus;
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -979,18 +1001,35 @@ function ProjectHeaderRow({
         <ProjectLeadingVisual
           displayName={displayName}
           iconDataUri={iconDataUri}
-          statusBucket={statusBucket}
+          statusBucket={resolveSidebarProjectLeadingStatus(
+            statusBucket,
+            sidebarActivityChips,
+            chevron === "expand",
+          )}
           projectViewKey={project.viewKey}
-          backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
+          backdrop={getSidebarRowBackdrop({
+            isDragging,
+            isPressed,
+            selected,
+            isHovered,
+          })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
+          statusIsDecorative={sidebarActivityChips}
         />
 
         <View style={styles.projectTitleGroup}>
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
+          {sidebarActivityChips ? (
+            <ProjectActivityChip
+              bucket={statusBucket}
+              workingWorkspaceCount={workingWorkspaceCount}
+              projectViewKey={project.viewKey}
+            />
+          ) : null}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -1585,6 +1624,8 @@ function WorkspaceRow({
 
 function ProjectBlock({
   project,
+  aggregateStatusBucket,
+  workingWorkspaceCount,
   workspaceEntriesByKey,
   collapsed,
   displayName,
@@ -1611,6 +1652,8 @@ function ProjectBlock({
   onToggleWorkspacePin,
 }: {
   project: SidebarProjectEntry;
+  aggregateStatusBucket: SidebarStateBucket | null;
+  workingWorkspaceCount: number;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   collapsed: boolean;
   displayName: string;
@@ -1665,13 +1708,6 @@ function ProjectBlock({
       }),
     [collapsed, preferredServerId, project, supportsMultiplicityByServerId],
   );
-
-  // Collapsed rows hide their workspace rows, so the project row carries the most urgent
-  // status among them; expanded rows leave the signal to the child rows themselves.
-  const aggregateStatusBucket = useSidebarProjectStatusBucket({
-    workspaces: project.workspaces,
-    enabled: collapsed,
-  });
 
   const active = isProjectSelectedByRoute({
     selection: activeWorkspaceSelection,
@@ -1914,6 +1950,7 @@ function ProjectBlock({
         displayName={displayName}
         iconDataUri={iconDataUri}
         statusBucket={aggregateStatusBucket}
+        workingWorkspaceCount={workingWorkspaceCount}
         selected={false}
         chevron={rowModel.chevron}
         onPress={handleToggleCollapsed}
@@ -2344,6 +2381,7 @@ function ProjectModeList({
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
+  const projectStatusBuckets = useSidebarProjectActivity(projects, workspaceEntriesByKey);
   const { settings } = useAppSettings();
   const projectPinningEnabled = settings.paseoPlusPlus.projectPinning;
   const { t } = useTranslation();
@@ -2557,6 +2595,8 @@ function ProjectModeList({
         <MemoProjectBlock
           key={item.viewKey}
           project={item}
+          aggregateStatusBucket={projectStatusBuckets.get(item.viewKey)?.bucket ?? null}
+          workingWorkspaceCount={projectStatusBuckets.get(item.viewKey)?.workingCount ?? 0}
           workspaceEntriesByKey={workspaceEntriesByKey}
           collapsed={collapsedProjectKeys.has(item.viewKey)}
           displayName={item.projectName}
@@ -2585,6 +2625,7 @@ function ProjectModeList({
       );
     },
     [
+      projectStatusBuckets,
       collapsedProjectKeys,
       activeWorkspaceSelection,
       handleWorktreeCreated,
@@ -2920,7 +2961,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: "400",
     minWidth: 0,
-    flexShrink: 1,
+    flex: 1,
   },
   projectActionButton: {
     flexDirection: "row",
@@ -2955,19 +2996,15 @@ const styles = StyleSheet.create((theme) => ({
   projectTrailingActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 2,
+    gap: PROJECT_ACTION_GAP,
     flexShrink: 0,
     // MoreVertical paints only around the center of its 14px SVG. Keep the 24px controls,
     // but pull their painted edge through the unused view-box space onto the row rail.
-    marginRight: -6,
+    marginRight: -PROJECT_ACTION_OPTICAL_OFFSET,
   },
   projectKebabButton: {
-    // Larger on compact so the kebab is an easy tap target. The negative margins keep its
-    // dots on the same rail as the 24px desktop box and the row at its 44px height.
-    width: { xs: 32, md: 24 },
-    height: { xs: 32, md: 24 },
-    marginRight: { xs: -4, md: 0 },
-    marginVertical: { xs: -4, md: 0 },
+    width: PROJECT_ACTION_SIZE,
+    height: PROJECT_ACTION_SIZE,
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
@@ -2980,8 +3017,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   projectTrailingControlSlot: {
-    width: 24,
-    height: 24,
+    width: PROJECT_ACTION_SIZE,
+    height: PROJECT_ACTION_SIZE,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
