@@ -1,15 +1,26 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { readPreviousAgentsAvailability } from "@/hooks/previous-agents-availability";
+import {
+  createPreviousAgentLaunchAction,
+  isPreviousAgentsAvailable,
+} from "@/hooks/previous-agents";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useState,
   type ComponentType,
   type ReactNode,
 } from "react";
+import { ReopenClosedAgentDialog } from "@/components/reopen-closed-agent-dialog";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
+import { Globe, History, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { pluginIconComponent } from "@/plugins/icons";
@@ -38,6 +49,8 @@ export type WorkspaceTabLaunchDestination =
   | { kind: "replace"; tabId: string };
 
 export interface NewTabLauncher {
+  serverId: string;
+  workspaceId: string;
   showChanges: boolean;
   showPullRequest: boolean;
   showBrowser: boolean;
@@ -65,8 +78,11 @@ export interface WorkspaceTabLaunchGroup {
 
 const EMPTY_PANE_PANEL_KINDS: readonly WorkspaceTabTarget["kind"][] = [];
 
-const NewTabLauncherContext = createContext<NewTabLauncher | null>(null);
+const NewTabLauncherContext = createContext<
+  (NewTabLauncher & { previousAgentsEnabled: boolean; reopenClosedAgent: () => void }) | null
+>(null);
 
+/** Own launcher actions and their workspace-scoped reopen dialog together. */
 export function NewTabLauncherProvider({
   value,
   children,
@@ -74,7 +90,58 @@ export function NewTabLauncherProvider({
   value: NewTabLauncher;
   children: ReactNode;
 }) {
-  return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
+  const { settings, isReadReady } = useAppSettings();
+  const queryClient = useQueryClient();
+  const availability = {
+    serverId: value.serverId,
+    workspaceId: value.workspaceId,
+    readReady: isReadReady,
+    enabled: settings.paseoPlusPlus.previousAgents,
+  };
+  const previousAgentsEnabled = isPreviousAgentsAvailable(availability);
+  const [reopenIdentity, setReopenIdentity] = useState<{
+    serverId: string;
+    workspaceId: string;
+  } | null>(null);
+  const readAvailability = useStableEvent(() =>
+    readPreviousAgentsAvailability({
+      queryClient,
+      identity: { serverId: value.serverId, workspaceId: value.workspaceId },
+    }),
+  );
+  const reopenClosedAgent = useMemo(
+    () =>
+      createPreviousAgentLaunchAction({
+        identity: { serverId: value.serverId, workspaceId: value.workspaceId },
+        readAvailability,
+        open: setReopenIdentity,
+      }),
+    [readAvailability, value.serverId, value.workspaceId],
+  );
+  const closeReopenDialog = useCallback(() => setReopenIdentity(null), []);
+  const sameWorkspace =
+    reopenIdentity?.serverId === value.serverId &&
+    reopenIdentity?.workspaceId === value.workspaceId;
+  // Hide synchronously; clear the invocation so re-enabling never remounts an old dialog.
+  useEffect(() => {
+    if (!previousAgentsEnabled || !sameWorkspace) setReopenIdentity(null);
+  }, [previousAgentsEnabled, sameWorkspace]);
+  const context = useMemo(
+    () => ({ ...value, previousAgentsEnabled, reopenClosedAgent }),
+    [value, previousAgentsEnabled, reopenClosedAgent],
+  );
+  return (
+    <NewTabLauncherContext.Provider value={context}>
+      {children}
+      {previousAgentsEnabled && sameWorkspace && reopenIdentity ? (
+        <ReopenClosedAgentDialog
+          serverId={reopenIdentity.serverId}
+          workspaceId={reopenIdentity.workspaceId}
+          onClose={closeReopenDialog}
+        />
+      ) : null}
+    </NewTabLauncherContext.Provider>
+  );
 }
 
 const BUILT_IN_SELECTIONS = {
@@ -120,6 +187,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   }, [router, serverId]);
 
   return useMemo(() => {
+    const isExplorerMenu = host === "explorer" && surface === "menu";
     const changesPresentation = getLaunchPresentation("changes_tree");
     const diffPresentation = getLaunchPresentation("working_diff");
     const filesPresentation = getLaunchPresentation("files");
@@ -196,6 +264,17 @@ export function useWorkspaceTabLaunchCatalog(input: {
       const item = builtIns[id];
       return item.hidden || !panelSupportsHost(item.panelKind, host) ? [] : [item];
     });
+
+    if (!isExplorerMenu && launcher.previousAgentsEnabled) {
+      tabItems.splice(1, 0, {
+        id: "reopen-closed-agent",
+        label: t("sessions.previousTitle"),
+        Icon: History,
+        disabled: false,
+        panelKind: "agent",
+        launch: launcher.reopenClosedAgent,
+      });
+    }
 
     const pluginItems: WorkspaceTabLaunchItem[] = [];
     for (const plugin of plugins) {

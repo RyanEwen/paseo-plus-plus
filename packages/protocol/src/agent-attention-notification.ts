@@ -22,6 +22,7 @@ interface BuildAgentAttentionNotificationPayloadInput {
   workspaceId: string;
   agentId: string;
   assistantMessage?: string | null;
+  attentionMessage?: string;
   permissionRequest?: NotificationPermissionRequest | null;
 }
 
@@ -196,8 +197,11 @@ function resolveAgentAttentionFallbackBody(reason: AgentAttentionReason): string
 export function buildAgentAttentionNotificationPayload(
   input: BuildAgentAttentionNotificationPayloadInput,
 ): AgentAttentionNotificationPayload {
-  const title = resolveAgentAttentionTitle(input.reason);
-  const preview = resolveAgentAttentionPreview(input);
+  const title = input.attentionMessage
+    ? "Agent needs attention"
+    : resolveAgentAttentionTitle(input.reason);
+  const preview =
+    buildNotificationPreview(input.attentionMessage) ?? resolveAgentAttentionPreview(input);
   const body = preview ?? resolveAgentAttentionFallbackBody(input.reason);
 
   return {

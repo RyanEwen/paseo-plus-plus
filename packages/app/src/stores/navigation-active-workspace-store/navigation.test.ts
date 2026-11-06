@@ -158,6 +158,7 @@ describe("workspace navigation", () => {
       workspaceId: "workspace-a",
       requiresAttention: true,
       attentionReason: "permission",
+      pendingPermissions: [],
     } as unknown as Agent;
     const { deps, openedTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
@@ -186,6 +187,7 @@ describe("workspace navigation", () => {
       workspaceId: "workspace-a",
       requiresAttention: true,
       attentionReason: "permission",
+      pendingPermissions: [],
     } as unknown as Agent;
     const { deps, openedTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),

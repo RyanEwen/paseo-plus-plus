@@ -154,8 +154,16 @@ export class InMemoryAgentTimelineStore {
     return state.projection.getLastItem(state.nextSeq - 1);
   }
 
-  getLastAssistantMessage(agentId: string): string | null {
-    return this.requireState(agentId).projection.getLastAssistantMessage();
+  /** An optional turn fence keeps attention outcomes from capturing a later response. */
+  getLastAssistantMessage(agentId: string, turnId?: string): string | null {
+    const row = this.requireState(agentId)
+      .projection.getRows()
+      .findLast(
+        (candidate) =>
+          candidate.item.type === "assistant_message" &&
+          (turnId === undefined || candidate.turnId === turnId),
+      );
+    return row?.item.type === "assistant_message" ? row.item.text : null;
   }
 
   private requireState(agentId: string): AgentTimelineState {
