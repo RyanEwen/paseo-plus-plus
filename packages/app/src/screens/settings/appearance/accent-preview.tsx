@@ -6,7 +6,7 @@ import { UserMessage } from "@/components/message";
 export function AccentPreview({ message }: { message: string }) {
   return (
     <View style={styles.container} testID="accent-message-preview">
-      <UserMessage message={message} timestamp={0} previewLines={3} disableOuterSpacing />
+      <UserMessage message={message} timestamp={0} disableOuterSpacing />
     </View>
   );
 }
