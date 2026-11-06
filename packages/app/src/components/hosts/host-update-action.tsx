@@ -62,7 +62,7 @@ export function HostUpdateAction({
 
   return (
     <Button
-      size="xs"
+      size="sm"
       variant="outline"
       disabled={busy}
       accessibilityLabel={`${t("settings.host.daemon.update.confirm")} ${host.label}`}
