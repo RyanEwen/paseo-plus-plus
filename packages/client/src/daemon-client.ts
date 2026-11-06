@@ -1,3 +1,4 @@
+import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -460,6 +461,7 @@ export interface DaemonClientTrace {
 }
 
 export interface SendMessageOptions {
+  agentAttention?: SendAgentMessageRequest["agentAttention"];
   sourceAgentId?: string;
   sourceAgentServerId?: string;
   sessionMode?: string;
@@ -481,6 +483,9 @@ export interface AgentAttentionRequiredNotification {
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
 export interface CreateAgentRequestOptions extends AgentConfigOverrides {
+  sourceAgentId?: string;
+  sourceAgentServerId?: string;
+  agentAttention?: CreateAgentRequestMessage["agentAttention"];
   agentId?: string;
   onEvent?: (snapshot: CreationSnapshot) => void;
   config?: AgentSessionConfig;
@@ -975,6 +980,7 @@ export interface FetchAgentResult {
 }
 
 export interface WaitForFinishResult {
+  attentionOutcome?: import("@getpaseo/protocol/messages").AgentAttentionOutcome | null;
   status: "idle" | "error" | "permission" | "timeout";
   final: AgentSnapshotPayload | null;
   error: string | null;
@@ -3281,7 +3287,15 @@ export class DaemonClient {
     return this.lastServerInfoMessage?.features?.backgroundWorkspaces === true;
   }
 
+  /** Gate objective-aware agent delivery once, before a host could discard its optional metadata. */
+  private requireAgentAudienceAttention(): void {
+    if (this.lastServerInfoMessage?.features?.agentAudienceAttention !== true) {
+      throw new Error("Update the Paseo host to use agent audience and objective attention.");
+    }
+  }
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    if (options.sourceAgentId || options.agentAttention) this.requireAgentAudienceAttention();
     if (options.git !== undefined || options.worktreeName !== undefined) {
       throw new Error(
         "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
@@ -3309,6 +3323,9 @@ export class DaemonClient {
       ...(options.env ? { env: options.env } : {}),
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
+      sourceAgentId: options.sourceAgentId,
+      sourceAgentServerId: options.sourceAgentServerId,
+      agentAttention: options.agentAttention,
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       idempotencyKey: options.idempotencyKey,
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
@@ -3889,6 +3906,7 @@ export class DaemonClient {
     text: string,
     options: SendMessageOptions = {},
   ): Promise<{ deliveryStatus?: "queued" }> {
+    if (options.agentAttention) this.requireAgentAudienceAttention();
     if (
       options.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
@@ -3910,6 +3928,7 @@ export class DaemonClient {
       text,
       sourceAgentId: options.sourceAgentId,
       sourceAgentServerId: options.sourceAgentServerId,
+      agentAttention: options.agentAttention,
       sessionMode: options.sessionMode,
       ...(messageId ? { messageId } : {}),
       activeTurnBehavior: options.activeTurnBehavior,
@@ -6376,6 +6395,24 @@ export class DaemonClient {
   }
 
   async waitForFinish(agentId: string, timeout = 60000): Promise<WaitForFinishResult> {
+    return this.waitForFinishRequest({ agentId, timeout });
+  }
+
+  /** Request-correlated attention evidence uses existing agent observation authorization. */
+  async waitForAttentionOutcome(input: {
+    agentId: string;
+    attentionRequest: AgentAttentionRequestQuery;
+  }): Promise<WaitForFinishResult> {
+    this.requireAgentAudienceAttention();
+    return this.waitForFinishRequest({ ...input, timeout: 0 });
+  }
+
+  private async waitForFinishRequest(input: {
+    agentId: string;
+    timeout: number;
+    attentionRequest?: AgentAttentionRequestQuery;
+  }): Promise<WaitForFinishResult> {
+    const { agentId, timeout, attentionRequest } = input;
     const requestId = this.createRequestId();
     const hasTimeout = Number.isFinite(timeout) && timeout > 0;
     const message = SessionInboundMessageSchema.parse({
@@ -6383,6 +6420,7 @@ export class DaemonClient {
       requestId,
       agentId,
       ...(hasTimeout ? { timeoutMs: timeout } : {}),
+      ...(attentionRequest ? { attentionRequest } : {}),
     });
     const payload = await this.sendCorrelatedRequest({
       requestId,
@@ -6396,6 +6434,7 @@ export class DaemonClient {
       final: payload.final,
       error: payload.error,
       lastMessage: payload.lastMessage,
+      ...(attentionRequest ? { attentionOutcome: payload.attentionOutcome } : {}),
     };
   }
 
