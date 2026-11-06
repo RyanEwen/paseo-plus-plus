@@ -1,3 +1,4 @@
+import { AppSettingsStore } from "./app-settings/index.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -585,6 +586,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly credentialSource: DaemonAuthConfig | undefined;
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
+  private readonly appSettingsStore: AppSettingsStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
@@ -762,6 +764,7 @@ export class VoiceAssistantWebSocketServer {
     this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
+    this.appSettingsStore = new AppSettingsStore(paseoHome);
     this.mcpBaseUrl = mcpBaseUrl;
     this.assignOptionalServices({
       speech,
@@ -1669,6 +1672,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceRuntimeStore: this.workspaceRuntimeStore,
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
+      appSettingsStore: this.appSettingsStore,
       pluginRuntime: this.pluginRuntime,
       orchestrationSkills: this.orchestrationSkills,
       mcpBaseUrl: this.mcpBaseUrl,
