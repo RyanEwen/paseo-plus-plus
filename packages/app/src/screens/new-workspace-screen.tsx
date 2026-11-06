@@ -9,10 +9,16 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { router } from "expo-router";
+import type { TFunction } from "i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useWorktreeOptions,
+  worktreePickerOptions,
+  useWorktreeBranchChoice,
+} from "./new-workspace/use-worktree-options";
 import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
 import { useComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
@@ -87,7 +93,6 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
-  buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemLabel,
   pickerItemToCheckoutRequest,
@@ -223,6 +228,17 @@ function useWorkspaceIsolation(input: {
   };
 }
 
+/** Labels Local with its live branch without changing the selected checkout. */
+function isolationLabel(
+  t: TFunction,
+  isolation: "local" | "worktree",
+  currentBranch?: string | null,
+): string {
+  if (isolation === "worktree") return t("newWorkspace.isolation.worktree");
+  const localLabel = t("newWorkspace.isolation.local");
+  return currentBranch ? `${localLabel} · ${currentBranch}` : localLabel;
+}
+
 function normalizeBranchDetails(
   data: { branchDetails?: BranchPickerDetail[]; branches?: string[] } | undefined,
 ): BranchPickerDetail[] {
@@ -280,6 +296,7 @@ interface WorkspaceCreationResult {
   agent?: AgentSnapshotPayload;
 }
 
+/** Creates the workspace and maps its first agent into an explicitly adopted checkout. */
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
   worktreeSlug: string;
@@ -288,6 +305,7 @@ async function createMultiplicityWorkspace(input: {
   project: HostProjectListItem;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
+  source?: CreateWorkspaceRequestOptions["source"];
   withInitialAgent: boolean;
   agent?: CreateWorkspaceRequestOptions["agent"];
   onEvent?: (snapshot: CreationSnapshot) => void;
@@ -307,23 +325,42 @@ async function createMultiplicityWorkspace(input: {
     prompt: input.prompt,
     attachments: input.attachments,
   });
-  const payload = await input.client.createWorkspace({
-    idempotencyKey: input.idempotencyKey,
-    agent: input.agent,
-    onEvent: input.onEvent,
-    source: isWorktree
+  const source =
+    input.source ??
+    (isWorktree
       ? {
-          kind: "worktree",
+          kind: "worktree" as const,
           cwd: input.sourceDirectory,
           projectId,
           worktreeSlug: input.worktreeSlug,
           ...input.checkoutRequest,
         }
       : {
-          kind: "directory",
+          kind: "directory" as const,
           path: input.sourceDirectory,
           projectId,
-        },
+        });
+  // The composer still uses the project directory when another checkout is selected.
+  // Directory adoption must send the first agent inside that checkout, including its subdirectory.
+  const agent =
+    input.agent?.config && source.kind === "directory" && source.path !== input.sourceDirectory
+      ? {
+          ...input.agent,
+          config: {
+            ...input.agent.config,
+            cwd: remapDraftCwdToWorkspace({
+              cwd: input.agent.config.cwd,
+              sourceDirectory: input.sourceDirectory,
+              workspaceDirectory: source.path,
+            }),
+          },
+        }
+      : input.agent;
+  const payload = await input.client.createWorkspace({
+    idempotencyKey: input.idempotencyKey,
+    agent,
+    onEvent: input.onEvent,
+    source,
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
   if (payload.error || !payload.workspace) {
@@ -846,6 +883,11 @@ function useNewWorkspaceInitialContext({
   };
 }
 
+/** Repository queries need an open picker, a connected host and a selected source directory. */
+function isPickerQueryEnabled(open: boolean, ready: boolean, hasSourceDirectory: boolean): boolean {
+  return open && ready && hasSourceDirectory;
+}
+
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
@@ -884,6 +926,7 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  const supportsWorktreeOptions = useHostFeature(selectedServerId, "workspaceWorktreeOptions");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [creationIdentity] = useState(() => ({
     draftId: draftId ?? generateDraftId(),
@@ -895,6 +938,7 @@ export function NewWorkspaceScreen({
   >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [branchChoiceOpen, setBranchChoiceOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
@@ -1027,12 +1071,22 @@ export function NewWorkspaceScreen({
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
-  const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
+  const pickerQueryEnabled = isPickerQueryEnabled(
+    pickerOpen,
+    clientReady,
+    hasSelectedSourceDirectory,
+  );
+  const branchQueryEnabled = isPickerQueryEnabled(
+    pickerOpen || branchChoiceOpen,
+    clientReady,
+    hasSelectedSourceDirectory,
+  );
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
   });
+  const currentBranch = checkoutStatus?.currentBranch;
 
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
@@ -1062,7 +1116,7 @@ export function NewWorkspaceScreen({
         limit: 20,
       });
     },
-    enabled: pickerQueryEnabled,
+    enabled: branchQueryEnabled,
     staleTime: 15_000,
   });
 
@@ -1087,18 +1141,40 @@ export function NewWorkspaceScreen({
     return githubPrSearchQuery.data?.items ?? [];
   }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
-  const baseItem = useMemo(
+  const rawBaseItem = useMemo(
     () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
     [checkoutStatus, selectedItem],
   );
+  const worktreeOptions = useWorktreeOptions({
+    supported: supportsWorktreeOptions,
+    enabled: clientReady,
+    pickerOpen: isolationPickerOpen,
+    canCreateWorktree,
+    showRefPicker,
+    isolationLabel: isolationLabel(t, effectiveIsolation, currentBranch),
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory,
+    withClient: withConnectedClient,
+    item: rawBaseItem,
+    isolation: effectiveIsolation,
+    compact: isCompact,
+    pending: isPending,
+  });
+  const {
+    baseItem,
+    existing: existingWorktree,
+    select: selectWorktreeOption,
+    prepareSource,
+  } = worktreeOptions;
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
     () =>
-      buildPickerOptionData({
+      worktreePickerOptions({
         branchDetails,
         prItems,
         baseItem,
+        checkout: worktreeOptions.checkoutMode,
       }),
-    [baseItem, branchDetails, prItems],
+    [baseItem, branchDetails, prItems, worktreeOptions.checkoutMode],
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
@@ -1126,6 +1202,15 @@ export function NewWorkspaceScreen({
     },
     [itemById, selectPickerItem],
   );
+
+  const branchChoice = useWorktreeBranchChoice({
+    branchMode: worktreeOptions.branchMode,
+    branchDetails,
+    baseItem: rawBaseItem,
+    onSelectItem: selectPickerItem,
+    onSearchQueryChange: setPickerSearchQuery,
+    onOpenChange: setBranchChoiceOpen,
+  });
 
   const clearPickerSelectionForTargetChange = useCallback(
     (currentTargetId: string, nextTargetId: string) => {
@@ -1237,7 +1322,8 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+      const createsWorktree =
+        !existingWorktree && (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");
       const checkoutStatusForCreate = createsWorktree
         ? await ensureCheckoutStatus({
             queryClient,
@@ -1259,6 +1345,11 @@ export function NewWorkspaceScreen({
         project: selectedProject,
         sourceDirectory: selectedSourceDirectory,
         checkoutRequest,
+        source: await prepareSource({
+          createsWorktree,
+          projectId: getHostProjectId(selectedProject, selectedServerId)!,
+          refName: checkoutRequest?.refName,
+        }),
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
         attachments: input.attachments,
@@ -1274,6 +1365,8 @@ export function NewWorkspaceScreen({
     [
       creationIdentity,
       creationResult,
+      existingWorktree,
+      prepareSource,
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
@@ -1461,6 +1554,7 @@ export function NewWorkspaceScreen({
   const formStack = useNewWorkspaceForm({
     isCompact,
     isPending,
+    branchChoice,
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
@@ -1490,11 +1584,17 @@ export function NewWorkspaceScreen({
     isolation: {
       anchorRef: isolationPickerAnchorRef,
       open: openIsolationPicker,
+      ...worktreeOptions.isolationProps,
+      localLabel: isolationLabel(t, "local", currentBranch),
+      worktreeOptions: worktreeOptions.options,
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,
       effectiveIsolation,
       canCreateWorktree,
-      onSelect: setIsolation,
+      onSelect: (id) => {
+        selectWorktreeOption(id);
+        setIsolation(id === "worktree" ? "worktree" : "local");
+      },
     },
     base: {
       anchorRef: pickerAnchorRef,
@@ -1510,7 +1610,9 @@ export function NewWorkspaceScreen({
       onSelect: handleSelectOption,
       setSearchQuery: setPickerSearchQuery,
       emptyText: pickerEmptyText,
-      showRefPicker,
+      showRefPicker: worktreeOptions.showRefPicker,
+      refLabel: worktreeOptions.refLabel,
+      refPrefix: worktreeOptions.refPrefix,
     },
     launch: {
       serverId: selectedServerId,
@@ -1590,11 +1692,21 @@ export function NewWorkspaceScreen({
         isCompact={isCompact}
         fullscreen={isComposerFullscreen}
         title={t("newWorkspace.title")}
-        formStack={formStack}
+        formStack={
+          <>
+            {formStack}
+            {worktreeOptions.fields}
+            {worktreeOptions.error}
+          </>
+        }
         onImportSession={importSession.open}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {errorMessage ? (
+          <Text testID="new-workspace-create-error" style={styles.errorText}>
+            {errorMessage}
+          </Text>
+        ) : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>

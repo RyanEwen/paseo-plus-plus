@@ -101,7 +101,11 @@ export function IsolationOption({
       active={active}
       disabled={disabled}
       onPress={onPress}
-      leadingSlot={option.id === "worktree" ? worktreeLeading : localLeading}
+      leadingSlot={
+        option.id === "worktree" || option.id.startsWith("existing:")
+          ? worktreeLeading
+          : localLeading
+      }
     />
   );
 }
