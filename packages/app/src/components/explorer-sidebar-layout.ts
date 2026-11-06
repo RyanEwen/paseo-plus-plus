@@ -1,6 +1,6 @@
 const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 320;
 const MIN_EXPLORER_SIDEBAR_WIDTH = 240;
-const MIN_WORKSPACE_BODY_WIDTH = 360;
+const MIN_WORKSPACE_BODY_WIDTH = 400;
 export const EXPLORER_WORKSPACE_MIN_WIDTH = MIN_EXPLORER_SIDEBAR_WIDTH + MIN_WORKSPACE_BODY_WIDTH;
 
 export function resolveExplorerSidebarWidth(input: {
@@ -26,4 +26,22 @@ export function resolveExplorerSidebarDockSizes(input: {
   const width = resolveExplorerSidebarWidth(input);
   const ratio = width / input.containerWidth;
   return [1 - ratio, ratio];
+}
+
+/** Reject dock presets that would be clamped instead of producing the advertised ratio. */
+export function canApplyExplorerSidebarDockSizes(input: {
+  sizes: number[];
+  containerWidth: number;
+}): boolean {
+  const [main, dock] = input.sizes;
+  return (
+    Number.isFinite(input.containerWidth) &&
+    input.containerWidth > 0 &&
+    main !== undefined &&
+    dock !== undefined &&
+    Number.isFinite(main) &&
+    Number.isFinite(dock) &&
+    main * input.containerWidth >= MIN_WORKSPACE_BODY_WIDTH &&
+    dock * input.containerWidth >= MIN_EXPLORER_SIDEBAR_WIDTH
+  );
 }

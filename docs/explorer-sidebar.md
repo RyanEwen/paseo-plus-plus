@@ -76,6 +76,8 @@ the sheet's tab into a pane, and edits the autosave has not started writing are 
 
 The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits never read or modify that width.
 
+The dock divider shares the workspace split preset controls. A preset must fit both the dock’s 240 px minimum and the main area’s 400 px minimum. Disable choices that cannot produce their labeled ratio; do not offer a ratio and then clamp it to a different width.
+
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching workspace tab in Explorer. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
@@ -109,7 +111,7 @@ workspace tabs, launcher, and panel host. Below 600 points the shell is the swip
 overlay; at 600 points and above it reserves width beside the workspace. Native docking keeps its
 touch resize handle. Full workspace splits remain a separate web-only capability.
 
-The dock reserves at least 240 points and the workspace 360. App navigation yields when it cannot
+The dock reserves at least 240 points and the workspace 400. App navigation yields when it cannot
 share the remaining width with both. This keeps a portrait tablet from rendering three unusably
 narrow columns; widening restores navigation without changing its saved open state.
 
