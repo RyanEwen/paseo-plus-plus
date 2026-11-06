@@ -1,5 +1,5 @@
 import { test, expect } from "../support/fixtures";
-import { connectDaemonClient, loadProtocolSchemas } from "../support/helpers/daemon-client-loader";
+import { loadProtocolSchemas } from "../support/helpers/daemon-client-loader";
 import { buildSettingsSectionRoute } from "@/utils/host-routes";
 import type { Page } from "@playwright/test";
 import {
