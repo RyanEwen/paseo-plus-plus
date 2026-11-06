@@ -1558,8 +1558,6 @@ export class AgentManager {
       lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
       lastError: record.lastError ?? undefined,
       attention: extractAttention(record),
-      attentionObjectives: record.attentionObjectives,
-      attentionMessage: record.attentionMessage ?? undefined,
     };
   }
 
