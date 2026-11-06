@@ -9,6 +9,7 @@ import {
   openSidebarProjectFilter,
   pinWorkspaceFromSidebar,
   openMobileAgentSidebar,
+  expectMobileAgentSidebarVisible,
   selectAllProjectsFilter,
   selectSidebarStatusGrouping,
   selectSidebarProjectGrouping,
@@ -18,6 +19,14 @@ import {
 /** Read the actual scroll owner so a stationary list cannot satisfy the geometry case. */
 async function readScrollTop(scroll: Locator): Promise<number> {
   return scroll.evaluate((element) => element.scrollTop);
+}
+
+/** Every activity state uses the trailing rail rather than the leading title rail. */
+async function expectStatusOnRight(row: Locator, state: string): Promise<void> {
+  const rowBounds = await row.boundingBox();
+  const statusBounds = await row.getByTestId(`workspace-status-indicator-${state}`).boundingBox();
+  if (!rowBounds || !statusBounds) throw new Error("Workspace status has no rendered bounds");
+  expect(statusBounds.x).toBeGreaterThan(rowBounds.x + rowBounds.width / 2);
 }
 
 test.describe("Sidebar project filter", () => {
@@ -172,6 +181,7 @@ test("project chips stay visible through bulk collapse and reload", async ({ pag
     await gotoAppShell(page);
     await expect(row).toBeVisible({ timeout: 30_000 });
     await expect(chip).toHaveText("Done");
+    await expectStatusOnRight(row, "done");
     const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
     await row.hover();
     const workspaceHoverColor = await row.evaluate(
@@ -197,6 +207,7 @@ test("project chips stay visible through bulk collapse and reload", async ({ pag
     await page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspace.workspaceId}`).click();
     await page.getByRole("menuitem", { name: "Mark as unread", exact: true }).click();
     await expect(chip).toHaveText("Ready to review");
+    await expectStatusOnRight(row, "attention");
     await page.mouse.move(0, 0);
     const projectBounds = await projectRow.boundingBox();
     if (!projectBounds) throw new Error("Project row has no rendered bounds");
@@ -238,6 +249,7 @@ test("project chips stay visible through bulk collapse and reload", async ({ pag
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
     await openMobileAgentSidebar(page);
+    await expectMobileAgentSidebarVisible(page);
     await expect(chip).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("sidebar-project-activity-compact-dark.png"),
