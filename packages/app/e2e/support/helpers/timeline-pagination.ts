@@ -1,4 +1,4 @@
-import { expect, type Locator, type TestInfo, type Page } from "@playwright/test";
+import { expect, type TestInfo, type Page, type Locator } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import {
@@ -10,6 +10,7 @@ import {
   type BootstrapTimelineGate,
   type OlderTimelinePagesGate,
   type OlderTimelinePagesOptions,
+  type TimelineWindowPageReceipt,
 } from "./agent-timeline-gate";
 
 export { holdDaemonHydration };
@@ -77,6 +78,7 @@ export function originalTimelineText(
 interface LongTimelineAgentOptions {
   turns: number;
   /** Supply real response content when navigation needs substantial later scroll range. */
+  mockAssistantResponse?: string;
   /** Live turns stream for ten seconds unless a test needs one that outlasts it. */
   liveTurns?: "ten-second-stream" | "thirty-minute-stream";
 }
@@ -131,6 +133,8 @@ interface TimelinePromptPositionSnapshot {
 }
 
 interface OlderHistoryPages {
+  readAccounting(): ReturnType<OlderTimelinePagesGate["getReadAccounting"]>;
+  windowPages(): readonly TimelineWindowPageReceipt[];
   expectRequestedPages(count: number): Promise<void>;
   expectSettledWithRequestedPages(count: number): Promise<void>;
   expectNoRepeatedEntries(): void;
@@ -151,6 +155,9 @@ export async function seedLongMockAgentTimeline(
     repoPrefix: "timeline-pagination-",
     title: "Timeline pagination regression",
     model: options.liveTurns ?? "ten-second-stream",
+    featureValues: options.mockAssistantResponse
+      ? { mockAssistantResponse: options.mockAssistantResponse }
+      : undefined,
   });
 
   for (let index = 0; index < options.turns; index += 1) {
@@ -167,6 +174,33 @@ export async function seedLongMockAgentTimeline(
     newestOlderPagePrompt: promptForTurn(Math.max(0, options.turns - 21)),
     oldestPrompt: promptForTurn(0),
     newestPrompt: promptForTurn(options.turns - 1),
+  };
+}
+
+interface RemoteToolRunTimelineOptions {
+  /** Real completed prefix turns can exercise the existing virtualized viewport cohort. */
+  prefixTurns?: number;
+}
+
+/** Use the DEV mock's finite tool scenario before opening this new agent in any browser. */
+export async function seedRemoteToolRunTimeline(options: RemoteToolRunTimelineOptions = {}) {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "timeline-remote-tool-run-",
+    title: "Remote tool-run pagination regression",
+    model: "e2e-fast-stream",
+  });
+  for (let index = 0; index < (options.prefixTurns ?? 3); index += 1) {
+    await agent.client.sendAgentMessage(agent.agentId, promptForTurn(index));
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+  }
+  const prompt = "emit 120 consecutive pagination tool calls";
+  await agent.client.sendAgentMessage(agent.agentId, prompt);
+  await agent.client.waitForFinish(agent.agentId, 15_000);
+  return {
+    ...agent,
+    prompt,
+    readerText:
+      "Remote tool-run answer paragraph 1. This ordinary assistant response remains readable while earlier tool calls arrive through the canonical history owner.",
   };
 }
 
@@ -478,21 +512,116 @@ export async function holdNextOlderTimelinePage(
 export async function holdOlderHistoryPages(
   page: Page,
   agent: MockAgentWorkspace,
-  options?: OlderTimelinePagesOptions,
+  options: OlderTimelinePagesOptions = {},
 ): Promise<OlderHistoryPages> {
   const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(
     page,
     agent.agentId,
     options,
   );
+  /** Keep every before read accountable, while releasing content separately from held pages. */
+  const assertReadAccounting = () => {
+    const accounting = gate.getReadAccounting();
+    expect(accounting.errors).toEqual([]);
+    expect(accounting.allBefore).toBe(
+      accounting.windowBefore + accounting.contentBefore + (accounting.contextBefore ?? 0),
+    );
+    expect(accounting.windowBefore).toBe(gate.getRequestCount());
+  };
+  const settleContentReads = async () => {
+    assertReadAccounting();
+    await expect.poll(() => gate.getReadAccounting().pendingContent).toBe(0);
+    assertReadAccounting();
+    await waitForTimelineGeometryToSettle(page);
+    const before = await captureContentReadViewport(page);
+    if (!before.anchor)
+      throw new Error("Content-read anchoring requires a visible ordinary row before discovery");
+    const timeline = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+    const anchorRow = timeline.locator(`[data-history-row-id="${before.anchor.id}"]`);
+    const original = await anchorRow.evaluateHandle((element) => ({
+      row: element,
+      text: document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode(),
+    }));
+    try {
+      if (gate.flushContentReads() === 0) return;
+      // A source probe can lead to several independently released canonical cache pages.
+      for (let used = 1; used < 8 && gate.getReadAccounting().contextChainActive; used += 1) {
+        await expect.poll(() => gate.getReadAccounting().pendingContext).toBe(0);
+        try {
+          await expect.poll(() => gate.flushContentReads()).toBeGreaterThan(0);
+        } catch (error) {
+          throw new Error(`Context read accounting: ${JSON.stringify(gate.getReadAccounting())}`, {
+            cause: error,
+          });
+        }
+        assertReadAccounting();
+      }
+      const currentPrompt = gate.getMountingPrompt();
+      // An ordinary USER at the reading edge owns itself. A completed but obsolete
+      // response lease must not force a retained body into that cohort. Plugins
+      // may intentionally project a USER away; their ordinary membership stays real.
+      if (currentPrompt && !before.anchor.isUser && !before.anchor.isPlugin) {
+        const row = before.rows.includes(currentPrompt.id)
+          ? timeline.locator(`[data-history-row-id="${currentPrompt.id}"]`)
+          : timeline.locator(`[data-retained-prompt-row="${currentPrompt.id}"]`);
+        await expect(row).toHaveCount(1);
+        const owner = timeline.locator(
+          `[data-history-row-id="${currentPrompt.id}"], [data-retained-prompt-row="${currentPrompt.id}"]`,
+        );
+        await expect(owner).toHaveCount(1);
+        const body = row.getByTestId("user-message");
+        await expect(body).toHaveCount(1);
+        await expect(body.getByTestId("user-message-text")).toHaveText(
+          currentPrompt.text.trim() ? [currentPrompt.text] : [],
+        );
+        await expect(row.getByTestId("user-message-previous")).toBeAttached();
+        await expect(row.getByTestId("user-message-next")).toBeAttached();
+      }
+      await expect(page.getByTestId("sticky-user-message")).toHaveCount(0);
+      await waitForTimelineGeometryToSettle(page);
+      const after = await captureContentReadViewport(page, before.anchor.id);
+      const evidence = JSON.stringify({ before, after, accounting: gate.getReadAccounting() });
+      expect(after.rows, evidence).toEqual(before.rows);
+      expect(after.clientHeight, evidence).toBe(before.clientHeight);
+      expect(after.clientWidth, evidence).toBe(before.clientWidth);
+      expect(after.bottomActionVisible, evidence).toBe(before.bottomActionVisible);
+      if (!after.anchor)
+        throw new Error("Content-read anchoring requires the same ordinary row after discovery");
+      expect(after.anchor.id, evidence).toBe(before.anchor.id);
+      expect(after.anchor.text, evidence).toBe(before.anchor.text);
+      expect(Math.abs(after.anchor.top - before.anchor.top), evidence).toBeLessThanOrEqual(1);
+      // Isolated paint adds exactly zero transcript extent or scroll compensation.
+      expect(after.scrollHeight, evidence).toBe(before.scrollHeight);
+      expect(after.scrollWidth, evidence).toBe(before.scrollWidth);
+      expect(after.scrollTop, evidence).toBe(before.scrollTop);
+      expect(
+        await anchorRow.evaluate(
+          (element, prior) =>
+            element === prior.row && prior.text !== null && element.contains(prior.text),
+          original,
+        ),
+        evidence,
+      ).toBe(true);
+      assertReadAccounting();
+    } finally {
+      await original.dispose();
+    }
+  };
   const loader = page.getByTestId("load-older-history-spinner");
   return {
+    windowPages: gate.getWindowPages,
+    readAccounting: gate.getReadAccounting,
     async expectRequestedPages(count) {
       await gate.waitForRequestCount(count);
+      assertReadAccounting();
+      expect(gate.getRequestCount()).toBe(count);
+      await settleContentReads();
       expect(gate.getRequestCount()).toBe(count);
     },
     async expectSettledWithRequestedPages(count) {
+      await settleContentReads();
       await waitForTimelineGeometryToSettle(page);
+      assertReadAccounting();
       // The loader stays until the prepend settles and the viewport decides whether to
       // keep loading. Once it hides, no further page loads without new user intent.
       await expect
@@ -605,18 +734,37 @@ export async function expectOldestLoadedTurnPartial(
   prompts: readonly string[],
 ): Promise<string> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-  const oldestLoadedPrompt = await timeline
+  const ordinaryRows = originalTimelineRows(page);
+  const oldestLoadedPrompt = await ordinaryRows
     .getByTestId("user-message")
     .first()
     .evaluate((element) => element.textContent ?? "");
   const loadedIndex = prompts.findIndex((prompt) => oldestLoadedPrompt.includes(prompt));
   expect(loadedIndex, "oldest loaded prompt is a seeded turn").toBeGreaterThan(0);
-  const oldestRow = timeline.locator("[data-history-row-id]").first();
+  const oldestRow = ordinaryRows.first();
   await expect(oldestRow.getByTestId("user-message"), "rows above the oldest prompt").toHaveCount(
     0,
   );
   const partialPrompt = prompts[loadedIndex - 1]!;
-  await expectTimelinePromptNotMounted(page, partialPrompt);
+  // Certified paint is not loaded original membership. Preserve the missing-original
+  // proof while independently certifying the one actual recovered body and Text.
+  await expect(ordinaryRows.getByText(partialPrompt, { exact: true })).toHaveCount(0);
+  const retained = timeline
+    .locator("[data-retained-prompt-row]")
+    .filter({ hasText: partialPrompt });
+  await expect(retained).toHaveCount(1);
+  await expect(retained).toHaveAttribute("aria-hidden", "false");
+  await expect(retained).toHaveAttribute("data-prompt-pinned", "true");
+  const recoveredId = await retained.getAttribute("data-retained-prompt-row");
+  expect(recoveredId).not.toBeNull();
+  await expect(timeline.locator(`[data-history-row-id="${recoveredId}"]`)).toHaveCount(0);
+  await expect(retained.getByTestId("user-message")).toHaveCount(1);
+  await expect(retained.getByTestId("user-message-text")).toHaveText(partialPrompt);
+  await expect(
+    timeline
+      .locator("[data-actual-prompt-row], [data-retained-prompt-row]")
+      .filter({ hasText: partialPrompt }),
+  ).toHaveCount(1);
   return partialPrompt;
 }
 
@@ -717,6 +865,7 @@ async function returnTimelineToSettledHistoryStart(
     viewport = await readTimelineViewport(page);
     expect(
       viewport.scrollTop < previous.scrollTop || viewport.scrollHeight > previous.scrollHeight,
+      "History traversal must make progress after upward input",
     ).toBe(true);
     previous = viewport;
   }
@@ -764,6 +913,7 @@ async function readTimelineViewport(page: Page): Promise<TimelineViewportSnapsho
   });
 }
 
+/** Wait for bounded RAF geometry stability without moving the pointer or scrolling. */
 export async function waitForTimelineGeometryToSettle(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.evaluate(
@@ -848,4 +998,121 @@ export async function captureSpokenTimeline(
     body: await page.screenshot({ path: testInfo.outputPath(`spoken-${size}-web.png`) }),
     contentType: "image/png",
   });
+}
+
+/** Move beyond the qualified handoff of one actual ordinary prompt. */
+export async function scrollTimelinePastPrompt(page: Page, prompt: string): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const row = timeline.locator("[data-actual-prompt-row]").filter({ hasText: prompt });
+  await scrollActualPromptPastHandoff(page, row);
+}
+
+/** Read current published geometry; setup never manufactures a compact extent. */
+function actualPromptHandoffDelta(node: HTMLElement | SVGElement): number | null {
+  const viewport = node.closest('[data-testid="agent-chat-scroll"]');
+  const body = node.querySelector("[data-actual-prompt-content]");
+  const flow = Number(body?.getAttribute("data-prompt-flow-height"));
+  const compact = Number(body?.getAttribute("data-prompt-compact-height"));
+  if (
+    !viewport ||
+    !body ||
+    !(flow > 0) ||
+    !(compact > 0) ||
+    !Number.isFinite(flow) ||
+    !Number.isFinite(compact)
+  )
+    return null;
+  return (
+    node.getBoundingClientRect().top -
+    viewport.getBoundingClientRect().top +
+    Math.max(0, flow - compact) +
+    1
+  );
+}
+
+/** Attachment-only prompts are identified by their actual row, never ambiguous empty text. */
+export async function scrollActualPromptPastHandoff(page: Page, row: Locator): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await expect(row).toHaveCount(1);
+  await waitForTimelineGeometryToSettle(page);
+  const rowId = await row.getAttribute("data-history-row-id");
+  expect(rowId).not.toBeNull();
+  await expect.poll(() => row.evaluate(actualPromptHandoffDelta)).not.toBeNull();
+  const delta = await row.evaluate(actualPromptHandoffDelta);
+  if (delta === null) throw new Error("The actual prompt has no qualified tail handoff geometry");
+  await timeline.hover();
+  await page.mouse.wheel(0, delta);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const viewport = node.closest('[data-testid="agent-chat-scroll"]')!;
+        return node.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+      }),
+    )
+    .toBeLessThan(0);
+  await expect(row).toHaveAttribute("data-prompt-pinned", "true");
+  await expect(
+    timeline.locator('[data-actual-prompt-row][data-prompt-pinned="true"]'),
+  ).toHaveAttribute("data-history-row-id", rowId!);
+}
+
+/** Measure real ordinary membership without treating a cached prompt as an exclusion. */
+async function captureContentReadViewport(page: Page, ordinaryAnchorId?: string) {
+  const viewport = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+  const geometry = await viewport.evaluate((element, anchorId) => {
+    const bounds = element.getBoundingClientRect();
+    const ordinary = Array.from(element.querySelectorAll<HTMLElement>("[data-history-row-id]"));
+    const positions = [];
+    for (const row of ordinary) {
+      const rect = row.getBoundingClientRect();
+      const style = getComputedStyle(row);
+      const marginTop = Number.parseFloat(style.marginTop);
+      const marginBottom = Number.parseFloat(style.marginBottom);
+      let height = rect.height;
+      if (row.hasAttribute("data-index") && row.matches("[data-actual-prompt-row]")) {
+        const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
+        if (!body) throw new Error("Ordinary virtual USER has no actual body");
+        const flow = Number(body.dataset.promptFlowHeight);
+        const visual = Number(body.dataset.promptVisualHeight);
+        height =
+          Number.isFinite(flow) && flow > 0 && Number.isFinite(visual) && visual > 0
+            ? flow + body.getBoundingClientRect().height - visual
+            : body.getBoundingClientRect().height;
+      }
+      const allocation = height + marginTop + marginBottom;
+      if (!Number.isFinite(allocation) || allocation < 0)
+        throw new Error("Ordinary row has invalid real natural allocation");
+      const top = rect.top - bounds.top - marginTop;
+      positions.push({ row, top, bottom: top + allocation, allocation });
+    }
+    const anchor = anchorId
+      ? positions.find((entry) => entry.row.dataset.historyRowId === anchorId)
+      : positions.find(
+          (entry) => entry.allocation > 0 && entry.bottom > 0 && entry.top < bounds.height,
+        );
+    return {
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      scrollWidth: element.scrollWidth,
+      clientHeight: element.clientHeight,
+      clientWidth: element.clientWidth,
+      rows: ordinary.map((row) => row.dataset.historyRowId!),
+      anchor: anchor
+        ? {
+            id: anchor.row.dataset.historyRowId!,
+            top: anchor.top,
+            text: anchor.row.textContent,
+            isUser: anchor.row.matches("[data-actual-prompt-row]"),
+            isPlugin: anchor.row.hasAttribute("data-plugin-row"),
+          }
+        : null,
+    };
+  }, ordinaryAnchorId);
+  return {
+    ...geometry,
+    bottomActionVisible: await page
+      .getByTestId("scroll-to-bottom-button")
+      .filter({ visible: true })
+      .isVisible(),
+  };
 }
