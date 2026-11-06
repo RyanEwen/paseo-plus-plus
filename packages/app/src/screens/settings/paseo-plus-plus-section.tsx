@@ -1,6 +1,7 @@
 import { DEVICE_LOCAL_FORK_SETTING_KEYS } from "@/paseo-plus-plus/device-local-settings";
 import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
+import { SettingsSyncSection } from "./settings-sync-section";
 import { useQueryClient } from "@tanstack/react-query";
 import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
 import { Alert } from "@/components/ui/alert";
@@ -70,6 +71,7 @@ export function PaseoPlusPlusSection() {
 
   return (
     <View testID="paseo-plus-plus-settings">
+      <SettingsSyncSection />
       <SettingsSection title={t("paseoPlusPlus.optional")} info={t("paseoPlusPlus.optionalHint")}>
         {settingsError !== null ? (
           <Alert variant="error" description={t("paseoPlusPlus.loadFailed")}>

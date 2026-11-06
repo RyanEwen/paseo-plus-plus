@@ -40,6 +40,11 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions. Never gate an established request on a new enhancement: negotiate the optional enhancement at the client boundary and preserve the existing request for older hosts. Whole-turn pagination can require a capability; reading conversation history cannot.
 
+The `appSettingsChatPreferences` capability covers chat display and send shortcut writes on the
+selected settings host. Older hosts retain their stored tool-detail preferences; disable these
+new synchronized edits with an update instruction. Device-only choices remain available, and
+explicit initialization omits the unsupported keys.
+
 ## Client capability ownership
 
 The client package advertises the protocol behavior it implements. Add each new capability to
