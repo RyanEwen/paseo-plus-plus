@@ -8,6 +8,7 @@ import {
  */
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
+import { ProjectPinGutterProvider, WorkspaceProjectPinGutter } from "./sidebar/project-pin-gutter";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { Active, ClientRect, Over, DragEndEvent, DragStartEvent } from "@dnd-kit/core";
@@ -250,6 +251,56 @@ it("rejects a drop when its sorting changes away and back without issuing prefer
   useSidebarViewStore.setState({ setModePreferences: originalCommand });
 });
 
+it.each(["created", "lastPrompt"] as const)(
+  "invalidates cached workspace drops across %s and admits only fresh pin gestures",
+  async (automaticSort) => {
+    useSidebarViewStore.setState({
+      groupMode: "project",
+      workspaceSortMode: "custom",
+      workspaceSort: "manual",
+    });
+    try {
+      await act(() => root?.render(<ReorderGuardHarness />));
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit()).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      expect(reorderGuard!.disabled).toBe(true);
+      expect(reorderGuard!.canCommit()).toBe(false);
+      expect(reorderGuard!.canCommit(true)).toBe(false);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit()).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: automaticSort }));
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(false);
+      expect(reorderGuard!.canCommit(true)).toBe(true);
+      await act(() => useSidebarViewStore.setState({ workspaceSort: "manual" }));
+      expect(reorderGuard!.canCommit(true)).toBe(false);
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+      // Status mode keeps its own existing workspace-order preference.
+      await act(() =>
+        useSidebarViewStore.setState({ groupMode: "status", workspaceSort: automaticSort }),
+      );
+      await act(() => reorderGuard!.onDragBegin());
+      expect(reorderGuard!.canCommit()).toBe(true);
+    } finally {
+      await act(() =>
+        useSidebarViewStore.setState({
+          groupMode: "project",
+          workspaceSortMode: "custom",
+          workspaceSort: "manual",
+        }),
+      );
+    }
+  },
+);
+
 it("keeps sorted manual pins available while rejecting ordinary and stale-mode drops", async () => {
   useSidebarViewStore.setState({ groupMode: "project", workspaceSortMode: "name" });
   await act(() => root?.render(<ReorderGuardHarness />));
@@ -373,6 +424,56 @@ it.each(["project", "status"] as const)(
     }
   },
 );
+const PROJECT_PIN_RAIL_FIXTURE = {
+  workspaceKey: "srv:project-pin",
+  projectPinnedAt: "2026-10-16T00:00:00Z",
+  pinnedAt: null,
+};
+const GLOBAL_PIN_RAIL_FIXTURE = {
+  workspaceKey: "srv:global-pin",
+  projectPinnedAt: null,
+  pinnedAt: "2026-10-16T00:00:00Z",
+};
+const ORDINARY_PIN_RAIL_FIXTURE = {
+  workspaceKey: "srv:ordinary",
+  projectPinnedAt: null,
+  pinnedAt: null,
+};
+
+it("paints only project pins without reserving another name rail", async () => {
+  await act(() =>
+    root?.render(
+      <ProjectPinGutterProvider value={true}>
+        <WorkspaceProjectPinGutter workspace={PROJECT_PIN_RAIL_FIXTURE} />
+        <WorkspaceProjectPinGutter workspace={GLOBAL_PIN_RAIL_FIXTURE} />
+        <WorkspaceProjectPinGutter workspace={ORDINARY_PIN_RAIL_FIXTURE} />
+      </ProjectPinGutterProvider>,
+    ),
+  );
+  expect(container!.querySelectorAll('[data-testid^="sidebar-project-pin-rail-"]')).toHaveLength(1);
+  expect(
+    container!
+      .querySelector('[data-testid="sidebar-project-pin-rail-srv:project-pin"]')
+      ?.getAttribute("style"),
+  ).toContain("position: absolute");
+  expect(
+    container!.querySelector('[data-testid="sidebar-project-pin-icon-srv:project-pin"]'),
+  ).not.toBeNull();
+  expect(
+    container!.querySelector('[data-testid="sidebar-project-pin-icon-srv:global-pin"]'),
+  ).toBeNull();
+  expect(
+    container!.querySelector('[data-testid="sidebar-project-pin-icon-srv:ordinary"]'),
+  ).toBeNull();
+  await act(() =>
+    root?.render(
+      <ProjectPinGutterProvider value={false}>
+        <WorkspaceProjectPinGutter workspace={PROJECT_PIN_RAIL_FIXTURE} />
+      </ProjectPinGutterProvider>,
+    ),
+  );
+  expect(container!.querySelector('[data-testid^="sidebar-project-pin-rail-"]')).toBeNull();
+});
 
 it("animates unchanged rows when surrounding groups collapse or expand and respects disabled motion", () => {
   let top = 0;
