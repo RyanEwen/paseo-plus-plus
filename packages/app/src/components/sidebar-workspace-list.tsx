@@ -1,3 +1,11 @@
+import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
+import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
+import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
+import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
+import { useSessionStore } from "@/stores/session-store";
+import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
+import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
+import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -87,7 +95,11 @@ import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visua
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
-import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
+import {
+  hasVisibleOrderChanged,
+  moveProjectInFullOrder,
+  resolveProjectWorkspaceReorder,
+} from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
@@ -99,7 +111,6 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { createWorkspaceVisibilityPolicy } from "@/components/sidebar/sidebar-group-visibility";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
@@ -1578,7 +1589,11 @@ function ProjectBlock({
   onToggleCollapsed: (projectViewKey: string) => void;
   onWorkspacePress?: () => void;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
+  onWorkspaceReorder: (
+    projectViewKey: string,
+    workspaces: SidebarWorkspacePlacement[],
+    move: DragReorderMove,
+  ) => void;
   useNestable: boolean;
   dragGestureHostActive?: boolean;
   manualSort: boolean;
@@ -1593,21 +1608,17 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
-  const visibilityPolicy = useMemo(
-    () => createWorkspaceVisibilityPolicy<SidebarWorkspacePlacement>(workspaceEntriesByKey),
+  const getStatusEnteredAt = useCallback(
+    (workspace: SidebarWorkspacePlacement) =>
+      workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
   const {
-    leadingItem: leadingWorkspace,
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup({
-    items: project.workspaces,
-    selection: selectionEnabled ? activeWorkspaceSelection : null,
-    policy: visibilityPolicy,
-  });
+  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt);
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -1696,11 +1707,16 @@ function ProjectBlock({
     [renderWorkspaceRow],
   );
 
+  // Only Custom sorting accepts drops. Sorted rows stay selectable and keep their action menus.
+  const workspaceDrag = useSidebarReorderGuard("workspace");
+  const canCommitWorkspaceDrag = workspaceDrag.canCommit;
+  const workspaceDragDisabled = !manualSort || workspaceDrag.disabled;
   const handleWorkspaceDragEnd = useCallback(
-    (workspaces: SidebarWorkspacePlacement[]) => {
-      onWorkspaceReorder(project.viewKey, workspaces);
+    (workspaces: SidebarWorkspacePlacement[], move?: DragReorderMove) => {
+      if (!move || !canCommitWorkspaceDrag()) return;
+      onWorkspaceReorder(project.viewKey, workspaces, move);
     },
-    [onWorkspaceReorder, project.viewKey],
+    [onWorkspaceReorder, project.viewKey, canCommitWorkspaceDrag],
   );
 
   const toast = useToast();
@@ -1766,36 +1782,24 @@ function ProjectBlock({
   let projectChildren = null;
   if (!collapsed) {
     if (project.workspaces.length > 0) {
-      const leadingWorkspaceRow = leadingWorkspace ? renderWorkspaceRow(leadingWorkspace) : null;
       projectChildren = (
         <>
-          {manualSort ? (
-            <>
-              {leadingWorkspaceRow}
-              <DraggableList
-                testID={`sidebar-workspace-list-${project.viewKey}`}
-                data={visibleWorkspaces}
-                keyExtractor={workspaceKeyExtractor}
-                renderItem={renderWorkspace}
-                onDragEnd={handleWorkspaceDragEnd}
-                extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-                scrollEnabled={false}
-                useDragHandle
-                nestable={useNestable}
-                simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
-                containerStyle={styles.workspaceListContainer}
-              />
-            </>
-          ) : (
-            <View
-              testID={`sidebar-workspace-list-${project.viewKey}`}
-              style={styles.workspaceListContainer}
-            >
-              {leadingWorkspaceRow}
-              {visibleWorkspaces.map((item) => renderWorkspaceRow(item))}
-            </View>
-          )}
+          <DraggableList
+            testID={`sidebar-workspace-list-${project.viewKey}`}
+            data={visibleWorkspaces}
+            keyExtractor={workspaceKeyExtractor}
+            renderItem={renderWorkspace}
+            onDragEnd={handleWorkspaceDragEnd}
+            onDragBegin={workspaceDrag.onDragBegin}
+            disabled={workspaceDragDisabled}
+            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+            scrollEnabled={false}
+            useDragHandle
+            nestable={useNestable}
+            simultaneousGestureRef={parentGestureRef}
+            gestureHostPresented={dragGestureHostActive}
+            containerStyle={styles.workspaceListContainer}
+          />
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}
@@ -2010,14 +2014,89 @@ export function SidebarWorkspaceList({
   // Background visibility can also hide the last project. Keep the header mounted
   // whenever a local filter empties an otherwise populated directory, so users can
   // reach the display menu to reveal their work again.
-  const sidebarFilterEmpty = hasProjectsBeforeFilter && projects.length === 0;
+  const quickFilterActive = useSidebarQuickFilterStore(
+    (state) => state.byMode[groupMode].text.trim().length > 0,
+  );
+  const sidebarFilterEmpty =
+    (hasProjectsBeforeFilter || quickFilterActive) && projects.length === 0;
 
   // Project mode is the one that keeps its project headers; every other grouping mode is a flat
   // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
   // one's `else`.
+  const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
+  const emptyProjectSortMode = useSidebarViewStore((state) => state.emptyProjectSortMode);
+  const emptyProjects = useMemo(() => {
+    const empty = projects.filter((project) => project.workspaces.length === 0);
+    return groupMode === "status" && emptyProjectSortMode === "project"
+      ? sortSidebarProjectsByName({ projects: empty })
+      : empty;
+  }, [projects, groupMode, emptyProjectSortMode]);
+  const projectModePins = useMemo(
+    () =>
+      groupEmptyProjects
+        ? {
+            ...pinnedGroups,
+            unpinnedProjects: filterSidebarProjects(
+              pinnedGroups.unpinnedProjects,
+              "unarchived",
+              projects,
+            ),
+          }
+        : pinnedGroups,
+    [groupEmptyProjects, pinnedGroups, projects],
+  );
+  const emptyProjectPins = useMemo(
+    () => ({ pinnedChats: [], unpinnedProjects: emptyProjects }),
+    [emptyProjects],
+  );
+  const emptyProjectContent = useMemo(
+    () =>
+      emptyProjects.length > 0 ? (
+        <ProjectModeList
+          bodyOnly
+          projects={emptyProjects}
+          pinnedGroups={emptyProjectPins}
+          workspaceEntriesByKey={workspaceEntriesByKey}
+          projectIconByProjectViewKey={projectIconByProjectViewKey}
+          collapsedProjectKeys={collapsedProjectKeys}
+          onToggleProjectCollapsed={onToggleProjectCollapsed}
+          shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+          onWorkspacePress={onWorkspacePress}
+          sidebarFilterEmpty={false}
+          hasActiveProjectFilter={false}
+          parentGestureRef={parentGestureRef}
+          dragGestureHostActive={dragGestureHostActive}
+          pathname={pathname}
+          hostBadgeByServerId={hostBadgeByServerId}
+          supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+          supportsPinningByServerId={supportsPinningByServerId}
+          onToggleWorkspacePin={onToggleWorkspacePin}
+          onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
+        />
+      ) : null,
+    [
+      emptyProjects,
+      emptyProjectPins,
+      workspaceEntriesByKey,
+      projectIconByProjectViewKey,
+      collapsedProjectKeys,
+      onToggleProjectCollapsed,
+      shortcutIndexByWorkspaceKey,
+      onWorkspacePress,
+      parentGestureRef,
+      dragGestureHostActive,
+      pathname,
+      hostBadgeByServerId,
+      supportsMultiplicityByServerId,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      handlePinnedWorkspaceReorder,
+    ],
+  );
   const content =
     groupMode !== "project" ? (
       <SidebarGroupedModeList
+        emptyProjectContent={emptyProjectContent}
         workspaceGroups={workspaceGroups}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
@@ -2036,7 +2115,8 @@ export function SidebarWorkspaceList({
     ) : (
       <ProjectModeList
         projects={projects}
-        pinnedGroups={pinnedGroups}
+        pinnedGroups={projectModePins}
+        emptyProjectContent={groupEmptyProjects ? emptyProjectContent : null}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
         collapsedProjectKeys={collapsedProjectKeys}
@@ -2070,6 +2150,7 @@ export function SidebarWorkspaceList({
  * above it was status-only.
  */
 function SidebarGroupedModeList({
+  emptyProjectContent,
   workspaceGroups,
   pinnedGroups,
   workspaceEntriesByKey,
@@ -2085,6 +2166,7 @@ function SidebarGroupedModeList({
   parentGestureRef,
   dragGestureHostActive,
 }: {
+  emptyProjectContent?: ReactElement | null;
   workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -2112,6 +2194,7 @@ function SidebarGroupedModeList({
 
   return (
     <SidebarStatusWorkspaceList
+      emptyProjectContent={emptyProjectContent}
       groups={workspaceGroups}
       pinnedWorkspaces={pinnedWorkspaces}
       projectIconByProjectViewKey={projectIconByProjectViewKey}
@@ -2131,6 +2214,8 @@ function SidebarGroupedModeList({
 }
 
 function ProjectModeList({
+  bodyOnly = false,
+  emptyProjectContent,
   projects,
   pinnedGroups,
   workspaceEntriesByKey,
@@ -2162,7 +2247,10 @@ function ProjectModeList({
   | "isRefreshing"
   | "onRefresh"
 > & {
-  /** Swaps the list body for the label filter's empty state. Never the header above it. */
+  /** Render inside the grouped list's scroll owner for projects without workspaces. */
+  bodyOnly?: boolean;
+  emptyProjectContent?: ReactElement | null;
+  /** Swaps the list body for the filter's empty state. Never the header above it. */
   sidebarFilterEmpty: boolean;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;
@@ -2197,16 +2285,17 @@ function ProjectModeList({
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
+  const getStatusEnteredAt = useCallback(
+    (workspace: SidebarWorkspacePlacement) =>
+      workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
+    [workspaceEntriesByKey],
+  );
   const {
-    leadingItem: leadingPinnedChat,
     visibleItems: visiblePinnedChats,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup({
-    items: pinnedChats,
-    selection: selectionEnabled ? activeWorkspaceSelection : null,
-  });
+  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2267,51 +2356,58 @@ function ProjectModeList({
     });
   }, [creatingWorkspaceIds, projects]);
 
+  const projectDrag = useSidebarReorderGuard("project");
+  const canCommitProjectDrag = projectDrag.canCommit;
   const handleProjectDragEnd = useCallback(
-    (reorderedProjects: SidebarProjectEntry[]) => {
-      const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
-      const currentProjectOrder = getProjectOrder();
+    (reorderedProjects: SidebarProjectEntry[], move?: DragReorderMove) => {
+      if (!move || !canCommitProjectDrag()) return;
+      const visibleKeys = reorderedProjects.map((project) => project.viewKey);
       if (
         !hasVisibleOrderChanged({
-          currentOrder: currentProjectOrder,
-          reorderedVisibleKeys: reorderedProjectKeys,
+          currentOrder: unpinnedProjects.map((project) => project.viewKey),
+          reorderedVisibleKeys: visibleKeys,
         })
-      ) {
+      )
         return;
-      }
-
-      setProjectOrder(
-        mergeWithRemainder({
-          currentOrder: currentProjectOrder,
-          reorderedVisibleKeys: reorderedProjectKeys,
-        }),
+      if (!visibleKeys.includes(move.activeKey) || !visibleKeys.includes(move.overKey)) return;
+      const session = useSessionStore.getState();
+      const serverIds = getHostRuntimeStore()
+        .getHosts()
+        .map((host) => host.serverId);
+      const knownProjectKeys = selectWorkspaceStructureProjects(session, serverIds).map(
+        (project) => project.viewKey,
       );
+      if (!knownProjectKeys.includes(move.activeKey) || !knownProjectKeys.includes(move.overKey))
+        return;
+      const next = moveProjectInFullOrder({
+        currentOrder: getProjectOrder(),
+        knownProjectKeys,
+        move,
+      });
+      if (next) setProjectOrder(next);
     },
-    [getProjectOrder, setProjectOrder],
+    [getProjectOrder, setProjectOrder, unpinnedProjects, canCommitProjectDrag],
   );
 
   const handleWorkspaceReorder = useCallback(
-    (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
-      const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
-      const currentWorkspaceOrder = getWorkspaceOrder(projectViewKey);
-      if (
-        !hasVisibleOrderChanged({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        })
-      ) {
-        return;
-      }
+    (
+      projectViewKey: string,
+      reorderedWorkspaces: SidebarWorkspacePlacement[],
+      move: DragReorderMove,
+    ) => {
+      const project = unpinnedProjects.find((entry) => entry.viewKey === projectViewKey);
+      const result = resolveProjectWorkspaceReorder({
+        currentVisibleKeys: project?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
+        reorderedVisibleKeys: reorderedWorkspaces.map((workspace) => workspace.workspaceKey),
+        storedWorkspaceOrder: getWorkspaceOrder(projectViewKey),
+        move,
+      });
+      if (result.workspaceOrder === null) return;
 
-      setWorkspaceOrder(
-        projectViewKey,
-        mergeWithRemainder({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        }),
-      );
+      if (useSidebarViewStore.getState().workspaceSortMode !== "custom") return;
+      setWorkspaceOrder(projectViewKey, result.workspaceOrder);
     },
-    [getWorkspaceOrder, setWorkspaceOrder],
+    [getWorkspaceOrder, setWorkspaceOrder, unpinnedProjects],
   );
 
   const handleWorktreeCreated = useCallback((workspaceId: string) => {
@@ -2482,6 +2578,8 @@ function ProjectModeList({
         keyExtractor={projectViewKeyExtractor}
         renderItem={renderProject}
         onDragEnd={handleProjectDragEnd}
+        disabled={projectDrag.disabled}
+        onDragBegin={projectDrag.onDragBegin}
         extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
         scrollEnabled={false}
         useDragHandle
@@ -2504,8 +2602,7 @@ function ProjectModeList({
           />
           {pinnedCollapsed ? null : (
             <>
-              {leadingPinnedChat ? renderPinnedChatRow(leadingPinnedChat) : null}
-              <DraggableList
+              <SidebarPinnedList
                 testID="sidebar-pinned-list"
                 data={visiblePinnedChats}
                 keyExtractor={workspaceKeyExtractor}
@@ -2537,15 +2634,22 @@ function ProjectModeList({
         project whose chats are all pinned leaves `unpinnedProjects` empty, and without its term
         the header would go with it, taking the only route back to the filter page. */}
       {unpinnedProjects.length > 0 ||
+      pinnedChats.length > 0 ||
+      emptyProjectContent ||
       hasActiveHostFilter ||
       hasActiveProjectFilter ||
       sidebarFilterEmpty
         ? listHeaderComponent
         : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
+      {emptyProjectContent ? (
+        <SidebarEmptyProjectGroup>{emptyProjectContent}</SidebarEmptyProjectGroup>
+      ) : null}
       {listFooterComponent}
     </>
   );
+
+  if (bodyOnly) return content;
 
   return (
     <View style={styles.container}>
@@ -2554,7 +2658,7 @@ function ProjectModeList({
           {...nativeScrollGestureProps}
           style={styles.list}
           contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
           testID="sidebar-project-workspace-list-scroll"
         >
           {content}
@@ -2563,7 +2667,7 @@ function ProjectModeList({
         <ScrollView
           style={styles.list}
           contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
           testID="sidebar-project-workspace-list-scroll"
         >
           {content}
