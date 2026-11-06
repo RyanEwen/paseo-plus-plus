@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseCommandActions } from "@getpaseo/protocol/tool-call-activity";
 
 import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import {
@@ -678,6 +679,7 @@ function toToolCallFromNormalizedEnvelope(
 function mapCommandExecutionItem(
   item: z.infer<typeof CodexCommandExecutionItemSchema>,
 ): CodexNormalizedToolCallEnvelope {
+  const commandActions = parseCommandActions(item.commandActions);
   const command = normalizeCommandExecutionCommand(item.command);
   const parsedOutput = extractCodexShellOutput(item.aggregatedOutput ?? undefined);
   const input = toNullableObject({
@@ -706,6 +708,7 @@ function mapCommandExecutionItem(
     status,
     error,
     cwd: item.cwd ?? null,
+    ...(commandActions ? { metadata: { commandActions } } : {}),
   };
 }
 
@@ -903,6 +906,20 @@ function mapFileChangeItem(
     status,
     error,
     cwd: options?.cwd ?? null,
+    ...(files.length > 0
+      ? {
+          metadata: {
+            fileChanges: files.map((file) => ({
+              path: file.path,
+              diff: file.diff,
+              kind:
+                file.kind === "add" || file.kind === "update" || file.kind === "delete"
+                  ? file.kind
+                  : "unknown",
+            })),
+          },
+        }
+      : {}),
   };
 }
 
