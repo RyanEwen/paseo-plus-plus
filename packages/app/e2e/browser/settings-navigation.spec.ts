@@ -5,10 +5,7 @@ import {
   captureSidebarControlsExample,
   captureWorkspacePositionsExample,
 } from "../support/helpers/settings-example-scenes";
-import {
-  openMobileAgentSidebar,
-  seedLegacyCompactTabSwitcher,
-} from "../support/helpers/sidebar";
+import { openMobileAgentSidebar, seedLegacyCompactTabSwitcher } from "../support/helpers/sidebar";
 import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
