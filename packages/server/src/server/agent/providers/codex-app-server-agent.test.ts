@@ -7784,7 +7784,7 @@ test("publishes a materialized image before dispatching the following turn compl
   session.subscribe((event) => events.push(event));
   try {
     await session.startTurn("generate an image");
-    const data = Buffer.alloc(1024 * 1024, 47).toString("base64");
+    const data = ONE_BY_ONE_PNG_BASE64;
     const imageFrame =
       JSON.stringify({
         method: "item/completed",

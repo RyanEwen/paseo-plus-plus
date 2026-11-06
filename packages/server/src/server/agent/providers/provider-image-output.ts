@@ -22,6 +22,29 @@ const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
 const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
+export const PROVIDER_IMAGE_MAX_BYTES = 16 * 1024 * 1024;
+export const PROVIDER_IMAGE_MAX_BASE64_LENGTH = Math.ceil(PROVIDER_IMAGE_MAX_BYTES / 3) * 4;
+const PROVIDER_IMAGE_MAX_INPUT_LENGTH = PROVIDER_IMAGE_MAX_BASE64_LENGTH + 256;
+
+export class ProviderImageInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderImageInputError";
+  }
+}
+
+function assertImageInputLength(data: string): void {
+  // Check the original string before trim, regex, slicing or base64 allocation.
+  if (data.length > PROVIDER_IMAGE_MAX_INPUT_LENGTH) {
+    throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
+  }
+}
+
+function assertProviderImageInputLengths(image: ProviderImageOutput): void {
+  for (const value of [image.data, image.path, image.url]) {
+    if (value) assertImageInputLength(value);
+  }
+}
 
 let materializedImageAttachmentDir: string | null = null;
 // Serialize materializations: one decoder and one file operation at a time, including
@@ -66,10 +89,93 @@ function getImageExtension(mimeType: string): string {
   }
 }
 
-// 128 MiB admits the measured 64 MiB fixture with headroom while bounding disk
-// and decoding per image. This is materialization admission, not a wire schema limit.
-export const MAX_PROVIDER_IMAGE_BYTES = 128 * 1024 * 1024;
-const BASE64_CHUNK_CHARACTERS = 256 * 1024; // Multiple of four; decode units stay aligned.
+function normalizeImageData(mimeType: string, data: string): { mimeType: string; data: string } {
+  assertImageInputLength(data);
+  const trimmed = data.trim();
+  if (trimmed.startsWith("data:")) {
+    const comma = trimmed.indexOf(",");
+    if (comma < 0 || comma > 255) {
+      throw new ProviderImageInputError("Image data URL has an invalid header.");
+    }
+    const header = trimmed.slice(0, comma);
+    const match = /^data:(image\/[a-z0-9.+-]+);base64$/i.exec(header);
+    if (!match) {
+      throw new ProviderImageInputError("Image data URL must contain base64 image data.");
+    }
+    return { mimeType: match[1].toLowerCase(), data: trimmed.slice(comma + 1) };
+  }
+  return { mimeType: mimeType.toLowerCase(), data: trimmed };
+}
+
+function decodeImageData(data: string): Buffer {
+  if (data.length > PROVIDER_IMAGE_MAX_BASE64_LENGTH) {
+    throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
+  }
+  const paddingStart = data.indexOf("=");
+  const bodyLength = paddingStart < 0 ? data.length : paddingStart;
+  const paddingLength = data.length - bodyLength;
+  const body = data.slice(0, bodyLength);
+  const invalidPadding =
+    paddingLength > 0 &&
+    (paddingLength > 2 || data.length % 4 !== 0 || !/^={1,2}$/.test(data.slice(bodyLength)));
+  if (bodyLength === 0 || bodyLength % 4 === 1 || invalidPadding || /[^A-Za-z0-9+/]/.test(body)) {
+    throw new ProviderImageInputError("Image contains invalid base64 data.");
+  }
+  const remainder = bodyLength % 4;
+  const lastDigit = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".indexOf(
+    body[bodyLength - 1],
+  );
+  const invalidPadBits =
+    (remainder === 2 && (lastDigit & 15) !== 0) || (remainder === 3 && (lastDigit & 3) !== 0);
+  if (invalidPadBits) throw new ProviderImageInputError("Image contains invalid base64 data.");
+  const byteLength = Math.floor((bodyLength * 3) / 4);
+  if (byteLength > PROVIDER_IMAGE_MAX_BYTES) {
+    throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
+  }
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.length !== byteLength) {
+    throw new ProviderImageInputError("Image contains invalid base64 data.");
+  }
+  return bytes;
+}
+
+function assertImageSignature(bytes: Buffer, mimeType: string): void {
+  // These signatures identify the container only; no decoder or frame/pixel safety is implied.
+  let matches = false;
+  switch (mimeType) {
+    case "image/png":
+      matches = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      break;
+    case "image/jpeg":
+      matches = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+      break;
+    case "image/gif":
+      matches = ["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6));
+      break;
+    case "image/webp":
+      matches =
+        bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP";
+      break;
+    case "image/bmp":
+      matches = bytes[0] === 0x42 && bytes[1] === 0x4d;
+      break;
+    case "image/tiff":
+      matches =
+        bytes.subarray(0, 4).equals(Buffer.from([0x49, 0x49, 42, 0])) ||
+        bytes.subarray(0, 4).equals(Buffer.from([0x4d, 0x4d, 0, 42])) ||
+        bytes.subarray(0, 4).equals(Buffer.from([0x49, 0x49, 43, 0])) ||
+        bytes.subarray(0, 4).equals(Buffer.from([0x4d, 0x4d, 0, 43]));
+      break;
+    default:
+      throw new ProviderImageInputError("Image attachment format is unsupported.");
+  }
+  if (!matches) {
+    throw new ProviderImageInputError("Image attachment does not match its declared format.");
+  }
+}
+
+export const MAX_PROVIDER_IMAGE_BYTES = PROVIDER_IMAGE_MAX_BYTES;
+const BASE64_CHUNK_CHARACTERS = 256 * 1024;
 
 export function materializeProviderImage(image: {
   data: string;
@@ -84,25 +190,17 @@ async function materializeImage(image: {
   data: string;
   mimeType: string | null;
 }): Promise<MaterializedProviderImage> {
-  const maxEncodedCharacters = Math.ceil(MAX_PROVIDER_IMAGE_BYTES / 3) * 4;
-  // Check length before inspecting/copying the payload, including a bounded data URI header.
-  if (image.data.length > maxEncodedCharacters + 256) {
-    throw new Error(`Image attachment exceeds ${MAX_PROVIDER_IMAGE_BYTES} bytes`);
-  }
-  let data = image.data;
-  let mimeType = image.mimeType ?? "image/png";
-  if (data.startsWith("data:")) {
-    const separator = data.indexOf(";base64,");
-    if (separator >= 0 && separator < 256) {
-      mimeType = data.slice(5, separator);
-      data = data.slice(separator + 8);
-    }
-  }
-  if (data.length > maxEncodedCharacters) {
-    throw new Error(`Image attachment exceeds ${MAX_PROVIDER_IMAGE_BYTES} bytes`);
-  }
+  const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
+  const { data, mimeType } = normalized;
   const hash = createHash("sha256");
-  for await (const bytes of decodeImage(data)) hash.update(bytes);
+  let first = true;
+  for await (const bytes of decodeImage(data)) {
+    if (first) {
+      assertImageSignature(bytes, mimeType);
+      first = false;
+    }
+    hash.update(bytes);
+  }
   const dir = await getMaterializedImageAttachmentDir();
   const filePath = path.join(dir, `${hash.digest("hex")}.${getImageExtension(mimeType)}`);
   try {
@@ -133,25 +231,47 @@ async function materializeImage(image: {
 }
 
 async function* decodeImage(data: string): AsyncGenerator<Buffer> {
-  let carry = "";
+  if (!data.length || data.length > PROVIDER_IMAGE_MAX_BASE64_LENGTH) {
+    decodeImageData(data); // Use the same admission errors as durable attachments.
+  }
+  // Reject decoded overflow before inspecting the first container chunk.
+  let trailingPadding = 0;
+  if (data.endsWith("==")) trailingPadding = 2;
+  else if (data.endsWith("=")) trailingPadding = 1;
+  if (Math.floor(((data.length - trailingPadding) * 3) / 4) > PROVIDER_IMAGE_MAX_BYTES)
+    throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
   let decodedBytes = 0;
   for (let offset = 0; offset < data.length; offset += BASE64_CHUNK_CHARACTERS) {
-    // Buffer.from ignores non-base64 characters. Carry incomplete quartets so
-    // line-wrapped payloads decode identically across chunk boundaries.
-    const chunk =
-      carry +
-      data.slice(offset, offset + BASE64_CHUNK_CHARACTERS).replace(/[^A-Za-z0-9+/_=-]/g, "");
-    const finalChunk = offset + BASE64_CHUNK_CHARACTERS >= data.length || chunk.includes("=");
-    const end = finalChunk ? chunk.length : chunk.length - (chunk.length % 4);
-    const bytes = Buffer.from(chunk.slice(0, end), "base64");
-    carry = chunk.slice(end);
+    const chunk = data.slice(offset, offset + BASE64_CHUNK_CHARACTERS);
+    if (offset + chunk.length < data.length && chunk.includes("="))
+      throw new ProviderImageInputError("Image contains invalid base64 data.");
+    const bytes = decodeImageData(chunk);
     decodedBytes += bytes.length;
-    if (decodedBytes > MAX_PROVIDER_IMAGE_BYTES)
-      throw new Error("Image attachment exceeds size limit");
+    if (decodedBytes > PROVIDER_IMAGE_MAX_BYTES)
+      throw new ProviderImageInputError("Image input exceeds the 16 MiB attachment limit.");
     yield bytes;
     await setImmediate();
-    if (finalChunk) break;
   }
+}
+
+export interface AdmittedProviderImage {
+  bytes: Buffer;
+  mimeType: string;
+  sha256: string;
+}
+
+export function admitProviderImage(image: {
+  data: string;
+  mimeType: string | null;
+}): AdmittedProviderImage {
+  const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
+  const bytes = decodeImageData(normalized.data);
+  assertImageSignature(bytes, normalized.mimeType);
+  return {
+    bytes,
+    mimeType: normalized.mimeType,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 // Recognizes markdown rendered for a materialized provider image: its source is a content-hashed
@@ -231,6 +351,12 @@ export async function renderProviderImageOutputAsAssistantMarkdown(
   image: ProviderImageOutput,
   options: RenderProviderImageOutputOptions = {},
 ): Promise<AgentTimelineItem | null> {
+  try {
+    assertProviderImageInputLengths(image);
+  } catch (error) {
+    if (!(error instanceof ProviderImageInputError)) throw error;
+    return { type: "assistant_message", text: `Image output omitted: ${error.message}` };
+  }
   const source = nonEmptyString(image.path) ?? nonEmptyString(image.url);
   if (source && !isDataImageSource(source)) {
     const altText = escapeMarkdownImageAlt(nonEmptyString(image.altText) ?? "Image");
@@ -254,7 +380,10 @@ export async function renderProviderImageOutputAsAssistantMarkdown(
           mimeType: nonEmptyString(image.mimeType),
         })
       : null;
-  } catch {
+  } catch (error) {
+    if (error instanceof ProviderImageInputError) {
+      return { type: "assistant_message", text: `Image output omitted: ${error.message}` };
+    }
     materialized = null;
   }
   if (!materialized?.path || isDataImageSource(materialized.path)) {

@@ -1,3 +1,4 @@
+import { holdProviderImageMaterialization } from "../../../../test-utils/provider-image-fixtures.js";
 import {
   closeSync,
   existsSync,
@@ -3601,11 +3602,12 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   let admitted = false;
+  const image = holdProviderImageMaterialization();
   const first = session
     .startTurn([
       {
         type: "image",
-        data: Buffer.alloc(16 * 1024 * 1024, 51).toString("base64"),
+        data: ONE_BY_ONE_PNG_BASE64,
         mimeType: "image/png",
       },
     ])
@@ -3613,11 +3615,12 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
       admitted = true;
       return result;
     });
-  await waitForImmediate();
+  await image.entered;
   expect(admitted).toBe(false);
   expect(pi.latestSession().prompts).toHaveLength(0);
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image interrupt");
+  image.release();
   const original = await first;
   expect(events).toContainEqual(
     expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
@@ -3630,17 +3633,19 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
 
 test("closing Pi during image conversion rejects its pending start", async () => {
   const { pi, session } = await createSession();
+  const image = holdProviderImageMaterialization();
   const first = session.startTurn([
     {
       type: "image",
-      data: Buffer.alloc(16 * 1024 * 1024, 52).toString("base64"),
+      data: ONE_BY_ONE_PNG_BASE64,
       mimeType: "image/png",
     },
   ]);
   const rejected = expect(first).rejects.toThrow("closed");
-  await waitForImmediate();
+  await image.entered;
   expect(pi.latestSession().prompts).toHaveLength(0);
   await session.close();
+  image.release();
   await rejected;
 });
 
@@ -3665,11 +3670,11 @@ describe("Pi tool-result images", () => {
         result: {
           content: [
             { type: "text", text: "captured" },
-            { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png" },
+            { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
           ],
           structuredContent: {
             type: "image",
-            data: Buffer.from("hello").toString("base64"),
+            data: ONE_BY_ONE_PNG_BASE64,
             mimeType: "image/png",
             note: "captured",
           },
@@ -3692,9 +3697,7 @@ describe("Pi tool-result images", () => {
       );
       expect(toolIndex).toBeGreaterThanOrEqual(0);
       // Base64 must never reach the tool output stringifier.
-      expect(JSON.stringify(items[toolIndex])).not.toContain(
-        Buffer.from("hello").toString("base64"),
-      );
+      expect(JSON.stringify(items[toolIndex])).not.toContain(ONE_BY_ONE_PNG_BASE64);
       expect(items.slice(toolIndex + 1)).toEqual([
         expect.objectContaining({
           type: "assistant_message",
@@ -3714,6 +3717,7 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
   session.subscribe((event) => emitted.push(event));
   const native = pi.latestSession();
   const first = await session.startTurn("read image");
+  const image = holdProviderImageMaterialization();
   native.emit({
     type: "tool_execution_end",
     toolCallId: "large-image",
@@ -3722,7 +3726,7 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
       content: [
         {
           type: "image",
-          data: Buffer.alloc(8 * 1024 * 1024, 73).toString("base64"),
+          data: ONE_BY_ONE_PNG_BASE64,
           mimeType: "image/png",
         },
       ],
@@ -3730,10 +3734,11 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
     isError: false,
   });
   native.finishTurn();
+  await image.entered;
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image");
-  await waitForImmediate();
-  await waitForImmediate();
+  image.release();
+  await image.settled;
   await expect
     .poll(() =>
       events
