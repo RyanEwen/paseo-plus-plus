@@ -2,7 +2,6 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsCard, SettingsSection, SettingsSelect } from "@/components/settings";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
-import { useSettingsSyncState } from "@/settings-sync/bootstrap";
 import { useSessionStore } from "@/stores/session-store";
 import { selectAccentColorSupport } from "@/appearance/accent-support";
 import { ACCENT_OPTIONS, type AccentColor } from "@/styles/accent";
@@ -11,7 +10,9 @@ import { AccentPreview } from "./accent-preview";
 /** Share the standard settings save, sync, error and selected-option behavior on every platform. */
 export function AccentSection() {
   const { t } = useTranslation();
-  const { selectedHost } = useSettingsSyncState();
+  // adapt: this layer has no settings sync, so preferences stay on this device (no selected host).
+  // Main reads the selected settings host from settings sync; restore that once a fork-base seam exposes it.
+  const selectedHost: string | null = null;
   const supported = useSessionStore((state) => selectAccentColorSupport(state, selectedHost));
   const { settings, save, pending, failed, isLoading, error } = useSettingsSave<"accentColor">();
   const options = useMemo(
