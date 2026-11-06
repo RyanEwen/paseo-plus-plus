@@ -9,7 +9,13 @@ import type { StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { ReplicaCache } from ".";
 import type { DirectoryCheckpoint } from "@/runtime/replica-cache";
-import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
+import type {
+  ReplicaHostRows,
+  ReplicaRow,
+  ReplicaRowChanges,
+  ReplicaRowExpectation,
+  ReplicaRowStore,
+} from "./row-store";
 
 const SERVER_ID = "cached-host";
 
@@ -29,6 +35,7 @@ class MemoryStorage implements ReplicaRowStore {
     kinds: readonly ReplicaRow["kind"][];
     ids?: readonly string[];
   }> = [];
+  beforeConditionalApply: (() => void | Promise<void>) | null = null;
   writes = 0;
   cleanups = 0;
   nextWriteFailure: Error | null = null;
@@ -88,6 +95,26 @@ class MemoryStorage implements ReplicaRowStore {
     this.changes.push(changes);
     for (const key of changes.deletes) this.rows.delete(this.key(key));
     for (const row of changes.upserts) this.rows.set(this.key(row), row);
+  }
+
+  async applyIfUnchanged(
+    changes: ReplicaRowChanges,
+    expected: readonly ReplicaRowExpectation[],
+  ): Promise<boolean> {
+    const before = this.beforeConditionalApply;
+    this.beforeConditionalApply = null;
+    await before?.();
+    for (const condition of expected) {
+      const current = this.rows.get(this.key(condition));
+      if (
+        condition.payload === null
+          ? current !== undefined
+          : current === undefined || current.payload !== condition.payload
+      )
+        return false;
+    }
+    await this.apply(changes);
+    return true;
   }
 
   async deleteHost(serverId: string): Promise<void> {
@@ -956,6 +983,111 @@ describe("ReplicaCache", () => {
     const reopened = await createCache(storage).readDirectory(SERVER_ID);
     expect(reopened.checkpoint).toEqual({
       projects: { generation: "g", afterSeq: 4 },
+    });
+  });
+
+  it("rereads instead of deleting a row another context replaced during repair", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    commitDirectory(writer, SERVER_ID, directory({ agents: { generation: "g", afterSeq: 12 } }));
+    await writer.flush();
+    const agentKey = `${SERVER_ID}:agent:agent-1`;
+    const current = storage.rows.get(agentKey);
+    if (!current) throw new Error("agent row was not written");
+    storage.rows.set(agentKey, { ...current, payload: "{bad" });
+    // Another browser context writes a valid row between this read and its repair.
+    storage.beforeConditionalApply = () => {
+      storage.rows.set(agentKey, current);
+    };
+
+    expect((await createCache(storage).readAgent(SERVER_ID, "agent-1"))?.id).toBe("agent-1");
+
+    expect(storage.rows.get(agentKey)).toEqual(current);
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+      agents: { generation: "g", afterSeq: 12 },
+    });
+  });
+
+  it("repairs again when another context writes a checkpoint the repair saw as absent", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    commitDirectory(
+      writer,
+      SERVER_ID,
+      directory({
+        agents: { generation: "g", afterSeq: 12 },
+        projects: { generation: "g", afterSeq: 4 },
+      }),
+    );
+    await writer.flush();
+    const checkpointKey = `${SERVER_ID}:checkpoint:singleton`;
+    const checkpointRow = storage.rows.get(checkpointKey);
+    if (!checkpointRow) throw new Error("checkpoint row was not written");
+    storage.rows.delete(checkpointKey);
+    storage.rows.set(`${SERVER_ID}:agent:agent-1`, {
+      serverId: SERVER_ID,
+      kind: "agent",
+      id: "agent-1",
+      payload: "{bad",
+    });
+    storage.beforeConditionalApply = () => {
+      storage.rows.set(checkpointKey, checkpointRow);
+    };
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.checkpoint).toEqual({ projects: { generation: "g", afterSeq: 4 } });
+    expect(storage.rows.has(`${SERVER_ID}:agent:agent-1`)).toBe(false);
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+      projects: { generation: "g", afterSeq: 4 },
+    });
+  });
+
+  it("keeps a repaired cursor out of ordinary checkpoint writes until a complete baseline", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    commitDirectory(
+      writer,
+      SERVER_ID,
+      directory({
+        agents: { generation: "g", afterSeq: 12 },
+        projects: { generation: "g", afterSeq: 4 },
+      }),
+    );
+    await writer.flush();
+    storage.rows.set(`${SERVER_ID}:agent:agent-1`, {
+      serverId: SERVER_ID,
+      kind: "agent",
+      id: "agent-1",
+      payload: "{bad",
+    });
+    const cache = createCache(storage);
+    expect(await cache.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+
+    commitDirectory(
+      cache,
+      SERVER_ID,
+      directory({
+        agents: { generation: "g", afterSeq: 13 },
+        projects: { generation: "g", afterSeq: 5 },
+      }),
+    );
+    await cache.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+      projects: { generation: "g", afterSeq: 5 },
+    });
+
+    cache.replaceDirectoryBaseline(
+      SERVER_ID,
+      directory({
+        agents: { generation: "g", afterSeq: 14 },
+        projects: { generation: "g", afterSeq: 6 },
+      }),
+    );
+    await cache.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual({
+      agents: { generation: "g", afterSeq: 14 },
+      projects: { generation: "g", afterSeq: 6 },
     });
   });
 

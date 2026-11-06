@@ -571,6 +571,16 @@ then retry only when a requested row changes during the read. Unrelated agent st
 invalidate the read. Directory baseline replacements and host removal or renaming still invalidate
 the affected reads.
 
+Compare captured raw rows and the checkpoint (including its absence) before applying repair,
+in the same storage transaction. A repair from one browser context must not delete a newer
+baseline written by another. On a comparison mismatch, reread rather than replaying the old repair.
+Host lifecycle and pending-write fences still apply within each cache instance.
+After repair, ordinary checkpoint writes cannot restore the affected entity cursor. Only a
+successfully persisted complete directory baseline clears that invalidation; timelines and newer
+unrelated cursors continue to persist.
+These cursor fences are local to the cache instance. Compare-and-apply protects a repair from
+stale observations; ordinary writes from another instance remain unconditional.
+
 The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
