@@ -1,3 +1,4 @@
+import { useSettings } from "@/hooks/use-settings";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
@@ -2271,6 +2272,10 @@ export const ToolCall = memo(function ToolCall({
   standalone = true,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
+  const descriptiveToolCalls = useSettings(
+    (settings) => settings.paseoPlusPlus.descriptiveToolCalls,
+  );
+  const { t: activityTranslation } = useTranslation();
   const { expanded: isExpanded, toggle: toggleExpanded } = useToolCallExpanded({
     callId: itemId,
     defaultExpanded: defaultExpanded ?? false,
@@ -2307,8 +2312,20 @@ export const ToolCall = memo(function ToolCall({
         cwd,
         targetAgentTitle,
         resolveIcon: resolveToolCallIcon,
+        activityTranslation: descriptiveToolCalls ? activityTranslation : undefined,
       }),
-    [toolName, status, error, effectiveDetail, metadata, cwd, agentMessage, targetAgentTitle],
+    [
+      toolName,
+      status,
+      error,
+      effectiveDetail,
+      metadata,
+      cwd,
+      agentMessage,
+      targetAgentTitle,
+      descriptiveToolCalls,
+      activityTranslation,
+    ],
   );
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;

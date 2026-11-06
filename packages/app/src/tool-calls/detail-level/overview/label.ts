@@ -23,6 +23,7 @@ function joinSummaryParts(parts: string[], conjunction: string): string {
 export function useOverviewSummaryLabel(
   summary: OverviewSummary,
   leadingParts: readonly string[] = [],
+  descriptive = false,
 ): string {
   const { t } = useTranslation();
   return useMemo(() => {
@@ -36,7 +37,13 @@ export function useOverviewSummaryLabel(
     ] as const;
     for (const [count, key] of entries) {
       if (count > 0) {
-        parts.push(t(`${key}.${count === 1 ? "one" : "other"}`, { count }));
+        parts.push(
+          descriptive
+            ? t(`toolActivity.counts.${key.split(".")[1]}.${count === 1 ? "one" : "other"}`, {
+                count,
+              })
+            : t(`${key}.${count === 1 ? "one" : "other"}`, { count }),
+        );
       }
     }
     for (const [action, count] of Object.entries(summary.paseoActions)) {
@@ -48,5 +55,5 @@ export function useOverviewSummaryLabel(
     // Keep a label for a group containing only reasoning.
     if (parts.length === 0 && summary.thoughtCount > 0) return t("toolCallGroup.thought");
     return joinSummaryParts(parts, t("toolCallGroup.and"));
-  }, [leadingParts, summary, t]);
+  }, [leadingParts, summary, descriptive, t]);
 }

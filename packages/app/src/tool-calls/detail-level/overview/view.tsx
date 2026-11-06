@@ -1,4 +1,6 @@
-import React, { memo, useCallback, useRef, type ReactNode } from "react";
+import { useSettings } from "@/hooks/use-settings";
+import { buildOverviewGroup } from "./model";
+import React, { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { ScrollView } from "react-native";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -28,7 +30,13 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
 }: OverviewGroupProps) {
   const scrollRef = useRef<ScrollView>(null);
   const isCompact = useIsCompactFormFactor();
-  const aggregateSummary = useOverviewSummaryLabel(group.summary);
+  const descriptive = useSettings((settings) => settings.paseoPlusPlus.descriptiveToolCalls);
+  const summary = useMemo(
+    () =>
+      descriptive ? buildOverviewGroup(group.run, { descriptive: true }).summary : group.summary,
+    [group.run, group.summary, descriptive],
+  );
+  const aggregateSummary = useOverviewSummaryLabel(summary, undefined, descriptive);
   const scrollToLatest = useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
