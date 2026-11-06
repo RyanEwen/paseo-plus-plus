@@ -5,8 +5,11 @@ import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
+  listPaseoWorktrees,
+  runWorktreeSetupCommands,
   runWorktreeTeardownCommands,
   slugify,
+  resolveDefaultWorktreePath,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
@@ -22,7 +25,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { join } from "path";
+import { join, sep } from "path";
+import { WorktreeCreationQueue } from "./worktree-creation-queue";
 import { createServer, type AddressInfo, type Socket } from "net";
 import { tmpdir } from "os";
 import { createRealpathAwarePathMatcher } from "./path";
@@ -94,6 +98,111 @@ describe("paseo worktree manager", () => {
 
   afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  it("serializes canonical project aliases and releases creation after failure", async () => {
+    const queue = new WorktreeCreationQueue();
+    const events: string[] = [];
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = queue.run(repoDir, async () => {
+      events.push("first");
+      await gate;
+      throw new Error("fixture creation failure");
+    });
+    const firstOutcome = first.catch((error: unknown) =>
+      error instanceof Error ? error.message : "unexpected failure",
+    );
+    const second = queue.run(`${repoDir}${sep}.`, async () => {
+      events.push("second");
+      return "created";
+    });
+    try {
+      await Promise.resolve();
+      expect(events).toEqual(["first"]);
+      release();
+      expect(await firstOutcome).toBe("fixture creation failure");
+      expect(await second).toBe("created");
+      expect(events).toEqual(["first", "second"]);
+      expect(await queue.run(repoDir, async () => "next creation")).toBe("next creation");
+    } finally {
+      release();
+      await Promise.allSettled([first, second]);
+    }
+  });
+
+  it("does not block an independent project creation", async () => {
+    const queue = new WorktreeCreationQueue();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = queue.run(repoDir, async () => {
+      await gate;
+      return "first";
+    });
+    try {
+      expect(await queue.run(tempDir, async () => "independent")).toBe("independent");
+      release();
+      expect(await first).toBe("first");
+    } finally {
+      release();
+      await first;
+    }
+  });
+
+  it("creates exactly one checkout for concurrent exact worktree names without a loser branch", async () => {
+    const outcomes = await Promise.allSettled(
+      ["concurrent-a", "concurrent-b"].map((branchName) =>
+        createWorktreePrimitive({
+          cwd: repoDir,
+          paseoHome,
+          source: { kind: "branch-off", baseBranch: "main", branchName },
+          worktreeSlug: "same-path",
+          exactNames: true,
+        }),
+      ),
+    );
+    const winners = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const losers = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect(String(losers[0]!.reason)).toContain("Worktree directory already exists");
+    const winner = winners[0]!.value;
+    const placement = { cwd: repoDir, paseoHome, worktreeSlug: "same-path" };
+    expect(await resolveDefaultWorktreePath({ ...placement, exactNames: true })).toBe(
+      winner.worktreePath,
+    );
+    expect(await resolveDefaultWorktreePath(placement)).toBe(`${winner.worktreePath}-1`);
+    expect(["concurrent-a", "concurrent-b"]).toContain(winner.branchName);
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+    expect(
+      git("branch", "--format=%(refname:short)", "--list", "concurrent-a", "concurrent-b"),
+    ).toBe(winner.branchName);
+    const matchesWinner = createRealpathAwarePathMatcher(winner.worktreePath);
+    const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+    expect(worktrees.filter((entry) => matchesWinner(entry.path))).toHaveLength(1);
+  });
+
+  it("allocates distinct legacy suffixes for concurrent worktree names", async () => {
+    const created = await Promise.all(
+      ["legacy-a", "legacy-b"].map((branchName) =>
+        createWorktreePrimitive({
+          cwd: repoDir,
+          paseoHome,
+          source: { kind: "branch-off", baseBranch: "main", branchName },
+          worktreeSlug: "legacy-path",
+        }),
+      ),
+    );
+    expect(created.map((entry) => entry.worktreePath.split(sep).at(-1)).sort()).toEqual([
+      "legacy-path",
+      "legacy-path-1",
+    ]);
+    expect(created.map((entry) => entry.branchName).sort()).toEqual(["legacy-a", "legacy-b"]);
   });
 
   it.each([
@@ -363,6 +472,100 @@ describe("paseo worktree manager", () => {
     });
 
     expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
+  it("exact setup failures retain checkouts for setup retry and preserve existing, advanced or occupied branches", async () => {
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+    writeFileSync(
+      join(repoDir, "setup.cjs"),
+      `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const root = process.env.PASEO_SOURCE_CHECKOUT_PATH;
+      const git = (...args) => require("node:child_process").execFileSync("git", args);
+      if (fs.existsSync(path.join(root, "advance-branch"))) {
+        git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "setup-commit");
+      }
+      if (fs.existsSync(path.join(root, "reuse-branch"))) {
+        git("checkout", "--detach");
+        git("worktree", "add", path.join(root, "reused-checkout"), process.env.PASEO_BRANCH_NAME);
+      }
+      if (!fs.existsSync(path.join(root, "allow-setup"))) process.exit(1);
+    `,
+    );
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({ worktree: { setup: ["node setup.cjs"] } }),
+    );
+    git("add", "setup.cjs", "paseo.json");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "setup fixture");
+    git("branch", "existing-branch");
+    const initialTip = git("rev-parse", "main");
+    // Creation and setup are separate production owners; exercise both real operations.
+    async function createAndRunSetup(input: CreateWorktreeOptions) {
+      const created = await createWorktreePrimitive(input);
+      await runWorktreeSetupCommands({
+        worktreePath: created.worktreePath,
+        branchName: created.branchName,
+      });
+      return created;
+    }
+    const options = {
+      cwd: repoDir,
+      paseoHome,
+      exactNames: true,
+      source: { kind: "branch-off" as const, baseBranch: "main", branchName: "retry-branch" },
+      worktreeSlug: "retry-directory",
+    };
+    await expect(createAndRunSetup(options)).rejects.toThrow("Worktree setup command failed");
+    const retained = (await listPaseoWorktrees({ cwd: repoDir, paseoHome })).find(
+      (worktree) => worktree.branchName === "retry-branch",
+    );
+    expect(retained).toBeDefined();
+    expect(git("rev-parse", "retry-branch")).toBe(initialTip);
+    await expect(createWorktreePrimitive(options)).rejects.toThrow(
+      "Worktree directory already exists",
+    );
+    await expect(
+      createWorktreePrimitive({ ...options, worktreeSlug: "another-directory" }),
+    ).rejects.toThrow("Branch already exists");
+    writeFileSync(join(repoDir, "allow-setup"), "");
+    await runWorktreeSetupCommands({
+      worktreePath: retained!.path,
+      branchName: "retry-branch",
+    });
+    expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(2);
+    rmSync(join(repoDir, "allow-setup"));
+    await expect(
+      createAndRunSetup({
+        ...options,
+        worktreeSlug: "existing-directory",
+        source: { kind: "checkout-branch", branchName: "existing-branch" },
+      }),
+    ).rejects.toThrow("Worktree setup command failed");
+    expect(git("rev-parse", "existing-branch")).toBe(initialTip);
+    writeFileSync(join(repoDir, "advance-branch"), "");
+    await expect(
+      createAndRunSetup({
+        ...options,
+        worktreeSlug: "advanced-directory",
+        source: { ...options.source, branchName: "advanced-branch" },
+      }),
+    ).rejects.toThrow("Worktree setup command failed");
+    expect(git("log", "-1", "--format=%s", "advanced-branch")).toBe("setup-commit");
+    expect(git("rev-parse", "advanced-branch^")).toBe(initialTip);
+    rmSync(join(repoDir, "advance-branch"));
+    writeFileSync(join(repoDir, "reuse-branch"), "");
+    await expect(
+      createAndRunSetup({
+        ...options,
+        worktreeSlug: "occupied-directory",
+        source: { ...options.source, branchName: "occupied-branch" },
+      }),
+    ).rejects.toThrow("Worktree setup command failed");
+    expect(git("rev-parse", "occupied-branch")).toBe(initialTip);
+    expect(existsSync(join(repoDir, "reused-checkout"))).toBe(true);
   });
 
   describe("branch-off from a remote-tracking base", () => {

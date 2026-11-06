@@ -23,6 +23,7 @@ import { runGitCommand, runWithGitCommandPriority } from "../utils/run-git-comma
 export interface CreateWorktreeCoreInput {
   cwd: string;
   worktreeSlug?: string;
+  exactNames?: boolean;
   branchName?: string;
   refName?: string;
   action?: "branch-off" | "checkout";
@@ -62,9 +63,12 @@ async function createWorktreeCoreWithPriority(
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
   const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
-  const requestedWorktreeSlug = input.worktreeSlug
-    ? normalizeWorktreeSlug(input.worktreeSlug)
-    : undefined;
+  let requestedWorktreeSlug: string | undefined;
+  if (input.worktreeSlug !== undefined) {
+    requestedWorktreeSlug = input.exactNames
+      ? validateExactWorktreeName(input.worktreeSlug)
+      : normalizeWorktreeSlug(input.worktreeSlug);
+  }
   const requestedBranchName = input.branchName?.trim();
 
   let intentInput: ResolveWorktreeCreationIntentInput;
@@ -123,6 +127,7 @@ async function createWorktreeCoreWithPriority(
     paseoHome: input.paseoHome,
     worktreesRoot: input.worktreesRoot,
     worktreeSlug: normalizedSlug,
+    exactNames: input.exactNames,
   });
   const { stdout: sourceRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd: input.cwd,
@@ -146,6 +151,7 @@ async function createWorktreeCoreWithPriority(
       worktreeSlug: normalizedSlug,
       worktreePath: transformed.path,
       source: intent,
+      exactNames: input.exactNames,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
     }),
@@ -260,4 +266,14 @@ function validateWorktreeSlug(slug: string): string {
 
 function normalizeWorktreeSlug(value: string): string {
   return validateWorktreeSlug(slugify(value));
+}
+
+/** Validate an explicitly chosen directory name without changing it. */
+function validateExactWorktreeName(value: string): string {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) || value.length > 50) {
+    throw new Error(
+      "Invalid worktree name: use lowercase letters, numbers and single hyphens (max 50 characters)",
+    );
+  }
+  return value;
 }

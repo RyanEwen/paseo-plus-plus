@@ -7,6 +7,7 @@ import {
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
   InvalidGitBranchNameError,
+  WorktreeSetupError,
   getScriptConfigs,
   getWorktreeSetupCommands,
   getWorktreeTerminalSpecs,
@@ -51,7 +52,7 @@ import {
   readlinkSync,
   symlinkSync,
 } from "fs";
-import { delimiter, dirname, join } from "path";
+import { basename, delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
 
@@ -93,6 +94,18 @@ function createLegacyWorktreeForTest(
 
 describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
   describe("createWorktree", () => {
+    /** Creates the checkout before exposing the separately owned setup operation. */
+    async function prepareSetup(options: CreateWorktreeOptions) {
+      const created = await createWorktreePrimitive(options);
+      return {
+        created,
+        run: () =>
+          runWorktreeSetupCommands({
+            worktreePath: created.worktreePath,
+            branchName: created.branchName,
+          }),
+      };
+    }
     let tempDir: string;
     let repoDir: string;
     let paseoHome: string;
@@ -912,6 +925,192 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         "hello from string setup",
       );
     });
+
+    it("retains exact-name failures for setup retry without running slow deletion hooks", async () => {
+      const git = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+      const markerPath = join(tempDir, "slow-hook-finished");
+      const hookPath = join(repoDir, ".git", "hooks", "reference-transaction");
+      writeFileSync(
+        hookPath,
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const updates = fs.readFileSync(0, "utf8").trim().split("\\n");
+if (process.argv[2] === "prepared" && updates.some(line => {
+  const [, newTip, ref] = line.split(" ");
+  return ref === "refs/heads/slow-hook-branch" && /^0+$/.test(newTip);
+})) {
+  setTimeout(() => fs.writeFileSync(${JSON.stringify(markerPath)}, "finished"), 3_000);
+}
+`,
+      );
+      chmodSync(hookPath, 0o755);
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: '[ -f "$PASEO_SOURCE_CHECKOUT_PATH/allow-setup" ]' } }),
+      );
+      const options = {
+        cwd: repoDir,
+        paseoHome,
+        exactNames: true,
+        worktreeSlug: "slow-hook-directory",
+        source: { kind: "branch-off" as const, baseBranch: "main", branchName: "slow-hook-branch" },
+      };
+      const setup = await prepareSetup(options);
+      await expect(setup.run()).rejects.toThrow("Worktree setup command failed");
+      expect(existsSync(markerPath)).toBe(false);
+      const retained = (await listPaseoWorktrees({ cwd: repoDir, paseoHome })).find(
+        (worktree) => worktree.branchName === "slow-hook-branch",
+      );
+      expect(retained).toBeDefined();
+      expect(git("rev-parse", "slow-hook-branch")).toBe(git("rev-parse", "main"));
+      await expect(createWorktreePrimitive(options)).rejects.toThrow();
+      expect(existsSync(join(repoDir, ".git", "refs", "heads", "slow-hook-branch.lock"))).toBe(
+        false,
+      );
+
+      writeFileSync(join(repoDir, "allow-setup"), "");
+      await expect(
+        runWorktreeSetupCommands({
+          worktreePath: retained!.path,
+          branchName: "slow-hook-branch",
+        }),
+      ).resolves.toMatchObject([{ exitCode: 0 }]);
+      expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(2);
+    });
+
+    it("reports setup failure without starting buffered rollback transactions", async () => {
+      const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+      const initialTip = execFileSync(realGit, ["rev-parse", "HEAD"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim();
+      const markerPath = join(tempDir, "prepared-but-buffered");
+      const binDir = join(tempDir, "buffered-git-bin");
+      mkdirSync(binDir);
+      const shimPath = join(binDir, "git");
+      // Git 2.30 buffered these replies. Run real Git but hold its stdout
+      // until exit, reproducing that behavior while keeping real ref locks.
+      writeFileSync(
+        shimPath,
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawn, spawnSync } = require("node:child_process");
+const realGit = ${JSON.stringify(realGit)};
+const args = process.argv.slice(2);
+if (args.includes("update-ref") && args.includes("--stdin")) {
+  const child = spawn(realGit, args, { stdio: ["inherit", "pipe", "inherit"] });
+  const chunks = [];
+  child.stdout.on("data", chunk => {
+    chunks.push(chunk);
+    if (Buffer.concat(chunks).toString().includes("prepare: ok")) {
+      fs.writeFileSync(${JSON.stringify(markerPath)}, "prepared");
+    }
+  });
+  child.on("close", code => {
+    process.stdout.write(Buffer.concat(chunks));
+    process.exit(code ?? 1);
+  });
+} else {
+  const result = spawnSync(realGit, args, { stdio: "inherit" });
+  process.exit(result.status ?? 1);
+}
+`,
+      );
+      chmodSync(shimPath, 0o755);
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ worktree: { setup: "exit 1" } }));
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`;
+      const startedAt = performance.now();
+      try {
+        const setup = await prepareSetup({
+          cwd: repoDir,
+          paseoHome,
+          exactNames: true,
+          worktreeSlug: "buffered-directory",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "buffered-branch" },
+        });
+        await expect(setup.run()).rejects.toThrow("Worktree setup command failed: exit 1");
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = originalPath;
+        }
+      }
+      expect(performance.now() - startedAt).toBeLessThan(10_000);
+      expect(existsSync(markerPath)).toBe(false);
+      expect(
+        execFileSync(realGit, ["rev-parse", "buffered-branch"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe(initialTip);
+      expect(existsSync(join(repoDir, ".git", "refs", "heads", "buffered-branch.lock"))).toBe(
+        false,
+      );
+    }, 45_000);
+
+    it.each(["switch", "worktree add --no-checkout"])(
+      "preserves exact-name failures adopted by %s during setup",
+      async (action) => {
+        const git = (...args: string[]) =>
+          execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+        const initialTip = git("rev-parse", "HEAD");
+        const concurrentPath = join(tempDir, "adopted-checkout");
+        const actorArgs =
+          action === "switch"
+            ? ["switch", "adopted-branch"]
+            : ["worktree", "add", "--no-checkout", concurrentPath, "adopted-branch"];
+        writeFileSync(
+          join(repoDir, "adopt.cjs"),
+          `
+const { execFileSync } = require("node:child_process");
+execFileSync("git", ["checkout", "--detach"]);
+execFileSync("git", ${JSON.stringify(actorArgs)}, { cwd: process.env.PASEO_SOURCE_CHECKOUT_PATH });
+process.stderr.write("setup failed after adoption");
+process.exit(1);
+`,
+        );
+        writeFileSync(
+          join(repoDir, "paseo.json"),
+          JSON.stringify({ worktree: { setup: "node adopt.cjs" } }),
+        );
+        git("add", "adopt.cjs", "paseo.json");
+        git("-c", "commit.gpgsign=false", "commit", "-m", "adoption setup fixture");
+        const branchTip = git("rev-parse", "HEAD");
+        expect(branchTip).not.toBe(initialTip);
+
+        const setup = await prepareSetup({
+          cwd: repoDir,
+          paseoHome,
+          exactNames: true,
+          worktreeSlug: "failed-adopted-directory",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "adopted-branch" },
+        });
+        const error = await setup.run().catch((caughtError: unknown) => caughtError);
+        expect(error).toBeInstanceOf(WorktreeSetupError);
+        const setupError = error as WorktreeSetupError;
+        expect(setupError.message).toContain("setup failed after adoption");
+        expect(setupError.results[0]?.exitCode).toBe(1);
+        expect(setup.created.branchName).toBe("adopted-branch");
+        expect(basename(setup.created.worktreePath)).toBe("failed-adopted-directory");
+        expect(existsSync(setup.created.worktreePath)).toBe(true);
+        const adoptedCheckout = action === "switch" ? repoDir : concurrentPath;
+        expect(git("-C", adoptedCheckout, "symbolic-ref", "HEAD")).toBe(
+          "refs/heads/adopted-branch",
+        );
+        expect(git("rev-parse", "adopted-branch")).toBe(branchTip);
+        expect(git("worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(
+          action === "switch" ? 2 : 3,
+        );
+        // Retry the retained checkout through the same public setup boundary.
+        writeFileSync(join(setup.created.worktreePath, "adopt.cjs"), "process.exit(0);\n");
+        await expect(setup.run()).resolves.toMatchObject([{ exitCode: 0 }]);
+        expect(git("rev-parse", "adopted-branch")).toBe(branchTip);
+        expect(existsSync(setup.created.worktreePath)).toBe(true);
+      },
+    );
 
     it("runs setup commands with the daemon PATH instead of login profile PATH", async () => {
       const home = join(tempDir, "host-home");
