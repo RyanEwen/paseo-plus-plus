@@ -97,6 +97,7 @@ import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import {
   hasVisibleOrderChanged,
+  mergeWithRemainder,
   moveProjectInFullOrder,
   resolveProjectWorkspaceReorder,
 } from "@/utils/sidebar-reorder";
