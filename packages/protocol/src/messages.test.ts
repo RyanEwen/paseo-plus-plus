@@ -550,6 +550,61 @@ test("agent messages are an optional semantic payload on existing tool rows", ()
   ).toBe(false);
 });
 
+test("durable original RPCs are structural, bounded and optional on server info", () => {
+  for (const type of [
+    "attachments.list.request",
+    "attachments.get.request",
+    "attachments.read.request",
+  ]) {
+    expect(
+      SessionInboundMessageSchema.safeParse({
+        type,
+        agentId: "agent-a",
+        referenceId: "att_11111111-1111-4111-8111-111111111111",
+        requestId: "req",
+      }).success,
+    ).toBe(true);
+  }
+  expect(
+    SessionInboundMessageSchema.safeParse({
+      type: "attachments.list.request",
+      agentId: "agent-a",
+      limit: 51,
+      requestId: "req",
+    }).success,
+  ).toBe(false);
+  expect(
+    SessionInboundMessageSchema.safeParse({
+      type: "attachments.read.request",
+      agentId: "agent-a",
+      referenceId: "../../secret",
+      requestId: "req",
+    }).success,
+  ).toBe(false);
+  expect(
+    SessionOutboundMessageSchema.safeParse({
+      type: "attachments.read.response",
+      payload: { reference: null, error: "Original unavailable", requestId: "req" },
+    }).success,
+  ).toBe(true);
+  const legacy = { type: "status", payload: { status: "server_info", serverId: "server-a" } };
+  expect(SessionOutboundMessageSchema.safeParse(legacy).success).toBe(true);
+  expect(
+    SessionOutboundMessageSchema.safeParse({
+      type: "status",
+      payload: {
+        ...legacy.payload,
+        features: { durableAttachments: true },
+        attachmentStorage: {
+          writable: false,
+          originalReads: false,
+          writeError: "Exclusive ownership unavailable",
+        },
+      },
+    }).success,
+  ).toBe(true);
+});
+
 test.each(["all", "base", "uncommitted"] as const)(
   "preserves %s review attachments while ignoring unknown attachments",
   (mode) => {
