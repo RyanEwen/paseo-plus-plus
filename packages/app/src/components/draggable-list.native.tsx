@@ -1,9 +1,10 @@
 import { RefreshControl } from "react-native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
 } from "react-native-draggable-flatlist";
+import { describeDragReorderMove, isDragGroupOrderValid } from "./drag-reorder/reorder-items";
 import { useUnistyles } from "react-native-unistyles";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 
@@ -12,10 +13,12 @@ export type { DraggableListProps, DraggableRenderItemInfo };
 const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
 
 export function DraggableList<T>({
+  disabled = false,
   data,
   keyExtractor,
   renderItem,
   onDragEnd,
+  getDragGroupKey,
   style,
   containerStyle,
   contentContainerStyle,
@@ -37,6 +40,7 @@ export function DraggableList<T>({
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);
+  const dragItems = useRef<T[] | null>(null);
 
   // Pass the ref directly to DraggableFlatList - it handles gesture
   // coordination internally for nestable lists.
@@ -56,26 +60,49 @@ export function DraggableList<T>({
       const info: DraggableRenderItemInfo<T> = {
         item,
         index,
-        drag,
+        drag: disabled || getDragGroupKey?.(item) === null ? () => {} : drag,
         isActive,
       };
       return renderItem(info);
     },
-    [renderItem],
+    [disabled, getDragGroupKey, renderItem],
   );
 
   const handleDragEnd = useCallback(
-    ({ data: newData }: { data: T[] }) => {
+    ({ data: newData, from, to }: { data: T[]; from: number; to: number }) => {
       setIsDragging(false);
-      onDragEnd(newData);
+      const original = dragItems.current ?? data;
+      dragItems.current = null;
+      if (disabled) return;
+      if (
+        getDragGroupKey &&
+        !isDragGroupOrderValid({
+          original,
+          reordered: newData,
+          keyExtractor,
+          getDragGroupKey,
+        })
+      )
+        return;
+      const move = describeDragReorderMove({
+        items: newData,
+        originalItems: original,
+        from,
+        to,
+        keyExtractor,
+      });
+      if (!move && from !== to) return;
+      onDragEnd(newData, move ?? undefined);
     },
-    [onDragEnd],
+    [data, disabled, getDragGroupKey, keyExtractor, onDragEnd],
   );
 
   const handleDragBegin = useCallback(() => {
+    if (disabled) return;
+    dragItems.current = data;
     setIsDragging(true);
     onDragBeginProp?.();
-  }, [onDragBeginProp]);
+  }, [data, disabled, onDragBeginProp]);
 
   const handleRelease = useCallback(() => {
     setIsDragging(false);
@@ -102,6 +129,15 @@ export function DraggableList<T>({
     [shouldShowRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
   );
 
+  const dragGroupKeys = useMemo(
+    () => (getDragGroupKey ? data.map(getDragGroupKey) : undefined),
+    [data, getDragGroupKey],
+  );
+  const listExtraData = useMemo(
+    () => [extraData, disabled],
+    [extraData, disabled],
+  );
+
   return (
     <ListComponent
       testID={testID}
@@ -117,7 +153,8 @@ export function DraggableList<T>({
       ListEmptyComponent={ListEmptyComponent}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
       scrollEnabled={scrollEnabled}
-      extraData={extraData}
+      extraData={listExtraData}
+      dragGroupKeys={dragGroupKeys}
       simultaneousHandlers={simultaneousHandlers}
       dragGestureHostPresented={gestureHostPresented}
       // Higher activation distance reduces accidental drag capture while nested
