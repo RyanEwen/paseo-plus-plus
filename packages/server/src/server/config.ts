@@ -1,3 +1,4 @@
+import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -585,6 +586,7 @@ export type ResolvedDaemonSettings = Pick<
   | "browserToolsEnabled"
   | "git"
   | "autoArchiveAfterMerge"
+  | "notifications"
   | "enableTerminalAgentHooks"
   | "appendSystemPrompt"
   | "terminalProfiles"
@@ -684,6 +686,9 @@ export function resolveReloadableConfig(
     plugins: persisted.plugins,
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
+    notifications: {
+      agentAwareAttention: resolveAgentAwareAttention(persisted),
+    },
     idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
     ...resolveRestartRecoveryConfig(persisted.agents),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
@@ -842,4 +847,8 @@ function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
     resumeOnStartup: agents?.resumeOnStartup ?? false,
     resumePrompt: agents?.resumePrompt ?? "Resume working.",
   };
+}
+
+function resolveAgentAwareAttention(persisted: PersistedConfig): boolean {
+  return isAgentAwareAttentionEnabled({ notifications: persisted.daemon?.notifications });
 }
