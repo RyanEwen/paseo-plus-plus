@@ -1,3 +1,8 @@
+import {
+  ProjectExpansionAnchorContext,
+  useProjectExpansionAnchor,
+} from "./sidebar/project-expansion-anchor";
+import { useProjectExpansionScroll } from "./sidebar/use-project-expansion-scroll";
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
@@ -165,6 +170,10 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
+import {
+  SidebarPositionTransitions,
+  useSidebarPositionTransitionDuration,
+} from "./sidebar/position-transitions";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
@@ -1609,6 +1618,7 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const getStatusEnteredAt = useCallback(
     (workspace: SidebarWorkspacePlacement) =>
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
@@ -1776,9 +1786,21 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, displayName, t, toast, project.hosts]);
 
+  const { ref: projectAnchorRef, anchor: anchorExpansion } = useProjectExpansionAnchor();
   const handleToggleCollapsed = useCallback(() => {
-    onToggleCollapsed(project.viewKey);
-  }, [onToggleCollapsed, project.viewKey]);
+    const toggle = () => onToggleCollapsed(project.viewKey);
+    const view = useSidebarViewStore.getState();
+    if (
+      collapsed &&
+      view.groupMode === "project" &&
+      view.oneProjectAtATime &&
+      projectAnchorRef.current
+    ) {
+      anchorExpansion(projectAnchorRef.current, toggle);
+    } else {
+      toggle();
+    }
+  }, [anchorExpansion, collapsed, onToggleCollapsed, project.viewKey, projectAnchorRef]);
 
   let projectChildren = null;
   if (!collapsed) {
@@ -1787,6 +1809,7 @@ function ProjectBlock({
         <>
           <DraggableList
             testID={`sidebar-workspace-list-${project.viewKey}`}
+            positionTransitionDuration={positionTransitionDuration}
             data={visibleWorkspaces}
             keyExtractor={workspaceKeyExtractor}
             renderItem={renderWorkspace}
@@ -1824,6 +1847,8 @@ function ProjectBlock({
 
   return (
     <View
+      ref={projectAnchorRef}
+      collapsable={false}
       role="group"
       accessibilityLabel={displayName}
       style={projectChildren ? styles.projectBlockExpanded : undefined}
@@ -2141,7 +2166,7 @@ export function SidebarWorkspaceList({
       />
     );
 
-  return content;
+  return <SidebarPositionTransitions>{content}</SidebarPositionTransitions>;
 }
 
 /**
@@ -2261,6 +2286,8 @@ function ProjectModeList({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
+  const positionTransitionDuration = useSidebarPositionTransitionDuration();
+  const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
   const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
@@ -2569,12 +2596,19 @@ function ProjectModeList({
     [renderPinnedChatRow],
   );
 
+  const projectLayoutRevision = useMemo(
+    () => [collapsedProjectKeys, pinnedCollapsed, visiblePinnedChats],
+    [collapsedProjectKeys, pinnedCollapsed, visiblePinnedChats],
+  );
+
   const projectBody =
     projects.length === 0 ? (
       <SidebarProjectEmptyState onAddProject={onAddProject} onImportSession={onImportSession} />
     ) : (
       <DraggableList
         testID="sidebar-project-list"
+        positionTransitionDuration={positionTransitionDuration}
+        positionTransitionRevision={projectLayoutRevision}
         data={unpinnedProjects}
         keyExtractor={projectViewKeyExtractor}
         renderItem={renderProject}
@@ -2653,28 +2687,34 @@ function ProjectModeList({
   if (bodyOnly) return content;
 
   return (
-    <View style={styles.container}>
-      {platformIsNative ? (
-        <NestableScrollContainer
-          {...nativeScrollGestureProps}
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={true}
-          testID="sidebar-project-workspace-list-scroll"
-        >
-          {content}
-        </NestableScrollContainer>
-      ) : (
-        <ScrollView
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={true}
-          testID="sidebar-project-workspace-list-scroll"
-        >
-          {content}
-        </ScrollView>
-      )}
-    </View>
+    <ProjectExpansionAnchorContext value={expansionScroll.anchor}>
+      <View style={styles.container}>
+        {platformIsNative ? (
+          <NestableScrollContainer
+            ref={expansionScroll.ref}
+            onScrollBeginDrag={expansionScroll.cancel}
+            onTouchStart={expansionScroll.cancel}
+            {...nativeScrollGestureProps}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={true}
+            testID="sidebar-project-workspace-list-scroll"
+          >
+            {content}
+          </NestableScrollContainer>
+        ) : (
+          <ScrollView
+            ref={expansionScroll.ref}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={true}
+            testID="sidebar-project-workspace-list-scroll"
+          >
+            {content}
+          </ScrollView>
+        )}
+      </View>
+    </ProjectExpansionAnchorContext>
   );
 }
 
