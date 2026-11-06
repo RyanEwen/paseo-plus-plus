@@ -889,6 +889,8 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
   return (
     <HostRuntimeBootstrapProvider>
       <NotificationOpenBridge />
+      {/* Feature settings domain adapters (useSettingsDomainAdapter) mount above this line, so
+          React runs their registration effects before the settings sync bootstrap loads. */}
       <SettingsSyncBootstrap />
       <SidebarCalloutProvider>
         <ProvidersWrapper>{children}</ProvidersWrapper>

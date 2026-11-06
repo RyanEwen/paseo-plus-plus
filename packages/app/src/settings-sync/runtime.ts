@@ -28,11 +28,13 @@ import {
   collectDomainDeviceValues,
   filterDomainAppExport,
   initializeDomains,
-  listSettingsSyncDomains,
   ownedDomainAppKeys,
   trackDomainEdits,
-  type SettingsSyncContext,
 } from "./domains";
+import {
+  listSettingsDomainAdapters,
+  type SettingsDomainContext,
+} from "@/hooks/use-settings/domain-adapters";
 import { useSessionStore } from "@/stores/session-store";
 
 const STORAGE_KEY = "app-settings-sync";
@@ -50,12 +52,12 @@ const deps: SettingsDeps = {
 
 /** Let every registered domain load its local state before sync reads or replaces it. */
 export async function initializeSettingsSyncDomains(): Promise<void> {
-  await initializeDomains(listSettingsSyncDomains());
+  await initializeDomains(listSettingsDomainAdapters());
 }
 
 /** Run every registered domain's edit committer, including later registrations; returns stop. */
 export function observeSettingsSyncDomainEdits(): () => void {
-  return trackDomainEdits(settingsSync);
+  return trackDomainEdits();
 }
 
 /**
@@ -70,7 +72,7 @@ export async function getDeviceSettingsValues(
   const settings =
     queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage());
-  const domains = listSettingsSyncDomains();
+  const domains = listSettingsDomainAdapters();
   await initializeDomains(domains);
 
   // Plain app preferences. Keys a domain projects itself are left to that domain.
@@ -84,7 +86,7 @@ export async function getDeviceSettingsValues(
   }
   app.usage = { displayAs: settings.usage.displayAs, pins: settings.usage.pins };
 
-  const context: SettingsSyncContext = {
+  const context: SettingsDomainContext = {
     purpose,
     selectedHost: settingsSync.getState().selectedHost,
   };
@@ -116,7 +118,7 @@ async function applyValues(values: Record<string, unknown>): Promise<void> {
     deps,
   });
   // Domains project their own values only after the app preferences are durable.
-  await applyDomainValues(listSettingsSyncDomains(), values, app);
+  await applyDomainValues(listSettingsDomainAdapters(), values, app);
 }
 
 export const settingsSync = new SettingsSyncModel({
