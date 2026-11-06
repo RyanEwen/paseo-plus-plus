@@ -32,6 +32,8 @@ export interface WorkspaceTabLayoutInput {
    * narrow X beside the label is easy to hit by accident and the tab's long-press menu closes it.
    */
   compact: boolean;
+  /** Raise only the title-width ceiling; short tabs stay content-driven. */
+  widerTabs?: boolean;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -90,8 +92,9 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
-    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
+    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
   const minimumTotalWidth = input.metrics.minTabWidth * tabCount;
@@ -117,7 +120,7 @@ export function computeWorkspaceTabLayout(
   }
 
   const roundedWidths = resolvedWidths.map((width) =>
-    Math.round(clamp(width, input.metrics.minTabWidth, input.metrics.maxTabWidth)),
+    Math.round(clamp(width, input.metrics.minTabWidth, maximumWidth)),
   );
 
   return {
