@@ -1510,6 +1510,7 @@ Every panel receives `PluginPanelProps<Params>` with `theme`, `host`, `layout`, 
 `workspaceId`, read-only `params`, `revision`, and `tab`. Workspace panels have empty
 `PluginWorkspacePanelParams`; agent panels have `PluginAgentPanelParams` containing `agentId`.
 `revision` increments whenever params are re-sent to the same tab, including an identical request.
+Both receive `active`, which is false while the retained panel is off-screen. Pause media and polling when inactive; retain local drafts and panel state. Older hosts omit this field.
 
 `tab.setModified(boolean)` marks unsaved work and asks before closing. `tab.state` is opaque
 persisted JSON, initially `undefined`; `tab.setState(value)` replaces it. Each tab owns its state.

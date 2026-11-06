@@ -120,6 +120,8 @@ export interface PluginTab {
 }
 
 export interface PluginPanelProps<Params> extends PluginNavigableHostProps {
+  /** False while a retained panel is off-screen. Pause media and polling, preserving local state. */
+  active?: boolean;
   workspaceId: string;
   readonly params: Readonly<Params>;
   revision: number;
