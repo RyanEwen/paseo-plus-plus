@@ -14,8 +14,69 @@ import {
 
 export { holdDaemonHydration };
 
+/** Select original authoritative rows inside the intended chat/pane, excluding sticky copies.
+ * Hidden timelines are included only for assertions that deliberately inspect retained DOM.
+ * Multiple visible timelines stay strict: callers must supply their owning pane.
+ */
+export function originalTimelineRows(scope: Page | Locator, includeHidden = false): Locator {
+  const timelines = scope.getByTestId("agent-chat-scroll");
+  const owner = includeHidden ? timelines : timelines.filter({ visible: true });
+  return owner.locator("[data-history-row-id]");
+}
+
+/** Select original prompt bodies while preserving exact-count and busy-state assertions. */
+export function originalUserMessages(scope: Page | Locator): Locator {
+  return originalTimelineRows(scope).getByTestId("user-message");
+}
+
+/** Measure transcript position independently of a bubble's current sticky translation. */
+export async function readOriginalUserMessageBounds(message: Locator) {
+  return message.evaluate((bubble) => {
+    const rect = bubble.getBoundingClientRect();
+    const row = bubble.closest("[data-actual-prompt-row]");
+    const body = bubble.closest("[data-actual-prompt-content]");
+    const y =
+      row && body
+        ? row.getBoundingClientRect().top + rect.top - body.getBoundingClientRect().top
+        : rect.top;
+    return { x: rect.x, y, width: rect.width, height: rect.height };
+  });
+}
+
+/** Disclose the real prompt body without changing the expected submission lifecycle. */
+export async function revealUserMessageBody(
+  message: Locator,
+  state: "pending" | "acknowledged" = "acknowledged",
+): Promise<void> {
+  // Held submissions must remain pending; both states can render compact previews.
+  await expect(message).toBeVisible();
+  await expect(message).toHaveAttribute("aria-busy", String(state === "pending"));
+  const expand = message.getByRole("button", { name: "Expand user message", exact: true });
+  if (await expand.count()) await expand.click();
+}
+
+/** Inspect the real image and prove disclosure preserved the expected submission state. */
+export async function expectUserMessageImageVisible(
+  message: Locator,
+  state: "pending" | "acknowledged" = "acknowledged",
+): Promise<void> {
+  await revealUserMessageBody(message, state);
+  await expect(message.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expect(message).toHaveAttribute("aria-busy", String(state === "pending"));
+}
+
+/** Match exact original timeline text, never the sticky renderer or its measurement probe. */
+export function originalTimelineText(
+  scope: Page | Locator,
+  text: string,
+  includeHidden = false,
+): Locator {
+  return originalTimelineRows(scope, includeHidden).getByText(text, { exact: true });
+}
+
 interface LongTimelineAgentOptions {
   turns: number;
+  /** Supply real response content when navigation needs substantial later scroll range. */
   /** Live turns stream for ten seconds unless a test needs one that outlasts it. */
   liveTurns?: "ten-second-stream" | "thirty-minute-stream";
 }
