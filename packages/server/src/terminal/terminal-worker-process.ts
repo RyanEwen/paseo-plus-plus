@@ -169,6 +169,35 @@ function runLauncher(argv: string[]): void {
 type TerminalCreateRequest = Extract<TerminalWorkerRequest, { type: "createTerminal" }>;
 
 function runWorker(argv: string[]): void {
+  let startupPhase = "entry";
+
+  /**
+   * Writes one startup marker to this worker's log, the only output a launcher that kills a
+   * stalled worker leaves behind. Elapsed time is since process start, so the first marker also
+   * shows runtime boot and bundle load. Markers carry no paths, arguments or process details, a
+   * startup writes a fixed few, and an unusable stderr must never fail the startup itself.
+   */
+  function logStartupPhase(phase: string, detail: Record<string, string | number> = {}): void {
+    startupPhase = phase;
+    const fields = {
+      pid: process.pid,
+      platform: process.platform,
+      arch: process.arch,
+      elapsedMs: Math.round(performance.now()),
+      phase,
+      ...detail,
+    };
+    const line = Object.entries(fields)
+      .map(([name, value]) => `${name}=${value}`)
+      .join(" ");
+    try {
+      console.error(`Terminal worker startup ${line}`);
+    } catch {
+      // Diagnostics only.
+    }
+  }
+
+  logStartupPhase("entry");
   const args = parseWorkerArgs(argv, TERMINAL_WORKER_MARKER_ARG);
   const protocolVersion = reportedProtocolVersion();
   const manager = createTerminalManager();
@@ -682,15 +711,19 @@ function runWorker(argv: string[]): void {
   }
 
   function reportReady(line: string): void {
+    logStartupPhase("ready-attempt");
     try {
       writeSync(READY_FD, `${line}\n`);
       closeSync(READY_FD);
+      logStartupPhase("ready-written");
     } catch {
       // Started without a launcher pipe (tests that spawn the worker directly).
+      logStartupPhase("ready-unavailable");
     }
   }
 
   async function start(): Promise<void> {
+    logStartupPhase("socket-listen-begin");
     const socketPath = resolveTerminalWorkerSocketPath({
       paseoHome: args.paseoHome,
       workerPid: process.pid,
@@ -710,8 +743,15 @@ function runWorker(argv: string[]): void {
     if (process.platform !== "win32") {
       chmodSync(socketPath, PRIVATE_FILE_MODE);
     }
+    logStartupPhase("socket-listening");
 
+    logStartupPhase("inspect-begin");
+    const inspectStartedAt = performance.now();
     const self = await inspector.inspect(process.pid);
+    logStartupPhase("inspect-result", {
+      status: self.status,
+      durationMs: Math.round(performance.now() - inspectStartedAt),
+    });
     if (
       self.status !== "alive" ||
       !self.snapshot.startedAt ||
@@ -734,6 +774,7 @@ function runWorker(argv: string[]): void {
       terminals: [],
     };
     writeTerminalWorkerRecord(args.paseoHome, record);
+    logStartupPhase("record-written");
     reportReady(`ready ${socketPath}`);
 
     setTimeout(() => {
@@ -750,7 +791,9 @@ function runWorker(argv: string[]): void {
     void killEveryTerminalAndExit();
   });
 
+  logStartupPhase("init-done");
   start().catch((error: unknown) => {
+    logStartupPhase("failed", { after: startupPhase });
     const message = errorMessage(error).replace(/\n/g, " | ");
     console.error(`Terminal worker failed to start: ${errorMessage(error)}`);
     reportReady(`error ${message}`);

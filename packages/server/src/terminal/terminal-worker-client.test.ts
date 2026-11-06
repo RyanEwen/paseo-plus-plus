@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { isPlatform } from "../test-utils/platform.js";
 import { encodeFrame, FrameDecoder, TerminalWorkerFrameError } from "./terminal-worker-frames.js";
 import { connectTerminalWorker, TerminalWorkerConnectError } from "./terminal-worker-client.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
-import { terminalWorkerRecordPath } from "./terminal-worker-record.js";
+import { terminalWorkerLogPath, terminalWorkerRecordPath } from "./terminal-worker-record.js";
 
 const temporaryDirs: string[] = [];
 
@@ -71,6 +71,105 @@ describe("terminal worker authentication", () => {
     connection.disconnect();
     await waitUntil(() => !existsSync(recordPath), 10_000);
   });
+});
+
+describe("terminal worker startup phases", () => {
+  function readStartupLines(paseoHome: string): string[] {
+    return readFileSync(terminalWorkerLogPath(paseoHome), "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("Terminal worker startup "));
+  }
+
+  function phaseOf(line: string): string | undefined {
+    return line.match(/ phase=(\S+)/)?.[1];
+  }
+
+  it("records each phase of a real start in order, with only its own bounded fields", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "tw-phases-"));
+    temporaryDirs.push(paseoHome);
+
+    const { record, recordPath } = await launchTerminalWorker({
+      paseoHome,
+      paseoVersion: "0.0.0-test",
+    });
+
+    // The launcher can resolve before the worker logs what follows its fd 3 write.
+    await waitUntil(
+      () => readStartupLines(paseoHome).map(phaseOf).includes("ready-written"),
+      10_000,
+    );
+    const lines = readStartupLines(paseoHome);
+    expect(lines.map(phaseOf)).toEqual([
+      "entry",
+      "init-done",
+      "socket-listen-begin",
+      "socket-listening",
+      "inspect-begin",
+      "inspect-result",
+      "record-written",
+      "ready-attempt",
+      "ready-written",
+    ]);
+    for (const line of lines) {
+      expect(line).toMatch(
+        /^Terminal worker startup pid=\d+ platform=\w+ arch=\w+ elapsedMs=\d+ phase=[a-z-]+( status=[a-z-]+ durationMs=\d+)?$/,
+      );
+      expect(line).toContain(`pid=${record.pid} `);
+    }
+    expect(lines.find((line) => phaseOf(line) === "inspect-result")).toContain("status=alive");
+
+    const log = readFileSync(terminalWorkerLogPath(paseoHome), "utf8");
+    for (const sensitive of [record.secret, record.recordId, record.socketPath, paseoHome]) {
+      expect(log).not.toContain(sensitive);
+    }
+
+    const connection = await connectTerminalWorker({
+      socketPath: record.socketPath,
+      secret: record.secret,
+    });
+    connection.disconnect();
+    await waitUntil(() => !existsSync(recordPath), 10_000);
+    expect(readStartupLines(paseoHome)).toHaveLength(lines.length);
+  });
+
+  // The Windows inspector runs PowerShell by absolute path, so this PATH failure is POSIX only.
+  it.skipIf(isPlatform("win32"))(
+    "records the phase a real start failed after and keeps its original error",
+    async () => {
+      const paseoHome = mkdtempSync(path.join(tmpdir(), "tw-phase-fail-"));
+      temporaryDirs.push(paseoHome);
+      const originalPath = process.env.PATH;
+      // The worker cannot find `ps`, so its real self-inspection fails.
+      process.env.PATH = paseoHome;
+      try {
+        await expect(
+          launchTerminalWorker({ paseoHome, paseoVersion: "0.0.0-test" }),
+        ).rejects.toThrow(/cannot read its own process identity/);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+
+      // Everything through ready-attempt precedes the fd 3 write that rejected the launch. Nothing
+      // later is asserted: the launcher kills a worker that reports an error, so ready-written may
+      // never be logged.
+      const lines = readStartupLines(paseoHome);
+      expect(lines.map(phaseOf).slice(0, 8)).toEqual([
+        "entry",
+        "init-done",
+        "socket-listen-begin",
+        "socket-listening",
+        "inspect-begin",
+        "inspect-result",
+        "failed",
+        "ready-attempt",
+      ]);
+      expect(lines.find((line) => phaseOf(line) === "inspect-result")).toContain("status=error");
+      expect(lines.find((line) => phaseOf(line) === "failed")).toContain("after=inspect-result");
+      expect(readFileSync(terminalWorkerLogPath(paseoHome), "utf8")).toContain(
+        "Terminal worker failed to start: Terminal worker cannot read its own process identity",
+      );
+    },
+  );
 });
 
 it("bounds a stalled framed writer to one chunk and resumes in order", async () => {
