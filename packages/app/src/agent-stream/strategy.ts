@@ -1,3 +1,5 @@
+import type { PromptJumpPlacement } from "./prompt-jump-placement";
+import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
@@ -56,9 +58,15 @@ export interface StreamViewportHandle {
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  /** Cancel only message navigation, leaving bottom anchoring and delivery intact. */
+  cancelMessageScroll?: () => void;
+  scrollToMessage?: (
+    messageId: string,
+    occurrence?: ScrollToMessageOccurrence,
+    placement?: PromptJumpPlacement,
+  ) => void;
   /** Stop following output so the rows on screen stay put while rows below them open or close. */
   holdReadingPosition: () => void;
-  scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -77,6 +85,8 @@ export interface StreamHistoryRowRevision {
 export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
+  /** Isolated display context stays mounted but cannot own ordinary reading geometry. */
+  contextOnlyIds?: ReadonlySet<string>;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
   /** Presentation rows replaced by another row after history is folded. */
@@ -88,9 +98,10 @@ export interface StreamRenderInput {
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
   onNearBottomChange: (value: boolean) => void;
-  // The history row under the top of the viewport, for surfaces that mark where the reader
-  // is in the transcript. Only the web viewport measures it today.
-  onReadingPositionChange?: (rowId: string | null) => void;
+  onMessageNavigationError?: () => void;
+  // Viewport reading ownership and original user bubbles that still intersect it.
+  trackPromptHandoff?: boolean;
+  onReadingPositionChange?: (position: PromptReadingPosition) => void;
   onNearHistoryStart: () => boolean | Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;

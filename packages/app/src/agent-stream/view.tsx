@@ -1,3 +1,17 @@
+import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
+import { useSyncExternalStore } from "react";
+import { resolveRetainedContextSource } from "./sticky-prompt-model";
+import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
+import {
+  normalContextPageReader,
+  normalContextPromptIndexReader,
+} from "./fetch-reading-prompt-context";
+import {
+  mergeRetainedPrompts,
+  retainedCanonicalPositions,
+} from "@/timeline/canonical-prompt-context";
+import { shouldIndexUserPrompts } from "./chat-outline/model";
+import { useAppSettings } from "@/hooks/use-settings";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -32,7 +46,6 @@ import { openExplorerSidebarView } from "@/workspace-tabs/explorer-sidebar";
 import {
   AssistantMessage,
   SpeakMessage,
-  UserMessage,
   Notification,
   ToolCall,
   TodoListCard,
@@ -41,6 +54,7 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
+import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
@@ -51,7 +65,7 @@ import type {
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type AgentTimelineCursorState } from "@/stores/session-store";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
@@ -74,6 +88,13 @@ import { TurnSummaryLine } from "./turn-collapse/summary-line";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import type { PromptJumpPlacement } from "./prompt-jump-placement";
+import {
+  createPromptReadingPublisher,
+  type PromptReadingPosition,
+} from "./prompt-reading-position";
+import { PromptUserMessage } from "./prompt-user-message";
+import { StickyPrompt, type StickyPromptHandle } from "./sticky-prompt";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -289,10 +310,16 @@ export interface AgentStreamViewProps {
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
   historyPagination?: {
+    /** Authoritative epoch for a transcript with its own history owner. */
+    epoch?: string | null;
     hasOlder: boolean;
     isLoadingOlder: boolean;
     progressKey: string | null;
-    onLoadOlder: () => boolean | Promise<boolean>;
+    readPromptContext?: import("./fetch-reading-prompt-context").ContextPageReader;
+    promptContexts?: import("@/timeline/canonical-prompt-context").CanonicalPromptContexts;
+    coverage?: readonly import("@/timeline/canonical-prompt-context").CanonicalTimelineCoverage[];
+    sourceMetadata?: readonly import("@/timeline/canonical-source-metadata").CanonicalSourceMetadata[];
+    onLoadOlder: (acceptance?: TimelinePageAcceptance) => boolean | Promise<boolean>;
   };
 }
 
@@ -324,6 +351,134 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
   return Math.max(16, clearance ?? 0);
 }
 
+function useTranscriptCursor(input: {
+  serverId: string;
+  agentId: string;
+  historyPagination: AgentStreamViewProps["historyPagination"];
+}) {
+  const rootTimelineCursor = useSessionStore((state) =>
+    state.sessions[input.serverId]?.agentTimelineCursor.get(input.agentId),
+  );
+  const rootTimelineEpoch = rootTimelineCursor?.epoch ?? null;
+  const timelineEpoch = resolveTranscriptEpoch(input.historyPagination, rootTimelineEpoch);
+  return { rootTimelineCursor, timelineEpoch };
+}
+
+interface RetainedCanonicalTranscriptInput {
+  resolvedServerId: string;
+  agentId: string;
+  timelineEpoch: string | null;
+  historyPagination: AgentStreamViewProps["historyPagination"];
+  rootTimelineCursor: AgentTimelineCursorState | undefined;
+  client: DaemonClient | null;
+  promptReading: ReturnType<typeof createPromptReadingPublisher>;
+  effectiveStreamItems: StreamItem[];
+  effectiveStreamHead: StreamItem[] | undefined;
+  stickyEnabled: boolean;
+  canIndexPrompts: boolean;
+  isActive: boolean;
+  isAuthoritativeHistoryReady: boolean;
+}
+
+/** Admit canonical sources before the single presentation pass, without extending window coverage. */
+function useRetainedCanonicalTranscript({
+  resolvedServerId,
+  agentId,
+  timelineEpoch,
+  historyPagination,
+  rootTimelineCursor,
+  client,
+  promptReading,
+  effectiveStreamItems,
+  effectiveStreamHead,
+  stickyEnabled,
+  canIndexPrompts,
+  isActive,
+  isAuthoritativeHistoryReady,
+}: RetainedCanonicalTranscriptInput) {
+  const timelineOwner = useSessionStore(
+    (state) => state.sessions[resolvedServerId]?.viewedTimelineSync ?? null,
+  );
+  const rootContextOwner = timelineOwner?.promptContexts ?? null;
+  const contextOwner = historyPagination
+    ? (historyPagination.promptContexts ?? null)
+    : rootContextOwner;
+  const childTranscript = historyPagination !== undefined;
+  const suppliedCoverage = historyPagination?.coverage;
+  const contextCoverage = useMemo(() => {
+    if (childTranscript) return suppliedCoverage ?? [];
+    return canonicalCoverageForCursor(rootTimelineCursor);
+  }, [childTranscript, suppliedCoverage, rootTimelineCursor]);
+  const sourceItems = useMemo(
+    () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
+    [effectiveStreamItems, effectiveStreamHead],
+  );
+  const readSource = useCallback(() => {
+    return resolveRetainedContextSource(
+      sourceItems,
+      timelineEpoch,
+      promptReading.getSnapshot(),
+      contextCoverage,
+    );
+  }, [promptReading, sourceItems, timelineEpoch, contextCoverage]);
+  const contextSource = useSyncExternalStore(promptReading.subscribe, readSource, readSource);
+  const suppliedContextReader = historyPagination?.readPromptContext;
+  const contextReader = useMemo(() => {
+    if (childTranscript) return suppliedContextReader;
+    if (client) return normalContextPageReader(client, agentId);
+    return undefined;
+  }, [childTranscript, suppliedContextReader, client, agentId]);
+  const contextLookup = useMemo(
+    () =>
+      contextReader
+        ? {
+            agentId,
+            readPage: contextReader,
+            readPromptIndex:
+              !childTranscript && canIndexPrompts && client
+                ? normalContextPromptIndexReader(client, agentId)
+                : undefined,
+            projection: childTranscript ? ("projected" as const) : ("canonical" as const),
+          }
+        : undefined,
+    [contextReader, childTranscript, agentId, canIndexPrompts, client],
+  );
+  const retainedContext = useCanonicalPromptContext({
+    owner: contextOwner,
+    agentId,
+    epoch: timelineEpoch,
+    source: contextSource,
+    ordinaryItems: sourceItems,
+    coverage: contextCoverage,
+    sourceMetadata: historyPagination?.sourceMetadata,
+    enabled: stickyEnabled && isActive,
+    lookupReady: isAuthoritativeHistoryReady,
+    lookup: contextLookup,
+  });
+  const canonicalTail = useMemo(
+    () =>
+      mergeRetainedPrompts(
+        effectiveStreamItems,
+        retainedContext.contexts,
+        effectiveStreamHead ?? [],
+      ),
+    [effectiveStreamItems, effectiveStreamHead, retainedContext.contexts],
+  );
+  const retainedPositions = useMemo(
+    () => retainedCanonicalPositions(canonicalTail, retainedContext.contexts),
+    [canonicalTail, retainedContext.contexts],
+  );
+  const contextOnlyIds = useMemo(
+    () =>
+      new Set(
+        mergeRetainedPrompts([], retainedContext.contexts, sourceItems).map((item) => item.id),
+      ),
+    [retainedContext.contexts, sourceItems],
+  );
+
+  return { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds };
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -349,6 +504,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
+    const { settings: appSettings } = useAppSettings();
+    const stickyEnabled = appSettings.paseoPlusPlus.stickyUserPrompts;
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -391,9 +548,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
     );
-    const timelineEpoch = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
-    );
+    const { rootTimelineCursor, timelineEpoch } = useTranscriptCursor({
+      serverId: resolvedServerId,
+      agentId,
+      historyPagination,
+    });
     const isTimelineDetached = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
@@ -409,19 +568,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       toast,
     });
+    const pagination = useMemo(
+      () => resolveHistoryPagination(historyPagination, agentHistoryPagination),
+      [historyPagination, agentHistoryPagination],
+    );
     const {
       isLoadingOlder: remoteIsLoadingOlder,
       hasOlder: remoteHasOlder,
       progressKey: remoteProgressKey,
       loadOlder: loadRemoteOlder,
-    } = historyPagination
-      ? {
-          isLoadingOlder: historyPagination.isLoadingOlder,
-          hasOlder: historyPagination.hasOlder,
-          progressKey: historyPagination.progressKey,
-          loadOlder: historyPagination.onLoadOlder,
-        }
-      : agentHistoryPagination;
+    } = pagination;
+    const canIndexPrompts = supportsChatOutline && !historyPagination;
     // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
     // tracked in react-native-reanimated#8422.
     const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -523,11 +680,32 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const promptReading = useMemo(createPromptReadingPublisher, [
+      resolvedServerId,
+      agentId,
+      timelineEpoch,
+    ]);
+    const { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds } =
+      useRetainedCanonicalTranscript({
+        resolvedServerId,
+        agentId,
+        timelineEpoch,
+        historyPagination,
+        rootTimelineCursor,
+        client,
+        promptReading,
+        effectiveStreamItems,
+        effectiveStreamHead,
+        stickyEnabled,
+        canIndexPrompts,
+        isActive,
+        isAuthoritativeHistoryReady,
+      });
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
       () =>
         presentStream({
-          tail: effectiveStreamItems,
+          tail: isWeb ? effectiveStreamItems : canonicalTail,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
           display: chatDisplay,
@@ -538,6 +716,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [
         presentStream,
+        canonicalTail,
         effectiveStreamItems,
         effectiveStreamHead,
         transformTimelineItem,
@@ -571,6 +750,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
         historyStart: historyWindowStart,
+        retainedPositions: isWeb ? undefined : retainedPositions,
       });
     }, [
       isMobile,
@@ -579,7 +759,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       presentation.tail,
       effectiveTurnPresentation.startedAt,
       historyWindowStart,
+      retainedPositions,
     ]);
+    const viewportContextOnlyIds = useMemo(
+      () => (isWeb ? undefined : contextOnlyIds),
+      [contextOnlyIds],
+    );
     const streamLayout = useMemo(
       () =>
         layoutStream({
@@ -622,27 +807,38 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: supportsChatOutline && chatOutlineEnabled,
+      enabled: shouldIndexUserPrompts(canIndexPrompts, chatOutlineEnabled, stickyEnabled),
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       mountedHistoryMessageIds,
       revealLoadedMessage: revealLoadedHistory,
     });
 
+    const jumpToStickyMessage = useStableEvent((id: string, placement?: PromptJumpPlacement) =>
+      chatOutline.jumpToMessage(id, { source: "sticky", placement }),
+    );
+    const stickyPromptRef = useRef<StickyPromptHandle>(null);
+    const followLatestPrompt = useStableEvent(() => {
+      chatOutline.cancelJump();
+      stickyPromptRef.current?.followLatest();
+    });
+
     useImperativeHandle(
       ref,
       () => ({
         scrollToBottom(reason = "jump-to-bottom") {
+          followLatestPrompt();
           viewportRef.current?.scrollToBottom(reason);
         },
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
       }),
-      [],
+      [followLatestPrompt],
     );
 
     const scrollToBottom = useCallback(() => {
+      followLatestPrompt();
       if (!isTimelineDetached) {
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
@@ -655,7 +851,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
         onError: handleTimelineHistoryLoadError,
       });
-    }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
+    }, [
+      agentId,
+      followLatestPrompt,
+      handleTimelineHistoryLoadError,
+      isTimelineDetached,
+      resolvedServerId,
+    ]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -718,10 +920,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         const collapsedTurn = getCollapsedTurn(item.id);
         const message = (
-          <UserMessage
+          <PromptUserMessage
             serverId={resolvedServerId}
             agentId={agentId}
             messageId={item.messageId}
+            timelineMessageId={item.id}
             message={item.text}
             sender={item.sender}
             images={item.images}
@@ -1096,12 +1299,29 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return itemById;
     }, [streamLayout.liveHead]);
 
-    const handleReadingPositionChange = useStableEvent((rowId: string | null) => {
+    const handleReadingPositionChange = useStableEvent((position: PromptReadingPosition) => {
+      const { rowId, visibleUserIds, navigating, following, manual, userHandoffs, viewportWidth } =
+        position;
       const row =
         rowId === null
           ? undefined
           : (layoutHistoryItemById.get(rowId) ?? layoutLiveHeadItemById.get(rowId));
-      chatOutline.reportReadingPosition(row?.item.timelineCursor?.seq ?? null);
+      const seq = row?.item.timelineCursor?.seq ?? null;
+      const wasManual = promptReading.getSnapshot().manual;
+      // Presentation rows can be Markdown blocks or plugin cards. Resolve their
+      // authoritative position before publishing to surfaces that hold canonical prompts.
+      promptReading.publish(
+        rowId,
+        visibleUserIds,
+        navigating,
+        following,
+        manual,
+        seq,
+        userHandoffs,
+        viewportWidth,
+      );
+      if (manual && !wasManual) stickyPromptRef.current?.reviewReading();
+      chatOutline.reportReadingPosition(seq);
     });
 
     const renderHistoryRow = useCallback(
@@ -1189,52 +1409,78 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const findItems = useMemo(
-      () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
-      [effectiveStreamItems, effectiveStreamHead],
+    const navigationItems = useMemo(
+      () => canonicalTail.concat(effectiveStreamHead ?? []),
+      [canonicalTail, effectiveStreamHead],
     );
     return (
       <ChatFind
         agentId={agentId}
         serverId={resolvedServerId}
         epoch={timelineEpoch}
-        items={findItems}
+        items={sourceItems}
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedMessage}
         visibleMessageIds={mountedMessageIds}
       >
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
-            <MessageOuterSpacingProvider disableOuterSpacing>
-              <ToolCallExpansionContext.Provider value={toolCallExpansion}>
-                {streamRenderStrategy.render({
-                  readingRowReplacements: presentation.readingRowReplacements,
-                  agentId,
-                  segments: renderModel.segments,
-                  historyRowRevision,
-                  liveHeadRowRevision: expandedToolCallGroups,
-                  boundary,
-                  renderers,
-                  listEmptyComponent,
-                  viewportRef,
-                  routeBottomAnchorRequest,
-                  isAuthoritativeHistoryReady,
-                  onNearBottomChange: setIsNearBottom,
-                  onReadingPositionChange: handleReadingPositionChange,
-                  onNearHistoryStart: loadOlder,
-                  isLoadingOlderHistory: isLoadingOlder,
-                  hasOlderHistory: hasOlder,
-                  olderHistoryProgressKey: progressKey,
-                  scrollEnabled: streamScrollEnabled,
-                  listStyle: stylesheet.list,
-                  baseListContentContainerStyle: stylesheet.listContentContainer,
-                  forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
-                  contentMaxWidth,
-                })}
-              </ToolCallExpansionContext.Provider>
-            </MessageOuterSpacingProvider>
+            <StickyPrompt
+              key={`${resolvedServerId}:${agentId}`}
+              enabled={stickyEnabled}
+              items={navigationItems}
+              contextOnlyIds={contextOnlyIds}
+              epoch={timelineEpoch}
+              outline={chatOutline}
+              indexed={canIndexPrompts}
+              hasOlder={remoteHasOlder}
+              loadingOlder={remoteIsLoadingOlder}
+              progressKey={remoteProgressKey}
+              loadOlder={loadRemoteOlder}
+              contextPageReader={resolveContextPageReader(historyPagination)}
+              retainedContext={retainedContext}
+              jumpToLoaded={jumpToStickyMessage}
+              client={client}
+              ref={stickyPromptRef}
+              contentMaxWidth={contentMaxWidth}
+              agentId={agentId}
+              reading={promptReading}
+            >
+              <MessageOuterSpacingProvider disableOuterSpacing>
+                <ToolCallExpansionContext.Provider value={toolCallExpansion}>
+                  {streamRenderStrategy.render({
+                    readingRowReplacements: presentation.readingRowReplacements,
+                    agentId,
+                    nativeViewportPlacement,
+                    segments: renderModel.segments,
+                    contextOnlyIds: viewportContextOnlyIds,
+                    historyRowRevision,
+                    liveHeadRowRevision: expandedToolCallGroups,
+                    boundary,
+                    renderers,
+                    listEmptyComponent,
+                    viewportRef,
+                    routeBottomAnchorRequest,
+                    isAuthoritativeHistoryReady,
+                    onNearBottomChange: setIsNearBottom,
+                    onMessageNavigationError: chatOutline.reportJumpError,
+                    trackPromptHandoff: stickyEnabled,
+                    onReadingPositionChange: handleReadingPositionChange,
+                    onNearHistoryStart: loadOlder,
+                    isLoadingOlderHistory: isLoadingOlder,
+                    hasOlderHistory: hasOlder,
+                    olderHistoryProgressKey: progressKey,
+                    scrollEnabled: streamScrollEnabled,
+                    listStyle: stylesheet.list,
+                    baseListContentContainerStyle: stylesheet.listContentContainer,
+                    forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
+                    contentMaxWidth,
+                  })}
+                </ToolCallExpansionContext.Provider>
+              </MessageOuterSpacingProvider>
+            </StickyPrompt>
             <ChatOutlineRail
-              prompts={chatOutline.prompts}
+              prompts={chatOutlineEnabled ? chatOutline.prompts : []}
               activePrompt={chatOutline.activePrompt}
               onJumpToPrompt={chatOutline.jumpToPrompt}
             />
@@ -1340,10 +1586,24 @@ function historyPaginationPropsEqual(
   right: AgentStreamViewProps["historyPagination"],
 ): boolean {
   return (
+    left?.epoch === right?.epoch &&
     left?.hasOlder === right?.hasOlder &&
     left?.isLoadingOlder === right?.isLoadingOlder &&
     left?.progressKey === right?.progressKey &&
-    left?.onLoadOlder === right?.onLoadOlder
+    left?.onLoadOlder === right?.onLoadOlder &&
+    historyContextPropsEqual(left, right)
+  );
+}
+
+function historyContextPropsEqual(
+  left: AgentStreamViewProps["historyPagination"],
+  right: AgentStreamViewProps["historyPagination"],
+): boolean {
+  return (
+    left?.readPromptContext === right?.readPromptContext &&
+    left?.promptContexts === right?.promptContexts &&
+    left?.coverage === right?.coverage &&
+    left?.sourceMetadata === right?.sourceMetadata
   );
 }
 
@@ -1927,4 +2187,33 @@ function StreamItemWrapper({ gapBelow, turnIndent, children }: StreamItemWrapper
         </View>
       );
   }
+}
+
+/** Child transcripts supply their own page owner; root chats use the viewed timeline. */
+function resolveHistoryPagination(
+  provided: AgentStreamViewProps["historyPagination"],
+  root: ReturnType<typeof useLoadOlderAgentHistory>,
+): ReturnType<typeof useLoadOlderAgentHistory> {
+  if (!provided) return root;
+  return {
+    isLoadingOlder: provided.isLoadingOlder,
+    hasOlder: provided.hasOlder,
+    progressKey: provided.progressKey,
+    loadOlder: async (acceptance) => provided.onLoadOlder(acceptance),
+  };
+}
+
+/** A child epoch must not inherit the parent conversation's identity. */
+function resolveTranscriptEpoch(
+  provided: AgentStreamViewProps["historyPagination"],
+  rootEpoch: string | null,
+): string | null {
+  if (provided) return provided.epoch ?? null;
+  return rootEpoch;
+}
+
+/** An unavailable child cache reader must never fall through to the synthetic parent journal. */
+function resolveContextPageReader(provided: AgentStreamViewProps["historyPagination"]) {
+  if (!provided) return undefined;
+  return provided.readPromptContext ?? null;
 }
