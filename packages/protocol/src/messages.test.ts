@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
   AgentTimelineItemPayloadSchema,
+  CheckoutDiffGetRequestSchema,
   SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
+  SubscribeCheckoutDiffRequestSchema,
   WorkspaceProjectDescriptorPayloadSchema,
 } from "./messages.js";
 
@@ -550,6 +552,35 @@ test("agent messages are an optional semantic payload on existing tool rows", ()
   ).toBe(false);
 });
 
+test.each([undefined, " :(glob)*\tfile.css "])(
+  "checkout diff requests preserve optional literal file scope %s",
+  (filePath) => {
+    const compare = {
+      mode: "base" as const,
+      baseRef: "main",
+      ...(filePath === undefined ? {} : { filePath }),
+    };
+    const common = { cwd: "/repo", requestId: "diff-scope", compare };
+    expect(
+      CheckoutDiffGetRequestSchema.parse({ ...common, type: "checkout.diff.get.request" }).compare,
+    ).toEqual(compare);
+    expect(
+      SubscribeCheckoutDiffRequestSchema.parse({
+        ...common,
+        type: "subscribe_checkout_diff_request",
+      }).compare,
+    ).toEqual(compare);
+  },
+);
+
+test("single-file diff capability is optional on older hosts", () => {
+  const host = { status: "server_info", serverId: "workspace-host" };
+  expect(parseServerInfoStatusPayload(host)?.features?.checkoutFileDiff).toBeUndefined();
+  expect(
+    parseServerInfoStatusPayload({ ...host, features: { checkoutFileDiff: true } })?.features
+      ?.checkoutFileDiff,
+  ).toBe(true);
+});
 test.each(["all", "base", "uncommitted"] as const)(
   "preserves %s review attachments while ignoring unknown attachments",
   (mode) => {
