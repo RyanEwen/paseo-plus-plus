@@ -74,7 +74,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [SECURITY.md](SECURITY.md)                                               | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [public-docs/hub/security.md](public-docs/hub/security.md)               | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
 | [docs/agent-documentation-review.md](docs/agent-documentation-review.md) | Codex lifecycle hooks for keeping fork descriptions and developer docs aligned                                                 |
-| [docs/worktree-development.md](docs/worktree-development.md)             | Fork branch roles, owner lifecycle, upstream synchronization, environment qualification, and review assembly                   |
+| [docs/worktree-development.md](docs/worktree-development.md)             | Fork branch layers (upstream fixes, fork base, features), owner lifecycle, upstream sync, environment qualification, review    |
 | [docs/native-browser-feasibility.md](docs/native-browser-feasibility.md) | Native browser ownership, practical extension limits and qualification gates                                                   |
 | [docs/relay-endpoint-security.md](docs/relay-endpoint-security.md)       | Relay E2EE modes: Noise NK mapping, record framing, negotiation, the `requireProtectedSecurity` flag, close codes              |
 | [docs/terminal-rendering.md](docs/terminal-rendering.md)                 | Native terminal view: xterm owns the grid, cluster placement, emoji widths, mixed-direction limits, render regression          |
