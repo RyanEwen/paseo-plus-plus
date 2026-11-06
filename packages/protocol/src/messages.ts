@@ -1,4 +1,8 @@
 import {
+  NotificationAcknowledgementSchema,
+  WorkspaceNotificationReceiptsSchema,
+} from "./notification-receipts.js";
+import {
   DaemonNotificationPreferencesSchema,
   AgentAttentionObjectivesSchema,
   AgentAttentionPeerSchema,
@@ -838,6 +842,8 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
         data: z.object({
           serverId: z.string(),
           workspaceId: z.string().optional(),
+          notificationSequence: z.number().int().positive().optional(),
+          attentionTimestamp: z.string().optional(),
           agentId: z.string(),
           reason: z.enum(["finished", "error", "permission"]),
         }),
@@ -2784,6 +2790,7 @@ export const WorkspaceClearAttentionRequestSchema = z.object({
   type: z.literal("workspace.clear_attention.request"),
   workspaceId: z.union([z.string(), z.array(z.string())]),
   requestId: z.string(),
+  notification: NotificationAcknowledgementSchema.optional(),
 });
 
 export const WorkspaceMarkUnreadRequestSchema = z.object({
@@ -4195,6 +4202,7 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
 
 export const WorkspaceDescriptorPayloadSchema = z
   .object({
+    notificationReceipts: WorkspaceNotificationReceiptsSchema.optional(),
     id: z.string(),
     projectId: z.string(),
     projectDisplayName: z.string(),
@@ -5030,6 +5038,8 @@ export const AgentAttentionRequiredMessageSchema = z.object({
         data: z.object({
           serverId: z.string(),
           workspaceId: z.string().optional(),
+          notificationSequence: z.number().int().positive().optional(),
+          attentionTimestamp: z.string().optional(),
           agentId: z.string(),
           reason: z.enum(["finished", "error", "permission"]),
         }),
@@ -6748,6 +6758,7 @@ export const TerminalAttentionRequiredSchema = z.object({
   payload: z.object({
     subscriptionId: z.string().optional(),
     serverId: z.string().optional(),
+    notificationSequence: z.number().int().positive().optional(),
     terminalId: z.string(),
     cwd: z.string(),
     workspaceId: z.string().optional(),
