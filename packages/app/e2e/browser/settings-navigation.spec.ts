@@ -1,3 +1,10 @@
+import { verifySettingsExamplesHelp } from "../support/helpers/settings-example-help";
+import {
+  capturePreviousAgentsExample,
+  captureExplorerExample,
+  captureSidebarControlsExample,
+  captureWorkspacePositionsExample,
+} from "../support/helpers/settings-example-scenes";
 import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
@@ -491,6 +498,49 @@ test.describe("Settings — compact master-detail", () => {
     await expect(page).toHaveURL(/\/welcome$/);
     await expect(page.getByTestId("welcome-direct-connection")).toBeVisible();
   });
+});
+
+// Capture cases stay separate so a failed locator never repeats already qualified scenes.
+test.describe("Settings example captures", () => {
+  const directory = process.env.PASEO_SETTINGS_EXAMPLE_CAPTURE_DIR;
+  test.skip(!directory, "Only run under a coordinator-granted isolated capture slot.");
+
+  test("capture only Previous agents example", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await capturePreviousAgentsExample(page, directory!);
+  });
+
+  test("capture only Explorer and Changes examples", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await captureExplorerExample(page, directory!);
+  });
+
+  test("capture only sidebar controls examples", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await captureSidebarControlsExample(page, directory!);
+  });
+
+  test("capture only settled workspace positions example", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await captureWorkspacePositionsExample(page, directory!);
+  });
+});
+
+test.describe("Settings screenshot help", () => {
+  test.use({ hasTouch: true });
+  const directory = process.env.PASEO_SETTINGS_EXAMPLE_CAPTURE_DIR;
+  test.skip(
+    process.env.PASEO_SETTINGS_EXAMPLE_HELP_VERIFY !== "1" || !directory,
+    "Needs a separate coordinator-granted image-help verification stage.",
+  );
+  for (const compact of [false, true]) {
+    test(`real images and accessible disclosure at ${compact ? "390" : "1440"}`, async ({
+      page,
+    }) => {
+      test.setTimeout(120_000);
+      await verifySettingsExamplesHelp(page, compact, directory!);
+    });
+  }
 });
 
 async function measureDockedNavigation(page: import("@playwright/test").Page, width: number) {
