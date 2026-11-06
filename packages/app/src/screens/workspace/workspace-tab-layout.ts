@@ -1,3 +1,12 @@
+import type { PaneHost } from "@/panels/panel-manifest";
+export const MIN_WORKSPACE_TAB_WIDTH = 96;
+
+/** Desktop main/sheet tabs retain the fork minimum; compact chips use the upstream touch layout. */
+export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
+  if (compact || host === "explorer") return 64;
+  return MIN_WORKSPACE_TAB_WIDTH;
+}
+
 export type WorkspaceTabCloseButtonPolicy = "all" | "none";
 
 export interface WorkspaceTabLayoutMetrics {
