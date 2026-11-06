@@ -1,3 +1,4 @@
+import { useWorkspaceFamilyDrag } from "@/components/sidebar/use-workspace-family-drag";
 import {
   ProjectExpansionAnchorContext,
   useProjectExpansionAnchor,
@@ -120,9 +121,12 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import { useWorkspaceFamilyWindow } from "@/components/sidebar/use-workspace-family-window";
+import { WorkspaceTreeBranch } from "@/components/sidebar/workspace-tree-branch";
+import { useSidebarWorkspaceFamilyPresentation } from "@/components/sidebar/workspace-tree-context";
 import {
   SidebarWorkspaceRowFrame,
+  sidebarWorkspaceRowStyles,
   SidebarWorkspaceRowContent,
   SidebarWorkspaceShortcutBadge,
   resolveTrailingActionVisibility,
@@ -395,14 +399,17 @@ function getProjectWorkspaceRowStyle({
   isPressed,
   selected,
   isHovered,
+  hasFamilyDisclosure,
 }: {
   isDragging: boolean;
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
+  hasFamilyDisclosure: boolean;
 }) {
   return [
     styles.workspaceRow,
+    hasFamilyDisclosure && sidebarWorkspaceRowStyles.familyParentRow,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
@@ -1143,6 +1150,7 @@ function WorkspaceRowInner({
   onToggleProjectPin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
@@ -1180,7 +1188,7 @@ function WorkspaceRowInner({
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
+      {({ isHovered, contextMenuOpen, onContextMenuOpenChange }) => {
         const isDesktop = !isTouchPlatform;
         const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
         const workspaceRowStyle = getProjectWorkspaceRowStyle({
@@ -1188,6 +1196,7 @@ function WorkspaceRowInner({
           isPressed,
           selected,
           isHovered,
+          hasFamilyDisclosure: family.disclosure !== null,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -1196,7 +1205,6 @@ function WorkspaceRowInner({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
-            {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
@@ -1222,6 +1230,8 @@ function WorkspaceRowInner({
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
+              aria-describedby={family.collapsedSummary?.id}
+              accessibilityHint={family.collapsedSummary?.description}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
@@ -1683,10 +1693,11 @@ function ProjectBlock({
   );
   const {
     visibleItems: visibleWorkspaces,
+    itemsByKey: familyItemsByKey,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(project.workspaces, getStatusEnteredAt);
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -1752,7 +1763,7 @@ function ProjectBlock({
     ],
   );
 
-  const workspaceDrag = useSidebarReorderGuard("workspace");
+  const workspaceDrag = useWorkspaceFamilyDrag();
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
   const projectPinning = useAppSettings().settings.paseoPlusPlus.projectPinning;
   const workspaceDragGroup = useCallback(
@@ -1766,20 +1777,42 @@ function ProjectBlock({
     },
     [manualSort, projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
   );
-  const renderWorkspace = useCallback(
-    ({
-      item,
-      drag: workspaceRowDrag,
-      isActive,
-      dragHandleProps: workspaceDragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return renderWorkspaceRow(item, {
-        drag: workspaceRowDrag,
-        isDragging: isActive,
-        dragHandleProps: workspaceDragHandleProps,
-      });
-    },
+  const renderFamilyRow = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) =>
+      renderWorkspaceRow(row.item, {
+        drag: row.drag,
+        isDragging: row.isActive,
+        dragHandleProps: row.dragHandleProps,
+      }),
     [renderWorkspaceRow],
+  );
+  const reorderFamilySiblings = useCallback(
+    (rows: SidebarWorkspacePlacement[], move: DragReorderMove) =>
+      onWorkspaceReorder(project.viewKey, rows, move),
+    [onWorkspaceReorder, project.viewKey],
+  );
+  const renderWorkspace = useCallback(
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return (
+        <WorkspaceTreeBranch
+          row={row}
+          itemsByKey={familyItemsByKey}
+          renderRow={renderFamilyRow}
+          onSiblingReorder={reorderFamilySiblings}
+          getDragGroupKey={workspaceDragGroup}
+          parentGestureRef={parentGestureRef}
+          dragGestureHostActive={dragGestureHostActive}
+        />
+      );
+    },
+    [
+      familyItemsByKey,
+      renderFamilyRow,
+      reorderFamilySiblings,
+      workspaceDragGroup,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
   );
 
   const handleWorkspaceDragEnd = useCallback(
@@ -2408,10 +2441,11 @@ function ProjectModeList({
   );
   const {
     visibleItems: visiblePinnedChats,
+    itemsByKey: pinnedFamilyItemsByKey,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(pinnedChats, getStatusEnteredAt);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2647,37 +2681,36 @@ function ProjectModeList({
   );
 
   const renderPinnedChatRow = useCallback(
-    (
-      workspace: SidebarWorkspacePlacement,
-      input?: {
-        drag?: () => void;
-        isDragging?: boolean;
-        dragHandleProps?: DraggableListDragHandleProps;
-      },
-    ) => (
-      <MemoWorkspaceRowItem
-        key={workspace.workspaceKey}
-        workspace={workspace}
-        workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-        hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-        leadingProjectName={workspace.projectName}
-        leadingProjectIconDataUri={
-          projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
-        }
-        shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
-        showShortcutBadge={showShortcutBadges}
-        canCopyBranchName={workspace.projectKind === "git"}
-        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-        onToggleWorkspacePin={onToggleWorkspacePin}
-        isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
-        selectionEnabled={selectionEnabled}
-        activeWorkspaceSelection={activeWorkspaceSelection}
-        onWorkspacePress={onWorkspacePress}
-        drag={input?.drag}
-        isDragging={input?.isDragging}
-        dragHandleProps={input?.dragHandleProps}
-      />
-    ),
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return (
+        <MemoWorkspaceRowItem
+          workspace={workspace}
+          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
+          hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
+          leadingProjectName={workspace.projectName}
+          leadingProjectIconDataUri={
+            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
+          }
+          shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
+          showShortcutBadge={showShortcutBadges}
+          canCopyBranchName={workspace.projectKind === "git"}
+          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+          onToggleWorkspacePin={onToggleWorkspacePin}
+          isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
+          selectionEnabled={selectionEnabled}
+          activeWorkspaceSelection={activeWorkspaceSelection}
+          onWorkspacePress={onWorkspacePress}
+          drag={drag}
+          isDragging={isActive}
+          dragHandleProps={dragHandleProps}
+        />
+      );
+    },
     [
       activeWorkspaceSelection,
       creatingWorkspaceIds,
@@ -2694,19 +2727,24 @@ function ProjectModeList({
   );
 
   const renderPinnedChat = useCallback(
-    ({
-      item: workspace,
-      drag,
-      isActive,
-      dragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return renderPinnedChatRow(workspace, {
-        drag,
-        isDragging: isActive,
-        dragHandleProps,
-      });
-    },
-    [renderPinnedChatRow],
+    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => (
+      <WorkspaceTreeBranch
+        row={row}
+        itemsByKey={pinnedFamilyItemsByKey}
+        renderRow={renderPinnedChatRow}
+        onSiblingReorder={onPinnedWorkspaceReorder}
+        manualPins
+        parentGestureRef={parentGestureRef}
+        dragGestureHostActive={dragGestureHostActive}
+      />
+    ),
+    [
+      pinnedFamilyItemsByKey,
+      renderPinnedChatRow,
+      onPinnedWorkspaceReorder,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
   );
 
   const projectLayoutRevision = useMemo(

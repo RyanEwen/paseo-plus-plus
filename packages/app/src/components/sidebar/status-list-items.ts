@@ -1,3 +1,11 @@
+import {
+  EMPTY_WORKSPACE_TREE,
+  collectActiveWorkspaceKeys,
+  includeActiveWorkspaceFamily,
+  workspaceFamilyRoots,
+  workspaceFamilyUpdatedAt,
+  type WorkspaceTreeNode,
+} from "./workspace-tree";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { SidebarWorkspaceGroup } from "./sidebar-labels";
 import { limitSidebarWorkspaces } from "./workspace-limit";
@@ -26,8 +34,12 @@ export function buildStatusListItems({
   expandedGroupKeys,
   initialCount,
   updatedWithin,
+  workspaceTree = EMPTY_WORKSPACE_TREE,
+  activeWorkspaceKey = null,
 }: {
   groups: SidebarWorkspaceGroup[];
+  workspaceTree?: ReadonlyMap<string, WorkspaceTreeNode>;
+  activeWorkspaceKey?: string | null;
   collapsedGroupKeys: ReadonlySet<string>;
   expandedGroupKeys: ReadonlySet<string>;
   initialCount: number | null;
@@ -39,22 +51,39 @@ export function buildStatusListItems({
     result.push({ kind: "header", group, collapsed });
     if (collapsed) continue;
     const expanded = expandedGroupKeys.has(group.key);
+    const entries = new Map(group.rows.map((row) => [row.workspaceKey, row]));
     const { visibleItems, canToggle } = limitSidebarWorkspaces({
-      items: group.rows,
+      items: workspaceFamilyRoots(group.rows, workspaceTree),
       initialCount,
       expanded,
       updatedWithin: updatedWithin
-        ? { ...updatedWithin, getStatusEnteredAt: (workspace) => workspace.statusEnteredAt }
+        ? {
+            ...updatedWithin,
+            getStatusEnteredAt: (workspace) =>
+              workspaceFamilyUpdatedAt({
+                workspaceKey: workspace.workspaceKey,
+                tree: workspaceTree,
+                getStatusEnteredAt: (key) => entries.get(key)?.statusEnteredAt ?? null,
+              }),
+          }
         : undefined,
     });
-    for (const workspace of visibleItems) {
+    const roots = workspaceFamilyRoots(group.rows, workspaceTree);
+    const rendered = includeActiveWorkspaceFamily({
+      roots,
+      visibleItems,
+      tree: workspaceTree,
+      activeWorkspaceKey,
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+    });
+    for (const workspace of rendered) {
       result.push({ kind: "workspace", workspace, groupKey: group.key });
     }
     result.push({
       kind: "footer",
       groupKey: group.key,
       expanded,
-      canToggle,
+      canToggle: canToggle && (expanded || rendered.length < roots.length),
     });
   }
   return result;

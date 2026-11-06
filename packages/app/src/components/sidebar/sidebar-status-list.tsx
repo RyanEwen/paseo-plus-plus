@@ -1,5 +1,5 @@
+import { useWorkspaceFamilyDrag } from "@/components/sidebar/use-workspace-family-drag";
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
-import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import { useSidebarRecencyClock } from "./workspace-recency-clock";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
@@ -12,6 +12,7 @@ import {
   useState,
   useRef,
   type MutableRefObject,
+  type ReactElement,
   type ReactNode,
   type Ref,
 } from "react";
@@ -65,7 +66,12 @@ import {
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import { useWorkspaceFamilyWindow } from "./use-workspace-family-window";
+import {
+  useSidebarWorkspaceTree,
+  useSidebarWorkspaceFamilyPresentation,
+} from "./workspace-tree-context";
+import { WorkspaceTreeBranch } from "./workspace-tree-branch";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
@@ -132,23 +138,22 @@ export function SidebarStatusWorkspaceList({
   );
   const {
     visibleItems: visiblePinnedWorkspaces,
+    itemsByKey: pinnedFamilyItemsByKey,
     expanded: pinnedWorkspacesExpanded,
     canToggle: canTogglePinnedWorkspaces,
     toggleExpanded: togglePinnedWorkspacesExpanded,
-  } = useLimitedSidebarGroup(pinnedWorkspaces, getStatusEnteredAt);
+  } = useWorkspaceFamilyWindow(pinnedWorkspaces, getStatusEnteredAt);
 
   const statusShortcutIndex = showShortcutBadges
     ? shortcutIndexByWorkspaceKey
     : EMPTY_SHORTCUT_INDEX;
   const renderPinnedWorkspaceRow = useCallback(
-    (
-      workspace: SidebarWorkspaceEntry,
-      input?: {
-        drag?: () => void;
-        isDragging?: boolean;
-        dragHandleProps?: DraggableListDragHandleProps;
-      },
-    ) => (
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => (
       <StatusWorkspaceRow
         key={workspace.workspaceKey}
         workspace={workspace}
@@ -163,9 +168,9 @@ export function SidebarStatusWorkspaceList({
         canPin={supportsPinningByServerId.get(workspace.serverId) === true}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onWorkspacePress={onWorkspacePress}
-        drag={input?.drag}
-        isDragging={input?.isDragging}
-        dragHandleProps={input?.dragHandleProps}
+        drag={drag}
+        isDragging={isActive}
+        dragHandleProps={dragHandleProps}
       />
     ),
     [
@@ -179,19 +184,26 @@ export function SidebarStatusWorkspaceList({
     ],
   );
   const renderPinnedWorkspace = useCallback(
-    ({
-      item: workspace,
-      drag,
-      isActive,
-      dragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) =>
-      renderPinnedWorkspaceRow(workspace, {
-        drag,
-        isDragging: isActive,
-        dragHandleProps,
-      }),
-    [renderPinnedWorkspaceRow],
+    (row: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => (
+      <WorkspaceTreeBranch
+        row={row}
+        itemsByKey={pinnedFamilyItemsByKey}
+        renderRow={renderPinnedWorkspaceRow}
+        onSiblingReorder={onPinnedWorkspaceReorder}
+        manualPins
+        parentGestureRef={parentGestureRef}
+        dragGestureHostActive={dragGestureHostActive}
+      />
+    ),
+    [
+      pinnedFamilyItemsByKey,
+      renderPinnedWorkspaceRow,
+      onPinnedWorkspaceReorder,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
   );
+
   const content = (
     <>
       {pinnedWorkspaces.length > 0 ? (
@@ -303,6 +315,16 @@ function StatusGroupList({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
 }) {
+  const { tree: workspaceTree, activeWorkspaceKey } = useSidebarWorkspaceTree();
+  const familyItemsByKey = useMemo(
+    () =>
+      new Map(
+        groups
+          .flatMap((group) => group.rows)
+          .map((workspace) => [workspace.workspaceKey, workspace]),
+      ),
+    [groups],
+  );
   const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
   const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
   const now = useSidebarRecencyClock();
@@ -312,12 +334,23 @@ function StatusGroupList({
     () =>
       buildStatusListItems({
         groups,
+        workspaceTree,
+        activeWorkspaceKey,
         collapsedGroupKeys: collapsedWorkspaceGroupKeys,
         expandedGroupKeys,
         initialCount,
         updatedWithin: days === null ? undefined : { days, now },
       }),
-    [groups, collapsedWorkspaceGroupKeys, expandedGroupKeys, initialCount, days, now],
+    [
+      groups,
+      workspaceTree,
+      activeWorkspaceKey,
+      collapsedWorkspaceGroupKeys,
+      expandedGroupKeys,
+      initialCount,
+      days,
+      now,
+    ],
   );
 
   const destinationGroupKeys = useMemo(() => {
@@ -345,7 +378,7 @@ function StatusGroupList({
     });
   }, []);
 
-  const workspaceDrag = useSidebarReorderGuard("workspace");
+  const workspaceDrag = useWorkspaceFamilyDrag();
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
   const handleWorkspaceReorder = useCallback(
     (reordered: StatusListItem[]) => {
@@ -389,8 +422,43 @@ function StatusGroupList({
     [groups, items, canCommitWorkspaceDrag],
   );
 
+  const renderFamilyRow = useCallback(
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => (
+      <StatusWorkspaceRow
+        workspace={workspace}
+        {...buildStatusRowProjectPresentation({
+          workspace,
+          projectIconByProjectViewKey,
+          hostBadgeByServerId,
+        })}
+        shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        onWorkspacePress={onWorkspacePress}
+        drag={drag}
+        isDragging={isActive}
+        dragHandleProps={dragHandleProps}
+      />
+    ),
+    [
+      projectIconByProjectViewKey,
+      hostBadgeByServerId,
+      shortcutIndex,
+      showShortcutBadges,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      onWorkspacePress,
+    ],
+  );
   const renderItem = useCallback(
-    ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<StatusListItem>) => {
+    (row: DraggableRenderItemInfo<StatusListItem>) => {
+      const { item } = row;
       if (item.kind === "header") {
         return (
           <SidebarWorkspaceGroupHeader
@@ -410,34 +478,23 @@ function StatusGroupList({
           groupKey={item.groupKey}
           resolveDestinationGroupKey={resolveDestinationGroupKey}
         >
-          <StatusWorkspaceRow
+          <StatusWorkspaceFamilyBranch
+            row={row}
             workspace={workspace}
-            {...buildStatusRowProjectPresentation({
-              workspace,
-              projectIconByProjectViewKey,
-              hostBadgeByServerId,
-            })}
-            shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
-            showShortcutBadge={showShortcutBadges}
-            canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-            onToggleWorkspacePin={onToggleWorkspacePin}
-            onWorkspacePress={onWorkspacePress}
-            drag={drag}
-            isDragging={isActive}
-            dragHandleProps={dragHandleProps}
+            itemsByKey={familyItemsByKey}
+            renderRow={renderFamilyRow}
+            parentGestureRef={parentGestureRef}
+            dragGestureHostActive={dragGestureHostActive}
           />
         </StatusGroupCell>
       );
     },
     [
       resolveDestinationGroupKey,
-      projectIconByProjectViewKey,
-      hostBadgeByServerId,
-      shortcutIndex,
-      showShortcutBadges,
-      supportsPinningByServerId,
-      onToggleWorkspacePin,
-      onWorkspacePress,
+      familyItemsByKey,
+      renderFamilyRow,
+      parentGestureRef,
+      dragGestureHostActive,
       toggleExpanded,
     ],
   );
@@ -458,6 +515,35 @@ function StatusGroupList({
       simultaneousGestureRef={parentGestureRef}
       gestureHostPresented={dragGestureHostActive}
       renderItem={renderItem}
+    />
+  );
+}
+
+/** Adapt a status-list cell to its workspace row while retaining the list's drag metadata. */
+function StatusWorkspaceFamilyBranch({
+  row,
+  workspace,
+  itemsByKey,
+  renderRow,
+  parentGestureRef,
+  dragGestureHostActive,
+}: {
+  row: DraggableRenderItemInfo<StatusListItem>;
+  workspace: SidebarWorkspaceEntry;
+  itemsByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  renderRow: (row: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => ReactElement;
+  parentGestureRef?: MutableRefObject<GestureType | undefined>;
+  dragGestureHostActive?: boolean;
+}) {
+  const workspaceRow = useMemo(() => ({ ...row, item: workspace }), [row, workspace]);
+  return (
+    <WorkspaceTreeBranch
+      row={workspaceRow}
+      itemsByKey={itemsByKey}
+      renderRow={renderRow}
+      onSiblingReorder={persistStatusSiblingOrder}
+      parentGestureRef={parentGestureRef}
+      dragGestureHostActive={dragGestureHostActive}
     />
   );
 }
@@ -803,6 +889,7 @@ function StatusWorkspaceRowInnerContent({
 }: StatusWorkspaceRowInnerProps & {
   dragInteraction?: ReturnType<typeof useLongPressDragInteraction>;
 }) {
+  const family = useSidebarWorkspaceFamilyPresentation();
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
@@ -843,7 +930,7 @@ function StatusWorkspaceRowInnerContent({
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
+      {({ isHovered, contextMenuOpen, onContextMenuOpenChange }) => {
         const showShortcut = showShortcutBadge && shortcutNumber !== null;
         const {
           trailingPresentation,
@@ -864,6 +951,7 @@ function StatusWorkspaceRowInnerContent({
           isHovered,
           inStatusGroup,
           isDragging,
+          hasFamilyDisclosure: family.disclosure !== null,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -872,7 +960,6 @@ function StatusWorkspaceRowInnerContent({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
-            {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
@@ -900,6 +987,8 @@ function StatusWorkspaceRowInnerContent({
               disabled={isArchiving}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
+              aria-describedby={family.collapsedSummary?.id}
+              accessibilityHint={family.collapsedSummary?.description}
               style={workspaceRowStyle}
               highlightStyle={styles.workspaceRowPressed}
               onPressIn={handlePressIn}
@@ -1035,16 +1124,19 @@ function getStatusWorkspaceRowStyle({
   isHovered,
   inStatusGroup,
   isDragging,
+  hasFamilyDisclosure,
 }: {
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
   inStatusGroup: boolean;
   isDragging: boolean;
+  hasFamilyDisclosure: boolean;
 }) {
   return [
     styles.workspaceRow,
     inStatusGroup && sidebarWorkspaceRowStyles.rowIndented,
+    hasFamilyDisclosure && sidebarWorkspaceRowStyles.familyParentRow,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
@@ -1108,3 +1200,14 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surfaceSidebarSelected,
   },
 }));
+
+/** The branch guard admits only current same-parent siblings before their saved order changes. */
+function persistStatusSiblingOrder(rows: SidebarWorkspaceEntry[]) {
+  const store = useSidebarOrderStore.getState();
+  store.setStatusWorkspaceOrder(
+    mergeWithRemainder({
+      currentOrder: store.statusWorkspaceOrder,
+      reorderedVisibleKeys: rows.map((workspace) => workspace.workspaceKey),
+    }),
+  );
+}
