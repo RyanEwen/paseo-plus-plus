@@ -64,11 +64,62 @@ describe("mergeWithRemainder", () => {
   });
 });
 
+describe("project pin reordering", () => {
+  const input = {
+    currentVisibleKeys: ["srv:pin1", "srv:pin2", "srv:a", "srv:b"],
+    projectPinnedKeys: new Set(["srv:pin1", "srv:pin2"]),
+    storedWorkspaceOrder: ["srv:a", "srv:hidden", "srv:pin1", "srv:b", "srv:pin2"],
+  };
+  it("does not rewrite saved workspace order when pins move within their partition", () => {
+    const result = resolveProjectWorkspaceReorder({
+      ...input,
+      reorderedVisibleKeys: ["srv:pin2", "srv:pin1", "srv:a", "srv:b"],
+      move: { activeKey: "srv:pin1", overKey: "srv:pin2", from: 0, to: 1 },
+    });
+    expect(result).toEqual({ projectPinKeys: ["srv:pin2", "srv:pin1"], workspaceOrder: null });
+  });
+  it("reorders ordinary siblings while retaining hidden and pinned saved keys", () => {
+    const result = resolveProjectWorkspaceReorder({
+      ...input,
+      reorderedVisibleKeys: ["srv:pin1", "srv:pin2", "srv:b", "srv:a"],
+      move: { activeKey: "srv:a", overKey: "srv:b", from: 2, to: 3 },
+    });
+    expect(result).toEqual({
+      projectPinKeys: ["srv:pin1", "srv:pin2"],
+      workspaceOrder: ["srv:hidden", "srv:pin1", "srv:b", "srv:a", "srv:pin2"],
+    });
+    expect(input.storedWorkspaceOrder).toEqual([
+      "srv:a",
+      "srv:hidden",
+      "srv:pin1",
+      "srv:b",
+      "srv:pin2",
+    ]);
+  });
+});
+
+it("treats saved project pins as ordinary rows when project pinning is disabled", () => {
+  const storedWorkspaceOrder = ["srv:ordinary", "srv:pin", "srv:hidden"];
+  const result = resolveProjectWorkspaceReorder({
+    currentVisibleKeys: ["srv:ordinary", "srv:pin"],
+    reorderedVisibleKeys: ["srv:pin", "srv:ordinary"],
+    projectPinnedKeys: new Set(),
+    storedWorkspaceOrder,
+    move: { activeKey: "srv:ordinary", overKey: "srv:pin", from: 0, to: 1 },
+  });
+  expect(result).toEqual({
+    projectPinKeys: [],
+    workspaceOrder: ["srv:pin", "srv:ordinary", "srv:hidden"],
+  });
+  expect(storedWorkspaceOrder).toEqual(["srv:ordinary", "srv:pin", "srv:hidden"]);
+});
+
 describe("anchored workspace move through a limited family window", () => {
   const canonical = Array.from({ length: 12 }, (_, index) => `srv:${index}`);
   const visible = [...canonical.slice(0, 7), canonical[9]!];
   const input = {
     currentVisibleKeys: canonical,
+    projectPinnedKeys: new Set<string>(),
     storedWorkspaceOrder: canonical,
   };
   it("swaps the dragged first two rows without promoting passive overflow over hidden siblings", () => {
@@ -78,6 +129,7 @@ describe("anchored workspace move through a limited family window", () => {
       move: { activeKey: "srv:0", overKey: "srv:1", from: 0, to: 1 },
     });
     expect(result).toEqual({
+      projectPinKeys: [],
       workspaceOrder: [canonical[1], canonical[0], ...canonical.slice(2)],
     });
     expect(result.workspaceOrder?.filter((key) => key !== "srv:0")).toEqual(
@@ -131,9 +183,10 @@ describe("anchored workspace move through a limited family window", () => {
           currentVisibleKeys: known,
           storedWorkspaceOrder: saved,
           reorderedVisibleKeys: result,
+          projectPinnedKeys: new Set(),
           move,
         }),
-      ).toEqual({ workspaceOrder: null });
+      ).toEqual({ projectPinKeys: [], workspaceOrder: null });
     },
   );
   it("admits a fresh ordinary gesture after the existing owner reconciles missing ranks", () => {
@@ -179,12 +232,25 @@ describe("anchored workspace move through a limited family window", () => {
       currentVisibleKeys: current,
       storedWorkspaceOrder: reconciled,
       reorderedVisibleKeys: ["srv:A", "srv:C", "srv:B"],
+      projectPinnedKeys: new Set(),
       move: { activeKey: "srv:B", overKey: "srv:C", from: 1, to: 2 },
     });
     expect(result).toEqual({
+      projectPinKeys: [],
       workspaceOrder: ["srv:A", "unknown", "offline", "srv:C", "srv:B"],
     });
     expect(saved).toEqual(["unknown", "srv:B", "offline", "srv:C"]);
+  });
+  it("keeps a valid automatic-sort pin drag independent of absent ordinary ranks", () => {
+    expect(
+      resolveProjectWorkspaceReorder({
+        currentVisibleKeys: ["srv:pin1", "srv:pin2", "srv:A"],
+        storedWorkspaceOrder: [],
+        reorderedVisibleKeys: ["srv:pin2", "srv:pin1", "srv:A"],
+        projectPinnedKeys: new Set(["srv:pin1", "srv:pin2"]),
+        move: { activeKey: "srv:pin1", overKey: "srv:pin2", from: 0, to: 1 },
+      }),
+    ).toEqual({ projectPinKeys: ["srv:pin2", "srv:pin1"], workspaceOrder: null });
   });
   it.each([
     { activeKey: "absent", overKey: "srv:1", from: 0, to: 1 },
@@ -200,7 +266,7 @@ describe("anchored workspace move through a limited family window", () => {
         reorderedVisibleKeys: [canonical[1]!, canonical[0]!, ...visible.slice(2)],
         move,
       }),
-    ).toEqual({ workspaceOrder: null });
+    ).toEqual({ projectPinKeys: [], workspaceOrder: null });
   });
   it("rejects an anchor from outside the actual sibling list even when present in the project", () => {
     expect(
@@ -209,7 +275,17 @@ describe("anchored workspace move through a limited family window", () => {
         reorderedVisibleKeys: ["srv:1", "srv:0"],
         move: { activeKey: "srv:0", overKey: "srv:9", from: 0, to: 1 },
       }),
-    ).toEqual({ workspaceOrder: null });
+    ).toEqual({ projectPinKeys: [], workspaceOrder: null });
+  });
+  it("rejects a cross-pin-partition drag without updating pins or ordinary siblings", () => {
+    expect(
+      resolveProjectWorkspaceReorder({
+        ...input,
+        projectPinnedKeys: new Set(["srv:0"]),
+        reorderedVisibleKeys: ["srv:1", "srv:0"],
+        move: { activeKey: "srv:0", overKey: "srv:1", from: 0, to: 1 },
+      }),
+    ).toEqual({ projectPinKeys: [], workspaceOrder: null });
   });
   it("rejects a drop result that moves an additional passive sibling", () => {
     expect(
@@ -218,7 +294,7 @@ describe("anchored workspace move through a limited family window", () => {
         reorderedVisibleKeys: ["srv:1", "srv:0", "srv:9", ...canonical.slice(2, 7)],
         move: { activeKey: "srv:0", overKey: "srv:1", from: 0, to: 1 },
       }),
-    ).toEqual({ workspaceOrder: null });
+    ).toEqual({ projectPinKeys: [], workspaceOrder: null });
   });
 });
 
@@ -276,6 +352,7 @@ describe("Custom-only sidebar reorder domains", () => {
     groupMode: "project" as const,
     sortMode: "custom" as const,
     workspaceSortMode: "custom" as const,
+    workspaceSort: "manual" as const,
     emptyProjectSortMode: "project" as const,
     hostFilters: [],
     projectFilters: [],

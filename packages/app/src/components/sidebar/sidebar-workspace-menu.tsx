@@ -17,6 +17,7 @@ import {
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import { useAppSettings } from "@/hooks/use-settings";
 import { densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -95,6 +96,8 @@ export interface SidebarWorkspaceMenuProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  isProjectPinned?: boolean;
+  onToggleProjectPin?: () => void;
   openInFileManagerPath?: string | null;
   /**
    * Lifted so the row that reveals the kebab can keep it mounted while its menu is up. See
@@ -143,8 +146,11 @@ function SidebarWorkspaceMenuItems({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
+  const { settings } = useAppSettings();
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
@@ -207,6 +213,18 @@ function SidebarWorkspaceMenuItems({
           Mark as unread
         </WorkspaceMenuItem>
       ) : null}
+      {settings.paseoPlusPlus.projectPinning && onToggleProjectPin ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-project-pin-${workspaceKey}`}
+          leading={isProjectPinned ? unpinLeadingIcon : pinLeadingIcon}
+          onSelect={onToggleProjectPin}
+        >
+          {isProjectPinned
+            ? t("sidebar.workspace.actions.unpinInProject")
+            : t("sidebar.workspace.actions.pinInProject")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onTogglePin ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -265,6 +283,8 @@ export function SidebarWorkspaceMenu({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
   openInFileManagerPath,
   open,
   onOpenChange,
@@ -311,6 +331,8 @@ export function SidebarWorkspaceMenu({
           archiveShortcutKeys={archiveShortcutKeys}
           isPinned={isPinned}
           onTogglePin={onTogglePin}
+          isProjectPinned={isProjectPinned}
+          onToggleProjectPin={onToggleProjectPin}
           openInFileManagerPath={openInFileManagerPath}
         />
       </DropdownMenuContent>
@@ -344,6 +366,8 @@ export function SidebarWorkspaceContextMenu({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
   openInFileManagerPath,
   accessibilityLabel,
   highlightStyle,
@@ -423,6 +447,8 @@ export function SidebarWorkspaceContextMenu({
           archiveShortcutKeys={archiveShortcutKeys}
           isPinned={isPinned}
           onTogglePin={onTogglePin}
+          isProjectPinned={isProjectPinned}
+          onToggleProjectPin={onToggleProjectPin}
           openInFileManagerPath={openInFileManagerPath}
         />
       </ContextMenuContent>
