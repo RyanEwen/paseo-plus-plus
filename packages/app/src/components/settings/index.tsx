@@ -37,6 +37,9 @@ interface AppRowExtras {
   labelAccessory?: ReactNode;
 }
 
+type AppSettingsSwitchProps = SettingsSwitchProps & Pick<AppSettingsRowProps, "labelAccessory">;
+type AppSettingsSelectProps<Value extends string> = SettingsSelectProps<Value> &
+  Pick<AppSettingsRowProps, "labelAccessory">;
 interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtras {
   hint?: ReactNode;
 }
@@ -95,7 +98,7 @@ export function SettingsRow({
   );
 }
 
-export function SettingsSwitch({ value, onValueChange, disabled, ...row }: SettingsSwitchProps) {
+export function SettingsSwitch({ value, onValueChange, disabled, ...row }: AppSettingsSwitchProps) {
   return (
     <SettingsRow {...row}>
       <Switch
@@ -131,7 +134,7 @@ export function SettingsSelect<Value extends string>({
   onValueChange,
   disabled,
   ...row
-}: SettingsSelectProps<Value> & AppRowExtras) {
+}: AppSettingsSelectProps<Value>) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <SettingsRow {...row}>

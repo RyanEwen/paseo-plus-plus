@@ -25,6 +25,9 @@ interface SettingsInfoTipProps {
   /** Defaults to "About {title}". */
   accessibilityLabel?: string;
   testID?: string;
+  contentTestID?: string;
+  /** Image help can use a wider frame while ordinary text tips keep the default. */
+  contentMaxWidth?: number;
 }
 
 /**
@@ -35,9 +38,11 @@ interface SettingsInfoTipProps {
 export function SettingsInfoTip({
   title,
   info,
+  testID,
+  contentTestID,
+  contentMaxWidth,
   icon = Info,
   accessibilityLabel,
-  testID,
 }: SettingsInfoTipProps) {
   const { t } = useTranslation();
   return (
@@ -53,8 +58,18 @@ export function SettingsInfoTip({
           <ThemedTipIcon icon={icon} uniProps={mutedIconMapping} />
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="start" offset={8}>
-        <Text style={styles.tooltipText}>{info}</Text>
+      <TooltipContent
+        side="top"
+        align="start"
+        offset={8}
+        testID={contentTestID}
+        maxWidth={contentMaxWidth}
+      >
+        {typeof info === "string" || typeof info === "number" ? (
+          <Text style={styles.tooltipText}>{info}</Text>
+        ) : (
+          info
+        )}
       </TooltipContent>
     </Tooltip>
   );
