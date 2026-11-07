@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { DEFAULT_SIDEBAR_ROW_ITEMS } from "@/components/sidebar/display-preferences/row-items";
-import {
-  DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT,
-  type AppSettings,
-} from "@/hooks/use-settings/storage";
+import type { AppSettings } from "@/hooks/use-settings/storage";
+import { DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT } from "@/components/sidebar/workspace-limit";
+
+/** Persisted sidebar-view envelope version; e2e fixtures seed the same version. */
+export const SIDEBAR_VIEW_STORE_VERSION = 12;
 
 export const SidebarModePreferencesSchema = z.object({
   sortMode: z.enum(["project", "status", "custom"]),

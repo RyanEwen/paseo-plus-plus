@@ -1,4 +1,5 @@
 import {
+  SIDEBAR_VIEW_STORE_VERSION,
   SidebarModePreferencesSchema,
   SidebarModeProfilesSchema,
   SidebarLocalModeFiltersSchema,
@@ -27,7 +28,6 @@ export type SidebarProjectVisibility = "all" | "unarchived";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 12;
 
 /**
  * The key standing for "this workspace carries no labels at all".

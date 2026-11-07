@@ -1,3 +1,6 @@
+/** Workspaces each sidebar group shows before Show more, unless a mode chooses otherwise. */
+export const DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT = 20;
+
 interface SidebarWorkspaceLimitInput<T> {
   items: readonly T[];
   initialCount: number | null;

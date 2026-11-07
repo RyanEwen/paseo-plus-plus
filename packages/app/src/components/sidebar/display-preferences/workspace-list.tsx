@@ -1,8 +1,10 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MenuHint, MenuItem, MenuLabel, MenuSubTrigger, MenuTextField } from "@/components/ui/menu";
-import { parseSidebarWorkspaceCount } from "@/components/sidebar/workspace-limit";
-import { DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT } from "@/hooks/use-settings/storage";
+import {
+  DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT,
+  parseSidebarWorkspaceCount,
+} from "@/components/sidebar/workspace-limit";
 
 /** These ports are supplied by the parent-owned active-mode preferences hook. */
 export interface WorkspaceListPreferences {
