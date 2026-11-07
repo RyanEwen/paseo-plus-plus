@@ -156,7 +156,7 @@ test("Explorer divider hover presets honor pixel minimums and persist exact widt
     .toBeCloseTo(shellWidth * 0.4, 0);
   await expectExplorerWidthSurvivesReload(page, shellWidth * 0.4);
 
-  // At this viewport the body is narrower than 400 / .3, making 30/70 impossible.
+  // At this viewport the body is narrower than 360 / .3, making 30/70 impossible.
   await page.setViewportSize({ width: 1000, height: 1000 });
   const narrowBounds = await separator.boundingBox();
   if (!narrowBounds) throw new Error("Explorer divider is missing after resize");
