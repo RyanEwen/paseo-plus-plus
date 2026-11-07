@@ -24,3 +24,19 @@ export async function waitForGitHubRelease(
   }
   return null;
 }
+
+/**
+ * Confirm that a draft holds exactly the validated assets after upload.
+ *
+ * `names` is the sorted list of file names that were uploaded. Throws when GitHub reports a
+ * different set, leaving the release as a draft.
+ */
+export function requireUploadedDraftAssets({ repo, tag, names, lookup = getGitHubRelease }) {
+  const uploaded = lookup(repo, tag);
+  const uploadedNames = uploaded.assets.map((asset) => asset.name).sort();
+  if (JSON.stringify(uploadedNames) !== JSON.stringify(names)) {
+    throw new Error(
+      "Uploaded release assets do not match the validated set; the release remains a draft",
+    );
+  }
+}

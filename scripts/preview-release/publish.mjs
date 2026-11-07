@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { getGitHubRelease, getReleaseLookupTag } from "../github-release.mjs";
-import { waitForGitHubRelease } from "./github.mjs";
+import { requireUploadedDraftAssets, waitForGitHubRelease } from "./github.mjs";
 import { uploadWithRetry } from "../upload-release-assets.mjs";
 import { isMainModule } from "../is-main-module.mjs";
 import { validatePreviewAssets } from "./assets.mjs";
@@ -93,13 +93,7 @@ ${kind === "bridge" ? updaterBridgeMarker : ""}
   if (exitCode !== 0) {
     throw new Error("Preview asset upload failed; the release remains a draft");
   }
-  const uploaded = getGitHubRelease(repo, release.tag);
-  const uploadedNames = uploaded.assets.map((asset) => asset.name).sort();
-  if (JSON.stringify(uploadedNames) !== JSON.stringify(names)) {
-    throw new Error(
-      "Uploaded release assets do not match the validated set; the release remains a draft",
-    );
-  }
+  requireUploadedDraftAssets({ repo, tag: release.tag, names });
   if (publish) {
     // The qualified bridge must still be public and unchanged after uploads finish.
     const policy = requirePublicationPolicy({ kind, repo, release });

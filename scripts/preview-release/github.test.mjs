@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { waitForGitHubRelease } from "./github.mjs";
+import { requireUploadedDraftAssets, waitForGitHubRelease } from "./github.mjs";
 
 test("waits for delayed draft visibility without creating another release", async () => {
   const release = { id: 42, draft: true };
@@ -30,4 +30,26 @@ test("does not retry an authentication failure while waiting for a draft", async
     failure,
   );
   assert.equal(attempts, 1);
+});
+
+test("accepts a draft whose uploaded assets match the validated set", () => {
+  requireUploadedDraftAssets({
+    repo: "RyanEwen/paseo-plus-plus",
+    tag: "v0.15.3-preview.43",
+    names: ["SHA256SUMS", "app.apk"],
+    lookup: () => ({ assets: [{ name: "app.apk" }, { name: "SHA256SUMS" }] }),
+  });
+});
+
+test("rejects a draft whose uploaded assets differ from the validated set", () => {
+  assert.throws(
+    () =>
+      requireUploadedDraftAssets({
+        repo: "RyanEwen/paseo-plus-plus",
+        tag: "v0.15.3-preview.43",
+        names: ["SHA256SUMS", "app.apk"],
+        lookup: () => ({ assets: [{ name: "app.apk" }] }),
+      }),
+    /do not match the validated set/,
+  );
 });
