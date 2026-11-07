@@ -9,7 +9,11 @@ import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store"
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
-import { useAppSettings } from "@/hooks/use-settings";
+import {
+  isProjectPinnedEntry,
+  projectPinnedKeys as resolveProjectPinnedKeys,
+} from "@/components/sidebar/project-pins";
+import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -1731,13 +1735,10 @@ function ProjectBlock({
 
   const workspaceDrag = useSidebarReorderGuard("workspace");
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
-  const projectPinning = useAppSettings().settings.paseoPlusPlus.projectPinning;
+  const projectPinning = useProjectPinningEnabled();
   const workspaceDragGroup = useCallback(
     (workspace: SidebarWorkspacePlacement) => {
-      if (
-        projectPinning &&
-        workspaceEntriesByKey.get(workspace.workspaceKey)?.projectPinnedAt != null
-      )
+      if (isProjectPinnedEntry(workspaceEntriesByKey.get(workspace.workspaceKey), projectPinning))
         return "pins";
       return !manualSort || workspaceDrag.disabled ? null : "ordinary";
     },
@@ -2341,8 +2342,7 @@ function ProjectModeList({
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
-  const { settings } = useAppSettings();
-  const projectPinningEnabled = settings.paseoPlusPlus.projectPinning;
+  const projectPinningEnabled = useProjectPinningEnabled();
   const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
@@ -2476,14 +2476,10 @@ function ProjectModeList({
       move: DragReorderMove,
     ) => {
       const project = unpinnedProjects.find((entry) => entry.viewKey === projectViewKey);
-      const projectPinnedKeys = new Set(
-        reorderedWorkspaces
-          .filter(
-            (workspace) =>
-              projectPinningEnabled &&
-              workspaceEntriesByKey.get(workspace.workspaceKey)?.projectPinnedAt != null,
-          )
-          .map((workspace) => workspace.workspaceKey),
+      const projectPinnedKeys = resolveProjectPinnedKeys(
+        reorderedWorkspaces,
+        workspaceEntriesByKey,
+        projectPinningEnabled,
       );
       const result = resolveProjectWorkspaceReorder({
         currentVisibleKeys: project?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
