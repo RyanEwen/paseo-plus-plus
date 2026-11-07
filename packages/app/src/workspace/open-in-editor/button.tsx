@@ -25,7 +25,10 @@ import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
-import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
+import {
+  planWorkspaceOpenTargets,
+  type PlannedForgeOpenTarget,
+} from "@/workspace/open-in-editor/planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
@@ -45,7 +48,6 @@ interface OpenTarget {
   label: string;
   icon: ReactElement;
   onOpen: () => Promise<void> | void;
-  url?: string;
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -125,7 +127,7 @@ export function WorkspaceOpenInEditorButton({
     cwd: shouldQueryCheckout ? cwd : "",
   });
 
-  const targets = useMemo<OpenTarget[]>(
+  const plannedTargets = useMemo(
     () =>
       planWorkspaceOpenTargets({
         workspaceDirectory: cwd,
@@ -136,7 +138,29 @@ export function WorkspaceOpenInEditorButton({
         isLocalExecution: isLocalDaemon,
         checkoutStatus,
         forge: resolvedForge,
-      }).map((target) => {
+      }),
+    [
+      activeFile,
+      checkoutStatus,
+      cwd,
+      desktopOpenTargets,
+      resolvedForge,
+      isDesktopOpenAvailable,
+      isLocalDaemon,
+      resolvedFile,
+    ],
+  );
+  // The forge page is the one target that is also a web page, so it gets browser destinations.
+  const forgeUrl = useMemo(
+    () =>
+      plannedTargets.find((target): target is PlannedForgeOpenTarget => target.source === "forge")
+        ?.url,
+    [plannedTargets],
+  );
+
+  const targets = useMemo<OpenTarget[]>(
+    () =>
+      plannedTargets.map((target) => {
         if (target.source === "forge") {
           const presentation = getForgePresentation(target.forge);
           return {
@@ -144,7 +168,6 @@ export function WorkspaceOpenInEditorButton({
             label: target.label,
             icon: renderForgeOpenTargetIcon(presentation.icon),
             onOpen: () => openPrimary(target.url),
-            url: target.url,
           };
         }
         return {
@@ -156,17 +179,7 @@ export function WorkspaceOpenInEditorButton({
           onOpen: () => openDesktopTarget(target.openInput),
         };
       }),
-    [
-      activeFile,
-      checkoutStatus,
-      cwd,
-      desktopOpenTargets,
-      resolvedForge,
-      isDesktopOpenAvailable,
-      isLocalDaemon,
-      resolvedFile,
-      openPrimary,
-    ],
+    [plannedTargets, openPrimary],
   );
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
@@ -192,8 +205,7 @@ export function WorkspaceOpenInEditorButton({
     [openMutation],
   );
 
-  const browserUrl = targets.find((target) => target.url)?.url;
-  const canOpenInBrowser = Boolean(openInPaseo && browserUrl);
+  const canOpenInBrowser = Boolean(openInPaseo && forgeUrl);
   const handleSelectTarget = useCallback(
     (target: OpenTarget) => {
       void updatePreferredEditor(target.id).catch((error: unknown) => {
@@ -292,7 +304,7 @@ export function WorkspaceOpenInEditorButton({
               {canOpenInBrowser ? (
                 <>
                   <DropdownMenuSeparator />
-                  <WorkspaceBrowserDestinationItems url={browserUrl} />
+                  <WorkspaceBrowserDestinationItems url={forgeUrl} />
                 </>
               ) : null}
             </DropdownMenuContent>
