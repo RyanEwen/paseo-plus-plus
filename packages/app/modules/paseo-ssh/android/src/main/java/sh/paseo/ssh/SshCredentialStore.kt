@@ -3,9 +3,12 @@ package sh.paseo.ssh
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.AtomicFile
 import android.util.Base64
 import org.json.JSONObject
+import java.io.File
 import java.security.KeyStore
+import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -13,33 +16,49 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** Encrypts SSH secrets with a non-exportable Android Keystore key in backup-excluded storage. */
 internal class SshCredentialStore(context: Context) {
-  private val directory = java.io.File(context.noBackupFilesDir, "paseo-ssh").apply { mkdirs() }
+  private val directory = File(context.noBackupFilesDir, "paseo-ssh").apply { mkdirs() }
   private val alias = "paseo-ssh-credentials-v1"
 
+  /** Load the Keystore key, creating it on first use. */
   private fun key(): SecretKey {
     val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-    (store.getKey(alias, null) as? SecretKey)?.let { return it }
-    return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
-      init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
-    }.generateKey()
+    val existing = store.getKey(alias, null) as? SecretKey
+    if (existing != null) return existing
+
+    val spec = KeyGenParameterSpec.Builder(
+      alias,
+      KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+    )
+      .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+      .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+      .build()
+    val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+    generator.init(spec)
+    return generator.generateKey()
   }
 
-  private fun file(id: String): java.io.File {
-    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.toByteArray())
-    return java.io.File(directory, digest.joinToString("") { "%02x".format(it) })
+  /** File names hash the credential id, so destinations never appear on disk. */
+  private fun file(id: String): File {
+    val digest = MessageDigest.getInstance("SHA-256").digest(id.toByteArray())
+    val name = digest.joinToString("") { "%02x".format(it) }
+    return File(directory, name)
   }
 
-  @Synchronized fun save(id: String, value: JSONObject) {
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+  @Synchronized fun save(id: String, credentials: SshCredentials) {
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, key())
+    // Bind the ciphertext to its id, so one destination's file cannot stand in for another's.
     cipher.updateAAD(id.toByteArray())
-    val data = JSONObject().put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-      .put("data", Base64.encodeToString(cipher.doFinal(value.toString().toByteArray()), Base64.NO_WRAP))
-    val atomic = android.util.AtomicFile(file(id))
+    val encrypted = cipher.doFinal(toJson(credentials).toString().toByteArray())
+
+    val envelope = JSONObject()
+    envelope.put("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+    envelope.put("data", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+
+    val atomic = AtomicFile(file(id))
     val stream = atomic.startWrite()
     try {
-      stream.write(data.toString().toByteArray())
+      stream.write(envelope.toString().toByteArray())
       atomic.finishWrite(stream)
     } catch (error: Exception) {
       atomic.failWrite(stream)
@@ -47,16 +66,36 @@ internal class SshCredentialStore(context: Context) {
     }
   }
 
-  @Synchronized fun read(id: String): JSONObject? {
+  @Synchronized fun read(id: String): SshCredentials? {
     val target = file(id)
     if (!target.exists()) return null
-    val data = JSONObject(android.util.AtomicFile(target).openRead().use { it.readBytes().toString(Charsets.UTF_8) })
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
-      init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(data.getString("iv"), Base64.NO_WRAP)))
-    }
+
+    val stored = AtomicFile(target).openRead().use { it.readBytes().toString(Charsets.UTF_8) }
+    val envelope = JSONObject(stored)
+    val iv = Base64.decode(envelope.getString("iv"), Base64.NO_WRAP)
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
     cipher.updateAAD(id.toByteArray())
-    return JSONObject(cipher.doFinal(Base64.decode(data.getString("data"), Base64.NO_WRAP)).toString(Charsets.UTF_8))
+    val decrypted = cipher.doFinal(Base64.decode(envelope.getString("data"), Base64.NO_WRAP))
+    return fromJson(JSONObject(decrypted.toString(Charsets.UTF_8)))
   }
 
-  @Synchronized fun remove(id: String) { android.util.AtomicFile(file(id)).delete() }
+  @Synchronized fun remove(id: String) {
+    AtomicFile(file(id)).delete()
+  }
+
+  // The stored JSON keys are a persisted format: files written by earlier builds use them.
+  private fun toJson(credentials: SshCredentials): JSONObject {
+    val json = JSONObject()
+    json.put("privateKey", credentials.privateKey)
+    json.put("passphrase", credentials.passphrase)
+    json.put("fingerprint", credentials.fingerprint)
+    return json
+  }
+
+  private fun fromJson(json: JSONObject) = SshCredentials(
+    privateKey = json.getString("privateKey"),
+    passphrase = json.optString("passphrase"),
+    fingerprint = json.getString("fingerprint"),
+  )
 }
