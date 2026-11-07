@@ -23,9 +23,9 @@ describe("resolveHostUpdateSupport", () => {
   const differs = { versionDiffersFromApp: true };
 
   test("a host that answers availability checks is checked", () => {
-    expect(
-      resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: true }), differs),
-    ).toBe("checked");
+    expect(resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: true }), differs)).toBe(
+      "checked",
+    );
   });
 
   test("an older self-updating host on a different version gets the manual update", () => {
@@ -51,9 +51,9 @@ describe("resolveHostUpdateSupport", () => {
   });
 
   test("a host that reports no availability check is offered nothing", () => {
-    expect(
-      resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: false }), differs),
-    ).toBe("none");
+    expect(resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: false }), differs)).toBe(
+      "none",
+    );
   });
 
   test.each([null, undefined])("a host with no server info yet (%s) is offered nothing", (info) => {

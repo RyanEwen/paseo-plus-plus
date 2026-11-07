@@ -27,9 +27,9 @@ const running: HostUpdatePresentation = { host: hostA, busy: true, dismissed: fa
 
 describe("reduceHostUpdatePresentation", () => {
   test("starting presents the host as busy", () => {
-    expect(reduceHostUpdatePresentation(CLOSED_HOST_UPDATE, { type: "start", host: hostA })).toEqual(
-      running,
-    );
+    expect(
+      reduceHostUpdatePresentation(CLOSED_HOST_UPDATE, { type: "start", host: hostA }),
+    ).toEqual(running);
   });
 
   test("a second start while busy keeps the running attempt", () => {
@@ -44,9 +44,9 @@ describe("reduceHostUpdatePresentation", () => {
   });
 
   test("a settled attempt stays presented until closed", () => {
-    expect(
-      reduceHostUpdatePresentation(running, { type: "finished", outcome: "settled" }),
-    ).toEqual({ host: hostA, busy: false, dismissed: false });
+    expect(reduceHostUpdatePresentation(running, { type: "finished", outcome: "settled" })).toEqual(
+      { host: hostA, busy: false, dismissed: false },
+    );
   });
 
   test.each(["cancelled", "duplicate"] as const)("a %s attempt closes the sheet", (outcome) => {
@@ -88,7 +88,10 @@ describe("isHostUpdateSheetVisible", () => {
 
   test("a failure after dismissed progress is shown again", () => {
     const dismissed = reduceHostUpdatePresentation(running, { type: "dismiss" });
-    const failed = reduceHostUpdatePresentation(dismissed, { type: "finished", outcome: "settled" });
+    const failed = reduceHostUpdatePresentation(dismissed, {
+      type: "finished",
+      outcome: "settled",
+    });
 
     expect(isHostUpdateSheetVisible(failed, "failed")).toBe(true);
   });

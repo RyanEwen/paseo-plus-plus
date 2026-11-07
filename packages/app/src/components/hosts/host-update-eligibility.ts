@@ -32,7 +32,9 @@ export function resolveHostUpdateSupport(
 
 function canUpdateManually(info: DaemonServerInfo, versionDiffersFromApp: boolean): boolean {
   return (
-    info.features?.daemonSelfUpdate === true && info.desktopManaged !== true && versionDiffersFromApp
+    info.features?.daemonSelfUpdate === true &&
+    info.desktopManaged !== true &&
+    versionDiffersFromApp
   );
 }
 
@@ -57,7 +59,10 @@ export function shouldCheckHostUpdate(row: HostUpdateRowState): boolean {
 }
 
 /** Whether a row offers Update: failures and unknown eligibility never become an invitation. */
-export function isHostUpdateOffered(row: HostUpdateRowState, check: HostUpdateCheckResult): boolean {
+export function isHostUpdateOffered(
+  row: HostUpdateRowState,
+  check: HostUpdateCheckResult,
+): boolean {
   const canRunUpdate = row.enabled && row.connected && row.hasClient;
   if (!canRunUpdate) return false;
   if (row.support === "manual") return true;
