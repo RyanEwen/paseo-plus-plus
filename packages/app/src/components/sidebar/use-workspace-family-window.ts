@@ -9,10 +9,16 @@ import {
 } from "./workspace-tree";
 import { useSidebarWorkspaceTree } from "./workspace-tree-context";
 
-/** Apply existing count and age preferences to whole families, preserving each child's own date. */
+/**
+ * Apply existing count and age preferences to whole families, preserving each child's own date.
+ *
+ * @param keep roots that stay visible past both windows, such as the open workspace; the active
+ *   family and families with active work are revealed on top of it.
+ */
 export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
   items: readonly T[],
   getStatusEnteredAt: (item: T) => Date | null,
+  keep?: (item: T) => boolean,
 ) {
   const { tree, activeWorkspaceKey, entries } = useSidebarWorkspaceTree();
   const itemsByKey = useMemo(
@@ -36,7 +42,7 @@ export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
       }),
     [tree, itemsByKey, getStatusEnteredAt],
   );
-  const window = useLimitedSidebarGroup(roots, getFamilyDate);
+  const window = useLimitedSidebarGroup(roots, getFamilyDate, keep);
   const visibleItems = includeActiveWorkspaceFamily({
     roots,
     visibleItems: window.visibleItems,
