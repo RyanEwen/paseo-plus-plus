@@ -12819,10 +12819,13 @@ test("steering joins human obligations while unrelated replacement keeps objecti
   expect(objectives.hasHumanAudience()).toBe(false);
   expect(objectives.requiresHumanAttention({ hasUnread: false, hasProblem: true })).toBe(false);
   expect(objectives.requiresHumanAttention({ hasUnread: true, hasProblem: false })).toBe(true);
-  objectives.requestHuman("other", "Pick an account");
+  const lease = objectives.reserveHumanAttention("other", "Pick an account");
+  if (!lease) throw new Error("Expected a first human attention reservation");
+  objectives.commitHumanAttention(lease);
+  // A retry of the same reason stays quiet after restart; a new reason escalates again.
   const restored = new AgentAttentionObjectives(objectives.snapshot());
-  expect(restored.requestHuman("other", "Pick an account")).toBe(false);
-  expect(restored.requestHuman("other", "Approve deployment")).toBe(true);
+  expect(restored.reserveHumanAttention("other", "Pick an account")).toBeNull();
+  expect(restored.reserveHumanAttention("other", "Approve deployment")).toEqual(expect.any(Symbol));
 });
 
 test.each(["available", "missing", "unknown"] as const)(

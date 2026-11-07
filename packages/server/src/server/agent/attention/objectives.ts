@@ -279,14 +279,6 @@ export class AgentAttentionObjectives {
     this.requireActiveObjective(objectiveId).disposition = disposition;
   }
 
-  /** Return false for a retry of the same reason, including after an attention clear or restart. */
-  requestHuman(objectiveId: string, reason: string): boolean {
-    const lease = this.reserveHumanAttention(objectiveId, reason);
-    if (!lease) return false;
-    this.commitHumanAttention(lease);
-    return true;
-  }
-
   /** Keep pending reasons process-local so ordinary close/reload snapshots cannot commit them. */
   reserveHumanAttention(objectiveId: string, reason: string): symbol | null {
     const objective = this.requireActiveObjective(objectiveId);
