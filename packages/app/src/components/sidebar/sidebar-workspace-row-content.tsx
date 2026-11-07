@@ -1,5 +1,6 @@
 import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
+import { resolveWorkspaceLeadingSlot, WorkspaceProjectPinGutter } from "./project-pin-gutter";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
@@ -157,6 +158,15 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             reserveIdleSpace={reserveIdleStatusIndicatorSpace}
           />
         )}
+        <WorkspaceProjectPinGutter
+          workspace={workspace}
+          leadingSlot={resolveWorkspaceLeadingSlot({
+            hasProjectIcon: Boolean(leadingProjectName),
+            loading: isLoading,
+            bucket: workspace.statusBucket,
+            reserveIdleSpace: reserveIdleStatusIndicatorSpace,
+          })}
+        />
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>

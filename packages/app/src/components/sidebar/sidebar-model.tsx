@@ -1,9 +1,11 @@
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import { filterSidebarByText } from "./sidebar-text-filter";
+import { ProjectPinGutterProvider } from "./project-pin-gutter";
 import { useSidebarProjectActivity } from "./use-sidebar-project-activity";
 import { useSessionStore } from "@/stores/session-store";
 import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
 import { SidebarRecencyClockProvider } from "./workspace-recency-clock";
+import { useProjectPinningEnabled } from "./use-project-pinning-enabled";
 import { useTranslation } from "react-i18next";
 import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
@@ -82,6 +84,7 @@ export function SidebarModelProvider({
 }) {
   const { t } = useTranslation();
   const list = useSidebarWorkspacesList({ enabled: active });
+  const projectPinningEnabled = useProjectPinningEnabled();
   const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const workspaceSortMode = useSidebarViewStore((state) => state.workspaceSortMode);
   const statusWorkspaceOrder = useSidebarOrderStore((state) => state.statusWorkspaceOrder);
@@ -233,6 +236,7 @@ export function SidebarModelProvider({
       groupMode,
       workspaceSortMode,
       workspaceTitleSource,
+      projectPinningEnabled,
       statusWorkspaceOrder,
       pinnedCollapsed,
       collapsedProjectKeys,
@@ -245,6 +249,7 @@ export function SidebarModelProvider({
       groupMode,
       workspaceSortMode,
       workspaceTitleSource,
+      projectPinningEnabled,
       statusWorkspaceOrder,
       list.projectNamesByViewKey,
       textFiltered,
@@ -284,7 +289,9 @@ export function SidebarModelProvider({
 
   return (
     <SidebarModelContext.Provider value={value}>
-      <SidebarRecencyClockProvider active={active}>{children}</SidebarRecencyClockProvider>
+      <ProjectPinGutterProvider value={projectPinningEnabled}>
+        <SidebarRecencyClockProvider active={active}>{children}</SidebarRecencyClockProvider>
+      </ProjectPinGutterProvider>
     </SidebarModelContext.Provider>
   );
 }

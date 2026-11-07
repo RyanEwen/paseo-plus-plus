@@ -32,6 +32,7 @@ import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
+import { resolveWorkspacePinFields, type WorkspacePinScope } from "./workspace-pin-scope.js";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
@@ -3209,7 +3210,12 @@ export class Session {
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
-        return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+        return this.handleWorkspacePinSetRequest(
+          msg.workspaceId,
+          msg.pinned,
+          msg.requestId,
+          msg.scope,
+        );
       default:
         return undefined;
     }
@@ -4070,8 +4076,9 @@ export class Session {
     workspaceId: string,
     pinned: boolean,
     requestId: string,
+    scope: WorkspacePinScope = "global",
   ): Promise<void> {
-    const logContext = { workspaceId, pinned, requestId };
+    const logContext = { workspaceId, pinned, scope, requestId };
     this.sessionLogger.info(logContext, "session: workspace.pin.set.request");
     const emitResponse = (accepted: boolean, pinnedAt: string | null, error: string | null) => {
       this.emit({
@@ -4085,14 +4092,14 @@ export class Session {
       const updatedAt = new Date().toISOString();
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
-        pinnedAt: nextPinnedAt,
+        ...resolveWorkspacePinFields(scope, nextPinnedAt),
         updatedAt,
       }));
       if (!updated) {
         emitResponse(false, null, "Workspace not found");
         return;
       }
-      emitResponse(true, nextPinnedAt, null);
+      emitResponse(true, updated.pinnedAt, null);
       await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
     } catch (error) {
       this.sessionLogger.error(
@@ -5929,6 +5936,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      projectPinnedAt: workspace.projectPinnedAt ?? null,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       background: workspace.background,
       archivingAt: null,
@@ -6028,6 +6036,7 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      projectPinnedAt: result.workspace.projectPinnedAt ?? null,
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),

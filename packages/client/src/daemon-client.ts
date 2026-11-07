@@ -149,6 +149,7 @@ import type {
   AgentSkillSelection,
   AgentSkillsStatus,
   AgentSkillsSaveResult,
+  WorkspacePinScope,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -3603,10 +3604,15 @@ export class DaemonClient {
     return { title: payload.title };
   }
 
+  /**
+   * Set one exclusive pin scope. Omitted scope preserves legacy global pin behavior.
+   * Project scope requires projectWorkspacePinning; pinnedAt reports the global pin only.
+   */
   async setWorkspacePinned(
     workspaceId: string,
     pinned: boolean,
     requestId?: string,
+    scope?: WorkspacePinScope,
   ): Promise<{ pinnedAt: string | null }> {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
@@ -3614,6 +3620,7 @@ export class DaemonClient {
         type: "workspace.pin.set.request",
         workspaceId,
         pinned,
+        ...(scope ? { scope } : {}),
       },
       responseType: "workspace.pin.set.response",
     });

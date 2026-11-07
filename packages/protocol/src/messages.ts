@@ -1068,10 +1068,16 @@ export const WorkspaceTitleSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+/** Where a workspace pin applies: the top of the whole sidebar or the top of its project. */
+export const WorkspacePinScopeSchema = z.enum(["global", "project"]);
+export type WorkspacePinScope = z.infer<typeof WorkspacePinScopeSchema>;
+
 export const WorkspacePinSetRequestSchema = z.object({
   type: z.literal("workspace.pin.set.request"),
   workspaceId: z.string(),
   pinned: z.boolean(),
+  // COMPAT(projectWorkspacePinning): added in v0.11.2, remove optional after 2027-02-11.
+  scope: WorkspacePinScopeSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2232,6 +2238,8 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
   requestId: z.string(),
   workspaceId: z.string(),
   accepted: z.boolean(),
+  // The global pin only: an accepted project pin answers null here. The workspace update that
+  // follows carries projectPinnedAt.
   pinnedAt: z.string().nullable(),
   error: z.string().nullable(),
 });
@@ -4308,6 +4316,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    // COMPAT(projectWorkspacePinning): added in v0.11.2, remove optional after 2027-02-11.
+    projectPinnedAt: z.string().nullable().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
     // Retained for wire parsing of older daemon descriptors.

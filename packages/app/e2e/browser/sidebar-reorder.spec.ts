@@ -10,6 +10,7 @@ import {
   selectSidebarProjectGrouping,
   sidebarWorkspaceSortMenuItem,
   closeSidebarDisplayPreferences,
+  openWorkspaceContextMenu,
   seedSidebarModeProfiles,
 } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
@@ -325,6 +326,86 @@ async function expectWorkspaceSortingRestoresCustomOrder(
   await page.reload();
   await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
 }
+
+/** Press the source row and move onto the target row with the button held, as a user drags. */
+async function dragRowOnto(source: Locator, target: Locator): Promise<void> {
+  const sourceBox = await visibleBoundingBox(source);
+  const targetBox = await visibleBoundingBox(target);
+  const page = source.page();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+    steps: 8,
+  });
+}
+
+/** Drag the first ordinary row onto the second and expect no drag feedback and no reorder. */
+async function expectOrdinaryDragInert(rows: Locator) {
+  const source = rows.first();
+  const before = await rowTestIds(rows);
+  const border = await source.evaluate((node) => getComputedStyle(node).borderTopWidth);
+  await dragRowOnto(source, rows.nth(1));
+  await expect(source).toHaveCSS("border-top-width", border);
+  await finishSidebarDrag(rows.page());
+  await expect.poll(() => rowTestIds(rows)).toEqual(before);
+}
+
+/** Try to drop the first pin onto the last ordinary row, across the partition. */
+async function attemptPinAcrossOrdinaryRows(pins: Locator, ordinary: Locator) {
+  await dragRowOnto(pins.first(), ordinary.last());
+  await finishSidebarDrag(pins.page());
+}
+
+test("project pins remain independently draggable while workspace sort owns ordinary rows", async ({
+  page,
+}) => {
+  const seed = await seedWorkspace({ repoPrefix: "project-pin-sort-drag-", title: "Pin Alpha" });
+  try {
+    const ids = [seed.workspaceId];
+    for (const title of ["Pin Beta", "Ordinary Alpha", "Ordinary Beta"]) {
+      const created = await seed.client.createWorkspace({
+        source: { kind: "directory", path: seed.repoPath, projectId: seed.projectId },
+        title,
+      });
+      if (!created.workspace) throw new Error(created.error ?? "Workspace creation failed");
+      ids.push(created.workspace.id);
+    }
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    for (const id of ids.slice(0, 2)) {
+      await openWorkspaceContextMenu(page, id);
+      await page.getByTestId(`sidebar-workspace-menu-project-pin-${getServerId()}:${id}`).click();
+      await expect
+        .poll(
+          async () =>
+            (await seed.client.fetchWorkspaces()).entries.find((entry) => entry.id === id)
+              ?.projectPinnedAt,
+        )
+        .toBeTruthy();
+    }
+    const pins = workspaceRows(page, ids.slice(0, 2));
+    const ordinary = workspaceRows(page, ids.slice(2));
+    const all = workspaceRows(page, ids);
+    const pinnedIds = new Set(
+      ids.slice(0, 2).map((id) => `sidebar-workspace-row-${getServerId()}:${id}`),
+    );
+    for (const sort of ["Created", "Last prompt"] as const) {
+      await selectWorkspaceSort(page, sort);
+      await quickDragFirstRowAfterSecond(pins, pressWorkspaceRow);
+      await expectOrdinaryDragInert(ordinary);
+      const ordinaryBefore = await rowTestIds(ordinary);
+      await attemptPinAcrossOrdinaryRows(pins, ordinary);
+      const after = await rowTestIds(all);
+      expect(new Set(after.slice(0, 2))).toEqual(pinnedIds);
+      expect(after.slice(2)).toEqual(ordinaryBefore);
+    }
+    await selectWorkspaceSort(page, "Manual");
+    await quickDragFirstRowAfterSecond(ordinary, pressWorkspaceRow);
+    expect(new Set((await rowTestIds(all)).slice(0, 2))).toEqual(pinnedIds);
+  } finally {
+    await seed.cleanup();
+  }
+});
 
 test("workspace sorting restores custom drag order in project grouping", async ({ page }) => {
   const seeded = await seedSortableWorkspaceRows(page);
