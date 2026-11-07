@@ -1019,13 +1019,26 @@ function scanDirectoryRows(serverId: string, rows: readonly ReplicaRow[]): Direc
   return { result, invalidRows, checkpointRow };
 }
 
+/**
+ * Tracks the workspace cursor a workspace read observed. That read depends on the checkpoint only
+ * through its workspace cursor, so checkpoint writes that leave the cursor unchanged (an agent or
+ * project cursor advancing) do not invalidate it.
+ */
+interface WorkspaceAuthority {
+  /** Projection of the checkpoint the read observed; undefined until storage was read. */
+  observed?: string;
+  /** Projections of checkpoint writes accepted while the read was in flight. */
+  changes: Set<string>;
+}
+
 interface ReplicaRead {
   serverId: string;
   kinds: readonly ReplicaRowKind[];
   ids?: readonly string[];
   invalidated: boolean;
+  /** When set, the scope matches these exact rows instead of the kinds and ids cross product. */
   keys?: Array<Pick<ReplicaRowKey, "kind" | "id">>;
-  workspaceAuthority?: { observed?: string; changes: Set<string> };
+  workspaceAuthority?: WorkspaceAuthority;
 }
 
 /**
@@ -1085,6 +1098,12 @@ function parseTimelineRow(agentId: string, row: ReplicaRow): CachedTimeline | un
   return deserializeTimeline(stored) ?? undefined;
 }
 
+/**
+ * Projects a stored checkpoint payload to the part a workspace read depends on. A readable
+ * checkpoint projects to `["current", workspaces cursor or null]`; a missing or unreadable one
+ * is `"provisional"`, because no cursor vouches for the cached workspace rows. Reads compare
+ * projections by string equality.
+ */
 function workspaceAuthorityProjection(payload: string | undefined): string {
   if (typeof payload !== "string") return "provisional";
   try {
@@ -1094,6 +1113,7 @@ function workspaceAuthorityProjection(payload: string | undefined): string {
   }
 }
 
+/** Whether a row belongs to a scope: by exact key when the scope has keys, else by kind and id. */
 function matchesReplicaRead(read: ReplicaRead, row: ReplicaRowKey): boolean {
   return (
     read.serverId === row.serverId &&
@@ -1103,6 +1123,10 @@ function matchesReplicaRead(read: ReplicaRead, row: ReplicaRowKey): boolean {
   );
 }
 
+/**
+ * Records the workspace authority a read observed in storage, and invalidates the read when a
+ * checkpoint write accepted while it was in flight projects differently.
+ */
 function bindWorkspaceAuthority(read: ReplicaRead, rows: ReplicaRow[]): void {
   const authority = read.workspaceAuthority;
   if (!authority) return;
@@ -1665,15 +1689,19 @@ export class ReplicaCache {
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
     const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
-    for (const serverId of [...removed, ...added]) this.invalidateHostReads(serverId);
-    for (const serverId of [...removed, ...added])
+    for (const serverId of [...removed, ...added]) {
+      this.invalidateHostReads(serverId);
       this.hostIncarnations.set(serverId, Symbol(serverId));
+    }
     this.activeServerIds.clear();
     for (const serverId of next) this.activeServerIds.add(serverId);
     for (const serverId of removed) {
       this.invalidDirectoryCursors.delete(serverId);
-      for (const namespace of this.repairNamespaces)
-        if (namespace.serverId === serverId) namespace.cancelled = true;
+      for (const namespace of this.repairNamespaces) {
+        if (namespace.serverId === serverId) {
+          namespace.cancelled = true;
+        }
+      }
       this.removeStoredHost(serverId);
       this.dropPendingHostChanges(serverId);
       this.invalidatedHosts.delete(serverId);
@@ -1687,8 +1715,9 @@ export class ReplicaCache {
     for (const namespace of this.repairNamespaces) {
       if (namespace.cancelled) continue;
       if (namespace.serverId === oldServerId) namespace.serverId = newServerId;
-      if (namespace.serverId === newServerId)
+      if (namespace.serverId === newServerId) {
         namespace.incarnation = this.hostIncarnations.get(newServerId);
+      }
     }
     const invalid = this.invalidDirectoryCursors.get(oldServerId);
     if (invalid) {
@@ -1760,8 +1789,12 @@ export class ReplicaCache {
           for (const serverId of pending.baselines) {
             if (!evicted.has(serverId)) {
               this.invalidatedHosts.delete(serverId);
-              if (this.hostIncarnations.get(serverId) === baselineIncarnations.get(serverId))
+              // A host re-registered during the write keeps the fences of its new registration.
+              const sameIncarnation =
+                this.hostIncarnations.get(serverId) === baselineIncarnations.get(serverId);
+              if (sameIncarnation) {
                 this.invalidDirectoryCursors.delete(serverId);
+              }
             }
           }
         } catch {
@@ -1803,34 +1836,47 @@ export class ReplicaCache {
     );
   }
 
+  /**
+   * Withholds repaired entity cursors from ordinary checkpoint writes. A complete baseline
+   * replaces every directory row, so it may write them again.
+   */
   private checkpointForWrite(
     serverId: string,
     value: DirectoryCheckpoint,
-    completeBaseline: boolean,
+    { completeBaseline }: { completeBaseline: boolean },
   ): DirectoryCheckpoint {
     const checkpoint = { ...value };
     if (!completeBaseline) {
-      for (const entity of this.invalidDirectoryCursors.get(serverId) ?? [])
+      for (const entity of this.invalidDirectoryCursors.get(serverId) ?? []) {
         delete checkpoint[entity];
+      }
     }
     return checkpoint;
   }
 
+  /**
+   * The workspace authority a pending checkpoint upsert will have once written. It is projected
+   * through the stored form so it compares equal to the row it becomes: the stored schema fixes
+   * key order and rejects values a reader would treat as provisional.
+   */
+  private pendingCheckpointAuthority(serverId: string, checkpoint: DirectoryCheckpoint): string {
+    const value = this.checkpointForWrite(serverId, checkpoint, {
+      completeBaseline: this.pendingBaselines.has(serverId),
+    });
+    return workspaceAuthorityProjection(JSON.stringify(serializeDirectoryCheckpoint(value)));
+  }
+
+  /**
+   * Whether a pending change affects a scope. A checkpoint upsert affects a workspace-authority
+   * scope only when it changes the workspace cursor the scope observed.
+   */
   private pendingReadChange(
     read: ReplicaRead,
     row: ReplicaRowKey | StructuredReplicaUpsert,
   ): boolean {
     if (!matchesReplicaRead(read, row)) return false;
     if (!read.workspaceAuthority || row.kind !== "checkpoint" || !("value" in row)) return true;
-    const value = this.checkpointForWrite(
-      row.serverId,
-      row.value,
-      this.pendingBaselines.has(row.serverId),
-    );
-    return (
-      read.workspaceAuthority.observed !==
-      workspaceAuthorityProjection(JSON.stringify(serializeDirectoryCheckpoint(value)))
-    );
+    return read.workspaceAuthority.observed !== this.pendingCheckpointAuthority(row.serverId, row.value);
   }
 
   private hasPendingReadChanges(read: ReplicaRead): boolean {
@@ -1850,23 +1896,13 @@ export class ReplicaCache {
     for (const read of this.activeReads) {
       if (!matchesReplicaRead(read, row)) continue;
       if (read.workspaceAuthority && row.kind === "checkpoint" && "value" in row) {
-        const projection = workspaceAuthorityProjection(
-          JSON.stringify(
-            serializeDirectoryCheckpoint(
-              this.checkpointForWrite(
-                row.serverId,
-                row.value,
-                this.pendingBaselines.has(row.serverId),
-              ),
-            ),
-          ),
-        );
+        const projection = this.pendingCheckpointAuthority(row.serverId, row.value);
         read.workspaceAuthority.changes.add(projection);
-        if (
-          read.workspaceAuthority.observed !== undefined &&
-          read.workspaceAuthority.observed !== projection
-        )
+        const { observed } = read.workspaceAuthority;
+        const changesObservedAuthority = observed !== undefined && observed !== projection;
+        if (changesObservedAuthority) {
           read.invalidated = true;
+        }
       } else {
         read.invalidated = true;
       }
@@ -1911,7 +1947,9 @@ export class ReplicaCache {
     const deletes = new Map(pending.deletes.map((row) => [pendingRowKey(row), row]));
     const upserts: ReplicaRow[] = [];
     for (const upsert of pending.upserts) {
-      const row = this.materializeUpsert(upsert, pending.baselines.has(upsert.serverId));
+      const row = this.materializeUpsert(upsert, {
+        completeBaseline: pending.baselines.has(upsert.serverId),
+      });
       if (row) upserts.push(row);
       else deletes.set(pendingRowKey(upsert), upsert);
     }
@@ -1928,9 +1966,10 @@ export class ReplicaCache {
     return { upserts, deletes: [...deletes.values()] };
   }
 
+  /** @param options.completeBaseline Whether this write carries a complete directory baseline. */
   private materializeUpsert(
     upsert: StructuredReplicaUpsert,
-    completeBaseline: boolean,
+    { completeBaseline }: { completeBaseline: boolean },
   ): ReplicaRow | null {
     let value: unknown;
     switch (upsert.kind) {
@@ -1949,7 +1988,7 @@ export class ReplicaCache {
         break;
       case "checkpoint": {
         value = serializeDirectoryCheckpoint(
-          this.checkpointForWrite(upsert.serverId, upsert.value, completeBaseline),
+          this.checkpointForWrite(upsert.serverId, upsert.value, { completeBaseline }),
         );
         break;
       }
