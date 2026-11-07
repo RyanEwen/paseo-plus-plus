@@ -45,6 +45,25 @@ describe("sidebar collapsed projects transitions", () => {
     });
   });
 
+  it("roundtrips host-qualified child-workspace collapse without changing project or status collapse", () => {
+    let state = emptyState();
+    state = toggleWorkspaceGroupCollapsed(state, "workspace:host-a:child");
+    state = toggleWorkspaceGroupCollapsed(state, "workspace:host-b:child");
+    const restored = mergePersistedCollapsedProjects(
+      serializeCollapsedProjects(state),
+      emptyState(),
+    );
+    expect([...restored.collapsedWorkspaceGroupKeys]).toEqual([
+      "workspace:host-a:child",
+      "workspace:host-b:child",
+    ]);
+    expect([...restored.collapsedProjectKeys]).toEqual([]);
+    expect(restored.collapsedPinned).toBe(false);
+    expect(
+      toggleWorkspaceGroupCollapsed(restored, "workspace:host-a:child").collapsedWorkspaceGroupKeys,
+    ).toEqual(new Set(["workspace:host-b:child"]));
+  });
+
   it("toggles and restores the pinned section collapse flag", () => {
     const toggled = togglePinnedCollapsed(emptyState());
     expect(toggled.collapsedPinned).toBe(true);

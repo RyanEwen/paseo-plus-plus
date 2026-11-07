@@ -1,5 +1,10 @@
 import type { SidebarCollapseTargets } from "@/stores/sidebar-collapsed-sections-store/state";
 import type { SidebarProjection, SidebarProjectionInput } from "./sidebar-projection";
+import {
+  EMPTY_WORKSPACE_TREE,
+  workspaceCollapseKey,
+  type WorkspaceTreeNode,
+} from "./workspace-tree";
 
 /** The filtered projection the sidebar renders, plus the Empty projects grouping preference. */
 export interface SidebarCollapseTargetsInput
@@ -7,11 +12,14 @@ export interface SidebarCollapseTargetsInput
     Pick<SidebarProjectionInput, "projects" | "groupMode">,
     Pick<SidebarProjection, "pinnedGroups" | "workspaceGroups"> {
   groupEmptyProjects: boolean;
+  /** Rendered workspace families; every parent with children is a collapse target. */
+  workspaceTree?: ReadonlyMap<string, WorkspaceTreeNode>;
 }
 
 /**
  * Resolve bulk collapse targets from the same filtered projection that renders the sidebar:
- * project headers, Status groups, the Empty projects group and the Pinned section. Sections the
+ * project headers, Status groups, the Empty projects group, the Pinned section and workspace
+ * families. Sections the
  * current filters hide are not targets, so their saved collapse state survives Expand all and
  * Collapse all.
  */
@@ -27,6 +35,9 @@ export function resolveSidebarCollapseTargets(
     input.groupMode === "status" ? input.workspaceGroups.map((group) => group.key) : [];
   if (input.groupEmptyProjects && emptyProjects.length > 0) {
     workspaceGroupKeys.push("no-unarchived-workspaces");
+  }
+  for (const [key, node] of input.workspaceTree ?? EMPTY_WORKSPACE_TREE) {
+    if (node.childKeys.length > 0) workspaceGroupKeys.push(workspaceCollapseKey(key));
   }
   return {
     projectKeys: renderedProjects.map((project) => project.viewKey),
