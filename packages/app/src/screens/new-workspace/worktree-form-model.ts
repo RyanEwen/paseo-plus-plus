@@ -21,7 +21,9 @@ export function findExistingWorktreeByOptionId(
   entries: readonly ExistingWorktree[] | undefined,
   optionId: string,
 ): ExistingWorktree | null {
-  return entries?.find((entry) => existingWorktreeOptionId(entry.worktreePath) === optionId) ?? null;
+  return (
+    entries?.find((entry) => existingWorktreeOptionId(entry.worktreePath) === optionId) ?? null
+  );
 }
 
 /** Branch and absolute path distinguish checkout rows, including detached worktrees. */

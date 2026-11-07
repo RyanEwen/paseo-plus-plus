@@ -1502,9 +1502,10 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         ),
       );
 
-      expect(created.map((result) => path.basename(result.worktree.worktreePath)).sort()).toEqual(
-        ["shared", "shared-1"],
-      );
+      expect(created.map((result) => path.basename(result.worktree.worktreePath)).sort()).toEqual([
+        "shared",
+        "shared-1",
+      ]);
       expect(created.map((result) => result.worktree.branchName).sort()).toEqual([
         "concurrent-first",
         "concurrent-second",

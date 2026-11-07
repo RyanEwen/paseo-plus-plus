@@ -1141,12 +1141,7 @@ export function NewWorkspaceScreen({
     compact: isCompact,
     pending: isPending,
   });
-  const {
-    baseItem,
-    existing: existingWorktree,
-    selectIsolation,
-    prepareSource,
-  } = worktreeOptions;
+  const { baseItem, existing: existingWorktree, selectIsolation, prepareSource } = worktreeOptions;
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
     () =>
       worktreePickerOptions({

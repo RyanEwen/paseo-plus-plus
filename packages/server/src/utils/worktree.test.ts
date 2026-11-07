@@ -125,7 +125,9 @@ describe("paseo worktree manager", () => {
       expect(await firstOutcome).toBe("fixture creation failure");
       expect(await second).toBe("created");
       expect(events).toEqual(["first", "second"]);
-      expect(await runInWorktreeCreationLane(repoDir, async () => "next creation")).toBe("next creation");
+      expect(await runInWorktreeCreationLane(repoDir, async () => "next creation")).toBe(
+        "next creation",
+      );
     } finally {
       release();
       await Promise.allSettled([first, second]);
@@ -142,7 +144,9 @@ describe("paseo worktree manager", () => {
       return "first";
     });
     try {
-      expect(await runInWorktreeCreationLane(tempDir, async () => "independent")).toBe("independent");
+      expect(await runInWorktreeCreationLane(tempDir, async () => "independent")).toBe(
+        "independent",
+      );
       release();
       expect(await first).toBe("first");
     } finally {

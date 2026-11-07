@@ -268,8 +268,7 @@ export function useWorktreeBranchChoice(input: {
   onSearchQueryChange: (query: string) => void;
   control: PickerControl;
 }): (PickerControl & WorktreeBranchChoice) | null {
-  const { branchMode, branchDetails, baseItem, onSelectItem, onSearchQueryChange, control } =
-    input;
+  const { branchMode, branchDetails, baseItem, onSelectItem, onSearchQueryChange, control } = input;
   const checkout = branchMode?.value === "checkout";
   const choices = useMemo(
     () => worktreeBranchChoiceOptions({ branchDetails, baseItem, checkout }),

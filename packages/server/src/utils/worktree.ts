@@ -250,7 +250,11 @@ export class WorktreeNameConflictError extends Error {
   /** The branch name, or the folder path for a directory conflict. */
   readonly conflictingName: string;
 
-  constructor(params: { kind: WorktreeNameConflictKind; conflictingName: string; message: string }) {
+  constructor(params: {
+    kind: WorktreeNameConflictKind;
+    conflictingName: string;
+    message: string;
+  }) {
     super(params.message);
     this.name = "WorktreeNameConflictError";
     this.kind = params.kind;
