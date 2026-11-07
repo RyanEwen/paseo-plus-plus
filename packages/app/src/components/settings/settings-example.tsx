@@ -4,14 +4,16 @@ import { useMemo } from "react";
 import { Image, Text, View, useWindowDimensions, type ImageRequireSource } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { SettingsInfoTip } from "./headings/settings-info-tip";
+import { fitScreenshotViewport, type ScreenshotViewport } from "./settings-example-fit";
 
-interface ScreenshotViewport {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
+/** Widest an example image frame grows, in display pixels. */
+const EXAMPLE_MAX_WIDTH = 320;
+/** Horizontal space kept free around the tip on narrow screens. */
+const EXAMPLE_SCREEN_INSET = 48;
+/** Extra width the tip surface needs around its content for padding and border. */
+const TIP_FRAME_PADDING = 18;
 
 export interface SettingsExampleImage {
   id: string;
@@ -40,61 +42,29 @@ interface SettingsExampleProps {
 export function SettingsExample({ title, caption, images, testID }: SettingsExampleProps) {
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
-  const exampleWidth = Math.min(320, width - 48);
+  const exampleWidth = Math.min(EXAMPLE_MAX_WIDTH, width - EXAMPLE_SCREEN_INSET);
+  // A stable element keeps the tip's info prop from changing on every render.
   const content = useMemo(() => {
     if (!images || images.length === 0) return caption;
+    const annotated = images.some((image) => image.arrows?.length);
     return (
-      <View style={[styles.example, { width: exampleWidth }]}>
-        {images.map((image) => {
-          const viewport = image.viewport ?? {
-            left: 0,
-            top: 0,
-            width: image.width,
-            height: image.height,
-          };
-          const displayWidth = Math.min(exampleWidth, viewport.width);
-          const scale = displayWidth / viewport.width;
-          const displayHeight = scale * viewport.height;
-          const label = image.label ? t(`paseoPlusPlus.examples.${image.label}`) : undefined;
-          return (
-            <View key={image.id} style={styles.frame}>
-              {label ? <Text style={styles.caption}>{label}</Text> : null}
-              <View style={[styles.picture, { width: displayWidth, height: displayHeight }]}>
-                <Image
-                  source={image.source}
-                  resizeMode="contain"
-                  accessibilityLabel={`${t("paseoPlusPlus.examples.imageLabel", { title })}. ${label ?? caption}`}
-                  style={[
-                    styles.image,
-                    {
-                      width: scale * image.width,
-                      height: scale * image.height,
-                      left: -scale * viewport.left,
-                      top: -scale * viewport.top,
-                    },
-                  ]}
-                />
-                {image.arrows?.length || image.outlines?.length ? (
-                  <ScreenshotAnnotations
-                    width={viewport.width}
-                    height={viewport.height}
-                    arrows={image.arrows}
-                    outlines={image.outlines}
-                  />
-                ) : null}
-              </View>
-            </View>
-          );
-        })}
+      <View style={[styles.example, inlineUnistylesStyle({ width: exampleWidth })]}>
+        {images.map((image) => (
+          <SettingsExampleImageFrame
+            key={image.id}
+            image={image}
+            maxWidth={exampleWidth}
+            title={title}
+            caption={caption}
+          />
+        ))}
         <Text style={styles.caption}>
           {caption}
-          {images.some((image) => image.arrows?.length)
-            ? ` ${t("paseoPlusPlus.examples.annotated")}`
-            : ""}
+          {annotated ? ` ${t("paseoPlusPlus.examples.annotated")}` : ""}
         </Text>
       </View>
     );
-  }, [images, title, caption, t, exampleWidth]);
+  }, [images, exampleWidth, title, caption, t]);
 
   return (
     <SettingsInfoTip
@@ -102,8 +72,63 @@ export function SettingsExample({ title, caption, images, testID }: SettingsExam
       info={content}
       testID={testID}
       contentTestID={`${testID}-content`}
-      contentMaxWidth={exampleWidth + 18}
+      contentMaxWidth={exampleWidth + TIP_FRAME_PADDING}
     />
+  );
+}
+
+interface SettingsExampleImageFrameProps {
+  image: SettingsExampleImage;
+  maxWidth: number;
+  title: string;
+  caption: string;
+}
+
+/** One screenshot region in its frame, with an optional before/after label and annotations. */
+function SettingsExampleImageFrame({
+  image,
+  maxWidth,
+  title,
+  caption,
+}: SettingsExampleImageFrameProps) {
+  const { t } = useTranslation();
+  const fitted = fitScreenshotViewport(image, maxWidth);
+  const label = image.label ? t(`paseoPlusPlus.examples.${image.label}`) : undefined;
+  const hasAnnotations = Boolean(image.arrows?.length || image.outlines?.length);
+
+  return (
+    <View style={styles.frame}>
+      {label ? <Text style={styles.caption}>{label}</Text> : null}
+      <View
+        style={[
+          styles.picture,
+          inlineUnistylesStyle({ width: fitted.frameWidth, height: fitted.frameHeight }),
+        ]}
+      >
+        <Image
+          source={image.source}
+          resizeMode="contain"
+          accessibilityLabel={`${t("paseoPlusPlus.examples.imageLabel", { title })}. ${label ?? caption}`}
+          style={[
+            styles.image,
+            inlineUnistylesStyle({
+              width: fitted.imageWidth,
+              height: fitted.imageHeight,
+              left: fitted.imageLeft,
+              top: fitted.imageTop,
+            }),
+          ]}
+        />
+        {hasAnnotations ? (
+          <ScreenshotAnnotations
+            width={fitted.viewport.width}
+            height={fitted.viewport.height}
+            arrows={image.arrows}
+            outlines={image.outlines}
+          />
+        ) : null}
+      </View>
+    </View>
   );
 }
 

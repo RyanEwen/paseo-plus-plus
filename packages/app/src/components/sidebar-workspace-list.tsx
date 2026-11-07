@@ -4,11 +4,10 @@ import {
 } from "./sidebar/project-expansion-anchor";
 import { useProjectExpansionScroll } from "./sidebar/use-project-expansion-scroll";
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
+import { selectKnownSidebarProjectKeys } from "@/components/sidebar/sidebar-model";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
-import { useSessionStore } from "@/stores/session-store";
-import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -117,7 +116,10 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import {
+  useLimitedSidebarGroup,
+  useOpenWorkspaceKeep,
+} from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -1624,12 +1626,15 @@ function ProjectBlock({
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
+  const keepOpenWorkspace = useOpenWorkspaceKeep(
+    selectionEnabled ? activeWorkspaceSelection : null,
+  );
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt, keepOpenWorkspace);
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -2318,12 +2323,15 @@ function ProjectModeList({
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
+  const keepOpenWorkspace = useOpenWorkspaceKeep(
+    selectionEnabled ? activeWorkspaceSelection : null,
+  );
   const {
     visibleItems: visiblePinnedChats,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt, keepOpenWorkspace);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2398,13 +2406,7 @@ function ProjectModeList({
       )
         return;
       if (!visibleKeys.includes(move.activeKey) || !visibleKeys.includes(move.overKey)) return;
-      const session = useSessionStore.getState();
-      const serverIds = getHostRuntimeStore()
-        .getHosts()
-        .map((host) => host.serverId);
-      const knownProjectKeys = selectWorkspaceStructureProjects(session, serverIds).map(
-        (project) => project.viewKey,
-      );
+      const knownProjectKeys = selectKnownSidebarProjectKeys();
       if (!knownProjectKeys.includes(move.activeKey) || !knownProjectKeys.includes(move.overKey))
         return;
       const next = moveProjectInFullOrder({
@@ -2431,8 +2433,6 @@ function ProjectModeList({
         move,
       });
       if (result.workspaceOrder === null) return;
-
-      if (useSidebarViewStore.getState().workspaceSortMode !== "custom") return;
       setWorkspaceOrder(projectViewKey, result.workspaceOrder);
     },
     [getWorkspaceOrder, setWorkspaceOrder, unpinnedProjects],

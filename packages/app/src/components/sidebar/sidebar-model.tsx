@@ -55,21 +55,22 @@ interface SidebarModel extends SidebarWorkspacesListResult {
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
 
+/** Every project in the cached catalog of every connected host, read at an action boundary. */
+export function selectKnownSidebarProjectKeys(): string[] {
+  const session = useSessionStore.getState();
+  return selectWorkspaceStructureProjects(session, Object.keys(session.sessions)).map(
+    (project) => project.viewKey,
+  );
+}
+
 /** Read the current mode, preference and cached catalog at the action boundary. */
 function toggleSidebarProjectCollapsed(projectViewKey: string) {
   const view = useSidebarViewStore.getState();
-  const session = useSessionStore.getState();
-  const projectKeys =
-    view.groupMode === "project" && view.oneProjectAtATime
-      ? selectWorkspaceStructureProjects(session, Object.keys(session.sessions)).map(
-          (project) => project.viewKey,
-        )
-      : [];
-  useSidebarCollapsedSectionsStore.getState().toggleProjectCollapsed(projectViewKey, {
-    mode: view.groupMode,
-    oneProjectAtATime: view.oneProjectAtATime,
-    projectKeys,
-  });
+  const oneProjectAtATime = view.groupMode === "project" && view.oneProjectAtATime;
+  const collapseOthers = oneProjectAtATime ? selectKnownSidebarProjectKeys() : [];
+  useSidebarCollapsedSectionsStore
+    .getState()
+    .toggleProjectCollapsed(projectViewKey, { collapseOthers });
 }
 
 export function SidebarModelProvider({

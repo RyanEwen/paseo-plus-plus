@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { createStore } from "zustand/vanilla";
 
 /**
  * A source that can temporarily block settings edits, such as a settings host that has not
@@ -11,8 +12,10 @@ export interface SettingsEditingBlocker {
   subscribe: (listener: () => void) => () => void;
 }
 
-let blocker: SettingsEditingBlocker | null = null;
-const registrationListeners = new Set<() => void>();
+/** The registered blocker; the store's own subscription reports registration changes. */
+const registration = createStore<{ blocker: SettingsEditingBlocker | null }>(() => ({
+  blocker: null,
+}));
 
 /**
  * Register the single editing blocker for this build.
@@ -21,38 +24,33 @@ const registrationListeners = new Set<() => void>();
  * features cannot silently compete for the same gate.
  */
 export function registerSettingsEditingBlocker(next: SettingsEditingBlocker): () => void {
-  if (blocker) throw new Error("A settings editing blocker is already registered");
-  blocker = next;
-  notifyRegistration();
+  if (registration.getState().blocker) {
+    throw new Error("A settings editing blocker is already registered");
+  }
+  registration.setState({ blocker: next });
   return () => {
-    if (blocker !== next) return;
-    blocker = null;
-    notifyRegistration();
+    if (registration.getState().blocker !== next) return;
+    registration.setState({ blocker: null });
   };
 }
 
 /** Read the current state; false when no blocker is registered. */
 export function isSettingsEditingBlocked(): boolean {
-  return blocker?.isBlocked() ?? false;
+  return registration.getState().blocker?.isBlocked() ?? false;
 }
 
 /** Subscribe to both registration changes and the registered blocker's own changes. */
 function subscribe(listener: () => void): () => void {
-  let unsubscribeBlocker = blocker?.subscribe(listener) ?? null;
-  const onRegistration = () => {
+  let unsubscribeBlocker = registration.getState().blocker?.subscribe(listener) ?? null;
+  const unsubscribeRegistration = registration.subscribe(({ blocker }) => {
     unsubscribeBlocker?.();
     unsubscribeBlocker = blocker?.subscribe(listener) ?? null;
     listener();
-  };
-  registrationListeners.add(onRegistration);
+  });
   return () => {
-    registrationListeners.delete(onRegistration);
+    unsubscribeRegistration();
     unsubscribeBlocker?.();
   };
-}
-
-function notifyRegistration(): void {
-  for (const listener of registrationListeners) listener();
 }
 
 /** React view of the registered blocker. */
