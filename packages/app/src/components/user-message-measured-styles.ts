@@ -1,8 +1,10 @@
 import type { ViewStyle } from "react-native";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 /**
  * Styles built from measured prompt geometry. These values change per message, per resize
- * and per More/Less, so each builder returns one object per measured value set.
+ * and per More/Less. Each builder returns its object through the inline lane so Unistyles web
+ * does not add a stylesheet rule per distinct value (docs/unistyles.md).
  */
 
 /** The natural bubble frame the flow measured, or undefined while unmeasured. */
@@ -14,17 +16,17 @@ export function naturalBubbleFrameStyle(frame: {
   const style: ViewStyle = {};
   if (frame.width !== undefined) style.width = frame.width;
   if (frame.height !== undefined) style.height = frame.height;
-  return style;
+  return inlineUnistylesStyle(style);
 }
 
 /** A measured width, or undefined while unmeasured. */
 export function measuredWidthStyle(width: number | undefined): ViewStyle | undefined {
-  return width === undefined ? undefined : { width };
+  return width === undefined ? undefined : inlineUnistylesStyle({ width });
 }
 
 /** A measured height, or undefined while unmeasured. */
 export function measuredHeightStyle(height: number | undefined): ViewStyle | undefined {
-  return height === undefined ? undefined : { height };
+  return height === undefined ? undefined : inlineUnistylesStyle({ height });
 }
 
 /**
@@ -39,14 +41,14 @@ export function previewTextClipStyle(input: {
   translateY: number;
 }): ViewStyle {
   const untranslated = input.translateX === 0 && input.translateY === 0;
-  return {
+  return inlineUnistylesStyle({
     width: input.width,
     overflow: input.compact ? "hidden" : "visible",
     transform:
       input.web && untranslated
         ? undefined
         : [{ translateX: input.translateX }, { translateY: input.translateY }],
-  };
+  });
 }
 
 /**
@@ -60,15 +62,15 @@ export function trailingRailStyles(input: { railWidth: number | undefined; paddi
   const prepared = input.railWidth !== undefined && input.railWidth > 0;
   const railWidth = input.railWidth ?? 0;
   return {
-    paint: {
+    paint: inlineUnistylesStyle({
       maxWidth: prepared ? railWidth + input.padding * 2 : "100%",
       marginLeft: prepared ? -input.padding : 0,
       marginRight: prepared ? -input.padding : 0,
-    },
-    content: {
+    }),
+    content: inlineUnistylesStyle({
       maxWidth: prepared ? railWidth : "100%",
       minWidth: 0,
       flexShrink: 1,
-    },
+    }),
   };
 }
