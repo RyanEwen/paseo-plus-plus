@@ -3,6 +3,7 @@ import type { FinishSubscriptions, FinishRegistration } from "../finish-subscrip
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
+  DelegatedIdentityMismatchError,
   HostOperationRejectedError,
   type HostOperation,
   type AgentHostOperationResult,
@@ -770,9 +771,16 @@ function createToolCatalog(
         } catch (error) {
           // A lost response does not establish whether the remote daemon admitted the prompt.
           // Reconcile the child rather than silently dropping notification intent.
-          if (error instanceof PaseoToolInputError || error instanceof HostOperationRejectedError)
+          // A mismatched identity proves the watched agent is not the one the host created.
+          if (
+            error instanceof PaseoToolInputError ||
+            error instanceof HostOperationRejectedError ||
+            error instanceof DelegatedIdentityMismatchError
+          ) {
             await remoteNotification?.reject();
-          else remoteNotification?.accept();
+          } else {
+            remoteNotification?.accept();
+          }
           if (!options.serverId) throw error;
           const failure = {
             serverId: destination,

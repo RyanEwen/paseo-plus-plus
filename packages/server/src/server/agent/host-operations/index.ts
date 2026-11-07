@@ -38,6 +38,16 @@ export class HostOperationRejectedError extends Error {
     this.code = error instanceof Error && "code" in error ? error.code : undefined;
   }
 }
+/** A destination answered a delegated create with an agent other than the reserved identity. */
+export class DelegatedIdentityMismatchError extends Error {
+  constructor(
+    readonly expectedAgentId: string,
+    readonly returnedAgentId: string,
+  ) {
+    super("Host returned a different agent identity for the delegated request");
+    this.name = "DelegatedIdentityMismatchError";
+  }
+}
 function isAmbiguousPromptFailure(error: unknown): boolean {
   if (error instanceof DaemonConnectionError) return true;
   return error instanceof Error && error.message.startsWith("Timeout waiting for message");
@@ -295,7 +305,7 @@ export function createHostResolver(input: {
               idempotencyKey: parsed.idempotencyKey,
             });
             if (agentId && snapshot.id !== agentId) {
-              throw new Error("Host returned a different agent identity for the delegated request");
+              throw new DelegatedIdentityMismatchError(agentId, snapshot.id);
             }
             return {
               ...result({
