@@ -1,4 +1,3 @@
-import type { ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
@@ -39,13 +38,6 @@ function parseSessionMessage(message: WebSocketMessage): Record<string, unknown>
   }
 }
 
-/** Identify this agent's stream without holding health or other subscription replies. */
-function isAgentStreamFor(message: WebSocketMessage, agentId: string): boolean {
-  const session = parseSessionMessage(message);
-  const payload = session?.payload as Record<string, unknown> | undefined;
-  return session?.type === "agent_stream" && payload?.agentId === agentId;
-}
-
 function getToolCallStatus(
   message: WebSocketMessage,
   agentId: string,
@@ -72,24 +64,17 @@ function cloneToolCallWithId(
   message: WebSocketMessage,
   callId: string,
   sequenceOffset: number,
-  replacement?: ToolCallTimelineItem,
 ): string {
   const raw = typeof message === "string" ? message : message.toString("utf8");
   const envelope = JSON.parse(raw) as {
-    message?: {
-      payload?: { seq?: number; event?: { item?: { callId?: string } | ToolCallTimelineItem } };
-    };
+    message?: { payload?: { seq?: number; event?: { item?: { callId?: string } } } };
   };
   const payload = envelope.message?.payload;
   const item = payload?.event?.item;
   if (!payload || !item?.callId || typeof payload.seq !== "number") {
     throw new Error("Expected a tool-call session message");
   }
-  if (replacement && payload.event) {
-    payload.event.item = { ...replacement, callId };
-  } else {
-    item.callId = callId;
-  }
+  item.callId = callId;
   payload.seq += sequenceOffset;
   return JSON.stringify(envelope);
 }
@@ -115,11 +100,7 @@ function shiftTimelineSequence(
   }
 }
 
-async function holdStreamAfterFirstCompletedToolCall(
-  page: Page,
-  agentId: string,
-  scene?: ToolCallTimelineItem[],
-) {
+async function holdStreamAfterFirstCompletedToolCall(page: Page, agentId: string) {
   let firstCallId: string | null = null;
   let firstCompletedMessage: WebSocketMessage | null = null;
   let isHolding = false;
@@ -137,24 +118,13 @@ async function holdStreamAfterFirstCompletedToolCall(
     ws.onMessage((message) => server.send(message));
     server.onMessage((message) => {
       if (isHolding) {
-        // Semantic scenes freeze this agent's subsequent stream, while health
-        // replies and unrelated subscriptions continue through the real socket.
-        if (scene && !isAgentStreamFor(message, agentId)) {
-          ws.send(message);
-          return;
-        }
         heldMessages.push(message);
         return;
       }
 
+      ws.send(shiftTimelineSequence(message, sequenceOffset));
       const toolCall = getToolCallStatus(message, agentId);
       firstCallId ??= toolCall?.callId ?? null;
-      const isFirstCompleted = toolCall?.callId === firstCallId && toolCall?.status === "completed";
-      const forwarded =
-        firstCallId !== null && isFirstCompleted && scene?.[0]
-          ? cloneToolCallWithId(message, firstCallId, 0, scene[0])
-          : message;
-      ws.send(shiftTimelineSequence(forwarded, sequenceOffset));
       if (toolCall?.callId === firstCallId && toolCall.status === "completed") {
         firstCompletedMessage = message;
         isHolding = true;
@@ -182,23 +152,8 @@ async function holdStreamAfterFirstCompletedToolCall(
     waitForFirstCompleted: () => firstCompleted,
     appendCompletedCalls,
     release(extraCompletedCalls = 0) {
-      if (scene) extraCompletedCalls = scene.length - 1;
-      isHolding = Boolean(scene);
-      if (extraCompletedCalls > 0 && (!firstCallId || !firstCompletedMessage)) {
-        throw new Error("Expected the first completed tool call before release");
-      }
-      for (let index = 0; index < extraCompletedCalls; index += 1) {
-        sendToPage?.(
-          cloneToolCallWithId(
-            firstCompletedMessage as WebSocketMessage,
-            `${firstCallId}:${index}`,
-            index + 1,
-            scene?.[index + 1],
-          ),
-        );
-      }
-      sequenceOffset = extraCompletedCalls;
-      if (scene) return;
+      isHolding = false;
+      appendCompletedCalls(extraCompletedCalls);
       for (const message of heldMessages.splice(0)) {
         sendToPage?.(shiftTimelineSequence(message, sequenceOffset));
       }
