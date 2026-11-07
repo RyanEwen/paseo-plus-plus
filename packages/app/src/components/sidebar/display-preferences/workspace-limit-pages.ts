@@ -11,6 +11,10 @@ export interface WorkspaceLimitPageSpec {
 
 export const WORKSPACE_LIMIT_PAGES: readonly WorkspaceLimitPageSpec[] = [
   { id: "workspaceList", titleKey: "paseoPlusPlus.workspaceLimit.title" },
-  { id: "workspaceCount", titleKey: "sidebar.display.workspaceList.countLimit" },
+  {
+    id: "workspaceCount",
+    titleKey: "sidebar.display.workspaceList.countLimit",
+    hoverIntent: false,
+  },
   { id: "workspaceUpdatedWithin", titleKey: "sidebar.display.workspaceList.updatedWithin" },
 ];
