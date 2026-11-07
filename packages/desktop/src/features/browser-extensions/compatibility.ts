@@ -81,6 +81,9 @@ const QuerySchema = z.strictObject({
   url: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
+/** Who called an extension API: a frame (page, popup or extension document) or the extension's service worker. */
+type ExtensionCaller = { kind: "frame"; webContentsId: number } | { kind: "worker" };
+
 /** Add browser-owned extension APIs and normal MV3 worker wake-up behavior. Native supported APIs remain Chromium-owned. */
 export function registerBrowserExtensionCompatibility(
   profile: Session,
@@ -251,8 +254,9 @@ export function registerBrowserExtensionCompatibility(
     actionBadges.forgetExtension(extension.id),
   );
 
-  function ownerWindow(senderId: number | null) {
-    if (senderId === null) {
+  /** A worker has no window of its own, so it acts on the focused app window. */
+  function ownerWindow(caller: ExtensionCaller) {
+    if (caller.kind === "worker") {
       const focused = BrowserWindow.getFocusedWindow();
       if (!focused) {
         return null;
@@ -261,8 +265,8 @@ export function registerBrowserExtensionCompatibility(
       const host = hostId === undefined ? null : webContents.fromId(hostId);
       return host ? BrowserWindow.fromWebContents(host) : focused;
     }
-    const hostId = popupOwners.get(senderId);
-    const contents = webContents.fromId(hostId === undefined ? senderId : hostId);
+    const hostId = popupOwners.get(caller.webContentsId);
+    const contents = webContents.fromId(hostId === undefined ? caller.webContentsId : hostId);
     return contents ? BrowserWindow.fromWebContents(contents) : null;
   }
 
@@ -272,14 +276,14 @@ export function registerBrowserExtensionCompatibility(
       tabs()
         .map(tab)
         .filter((item) => item.windowId === windowId),
-    resolveOwner: (window) => ownerWindow(window.webContents.id),
+    resolveOwner: (window) => ownerWindow({ kind: "frame", webContentsId: window.webContents.id }),
     emit: deliverEvent,
   });
 
   /** Query actual browser guests and extension popout tabs; toolbar action popups have no tab. */
   function queryTabs(
     args: unknown[],
-    senderId: number | null,
+    caller: ExtensionCaller,
     extension: Electron.Extension,
   ): unknown[] {
     const query = QuerySchema.parse(args[0]);
@@ -293,7 +297,7 @@ export function registerBrowserExtensionCompatibility(
     } else if (query.windowType !== undefined) {
       return [];
     }
-    const owner = ownerWindow(senderId);
+    const owner = ownerWindow(caller);
     let urls: string[] = [];
     if (typeof query.url === "string") {
       urls = [query.url];
@@ -319,13 +323,14 @@ export function registerBrowserExtensionCompatibility(
   async function requestTab(
     method: string,
     args: unknown[],
-    senderId: number | null,
+    caller: ExtensionCaller,
     extension: Electron.Extension,
   ): Promise<unknown> {
     if (method === "tabs.getCurrent") {
-      if (senderId === null) {
+      if (caller.kind === "worker") {
         return undefined;
       }
+      const senderId = caller.webContentsId;
       const popupTab = windows.getPopupTab(senderId);
       if (popupTab) {
         return describeVisibleExtensionTab(extension, popupTab);
@@ -361,15 +366,15 @@ export function registerBrowserExtensionCompatibility(
       return describeVisibleExtensionTab(extension, tab(contents));
     }
     if (method === "tabs.query") {
-      return queryTabs(args, senderId, extension);
+      return queryTabs(args, caller, extension);
     }
     throw new Error(`Extension API ${method} is not supported in Paseo.`);
   }
 
   /** Record only worker registrations; renderer listeners never require a worker wake-up. */
-  function setWorkerSubscription(id: string, senderId: number | null, input: unknown): void {
+  function setWorkerSubscription(id: string, caller: ExtensionCaller, input: unknown): void {
     const subscription = EventSubscriptionSchema.parse(input);
-    if (senderId !== null) {
+    if (caller.kind !== "worker") {
       return;
     }
     const listeners = workerListeners.get(id) ?? new Set<string>();
@@ -381,7 +386,7 @@ export function registerBrowserExtensionCompatibility(
     workerListeners.set(id, listeners);
   }
 
-  async function request(url: string, senderId: number | null, input: unknown): Promise<unknown> {
+  async function request(url: string, caller: ExtensionCaller, input: unknown): Promise<unknown> {
     const extension = extensionForUrl(url);
     const manifest = ManifestSchema.parse(extension.manifest);
     const { method, args } = RequestSchema.parse(input);
@@ -399,7 +404,7 @@ export function registerBrowserExtensionCompatibility(
       );
     }
     if (method === "events.set-subscription") {
-      setWorkerSubscription(extension.id, senderId, args[0]);
+      setWorkerSubscription(extension.id, caller, args[0]);
       return undefined;
     }
     if (method === "permissions.request") {
@@ -407,7 +412,7 @@ export function registerBrowserExtensionCompatibility(
       throw new Error("Optional extension permissions are not supported in Paseo.");
     }
     if (method.startsWith("tabs.")) {
-      return requestTab(method, args, senderId, extension);
+      return requestTab(method, args, caller, extension);
     }
     if (method === "webNavigation.getFrame" || method === "webNavigation.getAllFrames") {
       if (!manifest.permissions.includes("webNavigation")) {
@@ -429,7 +434,7 @@ export function registerBrowserExtensionCompatibility(
       return details.find((frame) => frame.frameId === frameInput.frameId) ?? null;
     }
     if (method.startsWith("windows.")) {
-      return windows.request({ method, args, owner: ownerWindow(senderId), extension });
+      return windows.request({ method, args, owner: ownerWindow(caller), extension });
     }
     if (method.startsWith("notifications.")) {
       if (!manifest.permissions.includes("notifications")) {
@@ -453,7 +458,7 @@ export function registerBrowserExtensionCompatibility(
     if (event.sender.session !== profile || !event.senderFrame) {
       throw new Error("Extension APIs belong to the browser profile.");
     }
-    return request(event.senderFrame.url, event.sender.id, input);
+    return request(event.senderFrame.url, { kind: "frame", webContentsId: event.sender.id }, input);
   });
   profile.serviceWorkers.on("running-status-changed", (details) => {
     if (details.runningStatus === "running") {
@@ -482,7 +487,7 @@ export function registerBrowserExtensionCompatibility(
       ) {
         throw new Error("The extension worker is no longer active.");
       }
-      return request(worker.scriptURL, null, input);
+      return request(worker.scriptURL, { kind: "worker" }, input);
     });
   });
 
