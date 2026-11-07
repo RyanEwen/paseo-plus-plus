@@ -3639,6 +3639,7 @@ function WorkspaceScreenContent({
   );
 
   // Measure title and navigation together so floating chat clearance includes both rows.
+  // The shared surface keeps both rows opaque while the header floats above the chat.
   const compactHeaderLayout = resolveCompactHeaderLayout({
     header: (
       <View style={styles.containerWorkspaceBackground}>
