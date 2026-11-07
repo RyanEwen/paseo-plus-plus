@@ -630,6 +630,12 @@ test("prepares a Windows ARM64 build with inherited packaging and required Azure
         }),
       );
     }
+    // Version stamping runs the checkout's own upstream sync script.
+    mkdirSync(path.join(root, "scripts"));
+    copyFileSync(
+      new URL("./sync-workspace-versions.mjs", import.meta.url),
+      path.join(root, "scripts/sync-workspace-versions.mjs"),
+    );
     const desktop = path.join(root, "packages/desktop");
     for (const name of ["electron-builder.yml", "electron-builder.preview.yml"]) {
       copyFileSync(

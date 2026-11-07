@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isMainModule } from "../is-main-module.mjs";
-import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
 
 const require = createRequire(import.meta.url);
 const { getPreviewReleaseVersion } = require("../../packages/app/native-release-version.js");
@@ -46,13 +45,17 @@ export function printReleaseOutputs(release, write = (text) => process.stdout.wr
  *
  * The desktop compares the running daemon version with its own version, so every bundled
  * workspace must carry the same version or an owned daemon is restarted as perpetually outdated.
+ * The sync runs the checkout's own upstream scripts/sync-workspace-versions.mjs, which always
+ * operates on the checkout that contains it.
  */
 export function stampCheckoutVersion({ root, version }) {
   const manifestPath = path.join(root, "package.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   manifest.version = version;
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  syncWorkspaceVersions(root);
+  execFileSync(process.execPath, [path.join(root, "scripts/sync-workspace-versions.mjs")], {
+    stdio: "inherit",
+  });
 }
 
 if (isMainModule(import.meta.url)) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -62,6 +62,12 @@ test("stamps the root and every workspace with the preview version", () => {
     writeFileSync(
       path.join(root, "package.json"),
       JSON.stringify({ version: "0.11.0-beta.5", workspaces: ["packages/server", "packages/cli"] }),
+    );
+    // The stamp runs the checkout's own upstream sync script.
+    mkdirSync(path.join(root, "scripts"));
+    copyFileSync(
+      new URL("../sync-workspace-versions.mjs", import.meta.url),
+      path.join(root, "scripts/sync-workspace-versions.mjs"),
     );
     for (const name of ["server", "cli"]) {
       mkdirSync(path.join(root, "packages", name), { recursive: true });
