@@ -15,14 +15,20 @@ import type { BrowserRegistry, TabContents, TabImage, DialogCaptureOperation } f
 import { executeAutomationCommand } from "./service.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
-/** Run one test body with fake timers, restoring real timers even when it fails. */
-async function withFakeTimers(body: () => Promise<void>): Promise<void> {
-  vi.useFakeTimers();
-  try {
-    await body();
-  } finally {
-    vi.useRealTimers();
-  }
+/** Wrap a test body so it runs with fake timers, restoring real timers even when it fails.
+ * Returning the test function keeps the body at the test's own nesting depth.
+ */
+function fakeTimerTest<Args extends unknown[]>(
+  body: (...args: Args) => Promise<void>,
+): (...args: Args) => Promise<void> {
+  return async (...args) => {
+    vi.useFakeTimers();
+    try {
+      await body(...args);
+    } finally {
+      vi.useRealTimers();
+    }
+  };
 }
 
 const BROWSER_A = "11111111-1111-4111-8111-111111111111";
@@ -1235,8 +1241,9 @@ describe("executeAutomationCommand", () => {
     });
   });
 
-  test("click returns a retryable browser timeout when the ref never becomes actionable", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "click returns a retryable browser timeout when the ref never becomes actionable",
+    fakeTimerTest(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
@@ -1259,11 +1266,12 @@ describe("executeAutomationCommand", () => {
         },
       });
       expect(browser.tab.debugCommands).toEqual([]);
-    });
-  });
+    }),
+  );
 
-  test("command failures include dialogs handled before the failure", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "command failures include dialogs handled before the failure",
+    fakeTimerTest(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
@@ -1303,8 +1311,8 @@ describe("executeAutomationCommand", () => {
           },
         ],
       });
-    });
-  });
+    }),
+  );
 
   test("wait resolves when the explicit tab contains the requested text", async () => {
     const browser = new BrowserAutomationHarness();
@@ -2427,8 +2435,9 @@ describe("executeAutomationCommand", () => {
 });
 
 describe("background actionability sampling", () => {
-  test("resamples geometry on the main clock without a guest timer or animation frame", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "resamples geometry on the main clock without a guest timer or animation frame",
+    fakeTimerTest(async () => {
       const rect = { x: 10, y: 20, width: 30, height: 40 };
       const target = { point: { x: 25, y: 40 }, rect };
       const executeJavaScript = vi
@@ -2449,27 +2458,23 @@ describe("background actionability sampling", () => {
         // Guest timers and animation frames can be suspended in a hidden page.
         expect(script).not.toMatch(/setTimeout|requestAnimationFrame/);
       }
-    });
-  });
+    }),
+  );
 
   test.each(["disabled", "covered", "not visible", "not editable"])(
     "bounds %s polling and resets unstable geometry",
-    async (detail) => {
-      await withFakeTimers(async () => {
-        const executeJavaScript = vi
-          .fn()
-          .mockResolvedValue({ ok: false, reason: "timeout", detail });
-        const pending = waitForActionableTarget({
-          page: { getURL: () => "https://fixture.test", executeJavaScript },
-          elementExpression: "document.body",
-          timeoutMs: 32,
-        });
-        await vi.advanceTimersByTimeAsync(48);
-        await expect(pending).resolves.toEqual({ ok: false, reason: "timeout", detail });
-        expect(executeJavaScript).toHaveBeenCalledTimes(2);
-        expect(executeJavaScript.mock.calls[1][0]).toContain("const previousRect = null");
+    fakeTimerTest(async (detail: string) => {
+      const executeJavaScript = vi.fn().mockResolvedValue({ ok: false, reason: "timeout", detail });
+      const pending = waitForActionableTarget({
+        page: { getURL: () => "https://fixture.test", executeJavaScript },
+        elementExpression: "document.body",
+        timeoutMs: 32,
       });
-    },
+      await vi.advanceTimersByTimeAsync(48);
+      await expect(pending).resolves.toEqual({ ok: false, reason: "timeout", detail });
+      expect(executeJavaScript).toHaveBeenCalledTimes(2);
+      expect(executeJavaScript.mock.calls[1][0]).toContain("const previousRect = null");
+    }),
   );
 });
 
@@ -2491,19 +2496,21 @@ describe("trusted input activity completion", () => {
     return { browser, response: await pending };
   }
 
-  test("holds activity through a 1000 ms input paint and releases it", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "holds activity through a 1000 ms input paint and releases it",
+    fakeTimerTest(async () => {
       const { browser, response } = await clickWithPaintDelay(1000);
       expect(response.ok).toBe(true);
       expect(browser.tab.frameProductionScopes).toBe(0);
       expect(browser.tab.debugCommands).toHaveLength(3);
       await vi.advanceTimersByTimeAsync(1000);
       expect(browser.tab.debugCommands).toHaveLength(3);
-    });
-  });
+    }),
+  );
 
-  test("a 6000 ms input paint releases activity with a non-retryable timeout", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "a 6000 ms input paint releases activity with a non-retryable timeout",
+    fakeTimerTest(async () => {
       const { browser, response } = await clickWithPaintDelay(6000);
       expect(response).toMatchObject({
         ok: false,
@@ -2517,13 +2524,14 @@ describe("trusted input activity completion", () => {
       expect(browser.tab.debugCommands).toHaveLength(3);
       await vi.advanceTimersByTimeAsync(6000);
       expect(browser.tab.debugCommands).toHaveLength(3);
-    });
-  });
+    }),
+  );
 });
 
 describe("bounded trusted input lifetime", () => {
-  test("a stalled layout sample releases activity without dispatching late input", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "a stalled layout sample releases activity without dispatching late input",
+    fakeTimerTest(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       requireSnapshotRefs(await browser.snapshot());
@@ -2549,49 +2557,47 @@ describe("bounded trusted input lifetime", () => {
       await vi.advanceTimersByTimeAsync(15000);
       expect(browser.tab.debugCommands).toHaveLength(0);
       expect(vi.getTimerCount()).toBe(0);
-    });
-  });
+    }),
+  );
 
   test.each(["mouseMoved", "mousePressed"])(
     "a missing %s acknowledgment cannot pin activity or resume the gesture",
-    async (blockedType) => {
-      await withFakeTimers(async () => {
-        const browser = new BrowserAutomationHarness();
-        browser.tab.snapshotNodes = formElements();
-        requireSnapshotRefs(await browser.snapshot());
-        let finishInput!: (value: unknown) => void;
-        const stalled = new Promise<unknown>((resolve) => {
-          finishInput = resolve;
-        });
-        const send = browser.tab.sendDebugCommand.bind(browser.tab);
-        vi.spyOn(browser.tab, "sendDebugCommand").mockImplementation((command, params) => {
-          if (params?.type !== blockedType) return send(command, params);
-          browser.tab.debugCommands.push({ command, params });
-          return stalled;
-        });
-        const pending = browser.execute({
-          command: "click",
-          args: { browserId: BROWSER_A, ref: "@e1" },
-        });
-        await vi.advanceTimersByTimeAsync(15000);
-        await expect(pending).resolves.toMatchObject({
-          requestId: "req-click",
-          ok: false,
-          error: { code: "browser_timeout", retryable: false },
-        });
-        expect(browser.tab.frameProductionScopes).toBe(0);
-        const types = browser.tab.debugCommands.map(({ params }) => params?.type);
-        expect(types).toEqual(
-          blockedType === "mouseMoved"
-            ? ["mouseMoved"]
-            : ["mouseMoved", "mousePressed", "mouseReleased"],
-        );
-        finishInput({});
-        await vi.advanceTimersByTimeAsync(15000);
-        expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(types);
-        expect(vi.getTimerCount()).toBe(0);
+    fakeTimerTest(async (blockedType: string) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      let finishInput!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finishInput = resolve;
       });
-    },
+      const send = browser.tab.sendDebugCommand.bind(browser.tab);
+      vi.spyOn(browser.tab, "sendDebugCommand").mockImplementation((command, params) => {
+        if (params?.type !== blockedType) return send(command, params);
+        browser.tab.debugCommands.push({ command, params });
+        return stalled;
+      });
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e1" },
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+      await expect(pending).resolves.toMatchObject({
+        requestId: "req-click",
+        ok: false,
+        error: { code: "browser_timeout", retryable: false },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      const types = browser.tab.debugCommands.map(({ params }) => params?.type);
+      expect(types).toEqual(
+        blockedType === "mouseMoved"
+          ? ["mouseMoved"]
+          : ["mouseMoved", "mousePressed", "mouseReleased"],
+      );
+      finishInput({});
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(types);
+      expect(vi.getTimerCount()).toBe(0);
+    }),
   );
 
   test("concurrent clicks stay atomic and a waiting click does not wake rendering", async () => {
@@ -2630,8 +2636,9 @@ describe("bounded trusted input lifetime", () => {
     expect(browser.tab.frameProductionScopes).toBe(0);
   });
 
-  test("a waiter whose deadline expires with its predecessor never starts input", async () => {
-    await withFakeTimers(async () => {
+  test(
+    "a waiter whose deadline expires with its predecessor never starts input",
+    fakeTimerTest(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       requireSnapshotRefs(await browser.snapshot());
@@ -2674,8 +2681,8 @@ describe("bounded trusted input lifetime", () => {
       await vi.advanceTimersByTimeAsync(15000);
       expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(["mouseMoved"]);
       expect(vi.getTimerCount()).toBe(0);
-    });
-  });
+    }),
+  );
 
   test("closure while waiting behind another gesture does not wake the closed guest", async () => {
     const browser = new BrowserAutomationHarness();
