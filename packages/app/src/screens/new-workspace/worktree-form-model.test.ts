@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import {
+  adoptedCheckoutAgent,
   branchNameFromRef,
   existingWorktreeLabel,
   existingWorktreeOptionId,
@@ -171,5 +173,38 @@ describe("existing worktree options", () => {
     ["feature/a", "feature/a"],
   ])("reads the branch name of %s", (refName, branchName) => {
     expect(branchNameFromRef(refName)).toBe(branchName);
+  });
+});
+
+describe("adoptedCheckoutAgent", () => {
+  const agent: CreateWorkspaceRequestOptions["agent"] = {
+    config: { provider: "claude", cwd: "/repo/packages/app" },
+  };
+
+  it("moves the first agent into an adopted checkout, keeping its subdirectory", () => {
+    const adopted = adoptedCheckoutAgent({
+      agent,
+      sourceDirectory: "/repo",
+      source: { kind: "directory", path: "/worktrees/existing", projectId: "project" },
+    });
+
+    expect(adopted?.config?.cwd).toBe("/worktrees/existing/packages/app");
+  });
+
+  it("keeps the drafted agent for the project directory and for new worktrees", () => {
+    expect(
+      adoptedCheckoutAgent({
+        agent,
+        sourceDirectory: "/repo",
+        source: { kind: "directory", path: "/repo", projectId: "project" },
+      }),
+    ).toBe(agent);
+    expect(
+      adoptedCheckoutAgent({
+        agent,
+        sourceDirectory: "/repo",
+        source: { kind: "worktree", cwd: "/repo", projectId: "project", worktreeSlug: "new" },
+      }),
+    ).toBe(agent);
   });
 });

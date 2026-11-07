@@ -1,6 +1,7 @@
 import { isValidWorktreeName, slugify } from "@getpaseo/protocol/branch-slug";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { PickerItem } from "../new-workspace-picker-item";
+import { remapDraftCwdToWorkspace } from "../new-workspace-fork-context";
 
 export interface ExistingWorktree {
   worktreePath: string;
@@ -147,4 +148,27 @@ export function worktreeFormSource(
     refName: state.mode === "checkout" ? state.checkoutBranch : input.refName,
     ...(state.mode === "branch-off" ? { branchName: state.branchName.trim() } : {}),
   };
+}
+
+/**
+ * The first agent for a workspace request. The composer drafts against the project directory,
+ * so when the request adopts another checkout the agent's cwd moves into that checkout,
+ * keeping its subdirectory. Any other request keeps the agent as drafted.
+ */
+export function adoptedCheckoutAgent(input: {
+  agent: CreateWorkspaceRequestOptions["agent"];
+  sourceDirectory: string;
+  source: CreateWorkspaceRequestOptions["source"];
+}): CreateWorkspaceRequestOptions["agent"] {
+  const { agent, sourceDirectory, source } = input;
+  const adoptsAnotherCheckout = source.kind === "directory" && source.path !== sourceDirectory;
+  if (!agent?.config || !adoptsAnotherCheckout) {
+    return agent;
+  }
+  const cwd = remapDraftCwdToWorkspace({
+    cwd: agent.config.cwd,
+    sourceDirectory,
+    workspaceDirectory: source.path,
+  });
+  return { ...agent, config: { ...agent.config, cwd } };
 }

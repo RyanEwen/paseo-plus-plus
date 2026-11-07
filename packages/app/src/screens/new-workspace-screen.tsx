@@ -14,6 +14,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { adoptedCheckoutAgent } from "./new-workspace/worktree-form-model";
 import {
   useWorktreeOptions,
   worktreePickerOptions,
@@ -340,25 +341,13 @@ async function createMultiplicityWorkspace(input: {
           path: input.sourceDirectory,
           projectId,
         });
-  // The composer still uses the project directory when another checkout is selected.
-  // Directory adoption must send the first agent inside that checkout, including its subdirectory.
-  const agent =
-    input.agent?.config && source.kind === "directory" && source.path !== input.sourceDirectory
-      ? {
-          ...input.agent,
-          config: {
-            ...input.agent.config,
-            cwd: remapDraftCwdToWorkspace({
-              cwd: input.agent.config.cwd,
-              sourceDirectory: input.sourceDirectory,
-              workspaceDirectory: source.path,
-            }),
-          },
-        }
-      : input.agent;
   const payload = await input.client.createWorkspace({
     idempotencyKey: input.idempotencyKey,
-    agent,
+    agent: adoptedCheckoutAgent({
+      agent: input.agent,
+      sourceDirectory: input.sourceDirectory,
+      source,
+    }),
     onEvent: input.onEvent,
     source,
     ...(firstAgentContext ? { firstAgentContext } : {}),
