@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useRef } from "react";
-import type { EncodedVideoHandle, EncodedVideoProps } from "@getpaseo/plugin/client/react-native";
+import type { EncodedVideoHandle, EncodedVideoProps } from "@getpaseo/plugin/client/ui";
 
 /** Native platforms without the Android decoder report a capability failure once per mount. */
 export const EncodedVideo = forwardRef<EncodedVideoHandle, EncodedVideoProps>(function EncodedVideo(

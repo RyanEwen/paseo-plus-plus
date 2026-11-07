@@ -1022,7 +1022,7 @@ contains a padded form, full-width rows, a virtualized list, horizontal tabs, an
 
 ### Encoded video on Android
 
-`EncodedVideo` from `@getpaseo/plugin/client/react-native` provides a host-owned Android canvas
+`EncodedVideo` from `@getpaseo/plugin/client/ui` provides a host-owned Android canvas
 for raw WebCodecs chunks. Use the SDK containing this API and rebuild the Android app before
 adopting it. The renderer receives encoded bytes through the existing plugin RPC transport;
 it does not open a media URL or require another port. Other platforms report unsupported.

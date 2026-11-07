@@ -4,7 +4,7 @@ import type {
   EncodedVideoChunk,
   EncodedVideoFrame,
   EncodedVideoConfig,
-} from "@getpaseo/plugin/client/react-native";
+} from "@getpaseo/plugin/client/ui";
 import { encodedVideoHtml } from "./runtime";
 
 interface Message {

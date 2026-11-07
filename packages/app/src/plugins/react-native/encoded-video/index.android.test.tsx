@@ -4,7 +4,7 @@
 import React, { act, createRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import type { EncodedVideoConfig, EncodedVideoHandle } from "@getpaseo/plugin/client/react-native";
+import type { EncodedVideoConfig, EncodedVideoHandle } from "@getpaseo/plugin/client/ui";
 import { EncodedVideo } from "./index.android";
 
 interface WebViewCallbacks {

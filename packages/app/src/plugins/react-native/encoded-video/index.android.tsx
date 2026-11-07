@@ -9,7 +9,7 @@ import {
 import { StyleSheet } from "react-native";
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 import { z } from "zod";
-import type { EncodedVideoHandle, EncodedVideoProps } from "@getpaseo/plugin/client/react-native";
+import type { EncodedVideoHandle, EncodedVideoProps } from "@getpaseo/plugin/client/ui";
 import { encodedVideoHtml } from "./runtime";
 
 const messageSchema = z.discriminatedUnion("type", [
