@@ -159,7 +159,7 @@ new target and never yanks an existing tab out of a user-selected pane.
 
 ## Routing preferences
 
-**Settings → Sidebar → Explorer** controls whether Explorer starts open in new desktop workspaces.
+**Settings → Paseo++ → Explorer** controls whether Explorer starts open in new desktop workspaces.
 It defaults to closed. Saved workspace visibility stays as you left it when this setting changes.
 
 The same section controls whether clicking a file in Changes shows all changed files or only the
