@@ -1,3 +1,5 @@
+import { ATTACHMENT_TRANSFER_CHUNK_MAX_BYTES } from "@getpaseo/protocol/attachments";
+
 /**
  * Attachment storage limits. Byte and count quotas bound originals on disk; read limits bound
  * concurrent original transfers and their deadlines.
@@ -15,7 +17,7 @@ export const ATTACHMENT_LIMITS = {
   scanEntries: 16384,
   globalReads: 4,
   sessionReads: 2,
-  chunkBytes: 64 * 1024,
+  chunkBytes: ATTACHMENT_TRANSFER_CHUNK_MAX_BYTES,
   readIdleMs: 30_000,
   readTotalMs: 300_000,
   closeMs: 30_000,
