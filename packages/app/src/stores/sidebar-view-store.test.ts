@@ -2,6 +2,7 @@ import { useSidebarQuickFilterStore } from "./sidebar-quick-filter-store";
 import {
   defaultSidebarModeProfiles,
   defaultSidebarLocalModeFilters,
+  SidebarModePreferencesSchema,
 } from "./sidebar-mode-preferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
 import { registerSettingsEditingBlocker } from "@/hooks/use-settings/editing-blocker";
@@ -634,6 +635,27 @@ describe("separate sidebar modes", () => {
     expect(saved.localModeFilters.status.hostFilters).toEqual(["host"]);
     expect(saved.localModeFilters.project.hostFilters).toEqual([]);
   });
+});
+
+it("seeds a legacy view into its mode profile without the upstream workspace sort leaf", () => {
+  const legacy = {
+    groupMode: "status",
+    sortMode: "project",
+    workspaceSortMode: "name",
+    workspaceSort: "created",
+    hostFilters: ["host-a"],
+    projectFilters: ["project-a"],
+  };
+  const normalized = normalizeSidebarModeState(legacy);
+  expect(normalized.workspaceSort).toBe("created");
+  expect(normalized.modeProfiles.status).toEqual(
+    SidebarModePreferencesSchema.parse({
+      ...defaultSidebarModeProfiles().status,
+      sortMode: "project",
+      workspaceSortMode: "name",
+    }),
+  );
+  expect(normalized.modeProfiles.status).not.toHaveProperty("workspaceSort");
 });
 
 it("hydrates a real version-11 envelope once and preserves the intermediate restart before app settings arrive", async () => {
