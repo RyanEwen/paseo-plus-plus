@@ -28,6 +28,29 @@ function createTestProbe(options: { failure?: unknown } = {}) {
   return { inputs, probeHost };
 }
 
+/** A probe that succeeds only when the test calls `finish`, then runs `beforeSave`. */
+function createHeldProbe() {
+  let finishProbe: (() => void) | null = null;
+
+  function waitForFinish() {
+    return new Promise<void>((resolve) => {
+      finishProbe = resolve;
+    });
+  }
+
+  async function probeHost(input: ProbeInput): Promise<SavedSshHost> {
+    await waitForFinish();
+    await input.beforeSave?.();
+    return SAVED_HOST;
+  }
+
+  return {
+    probeHost,
+    isWaiting: () => finishProbe !== null,
+    finish: () => finishProbe?.(),
+  };
+}
+
 /** Open an Android form (with key import) whose probe succeeds unless told otherwise. */
 function openAndroidForm(options: { failure?: unknown } = {}) {
   const keyImport = createTestSshKeyImport();
@@ -222,23 +245,14 @@ describe("openRemoteSshForm", () => {
 
     it("cancels a probe that succeeds after the form closes, before committing", async () => {
       const keyImport: TestSshKeyImport = createTestSshKeyImport();
-      const pendingProbe: { finish: (() => void) | null } = { finish: null };
-      const model = openRemoteSshForm({
-        keyImport,
-        probeHost: async (input) => {
-          await new Promise<void>((resolve) => {
-            pendingProbe.finish = resolve;
-          });
-          await input.beforeSave?.();
-          return SAVED_HOST;
-        },
-      });
+      const probe = createHeldProbe();
+      const model = openRemoteSshForm({ keyImport, probeHost: probe.probeHost });
       await inspectExampleHost(model);
       const submitted = model.submit();
-      await waitFor(() => pendingProbe.finish !== null);
+      await waitFor(probe.isWaiting);
 
       model.close();
-      pendingProbe.finish?.();
+      probe.finish();
 
       await expect(submitted).resolves.toBeNull();
       expect(keyImport.calls.commit).toHaveLength(0);

@@ -12,9 +12,11 @@ function expoRejection(functionName: string, code: string, cause: string): Error
   return Object.assign(error, { code });
 }
 
-/** A native module whose every call rejects with `error`. */
-function rejectingNative(error: Error): SshNativeModule {
-  const reject = () => Promise.reject(error);
+/** A native module whose every call rejects with `failure`. */
+function rejectingNative(failure: Error): SshNativeModule {
+  async function reject(): Promise<never> {
+    throw failure;
+  }
   return {
     inspect: reject,
     stage: reject,
