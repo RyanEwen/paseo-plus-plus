@@ -566,8 +566,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       historyStartPaginationStateRef.current = rearmed;
       setHistoryStartPaginationState(rearmed);
     }
-    historyStartPaginationStateRef.current = rearmed;
-    setHistoryStartPaginationState(rearmed);
     evaluateHistoryStart();
   });
   const scheduleHistoryStartPrependSettle = useStableEvent(() => {
