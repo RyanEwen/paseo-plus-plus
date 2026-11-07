@@ -55,7 +55,7 @@ describe("validateContextRange", () => {
 describe("fetchReadingPromptContext", () => {
   it("fails a source without a canonical position before reading", async () => {
     const reader: ContextPageReader = vi.fn();
-    const { timelineCursor: _cursor, ...unpositioned } = SOURCE;
+    const unpositioned: StreamItem = { ...SOURCE, timelineCursor: undefined };
 
     await expect(
       fetchReadingPromptContext(reader, unpositioned, new AbortController().signal),
