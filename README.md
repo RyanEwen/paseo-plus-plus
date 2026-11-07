@@ -13,7 +13,7 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 - [Keep user prompts in view](docs/fork-features/keep-user-prompts-in-view.md) — full messages and sticky prompts when enabled; standard collapsed previews when off.
 - [Readable tool activity](docs/fork-features/readable-tool-activity.md)
 
-- [Previous agents](docs/fork-features/previous-agents.md)
+- [Reopen closed agent](docs/fork-features/previous-agents.md)
 
 - [Project activity chips](docs/fork-features/project-activity-chips.md)
 - [Bold project names](docs/fork-features/bold-project-names.md)
