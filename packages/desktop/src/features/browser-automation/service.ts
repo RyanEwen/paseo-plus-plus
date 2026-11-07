@@ -1844,6 +1844,15 @@ async function withTrustedInput({
     }
     if (!(error instanceof BrowserInputTimeoutError)) throw error;
     // The broker must not treat an uncertain delivered action as safe to replay.
+    // A command that timed out before sending any input delivered nothing.
+    if (!lifetime.dispatched) {
+      return fail(
+        requestId,
+        "browser_timeout",
+        "Browser input timed out before it was sent. Retry the command.",
+        true,
+      );
+    }
     return fail(requestId, "browser_timeout", error.message);
   } finally {
     lifetime.dispose();

@@ -18,6 +18,10 @@ export class BrowserInputTimeoutError extends Error {
 interface InputLifetime {
   page: TrustedInputPage;
   signal: AbortSignal;
+  /** True once the command sent text, a key or a CDP Input event to the guest.
+   * Before that point a timeout delivered nothing, so the command is safe to retry.
+   */
+  readonly dispatched: boolean;
   assertActive(): void;
   wait<T>(task: () => Promise<T>): Promise<T>;
   dispose(): void;
@@ -37,6 +41,7 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
     () => controller.abort(new BrowserInputTimeoutError()),
     INPUT_TIMEOUT_MS,
   );
+  let dispatched = false;
 
   function assertActive(): void {
     // Queue continuations can run between expired timers. Check the clock too,
@@ -58,9 +63,14 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
   const page: TrustedInputPage = {
     getURL: () => contents.getURL(),
     executeJavaScript: (code) => wait(() => contents.executeJavaScript(code)),
-    insertText: (text) => wait(() => contents.insertText(text)),
+    insertText: (text) =>
+      wait(() => {
+        dispatched = true;
+        return contents.insertText(text);
+      }),
     sendInputEvent: (event) => {
       assertActive();
+      dispatched = true;
       contents.sendInputEvent(event);
     },
   };
@@ -73,7 +83,12 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
       if (signal.aborted && releasesPointer) {
         return sendDebugCommand.call(contents, command, params, signal);
       }
-      return wait(() => sendDebugCommand.call(contents, command, params, signal));
+      return wait(() => {
+        // Count input as sent when it is handed to the transport. It may still
+        // wait in the guest queue, so this errs toward "possibly delivered".
+        if (command.startsWith("Input.")) dispatched = true;
+        return sendDebugCommand.call(contents, command, params, signal);
+      });
     };
   }
 
@@ -82,6 +97,9 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
     assertActive,
     page,
     wait,
+    get dispatched() {
+      return dispatched;
+    },
     dispose() {
       clearTimeout(timeout);
       // Fence unfinished continuations even when a shorter actionability/paint

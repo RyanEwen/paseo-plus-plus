@@ -2648,12 +2648,20 @@ describe("bounded trusted input lifetime", () => {
         args: { browserId: BROWSER_A, ref: "@e2" },
       });
       await vi.advanceTimersByTimeAsync(15000);
-      for (const response of await Promise.all([first, second])) {
-        expect(response).toMatchObject({
-          ok: false,
-          error: { code: "browser_timeout", retryable: false },
-        });
-      }
+      // The first click sent its pointer move, so its outcome is unknown. The
+      // waiter never sent input and is safe to retry.
+      await expect(first).resolves.toMatchObject({
+        ok: false,
+        error: { code: "browser_timeout", retryable: false },
+      });
+      await expect(second).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Browser input timed out before it was sent. Retry the command.",
+          retryable: true,
+        },
+      });
       expect(browser.tab.frameProductionScopes).toBe(0);
       finishMove({});
       await vi.advanceTimersByTimeAsync(15000);
