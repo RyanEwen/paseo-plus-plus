@@ -10,7 +10,7 @@ import { test } from "../support/fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "@/utils/host-routes";
 import {
   archiveAgentFromDaemon,
   archiveAgentFromSessions,
@@ -171,6 +171,21 @@ test.describe("Archive tab reconciliation", () => {
       );
     });
   }
+
+  test("Reopen closed agent leaves the + menu while its setting is off", async ({ page }) => {
+    // resetSeededPageState clears device settings, so the next test starts with the default (on).
+    await resetSeededPageState(page);
+    await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+    const toggle = page.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch");
+    await expect(toggle).toBeChecked();
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+
+    await page.goto(buildHostWorkspaceRoute(getServerId(), workspaceId));
+    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first().click();
+    await expect(page.getByTestId("workspace-new-tab-menu").filter({ visible: true })).toBeVisible();
+    await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);
+  });
 
   test("Reopen closed agent from an empty pane replaces the launcher tab with the agent", async ({
     page,
