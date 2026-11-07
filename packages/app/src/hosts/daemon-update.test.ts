@@ -37,7 +37,8 @@ function createFakeDaemon(install?: (requestId: string) => InstallResult): FakeD
         listener({ requestId, phase: "installing" });
       }
       if (install) return install(requestId);
-      pid = 2;
+      // Every install starts a new worker, so repeated attempts each observe a replacement.
+      pid += 1;
       version = "0.11.1-preview.13";
       return { success: true, error: null, newVersion: version };
     },
