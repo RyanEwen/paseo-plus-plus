@@ -1376,6 +1376,8 @@ export class VoiceAssistantWebSocketServer {
     if (!this.sessions.get(ws)?.session.delivery.permitsBinary(ws, frame)) {
       this.incrementRuntimeCounter("applicationBinaryRejected");
       this.logger.warn({ bytes: frame.byteLength }, "ws_application_binary_delivery_denied");
+      // Awaiting senders must observe refusal: an original read releases its slot instead of
+      // treating the frame as delivered, and a file explorer read replies with this error.
       throw new Error("Binary transfer delivery is unauthorized");
     }
     try {
