@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
@@ -67,22 +67,30 @@ test("host page shows the restarted daemon's version without reloading", async (
   });
 });
 
-async function readHelpHostVersion(page: Page, serverId: string): Promise<string> {
+/** Opens the help menu, reads one host's version row, then closes the menu. */
+async function withHelpHostVersionRow<T>(
+  page: Page,
+  serverId: string,
+  read: (row: Locator) => Promise<T>,
+): Promise<T> {
   await page.getByTestId("sidebar-help").click();
-  const row = page.getByTestId(`sidebar-help-host-version-${serverId}`);
-  await expect(row).toBeVisible();
-  await expect(row).toContainText(/v\d+\.\d+\.\d+/);
-  const text = await row.innerText();
+  const result = await read(page.getByTestId(`sidebar-help-host-version-${serverId}`));
   await page.keyboard.press("Escape");
-  return text;
+  return result;
+}
+
+async function readHelpHostVersion(page: Page, serverId: string): Promise<string> {
+  return withHelpHostVersionRow(page, serverId, async (row) => {
+    // The row appears before its version text populates.
+    await expect(row).toContainText(/v\d+\.\d+\.\d+/);
+    return row.innerText();
+  });
 }
 
 async function expectHelpHostVersion(page: Page, serverId: string, version: string): Promise<void> {
-  await page.getByTestId("sidebar-help").click();
-  await expect(page.getByTestId(`sidebar-help-host-version-${serverId}`)).toContainText(
-    `v${version}`,
-  );
-  await page.keyboard.press("Escape");
+  await withHelpHostVersionRow(page, serverId, async (row) => {
+    await expect(row).toContainText(`v${version}`);
+  });
 }
 
 async function openHostPage(page: Page, host: RestartableHostDaemon): Promise<void> {
