@@ -93,6 +93,43 @@ describe("durable owned screenshot originals", () => {
     } while (after);
     expect(paged).toEqual(saved);
   });
+  test("quota accounting after each commit counts shared blobs, deduplication and metadata exactly", async () => {
+    const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const second = Buffer.concat([signature, Buffer.from([1, 2, 3])]);
+    const firstBytes = Buffer.from(PNG, "base64").length;
+    const entry = ATTACHMENT_LIMITS.entryCharge;
+    const reservation = PROVIDER_IMAGE_MAX_BYTES + 2 * entry;
+    // Writer entry, one blob with its entry charge, and two reference entries.
+    const chargedAfterShared = entry + (firstBytes + entry) + 2 * entry;
+    const fixture = await durableFixture({
+      globalReferences: 3,
+      blobFiles: 3,
+      globalBytes: reservation + chargedAfterShared,
+    });
+    await saveOriginal(fixture.store, "agent-a");
+    await saveOriginal(fixture.store, "agent-a");
+    await saveOriginal(fixture.store, "agent-b");
+    const writer = await fixture.store.reserve({ agentId: "agent-b" });
+    await writer.commit({ data: second.toString("base64"), mimeType: "image/png" });
+    await writer.release();
+    await expect(fixture.store.reserve({ agentId: "agent-c" })).rejects.toThrow("quota");
+    await fixture.store.close();
+    const reopened = await fixture.reopen();
+    await expect(reopened.reserve({ agentId: "agent-c" })).rejects.toThrow("quota");
+  });
+  test("byte accounting admits exactly up to the global limit after a commit", async () => {
+    const firstBytes = Buffer.from(PNG, "base64").length;
+    const entry = ATTACHMENT_LIMITS.entryCharge;
+    const reservation = PROVIDER_IMAGE_MAX_BYTES + 2 * entry;
+    const charged = entry + (firstBytes + entry) + entry;
+    const exact = await durableFixture({ globalBytes: reservation + charged });
+    await saveOriginal(exact.store, "agent-a");
+    const writer = await exact.store.reserve({ agentId: "agent-a" });
+    await writer.release();
+    const tight = await durableFixture({ globalBytes: reservation + charged - 1 });
+    await saveOriginal(tight.store, "agent-a");
+    await expect(tight.store.reserve({ agentId: "agent-a" })).rejects.toThrow("quota");
+  });
   test("busy and conservative byte/count reservations reject before obtaining new image data", async () => {
     const fixture = await durableFixture({ ownerReferences: 1 });
     const writer = await fixture.store.reserve({ agentId: "agent-a" });
