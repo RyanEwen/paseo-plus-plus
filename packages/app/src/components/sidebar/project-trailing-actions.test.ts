@@ -22,7 +22,11 @@ describe("projectTrailingActionsWidth", () => {
 
   it("reserves nothing for a row without actions", () => {
     expect(
-      projectTrailingActionsWidth({ hasNewWorkspaceAction: false, hasKebab: false, compact: false }),
+      projectTrailingActionsWidth({
+        hasNewWorkspaceAction: false,
+        hasKebab: false,
+        compact: false,
+      }),
     ).toBe(0);
   });
 });

@@ -12,7 +12,8 @@ export const PROJECT_ACTION_OPTICAL_OFFSET = 6;
  * dots stay on the desktop rail and the row keeps its height; only its left edge takes extra width.
  */
 export const PROJECT_KEBAB_COMPACT_SIZE = 32;
-export const PROJECT_KEBAB_COMPACT_OVERHANG = (PROJECT_KEBAB_COMPACT_SIZE - PROJECT_ACTION_SIZE) / 2;
+export const PROJECT_KEBAB_COMPACT_OVERHANG =
+  (PROJECT_KEBAB_COMPACT_SIZE - PROJECT_ACTION_SIZE) / 2;
 
 /**
  * The width the hover reveal reserves for a project row's actions, in pixels.

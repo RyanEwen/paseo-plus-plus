@@ -106,8 +106,8 @@ describe("summarizeSidebarProjectActivity", () => {
       bucket: null,
       workingCount: 0,
     });
-    expect(summarizeSidebarProjectActivity([empty], entriesOf(worker), ONLINE).get("empty")).toEqual(
-      { bucket: null, workingCount: 0 },
-    );
+    expect(
+      summarizeSidebarProjectActivity([empty], entriesOf(worker), ONLINE).get("empty"),
+    ).toEqual({ bucket: null, workingCount: 0 });
   });
 });

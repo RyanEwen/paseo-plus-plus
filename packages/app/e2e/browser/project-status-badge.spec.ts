@@ -62,7 +62,9 @@ test("a project activity chip announces the most urgent workspace status once", 
 
     // Unlike the collapsed-only glyph, the chip stays when the project expands.
     await expandStatusProject(page, project);
-    await expect(projectRow.getByRole("status", { name: "Needs input", exact: true })).toBeVisible();
+    await expect(
+      projectRow.getByRole("status", { name: "Needs input", exact: true }),
+    ).toBeVisible();
     await expect(aggregateStatus).toHaveCount(1);
     await expect(projectRow.getByRole("status", { name: "Working", exact: true })).toHaveCount(0);
     await expectWorkspaceStatus(page, "Working workspace", "running");

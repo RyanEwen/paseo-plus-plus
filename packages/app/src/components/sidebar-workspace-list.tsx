@@ -475,11 +475,7 @@ function ProjectRowTrailingActions({
     compact: isMobileBreakpoint,
   });
   return (
-    <HoverRevealActions
-      visible={actionsVisible}
-      width={actionsWidth}
-      height={PROJECT_ACTION_SIZE}
-    >
+    <HoverRevealActions visible={actionsVisible} width={actionsWidth} height={PROJECT_ACTION_SIZE}>
       <View style={styles.projectTrailingActions}>
         {worktreeTarget ? (
           <NewWorktreeButton
