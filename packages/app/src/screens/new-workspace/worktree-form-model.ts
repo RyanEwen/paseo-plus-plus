@@ -8,6 +8,32 @@ export interface ExistingWorktree {
   head?: string | null;
 }
 
+const EXISTING_WORKTREE_OPTION_PREFIX = "existing:";
+
+/** Isolation picker option id for adopting an existing checkout. */
+export function existingWorktreeOptionId(worktreePath: string): string {
+  return `${EXISTING_WORKTREE_OPTION_PREFIX}${worktreePath}`;
+}
+
+/** The existing checkout an isolation option id refers to, or null for Local and New worktree. */
+export function findExistingWorktreeByOptionId(
+  entries: readonly ExistingWorktree[] | undefined,
+  optionId: string,
+): ExistingWorktree | null {
+  return entries?.find((entry) => existingWorktreeOptionId(entry.worktreePath) === optionId) ?? null;
+}
+
+/** Branch and absolute path distinguish checkout rows, including detached worktrees. */
+export function existingWorktreeLabel(entry: ExistingWorktree): string {
+  const branch = entry.branchName ?? `Detached ${entry.head?.slice(0, 8) ?? "HEAD"}`;
+  return `${branch} · ${entry.worktreePath}`;
+}
+
+/** Local branch name for a local or remote-tracking ref. */
+export function branchNameFromRef(refName: string): string {
+  return refName.replace(/^refs\/heads\//, "").replace(/^refs\/remotes\/[^/]+\//, "");
+}
+
 /** Owns explicit branch intent and editable names independently of async picker data. */
 export function openWorktreeForm(initialBranch: string) {
   const listeners = new Set<() => void>();
@@ -55,9 +81,7 @@ export function openWorktreeForm(initialBranch: string) {
     },
     applyRef(item: PickerItem | null) {
       const checkoutBranch =
-        item?.kind === "branch"
-          ? item.refName.replace(/^refs\/heads\//, "").replace(/^refs\/remotes\/[^/]+\//, "")
-          : (item?.item.headRefName ?? "");
+        item?.kind === "branch" ? branchNameFromRef(item.refName) : (item?.item.headRefName ?? "");
       if (checkoutBranch !== state.checkoutBranch) publish({ checkoutBranch });
     },
     setMode: (mode: typeof state.mode) => publish({ mode }),

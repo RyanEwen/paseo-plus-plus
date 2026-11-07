@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { openWorktreeForm, worktreeFormError, worktreeFormSource } from "./worktree-form-model";
+import {
+  branchNameFromRef,
+  existingWorktreeLabel,
+  existingWorktreeOptionId,
+  findExistingWorktreeByOptionId,
+  openWorktreeForm,
+  worktreeFormError,
+  worktreeFormSource,
+} from "./worktree-form-model";
 const branch = (refName: string) => ({
   kind: "branch" as const,
   name: refName,
@@ -135,5 +143,33 @@ describe("worktree form", () => {
       worktreeFormError(form.getState(), [{ worktreePath: "/repo", branchName: "main" }]),
     ).toContain("Select its existing worktree");
     expect(worktreeFormError(form.getState(), [])).toBeNull();
+  });
+});
+
+describe("existing worktree options", () => {
+  const entries = [
+    { worktreePath: "/worktrees/feature", branchName: "feature/a" },
+    { worktreePath: "/worktrees/detached", branchName: null, head: "0123456789abcdef" },
+  ];
+
+  it("finds the checkout an option id refers to, and nothing for Local or New worktree", () => {
+    expect(
+      findExistingWorktreeByOptionId(entries, existingWorktreeOptionId("/worktrees/feature")),
+    ).toBe(entries[0]);
+    expect(findExistingWorktreeByOptionId(entries, "local")).toBeNull();
+    expect(findExistingWorktreeByOptionId(entries, "worktree")).toBeNull();
+  });
+
+  it("labels a checkout by branch and path, and a detached one by its short head", () => {
+    expect(existingWorktreeLabel(entries[0]!)).toBe("feature/a · /worktrees/feature");
+    expect(existingWorktreeLabel(entries[1]!)).toBe("Detached 01234567 · /worktrees/detached");
+  });
+
+  it.each([
+    ["refs/heads/feature/a", "feature/a"],
+    ["refs/remotes/origin/feature/a", "feature/a"],
+    ["feature/a", "feature/a"],
+  ])("reads the branch name of %s", (refName, branchName) => {
+    expect(branchNameFromRef(refName)).toBe(branchName);
   });
 });

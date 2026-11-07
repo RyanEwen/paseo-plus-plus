@@ -12,6 +12,10 @@ import { WorktreeFields } from "./worktree-fields";
 import type { WorktreeBranchChoice } from "./form/branch-field";
 import type { PickerControl } from "./form";
 import {
+  branchNameFromRef,
+  existingWorktreeLabel,
+  existingWorktreeOptionId,
+  findExistingWorktreeByOptionId,
   openWorktreeForm,
   worktreeFormError,
   worktreeFormSource,
@@ -38,6 +42,8 @@ export function useWorktreeOptions(input: {
   withClient: () => DaemonClient;
   item: PickerItem | null;
   isolation: "local" | "worktree";
+  /** The screen's remembered isolation; an adopted checkout records Local. */
+  onIsolationChange: (isolation: "local" | "worktree") => void;
   compact: boolean;
   pending: boolean;
 }) {
@@ -76,13 +82,18 @@ export function useWorktreeOptions(input: {
   const retry = useCallback(() => {
     void refetch();
   }, [refetch]);
-  const select = useCallback(
+  const { onIsolationChange } = input;
+  /**
+   * One owner for an isolation pick. The screen remembers Local or New worktree as a form
+   * preference; adopting a checkout creates a directory workspace, so it records Local while
+   * the model holds the chosen checkout.
+   */
+  const selectIsolation = useCallback(
     (id: string) => {
-      model.selectExisting(
-        query.data?.find((entry) => `existing:${entry.worktreePath}` === id) ?? null,
-      );
+      model.selectExisting(findExistingWorktreeByOptionId(query.data, id));
+      onIsolationChange(id === "worktree" ? "worktree" : "local");
     },
-    [model, query.data],
+    [model, query.data, onIsolationChange],
   );
   // Re-read occupancy on submit; cached rows cannot authorize creating or adopting a checkout.
   const prepareSource = useCallback(
@@ -128,17 +139,15 @@ export function useWorktreeOptions(input: {
   return {
     baseItem,
     existing,
-    select,
+    selectIsolation,
     prepareSource,
     checkoutMode: input.supported && state.mode === "checkout",
     ...worktreePickerPresentation(state.mode, showFields, model.setMode),
     showRefPicker:
       input.showRefPicker && !existing && !(input.supported && state.mode === "checkout"),
     isolationProps: {
-      selectedId: existing ? `existing:${existing.worktreePath}` : input.isolation,
-      selectedLabel: existing
-        ? `${existing.branchName ?? "Detached HEAD"} · ${existing.worktreePath}`
-        : input.isolationLabel,
+      selectedId: existing ? existingWorktreeOptionId(existing.worktreePath) : input.isolation,
+      selectedLabel: existing ? existingWorktreeLabel(existing) : input.isolationLabel,
       emptyText: query.isFetching ? "Loading worktrees…" : undefined,
       footer: (
         <WorktreeListStatus
@@ -199,7 +208,7 @@ function worktreePickerPresentation(
 /** Checkout chooses a named branch; base-ref provenance only applies to branch-off. */
 function normalizeCheckoutItem(item: PickerItem | null, checkout: boolean): PickerItem | null {
   if (!checkout || item?.kind !== "branch") return item;
-  const name = item.refName.replace(/^refs\/heads\//, "").replace(/^refs\/remotes\/[^/]+\//, "");
+  const name = branchNameFromRef(item.refName);
   return { ...item, name, refName: `refs/heads/${name}`, accessibilityLabel: `${name}, branch` };
 }
 
@@ -287,11 +296,10 @@ export function useWorktreeBranchChoice(input: {
   };
 }
 
-/** Branch and absolute path distinguish checkout rows, including detached worktrees. */
 function existingWorktreeOptions(entries: readonly ExistingWorktree[] = []) {
   return entries.map((entry) => ({
-    id: `existing:${entry.worktreePath}`,
-    label: `${entry.branchName ?? `Detached ${entry.head?.slice(0, 8) ?? "HEAD"}`} · ${entry.worktreePath}`,
+    id: existingWorktreeOptionId(entry.worktreePath),
+    label: existingWorktreeLabel(entry),
   }));
 }
 

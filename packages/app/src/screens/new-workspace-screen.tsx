@@ -1158,13 +1158,14 @@ export function NewWorkspaceScreen({
     withClient: withConnectedClient,
     item: rawBaseItem,
     isolation: effectiveIsolation,
+    onIsolationChange: setIsolation,
     compact: isCompact,
     pending: isPending,
   });
   const {
     baseItem,
     existing: existingWorktree,
-    select: selectWorktreeOption,
+    selectIsolation,
     prepareSource,
   } = worktreeOptions;
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
@@ -1606,10 +1607,7 @@ export function NewWorkspaceScreen({
       onOpenChange: handleIsolationPickerOpenChange,
       effectiveIsolation,
       canCreateWorktree,
-      onSelect: (id) => {
-        selectWorktreeOption(id);
-        setIsolation(id === "worktree" ? "worktree" : "local");
-      },
+      onSelect: selectIsolation,
     },
     base: {
       anchorRef: pickerAnchorRef,
