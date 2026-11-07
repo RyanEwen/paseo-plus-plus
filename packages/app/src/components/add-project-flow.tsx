@@ -88,9 +88,7 @@ import {
 } from "@/runtime/host-runtime";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
-import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
-import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { includeCreatedProjectFilter } from "@/components/sidebar/sidebar-project-filter";
+import { revealCreatedProjectInSidebar } from "@/components/sidebar/project-selection";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
@@ -471,22 +469,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const openNewWorkspaceForProject = useCallback(
     (serverId: string, project: WorkspaceProjectDescriptorPayload) => {
-      const sidebar = useSidebarViewStore.getState();
-      const allHostIds = getHostRuntimeStore()
-        .getHosts()
-        .map((candidate) => candidate.serverId);
-      const selectedHostIds = allHostIds.filter((id) => sidebar.hostFilters.includes(id));
-      const visibleHostIds = selectedHostIds.length > 0 ? selectedHostIds : allHostIds;
-      const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), visibleHostIds);
-      sidebar.updateLocalFilters((current) => ({
-        ...current,
-        projectFilters: includeCreatedProjectFilter({
-          projectFilters: current.projectFilters,
-          projects,
-          serverId,
-          projectId: project.projectId,
-        }),
-      }));
+      revealCreatedProjectInSidebar({ serverId, projectId: project.projectId });
       onClose();
       usePanelStore.getState().showMobileAgent();
       router.push(

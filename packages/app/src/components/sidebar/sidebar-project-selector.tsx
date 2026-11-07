@@ -12,8 +12,6 @@ import { useSessionStore } from "@/stores/session-store";
 import { createWorkspaceStructureProjectsSelector } from "@/stores/session-store-hooks/selectors";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useProjectIcons } from "@/projects/icons";
-import { resolveSidebarProjectIconTargets } from "@/utils/sidebar-project-row-model";
-import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { Theme } from "@/styles/theme";
 import {
   MenuRoot,
@@ -29,7 +27,8 @@ import { useSidebarProjectActivity } from "./use-sidebar-project-activity";
 import { HostFilterPage } from "./sidebar-host-filter";
 import { useSidebarModel } from "./sidebar-model";
 import { SidebarProjectMenuItem } from "./sidebar-project-menu-item";
-import { resolveSidebarProjectLabels } from "./sidebar-project-filter";
+import { resolveSidebarProjectLabels } from "./project-labels";
+import { resolveProjectIconTargets } from "./project-selector-model";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 // Touch layouts keep the full 44 px target the release uses for compact controls.
@@ -47,12 +46,8 @@ export function SidebarProjectSelector(): ReactElement {
     () => createWorkspaceStructureProjectsSelector(serverIds),
     [serverIds],
   );
-  const catalog = useSessionStore(selectCatalog);
-  // This is cached registry metadata, independent of either local allowlist. No directory demand here.
-  const projects = useMemo<SidebarProjectEntry[]>(
-    () => catalog.map((project) => ({ ...project, workspaces: [] })),
-    [catalog],
-  );
+  // Cached registry metadata, independent of either local allowlist. No directory demand here.
+  const projects = useSessionStore(selectCatalog);
   const { resolvedProjectFilters, allProjects, allWorkspaceEntriesByKey } = useSidebarModel();
   const activity = useSidebarProjectActivity(allProjects, allWorkspaceEntriesByKey);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
@@ -90,7 +85,7 @@ export function SidebarProjectSelector(): ReactElement {
   const labels = useMemo(() => resolveSidebarProjectLabels(projects, hosts), [projects, hosts]);
   const [open, setOpen] = useState(false);
   const iconTargets = useMemo(
-    () => (open ? resolveSidebarProjectIconTargets(projects) : []),
+    () => (open ? resolveProjectIconTargets(projects) : []),
     [open, projects],
   );
   const icons = useProjectIcons({ projects: iconTargets });
