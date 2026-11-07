@@ -121,8 +121,14 @@ function writeResults(outputPath, results) {
 /**
  * Runs every probe in order against targets that stay alive throughout. Stdout is retained in
  * memory only to compare, and only timings, shapes, booleans and counts are ever written.
+ * `runProbe` and `now` (a millisecond clock) are injectable so tests can drive the budget.
  */
-async function measure({ coldFirst, outputPath }) {
+export async function measure({
+  coldFirst,
+  outputPath,
+  runProbe: runOneProbe = runProbe,
+  now = () => performance.now(),
+}) {
   const scriptDirectory = mkdtempSync(join(tmpdir(), "paseo-identity-probe-"));
   const scriptPath = join(scriptDirectory, "wmi-identity.js");
   writeFileSync(scriptPath, JSCRIPT_WMI_SOURCE);
@@ -150,17 +156,17 @@ async function measure({ coldFirst, outputPath }) {
     comparison: null,
   };
   const outputs = new Map();
-  const startedAt = performance.now();
+  const startedAt = now();
   try {
     for (const entry of buildProbePlan({ coldFirst, targets })) {
-      if (performance.now() - startedAt > TOTAL_PROBE_BUDGET_MS) {
+      if (now() - startedAt > TOTAL_PROBE_BUDGET_MS) {
         results.probes.push({ name: entry.name, shell: entry.shell, skippedForBudget: true });
         writeResults(outputPath, results);
         continue;
       }
       const chunks = [];
       let retainedBytes = 0;
-      const outcome = await runProbe({
+      const outcome = await runOneProbe({
         ...invocationFor(entry, scriptPath),
         stdin: entry.stdin,
         ...(entry.targetPid === undefined ? {} : { ownPid: entry.targetPid }),

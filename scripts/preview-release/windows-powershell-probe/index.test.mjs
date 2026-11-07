@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
   EXACT_PROCESS_LIST,
   exactSelfQuery,
   JSCRIPT_WMI_SOURCE,
+  measure,
   runProbe,
   sanitizeErrorLine,
   SENTINEL_ARGUMENTS,
@@ -531,12 +532,39 @@ test("the identity probe's worst case fits its job cap, leaving time to upload",
   assert.ok(worstCaseMinutes + 3 <= capMinutes, `${worstCaseMinutes} of ${capMinutes} minutes`);
   // Upload runs even after a failure or cancellation, so partial results survive.
   assert.match(probe, /upload-artifact@[^\n]*\n\s+if: always\(\)/);
-  const script = readFileSync(
-    new URL("scripts/preview-release/windows-powershell-probe/index.mjs", repoRoot),
-    "utf8",
-  );
-  assert.match(script, /skippedForBudget: true/);
-  assert.match(script, /renameSync\(`\$\{outputPath\}\.tmp`, outputPath\)/);
+});
+
+test("the identity probe leaves a readable results file after each probe and skips past its budget", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "powershell-probe-budget-"));
+  const outputPath = join(directory, "results.json");
+  try {
+    // The clock reads zero for the start and the first two budget checks, then is past the budget.
+    let clockReads = 0;
+    const now = () => (clockReads++ < 3 ? 0 : TOTAL_PROBE_BUDGET_MS + 1);
+    const seenBeforeEachProbe = [];
+    const results = await measure({
+      coldFirst: "query",
+      outputPath,
+      now,
+      runProbe: async () => {
+        seenBeforeEachProbe.push(
+          existsSync(outputPath) ? JSON.parse(readFileSync(outputPath, "utf8")).probes.length : 0,
+        );
+        return { exitCode: 1, exitMs: 1, timedOut: false, terminated: false };
+      },
+    });
+
+    // The second probe starts only after the first one's result is on disk.
+    assert.deepEqual(seenBeforeEachProbe, [0, 1]);
+    const written = JSON.parse(readFileSync(outputPath, "utf8"));
+    assert.deepEqual(written, JSON.parse(JSON.stringify(results)));
+    assert.equal(written.probes.length, results.probes.length);
+    assert.equal(written.probes.filter((probe) => !probe.skippedForBudget).length, 2);
+    assert.ok(written.probes.slice(2).every((probe) => probe.skippedForBudget === true));
+    assert.equal(existsSync(`${outputPath}.tmp`), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("the identity probe sentinels separate the ASCII marker from Unicode", () => {
