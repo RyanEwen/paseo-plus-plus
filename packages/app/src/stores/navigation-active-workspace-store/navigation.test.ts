@@ -72,6 +72,65 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it("reveals the workspace pane at once when a target's open is deferred", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const { deps, navigations, openedTabs, deferredTabs, revealed } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "notified-agent" },
+        pin: true,
+      },
+      deps,
+    );
+
+    // The destination reveals its own pane when it consumes the deferred open.
+    // Until then the chat must not stay behind the workspace list or explorer.
+    expect(revealed).toEqual([null]);
+    expect(deferredTabs).toHaveLength(1);
+    expect(openedTabs).toEqual([]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
+  });
+
+  it("leaves a hydrated target's reveal to its destination", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const { deps, openedTabs, revealed } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "notified-agent" },
+        pin: true,
+      },
+      deps,
+    );
+
+    // revealTab picks the explorer, agent pane or sheet for the opened tab;
+    // no later reveal may override that choice.
+    expect(revealed).toEqual(["notified-agent"]);
+    expect(openedTabs).toEqual([
+      {
+        workspaceKey: "server-1:workspace-a",
+        target: { kind: "agent", agentId: "notified-agent" },
+        pin: true,
+      },
+    ]);
+  });
+
   it("reveals even a current workspace without agents", () => {
     const { deps, revealed } = createFakeDeps();
     navigateToWorkspace({ serverId: "server", workspaceId: "workspace" }, deps);

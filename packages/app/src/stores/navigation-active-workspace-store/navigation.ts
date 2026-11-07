@@ -103,6 +103,10 @@ export function navigateToWorkspace(
   };
   if (input.target) {
     prepareWorkspaceTab({ ...input, target: input.target }, { openTab });
+    // A hydrated open reveals its own destination through revealTab. A deferred
+    // open reveals when the destination consumes it, so show the workspace pane
+    // now rather than leave the chat behind the workspace list or explorer.
+    if (shouldDeferOpen) deps.revealWorkspace();
   } else {
     const workspaceAgents = resolvedWorkspaceId
       ? Array.from(deps.getSessionAgents(input.serverId)).filter(

@@ -39,4 +39,14 @@ export async function getLastNotificationResponseAsync() {
   return null;
 }
 
+export async function getPresentedNotificationsAsync(): Promise<never[]> {
+  return [];
+}
+
+export async function dismissNotificationAsync(_identifier: string): Promise<void> {}
+
+export function addNotificationReceivedListener(_listener: (notification: never) => void) {
+  return { remove() {} };
+}
+
 export function clearLastNotificationResponse(): void {}

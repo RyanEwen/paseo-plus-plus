@@ -1,3 +1,8 @@
+import { seenAgentNotifications } from "@/notifications/seen-agent-client";
+import {
+  retainWebNotification,
+  type WebNotificationInstance,
+} from "@/notifications/web-notification-registry";
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
 import { parseNotificationOpenTarget, WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
@@ -11,10 +16,6 @@ interface OsNotificationPayload {
 
 export interface WebNotificationClickDetail {
   data?: Record<string, unknown>;
-}
-
-interface WebNotificationInstance {
-  addEventListener: (type: "click", listener: (event: Event) => void) => void;
 }
 
 let permissionRequest: Promise<boolean> | null = null;
@@ -156,11 +157,13 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
   if (NotificationConstructor) {
     const granted = await ensureNotificationPermission();
     if (granted) {
+      if (seenAgentNotifications.isViewed(payload.data)) return true;
       const notification = new NotificationConstructor(payload.title, {
         body: payload.body,
         data: payload.data,
         icon: getWebNotificationIconUrl(),
       }) as WebNotificationInstance;
+      retainWebNotification(payload.data, notification);
       if (hasNotificationClickTarget(payload.data)) {
         attachWebClickHandler(notification, payload.data);
       }

@@ -53,6 +53,16 @@ An arbitrary Activity launch with data extras does not exercise Expo's FCM path.
 Foreground pushes remain in Notification Center without a banner or sound.
 This preserves notifications sent with stale presence information.
 
+## Viewed chat
+
+A notification for the chat you are looking at is skipped, and delivered ones for it are dismissed. A chat counts as viewed only when its pane is focused, ready and in the foreground; on compact layouts the agent pane must also be settled at rest (`mobile-panels/rest.ts`). `notifications/seen-agent.ts` owns the app side; `packages/desktop/src/features/viewed-agent-notifications/` owns Electron.
+
+Both sides gate on visibility. The renderer knows which chat is painted; only the main process knows whether its window is visible and focused, and it receives notifications the renderer never created (Windows Notification Center history after a restart). The renderer reports its chat with a revision so a late report cannot replace a newer one.
+
+A pending native show cannot be cancelled by closing the JS `Notification`. A dismissal requested before `show` waits for the show callback.
+
+Windows exposes Notification Center history only through WinRT, which Electron does not wrap. `packages/desktop/src/features/windows-toast-history.ts` runs a PowerShell script that verifies the installer shortcut's app user model ID before reading or removing anything, and reads the current and the legacy (`electron.app.Paseo++`) namespaces. Only packaged Windows builds with an explicit app user model ID have history; other builds skip it.
+
 ## Startup and verification
 
 Wait for the root navigator, host registry, remembered selection, and startup
