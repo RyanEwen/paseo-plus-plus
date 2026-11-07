@@ -13,6 +13,7 @@ import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.j
 import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
+  createTimedOutNotificationRetention,
   createWindowsAgentNotificationOpener,
   shouldRetainWindowsNotification,
 } from "./windows-agent-notification.js";
@@ -27,12 +28,20 @@ interface NotificationClickPayload {
   data?: Record<string, unknown>;
 }
 
+interface NotificationIcon {
+  image: Electron.NativeImage;
+  /** File path, embedded in Windows toast XML. */
+  path: string;
+}
+
 const activeNotifications = new Set<Notification>();
 const agentNotifications = new Map<Notification, KnownAgentNotification>();
+const timedOutNotifications = createTimedOutNotificationRetention<Notification>();
 
 function releaseNotification(notification: Notification): void {
   activeNotifications.delete(notification);
   agentNotifications.delete(notification);
+  timedOutNotifications.release(notification);
 }
 
 function toTrimmedString(value: unknown): string | null {
@@ -49,7 +58,7 @@ function toRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function getNotificationIcon(): { image: Electron.NativeImage; path: string } | null {
+function getNotificationIcon(): NotificationIcon | null {
   const candidates = [
     path.resolve(__dirname, "../assets/icon.png"),
     path.resolve(__dirname, "../assets/64x64.png"),
@@ -174,17 +183,15 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     const settings = await getDesktopSettingsStore().get();
     if (target && viewed.isViewed(target)) return true;
     const silent = !settings.notifications.playSound;
-    const toastXml =
+    // A Windows chat notification carries its target in the toast, so activation survives
+    // the Notification object and app restarts.
+    const launch =
       process.platform === "win32"
-        ? buildWindowsAgentToast({
-            notificationId,
-            title,
-            body,
-            data,
-            iconPath: icon?.path ?? null,
-            silent,
-          })
+        ? buildWindowsAgentNotificationArguments({ notificationId, data })
         : null;
+    const toastXml = launch
+      ? buildWindowsAgentToast({ launch, title, body, iconPath: icon?.path ?? null, silent })
+      : null;
     const notification = new Notification({
       id: notificationId,
       title,
@@ -227,11 +234,8 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     notification.on("click", () => {
       // Electron 44 can report a foreground body tap only on the instance.
       // Route it through the same opener used by durable COM activations.
-      if (toastXml) {
-        const launch = buildWindowsAgentNotificationArguments({ notificationId, data });
-        if (launch) {
-          openWindowsNotification({ type: "click", arguments: launch });
-        }
+      if (launch) {
+        openWindowsNotification({ type: "click", arguments: launch });
         releaseNotification(notification);
         return;
       }
@@ -246,7 +250,11 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     notification.on("close", (closeEvent) => {
       if (process.platform === "win32" && shouldRetainWindowsNotification(closeEvent.reason)) {
         // getHistory() is macOS-only and returns an empty list on Windows.
-        // Keep this reference so foreground Center taps retain their listener.
+        // Keep this reference so foreground Center taps retain their listener, up to the
+        // number of toasts Notification Center can still show.
+        for (const evicted of timedOutNotifications.retain(notification)) {
+          releaseNotification(evicted);
+        }
         return;
       }
       releaseNotification(notification);

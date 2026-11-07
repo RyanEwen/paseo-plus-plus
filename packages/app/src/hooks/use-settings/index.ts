@@ -172,9 +172,7 @@ export function useAppSettings(): UseAppSettingsReturn {
 
   const resetSettings = useCallback(async () => {
     try {
-      const next = { ...DEFAULT_CLIENT_SETTINGS };
-      queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-      await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      await saveAppSettings({ queryClient, updates: DEFAULT_CLIENT_SETTINGS });
     } catch (err) {
       console.error("[AppSettings] Failed to reset settings:", err);
       throw err;
