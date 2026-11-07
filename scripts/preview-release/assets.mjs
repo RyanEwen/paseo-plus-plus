@@ -8,16 +8,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { dump, load } from "js-yaml";
 import { isMainModule } from "../is-main-module.mjs";
 
-// Resolve the packager's helpers through its declared workspace dependency, even when nested.
-const desktopRequire = createRequire(
-  new URL("../../packages/desktop/package.json", import.meta.url),
-);
-const require = createRequire(desktopRequire.resolve("electron-builder/package.json"));
-const { archFromString, getArtifactArchName } = require("builder-util");
+import { requireFromElectronBuilder } from "./packager.mjs";
+
+const { archFromString, getArtifactArchName } = requireFromElectronBuilder("builder-util");
 
 /** Match the packager's native architecture names, including amd64 and x86_64 Linux assets. */
 function assetSuffix(arch, extension) {

@@ -1,18 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { dump, load } from "js-yaml";
 import { isMainModule } from "../is-main-module.mjs";
 import { resolvePreviewRelease } from "./metadata.mjs";
 import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
 import { runNpm } from "./npm.mjs";
 
-const desktopRequire = createRequire(
-  new URL("../../packages/desktop/package.json", import.meta.url),
-);
-const require = createRequire(desktopRequire.resolve("electron-builder/package.json"));
-const { getConfig } = require("app-builder-lib/out/util/config/config.js");
+import { requireFromElectronBuilder } from "./packager.mjs";
+
+const { getConfig } = requireFromElectronBuilder("app-builder-lib/out/util/config/config.js");
 
 /** Prepare version and packaging inputs in a disposable checkout, leaving npm releases untouched. */
 export async function preparePreviewBuild({

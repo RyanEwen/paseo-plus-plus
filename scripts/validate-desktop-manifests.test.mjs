@@ -29,10 +29,14 @@ import {
 import { getAndroidCompilerBudget } from "./preview-release/android-compiler-budget.mjs";
 import { verifyAndroidApkSigner } from "./preview-release/android-signer.mjs";
 import { dump, load } from "js-yaml";
-import { createRequire } from "node:module";
+import { requireFromElectronBuilder } from "./preview-release/packager.mjs";
 
-const desktopRequire = createRequire(new URL("../packages/desktop/package.json", import.meta.url));
-const require = createRequire(desktopRequire.resolve("electron-builder/package.json"));
+const { getConfig, validateConfiguration } = requireFromElectronBuilder(
+  "app-builder-lib/out/util/config/config.js",
+);
+const { LinuxTargetHelper } = requireFromElectronBuilder(
+  "app-builder-lib/out/targets/LinuxTargetHelper.js",
+);
 
 test("daemon tracing and smoke load the native PTY addons used by each platform", () => {
   for (const [platform, expected] of [
@@ -85,8 +89,6 @@ test("native PTY tracing retains bundled ConPTY files and excludes compiler dire
     rmSync(root, { recursive: true, force: true });
   }
 });
-const { getConfig, validateConfiguration } = require("app-builder-lib/out/util/config/config.js");
-const { LinuxTargetHelper } = require("app-builder-lib/out/targets/LinuxTargetHelper.js");
 
 const releaseDate = "2026-09-04T00:00:00.000Z";
 const scriptPath = fileURLToPath(new URL("./validate-desktop-manifests.mjs", import.meta.url));
