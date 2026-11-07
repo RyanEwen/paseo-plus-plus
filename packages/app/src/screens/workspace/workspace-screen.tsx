@@ -32,7 +32,7 @@ import {
 } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "expo-router/react-navigation";
-import { BackHandler, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
@@ -67,6 +67,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useOpenOutsideWorkspaceFolder } from "@/workspace/open-in-file-manager/outside-folder";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
+import { useCompactPanelBack } from "@/mobile-panels/use-compact-panel-back";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   isExplorerSidebarOpen,
@@ -1246,8 +1247,6 @@ function WorkspaceScreenContent({
     workspace: workspaceDescriptor,
     checkoutState: workspaceHeaderCheckoutState,
   });
-  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
 
   const isExplorerSidebarShowing = useIsExplorerSidebarOpen({
     isCompact: isMobile,
@@ -1268,25 +1267,7 @@ function WorkspaceScreenContent({
     [isExplorerSidebarShowing],
   );
 
-  useEffect(() => {
-    // The compact project list and explorer share one overlay position. Back
-    // closes an open panel before opening the project list from the workspace.
-    if (!isRouteFocused || isWeb || !isMobile) {
-      return;
-    }
-
-    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
-      const panelTarget = usePanelStore.getState().mobilePanel.target;
-      if (panelTarget === "agent") {
-        showMobileAgentList();
-      } else {
-        showMobileAgent();
-      }
-      return true;
-    });
-
-    return () => handler.remove();
-  }, [isMobile, isRouteFocused, showMobileAgent, showMobileAgentList]);
+  useCompactPanelBack(isRouteFocused && isMobile);
 
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
