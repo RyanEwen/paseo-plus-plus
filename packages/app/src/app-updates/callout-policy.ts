@@ -11,7 +11,8 @@ export const AUTOMATIC_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 export function shouldRunAutomaticChecks(input: {
   available: boolean;
   settingsLoading: boolean;
-  settingsError: Error | null;
+  /** The settings load error, or null once settings loaded cleanly. */
+  settingsError: unknown;
   enabled: boolean;
 }): boolean {
   return input.available && !input.settingsLoading && input.settingsError === null && input.enabled;
