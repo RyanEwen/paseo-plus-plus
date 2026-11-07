@@ -70,3 +70,17 @@ export function useHostFeatureAvailabilityMap(
     [flags, serverIds],
   );
 }
+
+export type HostPermission = NonNullable<DaemonServerInfo["permissions"]>[number];
+
+/** Whether this client's authenticated session on the host holds `permission`; gates UI only. */
+export function useHostPermission(
+  serverId: string | null | undefined,
+  permission: HostPermission,
+): boolean {
+  const normalizedServerId = serverId?.trim() ?? "";
+  return useSessionStore(
+    (state) =>
+      state.sessions[normalizedServerId]?.serverInfo?.permissions?.includes(permission) === true,
+  );
+}
