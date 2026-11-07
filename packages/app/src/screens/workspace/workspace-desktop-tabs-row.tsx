@@ -47,14 +47,22 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabScroll } from "@/screens/workspace/use-workspace-tab-scroll";
 import {
   CompactTabMeasure,
-  CompactTabTrack,
-  usesCompactTabSlots,
+  COMPACT_TAB_CONTROL_HEIGHT,
+  TabStripContent,
+  compactTabChipPresentation,
+  compactTabStripContainerStyle,
+  compactTabStripLayout,
+  measuredTabTrackWidth,
+  selectedTabKey,
+  showsInlineCloseButton,
+  showsInlineNewTabButton,
+  tabStripScrolls,
 } from "@/screens/workspace/compact-tab-track";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import {
@@ -112,8 +120,6 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 
 const DROPDOWN_WIDTH = 220;
-/** Compact tab chips and the compact new-tab button keep the full touch-target height. */
-const COMPACT_TAB_CONTROL_HEIGHT = controlHeightForLayout("md", true);
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
 const PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING = 2;
 const PANE_SPLIT_ACTIONS_OUTER_MARGIN =
@@ -830,10 +836,12 @@ function TabChip({
       } as const)
     : undefined;
 
+  const compactChip = compactTabChipPresentation(isCompact);
+  const showInlineCloseButton = showsInlineCloseButton({ showCloseButton, compact: isCompact });
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
-      isCompact && styles.compactTab,
+      compactChip.tabStyle,
       !showLabel && iconOnlyTabStyles.tab,
       isFilled && styles.tabFill(chipBackdrop),
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
@@ -843,7 +851,7 @@ function TabChip({
         maxWidth: resolvedTabWidth,
       },
     ],
-    [chipBackdrop, isDragging, isFilled, isCompact, resolvedTabWidth, showLabel],
+    [chipBackdrop, compactChip, isDragging, isFilled, resolvedTabWidth, showLabel],
   );
 
   const handleTabPointerEnter = useCallback(() => {
@@ -890,7 +898,7 @@ function TabChip({
   return (
     <View
       ref={middleClickRef}
-      style={[styles.tabHoverFrame, isCompact && styles.compactTabFrame]}
+      style={[styles.tabHoverFrame, compactChip.frameStyle]}
       onPointerEnter={handleTabPointerEnter}
       onPointerLeave={handleTabPointerLeave}
     >
@@ -904,7 +912,7 @@ function TabChip({
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
               style={tabChipStyle}
               onPress={handleNavigateTab}
-              accessibilityRole={isCompact ? "tab" : "button"}
+              accessibilityRole={compactChip.accessibilityRole}
               accessibilityLabel={accessibilityLabel}
               accessibilityState={tabAccessibilityState}
               aria-selected={isActive}
@@ -939,7 +947,7 @@ function TabChip({
           </TooltipContent>
         </Tooltip>
 
-        {showCloseButton && !isCompact ? (
+        {showInlineCloseButton ? (
           <View
             pointerEvents={showCloseControl ? "box-none" : "none"}
             style={[
@@ -1098,8 +1106,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
-  const fillAvailableWidth = isCompact && host === "main";
-  const rendersCompactSlots = usesCompactTabSlots({ host, compact: isCompact });
+  const { fillAvailableWidth, rendersSlots } = compactTabStripLayout({ host, compact: isCompact });
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [tabsScrollWidth, setTabsScrollWidth] = useState(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
@@ -1107,7 +1114,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const iconOnly = explorerDisplay !== null && explorerDisplay.enabled;
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const tabScroll = useWorkspaceTabScroll({
-    activeTabKey: tabs.find((item) => item.isActive)?.tab.key,
+    activeTabKey: selectedTabKey(tabs),
     listKey: tabs.map((item) => item.tab.key).join("\n"),
     enabled: isCompact,
     offset: tabScrollBoundary.offset,
@@ -1285,7 +1292,11 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
-  const measuredTabsWidth = fillAvailableWidth ? tabsScrollWidth : tabsContainerWidth;
+  const measuredTabsWidth = measuredTabTrackWidth({
+    fillAvailableWidth,
+    scrollWidth: tabsScrollWidth,
+    containerWidth: tabsContainerWidth,
+  });
   const { layout } = useWorkspaceTabLayout({
     iconOnlyTabWidth: iconOnly ? iconOnlyTabWidth(isCompact) : null,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
@@ -1458,26 +1469,34 @@ function ResolvedWorkspaceDesktopTabsRow({
     },
     [boundaryOnContentSizeChange, selectedTabOnContentSizeChange],
   );
-  const scrolling = isCompact || layout.requiresHorizontalScrollFallback;
+  const { requiresHorizontalScrollFallback } = layout;
+  const scrolling = tabStripScrolls({ compact: isCompact, requiresHorizontalScrollFallback });
+  const showInlineNewTab = showsInlineNewTabButton({
+    compact: isCompact,
+    requiresHorizontalScrollFallback,
+  });
 
   // Compact chips are wrapped so the selected one can be revealed; wide strips render as upstream.
-  const renderCompactTab = useCallback(
-    (info: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => (
-      <CompactTabMeasure
-        key={tabKeyExtractor(info.item)}
-        selected={info.item.isActive}
-        activeTabRef={tabScroll.activeTabRef}
-        onActiveTabLayout={tabScroll.onActiveTabLayout}
-      >
-        {renderTab(info)}
-      </CompactTabMeasure>
-    ),
-    [renderTab, tabScroll.activeTabRef, tabScroll.onActiveTabLayout],
+  const renderStripTab = useCallback(
+    (info: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => {
+      if (!isCompact) return renderTab(info);
+      return (
+        <CompactTabMeasure
+          key={tabKeyExtractor(info.item)}
+          selected={info.item.isActive}
+          activeTabRef={tabScroll.activeTabRef}
+          onActiveTabLayout={tabScroll.onActiveTabLayout}
+        >
+          {renderTab(info)}
+        </CompactTabMeasure>
+      );
+    },
+    [isCompact, renderTab, tabScroll.activeTabRef, tabScroll.onActiveTabLayout],
   );
   const renderCompactSlot = useCallback(
     (item: ResolvedWorkspaceDesktopTabRowItem, index: number) =>
-      renderCompactTab({ item, index, isActive: false, drag: () => {} }),
-    [renderCompactTab],
+      renderStripTab({ item, index, isActive: false, drag: () => {} }),
+    [renderStripTab],
   );
   const tabList = (
     <SortableInlineList
@@ -1489,7 +1508,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       externalDndContext={externalDndContext}
       activeId={activeDragTabId}
       getItemData={getTabDragData}
-      renderItem={isCompact ? renderCompactTab : renderTab}
+      renderItem={renderStripTab}
     />
   );
 
@@ -1497,7 +1516,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     <View
       style={[
         styles.tabsContainer,
-        isCompact && styles.compactTabsContainer,
+        compactTabStripContainerStyle(isCompact),
         onSidebar && styles.tabsContainerSidebar,
       ]}
       testID="workspace-tabs-row"
@@ -1541,14 +1560,16 @@ function ResolvedWorkspaceDesktopTabsRow({
             onScroll={tabScrollBoundary.onScroll}
             scrollEventThrottle={16}
           >
-            {isCompact ? (
-              <CompactTabTrack trackRef={tabScroll.trackRef}>
-                {rendersCompactSlots ? displayedTabs.map(renderCompactSlot) : tabList}
-              </CompactTabTrack>
-            ) : (
-              tabList
-            )}
-            {!isCompact && !layout.requiresHorizontalScrollFallback ? (
+            <TabStripContent
+              compact={isCompact}
+              rendersSlots={rendersSlots}
+              trackRef={tabScroll.trackRef}
+              tabs={displayedTabs}
+              renderSlot={renderCompactSlot}
+            >
+              {tabList}
+            </TabStripContent>
+            {showInlineNewTab ? (
               <WorkspaceNewTabButton
                 panePanelKinds={panePanelKinds}
                 host={host}
@@ -1740,19 +1761,6 @@ function ResolvedDesktopTabChip({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  compactTabsContainer: {
-    height: COMPACT_TAB_CONTROL_HEIGHT + theme.spacing[2],
-    borderBottomWidth: 0,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  compactTab: {
-    height: COMPACT_TAB_CONTROL_HEIGHT,
-  },
-  compactTabFrame: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
   compactNewTabButton: {
     width: COMPACT_TAB_CONTROL_HEIGHT,
     height: COMPACT_TAB_CONTROL_HEIGHT,
