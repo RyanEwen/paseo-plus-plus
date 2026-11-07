@@ -1272,22 +1272,22 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
  * are properties of the action and of where it makes sense, and none of them
  * change because the keys did.
  */
+function hasNoModifier(combo: KeyCombo): boolean {
+  return !combo.meta && !combo.ctrl && !combo.alt && !combo.shift && !combo.mod;
+}
+
+/** Bare Space is the one key a focused control activates itself, so only it keeps the guard. */
+function isBareSpaceChord(parsedChord: readonly KeyCombo[]): boolean {
+  return parsedChord.length === 1 && parsedChord[0].code === "Space" && hasNoModifier(parsedChord[0]);
+}
+
 function withoutDefaultComboGuard(
   when: ShortcutWhen | undefined,
   parsedChord: readonly KeyCombo[],
 ): ShortcutWhen | undefined {
   if (!when) return when;
   const { editable: _editable, interactiveControl, ...rest } = when;
-  const combo = parsedChord[0];
-  const isBareSpace =
-    parsedChord.length === 1 &&
-    combo.code === "Space" &&
-    !combo.meta &&
-    !combo.ctrl &&
-    !combo.alt &&
-    !combo.shift &&
-    !combo.mod;
-  if (interactiveControl === false && isBareSpace) {
+  if (interactiveControl === false && isBareSpaceChord(parsedChord)) {
     return { ...rest, interactiveControl };
   }
   return rest;
