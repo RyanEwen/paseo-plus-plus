@@ -85,6 +85,17 @@ interface SidebarWorkspaceGroupHeaderProps {
   workspaceCount?: number;
 }
 
+/**
+ * Group name for the header's accessible name. When the heading shows a count, the count is
+ * announced with the name so screen readers hear the same total the row displays.
+ */
+function statusGroupSpokenLabel(label: string, workspaceCount: number | undefined): string {
+  if (workspaceCount === undefined) {
+    return label;
+  }
+  return `${label} (${workspaceCount})`;
+}
+
 /** Collapsible section header shared by status buckets and the empty-project section. */
 export function SidebarWorkspaceGroupHeader({
   group,
@@ -140,13 +151,14 @@ export function SidebarWorkspaceGroupHeader({
     ),
     [collapsed, group.leading, group.label, group.key, isCompact, workspaceCount],
   );
+  const accessibilityLabel = t("sidebar.statusGroupAccessibility", {
+    label: statusGroupSpokenLabel(group.label, workspaceCount),
+  });
 
   return (
     <PressHighlight
       accessibilityRole={platformIsWeb ? undefined : "button"}
-      accessibilityLabel={t("sidebar.statusGroupAccessibility", {
-        label: workspaceCount === undefined ? group.label : `${group.label} (${workspaceCount})`,
-      })}
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
       style={rowStyle}
       highlightStyle={highlightStyle}
