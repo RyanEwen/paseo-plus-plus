@@ -1,3 +1,3 @@
 # Status group counts
 
-See how many workspaces are in each Status group at the right edge of its heading. Counts follow sidebar filters and remain visible when groups are collapsed or rows are hidden by the display limit. Workspaces pinned at the top of the sidebar stay in their separate section.
+See how many workspaces are in each Status group at the right edge of its heading. Counts follow the sidebar filters and stay the same when a group is collapsed or when **Count limit** or **Updated within** hides rows. Workspaces pinned to the top of the sidebar are not counted; workspaces pinned within a project are.
