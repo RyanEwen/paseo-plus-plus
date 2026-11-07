@@ -92,8 +92,9 @@ describe("readable tool activity in stream presentation", () => {
       tail: answeredTurn.slice(1, 3),
       display: "collapseToolCalls",
     } as const;
+    // The run's first call hosts its group row.
     const groupSummary = (result: ReturnType<typeof present>) =>
-      [...result.groupsByHostId.values()][0]?.summary;
+      result.groupsByHostId.get("tool-read")?.summary;
 
     expect(groupSummary(present({ ...input, readableToolActivity: true }))).toMatchObject({
       readFileCount: 1,

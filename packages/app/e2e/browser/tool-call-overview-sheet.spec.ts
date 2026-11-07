@@ -12,7 +12,7 @@ import {
   ACTIVITY_READ_COMMAND,
   ACTIVITY_READ_OUTPUT,
   ACTIVITY_SCENE_LABELS,
-  openToolDetails,
+  openActivityDetails,
   TOOL_ACTIVITY_SCENE_PROMPT,
   TOOL_ACTIVITY_SCENE_SIZE,
 } from "../support/helpers/tool-activity";
@@ -464,12 +464,12 @@ for (const compact of [false, true]) {
           });
 
           // Details keep the exact command, output and every file of the patch in both modes.
-          const read = await openToolDetails(page, badges.nth(0), compact);
+          const read = await openActivityDetails(page, badges.nth(0), compact);
           await expect(read.surface).toContainText(ACTIVITY_READ_COMMAND);
           await expect(read.surface).toContainText(ACTIVITY_READ_OUTPUT);
           await read.close();
 
-          const patch = await openToolDetails(page, badges.nth(4), compact);
+          const patch = await openActivityDetails(page, badges.nth(4), compact);
           for (const diff of ACTIVITY_PATCH_DIFFS) {
             await expect(patch.surface).toContainText(diff);
           }
@@ -479,7 +479,7 @@ for (const compact of [false, true]) {
           });
           await patch.close();
 
-          const opaque = await openToolDetails(page, badges.nth(6), compact);
+          const opaque = await openActivityDetails(page, badges.nth(6), compact);
           await expect(opaque.surface).toContainText(ACTIVITY_OPAQUE_COMMAND);
           await expect(opaque.surface).toContainText("opaque script output");
         } finally {

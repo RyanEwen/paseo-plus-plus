@@ -47,7 +47,7 @@ export const ACTIVITY_SCENE_LABELS: Record<
  * Open a tool-call row's details: inline under the row on desktop, in the tool-call sheet on
  * compact layouts. Returns the surface that shows them and a function that closes it again.
  */
-export async function openToolDetails(
+export async function openActivityDetails(
   page: Page,
   badge: Locator,
   compact: boolean,
