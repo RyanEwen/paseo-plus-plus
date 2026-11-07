@@ -1,4 +1,5 @@
 import { AttentionPresentation } from "./attention/presentation.js";
+import { registerProviderHistory } from "./provider-history/binding.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -78,7 +79,7 @@ export function toStoredAgentRecord(
   options?: ProjectionOptions,
 ): StoredAgentRecord {
   const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
-  const config = buildSerializableConfig(agent.config);
+  const config = serializeAgentConfig(agent.config);
   const persistence = sanitizePersistenceHandle(agent.persistence);
   const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
 
@@ -114,6 +115,10 @@ export function toStoredAgentRecord(
     attentionMessage: agent.attentionMessage,
     internal: options?.internal,
     owner: agent.owner,
+    providerHistory: registerProviderHistory({
+      binding: agent.providerHistory,
+      sessionId: persistence?.sessionId ?? null,
+    }),
   } satisfies StoredAgentRecord;
 }
 
@@ -411,7 +416,7 @@ export function toRecentProviderSessionDescriptorPayload(
   };
 }
 
-function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
+export function serializeAgentConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
   if (config.modeId) {
     serializable.modeId = config.modeId;

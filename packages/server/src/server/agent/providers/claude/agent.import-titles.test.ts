@@ -112,6 +112,11 @@ describe("importing a renamed Claude session", () => {
         expect.objectContaining({ type: "user_message", text: "Review this project" }),
       );
       expect(imported.config.title).toBe("My research session");
+      expect(imported.session.historyStorage).toEqual({
+        kind: "unverified",
+        provider: "claude",
+        home: providerConfigDir,
+      });
     },
   );
 

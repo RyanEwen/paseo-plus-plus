@@ -2,6 +2,8 @@ import type { AgentPromptSource } from "./agent/agent-messages/envelope.js";
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import { AppSettingsSession } from "./app-settings/session.js";
 import { AppSettingsStore } from "./app-settings/index.js";
+import { isUncommittedCreatedIntent } from "./agent/agent-storage.js";
+import type { CreationAgentAttempt } from "./creation/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
@@ -4216,12 +4218,13 @@ export class Session {
           const record = await this.agentStorage.get(id);
           return record ? this.buildStoredAgentPayload(record) : null;
         },
-        createAgent: async (id, _workspace, onReady) => {
+        createAgent: async (id, _workspace, onReady, attempt) => {
           try {
             return await this.createSessionAgent(
               { ...request, type: "create_agent_request" },
               id,
               onReady,
+              attempt,
             );
           } catch (error) {
             throw new WorktreeRequestError(toWorktreeWireError(error));
@@ -4320,7 +4323,7 @@ export class Session {
             };
           },
           createAgent: agentInput
-            ? async (id, workspace, onReady) => {
+            ? async (id, workspace, onReady, attempt) => {
                 if (!workspace?.workspaceDirectory)
                   throw new Error("Created workspace has no directory");
                 const sourceCwd =
@@ -4347,6 +4350,7 @@ export class Session {
                   },
                   id,
                   onReady,
+                  attempt,
                 );
               }
             : undefined,
@@ -4463,11 +4467,49 @@ export class Session {
     }
   }
 
+  private async resolveCreationRetryPlacement(
+    msg: CreateAgentRequestMessage,
+    agentId: string | undefined,
+    creationAttempt: CreationAgentAttempt,
+  ) {
+    const createdDirectoryWorkspace = !msg.workspaceId && !msg.callerAgentId && !msg.worktree;
+    if (!agentId) throw new Error("Creation retry is missing its reserved agent ID");
+    const workspaceId = creationAttempt.resolveRetryWorkspaceId(agentId);
+    // This ID came from this operation's certified reservation, not a cwd lookup.
+    const original = await this.agentStorage.get(agentId, { includeHistoryIntents: true });
+    creationAttempt.assertRetryPlacementAdmitted(agentId);
+    if (
+      !isUncommittedCreatedIntent(original) ||
+      original.workspaceId !== workspaceId ||
+      original.provider !== msg.config.provider ||
+      (msg.workspaceId && msg.workspaceId !== workspaceId)
+    )
+      throw new Error("Creation retry no longer matches its original intention");
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    creationAttempt.assertRetryPlacementAdmitted(agentId);
+    if (!workspace || workspace.archivedAt || resolve(workspace.cwd) !== resolve(original.cwd))
+      throw new Error("Creation retry's original workspace is missing or changed");
+    // The legacy worktree path cleans up on failure. Reprovisioning or converting
+    // its worktree auto-archive policy to agent-only is not a safe retry.
+    if (msg.worktree)
+      throw new Error(
+        "Worktree agent creation cannot retry after cleanup; open its existing workspace explicitly",
+      );
+    return { request: { ...msg, workspaceId, background: undefined }, createdDirectoryWorkspace };
+  }
+
   private async createSessionAgent(
     msg: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
+    creationAttempt?: CreationAgentAttempt,
   ): Promise<CreatedAgent> {
+    let retryCreatedDirectoryWorkspace = false;
+    if (creationAttempt?.retryHistoryIntent) {
+      const retry = await this.resolveCreationRetryPlacement(msg, agentId, creationAttempt);
+      msg = retry.request;
+      retryCreatedDirectoryWorkspace = retry.createdDirectoryWorkspace;
+    }
     const {
       config,
       worktreeName,
@@ -4552,6 +4594,7 @@ export class Session {
         },
         {
           kind: "session",
+          creationAttempt,
           onAgentReady: async (agent) => {
             createdAgentId = agent.id;
             await onAgentReady?.(await this.buildAgentPayload(agent));
@@ -4576,7 +4619,10 @@ export class Session {
       await this.agentUpdates.forwardLiveAgent(
         this.agentManager.getAgent(snapshot.id) ?? liveSnapshot,
       );
-      if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
+      if (
+        (resolvedIntent.createdDirectoryWorkspace || retryCreatedDirectoryWorkspace) &&
+        trimmedPrompt
+      ) {
         this.workspaceAutoName.scheduleForDirectory(
           {
             workspaceId: resolvedIntent.intent.workspaceId,

@@ -76,3 +76,28 @@ test.each([
   const validate = new Ajv({ allErrors: true, strict: false }).compile(publishedSchema);
   expect(validate(config)).toBe(false);
 });
+
+test("configured history policy is optional and remains an exact provider override", () => {
+  const providers = {
+    "codex-work": {
+      extends: "codex",
+      label: "Work",
+      history: { mode: "configured" },
+      env: { CODEX_HOME: "/configured/profile" },
+      options: { sqlite_home: "/configured/db" },
+    },
+    codex: { history: { mode: "shared" } },
+  };
+  const config = { agents: { providers } };
+  expect(PersistedConfigSchema.parse(config)).toEqual(config);
+  const validate = new Ajv({ allErrors: true, strict: false }).compile(publishedSchema);
+  expect(validate(config)).toBe(true);
+  expect(PersistedConfigSchema.parse({ agents: { providers: { codex: {} } } })).toEqual({
+    agents: { providers: { codex: {} } },
+  });
+  expect(
+    PersistedConfigSchema.safeParse({
+      agents: { providers: { codex: { history: { mode: "private" } } } },
+    }).success,
+  ).toBe(false);
+});

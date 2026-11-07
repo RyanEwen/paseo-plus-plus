@@ -1,7 +1,9 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import type { ClaudeFreshRewindContext } from "./provider-history/claude-identity-types.js";
 
 import type {
   AgentCapabilityFlags,
+  AgentRewindInput,
   AgentPromptInput,
   AgentSession,
   AgentStreamEvent,
@@ -60,6 +62,11 @@ const RUNTIME_INFO: AgentRuntimeInfo = {
 
 class FakeSession implements AgentSession {
   readonly provider = "claude";
+  readonly historyStorage = {
+    kind: "unverified",
+    provider: "claude",
+    home: "/custom/claude-home",
+  } as const;
   id = "session-1";
   capabilities = CAPABILITIES;
   initialTimeline: ImportedTimelineEntry[] = [
@@ -246,4 +253,65 @@ describe("wrapSessionProvider", () => {
     session.steerActiveTurn = undefined;
     expect(wrapSessionProvider("custom-claude", session).steerActiveTurn).toBeUndefined();
   });
+});
+
+test("derived providers retain the base adapter's observed unverified storage", () => {
+  const inner = new FakeSession();
+  const wrapped = wrapSessionProvider("claude-work", inner);
+  expect(wrapped.historyStorage).toEqual({
+    kind: "unverified",
+    provider: "claude",
+    home: "/custom/claude-home",
+  });
+  expect(wrapped.provider).toBe("claude-work");
+});
+
+test("derived Claude rewind maps actual handles and preserves invocation context ownership", async () => {
+  const storage = {
+    kind: "configured-home" as const,
+    provider: "claude" as const,
+    home: "/fixture/configured",
+  };
+  let adopted: ClaudeFreshRewindContext | undefined;
+  class RewindingSession extends FakeSession {
+    override async revertConversation(input: AgentRewindInput) {
+      await input.commitClaudeRewind!({
+        previous: { provider: "claude", sessionId: "old", nativeHandle: "old" },
+        next: { provider: "claude", sessionId: "actual-new", nativeHandle: "actual-new" },
+        storage,
+        adopt: (context) => {
+          adopted = context;
+        },
+      });
+    }
+  }
+  const wrapped = wrapSessionProvider("claude-work", new RewindingSession());
+  const owner = {};
+  const commit = vi.fn(async () => {});
+  const fresh: ClaudeFreshRewindContext = {
+    owner,
+    operationId: "operation",
+    admit: async () => {},
+    release: () => {},
+    commit,
+  };
+  await wrapped.revertConversation!({
+    messageId: "target",
+    commitClaudeRewind: async (transition) => {
+      expect(transition.previous.provider).toBe("claude-work");
+      expect(transition.next?.provider).toBe("claude-work");
+      expect(transition.storage.provider).toBe("claude");
+      transition.adopt(fresh);
+    },
+  });
+  expect(adopted?.owner).toBe(owner);
+  await adopted!.commit({
+    previous: { provider: "claude", sessionId: "old" },
+    next: { provider: "claude", sessionId: "new" },
+    storage,
+    adopt: () => {},
+  });
+  expect(commit).toHaveBeenCalledWith(
+    expect.objectContaining({ next: expect.objectContaining({ provider: "claude-work" }) }),
+  );
 });
