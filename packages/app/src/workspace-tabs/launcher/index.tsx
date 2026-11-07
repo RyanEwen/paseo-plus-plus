@@ -149,6 +149,39 @@ const BUILT_IN_SELECTIONS = {
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
 } satisfies Record<Exclude<BuiltInLaunchItemId, "reopenClosedAgent">, NewTabSelection>;
 
+/** The Reopen closed agent row, shared by the launch catalog and the compact workspace menu. */
+function buildReopenClosedAgentItem(
+  label: string,
+  launch: WorkspaceTabLaunchItem["launch"],
+): WorkspaceTabLaunchItem {
+  return {
+    id: "reopen-closed-agent",
+    label,
+    Icon: History,
+    disabled: false,
+    panelKind: "agent",
+    launch,
+  };
+}
+
+/**
+ * The Reopen closed agent row on its own, for menus that list it without the rest of the
+ * catalog. Returns null while the setting is off or unread.
+ */
+export function useReopenClosedAgentLaunchItem(): WorkspaceTabLaunchItem | null {
+  const { t } = useTranslation();
+  const launcher = useContext(NewTabLauncherContext);
+  invariant(launcher, "NewTabLauncherProvider is required");
+  const { previousAgentsEnabled, reopenClosedAgent } = launcher;
+  return useMemo(
+    () =>
+      previousAgentsEnabled
+        ? buildReopenClosedAgentItem(t("sessions.previousTitle"), reopenClosedAgent)
+        : null,
+    [previousAgentsEnabled, reopenClosedAgent, t],
+  );
+}
+
 function getLaunchPresentation(kind: WorkspaceTabTarget["kind"]): PanelPresentation {
   const registration = getPanelRegistration(kind);
   invariant(registration?.presentation, `Panel ${kind} has no launch presentation`);
@@ -198,15 +231,10 @@ export function useWorkspaceTabLaunchCatalog(input: {
         launch: launchSelection(BUILT_IN_SELECTIONS.agent),
       },
       reopenClosedAgent: {
-        id: "reopen-closed-agent",
-        label: t("sessions.previousTitle"),
-        Icon: History,
-        disabled: false,
-        panelKind: "agent",
+        ...buildReopenClosedAgentItem(t("sessions.previousTitle"), launcher.reopenClosedAgent),
         // Not offered from the Explorer's + menu, which launches companion panels beside the
         // workspace; the Explorer's empty pane and every workspace launcher still offer it.
         hidden: !launcher.previousAgentsEnabled || isExplorerMenu,
-        launch: launcher.reopenClosedAgent,
       },
       terminal: {
         id: "terminal",
