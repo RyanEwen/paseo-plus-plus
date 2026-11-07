@@ -36,7 +36,7 @@ vi.mock("./use-sidebar-bulk-collapse", () => ({
 }));
 // Render the trigger as a plain element that records its resting style for the assertions.
 vi.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipContent: () => null,
   TooltipTrigger: ({ testID, style, children }: TriggerProps) => (
     <div
