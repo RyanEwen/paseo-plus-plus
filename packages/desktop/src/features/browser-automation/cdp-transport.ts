@@ -1,17 +1,30 @@
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 
+/** The Electron debugger members a guest CDP transport uses; every Electron Debugger has them. */
+export interface GuestCdpDebugger {
+  isAttached(): boolean;
+  attach(protocolVersion?: string): void;
+  sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
+  on(event: "detach", listener: () => void): void;
+  removeListener(event: "detach", listener: () => void): void;
+}
+
 /** Minimal native guest surface; creating a transport never observes console or enables domains. */
 export interface GuestCdpContents {
-  readonly debugger: {
-    isAttached(): boolean;
-    attach(protocolVersion?: string): void;
-    sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
-    on?(event: "detach", listener: () => void): void;
-    removeListener?(event: "detach", listener: () => void): void;
-  };
+  readonly debugger: GuestCdpDebugger;
   isDestroyed(): boolean;
   isDevToolsOpened?(): boolean;
   once(event: "destroyed", listener: () => void): void;
+}
+
+/** One queued guest CDP command. */
+export interface GuestCdpCommand {
+  command: string;
+  params?: Record<string, unknown>;
+  /** Cancels the command while it waits in the queue; a dispatched request still settles. */
+  signal?: AbortSignal;
+  /** Runs synchronously just before the request is handed to the native debugger. */
+  onDispatch?: () => void;
 }
 
 const transports = new WeakMap<GuestCdpContents, GuestCdpTransport>();
@@ -35,14 +48,14 @@ export class GuestCdpTransport {
   private readonly lifetime = new AbortController();
 
   private detachGeneration = 0;
-  private readonly nativeDebugger: GuestCdpContents["debugger"];
+  private readonly nativeDebugger: GuestCdpDebugger;
   private readonly detached = () => {
     this.detachGeneration += 1;
   };
 
   public constructor(private readonly contents: GuestCdpContents) {
     this.nativeDebugger = contents.debugger;
-    this.nativeDebugger.on?.("detach", this.detached);
+    this.nativeDebugger.on("detach", this.detached);
   }
 
   /** One metadata observation cannot silently attach again after its native session detaches. */
@@ -61,12 +74,7 @@ export class GuestCdpTransport {
   }
 
   /** Serialize normal commands, retaining the existing automation dispatch callback boundary. */
-  public send(
-    command: string,
-    params?: Record<string, unknown>,
-    signal?: AbortSignal,
-    onDispatch?: () => void,
-  ): Promise<unknown> {
+  public send({ command, params, signal, onDispatch }: GuestCdpCommand): Promise<unknown> {
     return this.queue.run(
       () => this.sendImmediate(command, params, onDispatch),
       this.signal(signal),
@@ -88,7 +96,7 @@ export class GuestCdpTransport {
   }
 
   /** Dialog responses and possibly delivered pointer releases retain their existing queue bypass. */
-  public sendImmediate(
+  public async sendImmediate(
     command: string,
     params?: Record<string, unknown>,
     onDispatch?: () => void,
@@ -103,7 +111,7 @@ export class GuestCdpTransport {
   /** Cancel undispatched queue work; an already dispatched native request still owns its barrier. */
   public dispose(): void {
     this.lifetime.abort(new Error("The browser guest has been destroyed."));
-    this.nativeDebugger.removeListener?.("detach", this.detached);
+    this.nativeDebugger.removeListener("detach", this.detached);
   }
 
   private signal(signal?: AbortSignal): AbortSignal {

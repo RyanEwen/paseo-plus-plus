@@ -2,6 +2,14 @@ import type { KeyboardInputEvent } from "electron";
 import type { ActionablePoint } from "./actionability.js";
 import type { CdpCommandSender } from "./cdp-session-queue.js";
 
+/** Identify the mouse-up that releases a possibly held pointer.
+ * After cancellation the input lifetime and the ipc adapter let only this
+ * cleanup bypass the abort race and the transport queue.
+ */
+export function isPointerRelease(command: string, params?: Record<string, unknown>): boolean {
+  return command === "Input.dispatchMouseEvent" && params?.type === "mouseReleased";
+}
+
 export type MouseButton = "left" | "right" | "middle";
 export type InputModifier = "Alt" | "Control" | "Meta" | "Shift";
 

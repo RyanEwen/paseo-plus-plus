@@ -10,12 +10,8 @@ import type {
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
-import {
-  BrowserInputTimeoutError,
-  createInputLifetime,
-  waitForInput,
-  type TrustedInputPage,
-} from "./input-lifetime.js";
+import { focusInputTarget, inputFocusFailure, withTrustedInput } from "./trusted-input-session.js";
+import { settleUnlessAborted } from "./abort-race.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   dispatchTrustedClick,
@@ -87,12 +83,12 @@ export interface BrowserRegistry {
 }
 
 export type AutomationCommandPayload = BrowserAutomationExecuteResponse["payload"];
-type FailurePayload = Extract<AutomationCommandPayload, { ok: false }>;
+export type FailurePayload = Extract<AutomationCommandPayload, { ok: false }>;
 
 const defaultSnapshotEngine = new BrowserSnapshotEngine();
 const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
 const WAIT_POLL_INTERVAL_MS = 25;
-const PIXEL_CAPTURE_TIMEOUT_MS = CAPTURE_TIMEOUT_MS;
+export const PIXEL_CAPTURE_TIMEOUT_MS = CAPTURE_TIMEOUT_MS;
 const PIXEL_CAPTURE_RETRY_INTERVAL_MS = 200;
 const SCREENSHOT_NO_FRAME_MESSAGE = "The tab has not painted yet. Retry the screenshot.";
 const ALLOWED_PAGE_URL_PROTOCOLS = new Set(["http:", "https:"]);
@@ -101,7 +97,7 @@ const MAX_EVALUATE_RESULT_PREVIEW_LENGTH = 79_000;
 const MAX_EVALUATE_ERROR_MESSAGE_LENGTH = 2_000;
 const captureAdmission = new CaptureAdmission();
 
-function fail(
+export function fail(
   requestId: string,
   code: BrowserAutomationErrorCode,
   message: string,
@@ -110,14 +106,15 @@ function fail(
   return { requestId, ok: false, error: { code, message, retryable } };
 }
 
-async function withDialogCapture(
+export async function withDialogCapture(
   contents: TabContents,
-  operation: DialogCaptureOperation<AutomationCommandPayload>,
+  task: () => Promise<AutomationCommandPayload>,
+  signal?: AbortSignal,
 ): Promise<AutomationCommandPayload> {
   if (!contents.captureDialogs) {
-    return operation.task();
+    return task();
   }
-  const { result, dialogs } = await contents.captureDialogs(operation);
+  const { result, dialogs } = await contents.captureDialogs({ task, signal });
   return dialogs.length > 0 ? { ...result, dialogs } : result;
 }
 
@@ -127,13 +124,14 @@ async function withScreenshotDialogs(
 ): Promise<AutomationCommandPayload> {
   const pending: { capture: Promise<AutomationCommandPayload> | null } = { capture: null };
   try {
-    return await withDialogCapture(contents, {
-      signal: operation.signal,
-      task() {
+    return await withDialogCapture(
+      contents,
+      () => {
         pending.capture = operation.task();
         return pending.capture;
       },
-    });
+      operation.signal,
+    );
   } finally {
     // Dialog cancellation may stop waiting before a dispatched CDP capture
     // settles. Admission still belongs to that capture, including late failure.
@@ -155,7 +153,7 @@ class ScreenshotNoFrameError extends Error {
   }
 }
 
-function isScreenshotNoFrameError(error: unknown): error is ScreenshotNoFrameError {
+export function isScreenshotNoFrameError(error: unknown): error is ScreenshotNoFrameError {
   return error instanceof ScreenshotNoFrameError;
 }
 
@@ -215,7 +213,7 @@ async function capturePixelFrameWithRetry<T>(
       if (!isKnownNoFrameCaptureError(error)) {
         throw error;
       }
-      await waitForInput(signal, () =>
+      await settleUnlessAborted(signal, () =>
         delay(Math.min(PIXEL_CAPTURE_RETRY_INTERVAL_MS, Math.max(0, deadline - Date.now()))),
       );
     }
@@ -232,7 +230,7 @@ function isKnownNoFrameCaptureError(error: unknown): boolean {
   );
 }
 
-async function waitForPaint(
+export async function waitForPaint(
   contents: Pick<TabContents, "executeJavaScript">,
   deadline: number,
 ): Promise<void> {
@@ -253,7 +251,7 @@ async function runPaintedPixelCapture<T>(
   deadline: number,
 ): Promise<T> {
   return contents.withFrameProduction(async () => {
-    await waitForInput(signal, () => waitForPaint(contents, deadline));
+    await settleUnlessAborted(signal, () => waitForPaint(contents, deadline));
     return capturePixelFrameWithRetry(contents, capture, deadline, signal);
   });
 }
@@ -264,7 +262,7 @@ async function capturePaintedViewport(
   deadline: number,
 ): Promise<TabImage> {
   return contents.withFrameProduction(async () => {
-    await waitForInput(signal, () => waitForPaint(contents, deadline));
+    await settleUnlessAborted(signal, () => waitForPaint(contents, deadline));
     const metrics = await getCdpLayoutMetrics(contents, signal);
     assertCaptureActive(signal, deadline);
     assertCaptureGeometry(
@@ -611,28 +609,26 @@ async function executeSnapshot(
     return target;
   }
 
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      const snapshot = await snapshotEngine.snapshot({
-        browserId: target.browserId,
-        page: target.contents,
-      });
+  return withDialogCapture(target.contents, async () => {
+    const snapshot = await snapshotEngine.snapshot({
+      browserId: target.browserId,
+      page: target.contents,
+    });
 
-      return {
-        requestId,
-        ok: true,
-        result: {
-          command: "snapshot",
-          browserId: target.browserId,
-          ...(registry.getBrowserWorkspaceId(target.browserId)
-            ? { workspaceId: registry.getBrowserWorkspaceId(target.browserId) ?? undefined }
-            : {}),
-          url: target.contents.getURL(),
-          title: target.contents.getTitle(),
-          ...snapshot,
-        },
-      };
-    },
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: target.browserId,
+        ...(registry.getBrowserWorkspaceId(target.browserId)
+          ? { workspaceId: registry.getBrowserWorkspaceId(target.browserId) ?? undefined }
+          : {}),
+        url: target.contents.getURL(),
+        title: target.contents.getTitle(),
+        ...snapshot,
+      },
+    };
   });
 }
 
@@ -703,19 +699,17 @@ async function executeFill(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      const result = await snapshotEngine.fill({
-        browserId: target.browserId,
-        page: target.contents,
-        ref,
-        value,
-      });
-      if (!result.ok) {
-        return staleRefFailure(requestId, ref);
-      }
-      return { requestId, ok: true, result: { command: "fill", browserId: target.browserId, ref } };
-    },
+  return withDialogCapture(target.contents, async () => {
+    const result = await snapshotEngine.fill({
+      browserId: target.browserId,
+      page: target.contents,
+      ref,
+      value,
+    });
+    if (!result.ok) {
+      return staleRefFailure(requestId, ref);
+    }
+    return { requestId, ok: true, result: { command: "fill", browserId: target.browserId, ref } };
   });
 }
 
@@ -732,23 +726,21 @@ async function executeSelect(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      const result = await snapshotEngine.select({
-        browserId: target.browserId,
-        page: target.contents,
-        ref,
-        value,
-      });
-      if (!result.ok) {
-        return staleRefFailure(requestId, ref);
-      }
-      return {
-        requestId,
-        ok: true,
-        result: { command: "select", browserId: target.browserId, ref, value },
-      };
-    },
+  return withDialogCapture(target.contents, async () => {
+    const result = await snapshotEngine.select({
+      browserId: target.browserId,
+      page: target.contents,
+      ref,
+      value,
+    });
+    if (!result.ok) {
+      return staleRefFailure(requestId, ref);
+    }
+    return {
+      requestId,
+      ok: true,
+      result: { command: "select", browserId: target.browserId, ref, value },
+    };
   });
 }
 
@@ -884,23 +876,21 @@ async function executeLogs(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      const consoleMessages = target.contents.getConsoleMessages?.() ?? [];
-      const networkEntries = parseNetworkEntries(
-        await target.contents.executeJavaScript(NETWORK_PERFORMANCE_SCRIPT),
-      );
-      return {
-        requestId,
-        ok: true,
-        result: {
-          command: "logs",
-          browserId: target.browserId,
-          console: consoleMessages.slice(-maxEntries),
-          network: networkEntries.slice(-maxEntries),
-        },
-      };
-    },
+  return withDialogCapture(target.contents, async () => {
+    const consoleMessages = target.contents.getConsoleMessages?.() ?? [];
+    const networkEntries = parseNetworkEntries(
+      await target.contents.executeJavaScript(NETWORK_PERFORMANCE_SCRIPT),
+    );
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "logs",
+        browserId: target.browserId,
+        console: consoleMessages.slice(-maxEntries),
+        network: networkEntries.slice(-maxEntries),
+      },
+    };
   });
 }
 
@@ -917,49 +907,47 @@ async function executeEvaluate(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      let elementExpression: string | undefined;
-      if (ref) {
-        const expression = snapshotEngine.runtimeElementExpression({
-          browserId: target.browserId,
-          ref,
-        });
-        if (typeof expression !== "string") {
-          return staleRefFailure(requestId, ref);
-        }
-        elementExpression = expression;
+  return withDialogCapture(target.contents, async () => {
+    let elementExpression: string | undefined;
+    if (ref) {
+      const expression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof expression !== "string") {
+        return staleRefFailure(requestId, ref);
       }
+      elementExpression = expression;
+    }
 
-      let rawResult: unknown;
-      try {
-        rawResult = await target.contents.executeJavaScript(
-          buildEvaluateScript(functionSource, elementExpression),
-        );
-      } catch (error) {
-        return fail(requestId, "browser_unknown_error", evaluateErrorMessage(error));
-      }
+    let rawResult: unknown;
+    try {
+      rawResult = await target.contents.executeJavaScript(
+        buildEvaluateScript(functionSource, elementExpression),
+      );
+    } catch (error) {
+      return fail(requestId, "browser_unknown_error", evaluateErrorMessage(error));
+    }
 
-      const result = readEvaluateScriptResult(rawResult);
-      if (result.status === "stale_ref") {
-        return staleRefFailure(requestId, ref ?? "unknown");
-      }
-      if (result.status === "error") {
-        return fail(requestId, "browser_unknown_error", capEvaluateErrorMessage(result.message));
-      }
+    const result = readEvaluateScriptResult(rawResult);
+    if (result.status === "stale_ref") {
+      return staleRefFailure(requestId, ref ?? "unknown");
+    }
+    if (result.status === "error") {
+      return fail(requestId, "browser_unknown_error", capEvaluateErrorMessage(result.message));
+    }
 
-      const capped = capEvaluateResultJson(result.resultJson);
-      return {
-        requestId,
-        ok: true,
-        result: {
-          command: "evaluate",
-          browserId: target.browserId,
-          resultJson: capped.resultJson,
-          truncated: result.truncated || capped.truncated,
-        },
-      };
-    },
+    const capped = capEvaluateResultJson(result.resultJson);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: target.browserId,
+        resultJson: capped.resultJson,
+        truncated: result.truncated || capped.truncated,
+      },
+    };
   });
 }
 
@@ -1085,53 +1073,51 @@ async function executeWait(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      if (!condition.text && !condition.url) {
-        return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
-      }
+  return withDialogCapture(target.contents, async () => {
+    if (!condition.text && !condition.url) {
+      return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
+    }
 
-      const timeoutMs = condition.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-      const deadline = Date.now() + timeoutMs;
-      do {
-        if (condition.url && target.contents.getURL().includes(condition.url)) {
+    const timeoutMs = condition.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
+    do {
+      if (condition.url && target.contents.getURL().includes(condition.url)) {
+        return {
+          requestId,
+          ok: true,
+          result: { command: "wait", browserId: target.browserId, matched: "url" },
+        };
+      }
+      if (condition.text) {
+        const pageText = await target.contents.executeJavaScript("document.body.innerText || ''");
+        if (typeof pageText === "string" && pageText.includes(condition.text)) {
           return {
             requestId,
             ok: true,
-            result: { command: "wait", browserId: target.browserId, matched: "url" },
+            result: { command: "wait", browserId: target.browserId, matched: "text" },
           };
         }
-        if (condition.text) {
-          const pageText = await target.contents.executeJavaScript("document.body.innerText || ''");
-          if (typeof pageText === "string" && pageText.includes(condition.text)) {
-            return {
-              requestId,
-              ok: true,
-              result: { command: "wait", browserId: target.browserId, matched: "text" },
-            };
-          }
-        }
-        await delay(WAIT_POLL_INTERVAL_MS);
-      } while (Date.now() < deadline);
+      }
+      await delay(WAIT_POLL_INTERVAL_MS);
+    } while (Date.now() < deadline);
 
-      if (condition.text) {
-        return fail(
-          requestId,
-          "browser_timeout",
-          `Timed out waiting for browser text: ${condition.text}`,
-          true,
-        );
-      }
-      if (condition.url) {
-        return fail(
-          requestId,
-          "browser_timeout",
-          `Timed out waiting for browser URL: ${condition.url}`,
-          true,
-        );
-      }
-      return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
-    },
+    if (condition.text) {
+      return fail(
+        requestId,
+        "browser_timeout",
+        `Timed out waiting for browser text: ${condition.text}`,
+        true,
+      );
+    }
+    if (condition.url) {
+      return fail(
+        requestId,
+        "browser_timeout",
+        `Timed out waiting for browser URL: ${condition.url}`,
+        true,
+      );
+    }
+    return fail(requestId, "browser_unsupported", "browser_wait requires text or url");
   });
 }
 
@@ -1169,7 +1155,7 @@ async function executeType(
         if (!actionable.ok) {
           return actionabilityFailure(requestId, ref, actionable);
         }
-        const focused = await focusInputTarget(page, elementExpression, true);
+        const focused = await focusInputTarget({ page, elementExpression, requiresEditable: true });
         if (focused === "stale_ref") return staleRefFailure(requestId, ref);
         if (focused !== "focused") return inputFocusFailure(requestId);
       }
@@ -1221,7 +1207,7 @@ async function executeKeypress(
         if (!actionable.ok) {
           return actionabilityFailure(requestId, ref, actionable);
         }
-        const focused = await focusInputTarget(page, elementExpression);
+        const focused = await focusInputTarget({ page, elementExpression });
         if (focused === "stale_ref") {
           return staleRefFailure(requestId, ref);
         }
@@ -1255,23 +1241,21 @@ async function executeNavigate(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      if (!isAllowedPageUrl(url)) {
-        return fail(
-          requestId,
-          "browser_denied",
-          "Browser navigation only supports http and https URLs.",
-        );
-      }
-      snapshotEngine.clearBrowser(browserId);
-      await target.contents.loadURL(url);
-      return {
+  return withDialogCapture(target.contents, async () => {
+    if (!isAllowedPageUrl(url)) {
+      return fail(
         requestId,
-        ok: true,
-        result: { command: "navigate", browserId: target.browserId, url },
-      };
-    },
+        "browser_denied",
+        "Browser navigation only supports http and https URLs.",
+      );
+    }
+    snapshotEngine.clearBrowser(browserId);
+    await target.contents.loadURL(url);
+    return {
+      requestId,
+      ok: true,
+      result: { command: "navigate", browserId: target.browserId, url },
+    };
   });
 }
 
@@ -1287,28 +1271,26 @@ async function executeNavigationAction(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      if (action === "back") {
-        if (!target.contents.canGoBack()) {
-          return fail(requestId, "browser_denied", "There is nothing to go back to.");
-        }
-        snapshotEngine.clearBrowser(browserId);
-        target.contents.goBack();
-        return { requestId, ok: true, result: { command: "back", browserId: target.browserId } };
-      }
-      if (action === "forward") {
-        if (!target.contents.canGoForward()) {
-          return fail(requestId, "browser_denied", "There is nothing to go forward to.");
-        }
-        snapshotEngine.clearBrowser(browserId);
-        target.contents.goForward();
-        return { requestId, ok: true, result: { command: "forward", browserId: target.browserId } };
+  return withDialogCapture(target.contents, async () => {
+    if (action === "back") {
+      if (!target.contents.canGoBack()) {
+        return fail(requestId, "browser_denied", "There is nothing to go back to.");
       }
       snapshotEngine.clearBrowser(browserId);
-      target.contents.reload();
-      return { requestId, ok: true, result: { command: "reload", browserId: target.browserId } };
-    },
+      target.contents.goBack();
+      return { requestId, ok: true, result: { command: "back", browserId: target.browserId } };
+    }
+    if (action === "forward") {
+      if (!target.contents.canGoForward()) {
+        return fail(requestId, "browser_denied", "There is nothing to go forward to.");
+      }
+      snapshotEngine.clearBrowser(browserId);
+      target.contents.goForward();
+      return { requestId, ok: true, result: { command: "forward", browserId: target.browserId } };
+    }
+    snapshotEngine.clearBrowser(browserId);
+    target.contents.reload();
+    return { requestId, ok: true, result: { command: "reload", browserId: target.browserId } };
   });
 }
 
@@ -1330,7 +1312,7 @@ async function executeScreenshot(
     CAPTURE_TIMEOUT_MS,
   );
   try {
-    return await waitForInput(signal, () =>
+    return await settleUnlessAborted(signal, () =>
       captureAdmission.run(async () => {
         assertCaptureActive(signal, deadline);
         if (fullPage) {
@@ -1580,62 +1562,60 @@ async function executeUpload(
   if ("ok" in target) {
     return target;
   }
-  return withDialogCapture(target.contents, {
-    task: async () => {
-      if (!target.contents.sendDebugCommand) {
-        return fail(requestId, "browser_unsupported", "browser_upload requires CDP");
-      }
-      const expression = snapshotEngine.runtimeElementExpression({
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(requestId, "browser_unsupported", "browser_upload requires CDP");
+    }
+    const expression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref: input.ref,
+    });
+    if (typeof expression !== "string") {
+      return staleRefFailure(requestId, input.ref);
+    }
+    const evaluated = (await target.contents.sendDebugCommand("Runtime.evaluate", {
+      expression,
+      objectGroup: "paseo-browser-automation",
+      returnByValue: false,
+    })) as CdpRuntimeEvaluateResult;
+    const objectId = evaluated.result?.objectId;
+    if (!objectId || evaluated.result?.subtype === "null") {
+      return staleRefFailure(requestId, input.ref);
+    }
+    const described = (await target.contents.sendDebugCommand("DOM.describeNode", {
+      objectId,
+    })) as CdpDescribeNodeResult;
+    const backendNodeId = described.node?.backendNodeId;
+    if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
+      return staleRefFailure(requestId, input.ref);
+    }
+    const workspaceRoot = resolveUploadWorkspaceRoot(cwd);
+    if (!workspaceRoot) {
+      return fail(requestId, "browser_unsupported", "browser_upload requires request cwd");
+    }
+    const filePaths = resolveWorkspaceFilePaths(input.filePaths, workspaceRoot);
+    if (!filePaths) {
+      return fail(
+        requestId,
+        "browser_unsupported",
+        "browser_upload only accepts files inside the agent workspace.",
+      );
+    }
+
+    await target.contents.sendDebugCommand("DOM.setFileInputFiles", {
+      backendNodeId,
+      files: filePaths,
+    });
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "upload",
         browserId: target.browserId,
         ref: input.ref,
-      });
-      if (typeof expression !== "string") {
-        return staleRefFailure(requestId, input.ref);
-      }
-      const evaluated = (await target.contents.sendDebugCommand("Runtime.evaluate", {
-        expression,
-        objectGroup: "paseo-browser-automation",
-        returnByValue: false,
-      })) as CdpRuntimeEvaluateResult;
-      const objectId = evaluated.result?.objectId;
-      if (!objectId || evaluated.result?.subtype === "null") {
-        return staleRefFailure(requestId, input.ref);
-      }
-      const described = (await target.contents.sendDebugCommand("DOM.describeNode", {
-        objectId,
-      })) as CdpDescribeNodeResult;
-      const backendNodeId = described.node?.backendNodeId;
-      if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
-        return staleRefFailure(requestId, input.ref);
-      }
-      const workspaceRoot = resolveUploadWorkspaceRoot(cwd);
-      if (!workspaceRoot) {
-        return fail(requestId, "browser_unsupported", "browser_upload requires request cwd");
-      }
-      const filePaths = resolveWorkspaceFilePaths(input.filePaths, workspaceRoot);
-      if (!filePaths) {
-        return fail(
-          requestId,
-          "browser_unsupported",
-          "browser_upload only accepts files inside the agent workspace.",
-        );
-      }
-
-      await target.contents.sendDebugCommand("DOM.setFileInputFiles", {
-        backendNodeId,
-        files: filePaths,
-      });
-      return {
-        requestId,
-        ok: true,
-        result: {
-          command: "upload",
-          browserId: target.browserId,
-          ref: input.ref,
-          filePaths,
-        },
-      };
-    },
+        filePaths,
+      },
+    };
   });
 }
 
@@ -1774,90 +1754,6 @@ function buildEvaluateScript(
 	  })()`;
 }
 
-/** Focus inside the guest without the pointer gesture that transfers host DOM focus.
- * Revalidate after synchronous focus handlers, before native input. This does not make
- * later page scripts and the separate native input message an atomic operation.
- * Contenteditable input focuses its editing host and keeps an existing exact-ref selection.
- */
-async function focusInputTarget(
-  contents: Pick<TabContents, "executeJavaScript">,
-  elementExpression: string,
-  requiresEditable = false,
-): Promise<"focused" | "stale_ref" | "not_focused"> {
-  const result = await contents.executeJavaScript(String.raw`(() => {
-    const resolveElement = () => (${elementExpression});
-    const element = resolveElement();
-    const connectedHere = (node) => node?.isConnected && node.ownerDocument === document &&
-      node.getRootNode() === document;
-    if (!connectedHere(element)) return { staleRef: true };
-    const editingHostFor = () => {
-      let host = element;
-      while (host.isContentEditable && host.parentElement?.isContentEditable) host = host.parentElement;
-      return host;
-    };
-    const editingHost = editingHostFor();
-    const selectionWithin = (selection) => Boolean(selection?.rangeCount) &&
-      element.contains(selection.anchorNode) && element.contains(selection.focusNode);
-    const selection = element.isContentEditable ? document.getSelection() : null;
-    const retainedSelection = selectionWithin(selection) ? {
-      anchor: selection.anchorNode, anchorOffset: selection.anchorOffset,
-      focus: selection.focusNode, focusOffset: selection.focusOffset,
-    } : null;
-    const stillCurrent = () => connectedHere(element) && connectedHere(editingHost) &&
-      resolveElement() === element && editingHostFor() === editingHost;
-    if (typeof editingHost.focus !== 'function') return { focused: false };
-    editingHost.focus({ preventScroll: true });
-    if (!stillCurrent()) return { staleRef: true };
-    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
-    const inputType = tagName === 'input' ? String(element.getAttribute('type') || 'text').toLowerCase() : '';
-    const editableInput = tagName === 'textarea' ||
-      (tagName === 'input' && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
-    const editable = editableInput || element.isContentEditable === true;
-    if (element.disabled || element.closest('[aria-disabled="true"], fieldset[disabled]') ||
-        (${JSON.stringify(requiresEditable)} && (!editable || element.readOnly))) {
-      return { focused: false };
-    }
-    if (element.isContentEditable) {
-      const currentSelection = document.getSelection();
-      if (document.activeElement !== editingHost || !currentSelection) return { focused: false };
-      if (retainedSelection) {
-        if (!element.contains(retainedSelection.anchor) || !element.contains(retainedSelection.focus)) {
-          return { focused: false };
-        }
-        const { anchor, anchorOffset, focus, focusOffset } = retainedSelection;
-        if (currentSelection.anchorNode !== anchor || currentSelection.anchorOffset !== anchorOffset ||
-            currentSelection.focusNode !== focus || currentSelection.focusOffset !== focusOffset) {
-          currentSelection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
-        }
-      } else {
-        // WebDriver Send Keys initializes a contenteditable caret after its child content.
-        // Use the exact ref subtree, never another selection in the surrounding editing host.
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        range.collapse(false);
-        currentSelection.removeAllRanges();
-        currentSelection.addRange(range);
-      }
-      if (!stillCurrent()) return { staleRef: true };
-      return { focused: document.activeElement === editingHost && selectionWithin(currentSelection) };
-    }
-    return { focused: document.activeElement === element };
-  })()`);
-  if (!result || typeof result !== "object") {
-    return "stale_ref";
-  }
-  const record = result as Record<string, unknown>;
-  if (record.staleRef === true) {
-    return "stale_ref";
-  }
-  return record.focused === true ? "focused" : "not_focused";
-}
-
-/** Refuse native input when a page handler redirected focus or disabled the original target. */
-function inputFocusFailure(requestId: string): FailurePayload {
-  return fail(requestId, "browser_unsupported", "Browser input target did not retain focus.");
-}
-
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
@@ -1902,68 +1798,4 @@ function resolveTabTarget(input: {
   }
 
   return { browserId, contents };
-}
-
-interface TrustedInputOperation {
-  requestId: string;
-  contents: TabContents;
-  task: (page: TrustedInputPage) => Promise<AutomationCommandPayload>;
-}
-
-/** Keep this guest producing frames only while trusted input is in flight.
- * Hidden Chromium input waits for compositor acknowledgments; the adapter
- * shares the scope with screenshots and restores policy after the last user.
- */
-async function withTrustedInput({
-  requestId,
-  contents,
-  task,
-}: TrustedInputOperation): Promise<AutomationCommandPayload> {
-  const lifetime = createInputLifetime(contents);
-
-  async function performInput(): Promise<AutomationCommandPayload> {
-    const inputUrl = contents.getURL();
-    const documentChanged = () =>
-      contents.isDestroyed() || contents.isLoading() || contents.getURL() !== inputUrl;
-    const result = await task(lifetime.page);
-    if (!result.ok || documentChanged()) return result;
-
-    // Wheel acknowledgments can precede animation-aligned event dispatch.
-    try {
-      await waitForPaint(lifetime.page, Date.now() + PIXEL_CAPTURE_TIMEOUT_MS);
-    } catch (error) {
-      // A delivered click/key may close or navigate the document while its
-      // final animation callback is pending. Preserve that input result.
-      if (documentChanged()) return result;
-      if (!isScreenshotNoFrameError(error)) throw error;
-      return fail(
-        result.requestId,
-        "browser_timeout",
-        "Timed out waiting for the browser input frame. Input may already have been delivered.",
-      );
-    }
-    return result;
-  }
-
-  const capture = () =>
-    withDialogCapture(contents, { task: performInput, signal: lifetime.signal });
-  const produceFrames = () => {
-    lifetime.assertActive();
-    if (contents.isDestroyed()) {
-      return Promise.resolve(fail(requestId, "browser_tab_closed", "Browser tab has been closed"));
-    }
-    return contents.withFrameProduction(() => lifetime.wait(capture));
-  };
-  try {
-    return await contents.runInput(produceFrames, lifetime.signal);
-  } catch (error) {
-    if (contents.isDestroyed()) {
-      return fail(requestId, "browser_tab_closed", "Browser tab has been closed");
-    }
-    if (!(error instanceof BrowserInputTimeoutError)) throw error;
-    // The broker must not treat an uncertain delivered action as safe to replay.
-    return fail(requestId, "browser_timeout", error.message);
-  } finally {
-    lifetime.dispose();
-  }
 }

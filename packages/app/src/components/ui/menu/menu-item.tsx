@@ -1,5 +1,5 @@
-import { MenuItemActions, type MenuItemSecondaryToggle } from "./menu-secondary-toggle";
-export type { MenuItemSecondaryToggle } from "./menu-secondary-toggle";
+import { MenuItemActions, type MenuItemSecondary } from "./menu-secondary-toggle";
+export type { MenuItemSecondary, MenuItemSecondaryToggle } from "./menu-secondary-toggle";
 import {
   useCallback,
   useMemo,
@@ -237,10 +237,12 @@ function resolveItemTrailing(
 export interface MenuItemProps {
   description?: string;
   accessibilityLabel?: string;
-  secondaryToggle?: MenuItemSecondaryToggle;
-  /** Independent sibling control, such as a creation row’s split-layout menu. */
-  secondaryAction?: ReactElement;
-  /** Compact menu action for an icon-only submenu trigger. */
+  /** A separate checkbox or sibling control beside this row's primary action. */
+  secondary?: MenuItemSecondary;
+  /**
+   * Render only the leading icon, for a compact sibling action. The row has no visible label,
+   * so pass `accessibilityLabel`.
+   */
   iconOnly?: boolean;
   onSelect?: () => void;
   disabled?: boolean;
@@ -276,8 +278,7 @@ export function MenuItem({
   children,
   description,
   accessibilityLabel,
-  secondaryToggle,
-  secondaryAction,
+  secondary,
   iconOnly = false,
   onSelect,
   disabled,
@@ -324,6 +325,7 @@ export function MenuItem({
     [selected],
   );
 
+  const hasSecondary = secondary !== undefined;
   const itemPressableStyle = useCallback(
     ({
       pressed,
@@ -331,7 +333,7 @@ export function MenuItem({
       focused = false,
     }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.item,
-      secondaryToggle || secondaryAction ? styles.splitPrimary : null,
+      hasSecondary ? styles.splitPrimary : null,
       iconOnly ? styles.iconOnly : null,
       active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
@@ -340,7 +342,7 @@ export function MenuItem({
       focused && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
     ],
-    [active, isDisabled, muted, secondaryToggle, secondaryAction, iconOnly],
+    [active, isDisabled, muted, hasSecondary, iconOnly],
   );
 
   const itemTextStyle = useMemo(
@@ -376,26 +378,24 @@ export function MenuItem({
         </View>
       ) : null}
       {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}
-      <View style={iconOnly ? styles.hiddenLabel : styles.itemContent}>
-        <Text numberOfLines={1} style={itemTextStyle}>
-          {label}
-        </Text>
-        {description && !isPending && !isSuccess ? (
-          <Text numberOfLines={2} style={styles.itemDescription}>
-            {description}
+      {iconOnly ? null : (
+        <View style={styles.itemContent}>
+          <Text numberOfLines={1} style={itemTextStyle}>
+            {label}
           </Text>
-        ) : null}
-      </View>
+          {description && !isPending && !isSuccess ? (
+            <Text numberOfLines={2} style={styles.itemDescription}>
+              {description}
+            </Text>
+          ) : null}
+        </View>
+      )}
       {trailingContent ? <View style={styles.trailingSlot}>{trailingContent}</View> : null}
     </Pressable>
   );
 
   return (
-    <MenuItemActions
-      toggle={secondaryToggle}
-      action={secondaryAction}
-      disabled={Boolean(isDisabled)}
-    >
+    <MenuItemActions secondary={secondary} disabled={Boolean(isDisabled)}>
       <MenuItemTooltip tooltip={tooltip}>{primaryContent}</MenuItemTooltip>
     </MenuItemActions>
   );
@@ -523,7 +523,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     minWidth: MENU_ITEM_HEIGHT,
   },
-  hiddenLabel: { display: "none" },
   splitPrimary: {
     flex: 1,
     minWidth: 0,

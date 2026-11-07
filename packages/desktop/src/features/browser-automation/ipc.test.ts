@@ -1182,15 +1182,15 @@ describe("shared exact-guest CDP transport", () => {
     const guest = new FakeWebContents(2004);
     guest.debugger.blockCommands = true;
     const owner = getGuestCdpTransport(guest);
-    const active = owner.send("Page.getFrameTree");
+    const active = owner.send({ command: "Page.getFrameTree" });
     await flushMicrotasks();
-    const queued = owner.send("Page.getNavigationHistory");
+    const queued = owner.send({ command: "Page.getNavigationHistory" });
     guest.destroy();
     await expect(queued).rejects.toThrow("destroyed");
     const replacement = new FakeWebContents(2004);
     const next = getGuestCdpTransport(replacement);
     expect(next).not.toBe(owner);
-    await next.send("Page.getFrameTree");
+    await next.send({ command: "Page.getFrameTree" });
     expect(guest.debugger.commands).toHaveLength(1);
     expect(replacement.debugger.commands).toHaveLength(1);
     guest.debugger.finishNextCommand();

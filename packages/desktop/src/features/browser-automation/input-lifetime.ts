@@ -1,4 +1,6 @@
 import type { TabContents } from "./service.js";
+import { settleUnlessAborted } from "./abort-race.js";
+import { isPointerRelease } from "./trusted-input.js";
 
 // Keep the command within the daemon broker's existing 15-second input budget.
 const INPUT_TIMEOUT_MS = 15_000;
@@ -15,9 +17,21 @@ export class BrowserInputTimeoutError extends Error {
   }
 }
 
+/** Abort reason that fences late continuations after a command has settled. */
+export class BrowserInputSettledError extends Error {
+  public constructor() {
+    super("Browser input command already settled.");
+    this.name = "BrowserInputSettledError";
+  }
+}
+
 interface InputLifetime {
   page: TrustedInputPage;
   signal: AbortSignal;
+  /** True once the command sent text, a key or a CDP Input event to the guest.
+   * Before that point a timeout delivered nothing, so the command is safe to retry.
+   */
+  readonly dispatched: boolean;
   assertActive(): void;
   wait<T>(task: () => Promise<T>): Promise<T>;
   dispose(): void;
@@ -37,6 +51,7 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
     () => controller.abort(new BrowserInputTimeoutError()),
     INPUT_TIMEOUT_MS,
   );
+  let dispatched = false;
 
   function assertActive(): void {
     // Queue continuations can run between expired timers. Check the clock too,
@@ -49,7 +64,7 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
 
   function wait<T>(task: () => Promise<T>): Promise<T> {
     assertActive();
-    return waitForInput(signal, () => {
+    return settleUnlessAborted(signal, () => {
       assertActive();
       return task();
     });
@@ -58,22 +73,30 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
   const page: TrustedInputPage = {
     getURL: () => contents.getURL(),
     executeJavaScript: (code) => wait(() => contents.executeJavaScript(code)),
-    insertText: (text) => wait(() => contents.insertText(text)),
+    insertText: (text) =>
+      wait(() => {
+        dispatched = true;
+        return contents.insertText(text);
+      }),
     sendInputEvent: (event) => {
       assertActive();
+      dispatched = true;
       contents.sendInputEvent(event);
     },
   };
   if (sendDebugCommand) {
     page.sendDebugCommand = (command, params) => {
-      const releasesPointer =
-        command === "Input.dispatchMouseEvent" && params?.type === "mouseReleased";
       // Release a possibly held pointer after cancellation. This cleans up the
       // original gesture without repeating a press or waiting on its acknowledgment.
-      if (signal.aborted && releasesPointer) {
+      if (signal.aborted && isPointerRelease(command, params)) {
         return sendDebugCommand.call(contents, command, params, signal);
       }
-      return wait(() => sendDebugCommand.call(contents, command, params, signal));
+      return wait(() => {
+        // Count input as sent when it is handed to the transport. It may still
+        // wait in the guest queue, so this errs toward "possibly delivered".
+        if (command.startsWith("Input.")) dispatched = true;
+        return sendDebugCommand.call(contents, command, params, signal);
+      });
     };
   }
 
@@ -82,37 +105,14 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
     assertActive,
     page,
     wait,
+    get dispatched() {
+      return dispatched;
+    },
     dispose() {
       clearTimeout(timeout);
       // Fence unfinished continuations even when a shorter actionability/paint
       // deadline settled the command before the overall input deadline.
-      controller.abort(new BrowserInputTimeoutError());
+      controller.abort(new BrowserInputSettledError());
     },
   };
-}
-
-/** Stop waiting at cancellation, while consuming any late rejection from Electron. */
-export function waitForInput<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => {
-      signal.removeEventListener("abort", abort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    const pending = Promise.resolve().then(() => {
-      signal.throwIfAborted();
-      return task();
-    });
-    pending.then(
-      (value) => {
-        signal.removeEventListener("abort", abort);
-        return resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", abort);
-        return reject(error);
-      },
-    );
-  });
 }
