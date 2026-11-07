@@ -26,6 +26,9 @@ import {
   type DirectorySourceToken,
   type DirectoryTransaction,
 } from "./transaction";
+import { WorkspaceObservation, type WorkspaceDirectoryObserver } from "./workspace-observation";
+
+export type { WorkspaceDirectoryObserver } from "./workspace-observation";
 import { workspaceLabels } from "@/workspace-labels";
 import type {
   CachedDirectory,
@@ -91,13 +94,6 @@ interface DirectoryReleaseOptions {
 
 interface DemandRefreshInput {
   force: boolean;
-}
-
-/** A complete current-source baseline followed by accepted upserts; cache paint is not fresh authority. */
-export interface WorkspaceDirectoryObserver {
-  snapshot(workspaces: readonly WorkspaceDescriptor[]): void;
-  update(workspaces: readonly WorkspaceDescriptor[]): void;
-  error(error: unknown): void;
 }
 
 interface WorkspaceRefreshSnapshot extends WorkspaceDirectorySnapshot, WorkspaceRefreshScope {
@@ -206,11 +202,8 @@ export class DirectorySync {
   private unselectedCacheCursors: DirectoryCheckpoint = {};
   private cacheRead: Promise<CachedDirectory> | null = null;
   private workspaceCacheLoad: Promise<void> | null = null;
-  private readonly workspaceObservers = new Set<WorkspaceDirectoryObserver>();
+  private readonly workspaceObservation = new WorkspaceObservation();
   private workspaceRefresh: WorkspaceRefreshOperation | null = null;
-  private workspaceSnapshotSource: DirectorySourceToken | null = null;
-  private projectSnapshotSource: DirectorySourceToken | null = null;
-  private workspaceBaselineAccepted = false;
 
   constructor(
     private readonly serverId: string,
@@ -249,7 +242,7 @@ export class DirectorySync {
     // Reattach labels here because route-only demand can satisfy the epoch before full demand requests them.
     void this.connectWorkspaceLabels().catch(() => undefined);
     if (this.hasDemand()) void this.requestDemandRefresh().catch(() => undefined);
-    if (this.workspaceObservers.size > 0) this.requestWorkspaceObservation();
+    if (this.workspaceObservation.hasObservers) this.requestWorkspaceObservation();
     return true;
   }
 
@@ -257,8 +250,7 @@ export class DirectorySync {
     const wasDemanded = this.fullDemandSources.size > 0;
     if (demanded) this.fullDemandSources.add(source);
     else this.fullDemandSources.delete(source);
-    if (!this.hasDemand())
-      this.releaseSubscriptions({ preserveWorkspaces: this.workspaceObservers.size > 0 });
+    this.releaseUnusedSubscriptions();
     if (!wasDemanded && this.fullDemandSources.size > 0) {
       void this.loadCachedDirectory().catch(() => undefined);
       if (this.getOnlineConnection()) void this.requestDemandRefresh().catch(() => undefined);
@@ -275,23 +267,28 @@ export class DirectorySync {
     }
     this.routeDemandIds.clear();
     for (const agentId of next) this.routeDemandIds.add(agentId);
-    if (!this.hasDemand())
-      this.releaseSubscriptions({ preserveWorkspaces: this.workspaceObservers.size > 0 });
+    this.releaseUnusedSubscriptions();
     if (this.routeDemandIds.size > 0 && this.getOnlineConnection()) {
       void this.requestDemandRefresh().catch(() => undefined);
     }
   }
 
+  /** Release directory subscriptions nothing demands, keeping workspaces for their observers. */
+  private releaseUnusedSubscriptions(): void {
+    if (this.hasDemand()) return;
+    this.releaseSubscriptions({ preserveWorkspaces: this.workspaceObservation.hasObservers });
+  }
+
   /** Retain only workspace data, including background rows, independently of UI directory demand. */
   observeWorkspaces(observer: WorkspaceDirectoryObserver): () => void {
-    this.workspaceObservers.add(observer);
+    this.workspaceObservation.add(observer);
     if (this.hasCurrentWorkspaceSnapshot()) {
       observer.snapshot([...this.workspaces.snapshot().workspaces.values()]);
     }
     this.requestWorkspaceObservation();
     return () => {
-      this.workspaceObservers.delete(observer);
-      if (!this.hasDemand() && this.workspaceObservers.size === 0) this.releaseSubscriptions();
+      this.workspaceObservation.delete(observer);
+      if (!this.hasDemand() && !this.workspaceObservation.hasObservers) this.releaseSubscriptions();
     };
   }
 
@@ -300,8 +297,8 @@ export class DirectorySync {
     return Boolean(
       client &&
       this.workspaceSubscription &&
-      this.workspaceSnapshotSource &&
-      this.isCurrent(client, this.workspaceSnapshotSource),
+      this.workspaceObservation.workspaceSnapshotSource &&
+      this.isCurrent(client, this.workspaceObservation.workspaceSnapshotSource),
     );
   }
 
@@ -313,37 +310,24 @@ export class DirectorySync {
       reuse: true,
     }).catch((error) => {
       if (error instanceof DirectoryRefreshSupersededError) return;
-      for (const observer of this.workspaceObservers) observer.error(error);
+      this.workspaceObservation.fail(error);
     });
   }
 
   private publishWorkspaceSnapshot(): void {
     if (!this.hasCurrentWorkspaceSnapshot()) return;
-    const workspaces = [...this.workspaces.snapshot().workspaces.values()];
-    for (const observer of this.workspaceObservers) {
-      try {
-        observer.snapshot(workspaces);
-      } catch (error) {
-        observer.error(error);
-      }
-    }
+    this.workspaceObservation.publishSnapshot([...this.workspaces.snapshot().workspaces.values()]);
   }
 
   private publishWorkspaceUpserts(mutations: readonly DirectoryReplicaMutation[]): void {
     if (!this.hasCurrentWorkspaceSnapshot()) return;
     const workspaces: WorkspaceDescriptor[] = [];
     for (const mutation of mutations) {
-      if (mutation.kind === "workspace" && mutation.type === "upsert")
+      if (mutation.kind === "workspace" && mutation.type === "upsert") {
         workspaces.push(mutation.value);
-    }
-    if (workspaces.length === 0) return;
-    for (const observer of this.workspaceObservers) {
-      try {
-        observer.update(workspaces);
-      } catch (error) {
-        observer.error(error);
       }
     }
+    this.workspaceObservation.publishUpserts(workspaces);
   }
 
   /**
@@ -370,7 +354,7 @@ export class DirectorySync {
     this.flushAbortedTransactions();
     this.abortPendingSessionWaits();
     this.scriptStatusDemand.clear();
-    this.workspaceObservers.clear();
+    this.workspaceObservation.clear();
     this.releaseSubscriptions();
     this.releaseScriptStatusEvents();
     this.fullDemandSources.clear();
@@ -380,20 +364,18 @@ export class DirectorySync {
 
   private releaseSubscriptions(input: DirectoryReleaseOptions = {}): void {
     this.subscriptionGeneration += 1;
-    for (const subscription of [
-      this.agentSubscription,
-      ...(input.preserveWorkspaces ? [] : [this.workspaceSubscription]),
-      this.eventSubscription,
-    ]) {
+    const released = [this.agentSubscription, this.eventSubscription];
+    if (!input.preserveWorkspaces) released.push(this.workspaceSubscription);
+    for (const subscription of released) {
       void subscription?.release().catch(() => undefined);
     }
     this.agentSubscription = null;
     if (!input.preserveWorkspaces) {
       this.workspaceSubscription = null;
-      this.workspaceSnapshotSource = null;
+      this.workspaceObservation.releaseWorkspaceSource();
       this.workspaceRefresh = null;
     }
-    this.projectSnapshotSource = null;
+    this.workspaceObservation.projectSnapshotSource = null;
     this.eventSubscription = null;
     this.satisfiedDemandSource = null;
     if (!this.wantsScriptStatus()) this.releaseScriptStatusEvents();
@@ -601,7 +583,7 @@ export class DirectorySync {
       if (!useSessionStore.getState().sessions[this.serverId]) return;
       this.unselectedCacheCursors = { ...cached.checkpoint };
       delete this.unselectedCacheCursors.workspaces;
-      if (!this.workspaceBaselineAccepted) {
+      if (!this.workspaceObservation.baselineAccepted) {
         this.workspaces.commitCached({
           workspaces: cached.workspaces,
           projects: this.workspaces.snapshot().projects,
@@ -627,11 +609,11 @@ export class DirectorySync {
       // A receipt-only network baseline may precede the UI's broad cache read.
       // Do not resurrect removed workspaces or replace its live workspace cursor.
       const workspaceCursor = this.cursors.workspaces;
-      const workspaces = this.workspaceBaselineAccepted ? new Map() : cached.workspaces;
+      const workspaces = this.workspaceObservation.baselineAccepted ? new Map() : cached.workspaces;
       this.workspaces.commitCached({ ...cached, workspaces });
       if (this.revision === revision) {
         this.cursors = { ...cached.checkpoint };
-        if (this.workspaceBaselineAccepted) {
+        if (this.workspaceObservation.baselineAccepted) {
           delete this.cursors.workspaces;
           if (workspaceCursor) this.cursors.workspaces = workspaceCursor;
         }
@@ -746,14 +728,15 @@ export class DirectorySync {
       return this.refreshWorkspacesInternal({ ...input, loadDirectoryCache: false });
     }
     const includesWorkspaces = !input.reuse || !this.hasCurrentWorkspaceSnapshot();
-    const includesProjects =
-      input.includeProjects &&
-      (!input.reuse || this.hasDemand()) &&
-      (!input.reuse ||
-        !this.projectSnapshotSource ||
-        !this.isCurrent(connection.client, this.projectSnapshotSource));
+    // A reused refresh fetches projects only for UI demand and only when its project list is stale.
+    const projectSource = this.workspaceObservation.projectSnapshotSource;
+    const projectsRequested = input.includeProjects && (!input.reuse || this.hasDemand());
+    const projectSnapshotStale =
+      !input.reuse || !projectSource || !this.isCurrent(connection.client, projectSource);
+    const includesProjects = projectsRequested && projectSnapshotStale;
     if (!includesWorkspaces && !includesProjects) return;
-    if (input.reuse && !this.hasDemand() && this.workspaceObservers.size === 0) return;
+    const unobserved = !this.hasDemand() && !this.workspaceObservation.hasObservers;
+    if (input.reuse && unobserved) return;
     const promise = this.fetchWorkspaceDirectory(input.subscription, {
       includesWorkspaces,
       includesProjects,
@@ -1103,10 +1086,12 @@ export class DirectorySync {
         completion.snapshot.syncModes?.workspaces === "snapshot",
     });
     if (completion.snapshot.includesWorkspaces) {
-      this.workspaceSnapshotSource = source;
-      this.workspaceBaselineAccepted = true;
+      this.workspaceObservation.workspaceSnapshotSource = source;
+      this.workspaceObservation.baselineAccepted = true;
     }
-    if (completion.snapshot.includesProjects) this.projectSnapshotSource = source;
+    if (completion.snapshot.includesProjects) {
+      this.workspaceObservation.projectSnapshotSource = source;
+    }
     this.publishWorkspaceSnapshot();
   }
 
