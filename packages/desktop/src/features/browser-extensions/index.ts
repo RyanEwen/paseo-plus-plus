@@ -1,25 +1,19 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, session } from "electron";
 import log from "electron-log";
 import { installChromeWebStore, uninstallExtension } from "electron-chrome-web-store";
-import { z } from "zod";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
-import { registerBrowserWebviewNavigationGuards } from "../browser-webviews/index.js";
 import { BrowserExtensionCatalog, toLoadedExtension } from "./catalog.js";
 import { registerBrowserExtensionActions } from "./actions.js";
 import { registerBrowserExtensionCompatibility } from "./compatibility.js";
-
-const ExtensionIdSchema = z.string().regex(/^[a-p]{32}$/);
-const PinInputSchema = z.object({ id: ExtensionIdSchema, pinned: z.boolean() });
-const EnableInputSchema = z.object({ id: ExtensionIdSchema, enabled: z.boolean() });
-const STORE_URL = "https://chromewebstore.google.com/";
+import { registerBrowserExtensionSettingsIpc } from "./settings-ipc.js";
+import { createStoreInstallPrompt, createStoreWindowOpener } from "./store-window.js";
 
 /** Install the Store only in the browser session, before any browser guest can navigate. */
 export async function registerBrowserExtensions(): Promise<void> {
   const profile = session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
   const extensionsPath = path.join(app.getPath("userData"), "browser-extensions");
   const managedLoads = new Set<string>();
-  let storeWindow: BrowserWindow | null = null;
 
   const notifyChanged = () => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -95,39 +89,10 @@ export async function registerBrowserExtensions(): Promise<void> {
     // The catalog owns restore and disabled choices. Store updates would bypass those choices.
     loadExtensions: false,
     autoUpdate: false,
-    async beforeInstall(details) {
-      if (startupError) {
-        return { action: "deny" };
-      }
-      if (new URL(details.frame.url).origin !== new URL(STORE_URL).origin) {
-        return { action: "deny" };
-      }
-      const installed = (await catalog.list()).find((entry) => entry.id === details.id);
-      if (installed) {
-        dialog.showErrorBox(
-          "Extension already installed",
-          "Enable or remove this extension in Settings > Browser.",
-        );
-        return { action: "deny" };
-      }
-      const permissions = [
-        ...(details.manifest.permissions ?? []),
-        ...(details.manifest.host_permissions ?? []),
-      ];
-      const options: Electron.MessageBoxOptions = {
-        type: "question",
-        title: "Add extension",
-        message: `Add ${details.localizedName}?`,
-        detail: `Requested permissions:\n${permissions.join("\n") || "None"}\n\nSome Chrome extension features are unsupported in Paseo. Installation does not guarantee compatibility.`,
-        buttons: ["Cancel", "Add extension"],
-        defaultId: 0,
-        cancelId: 0,
-      };
-      const result = details.browserWindow
-        ? await dialog.showMessageBox(details.browserWindow, options)
-        : await dialog.showMessageBox(options);
-      return { action: result.response === 1 ? "allow" : "deny" };
-    },
+    beforeInstall: createStoreInstallPrompt({
+      catalog,
+      isCatalogUnavailable: () => Boolean(startupError),
+    }),
   });
 
   /** Settings APIs belong to app windows, never to remote pages or installed extensions. */
@@ -156,82 +121,17 @@ export async function registerBrowserExtensions(): Promise<void> {
     getBadge: compatibility.getActionBadge,
   });
 
-  ipcMain.handle("paseo:browser:extensions:list", (event) => {
-    assertAppSender(event);
-    return catalog.list();
-  });
-  ipcMain.handle("paseo:browser:extensions:set-pinned", (event, input: unknown) => {
-    assertAppSender(event);
-    const { id, pinned } = PinInputSchema.parse(input);
-    return catalog.setPinned(id, pinned);
-  });
-  ipcMain.handle("paseo:browser:extensions:set-enabled", (event, input: unknown) => {
-    assertAppSender(event);
-    const { id, enabled } = EnableInputSchema.parse(input);
-    return catalog.setEnabled(id, enabled);
-  });
-  ipcMain.handle("paseo:browser:extensions:remove", async (event, input: unknown) => {
-    assertAppSender(event);
-    const id = ExtensionIdSchema.parse(input);
-    await catalog.remove(id);
+  registerBrowserExtensionSettingsIpc({
+    profile,
+    catalog,
+    assertAppSender,
+    loadReadyExtension,
     // Both independent stores must clear even if one cleanup fails.
-    await Promise.all([
-      compatibility.forgetExtensionContextMenus(id),
-      compatibility.forgetExtensionAlarms(id),
-    ]);
-  });
-  ipcMain.handle("paseo:browser:extensions:load-unpacked", async (event) => {
-    const owner = assertAppSender(event);
-    const result = await dialog.showOpenDialog(owner, {
-      title: "Select extension folder",
-      properties: ["openDirectory"],
-    });
-    if (result.canceled || !result.filePaths[0]) {
-      return;
-    }
-    const extensionPath = result.filePaths[0];
-    managedLoads.add(extensionPath);
-    try {
-      const extension = await loadReadyExtension(extensionPath);
-      try {
-        await catalog.remember(toLoadedExtension(extension));
-      } catch (error) {
-        profile.extensions.removeExtension(extension.id);
-        throw error;
-      }
-    } finally {
-      managedLoads.delete(extensionPath);
-    }
-  });
-  ipcMain.handle("paseo:browser:extensions:open-store", async (event) => {
-    assertAppSender(event);
-    if (storeWindow && !storeWindow.isDestroyed()) {
-      storeWindow.show();
-      storeWindow.focus();
-      return;
-    }
-    const window = new BrowserWindow({
-      title: "Chrome Web Store",
-      width: 1100,
-      height: 800,
-      webPreferences: {
-        session: profile,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    storeWindow = window;
-    registerBrowserWebviewNavigationGuards(window.webContents);
-    window.on("closed", () => {
-      storeWindow = null;
-    });
-    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    try {
-      await window.loadURL(STORE_URL);
-    } catch (error) {
-      window.close();
-      throw error;
-    }
+    forgetExtension: (id) =>
+      Promise.all([
+        compatibility.forgetExtensionContextMenus(id),
+        compatibility.forgetExtensionAlarms(id),
+      ]),
+    openStoreWindow: createStoreWindowOpener(profile),
   });
 }
