@@ -96,53 +96,6 @@ export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput
   return true;
 }
 
-interface OwnedBrowserContents extends BrowserWebContentsIdentity {
-  readonly session: object;
-  getType(): string;
-  once(event: "destroyed", listener: () => void): void;
-}
-
-/** Bind a main-created native view to its host and existing browser identity.
- * The native view has no webview hostWebContents relationship. Its creator supplies
- * the actual owner directly; renderer registration cannot claim this path by ID.
- * Invalid owners, profiles and content types are rejected before publication.
- */
-export function registerOwnedPaseoBrowser(input: {
-  browserId: string;
-  workspaceId: string;
-  contents: OwnedBrowserContents;
-  view: { readonly webContents: OwnedBrowserContents };
-  hostContents: BrowserWebContentsIdentity;
-  profileSession: object;
-}): boolean {
-  const { contents, hostContents } = input;
-  if (
-    contents.isDestroyed() ||
-    hostContents.isDestroyed() ||
-    input.view.webContents !== contents ||
-    (contents.getType() !== "window" && contents.getType() !== "browserView") ||
-    contents.session !== input.profileSession
-  ) {
-    return false;
-  }
-
-  browserRegistry.registerWebContents({
-    webContentsId: contents.id,
-    browserId: input.browserId,
-    hostWebContentsId: hostContents.id,
-  });
-  browserRegistry.registerWorkspace({
-    browserId: input.browserId,
-    workspaceId: input.workspaceId,
-  });
-  preparedGuestIds.add(contents.id);
-  contents.once("destroyed", () => {
-    preparedGuestIds.delete(contents.id);
-    browserRegistry.unregisterWebContents(contents.id);
-  });
-  return true;
-}
-
 export function getPaseoBrowserIdForWebContents(
   contents: BrowserWebContentsIdentity | null,
 ): string | null {

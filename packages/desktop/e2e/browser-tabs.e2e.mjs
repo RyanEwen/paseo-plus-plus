@@ -17,7 +17,6 @@ import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron
 import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
 import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
-import { prepareNativePaneRenderer, runNativePaneRegression } from "./native-pane.electron.mjs";
 import {
   seedBrowserExtensions,
   runBrowserExtensionsRegression,
@@ -36,7 +35,6 @@ const workspaceIds = [
   "desktop-browser-evict-three",
 ];
 const timeoutMs = 90_000;
-const nativePaneOnly = process.env.PASEO_DESKTOP_NATIVE_PANE_ONLY === "1";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -207,18 +205,6 @@ function spawnLogged(name, command, args, options, logDir) {
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (nativePaneOnly && child.pid) {
-    const birthsPath = path.join(logDir, "owned-process-births.jsonl");
-    fs.appendFileSync(
-      birthsPath,
-      JSON.stringify({
-        name,
-        pid: child.pid,
-        birthStat:
-          process.platform === "linux" ? fs.readFileSync(`/proc/${child.pid}/stat`, "utf8") : null,
-      }) + "\n",
-    );
-  }
   let openStreams = 2;
   const closeLogStream = () => {
     openStreams -= 1;
@@ -276,11 +262,7 @@ async function waitForDesktopStatus(page) {
 }
 
 /** Keep cold compilation admission separate from the existing rendered UI assertion. */
-async function waitForRendererReady(page, expoPort, artifactDir) {
-  if (nativePaneOnly) {
-    await prepareNativePaneRenderer({ page, expoPort, artifactDir, timeoutMs });
-    return;
-  }
+async function waitForRendererReady(page) {
   await page
     .getByRole("button", { name: "Settings", exact: true })
     .waitFor({ state: "visible", timeout: timeoutMs });
@@ -288,13 +270,6 @@ async function waitForRendererReady(page, expoPort, artifactDir) {
 
 async function startTargetPage() {
   const server = createServer((_request, response) => {
-    if (nativePaneOnly) {
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      response.end(
-        `<!doctype html><head><title>Native target ${_request.url}</title><style>html,body{margin:0;background:rgb(34,153,102)}#top,#bottom{position:fixed;left:0;right:0;height:32px}#top{top:0}#bottom{bottom:0}#typing-target{position:fixed;left:calc(50% - 120px);top:calc(50% - 20px);width:240px}</style></head><body><div id=top></div><input id=typing-target aria-label="Typing target"><div id=bottom></div></body>`,
-      );
-      return;
-    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(`<!doctype html>
       <html>
@@ -1360,19 +1335,6 @@ async function runRegression({
   };
 }
 
-/** Reuse an explicitly authenticated fixture display; ordinary runs keep their existing Xvfb wrapper. */
-function desktopLaunchCommand(desktopArgs) {
-  const useOwnPrivateDisplay =
-    nativePaneOnly && process.env.PASEO_BROWSER_FIXTURE_PRIVATE_DISPLAY === "1";
-  const desktopCommand =
-    process.platform === "linux" && !useOwnPrivateDisplay ? "xvfb-run" : desktopArgs.shift();
-  const desktopCommandArgs =
-    process.platform === "linux" && !useOwnPrivateDisplay
-      ? ["-a", "--server-args=-screen 0 1280x800x24", ...desktopArgs]
-      : desktopArgs;
-  return { desktopCommand, desktopCommandArgs };
-}
-
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
@@ -1401,10 +1363,6 @@ async function main() {
   let browser = null;
   let client = null;
   let appPage = null;
-  const stopOwned = () => {
-    for (const child of children.toReversed()) stopProcess(child);
-  };
-  if (nativePaneOnly) process.once("SIGTERM", stopOwned);
 
   try {
     // Observe the real Electron shell handoff without launching a user's browser.
@@ -1430,17 +1388,7 @@ async function main() {
       PASEO_VOICE_MODE_ENABLED: "0",
       FORCE_COLOR: "0",
       NO_COLOR: "1",
-      ...(nativePaneOnly
-        ? {
-            PASEO_METRO_CACHE_ROOT: path.join(runtimeDir, "metro-cache"),
-            PASEO_METRO_MAX_WORKERS: "1",
-            TMPDIR: path.join(runtimeDir, "tmp"),
-            XDG_CACHE_HOME: path.join(runtimeDir, "xdg-cache"),
-            XDG_CONFIG_HOME: path.join(runtimeDir, "xdg-config"),
-          }
-        : {}),
     };
-    if (nativePaneOnly) fs.mkdirSync(commonEnv.TMPDIR, { recursive: true });
     const runtimeContext = {
       runtimeDir,
       daemonPort,
@@ -1448,8 +1396,6 @@ async function main() {
       cdpPort: null,
       inspectorPort,
       targetUrl: target.url,
-      privateDisplay: process.env.DISPLAY,
-      nativePaneOnly,
     };
     writeJson(path.join(artifactDir, "runtime-context.json"), runtimeContext);
     const daemon = spawnLogged(
@@ -1462,26 +1408,24 @@ async function main() {
     children.push(daemon.child);
     await waitForPort(daemonPort, "daemon", daemon);
 
-    if (!nativePaneOnly) {
-      const remoteDaemon = spawnLogged(
-        "remote-daemon",
-        process.execPath,
-        ["--import", "tsx", path.join(rootDir, "packages/server/scripts/dev-runner.ts")],
-        {
-          cwd: rootDir,
-          env: {
-            ...commonEnv,
-            PASEO_HOME: remoteHome,
-            PASEO_LISTEN: `127.0.0.1:${remotePort}`,
-            PASEO_SERVER_ID: "plugin-links-remote",
-            PASEO_NODE_ENV: "development",
-          },
+    const remoteDaemon = spawnLogged(
+      "remote-daemon",
+      process.execPath,
+      ["--import", "tsx", path.join(rootDir, "packages/server/scripts/dev-runner.ts")],
+      {
+        cwd: rootDir,
+        env: {
+          ...commonEnv,
+          PASEO_HOME: remoteHome,
+          PASEO_LISTEN: `127.0.0.1:${remotePort}`,
+          PASEO_SERVER_ID: "plugin-links-remote",
+          PASEO_NODE_ENV: "development",
         },
-        artifactDir,
-      );
-      children.push(remoteDaemon.child);
-      await waitForPort(remotePort, "remote daemon", remoteDaemon);
-    }
+      },
+      artifactDir,
+    );
+    children.push(remoteDaemon.child);
+    await waitForPort(remotePort, "remote daemon", remoteDaemon);
 
     const desktopArgs = [
       process.execPath,
@@ -1489,7 +1433,11 @@ async function main() {
       `--inspect=127.0.0.1:${inspectorPort}`,
       ...(process.platform === "linux" ? ["--no-sandbox"] : []),
     ];
-    const { desktopCommand, desktopCommandArgs } = desktopLaunchCommand(desktopArgs);
+    const desktopCommand = process.platform === "linux" ? "xvfb-run" : desktopArgs.shift();
+    const desktopCommandArgs =
+      process.platform === "linux"
+        ? ["-a", "--server-args=-screen 0 1280x800x24", ...desktopArgs]
+        : desktopArgs;
     const desktop = spawnLogged(
       "desktop",
       desktopCommand,
@@ -1521,34 +1469,8 @@ async function main() {
     );
     await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
-    await waitForRendererReady(page, expoPort, artifactDir);
+    await waitForRendererReady(page);
 
-    if (nativePaneOnly) {
-      const callerAgentId = await createCallerAgent(daemonPort);
-      const transport = new StreamableHTTPClientTransport(
-        new URL(
-          `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
-        ),
-      );
-      client = await experimental_createMCPClient({ transport });
-      const report = await runNativePaneRegression({
-        page,
-        client,
-        serverId: status.serverId,
-        targetUrl: target.url,
-        workspaceIds,
-        artifactDir,
-        inspectorPort,
-        inspectWindowPresentation,
-        callBrowserTool,
-        assert,
-        rootDir,
-        timeoutMs,
-      });
-      writeJson(path.join(artifactDir, "native-pane-report.json"), report);
-      console.log("Actual native React browser pane journey passed.");
-      return;
-    }
     const checkPluginLinks = () =>
       runPluginLinksRegression({
         page,
@@ -1647,8 +1569,7 @@ async function main() {
   } finally {
     await client?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
-    stopOwned();
-    if (nativePaneOnly) process.removeListener("SIGTERM", stopOwned);
+    for (const child of children.toReversed()) stopProcess(child);
     target.server.closeAllConnections();
     await closeServer(target.server);
     await delay(1_000);
@@ -1670,8 +1591,8 @@ async function resizeDesktopWindow(inspectorPort, { width, height }) {
 }
 
 async function prepareTargetFixtures(userData, paseoHome) {
-  const extensionFixtures = nativePaneOnly ? null : seedBrowserExtensions(userData);
+  const extensionFixtures = seedBrowserExtensions(userData);
   const target = await startTargetPage();
-  if (!nativePaneOnly) seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
   return { extensionFixtures, target };
 }

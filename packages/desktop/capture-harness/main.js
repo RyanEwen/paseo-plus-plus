@@ -51,7 +51,6 @@ const FRESH_REPEAT_COUNT = 3;
 const SOAK_MS = Number(process.env.PASEO_CAPTURE_HARNESS_SOAK_MS || 75000);
 const HARNESS_GROUP = process.env.PASEO_CAPTURE_HARNESS_GROUP || "permanent-parking";
 const BROWSER_PROFILE_PHASE = process.env.PASEO_CAPTURE_HARNESS_PHASE || "";
-const NATIVE_BROWSER_BACKEND = process.env.PASEO_CAPTURE_HARNESS_BROWSER_BACKEND === "native";
 const BROWSER_PROFILE_ORIGIN_FILE = path.join(OUT_DIR, "browser-profile-origin.txt");
 const BROWSER_PROFILE_VALUE_FILE = path.join(OUT_DIR, "browser-profile-value.txt");
 const PERMANENT_STATE_FILTER = new Set(
@@ -187,15 +186,6 @@ async function startBrowserProfileServer() {
   const origin = `http://127.0.0.1:${address.port}`;
   if (BROWSER_PROFILE_PHASE === "write") {
     await fsp.writeFile(BROWSER_PROFILE_ORIGIN_FILE, `${origin}\n`);
-  }
-  if (NATIVE_BROWSER_BACKEND) {
-    require("./native-view-fixture.js")
-      .createNativeFixtureDiagnostics(OUT_DIR)
-      .record("browser-profile:server", "listening", {
-        phase: BROWSER_PROFILE_PHASE,
-        origin,
-        port: address.port,
-      });
   }
   return { origin, server };
 }
@@ -2815,43 +2805,7 @@ function assertAutomationSnapshot(snapshot) {
   }
 }
 
-async function createBrowserProfileHarnessWindow(partition, sourceUrl, nativeOptions = {}) {
-  if (NATIVE_BROWSER_BACKEND) {
-    if (process.env.PASEO_BROWSER_FIXTURE_PRIVATE_DISPLAY !== "1") {
-      fail("native profile fixtures require an authenticated private display");
-    }
-    const handle = createInactiveHarnessWindow({
-      width: 640,
-      height: 480,
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-    });
-    try {
-      await withTimeout(
-        handle.win.loadURL("data:text/html,<title>Owned native profile host</title>"),
-        "native browser profile host load",
-      );
-      await waitForInactiveReveal(handle, "native browser profile host");
-      const { createNativeBrowserProfileFixture } = require("./native-view-fixture.js");
-      const fixture = await withTimeout(
-        createNativeBrowserProfileFixture(
-          handle.win,
-          session.fromPartition(partition),
-          sourceUrl,
-          nativeOptions,
-        ),
-        "native browser profile creation",
-        BROWSER_PROFILE_TIMEOUT_MS,
-      );
-      return {
-        handle,
-        ...fixture,
-        expectedBrowserIds: nativeOptions.browserIds ?? ["browser-first", "browser-second"],
-      };
-    } catch (error) {
-      await closeHarnessWindow(handle.win);
-      throw error;
-    }
-  }
+async function createBrowserProfileHarnessWindow(partition, sourceUrl) {
   const handle = createInactiveHarnessWindow({
     width: 640,
     height: 480,
@@ -2913,17 +2867,13 @@ function resolveBrowserProfileGuests(profileWindow, profileSession) {
   }
   const guestsById = new Map(profileWindow.guests.map((guest) => [guest.id, guest]));
   const [firstIdentity, secondIdentity] = profileWindow.identities;
-  const expectedBrowserIds = profileWindow.expectedBrowserIds ?? [
-    "browser-first",
-    "browser-second",
-  ];
   const firstGuest = guestsById.get(firstIdentity.webContentsId);
   const secondGuest = guestsById.get(secondIdentity.webContentsId);
   if (!firstGuest || !secondGuest) {
     fail("browser profile renderer identities did not map to attached main-process guests");
   }
   if (
-    firstIdentity.browserId !== expectedBrowserIds[0] ||
+    firstIdentity.browserId !== "browser-first" ||
     firstIdentity.webContentsId !== firstGuest.id
   ) {
     fail(
@@ -2931,17 +2881,14 @@ function resolveBrowserProfileGuests(profileWindow, profileSession) {
     );
   }
   if (
-    secondIdentity.browserId !== expectedBrowserIds[1] ||
+    secondIdentity.browserId !== "browser-second" ||
     secondIdentity.webContentsId !== secondGuest.id
   ) {
     fail(
       `browser profile second attach mismatch ${JSON.stringify(secondIdentity)} main=${secondGuest.id}`,
     );
   }
-  if (profileWindow.nativeOwner) {
-    const { assertNativeBrowserProfileIdentity } = require("./native-view-fixture.js");
-    assertNativeBrowserProfileIdentity(profileWindow, profileSession);
-  } else if (
+  if (
     firstGuest.hostWebContents !== profileWindow.handle.win.webContents ||
     secondGuest.hostWebContents !== profileWindow.handle.win.webContents
   ) {
@@ -3261,11 +3208,10 @@ async function assertBrowserExtensionTabEvents({
     extraFixture = await createBrowserProfileHarnessWindow(
       "persist:paseo-browser-profile-harness-restart",
       firstGuest.getURL(),
-      { browserIds: ["tab-event-0", "tab-event-1"], workspaceId: "tab-event-workspace" },
     );
     const extraOwner = extraFixture.handle.win;
     const extraGuests = resolveBrowserProfileGuests(extraFixture, profile);
-    for (const [index, guest] of NATIVE_BROWSER_BACKEND ? [] : extraGuests.entries()) {
+    for (const [index, guest] of extraGuests.entries()) {
       if (
         !browserWebviews.registerAttachedPaseoBrowser({
           browserId: `tab-event-${index}`,
@@ -3353,7 +3299,6 @@ async function assertBrowserExtensionContextMenus({
   runtime,
   guest,
   extension,
-  nativeOwner,
 }) {
   const { openBrowserExtensionPopup } = require("../dist/features/browser-extensions/actions.js");
   const {
@@ -3380,28 +3325,16 @@ async function assertBrowserExtensionContextMenus({
         `context menu registration did not preserve Chrome create semantics: ${JSON.stringify(registration)}`,
       );
     }
-    let params;
-    if (nativeOwner) {
-      const { requestPresentedNativeContextMenu } = require("./native-input-fixture.js");
-      params = await requestPresentedNativeContextMenu({
-        nativeOwner,
-        host: owner,
-        guest,
-        profile,
-        outDir: OUT_DIR,
-      });
-    } else {
-      const requested = new Promise((resolve) =>
-        guest.once("context-menu", (_event, requestedParams) => resolve(requestedParams)),
-      );
-      guest.sendInputEvent({ type: "mouseDown", button: "right", x: 20, y: 20, clickCount: 1 });
-      guest.sendInputEvent({ type: "mouseUp", button: "right", x: 20, y: 20, clickCount: 1 });
-      params = await withTimeout(
-        requested,
-        "native browser context menu",
-        BROWSER_PROFILE_TIMEOUT_MS,
-      );
-    }
+    const requested = new Promise((resolve) =>
+      guest.once("context-menu", (_event, requestedParams) => resolve(requestedParams)),
+    );
+    guest.sendInputEvent({ type: "mouseDown", button: "right", x: 20, y: 20, clickCount: 1 });
+    guest.sendInputEvent({ type: "mouseUp", button: "right", x: 20, y: 20, clickCount: 1 });
+    const params = await withTimeout(
+      requested,
+      "native browser context menu",
+      BROWSER_PROFILE_TIMEOUT_MS,
+    );
     const items = buildBrowserExtensionContextMenuItems(guest, params);
     if (items.length !== 1 || items[0].label !== "Fixture parent") {
       fail("the real browser right-click menu did not include the registered extension action");
@@ -3608,7 +3541,7 @@ async function assertBrowserExtensionEarlyRegistration({ profile, popup, sourceU
         `chrome.storage.local.get(${JSON.stringify(key)})`,
       );
       if (values[key]?.started) {
-        if (!NATIVE_BROWSER_BACKEND && values[key].tab) {
+        if (values[key].tab) {
           fail(
             "document-start tab lookup resolved before the actual renderer identity was assigned",
           );
@@ -3621,59 +3554,45 @@ async function assertBrowserExtensionEarlyRegistration({ profile, popup, sourceU
     if (!started) {
       fail("the document-start content script did not issue its native sender tab lookup");
     }
-    if (NATIVE_BROWSER_BACKEND) {
-      const { assertNativeDocumentStartTab } = require("./native-view-fixture.js");
-      await assertNativeDocumentStartTab({
-        popup,
-        guest: first,
-        host: owner,
-        profile,
+    for (const [guest, browserId] of [
+      [first, "browser-first"],
+      [second, "browser-second"],
+    ]) {
+      const registered = browserWebviews.registerAttachedPaseoBrowser({
+        browserId,
         workspaceId: "early-registration-workspace",
-        outDir: OUT_DIR,
+        webContentsId: guest.id,
+        sender: owner.webContents,
+        profileSession: profile,
+        findWebContents: (id) => require("electron").webContents.fromId(id),
       });
-    } else {
-      for (const [guest, browserId] of [
-        [first, "browser-first"],
-        [second, "browser-second"],
-      ]) {
-        const registered = browserWebviews.registerAttachedPaseoBrowser({
-          browserId,
-          workspaceId: "early-registration-workspace",
-          webContentsId: guest.id,
-          sender: owner.webContents,
-          profileSession: profile,
-          findWebContents: (id) => require("electron").webContents.fromId(id),
-        });
-        if (!registered) {
-          fail("document-start fixture could not bind its actual browser identity");
-        }
-      }
-      browserWebviews.setWorkspaceActivePaseoBrowserId({
-        hostWebContentsId: owner.webContents.id,
-        workspaceId: "early-registration-workspace",
-        browserId: "browser-first",
-      });
-      const lookupDeadline = Date.now() + BROWSER_PROFILE_TIMEOUT_MS;
-      let resolved = false;
-      while (Date.now() < lookupDeadline) {
-        const values = await popup.webContents.executeJavaScript(
-          `chrome.storage.local.get(${JSON.stringify(key)})`,
-        );
-        if (values[key]?.tab) {
-          assertBrowserTabIdentity(values[key].tab, first, owner);
-          resolved = true;
-          break;
-        }
-        await delay(20);
-      }
-      if (!resolved) {
-        fail("document-start tab lookup did not resume when its actual renderer identity arrived");
+      if (!registered) {
+        fail("document-start fixture could not bind its actual browser identity");
       }
     }
+    browserWebviews.setWorkspaceActivePaseoBrowserId({
+      hostWebContentsId: owner.webContents.id,
+      workspaceId: "early-registration-workspace",
+      browserId: "browser-first",
+    });
+    const lookupDeadline = Date.now() + BROWSER_PROFILE_TIMEOUT_MS;
+    let resolved = false;
+    while (Date.now() < lookupDeadline) {
+      const values = await popup.webContents.executeJavaScript(
+        `chrome.storage.local.get(${JSON.stringify(key)})`,
+      );
+      if (values[key]?.tab) {
+        assertBrowserTabIdentity(values[key].tab, first, owner);
+        resolved = true;
+        break;
+      }
+      await delay(20);
+    }
+    if (!resolved) {
+      fail("document-start tab lookup did not resume when its actual renderer identity arrived");
+    }
     pass(
-      NATIVE_BROWSER_BACKEND
-        ? "document-start content sender receives its main-owned identity without renderer reassignment"
-        : "document-start native content sender waits for real browser identity and receives its actual app window",
+      "document-start native content sender waits for real browser identity and receives its actual app window",
     );
   } finally {
     browserWebviews.unregisterPaseoBrowserHost(owner.webContents.id);
@@ -3698,15 +3617,12 @@ async function assertBrowserExtensionCompatibility(
   runtime,
   firstGuest,
   secondGuest,
-  nativeOwner,
 ) {
   const browserWebviews = require("../dist/features/browser-webviews/index.js");
-  for (const [guest, browserId] of NATIVE_BROWSER_BACKEND
-    ? []
-    : [
-        [firstGuest, "browser-first"],
-        [secondGuest, "browser-second"],
-      ]) {
+  for (const [guest, browserId] of [
+    [firstGuest, "browser-first"],
+    [secondGuest, "browser-second"],
+  ]) {
     browserWebviews.preparePaseoBrowserWebContents(guest);
     const registered = browserWebviews.registerAttachedPaseoBrowser({
       browserId,
@@ -3850,7 +3766,6 @@ async function assertBrowserExtensionCompatibility(
       runtime,
       guest: firstGuest,
       extension,
-      nativeOwner,
     });
   } finally {
     if (popup) {
@@ -3903,29 +3818,6 @@ async function runBrowserProfileGroup() {
     const profileWindow = await createBrowserProfileHarnessWindow(partition, fixture.origin);
     windows.push(profileWindow.handle);
     const [firstGuest, secondGuest] = resolveBrowserProfileGuests(profileWindow, profileSession);
-    if (NATIVE_BROWSER_BACKEND) {
-      await fsp.writeFile(
-        path.join(OUT_DIR, `browser-profile-native-${BROWSER_PROFILE_PHASE}.json`),
-        `${JSON.stringify(
-          {
-            backend: profileWindow.backend,
-            phase: BROWSER_PROFILE_PHASE,
-            userDataPath: app.getPath("userData"),
-            hostWindowId: profileWindow.handle.win.id,
-            hostContentsId: profileWindow.handle.win.webContents.id,
-            identities: profileWindow.identities,
-            guests: profileWindow.guests.map((guest) => ({
-              contentsId: guest.id,
-              type: guest.getType(),
-              profileMatches: guest.session === profileSession,
-              ownerWindowId: BrowserWindow.fromWebContents(guest)?.id,
-            })),
-          },
-          null,
-          2,
-        )}\n`,
-      );
-    }
     await Promise.all([waitForGuestLoad(firstGuest), waitForGuestLoad(secondGuest)]);
     const extensionMarker = "document.documentElement.dataset.paseoExtensionFixture ?? null";
     for (const guest of [firstGuest, secondGuest]) {
@@ -3963,7 +3855,6 @@ async function runBrowserProfileGroup() {
       compatibility,
       firstGuest,
       secondGuest,
-      profileWindow.nativeOwner,
     );
 
     if (BROWSER_PROFILE_PHASE === "write") {
@@ -3984,22 +3875,14 @@ async function runBrowserProfileGroup() {
     assertBrowserProfileFixture(firstState, profileValue, "browser profile first tab");
     assertBrowserProfileFixture(secondState, profileValue, "browser profile second tab");
 
-    pass(
-      NATIVE_BROWSER_BACKEND
-        ? "browser profile native identities match their trusted main creator"
-        : "browser profile renderer dom-ready identities match their main-process guests",
-    );
+    pass("browser profile renderer dom-ready identities match their main-process guests");
     pass("browser profile tabs share cookies, localStorage, and one persistent session");
     if (BROWSER_PROFILE_PHASE === "read") {
       pass("browser profile cookies and localStorage survived an Electron process restart");
     }
     const results = [
       { group: "browser-profile", check: "store-install-notification", pass: true },
-      {
-        group: "browser-profile",
-        check: NATIVE_BROWSER_BACKEND ? "trusted-main-created-identity" : "renderer-main-identity",
-        pass: true,
-      },
+      { group: "browser-profile", check: "renderer-main-identity", pass: true },
       { group: "browser-profile", check: "shared-profile-data", pass: true },
       { group: "browser-profile", check: "extension-content-scripts", pass: true },
       { group: "browser-profile", check: "extension-enable-disable", pass: true },
@@ -4030,43 +3913,7 @@ async function runBrowserProfileGroup() {
       await profileSession.clearCache();
     }
     await closeServer(fixture.server);
-    if (NATIVE_BROWSER_BACKEND) {
-      require("./native-view-fixture.js")
-        .createNativeFixtureDiagnostics(OUT_DIR)
-        .record("browser-profile:server", "closed", {
-          phase: BROWSER_PROFILE_PHASE,
-          origin: fixture.origin,
-          port: Number(new URL(fixture.origin).port),
-        });
-    }
   }
-}
-
-/** Keep restart-phase receipts and native deadlines with the existing profile journey. */
-async function runBrowserProfileHarness() {
-  const browserProfileResults = NATIVE_BROWSER_BACKEND
-    ? await require("./native-view-fixture.js")
-        .createNativeFixtureDiagnostics(OUT_DIR)
-        .step(
-          `browser-profile:${BROWSER_PROFILE_PHASE}`,
-          runBrowserProfileGroup,
-          BROWSER_PROFILE_PHASE === "write" ? 180000 : 60000,
-        )
-    : await runBrowserProfileGroup();
-  const result = `${JSON.stringify(
-    {
-      generatedAt: new Date().toISOString(),
-      browserBackend: NATIVE_BROWSER_BACKEND ? "production-native-owner" : "webview",
-      browserProfileResults,
-    },
-    null,
-    2,
-  )}\n`;
-  await fsp.writeFile(path.join(OUT_DIR, "results.json"), result);
-  if (NATIVE_BROWSER_BACKEND) {
-    await fsp.writeFile(path.join(OUT_DIR, `results-${BROWSER_PROFILE_PHASE}.json`), result);
-  }
-  pass(`capture harness browser-profile complete output=${OUT_DIR}`);
 }
 
 async function main() {
@@ -4092,29 +3939,21 @@ async function main() {
   }
 
   if (HARNESS_GROUP === "browser-profile") {
-    await runBrowserProfileHarness();
+    const browserProfileResults = await runBrowserProfileGroup();
+    await fsp.writeFile(
+      path.join(OUT_DIR, "results.json"),
+      `${JSON.stringify(
+        { generatedAt: new Date().toISOString(), browserProfileResults },
+        null,
+        2,
+      )}\n`,
+    );
+    pass(`capture harness browser-profile complete output=${OUT_DIR}`);
     return;
   }
 
   if (HARNESS_GROUP === "automation") {
-    let automationResults;
-    if (process.env.PASEO_CAPTURE_HARNESS_BROWSER_BACKEND !== "native") {
-      automationResults = await runAutomationGroup();
-    } else if (
-      ["parent-clip", "parent-clip-host-zoom"].includes(
-        process.env.PASEO_CAPTURE_HARNESS_NATIVE_GATE,
-      )
-    ) {
-      automationResults =
-        await require("./native-parent-clip-fixture.js").runNativeParentClipFixture(OUT_DIR, {
-          hostZoom:
-            process.env.PASEO_CAPTURE_HARNESS_NATIVE_GATE === "parent-clip-host-zoom" ? 1.25 : 1,
-        });
-    } else {
-      automationResults = await require("./native-view-fixture.js").runNativeViewFixture(OUT_DIR, {
-        gate: process.env.PASEO_CAPTURE_HARNESS_NATIVE_GATE ?? "hidden",
-      });
-    }
+    const automationResults = await runAutomationGroup();
     await fsp.writeFile(
       path.join(OUT_DIR, "results.json"),
       `${JSON.stringify(

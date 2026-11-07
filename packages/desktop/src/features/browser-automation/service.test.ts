@@ -1,12 +1,6 @@
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { resolve as resolvePath } from "node:path";
-import { PassThrough } from "node:stream";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { runInNewContext } from "node:vm";
-import { CdpPipe } from "../browser-engine/cdp-pipe.js";
-import { ChromiumProcess } from "../browser-engine/process.js";
 
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -41,103 +35,6 @@ const BROWSER_A = "11111111-1111-4111-8111-111111111111";
 const BROWSER_B = "22222222-2222-4222-8222-222222222222";
 const WORKSPACE_A = "workspace-a";
 const WORKSPACE_B = "workspace-b";
-
-describe("Chromium private command transport", () => {
-  test("releases a failed process launch without deleting existing profile data", async () => {
-    const profile = await mkdtemp(join(tmpdir(), "paseo-chromium-failed-launch-"));
-    try {
-      await writeFile(join(profile, "retained-data"), "existing cookies and site data");
-      await expect(
-        ChromiumProcess.launch({
-          executablePath: join(profile, "missing-browser"),
-          profilePath: profile,
-          headless: true,
-        }),
-      ).rejects.toThrow("ENOENT");
-      await expect(stat(join(profile, ".paseo-owner"))).rejects.toMatchObject({ code: "ENOENT" });
-      expect(await readFile(join(profile, "retained-data"), "utf8")).toBe(
-        "existing cookies and site data",
-      );
-    } finally {
-      await rm(profile, { recursive: true, force: true });
-    }
-  });
-
-  test("routes overlapping session replies and preserves split UTF-8 events", async () => {
-    const commands = new PassThrough();
-    const replies = new PassThrough();
-    const pipe = new CdpPipe(commands, replies);
-    const published: string[] = [];
-    commands.on("data", (bytes) => published.push(bytes.toString()));
-    const events: unknown[] = [];
-    pipe.on("event", (event) => events.push(event));
-    try {
-      const first = pipe.send("Runtime.evaluate", {}, { sessionId: "tab-a" });
-      const second = pipe.send("Page.captureScreenshot", {}, { sessionId: "tab-b" });
-      expect(published.map((value) => JSON.parse(value.slice(0, -1)))).toEqual([
-        { id: 1, method: "Runtime.evaluate", params: {}, sessionId: "tab-a" },
-        { id: 2, method: "Page.captureScreenshot", params: {}, sessionId: "tab-b" },
-      ]);
-      const message = Buffer.from(
-        JSON.stringify({ method: "Page.title", params: { title: "café" }, sessionId: "tab-b" }) +
-          '\0{"id":2,"result":{"data":"pixels"}}\0{"id":1,"result":{"value":7}}\0',
-      );
-      const split = message.indexOf(Buffer.from("é")) + 1;
-      replies.write(message.subarray(0, split));
-      replies.write(message.subarray(split));
-      expect(await first).toEqual({ value: 7 });
-      expect(await second).toEqual({ data: "pixels" });
-      expect(events).toEqual([
-        { method: "Page.title", params: { title: "café" }, sessionId: "tab-b" },
-      ]);
-    } finally {
-      pipe.close();
-    }
-  });
-
-  test("does not publish pre-cancelled input or replay input after cancellation", async () => {
-    const commands = new PassThrough();
-    const replies = new PassThrough();
-    const pipe = new CdpPipe(commands, replies);
-    const published: string[] = [];
-    commands.on("data", (bytes) => published.push(bytes.toString()));
-    const before = AbortSignal.abort(new Error("cancelled before publish"));
-    try {
-      await expect(
-        pipe.send("Input.insertText", { text: "no" }, { signal: before }),
-      ).rejects.toThrow("cancelled before publish");
-      expect(published).toEqual([]);
-      const controller = new AbortController();
-      const input = pipe.send("Input.insertText", { text: "once" }, { signal: controller.signal });
-      const rejected = expect(input).rejects.toThrow("cancelled after publish");
-      controller.abort(new Error("cancelled after publish"));
-      await rejected;
-      replies.write('{"id":1,"result":{}}\0');
-      expect(published).toHaveLength(1);
-      const read = pipe.send("Browser.getVersion");
-      replies.write('{"id":2,"result":{"product":"Chromium"}}\0');
-      expect(await read).toEqual({ product: "Chromium" });
-    } finally {
-      pipe.close();
-    }
-  });
-
-  test("rejects outstanding commands on broken framing and releases listeners", async () => {
-    const commands = new PassThrough();
-    const replies = new PassThrough();
-    const pipe = new CdpPipe(commands, replies);
-    const waiting = pipe.send("Page.captureScreenshot");
-    const rejected = expect(waiting).rejects.toThrow();
-    replies.write("broken-json\0");
-    await rejected;
-    await expect(pipe.send("Browser.getVersion")).rejects.toThrow();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(replies.listenerCount("data")).toBe(0);
-    expect(replies.listenerCount("end")).toBe(0);
-    expect(commands.listenerCount("error")).toBe(0);
-    pipe.close();
-  });
-});
 
 class FakeImage implements TabImage {
   public constructor(

@@ -146,68 +146,7 @@ export interface DesktopAttachedBrowserRegistration {
   webContentsId: number;
 }
 
-export interface DesktopNativeBrowserState {
-  browserId: string;
-  workspaceId: string;
-  webContentsId: number;
-  url: string;
-  title: string;
-  faviconUrl: string | null;
-  isLoading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  visible: boolean;
-  /** Observed page zoom / host UI zoom; never a command to change either. */
-  presentationScale: number;
-  focused: boolean;
-  lastError: string | null;
-}
-export interface DesktopNativeBrowserOverlayTarget {
-  browserId: string;
-  webContentsId: number;
-  revision: number;
-}
-export interface DesktopNativeBrowserOverlayFrame extends DesktopNativeBrowserOverlayTarget {
-  bounds: { x: number; y: number; width: number; height: number };
-  dataUrl: string;
-}
-export interface DesktopNativeBrowserBridge {
-  prepareOverlay(token: string): Promise<DesktopNativeBrowserOverlayTarget[]>;
-  commitOverlay(input: {
-    token: string;
-    frames: DesktopNativeBrowserOverlayTarget[];
-  }): Promise<boolean>;
-  captureOverlay(
-    input: DesktopNativeBrowserOverlayTarget & { token: string },
-  ): Promise<DesktopNativeBrowserOverlayFrame | null>;
-  endOverlay(token: string): Promise<void>;
-  create(input: {
-    browserId: string;
-    workspaceId: string;
-    url: string;
-  }): Promise<DesktopNativeBrowserState>;
-  present(input: {
-    browserId: string;
-    webContentsId: number;
-    visible: boolean;
-    viewportMode: "fixed" | "responsive";
-    bounds: { x: number; y: number; width: number; height: number };
-    clip?: { x: number; y: number; width: number; height: number };
-  }): Promise<DesktopNativeBrowserState>;
-  navigate(browserId: string, webContentsId: number, url: string): Promise<void>;
-  executeScript(browserId: string, webContentsId: number, code: string): Promise<unknown>;
-  control(
-    browserId: string,
-    webContentsId: number,
-    command: "back" | "forward" | "reload" | "stop",
-  ): Promise<DesktopNativeBrowserState>;
-  state(browserId: string, webContentsId: number): Promise<DesktopNativeBrowserState>;
-  focus(browserId: string, webContentsId: number): Promise<boolean>;
-  close(browserId: string, webContentsId: number): Promise<void>;
-}
-
 export interface DesktopBrowserBridge {
-  views?: DesktopNativeBrowserBridge;
   extensions?: {
     list(): Promise<DesktopBrowserExtension[]>;
     actions(browserId: string): Promise<DesktopBrowserExtensionAction[]>;
