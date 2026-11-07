@@ -2,7 +2,11 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 
-/** Ignore activity-only agent updates while detecting authoritative topology and directory changes. */
+/**
+ * Ignore activity-only agent updates while detecting authoritative topology and directory changes.
+ * Status changes rebuild the derived activity index without moving a row in Project view, and a
+ * Status view regroup already changes the projection revision, so the index is not compared.
+ */
 function sameFamilySession(
   previous: SessionState | undefined,
   next: SessionState | undefined,
@@ -12,7 +16,6 @@ function sameFamilySession(
   if (
     previous.workspaces !== next.workspaces ||
     previous.projects !== next.projects ||
-    previous.workspaceAgentActivity !== next.workspaceAgentActivity ||
     previous.hasHydratedAgents !== next.hasHydratedAgents ||
     previous.hasHydratedWorkspaces !== next.hasHydratedWorkspaces ||
     previous.hasWorkspaceDirectorySnapshot !== next.hasWorkspaceDirectorySnapshot

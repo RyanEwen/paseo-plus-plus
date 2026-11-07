@@ -70,6 +70,22 @@ describe("workspace family drag tracker", () => {
     expect(tracker.getSnapshot()).toBe(before);
   });
 
+  it("keeps its generation when an agent's status changes", () => {
+    const tracker = createFamilyDragTracker([SERVER_ID]);
+    const before = tracker.getSnapshot();
+    const activity = useSessionStore.getState().sessions[SERVER_ID]!.workspaceAgentActivity;
+    replaceAgent({
+      ...agent("child", "parent"),
+      status: "running",
+      turn: { phase: "open", turnId: "turn-1", startedAt: null, cancellationRequestId: null },
+    });
+    // The derived activity index really changed, so only the tracker's rule can keep the drop.
+    expect(useSessionStore.getState().sessions[SERVER_ID]!.workspaceAgentActivity).not.toBe(
+      activity,
+    );
+    expect(tracker.getSnapshot()).toBe(before);
+  });
+
   it("advances when an agent's parent changes", () => {
     const tracker = createFamilyDragTracker([SERVER_ID]);
     const before = tracker.getSnapshot();
