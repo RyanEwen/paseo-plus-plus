@@ -70,6 +70,10 @@ test.afterAll(async () => {
 // Tab Creation Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+function isTerminalTab(id: string): boolean {
+  return id.includes("terminal");
+}
+
 test.describe("Tab creation", () => {
   test("Cmd+T keeps creating a New tab after workspace switches", async ({ page }) => {
     if (!secondWorkspaceId) {
@@ -222,7 +226,7 @@ test.describe("Tab creation", () => {
     await expectTerminalSurfaceVisible(page);
 
     await expect
-      .poll(async () => (await getTabTestIds(page)).filter((id) => id.includes("terminal")).length)
+      .poll(async () => (await getTabTestIds(page)).filter(isTerminalTab).length)
       .toBeGreaterThanOrEqual(1);
   });
 
