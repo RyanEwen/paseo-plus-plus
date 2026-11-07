@@ -105,10 +105,11 @@ function stripAssistantMessageId(
   return JSON.stringify(envelope);
 }
 
-function stripCanonicalSubmittedPrompts(
+function stripServerFeature(
   message: string | Buffer,
   enabled: boolean,
   messageType: unknown,
+  feature: string,
 ): string | Buffer {
   if (!enabled || messageType !== "status" || typeof message !== "string") return message;
   const envelope = JSON.parse(message) as {
@@ -117,7 +118,7 @@ function stripCanonicalSubmittedPrompts(
   };
   const payload = envelope.message?.payload ?? envelope.payload;
   if (payload?.status !== "server_info" || !payload.features) return message;
-  delete payload.features.canonicalSubmittedPrompts;
+  delete payload.features[feature];
   return JSON.stringify(envelope);
 }
 
@@ -138,16 +139,22 @@ function forceTimelineReset(message: string | Buffer, enabled: boolean): string 
 const TIMELINE_WRITER_CONFLICT_ERROR =
   "Failed to resume Codex thread playwright-thread: thread playwright-thread already has an active writer";
 
-function failTimelineResponse(message: string | Buffer, agentId: string | null): string | Buffer {
+function failTimelineResponse(
+  message: string | Buffer,
+  agentId: string | null,
+  rowsKey = "entries",
+  direction?: "before" | "tail",
+): string | Buffer {
   if (!agentId || typeof message !== "string") return message;
   const envelope = JSON.parse(message) as {
     message?: { payload?: Record<string, unknown> };
     payload?: Record<string, unknown>;
   };
   const payload = envelope.message?.payload ?? envelope.payload;
-  if (!payload || payload.agentId !== agentId) return message;
+  if (!payload || payload.agentId !== agentId || (direction && payload.direction !== direction))
+    return message;
   payload.error = TIMELINE_WRITER_CONFLICT_ERROR;
-  payload.entries = [];
+  payload[rowsKey] = [];
   return JSON.stringify(envelope);
 }
 
@@ -294,16 +301,18 @@ function recordClientRequest(
   directoryStarts.total[directory] += 1;
 }
 
-/** Gates the shared E2E daemon, or the daemon on `port` for a spec that runs its own. */
-export async function installDaemonWebSocketGate(page: Page, options: { port?: number } = {}) {
+export async function installDaemonWebSocketGate(page: Page) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
   let suppressAgentStream = false;
   let forceTimelineEpochReset = false;
   let stripAssistantMessageIds = false;
   let stripCanonicalSubmittedPromptsFeature = false;
+  let stripPromptIndexFeature = false;
+  let failingTimelineDirection: "before" | "tail" | undefined;
   let shellToolCommandOverride: string | null = null;
   let failingTimelineAgentId: string | null = null;
+  let failingPromptIndexAgentId: string | null = null;
   let holdingTimelineAgentId: string | null = null;
   const heldTimelineResponses: Array<() => void> = [];
   const heldTimelineResponseWaiters = new Set<() => void>();
@@ -446,11 +455,7 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     return true;
   };
 
-  const routePattern =
-    options.port === undefined
-      ? daemonWsRoutePattern()
-      : wsRoutePatternForPort(String(options.port));
-  await page.routeWebSocket(routePattern, (ws) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
       blockedConnectionCount += 1;
       for (const resolve of blockedConnectionWaiters) resolve();
@@ -507,25 +512,41 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     server.onMessage((message) => {
       if (!acceptingConnections) return;
       const serverMessage = readSessionMessage(message);
+      const messageType = serverMessage?.type;
       const fileMessage = serverMessage as ServerMessage | null;
       observeFileMessage(fileMessage);
-      let outboundMessage = stripAssistantMessageId(
-        message,
-        stripAssistantMessageIds,
-        serverMessage?.type,
-      );
+      let outboundMessage = stripAssistantMessageId(message, stripAssistantMessageIds, messageType);
       outboundMessage = rewriteShellToolCommand(outboundMessage, shellToolCommandOverride);
-      outboundMessage = stripCanonicalSubmittedPrompts(
+      outboundMessage = stripServerFeature(
         outboundMessage,
         stripCanonicalSubmittedPromptsFeature,
-        serverMessage?.type,
+        messageType,
+        "canonicalSubmittedPrompts",
       );
-      const isTimelineResponse = serverMessage?.type === "fetch_agent_timeline_response";
+      outboundMessage = stripServerFeature(
+        outboundMessage,
+        stripPromptIndexFeature,
+        messageType,
+        "agentTimelinePromptIndex",
+      );
+      const isTimelineResponse = messageType === "fetch_agent_timeline_response";
       if (isTimelineResponse) {
-        outboundMessage = failTimelineResponse(outboundMessage, failingTimelineAgentId);
+        outboundMessage = failTimelineResponse(
+          outboundMessage,
+          failingTimelineAgentId,
+          "entries",
+          failingTimelineDirection,
+        );
+      }
+      if (messageType === "agent.timeline.list_prompts.response") {
+        outboundMessage = failTimelineResponse(
+          outboundMessage,
+          failingPromptIndexAgentId,
+          "prompts",
+        );
       }
       const shouldForceTimelineReset =
-        forceTimelineEpochReset && serverMessage?.type === "fetch_agent_timeline_response";
+        forceTimelineEpochReset && messageType === "fetch_agent_timeline_response";
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       recordServerMessage(serverMessage);
@@ -614,11 +635,22 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     restore(): void {
       acceptingConnections = true;
     },
-    failTimelineResponses(agentId: string): void {
+    failPromptIndexResponses(agentId: string): void {
+      failingPromptIndexAgentId = agentId;
+    },
+    allowPromptIndexResponses(): void {
+      failingPromptIndexAgentId = null;
+    },
+    stripPromptIndex(stripped = true): void {
+      stripPromptIndexFeature = stripped;
+    },
+    failTimelineResponses(agentId: string, direction?: "before" | "tail"): void {
       failingTimelineAgentId = agentId;
+      failingTimelineDirection = direction;
     },
     allowTimelineResponses(): void {
       failingTimelineAgentId = null;
+      failingTimelineDirection = undefined;
     },
     holdTimelineResponses(agentId: string): void {
       holdingTimelineAgentId = agentId;
