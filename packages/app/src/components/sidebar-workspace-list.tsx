@@ -13,6 +13,7 @@ import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sid
 import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
 import { getProjectActivity, projectBlockActivityEqual } from "./sidebar/project-block-activity";
+import { resolveProjectLeadingStatus } from "./sidebar/project-leading-status";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
 import { useAppSettings } from "@/hooks/use-settings";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
@@ -160,7 +161,6 @@ import {
   resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
   type SidebarProjectIconTarget,
-  resolveSidebarProjectLeadingStatus,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -1013,11 +1013,11 @@ function ProjectHeaderRow({
         <ProjectLeadingVisual
           displayName={displayName}
           iconDataUri={iconDataUri}
-          statusBucket={resolveSidebarProjectLeadingStatus(
-            statusBucket,
-            sidebarActivityChips,
-            chevron === "expand",
-          )}
+          statusBucket={resolveProjectLeadingStatus({
+            bucket: statusBucket,
+            chipsEnabled: sidebarActivityChips,
+            collapsed: chevron === "expand",
+          })}
           projectViewKey={project.viewKey}
           backdrop={getSidebarRowBackdrop({
             isDragging,
