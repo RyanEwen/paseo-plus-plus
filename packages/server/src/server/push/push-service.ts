@@ -22,21 +22,30 @@ interface ExpoPushTicket {
 }
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-const MAX_BATCH_SIZE = 100;
 
 /**
  * Service for sending Expo push notifications.
- * Handles batching and invalid token removal.
+ * Keeps devices isolated across Expo projects and removes invalid tokens.
  */
 export class PushService {
   private readonly logger: pino.Logger;
   private readonly revokeToken: (token: string) => void;
+  private readonly fetchImpl: typeof fetch;
 
-  constructor(logger: pino.Logger, revokeToken: (token: string) => void) {
+  /**
+   * @param fetchImpl HTTP port for the Expo push API; tests pass a fake because Expo has no sandbox.
+   */
+  constructor(
+    logger: pino.Logger,
+    revokeToken: (token: string) => void,
+    fetchImpl: typeof fetch = globalThis.fetch,
+  ) {
     this.logger = logger.child({ component: "push-service" });
     this.revokeToken = revokeToken;
+    this.fetchImpl = fetchImpl;
   }
 
+  /** Deliver to every device, including clients built with different Expo projects. */
   async sendPush(tokens: string[], payload: PushPayload): Promise<void> {
     if (tokens.length === 0) {
       return;
@@ -50,18 +59,16 @@ export class PushService {
       sound: "default",
     }));
 
-    // Batch tokens (max 100 per request per Expo limits)
-    const batches: ExpoPushMessage[][] = [];
-    for (let i = 0; i < messages.length; i += MAX_BATCH_SIZE) {
-      batches.push(messages.slice(i, i + MAX_BATCH_SIZE));
-    }
-
-    await Promise.all(batches.map((batch) => this.sendBatch(batch)));
+    // Expo rejects a request that mixes projects (PUSH_TOO_MANY_EXPERIENCE_IDS), and
+    // tokens are opaque, so each device gets its own request without needing project
+    // metadata from older clients. They go out together so one slow device cannot
+    // delay the rest; a host's token count is its device count.
+    await Promise.all(messages.map((message) => this.sendBatch([message])));
   }
 
   private async sendBatch(messages: ExpoPushMessage[]): Promise<void> {
     try {
-      const response = await fetch(EXPO_PUSH_URL, {
+      const response = await this.fetchImpl(EXPO_PUSH_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
