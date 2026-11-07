@@ -18,6 +18,14 @@ class PaseoAppUpdateModule : Module() {
   private val context get() = requireNotNull(appContext.reactContext)
   private val updateFile get() = File(context.cacheDir, "app-updates/preview.apk")
 
+  /** A preview APK asset on the fork's current or legacy repository, with a safe file name. */
+  private val canonicalForkApkUrl = Regex(
+    "https://github\\.com/RyanEwen/paseo(?:-plus-plus)?/releases/download/" +
+      "v[0-9]+\\.[0-9]+\\.[0-9]+-preview\\.[0-9]+/" +
+      "[A-Za-z0-9][A-Za-z0-9._-]*\\.apk"
+  )
+  private val sha256Pattern = Regex("[a-f0-9]{64}")
+
   override fun definition() = ModuleDefinition {
     Name("PaseoAppUpdate")
     Events("downloadProgress")
@@ -26,29 +34,14 @@ class PaseoAppUpdateModule : Module() {
 
     AsyncFunction("download") { url: String, sha256: String, versionCode: Double ->
       requirePreviewPermission()
-      val canonicalForkApkUrl = Regex("https://github\\.com/RyanEwen/paseo(?:-plus-plus)?/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+-preview\\.[0-9]+/[A-Za-z0-9][A-Za-z0-9._-]*\\.apk").matches(url) && !url.contains("..")
-      require(canonicalForkApkUrl) {
-        "Unexpected update download URL."
-      }
-      require(Regex("[a-f0-9]{64}").matches(sha256)) { "Invalid update checksum." }
+      requireTrustedDownloadRequest(url, sha256)
       updateFile.parentFile!!.mkdirs()
       val partial = File(updateFile.parentFile, "preview.partial")
       updateFile.delete()
       try {
         downloadApk(url, partial, versionCode)
         reportDownloadProgress(versionCode, partial.length(), partial.length(), "verifying")
-        val digest = MessageDigest.getInstance("SHA-256")
-        partial.inputStream().use { input ->
-          val buffer = ByteArray(65536)
-          while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            digest.update(buffer, 0, count)
-          }
-        }
-        val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
-        require(actualHash == sha256) { "Update checksum mismatch. Try downloading again." }
-        validateApk(partial, versionCode)
+        requireVerifiedDownload(partial, sha256, versionCode)
         check(partial.renameTo(updateFile)) { "Unable to save the downloaded update." }
       } finally {
         partial.delete()
@@ -73,6 +66,37 @@ class PaseoAppUpdateModule : Module() {
         "installer_opened"
       }
     }.runOnQueue(appContext.backgroundCoroutineScope)
+  }
+
+  /**
+   * Accept only a canonical fork APK URL and a well-formed SHA-256. The JavaScript release client
+   * applies the same URL rule, but its input is untrusted here: this is the enforcing copy.
+   */
+  private fun requireTrustedDownloadRequest(url: String, sha256: String) {
+    require(canonicalForkApkUrl.matches(url) && !url.contains("..")) {
+      "Unexpected update download URL."
+    }
+    require(sha256Pattern.matches(sha256)) { "Invalid update checksum." }
+  }
+
+  /** Reject a downloaded file whose digest or package identity does not match the request. */
+  private fun requireVerifiedDownload(file: File, sha256: String, versionCode: Double) {
+    require(sha256Hex(file) == sha256) { "Update checksum mismatch. Try downloading again." }
+    validateApk(file, versionCode)
+  }
+
+  /** Stream the file through SHA-256 and return the lowercase hex digest. */
+  private fun sha256Hex(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+      val buffer = ByteArray(65536)
+      while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        digest.update(buffer, 0, count)
+      }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
   }
 
   /** The install permission is injected only into fork previews, not store or F-Droid builds. */
