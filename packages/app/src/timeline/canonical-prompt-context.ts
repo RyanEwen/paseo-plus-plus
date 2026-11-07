@@ -156,6 +156,15 @@ export function createCanonicalPromptContexts(
   const channels = new Map<object, object>();
   let disposed = false;
   let retainedAgents: Set<string> | null = null;
+  let stopObserving: (() => void) | undefined;
+  /** Subscribe when the first scope is admitted. Observations before then are no-ops, and an
+   * owner React builds during a render it later discards must not hold a store subscription. */
+  function startObserving() {
+    if (stopObserving || disposed || !subscribeOrdinary) return;
+    stopObserving = subscribeOrdinary((observation) => {
+      if (!disposed && observe(observation)) emit();
+    });
+  }
   function emit() {
     for (const listener of listeners) listener();
   }
@@ -218,6 +227,7 @@ export function createCanonicalPromptContexts(
     };
     scopes.set(agentId, scope);
     snapshots.set(agentId, { epoch, contexts: EMPTY, ranges: [] });
+    startObserving();
     return scope;
   }
   function observe({ agentId, epoch, items }: OrdinaryObservation): boolean {
@@ -555,9 +565,6 @@ export function createCanonicalPromptContexts(
       throw new Error("Canonical prompt context has a different owner or is unavailable");
     return readLookup(operation, input.lookup, progress);
   }
-  const stopObserving = subscribeOrdinary?.((observation) => {
-    if (!disposed && observe(observation)) emit();
-  });
   return {
     request,
     preview(agentId: string, source: StreamItem) {
