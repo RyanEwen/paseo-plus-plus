@@ -946,7 +946,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       } else if (largePayload) {
         this.scheduleLargePayloadTurn(turn, largePayload);
       } else if (paginationToolCount !== null) {
-        this.scheduleSettledAssistantTurn(turn, paginationToolRunAnswer(), paginationToolCount);
+        this.schedulePaginationToolRunTurn(turn, paginationToolCount);
       } else if (stress) {
         this.scheduleStressTurn(turn, stress);
       } else {
@@ -1311,14 +1311,18 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleSettledAssistantTurn(
-    turn: ActiveTurn,
-    finalText: string,
-    paginationToolCount?: number,
-  ): void {
+  private scheduleSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     turn.timer = setTimeout(() => {
-      if (paginationToolCount !== undefined) this.emitPaginationToolRun(turn, paginationToolCount);
       this.emitSettledAssistantTurn(turn, finalText);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  /** DEV pagination scenario: `count` completed tool calls, then one long settled answer. */
+  private schedulePaginationToolRunTurn(turn: ActiveTurn, count: number): void {
+    turn.timer = setTimeout(() => {
+      this.emitPaginationToolRun(turn, count);
+      this.emitSettledAssistantTurn(turn, paginationToolRunAnswer());
     }, 0);
     turn.timer.unref?.();
   }

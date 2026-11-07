@@ -96,6 +96,9 @@ function useNativeExpansionRetirement({
 
 /** Keep Android's physical touch bounds on the same root as sticky motion.
  * ScrollView still receives natural row layout and next-header ref updates. */
+/** Android pins a prompt only after its whole ordinary row leaves the viewport. */
+export const NATIVE_STICKY_HANDOFF: "full-row" | undefined = "full-row";
+
 export function ActualStickyHeader({ ref, children, ...props }: NativeStickyProps) {
   const reportLayout = props.onLayout;
   const rows = useContext(ActualPromptRowsContext);
@@ -107,7 +110,7 @@ export function ActualStickyHeader({ ref, children, ...props }: NativeStickyProp
         key: children.key,
         index: children.props.index,
         scope: rows?.scope,
-        handoff: "full-row",
+        handoff: NATIVE_STICKY_HANDOFF,
       }),
     [children.key, children.props.index, rows?.scope],
   );

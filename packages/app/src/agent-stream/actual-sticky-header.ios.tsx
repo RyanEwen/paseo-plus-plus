@@ -27,6 +27,9 @@ import type { NaturalMessageGeometry } from "@/components/user-message-flow-mode
 import { nativeStickyInterpolation, resolveNativeStickyHeights } from "./native-actual-row-model";
 
 /** Keep the sticky edge below the floating header and at the stationary keyboard clip. */
+/** iOS pins at the top trigger, without Android's full-row handoff. */
+export const NATIVE_STICKY_HANDOFF: "full-row" | undefined = undefined;
+
 export function ActualStickyHeader({ ref, ...props }: NativeStickyProps) {
   const reportLayout = props.onLayout;
   const rows = useContext(ActualPromptRowsContext);
@@ -119,10 +122,7 @@ export function ActualStickyHeader({ ref, ...props }: NativeStickyProps) {
       scrollAnimatedValue={scrollAnimatedValue}
     >
       <View
-        style={[
-          props.children.props.style,
-          { overflow: "visible", pointerEvents: enabled ? "box-none" : undefined },
-        ]}
+        style={[props.children.props.style, { overflow: "visible" }]}
         pointerEvents={enabled ? "box-none" : undefined}
         onLayout={props.children.props.onLayout}
         collapsable={false}

@@ -4,7 +4,11 @@ import { useContext } from "react";
 import { useAnimatedRef, useScrollOffset } from "react-native-reanimated";
 import { useDockReservation } from "@/keyboard/shift/internal/dock-reservation";
 import { ActualPromptRowsContext, ActualPinnedRowContext } from "./actual-prompt-rows";
-import { ActualStickyHeader, NativeActualMotionBoundary } from "./actual-sticky-header";
+import {
+  ActualStickyHeader,
+  NATIVE_STICKY_HANDOFF,
+  NativeActualMotionBoundary,
+} from "./actual-sticky-header";
 import {
   NativeStickyViewportProvider,
   useNativeReadingRefresh,
@@ -40,7 +44,6 @@ import {
 } from "react";
 import {
   FlatList,
-  Platform,
   View,
   type FlatListProps,
   type LayoutChangeEvent,
@@ -860,7 +863,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
           viewportHeight: m.viewportHeight,
           clippedLeading,
           stickyEnabled: actualRows !== null,
-          handoff: Platform.OS === "android" ? "full-row" : undefined,
+          handoff: NATIVE_STICKY_HANDOFF,
         });
         setPinnedId(readingPinnedId);
         props.onReadingPositionChange?.({

@@ -4,4 +4,7 @@ export const DockReservationContext = createContext<DockReservationSnapshot>({
   extent: 0,
   settledRevision: 0,
 });
-export const useDockReservation = () => useContext(DockReservationContext);
+/** The composer dock's published keyboard reservation. */
+export function useDockReservation() {
+  return useContext(DockReservationContext);
+}
