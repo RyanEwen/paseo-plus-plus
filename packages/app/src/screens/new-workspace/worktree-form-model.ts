@@ -1,4 +1,4 @@
-import { slugify } from "@getpaseo/protocol/branch-slug";
+import { isValidWorktreeName, slugify } from "@getpaseo/protocol/branch-slug";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { PickerItem } from "../new-workspace-picker-item";
 
@@ -94,7 +94,7 @@ export function worktreeFormError(
   worktrees: readonly ExistingWorktree[],
 ): string | null {
   if (state.mode === "branch-off" && !state.branchName.trim()) return "Enter a new branch name.";
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(state.worktreeName) || state.worktreeName.length > 50) {
+  if (!isValidWorktreeName(state.worktreeName)) {
     return "Worktree name must use lowercase letters, numbers and single hyphens (max 50 characters).";
   }
   if (state.mode === "checkout") {

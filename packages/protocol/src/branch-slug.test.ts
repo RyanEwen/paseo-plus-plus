@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { slugify, validateBranchSlug } from "./branch-slug.js";
+import { isValidWorktreeName, slugify, validateBranchSlug } from "./branch-slug.js";
 
 describe("branch slug utilities", () => {
   it("normalizes display names to lowercase branch slugs", () => {
@@ -48,4 +48,17 @@ describe("branch slug utilities", () => {
       /from\s+["'](?:node:)?(?:fs|path|child_process)["']|from\s+["']node:/,
     );
   });
+});
+
+describe("isValidWorktreeName", () => {
+  it.each(["feature", "feature-2", "a".repeat(50)])("accepts %s", (value) => {
+    expect(isValidWorktreeName(value)).toBe(true);
+  });
+
+  it.each(["", "UPPER", "two--hyphens", "-leading", "trailing-", "../escape", "a".repeat(51)])(
+    "rejects %s",
+    (value) => {
+      expect(isValidWorktreeName(value)).toBe(false);
+    },
+  );
 });

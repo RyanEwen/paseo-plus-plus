@@ -1,6 +1,7 @@
 import type { PluginWorktreeCreateRequest } from "@getpaseo/plugin/server";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
 import { createNameId } from "mnemonic-id";
+import { isValidWorktreeName } from "@getpaseo/protocol/branch-slug";
 
 import type { ForgeService } from "../services/forge-service.js";
 import {
@@ -284,7 +285,7 @@ function normalizeWorktreeSlug(value: string): string {
 
 /** Validate an explicitly chosen directory name without changing it. */
 function validateExactWorktreeName(value: string): string {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) || value.length > 50) {
+  if (!isValidWorktreeName(value)) {
     throw new Error(
       "Invalid worktree name: use lowercase letters, numbers and single hyphens (max 50 characters)",
     );
