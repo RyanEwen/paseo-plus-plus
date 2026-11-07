@@ -8,9 +8,8 @@ import { HostUpdateAction } from "./host-update-action";
 import type { HostUpdateSupport } from "./host-update-eligibility";
 import { HostPickerOption } from "./host-picker";
 import { defaultHostAppearance } from "@/hosts/appearance";
-import { i18n } from "@/i18n/i18next";
+import "@/i18n/i18next";
 import type { HostProfile } from "@/types/host-connection";
-void i18n;
 
 const runtime = vi.hoisted(() => ({
   connected: true,
@@ -157,18 +156,26 @@ describe("footer host update actions", () => {
     expect(runtime.check).not.toHaveBeenCalled();
     expect(within(container).queryByRole("button", { name: "Update Host A" })).toBeNull();
   });
-  it.each(["ineligible", "failed", "offline"])(
-    "does not offer an update when %s",
-    async (scenario) => {
-      if (scenario === "ineligible")
-        runtime.check.mockResolvedValue({ version: null, reason: "Source installation" });
-      if (scenario === "failed")
-        runtime.check.mockRejectedValue(new Error("Release service unavailable"));
-      if (scenario === "offline") runtime.connected = false;
-      await renderAction();
-      expect(within(container).queryByRole("button", { name: "Update Host A" })).toBeNull();
-    },
-  );
+  it.each<[string, () => void]>([
+    [
+      "the host reports no eligible release",
+      () => runtime.check.mockResolvedValue({ version: null, reason: "Source installation" }),
+    ],
+    [
+      "the availability check fails",
+      () => runtime.check.mockRejectedValue(new Error("Release service unavailable")),
+    ],
+    [
+      "the host is offline",
+      () => {
+        runtime.connected = false;
+      },
+    ],
+  ])("does not offer an update when %s", async (_scenario, arrange) => {
+    arrange();
+    await renderAction();
+    expect(within(container).queryByRole("button", { name: "Update Host A" })).toBeNull();
+  });
 });
 
 interface HostRowActionsProps {
