@@ -1736,6 +1736,8 @@ function ProjectBlock({
   const workspaceDrag = useSidebarReorderGuard("workspace");
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
   const projectPinning = useProjectPinningEnabled();
+  // Project pins stay draggable among themselves under any workspace sort. Ordinary rows accept
+  // drops only under Custom with Manual order; sorted rows stay selectable and keep their menus.
   const workspaceDragGroup = useCallback(
     (workspace: SidebarWorkspacePlacement) => {
       if (isProjectPinnedEntry(workspaceEntriesByKey.get(workspace.workspaceKey), projectPinning))
@@ -1760,6 +1762,10 @@ function ProjectBlock({
     [renderWorkspaceRow],
   );
 
+  const workspaceDragDisabled = useMemo(
+    () => visibleWorkspaces.every((workspace) => workspaceDragGroup(workspace) === null),
+    [visibleWorkspaces, workspaceDragGroup],
+  );
   const handleWorkspaceDragEnd = useCallback(
     (workspaces: SidebarWorkspacePlacement[], move?: DragReorderMove) => {
       if (!move) return;
@@ -1867,9 +1873,7 @@ function ProjectBlock({
             onDragEnd={handleWorkspaceDragEnd}
             onDragBegin={workspaceDrag.onDragBegin}
             getDragGroupKey={workspaceDragGroup}
-            disabled={visibleWorkspaces.every(
-              (workspace) => workspaceDragGroup(workspace) === null,
-            )}
+            disabled={workspaceDragDisabled}
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
             useDragHandle
