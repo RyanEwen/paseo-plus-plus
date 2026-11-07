@@ -55,6 +55,3 @@ export const AppSettingsChangedSchema = z.object({
   type: z.literal("app.settings.changed"),
   payload: z.object({ subscriptionId: z.string().optional(), snapshot: AppSettingsSnapshotSchema }),
 });
-
-// Synced key lists live in the fork-base registry so every layer shares one source.
-export * from "./app-settings-keys.js";
