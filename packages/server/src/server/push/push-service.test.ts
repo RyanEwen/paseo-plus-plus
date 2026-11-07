@@ -46,4 +46,31 @@ describe("PushService", () => {
     expect(expo.delivered).toEqual(["development-device", "production-device"]);
     expect(revokeToken).not.toHaveBeenCalled();
   });
+
+  test("a device whose request stalls does not delay delivery to the other devices", async () => {
+    const delivered: string[] = [];
+    let releaseStalled: () => void = () => undefined;
+    const stalled = new Promise<void>((resolve) => {
+      releaseStalled = resolve;
+    });
+    const fetchImpl = async (_url: string | URL | Request, options?: RequestInit) => {
+      const [message] = JSON.parse(String(options?.body)) as Array<{ to: string }>;
+      if (message.to === "stalled-device") {
+        await stalled;
+      }
+      delivered.push(message.to);
+      return Response.json({ data: [{ status: "ok", id: "test-ticket" }] });
+    };
+    const service = new PushService(createLogger(), vi.fn(), fetchImpl as typeof fetch);
+
+    const sending = service.sendPush(["stalled-device", "production-device"], {
+      title: "Agent finished",
+      body: "Done",
+    });
+
+    await vi.waitFor(() => expect(delivered).toEqual(["production-device"]));
+    releaseStalled();
+    await sending;
+    expect(delivered).toEqual(["production-device", "stalled-device"]);
+  });
 });

@@ -59,12 +59,11 @@ export class PushService {
       sound: "default",
     }));
 
-    // Expo rejects the entire request when tokens belong to different projects.
-    // Tokens are opaque, so send separately without requiring project metadata
-    // from older clients. Await each request to bound concurrency per host.
-    for (const message of messages) {
-      await this.sendBatch([message]);
-    }
+    // Expo rejects a request that mixes projects (PUSH_TOO_MANY_EXPERIENCE_IDS), and
+    // tokens are opaque, so each device gets its own request without needing project
+    // metadata from older clients. They go out together so one slow device cannot
+    // delay the rest; a host's token count is its device count.
+    await Promise.all(messages.map((message) => this.sendBatch([message])));
   }
 
   private async sendBatch(messages: ExpoPushMessage[]): Promise<void> {
