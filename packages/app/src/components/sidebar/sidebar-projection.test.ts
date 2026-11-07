@@ -72,67 +72,6 @@ function makeWorkspace(
   return { placement, entry };
 }
 
-it("active descendants retain their whole family beyond a window without moving passive siblings or pin partitions", () => {
-  const rows = [
-    makeWorkspace("first"),
-    makeWorkspace("hidden"),
-    makeWorkspace("parent"),
-    makeWorkspace("child", "running"),
-    makeWorkspace("selected"),
-    makeWorkspace("selected-child"),
-  ];
-  const entries = new Map(rows.map((row) => [row.entry.workspaceKey, row.entry]));
-  const family = orderWorkspaceFamilies({
-    workspaces: rows.map((row) => row.placement),
-    parents: new Map([
-      ["srv:child", "srv:parent"],
-      ["srv:selected-child", "srv:selected"],
-    ]),
-  });
-  const roots = family.rows.filter((row) => !family.tree.get(row.workspaceKey)?.parentKey);
-  const rendered = includeActiveWorkspaceFamily({
-    roots,
-    visibleItems: roots.slice(0, 1),
-    tree: family.tree,
-    activeWorkspaceKey: "srv:selected-child",
-    activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
-  });
-  expect(rendered.map((row) => row.workspaceKey)).toEqual([
-    "srv:first",
-    "srv:parent",
-    "srv:selected",
-  ]);
-  expect(family.tree.get("srv:parent")?.descendantKeys).toEqual(["srv:child"]);
-  expect(family.rows.map((row) => row.workspaceKey)).toEqual(
-    rows.map((row) => row.placement.workspaceKey),
-  );
-  // An independently pinned child is a separate family and cannot expose the ordinary parent.
-  const separated = orderWorkspaceFamilies({
-    workspaces: [rows[3]!.placement],
-    parents: new Map([["srv:child", "srv:parent"]]),
-  });
-  expect(
-    includeActiveWorkspaceFamily({
-      roots: separated.rows,
-      visibleItems: [],
-      tree: separated.tree,
-      activeWorkspaceKey: null,
-      activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
-    }).map((row) => row.workspaceKey),
-  ).toEqual(["srv:child"]);
-  const doneEntries = new Map(entries);
-  doneEntries.set("srv:child", { ...rows[3]!.entry, statusBucket: "done" });
-  expect(
-    includeActiveWorkspaceFamily({
-      roots,
-      visibleItems: roots.slice(0, 1),
-      tree: family.tree,
-      activeWorkspaceKey: null,
-      activeWorkspaceKeys: collectActiveWorkspaceKeys(doneEntries),
-    }).map((row) => row.workspaceKey),
-  ).toEqual(["srv:first"]);
-});
-
 function makeProject(
   workspaces: SidebarWorkspacePlacement[],
   viewKey = "project",
@@ -973,6 +912,67 @@ function nestedProjectionInput(groupMode: "project" | "status" = "project") {
 }
 
 describe("workspace family projection", () => {
+  it("active descendants retain their whole family beyond a window without moving passive siblings or pin partitions", () => {
+    const rows = [
+      makeWorkspace("first"),
+      makeWorkspace("hidden"),
+      makeWorkspace("parent"),
+      makeWorkspace("child", "running"),
+      makeWorkspace("selected"),
+      makeWorkspace("selected-child"),
+    ];
+    const entries = new Map(rows.map((row) => [row.entry.workspaceKey, row.entry]));
+    const family = orderWorkspaceFamilies({
+      workspaces: rows.map((row) => row.placement),
+      parents: new Map([
+        ["srv:child", "srv:parent"],
+        ["srv:selected-child", "srv:selected"],
+      ]),
+    });
+    const roots = family.rows.filter((row) => !family.tree.get(row.workspaceKey)?.parentKey);
+    const rendered = includeActiveWorkspaceFamily({
+      roots,
+      visibleItems: roots.slice(0, 1),
+      tree: family.tree,
+      activeWorkspaceKey: "srv:selected-child",
+      activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+    });
+    expect(rendered.map((row) => row.workspaceKey)).toEqual([
+      "srv:first",
+      "srv:parent",
+      "srv:selected",
+    ]);
+    expect(family.tree.get("srv:parent")?.descendantKeys).toEqual(["srv:child"]);
+    expect(family.rows.map((row) => row.workspaceKey)).toEqual(
+      rows.map((row) => row.placement.workspaceKey),
+    );
+    // An independently pinned child is a separate family and cannot expose the ordinary parent.
+    const separated = orderWorkspaceFamilies({
+      workspaces: [rows[3]!.placement],
+      parents: new Map([["srv:child", "srv:parent"]]),
+    });
+    expect(
+      includeActiveWorkspaceFamily({
+        roots: separated.rows,
+        visibleItems: [],
+        tree: separated.tree,
+        activeWorkspaceKey: null,
+        activeWorkspaceKeys: collectActiveWorkspaceKeys(entries),
+      }).map((row) => row.workspaceKey),
+    ).toEqual(["srv:child"]);
+    const doneEntries = new Map(entries);
+    doneEntries.set("srv:child", { ...rows[3]!.entry, statusBucket: "done" });
+    expect(
+      includeActiveWorkspaceFamily({
+        roots,
+        visibleItems: roots.slice(0, 1),
+        tree: family.tree,
+        activeWorkspaceKey: null,
+        activeWorkspaceKeys: collectActiveWorkspaceKeys(doneEntries),
+      }).map((row) => row.workspaceKey),
+    ).toEqual(["srv:first"]);
+  });
+
   it("keeps sibling order and preorder, with every child represented exactly once", () => {
     const projection = buildSidebarProjection(nestedProjectionInput());
     expect(
@@ -1421,7 +1421,7 @@ function attentionWorkspace(
 }
 
 describe("child workspace authoritative attention", () => {
-  it("T53 workspace authority suppresses routine raw blockers", () => {
+  it("workspace authority suppresses routine raw blockers", () => {
     const input = nestedProjectionInput();
     const agents = new Map([
       ["error", attentionAgent({ status: "error" })],
@@ -1458,7 +1458,7 @@ describe("child workspace authoritative attention", () => {
     expect(input.workspaceEntriesByKey.get("srv:parent")!.statusBucket).toBe("done");
   });
 
-  it("T53 workspace authority counts interventions and terminal attention once", () => {
+  it("workspace authority counts interventions and terminal attention once", () => {
     const input = nestedProjectionInput();
     const agents = new Map([
       ["explicit-child", attentionAgent({ humanAttentionRequired: true })],
@@ -1498,7 +1498,7 @@ describe("child workspace authoritative attention", () => {
     ).toEqual({ count: 3, bucket: "needs_input", humanAttentionCount: 2 });
   });
 
-  it("T53 workspace authority preserves undefined older-host fallbacks", () => {
+  it("workspace authority preserves undefined older-host fallbacks", () => {
     const input = nestedProjectionInput();
     const agents = new Map([
       ["error", attentionAgent({ status: "error" })],
@@ -1523,7 +1523,7 @@ describe("child workspace authoritative attention", () => {
     ).toEqual(new Set(["srv:child", "srv:grandchild", "srv:sibling"]));
   });
 
-  it("T53 workspace authority invalidates workspace-only cache changes within each host", () => {
+  it("workspace authority invalidates workspace-only cache changes within each host", () => {
     const child = makeWorkspace("child").placement;
     const foreign = { ...child, serverId: "foreign", workspaceKey: "foreign:child" };
     const select = createWorkspaceHumanAttentionSelector([child, foreign]);

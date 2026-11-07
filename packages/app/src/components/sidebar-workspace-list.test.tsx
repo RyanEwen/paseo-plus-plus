@@ -1655,7 +1655,7 @@ describe("workspace family store transitions", () => {
   );
 
   it.each(["project", "status", "pinned"] as const)(
-    "T53 family row layout restores roots and indents only content (%s)",
+    "family row layout restores roots and indents only content (%s)",
     (mode) => {
       act(() => renderLayout(mode));
       const parentRow = layoutElement("sidebar-workspace-row", "parent");
@@ -1720,7 +1720,7 @@ describe("workspace family store transitions", () => {
   );
 
   it.each(["project", "status"] as const)(
-    "T53 family row layout contains and describes its collapsed summary (%s)",
+    "family row layout contains and describes its collapsed summary (%s)",
     (mode) => {
       const store = useSessionStore.getState();
       const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
@@ -1765,7 +1765,7 @@ describe("workspace family store transitions", () => {
     },
   );
 
-  it("T53 family row layout reveals active descendants and restores the parent summary", () => {
+  it("family row layout reveals active descendants and restores the parent summary", () => {
     collapse("parent");
     act(() => renderLayout("project"));
     const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
@@ -1798,7 +1798,7 @@ describe("workspace family store transitions", () => {
     expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
   });
 
-  it("T53 relationship removal transition preserves collapse and unrelated children", () => {
+  it("relationship removal transition preserves collapse and unrelated children", () => {
     collapse("parent");
     collapse("other-parent");
     const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
@@ -1827,7 +1827,7 @@ describe("workspace family store transitions", () => {
     expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
   });
 
-  it("T53 pin transition rejects a retained sibling drop and admits a fresh unpinned drag", () => {
+  it("pin transition rejects a retained sibling drop and admits a fresh unpinned drag", () => {
     act(render);
     const drop = beginSiblingDrop();
     const renders = probe.renders;
@@ -1857,7 +1857,7 @@ describe("workspace family store transitions", () => {
     expectVisible(["parent", "b", "a", "other-parent", "other-child", "outside"]);
   });
 
-  it("T53 filter navigation transition reveals an active child then restores saved collapse", () => {
+  it("filter navigation transition reveals an active child then restores saved collapse", () => {
     collapse("parent");
     const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
     const filter = useSidebarQuickFilterStore.getState();
@@ -1886,7 +1886,7 @@ describe("workspace family store transitions", () => {
     expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
   });
 
-  it("T53 workspace ingress changes collapsed attention without changing agents", () => {
+  it("workspace ingress changes collapsed attention without changing agents", () => {
     useSidebarViewStore.setState({ hostFilters: [] });
     collapse("parent");
     collapse("parent", TRANSITION_OTHER_HOST);
@@ -2003,7 +2003,7 @@ describe("workspace family store transitions", () => {
     expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
   });
 
-  it("T53 wire attention transition keeps hidden blockers distinct and hosts isolated", () => {
+  it("wire attention transition keeps hidden blockers distinct and hosts isolated", () => {
     useSidebarViewStore.setState({ hostFilters: [] });
     collapse("parent");
     collapse("parent", TRANSITION_OTHER_HOST);
