@@ -3543,37 +3543,65 @@ class ClaudeAgentSession implements AgentSession {
       throw new HistoryStorageConflictError("stale-initial-history-query");
     const { providerOptions: _options, ...metadata } = this.config;
     const next = { provider: "claude", sessionId: id, nativeHandle: id, metadata };
+    const storage = this.boundHistory;
+    await this.commitClaudeIdentity({
+      id,
+      file,
+      storage,
+      failure: "initial child",
+      failedStep: "binding failed",
+      commit: () =>
+        context.commit({
+          storage,
+          next,
+          assertCurrent: () => {
+            const stillCurrent =
+              this.initialHistoryContext === context || this.freshRewindContext === context;
+            if (!this.ownsQuery(query) || !stillCurrent)
+              throw new HistoryStorageConflictError("stale-history-query");
+          },
+          adopt: () => {
+            if (!this.ownsQuery(query))
+              throw new HistoryStorageConflictError("stale-history-query");
+            this.claudeSessionId = id;
+            this.persistence = next;
+            this.initialHistoryContext = undefined;
+            this.initialHistoryQuery = null;
+            this.cachedRuntimeInfo = null;
+          },
+        }),
+    });
+  }
+
+  /**
+   * Check that the new native transcript sits in the bound home, then run the durable commit.
+   * A committed identity whose runtime adoption failed marks the session reload-required; any
+   * other failure reports the retained child and the refusal reason.
+   */
+  private async commitClaudeIdentity(input: {
+    id: string;
+    file: string;
+    storage: ConfiguredClaudeHistoryStorage;
+    /** Names the retained child in the failure message, e.g. "initial child". */
+    failure: string;
+    /** Names the step that failed, e.g. "binding failed". */
+    failedStep: string;
+    commit: () => Promise<void>;
+  }): Promise<void> {
     try {
-      checkClaudeRewindHandle(this.boundHistory, this.harnessEnvironment, file);
-      await context.commit({
-        storage: this.boundHistory,
-        next,
-        assertCurrent: () => {
-          if (
-            !this.ownsQuery(query) ||
-            (this.initialHistoryContext !== context && this.freshRewindContext !== context)
-          )
-            throw new HistoryStorageConflictError("stale-history-query");
-        },
-        adopt: () => {
-          if (!this.ownsQuery(query)) throw new HistoryStorageConflictError("stale-history-query");
-          this.claudeSessionId = id;
-          this.persistence = next;
-          this.initialHistoryContext = undefined;
-          this.initialHistoryQuery = null;
-          this.cachedRuntimeInfo = null;
-        },
-      });
+      checkClaudeRewindHandle(input.storage, this.harnessEnvironment, input.file);
+      await input.commit();
     } catch (error) {
       if (error instanceof HistoryIdentityCommittedError) {
         this.historyAdoptionFailed = true;
         throw new Error(
-          `Claude identity ${id} committed; runtime adoption failed; reload required`,
+          `Claude identity ${input.id} committed; runtime adoption failed; reload required`,
           { cause: error },
         );
       }
+      const reason = error instanceof HistoryStorageConflictError ? error.reason : "unavailable";
       throw new Error(
-        `Claude initial child ${id} retained in ${this.boundHistory.home}; binding failed (${error instanceof HistoryStorageConflictError ? error.reason : "unavailable"})`,
+        `Claude ${input.failure} ${input.id} retained in ${input.storage.home}; ${input.failedStep} (${reason})`,
         { cause: error },
       );
     }
@@ -3598,43 +3626,35 @@ class ClaudeAgentSession implements AgentSession {
     )
       throw new HistoryStorageConflictError("stale-fresh-rewind-query");
     const next = { ...previous, sessionId: id, nativeHandle: id };
-    try {
-      checkClaudeRewindHandle(this.boundHistory, this.harnessEnvironment, file);
-      await context.commit({
-        previous,
-        next,
-        storage: this.boundHistory,
-        assertCurrent: () => {
-          if (
-            !this.ownsQuery(query) ||
-            this.freshRewindQuery !== query ||
-            this.freshRewindContext !== context
-          )
-            throw new HistoryStorageConflictError("stale-fresh-rewind-query");
-        },
-        adopt: () => {
-          if (!this.ownsQuery(query))
-            throw new HistoryStorageConflictError("stale-fresh-rewind-query");
-          this.claudeSessionId = id;
-          this.persistence = next;
-          this.freshRewindContext = undefined;
-          this.freshRewindQuery = null;
-          this.cachedRuntimeInfo = null;
-        },
-      });
-    } catch (error) {
-      if (error instanceof HistoryIdentityCommittedError) {
-        this.historyAdoptionFailed = true;
-        throw new Error(
-          `Claude identity ${id} committed; runtime adoption failed; reload required`,
-          { cause: error },
-        );
-      }
-      throw new Error(
-        `Claude fresh rewind child ${id} retained in ${this.boundHistory.home}; commit failed (${error instanceof HistoryStorageConflictError ? error.reason : "unavailable"})`,
-        { cause: error },
-      );
-    }
+    const storage = this.boundHistory;
+    const assertFreshQuery = () => {
+      const stillCurrent = this.freshRewindQuery === query && this.freshRewindContext === context;
+      if (!this.ownsQuery(query) || !stillCurrent)
+        throw new HistoryStorageConflictError("stale-fresh-rewind-query");
+    };
+    await this.commitClaudeIdentity({
+      id,
+      file,
+      storage,
+      failure: "fresh rewind child",
+      failedStep: "commit failed",
+      commit: () =>
+        context.commit({
+          previous,
+          next,
+          storage,
+          assertCurrent: assertFreshQuery,
+          adopt: () => {
+            if (!this.ownsQuery(query))
+              throw new HistoryStorageConflictError("stale-fresh-rewind-query");
+            this.claudeSessionId = id;
+            this.persistence = next;
+            this.freshRewindContext = undefined;
+            this.freshRewindQuery = null;
+            this.cachedRuntimeInfo = null;
+          },
+        }),
+    });
   }
 
   private rebindConversationSession(
