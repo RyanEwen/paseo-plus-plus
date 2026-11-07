@@ -1,7 +1,10 @@
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { SidebarWorkspaceGroup } from "./sidebar-labels";
 import { limitSidebarWorkspaces } from "./workspace-limit";
+import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
+import { hasVisibleOrderChanged } from "@/utils/sidebar-reorder";
 
+/** One cell of the flat status list: a group header, a workspace row or a group's Show more footer. */
 export type StatusListItem =
   | { kind: "header"; group: SidebarWorkspaceGroup; collapsed: boolean }
   | { kind: "workspace"; workspace: SidebarWorkspaceEntry; groupKey: string }
@@ -26,12 +29,15 @@ export function buildStatusListItems({
   expandedGroupKeys,
   initialCount,
   updatedWithin,
+  keep,
 }: {
   groups: SidebarWorkspaceGroup[];
   collapsedGroupKeys: ReadonlySet<string>;
   expandedGroupKeys: ReadonlySet<string>;
   initialCount: number | null;
   updatedWithin?: { days: number; now: number };
+  /** Rows that stay visible past a group's count and age windows, such as the open workspace. */
+  keep?: (workspace: SidebarWorkspaceEntry) => boolean;
 }): StatusListItem[] {
   const result: StatusListItem[] = [];
   for (const group of groups) {
@@ -46,6 +52,7 @@ export function buildStatusListItems({
       updatedWithin: updatedWithin
         ? { ...updatedWithin, getStatusEnteredAt: (workspace) => workspace.statusEnteredAt }
         : undefined,
+      keep,
     });
     for (const workspace of visibleItems) {
       result.push({ kind: "workspace", workspace, groupKey: group.key });
@@ -58,4 +65,34 @@ export function buildStatusListItems({
     });
   }
   return result;
+}
+
+/** Workspace keys of one status group's rows, in list order. */
+function workspaceKeysInGroup(items: readonly StatusListItem[], groupKey: string): string[] {
+  return items.flatMap((item) =>
+    item.kind === "workspace" && item.groupKey === groupKey ? [item.workspace.workspaceKey] : [],
+  );
+}
+
+/**
+ * The moved row's group order after a drop, or null when that order did not change.
+ *
+ * The list confines drags to one group, so only the moved row's group can differ; headers,
+ * footers and other groups keep their positions.
+ */
+export function resolveStatusGroupReorder({
+  items,
+  reordered,
+  move,
+}: {
+  items: readonly StatusListItem[];
+  reordered: readonly StatusListItem[];
+  move: DragReorderMove;
+}): string[] | null {
+  const moved = items.find((item) => statusListItemKey(item) === move.activeKey);
+  if (moved?.kind !== "workspace") return null;
+  const currentOrder = workspaceKeysInGroup(items, moved.groupKey);
+  const reorderedVisibleKeys = workspaceKeysInGroup(reordered, moved.groupKey);
+  if (!hasVisibleOrderChanged({ currentOrder, reorderedVisibleKeys })) return null;
+  return reorderedVisibleKeys;
 }

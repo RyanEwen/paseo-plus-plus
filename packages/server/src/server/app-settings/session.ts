@@ -2,17 +2,31 @@ import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/pr
 import type { AppSettingsSnapshot } from "@getpaseo/protocol/app-settings";
 import type { SessionDelivery } from "../session/owned-subscriptions/index.js";
 import { AppSettingsStore } from "./index.js";
+import { registerForkCapability } from "../fork-capabilities.js";
+
+// COMPAT(appSettingsSync): added in v0.11.2, remove after 2027-10-12.
+registerForkCapability("appSettingsSync");
+// COMPAT(appSettingsChatPreferences): added in v0.15.0, remove gate after 2027-05-02.
+registerForkCapability("appSettingsChatPreferences");
+// COMPAT(appSettingsSidebarModeProfiles): added in v0.11.2, remove after 2027-10-16.
+registerForkCapability("appSettingsSidebarModeProfiles");
 
 /** Settings RPC adapter. Subscription lifetimes belong to the existing delivery owner. */
 export class AppSettingsSession {
+  private readonly emit: (message: SessionOutboundMessage) => void;
+  private readonly delivery: SessionDelivery;
   private readonly store: AppSettingsStore;
-  constructor(
-    private readonly emit: (message: SessionOutboundMessage) => void,
-    private readonly delivery: SessionDelivery,
-    paseoHome: string,
-    store?: AppSettingsStore,
-  ) {
-    this.store = store ?? new AppSettingsStore(paseoHome);
+
+  constructor(input: {
+    emit: (message: SessionOutboundMessage) => void;
+    delivery: SessionDelivery;
+    /** The daemon-wide store; a session without one gets a private store under paseoHome. */
+    store?: AppSettingsStore;
+    paseoHome: string;
+  }) {
+    this.emit = input.emit;
+    this.delivery = input.delivery;
+    this.store = input.store ?? new AppSettingsStore(input.paseoHome);
   }
 
   dispatch(message: SessionInboundMessage): Promise<void> | undefined {
@@ -37,9 +51,10 @@ export class AppSettingsSession {
       unsubscribe(),
     );
     let ready = false;
-    let pending: AppSettingsSnapshot | null = null;
+    // A field, not a local: the subscriber closure writes it while the read is in flight.
+    const buffer: { latest: AppSettingsSnapshot | null } = { latest: null };
     unsubscribe = this.store.subscribe((snapshot) => {
-      if (!ready) pending = snapshot;
+      if (!ready) buffer.latest = snapshot;
       else owner.emit({ type: "app.settings.changed", payload: { snapshot } });
     });
     try {
@@ -53,7 +68,7 @@ export class AppSettingsSession {
         payload: { requestId: request.requestId, subscriptionId: owner.responseId, snapshot },
       });
       ready = true;
-      const buffered = pending as AppSettingsSnapshot | null;
+      const buffered = buffer.latest;
       if (buffered && buffered.revision > snapshot.revision)
         owner.emit({ type: "app.settings.changed", payload: { snapshot: buffered } });
     } catch (error) {
@@ -65,7 +80,10 @@ export class AppSettingsSession {
   private async patch(
     request: Extract<SessionInboundMessage, { type: "app.settings.patch.request" }>,
   ): Promise<void> {
-    const result = await this.store.patch(request.patches, request.initialize);
+    const result = await this.store.patch({
+      patches: request.patches,
+      initialize: request.initialize,
+    });
     this.emit({
       type: "app.settings.patch.response",
       payload: { requestId: request.requestId, ...result },

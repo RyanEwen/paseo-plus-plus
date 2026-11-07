@@ -22,26 +22,32 @@ export function hasVisibleOrderChanged(input: {
   return input.reorderedVisibleKeys.some((key, index) => currentVisible[index] !== key);
 }
 
-/** Persist only the actual dragged sibling; passive visible overflow is not a move. */
+/**
+ * Resolve one project-workspace drop into the preference it should write.
+ *
+ * Persist only the actual dragged sibling; passive visible overflow is not a move. A dragged
+ * project pin returns the new pin order (`pinOrder`) and leaves the saved workspace order alone;
+ * an ordinary drag returns the new full workspace order and no pin order, so pins that were
+ * never dragged keep their newest-first recency order. Both are null for an invalid drop.
+ */
 export function resolveProjectWorkspaceReorder(input: {
   currentVisibleKeys: string[];
   reorderedVisibleKeys: string[];
   projectPinnedKeys: ReadonlySet<string>;
   storedWorkspaceOrder: string[];
   move: DragReorderMove;
-}): { projectPinKeys: string[]; workspaceOrder: string[] | null } {
-  if (!isProjectWorkspaceMoveValid(input)) return { projectPinKeys: [], workspaceOrder: null };
-  const projectPinKeys = input.reorderedVisibleKeys.filter((key) =>
-    input.projectPinnedKeys.has(key),
-  );
-  if (input.projectPinnedKeys.has(input.move.activeKey))
-    return { projectPinKeys, workspaceOrder: null };
+}): { pinOrder: string[] | null; workspaceOrder: string[] | null } {
+  if (!isProjectWorkspaceMoveValid(input)) return { pinOrder: null, workspaceOrder: null };
+  if (input.projectPinnedKeys.has(input.move.activeKey)) {
+    const pinOrder = input.reorderedVisibleKeys.filter((key) => input.projectPinnedKeys.has(key));
+    return { pinOrder, workspaceOrder: null };
+  }
   // Manual reconciliation owns new ranks. A stale ordinary gesture cannot invent their order.
   const savedKeys = new Set(input.storedWorkspaceOrder);
   if (input.currentVisibleKeys.some((key) => !savedKeys.has(key)))
-    return { projectPinKeys: [], workspaceOrder: null };
+    return { pinOrder: null, workspaceOrder: null };
   return {
-    projectPinKeys,
+    pinOrder: null,
     workspaceOrder: moveProjectInFullOrder({
       currentOrder: input.storedWorkspaceOrder,
       knownProjectKeys: input.currentVisibleKeys,
@@ -50,11 +56,13 @@ export function resolveProjectWorkspaceReorder(input: {
   };
 }
 
-/** The actual list owns the indices and partition; absent or stale anchors cannot commit. */
+/**
+ * The actual list owns the indices; absent or stale anchors cannot commit. The pin and ordinary
+ * partitions are enforced where the drop ends (isDragGroupOrderValid), not here.
+ */
 function isProjectWorkspaceMoveValid(input: {
   currentVisibleKeys: string[];
   reorderedVisibleKeys: string[];
-  projectPinnedKeys: ReadonlySet<string>;
   move: DragReorderMove;
 }): boolean {
   const { activeKey, overKey, from, to } = input.move;
@@ -66,13 +74,6 @@ function isProjectWorkspaceMoveValid(input: {
     original.length !== input.reorderedVisibleKeys.length ||
     original[from] !== activeKey ||
     original[to] !== overKey
-  )
-    return false;
-  const pinMove = input.projectPinnedKeys.has(activeKey);
-  if (
-    original
-      .slice(Math.min(from, to), Math.max(from, to) + 1)
-      .some((key) => input.projectPinnedKeys.has(key) !== pinMove)
   )
     return false;
   const expected = original.slice();
@@ -118,6 +119,9 @@ type SidebarReorderView = Pick<
 
 export function sidebarReorderSort(view: SidebarReorderView, domain: SidebarReorderDomain): string {
   if (domain === "workspace") {
+    // In Project grouping an automatic workspace sort (Created, Last prompt) owns ordinary rows,
+    // so it wins over Custom; none of its values equal "custom", which keeps ordinary drops off
+    // while manual pins still pass canCommitSidebarReorder.
     if (view.groupMode === "project" && view.workspaceSort !== "manual") return view.workspaceSort;
     return view.workspaceSortMode;
   }

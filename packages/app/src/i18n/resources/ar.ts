@@ -116,7 +116,7 @@ export const ar: TranslationResources = {
         hint: "ثبّت رسالة مختصرة مع إمكانية توسيعها والتنقل إلى السابقة والتالية. تبقى الرسائل العادية موسّعة، ولا يغطي مؤشر التحميل رسالة متاحة.",
       },
       previousAgents: {
-        label: "الوكلاء السابقون",
+        label: "إعادة فتح وكيل مغلق",
         hint: "يفتح المحادثات المغلقة أو المؤرشفة من قائمة + في مساحة العمل",
       },
       sidebarActivityChips: {
@@ -510,7 +510,7 @@ export const ar: TranslationResources = {
   sessions: {
     previousTitle: "إعادة فتح وكيل مغلق",
     previousEmpty: "لا يوجد وكلاء سابقون في مساحة العمل هذه",
-    workspaceHistoryUpdateRequired: "حدّث هذا المضيف لعرض وكلاء مساحة العمل السابقين.",
+    workspaceHistoryUpdateRequired: "حدّث هذا المضيف لإعادة فتح الوكلاء المغلقين.",
 
     title: "السجل",
     empty: "لا توجد جلسات بعد",
