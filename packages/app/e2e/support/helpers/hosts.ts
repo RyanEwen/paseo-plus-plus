@@ -130,8 +130,7 @@ export async function openSidebarDisplayPreferences(page: Page): Promise<void> {
   });
 }
 
-// The essential heading chooser exposes Hosts when more than one host is registered.
-// These local selections belong to the currently rendered sidebar mode.
+// Hosts appears in the heading chooser only when more than one host is registered.
 export async function openSidebarHostFilter(page: Page): Promise<void> {
   await page.getByTestId("sidebar-project-selector").click();
   await page.getByTestId("sidebar-chooser-hosts").click();
