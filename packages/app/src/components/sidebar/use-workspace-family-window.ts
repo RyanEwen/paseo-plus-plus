@@ -40,15 +40,34 @@ export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
       }),
     [tree, itemsByKey, getStatusEnteredAt],
   );
-  const window = useLimitedSidebarGroup(roots, getFamilyDate, keep);
-  const visibleItems = includeActiveWorkspaceFamily({
+  const limited = useLimitedSidebarGroup(roots, getFamilyDate, keep);
+  // Stable identities: visibleItems feeds DraggableList data and drop-handler dependencies.
+  const revealed = useMemo(() => {
+    const visibleItems = includeActiveWorkspaceFamily({
+      roots,
+      visibleItems: limited.visibleItems,
+      tree,
+      activeWorkspaceKey,
+      activeWorkspaceKeys,
+    });
+    // Already-visible active overflow needs no Show more; an expanded window keeps Show less.
+    const canToggle =
+      limited.canToggle && (limited.expanded || visibleItems.length < roots.length);
+    return { visibleItems, canToggle };
+  }, [
     roots,
-    visibleItems: window.visibleItems,
+    limited.visibleItems,
+    limited.canToggle,
+    limited.expanded,
     tree,
     activeWorkspaceKey,
     activeWorkspaceKeys,
-  });
-  // Already-visible active overflow needs no Show more; an expanded window keeps Show less.
-  const canToggle = window.canToggle && (window.expanded || visibleItems.length < roots.length);
-  return { ...window, visibleItems, canToggle, itemsByKey };
+  ]);
+  return {
+    expanded: limited.expanded,
+    toggleExpanded: limited.toggleExpanded,
+    visibleItems: revealed.visibleItems,
+    canToggle: revealed.canToggle,
+    itemsByKey,
+  };
 }

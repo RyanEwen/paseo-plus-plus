@@ -254,12 +254,22 @@ export function expandedWorkspaceRows<T extends SidebarWorkspacePlacement>(input
   });
 }
 
+/** What a collapsed parent row reports about its descendants. */
+export interface WorkspaceChildrenSummary {
+  /** Every descendant, not only direct children. */
+  count: number;
+  /** The aggregate status of the descendants, or null when none is known. */
+  bucket: ReturnType<typeof aggregateKnownSidebarStateBuckets>;
+  /** Descendants that need the user, counted separately from their status. */
+  humanAttentionCount: number;
+}
+
 /** Status and human attention are independent facts about descendants, never the parent state. */
 export function summarizeWorkspaceChildren(input: {
   node: WorkspaceTreeNode;
   entries: ReadonlyMap<string, SidebarWorkspaceEntry>;
   humanAttentionWorkspaceKeys: ReadonlySet<string>;
-}) {
+}): WorkspaceChildrenSummary {
   const buckets = input.node.descendantKeys.map(
     (key) => input.entries.get(key)?.statusBucket ?? null,
   );

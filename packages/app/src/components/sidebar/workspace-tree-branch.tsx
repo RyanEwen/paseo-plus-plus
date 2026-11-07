@@ -29,7 +29,7 @@ import {
 import {
   summarizeWorkspaceChildren,
   workspaceCollapseKey,
-  type WorkspaceTreeNode,
+  type WorkspaceChildrenSummary,
 } from "./workspace-tree";
 import { resolveSidebarWorkspacePrimaryLabel } from "./sidebar-workspace-title";
 
@@ -144,7 +144,6 @@ export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>(
   const showSummary = hasChildren && collapsed;
   const { summaryText, humanAttentionText } = formatWorkspaceChildrenSummary({
     showSummary,
-    node,
     summary,
     t,
   });
@@ -232,18 +231,16 @@ export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>(
 /** Translate the collapsed descendant summary without changing raw status or human-attention policy. */
 function formatWorkspaceChildrenSummary({
   showSummary,
-  node,
   summary,
   t,
 }: {
   showSummary: boolean;
-  node: WorkspaceTreeNode | undefined;
-  summary: ReturnType<typeof summarizeWorkspaceChildren> | null;
+  summary: WorkspaceChildrenSummary | null;
   t: TFunction;
 }) {
   const summaryText = showSummary
     ? t("sidebar.workspaceTree.summary", {
-        count: node?.descendantKeys.length ?? 0,
+        count: summary?.count ?? 0,
         status: summary?.bucket
           ? getStatusBucketLabel(summary.bucket, t)
           : t("sidebar.workspaceTree.unknownStatus"),
