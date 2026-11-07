@@ -56,11 +56,13 @@ export function resolveProjectWorkspaceReorder(input: {
   };
 }
 
-/** The actual list owns the indices and partition; absent or stale anchors cannot commit. */
+/**
+ * The actual list owns the indices; absent or stale anchors cannot commit. The pin and ordinary
+ * partitions are enforced where the drop ends (isDragGroupOrderValid), not here.
+ */
 function isProjectWorkspaceMoveValid(input: {
   currentVisibleKeys: string[];
   reorderedVisibleKeys: string[];
-  projectPinnedKeys: ReadonlySet<string>;
   move: DragReorderMove;
 }): boolean {
   const { activeKey, overKey, from, to } = input.move;
@@ -72,13 +74,6 @@ function isProjectWorkspaceMoveValid(input: {
     original.length !== input.reorderedVisibleKeys.length ||
     original[from] !== activeKey ||
     original[to] !== overKey
-  )
-    return false;
-  const pinMove = input.projectPinnedKeys.has(activeKey);
-  if (
-    original
-      .slice(Math.min(from, to), Math.max(from, to) + 1)
-      .some((key) => input.projectPinnedKeys.has(key) !== pinMove)
   )
     return false;
   const expected = original.slice();

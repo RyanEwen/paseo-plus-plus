@@ -278,16 +278,6 @@ describe("anchored workspace move through a limited family window", () => {
       }),
     ).toEqual({ pinOrder: null, workspaceOrder: null });
   });
-  it("rejects a cross-pin-partition drag without updating pins or ordinary siblings", () => {
-    expect(
-      resolveProjectWorkspaceReorder({
-        ...input,
-        projectPinnedKeys: new Set(["srv:0"]),
-        reorderedVisibleKeys: ["srv:1", "srv:0"],
-        move: { activeKey: "srv:0", overKey: "srv:1", from: 0, to: 1 },
-      }),
-    ).toEqual({ pinOrder: null, workspaceOrder: null });
-  });
   it("rejects a drop result that moves an additional passive sibling", () => {
     expect(
       resolveProjectWorkspaceReorder({
