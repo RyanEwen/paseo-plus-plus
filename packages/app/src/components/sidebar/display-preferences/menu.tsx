@@ -3,8 +3,8 @@ import {
   WorkspaceListPage,
   WorkspaceUpdatedWithinPage,
 } from "./workspace-list";
-import { useAppSettings } from "@/hooks/use-settings";
-import { useSidebarBulkCollapse } from "../use-sidebar-bulk-collapse";
+import { SidebarBulkCollapseMenuItems } from "../bulk-collapse-controls";
+import { WORKSPACE_LIMIT_PAGES } from "./workspace-limit-pages";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   isSidebarTrailingItemEnabled,
@@ -52,7 +52,7 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
-import { controlHeightForLayout } from "@/components/ui/control-geometry";
+import { SIDEBAR_HEADER_TOUCH_TARGET } from "../header-icon-button";
 import { isNative, isWeb } from "@/constants/platform";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { Theme } from "@/styles/theme";
@@ -71,9 +71,6 @@ import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
-
-/** Touch target for compact and native controls: the compact-layout md control height (44 px). */
-const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 
 const PreferencesDisabledContext = createContext(false);
 
@@ -201,6 +198,17 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
   timestamp: "sidebar.display.show.timestamp",
 };
 
+/** Prefix a page with the reason edits are disabled, when there is one. */
+function withDisabledHint(reason: string | null, content: ReactNode): ReactNode {
+  if (!reason) return content;
+  return (
+    <>
+      <MenuHint>{reason}</MenuHint>
+      {content}
+    </>
+  );
+}
+
 /**
  * What the sidebar shows and how it is arranged.
  *
@@ -211,9 +219,7 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
 export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
-  const { settings } = useAppSettings();
   const { projects, workspaceSortSupported } = useSidebarModel();
-  const { expandAll, collapseAll } = useSidebarBulkCollapse();
   const isCompact = useIsCompactFormFactor();
   const { labels } = useWorkspaceLabelProjection();
   const [managerOpen, setManagerOpen] = useState(false);
@@ -240,22 +246,18 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
     projects.some((project) => project.workspaces.length === 0);
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
+    const workspaceLimitContent = {
+      workspaceList: <WorkspaceListPage preferences={preferences} />,
+      workspaceCount: <WorkspaceCountPage preferences={preferences} />,
+      workspaceUpdatedWithin: <WorkspaceUpdatedWithinPage preferences={preferences} />,
+    };
     const definitions: MenuPageDefinition[] = [
-      {
-        id: "workspaceList",
-        title: t("paseoPlusPlus.workspaceLimit.title"),
-        content: <WorkspaceListPage preferences={preferences} />,
-      },
-      {
-        id: "workspaceCount",
-        title: t("sidebar.display.workspaceList.countLimit"),
-        content: <WorkspaceCountPage preferences={preferences} />,
-      },
-      {
-        id: "workspaceUpdatedWithin",
-        title: t("sidebar.display.workspaceList.updatedWithin"),
-        content: <WorkspaceUpdatedWithinPage preferences={preferences} />,
-      },
+      ...WORKSPACE_LIMIT_PAGES.map(({ id, titleKey, hoverIntent }) => ({
+        id,
+        title: t(titleKey),
+        hoverIntent,
+        content: workspaceLimitContent[id],
+      })),
       {
         id: "sorting",
         title: t("sidebar.display.sorting.label"),
@@ -366,22 +368,17 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         ),
       });
     }
-    for (const page of definitions) {
-      page.content = (
-        <>
-          {preferences.preferencesDisabledReason ? (
-            <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
-          ) : null}
-          {page.content}
-        </>
-      );
-    }
-    return definitions;
+    const reason = preferences.preferencesDisabledReason;
+    return definitions.map((page) =>
+      Object.assign({}, page, { content: withDisabledHint(reason, page.content) }),
+    );
   }, [t, preferences, workspaceSortSupported, showLabelFilter, labels, openManager]);
 
   return (
     <>
       <PreferencesDisabledContext.Provider value={preferences.preferencesDisabled}>
+        {/* Remount on a mode switch or when edits become blocked: open pages and drafts belong
+            to one mode's profile and must not carry over to the other or into a blocked state. */}
         <MenuRoot
           key={`${preferences.grouping}:${preferences.preferencesDisabled}`}
           compactMode="sheet"
@@ -402,17 +399,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             sheetTitle={`${t(`sidebar.display.grouping.${preferences.grouping}`)}: ${t("sidebar.display.heading")}`}
             testID="sidebar-display-preferences-content"
           >
-            {isCompact && settings.paseoPlusPlus.sidebarBulkActions ? (
-              <>
-                <MenuItem onSelect={expandAll} testID="sidebar-expand-all">
-                  {t("sidebar.display.expandAll")}
-                </MenuItem>
-                <MenuItem onSelect={collapseAll} testID="sidebar-collapse-all">
-                  {t("sidebar.display.collapseAll")}
-                </MenuItem>
-                <MenuSeparator />
-              </>
-            ) : null}
+            <SidebarBulkCollapseMenuItems />
             {preferences.preferencesDisabledReason ? (
               <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
             ) : null}
@@ -812,7 +799,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
   },
-  compactTrigger: { minWidth: TOUCH_TARGET_SIZE, minHeight: TOUCH_TARGET_SIZE },
+  compactTrigger: { minWidth: SIDEBAR_HEADER_TOUCH_TARGET, minHeight: SIDEBAR_HEADER_TOUCH_TARGET },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

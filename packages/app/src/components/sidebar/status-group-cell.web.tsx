@@ -1,12 +1,6 @@
-import { useCallback, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";
-
-interface StatusGroupCellProps {
-  workspaceKey: string;
-  groupKey: string;
-  resolveDestinationGroupKey: (workspaceKey: string) => string | undefined;
-  children: ReactNode;
-}
+import type { StatusGroupCellProps } from "./status-group-cell.types";
 
 /** A header can be inside the window while fixed sidebar controls clip it out of the scrollport. */
 function hasPaintedIntersection(header: HTMLElement): boolean {

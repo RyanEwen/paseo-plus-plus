@@ -1,19 +1,28 @@
-import { useWorkspaceFamilyDrag } from "@/components/sidebar/use-workspace-family-drag";
 import {
   ProjectExpansionAnchorContext,
-  useProjectExpansionAnchor,
+  useAnchoredProjectToggle,
 } from "./sidebar/project-expansion-anchor";
 import { useProjectExpansionScroll } from "./sidebar/use-project-expansion-scroll";
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
+import { selectKnownSidebarProjectKeys } from "@/components/sidebar/sidebar-model";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
-import { useSessionStore } from "@/stores/session-store";
-import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
+import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sidebar/project-pins";
+import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
+import { getProjectActivity, projectBlockActivityEqual } from "./sidebar/project-block-activity";
+import { useProjectHeaderActivity } from "./sidebar/use-project-header-activity";
+import {
+  PROJECT_ACTION_GAP,
+  PROJECT_ACTION_OPTICAL_OFFSET,
+  PROJECT_ACTION_SIZE,
+  PROJECT_KEBAB_COMPACT_OVERHANG,
+  PROJECT_KEBAB_COMPACT_SIZE,
+  projectTrailingActionsWidth,
+} from "./sidebar/project-trailing-actions";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
-import { useAppSettings } from "@/hooks/use-settings";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
@@ -111,7 +120,7 @@ import {
   resolveProjectWorkspaceReorder,
 } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { type SidebarStateBucket } from "@/utils/sidebar-agent-state";
+import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
@@ -121,12 +130,12 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useWorkspaceFamilyWindow } from "@/components/sidebar/use-workspace-family-window";
-import { WorkspaceTreeBranch } from "@/components/sidebar/workspace-tree-branch";
-import { useSidebarWorkspaceFamilyPresentation } from "@/components/sidebar/workspace-tree-context";
+import {
+  useLimitedSidebarGroup,
+  useOpenWorkspaceKeep,
+} from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
-  sidebarWorkspaceRowStyles,
   SidebarWorkspaceRowContent,
   SidebarWorkspaceShortcutBadge,
   resolveTrailingActionVisibility,
@@ -158,7 +167,6 @@ import {
   resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
   type SidebarProjectIconTarget,
-  resolveSidebarProjectLeadingStatus,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -399,17 +407,14 @@ function getProjectWorkspaceRowStyle({
   isPressed,
   selected,
   isHovered,
-  hasFamilyDisclosure,
 }: {
   isDragging: boolean;
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
-  hasFamilyDisclosure: boolean;
 }) {
   return [
     styles.workspaceRow,
-    hasFamilyDisclosure && sidebarWorkspaceRowStyles.familyParentRow,
     isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
@@ -437,10 +442,6 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
   },
 }));
 
-const PROJECT_ACTION_SIZE = 24;
-const PROJECT_ACTION_GAP = 2;
-const PROJECT_ACTION_OPTICAL_OFFSET = 6;
-
 function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
@@ -467,17 +468,13 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
-  const controlCount = Number(Boolean(worktreeTarget)) + Number(Boolean(onRemoveProject));
-  const actionsWidth =
-    controlCount * PROJECT_ACTION_SIZE +
-    Math.max(0, controlCount - 1) * PROJECT_ACTION_GAP -
-    PROJECT_ACTION_OPTICAL_OFFSET;
+  const actionsWidth = projectTrailingActionsWidth({
+    hasNewWorkspaceAction: worktreeTarget !== null,
+    hasKebab: onRemoveProject !== undefined,
+    compact: isMobileBreakpoint,
+  });
   return (
-    <HoverRevealActions
-      visible={actionsVisible}
-      width={Math.max(0, actionsWidth)}
-      height={PROJECT_ACTION_SIZE}
-    >
+    <HoverRevealActions visible={actionsVisible} width={actionsWidth} height={PROJECT_ACTION_SIZE}>
       <View style={styles.projectTrailingActions}>
         {worktreeTarget ? (
           <NewWorktreeButton
@@ -922,8 +919,10 @@ function ProjectHeaderRow({
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
-  const { settings } = useAppSettings();
-  const { sidebarActivityChips } = settings.paseoPlusPlus;
+  const headerActivity = useProjectHeaderActivity({
+    bucket: statusBucket,
+    collapsed: chevron === "expand",
+  });
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -1001,35 +1000,24 @@ function ProjectHeaderRow({
         <ProjectLeadingVisual
           displayName={displayName}
           iconDataUri={iconDataUri}
-          statusBucket={resolveSidebarProjectLeadingStatus(
-            statusBucket,
-            sidebarActivityChips,
-            chevron === "expand",
-          )}
+          statusBucket={headerActivity.leadingStatus}
           projectViewKey={project.viewKey}
-          backdrop={getSidebarRowBackdrop({
-            isDragging,
-            isPressed,
-            selected,
-            isHovered,
-          })}
+          backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
-          statusIsDecorative={sidebarActivityChips}
+          hiddenFromAccessibility={headerActivity.leadingHiddenFromAccessibility}
         />
 
         <View style={styles.projectTitleGroup}>
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
-          {sidebarActivityChips ? (
-            <ProjectActivityChip
-              bucket={statusBucket}
-              workingWorkspaceCount={workingWorkspaceCount}
-              projectViewKey={project.viewKey}
-            />
-          ) : null}
+          <ProjectActivityChip
+            bucket={headerActivity.chipBucket}
+            workingWorkspaceCount={workingWorkspaceCount}
+            projectViewKey={project.viewKey}
+          />
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -1150,7 +1138,6 @@ function WorkspaceRowInner({
   onToggleProjectPin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
-  const family = useSidebarWorkspaceFamilyPresentation();
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
@@ -1188,7 +1175,7 @@ function WorkspaceRowInner({
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
-      {({ isHovered, contextMenuOpen, onContextMenuOpenChange }) => {
+      {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
         const isDesktop = !isTouchPlatform;
         const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
         const workspaceRowStyle = getProjectWorkspaceRowStyle({
@@ -1196,7 +1183,6 @@ function WorkspaceRowInner({
           isPressed,
           selected,
           isHovered,
-          hasFamilyDisclosure: family.disclosure !== null,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
@@ -1205,6 +1191,7 @@ function WorkspaceRowInner({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
+            {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
@@ -1230,8 +1217,6 @@ function WorkspaceRowInner({
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
-              aria-describedby={family.collapsedSummary?.id}
-              accessibilityHint={family.collapsedSummary?.description}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
@@ -1371,7 +1356,7 @@ function WorkspaceRowWithMenu({
 
   const isPinned = workspace.pinnedAt != null;
   const isProjectPinned = workspace.projectPinnedAt != null;
-  const onToggleProjectPin = useCallback(() => {
+  const handleToggleProjectPin = useCallback(() => {
     onToggleWorkspacePin(workspace, "project");
   }, [onToggleWorkspacePin, workspace]);
   const handleTogglePin = useCallback(() => {
@@ -1437,7 +1422,7 @@ function WorkspaceRowWithMenu({
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         isProjectPinned={isProjectPinned}
-        onToggleProjectPin={onToggleProjectPin}
+        onToggleProjectPin={handleToggleProjectPin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
       <WorkspaceRenameModal
@@ -1691,13 +1676,15 @@ function ProjectBlock({
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
+  const keepOpenWorkspace = useOpenWorkspaceKeep(
+    selectionEnabled ? activeWorkspaceSelection : null,
+  );
   const {
     visibleItems: visibleWorkspaces,
-    itemsByKey: familyItemsByKey,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useWorkspaceFamilyWindow(project.workspaces, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt, keepOpenWorkspace);
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -1763,58 +1750,39 @@ function ProjectBlock({
     ],
   );
 
-  const workspaceDrag = useWorkspaceFamilyDrag();
+  const workspaceDrag = useSidebarReorderGuard("workspace");
   const canCommitWorkspaceDrag = workspaceDrag.canCommit;
-  const projectPinning = useAppSettings().settings.paseoPlusPlus.projectPinning;
+  const projectPinning = useProjectPinningEnabled();
+  // Project pins stay draggable among themselves under any workspace sort. Ordinary rows accept
+  // drops only under Custom with Manual order; sorted rows stay selectable and keep their menus.
   const workspaceDragGroup = useCallback(
     (workspace: SidebarWorkspacePlacement) => {
-      if (
-        projectPinning &&
-        workspaceEntriesByKey.get(workspace.workspaceKey)?.projectPinnedAt != null
-      )
+      if (isProjectPinnedEntry(workspaceEntriesByKey.get(workspace.workspaceKey), projectPinning))
         return "pins";
       return !manualSort || workspaceDrag.disabled ? null : "ordinary";
     },
     [manualSort, projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
   );
-  const renderFamilyRow = useCallback(
-    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) =>
-      renderWorkspaceRow(row.item, {
-        drag: row.drag,
-        isDragging: row.isActive,
-        dragHandleProps: row.dragHandleProps,
-      }),
+  const renderWorkspace = useCallback(
+    ({
+      item,
+      drag: workspaceRowDrag,
+      isActive,
+      dragHandleProps: workspaceDragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return renderWorkspaceRow(item, {
+        drag: workspaceRowDrag,
+        isDragging: isActive,
+        dragHandleProps: workspaceDragHandleProps,
+      });
+    },
     [renderWorkspaceRow],
   );
-  const reorderFamilySiblings = useCallback(
-    (rows: SidebarWorkspacePlacement[], move: DragReorderMove) =>
-      onWorkspaceReorder(project.viewKey, rows, move),
-    [onWorkspaceReorder, project.viewKey],
-  );
-  const renderWorkspace = useCallback(
-    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return (
-        <WorkspaceTreeBranch
-          row={row}
-          itemsByKey={familyItemsByKey}
-          renderRow={renderFamilyRow}
-          onSiblingReorder={reorderFamilySiblings}
-          getDragGroupKey={workspaceDragGroup}
-          parentGestureRef={parentGestureRef}
-          dragGestureHostActive={dragGestureHostActive}
-        />
-      );
-    },
-    [
-      familyItemsByKey,
-      renderFamilyRow,
-      reorderFamilySiblings,
-      workspaceDragGroup,
-      parentGestureRef,
-      dragGestureHostActive,
-    ],
-  );
 
+  const workspaceDragDisabled = useMemo(
+    () => visibleWorkspaces.every((workspace) => workspaceDragGroup(workspace) === null),
+    [visibleWorkspaces, workspaceDragGroup],
+  );
   const handleWorkspaceDragEnd = useCallback(
     (workspaces: SidebarWorkspacePlacement[], move?: DragReorderMove) => {
       if (!move) return;
@@ -1900,21 +1868,13 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, displayName, t, toast, project.hosts]);
 
-  const { ref: projectAnchorRef, anchor: anchorExpansion } = useProjectExpansionAnchor();
   const handleToggleCollapsed = useCallback(() => {
-    const toggle = () => onToggleCollapsed(project.viewKey);
-    const view = useSidebarViewStore.getState();
-    if (
-      collapsed &&
-      view.groupMode === "project" &&
-      view.oneProjectAtATime &&
-      projectAnchorRef.current
-    ) {
-      anchorExpansion(projectAnchorRef.current, toggle);
-    } else {
-      toggle();
-    }
-  }, [anchorExpansion, collapsed, onToggleCollapsed, project.viewKey, projectAnchorRef]);
+    onToggleCollapsed(project.viewKey);
+  }, [onToggleCollapsed, project.viewKey]);
+  const { ref: projectAnchorRef, onToggle: handleAnchoredToggle } = useAnchoredProjectToggle({
+    collapsed,
+    toggle: handleToggleCollapsed,
+  });
 
   let projectChildren = null;
   if (!collapsed) {
@@ -1930,9 +1890,7 @@ function ProjectBlock({
             onDragEnd={handleWorkspaceDragEnd}
             onDragBegin={workspaceDrag.onDragBegin}
             getDragGroupKey={workspaceDragGroup}
-            disabled={visibleWorkspaces.every(
-              (workspace) => workspaceDragGroup(workspace) === null,
-            )}
+            disabled={workspaceDragDisabled}
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
             useDragHandle
@@ -1978,7 +1936,7 @@ function ProjectBlock({
         workingWorkspaceCount={workingWorkspaceCount}
         selected={false}
         chevron={rowModel.chevron}
-        onPress={handleToggleCollapsed}
+        onPress={handleAnchoredToggle}
         worktreeTarget={
           rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
         }
@@ -2006,6 +1964,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
   return (
     previous.project === next.project &&
     projectWorkspaceEntriesEqual(previous, next) &&
+    projectBlockActivityEqual(previous, next) &&
     previous.collapsed === next.collapsed &&
     previous.displayName === next.displayName &&
     previous.iconDataUri === next.iconDataUri &&
@@ -2406,9 +2365,8 @@ function ProjectModeList({
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
-  const projectStatusBuckets = useSidebarProjectActivity(projects, workspaceEntriesByKey);
-  const { settings } = useAppSettings();
-  const projectPinningEnabled = settings.paseoPlusPlus.projectPinning;
+  const projectActivity = useSidebarProjectActivity(projects, workspaceEntriesByKey);
+  const projectPinningEnabled = useProjectPinningEnabled();
   const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
@@ -2439,13 +2397,15 @@ function ProjectModeList({
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
+  const keepOpenWorkspace = useOpenWorkspaceKeep(
+    selectionEnabled ? activeWorkspaceSelection : null,
+  );
   const {
     visibleItems: visiblePinnedChats,
-    itemsByKey: pinnedFamilyItemsByKey,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useWorkspaceFamilyWindow(pinnedChats, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt, keepOpenWorkspace);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2520,13 +2480,7 @@ function ProjectModeList({
       )
         return;
       if (!visibleKeys.includes(move.activeKey) || !visibleKeys.includes(move.overKey)) return;
-      const session = useSessionStore.getState();
-      const serverIds = getHostRuntimeStore()
-        .getHosts()
-        .map((host) => host.serverId);
-      const knownProjectKeys = selectWorkspaceStructureProjects(session, serverIds).map(
-        (project) => project.viewKey,
-      );
+      const knownProjectKeys = selectKnownSidebarProjectKeys();
       if (!knownProjectKeys.includes(move.activeKey) || !knownProjectKeys.includes(move.overKey))
         return;
       const next = moveProjectInFullOrder({
@@ -2546,14 +2500,10 @@ function ProjectModeList({
       move: DragReorderMove,
     ) => {
       const project = unpinnedProjects.find((entry) => entry.viewKey === projectViewKey);
-      const projectPinnedKeys = new Set(
-        reorderedWorkspaces
-          .filter(
-            (workspace) =>
-              projectPinningEnabled &&
-              workspaceEntriesByKey.get(workspace.workspaceKey)?.projectPinnedAt != null,
-          )
-          .map((workspace) => workspace.workspaceKey),
+      const projectPinnedKeys = collectProjectPinnedKeys(
+        reorderedWorkspaces,
+        workspaceEntriesByKey,
+        projectPinningEnabled,
       );
       const result = resolveProjectWorkspaceReorder({
         currentVisibleKeys: project?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
@@ -2562,14 +2512,13 @@ function ProjectModeList({
         storedWorkspaceOrder: getWorkspaceOrder(projectViewKey),
         move,
       });
-      if (result.projectPinKeys.length > 0) {
+      if (result.pinOrder) {
+        const pinOrder = new Set(result.pinOrder);
         onPinnedWorkspaceReorder(
-          reorderedWorkspaces.filter((workspace) => projectPinnedKeys.has(workspace.workspaceKey)),
+          reorderedWorkspaces.filter((workspace) => pinOrder.has(workspace.workspaceKey)),
         );
       }
       if (result.workspaceOrder === null) return;
-
-      if (useSidebarViewStore.getState().workspaceSortMode !== "custom") return;
       setWorkspaceOrder(projectViewKey, result.workspaceOrder);
     },
     [
@@ -2617,12 +2566,13 @@ function ProjectModeList({
         dragHandleProps?: DraggableRenderItemInfo<SidebarProjectEntry>["dragHandleProps"];
       },
     ) => {
+      const activity = getProjectActivity(projectActivity, item.viewKey);
       return (
         <MemoProjectBlock
           key={item.viewKey}
           project={item}
-          aggregateStatusBucket={projectStatusBuckets.get(item.viewKey)?.bucket ?? null}
-          workingWorkspaceCount={projectStatusBuckets.get(item.viewKey)?.workingCount ?? 0}
+          aggregateStatusBucket={activity.bucket}
+          workingWorkspaceCount={activity.workingCount}
           workspaceEntriesByKey={workspaceEntriesByKey}
           collapsed={collapsedProjectKeys.has(item.viewKey)}
           displayName={item.projectName}
@@ -2651,7 +2601,7 @@ function ProjectModeList({
       );
     },
     [
-      projectStatusBuckets,
+      projectActivity,
       collapsedProjectKeys,
       activeWorkspaceSelection,
       handleWorktreeCreated,
@@ -2681,36 +2631,37 @@ function ProjectModeList({
   );
 
   const renderPinnedChatRow = useCallback(
-    ({
-      item: workspace,
-      drag,
-      isActive,
-      dragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return (
-        <MemoWorkspaceRowItem
-          workspace={workspace}
-          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-          hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
-          leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
-          }
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={workspace.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          onWorkspacePress={onWorkspacePress}
-          drag={drag}
-          isDragging={isActive}
-          dragHandleProps={dragHandleProps}
-        />
-      );
-    },
+    (
+      workspace: SidebarWorkspacePlacement,
+      input?: {
+        drag?: () => void;
+        isDragging?: boolean;
+        dragHandleProps?: DraggableListDragHandleProps;
+      },
+    ) => (
+      <MemoWorkspaceRowItem
+        key={workspace.workspaceKey}
+        workspace={workspace}
+        workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
+        hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
+        leadingProjectName={workspace.projectName}
+        leadingProjectIconDataUri={
+          projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
+        }
+        shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canCopyBranchName={workspace.projectKind === "git"}
+        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        onWorkspacePress={onWorkspacePress}
+        drag={input?.drag}
+        isDragging={input?.isDragging}
+        dragHandleProps={input?.dragHandleProps}
+      />
+    ),
     [
       activeWorkspaceSelection,
       creatingWorkspaceIds,
@@ -2727,24 +2678,19 @@ function ProjectModeList({
   );
 
   const renderPinnedChat = useCallback(
-    (row: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => (
-      <WorkspaceTreeBranch
-        row={row}
-        itemsByKey={pinnedFamilyItemsByKey}
-        renderRow={renderPinnedChatRow}
-        onSiblingReorder={onPinnedWorkspaceReorder}
-        manualPins
-        parentGestureRef={parentGestureRef}
-        dragGestureHostActive={dragGestureHostActive}
-      />
-    ),
-    [
-      pinnedFamilyItemsByKey,
-      renderPinnedChatRow,
-      onPinnedWorkspaceReorder,
-      parentGestureRef,
-      dragGestureHostActive,
-    ],
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return renderPinnedChatRow(workspace, {
+        drag,
+        isDragging: isActive,
+        dragHandleProps,
+      });
+    },
+    [renderPinnedChatRow],
   );
 
   const projectLayoutRevision = useMemo(
@@ -3033,8 +2979,10 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -PROJECT_ACTION_OPTICAL_OFFSET,
   },
   projectKebabButton: {
-    width: PROJECT_ACTION_SIZE,
-    height: PROJECT_ACTION_SIZE,
+    width: { xs: PROJECT_KEBAB_COMPACT_SIZE, md: PROJECT_ACTION_SIZE },
+    height: { xs: PROJECT_KEBAB_COMPACT_SIZE, md: PROJECT_ACTION_SIZE },
+    marginRight: { xs: -PROJECT_KEBAB_COMPACT_OVERHANG, md: 0 },
+    marginVertical: { xs: -PROJECT_KEBAB_COMPACT_OVERHANG, md: 0 },
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",

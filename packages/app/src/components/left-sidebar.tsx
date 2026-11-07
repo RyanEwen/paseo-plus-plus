@@ -807,11 +807,10 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
-  const isCompact = useIsCompactFormFactor();
   return (
     <View>
       <SidebarSectionHeader title="Workspaces">
-        {!isCompact ? <SidebarBulkCollapseControls /> : null}
+        <SidebarBulkCollapseControls />
         <SidebarViewModeButton />
         <SidebarQuickFilterButton />
         <Tooltip delayDuration={300}>

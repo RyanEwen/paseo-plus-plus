@@ -10,8 +10,13 @@ import {
   openSidebarDisplayPage,
   selectSidebarStatusGrouping,
 } from "../support/helpers/sidebar";
+import { workspaceKebabRevealWidth } from "../../src/components/sidebar/workspace-kebab-geometry";
 
 const TITLE = "Linux desktop sandbox launch support";
+/** The trailing row's gap, which the revealed actions restore beside the status. */
+const TRAILING_ROW_GAP = 8;
+
+type TrailingStat = "Diff stats" | "Last activity";
 
 async function seedChangedWorkspace() {
   const workspace = await seedWorkspace({
@@ -47,7 +52,7 @@ async function titleWidth(row: Locator) {
     .evaluate((element) => element.getBoundingClientRect().width);
 }
 
-async function toggleTrailing(page: Page, label: "Diff stats" | "Last activity", touch = false) {
+async function toggleTrailing(page: Page, label: TrailingStat, touch = false) {
   await openSidebarDisplayPage(page, "sidebar-display-show");
   await page.getByRole("menuitem", { name: label, exact: true }).click();
   if (touch) {
@@ -63,15 +68,18 @@ async function toggleTrailing(page: Page, label: "Diff stats" | "Last activity",
   await page.mouse.move(0, 0);
 }
 
-async function expectTouchTitleWidth(page: Page) {
+/**
+ * Turn on the stats this grouping starts without, then check the title grows as each one hides.
+ *
+ * @param enable stats that are off in the current grouping's preferences.
+ */
+async function expectTouchTitleGrowsAsStatsHide(page: Page, enable: TrailingStat[]) {
   const row = workspaceRow(page);
-  // Compact rows now show explicitly enabled metadata, just like desktop rows.
-  if (!(await row.getByTestId("sidebar-workspace-diff-stat").count())) {
-    await toggleTrailing(page, "Diff stats", true);
+  for (const stat of enable) {
+    await toggleTrailing(page, stat, true);
   }
-  if (!(await row.getByTestId("sidebar-workspace-timestamp").count())) {
-    await toggleTrailing(page, "Last activity", true);
-  }
+  await expect(row.getByTestId("sidebar-workspace-diff-stat")).toBeVisible();
+  await expect(row.getByTestId("sidebar-workspace-timestamp")).toBeVisible();
   const withBoth = await titleWidth(row);
   await toggleTrailing(page, "Diff stats", true);
   const withoutDiff = await titleWidth(row);
@@ -125,7 +133,8 @@ async function expectHoverUsesActionSpace(page: Page, width: number, testInfo: T
   const row = workspaceRow(page);
   await row.hover();
   await expect(row.getByLabel("Workspace actions", { exact: true })).toBeVisible();
-  await expect.poll(() => titleWidth(row)).toBeLessThan(width - 20);
+  const revealed = workspaceKebabRevealWidth({ compact: false }) + TRAILING_ROW_GAP;
+  await expect.poll(() => titleWidth(row)).toBeCloseTo(width - revealed, 0);
   await page.screenshot({ path: testInfo.outputPath("desktop-hover.png") });
   await page.mouse.move(0, 0);
   await expect.poll(() => titleWidth(row)).toBeCloseTo(width, 0);
@@ -150,11 +159,12 @@ test("touch titles reclaim space when visible stats are disabled in every groupi
   page,
 }, testInfo) => {
   await openTouchWorkspaceList(page, testInfo);
-  await expectTouchTitleWidth(page);
+  await expectTouchTitleGrowsAsStatsHide(page, []);
   await pinWorkspaceForLayout(page);
-  await expectTouchTitleWidth(page);
+  await expectTouchTitleGrowsAsStatsHide(page, []);
   await moveWorkspaceToStatusGrouping(page);
-  await expectTouchTitleWidth(page);
+  // Status grouping keeps its own preferences, where diff stats start hidden.
+  await expectTouchTitleGrowsAsStatsHide(page, ["Diff stats"]);
 });
 
 test("desktop idle titles reclaim hover-action space and shortcut hints preserve width", async ({

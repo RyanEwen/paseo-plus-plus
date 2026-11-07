@@ -12,6 +12,7 @@ import {
   type ProjectStatusBadgeContent,
   type ProjectStatusBadgeDotBucket,
 } from "@/utils/project-status-badge-content";
+import { hiddenFromAccessibilityProps } from "@/utils/hidden-from-accessibility";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import {
@@ -66,7 +67,7 @@ export function ProjectLeadingVisual({
   chevron = null,
   showChevron = false,
   isArchiving = false,
-  statusIsDecorative = false,
+  hiddenFromAccessibility = false,
 }: {
   displayName: string;
   iconDataUri: string | null;
@@ -78,8 +79,11 @@ export function ProjectLeadingVisual({
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
-  /** A separate aggregate chip owns the accessible status while this glyph stays visible. */
-  statusIsDecorative?: boolean;
+  /**
+   * Hide the whole leading slot, project icon and status glyph, from assistive technology. The
+   * project title and the activity chip already announce both.
+   */
+  hiddenFromAccessibility?: boolean;
 }) {
   if (showChevron && chevron !== null) {
     return (
@@ -104,7 +108,7 @@ export function ProjectLeadingVisual({
       projectViewKey={projectViewKey}
       statusBucket={statusBucket}
       backdrop={backdrop}
-      statusIsDecorative={statusIsDecorative}
+      hiddenFromAccessibility={hiddenFromAccessibility}
     />
   );
 }
@@ -121,7 +125,7 @@ export function ProjectStatusIndicator({
   statusBucket,
   backdrop,
   loading = false,
-  statusIsDecorative = false,
+  hiddenFromAccessibility = false,
   testID,
 }: {
   iconDataUri: string | null;
@@ -131,8 +135,8 @@ export function ProjectStatusIndicator({
   /** The row's current background, so the status badge can knock out of it. */
   backdrop: SidebarSurfaceBackdrop;
   loading?: boolean;
-  /** Hide redundant status semantics when a sibling aggregate chip announces the same state. */
-  statusIsDecorative?: boolean;
+  /** Hide the icon and status glyph from assistive technology; see ProjectLeadingVisual. */
+  hiddenFromAccessibility?: boolean;
   testID?: string;
 }) {
   const placeholderInitial = projectIconPlaceholderLabelFromDisplayName(displayName)
@@ -147,9 +151,7 @@ export function ProjectStatusIndicator({
   return (
     <View
       style={styles.projectLeadingVisualSlot}
-      accessibilityElementsHidden={statusIsDecorative}
-      importantForAccessibility={statusIsDecorative ? "no-hide-descendants" : "auto"}
-      aria-hidden={statusIsDecorative}
+      {...hiddenFromAccessibilityProps(hiddenFromAccessibility)}
       testID={
         testID ??
         (statusBucket && statusBucket !== "done"

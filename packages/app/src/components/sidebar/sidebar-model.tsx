@@ -1,9 +1,3 @@
-import { useWorkspaceHumanAttention } from "./use-workspace-human-attention";
-import { useWorkspaceFamilyDragAuthority } from "./use-workspace-family-drag";
-import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import { useWorkspaceParents } from "./use-workspace-parents";
-import { SidebarWorkspaceTreeProvider } from "./workspace-tree-context";
-import type { WorkspaceTreeNode } from "./workspace-tree";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import { filterSidebarByText } from "./sidebar-text-filter";
 import { ProjectPinGutterProvider } from "./project-pin-gutter";
@@ -11,7 +5,7 @@ import { useSidebarProjectActivity } from "./use-sidebar-project-activity";
 import { useSessionStore } from "@/stores/session-store";
 import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
 import { SidebarRecencyClockProvider } from "./workspace-recency-clock";
-import { useAppSettings } from "@/hooks/use-settings";
+import { useProjectPinningEnabled } from "./use-project-pinning-enabled";
 import { useTranslation } from "react-i18next";
 import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
@@ -59,26 +53,26 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
   shortcutModel: SidebarShortcutModel;
-  workspaceTree: ReadonlyMap<string, WorkspaceTreeNode>;
 }
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
 
+/** Every project in the cached catalog of every connected host, read at an action boundary. */
+export function selectKnownSidebarProjectKeys(): string[] {
+  const session = useSessionStore.getState();
+  return selectWorkspaceStructureProjects(session, Object.keys(session.sessions)).map(
+    (project) => project.viewKey,
+  );
+}
+
 /** Read the current mode, preference and cached catalog at the action boundary. */
 function toggleSidebarProjectCollapsed(projectViewKey: string) {
   const view = useSidebarViewStore.getState();
-  const session = useSessionStore.getState();
-  const projectKeys =
-    view.groupMode === "project" && view.oneProjectAtATime
-      ? selectWorkspaceStructureProjects(session, Object.keys(session.sessions)).map(
-          (project) => project.viewKey,
-        )
-      : [];
-  useSidebarCollapsedSectionsStore.getState().toggleProjectCollapsed(projectViewKey, {
-    mode: view.groupMode,
-    oneProjectAtATime: view.oneProjectAtATime,
-    projectKeys,
-  });
+  const oneProjectAtATime = view.groupMode === "project" && view.oneProjectAtATime;
+  const collapseOthers = oneProjectAtATime ? selectKnownSidebarProjectKeys() : [];
+  useSidebarCollapsedSectionsStore
+    .getState()
+    .toggleProjectCollapsed(projectViewKey, { collapseOthers });
 }
 
 export function SidebarModelProvider({
@@ -90,9 +84,7 @@ export function SidebarModelProvider({
 }) {
   const { t } = useTranslation();
   const list = useSidebarWorkspacesList({ enabled: active });
-  const {
-    settings: { paseoPlusPlus },
-  } = useAppSettings();
+  const projectPinningEnabled = useProjectPinningEnabled();
   const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const workspaceSortMode = useSidebarViewStore((state) => state.workspaceSortMode);
   const statusWorkspaceOrder = useSidebarOrderStore((state) => state.statusWorkspaceOrder);
@@ -233,32 +225,10 @@ export function SidebarModelProvider({
       showBranch,
     ],
   );
-  const workspaceParents = useWorkspaceParents(list.workspacePlacements);
-  const familyDragServerIds = useMemo(
-    () => [...new Set(list.workspacePlacements.map((workspace) => workspace.serverId))],
-    [list.workspacePlacements],
-  );
-  const dragAuthority = useWorkspaceFamilyDragAuthority(familyDragServerIds);
-  const activeWorkspace = useActiveWorkspaceSelection();
-  const activeWorkspaceKey =
-    list.workspacePlacements.find((workspace) => {
-      if (activeWorkspace === null) return false;
-      return (
-        workspace.serverId === activeWorkspace.serverId &&
-        workspace.workspaceId === activeWorkspace.workspaceId
-      );
-    })?.workspaceKey ?? null;
-  const attentionWorkspaces = useMemo(
-    () => textFiltered.projects.flatMap((project) => project.workspaces),
-    [textFiltered.projects],
-  );
-  const humanAttentionWorkspaceKeys = useWorkspaceHumanAttention(attentionWorkspaces);
   const pinnedKeys = usePinnedSidebarKeys(textFiltered.projects);
   const projectionInput = useMemo(
     () => ({
       projects: textFiltered.projects,
-      workspaceParents,
-      activeWorkspaceKey,
       pinnedKeys,
       pinnedWorkspaceOrder,
       workspaceEntriesByKey: textFiltered.entries,
@@ -266,7 +236,7 @@ export function SidebarModelProvider({
       groupMode,
       workspaceSortMode,
       workspaceTitleSource,
-      projectPinningEnabled: paseoPlusPlus.projectPinning,
+      projectPinningEnabled,
       statusWorkspaceOrder,
       pinnedCollapsed,
       collapsedProjectKeys,
@@ -276,12 +246,10 @@ export function SidebarModelProvider({
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
-      workspaceParents,
-      activeWorkspaceKey,
       groupMode,
       workspaceSortMode,
       workspaceTitleSource,
-      paseoPlusPlus.projectPinning,
+      projectPinningEnabled,
       statusWorkspaceOrder,
       list.projectNamesByViewKey,
       textFiltered,
@@ -307,7 +275,6 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       toggleProjectCollapsed,
       shortcutModel: projection.shortcutModel,
-      workspaceTree: projection.workspaceTree,
     }),
     [
       resolvedProjectFilters,
@@ -320,44 +287,11 @@ export function SidebarModelProvider({
     ],
   );
 
-  const workspaceTreeModel = useMemo(
-    () => ({
-      tree: projection.workspaceTree,
-      dragAuthority,
-      revision: JSON.stringify([
-        [...projection.workspaceTree].map(([key, node]) => [key, node.parentKey, node.childKeys]),
-        projection.workspaceGroups.map((group) => [
-          group.key,
-          group.rows.map((workspace) => workspace.workspaceKey),
-        ]),
-        projection.pinnedGroups.pinnedChats.map((workspace) => workspace.workspaceKey),
-        [...projection.effectiveCollapsedWorkspaceKeys].sort(),
-        [...collapsedProjectKeys].sort(),
-        pinnedCollapsed,
-      ]),
-      collapsedKeys: projection.effectiveCollapsedWorkspaceKeys,
-      activeWorkspaceKey,
-      entries: textFiltered.entries,
-      humanAttentionWorkspaceKeys,
-    }),
-    [
-      projection,
-      dragAuthority,
-      activeWorkspaceKey,
-      textFiltered.entries,
-      collapsedProjectKeys,
-      pinnedCollapsed,
-      humanAttentionWorkspaceKeys,
-    ],
-  );
-
   return (
     <SidebarModelContext.Provider value={value}>
-      <SidebarWorkspaceTreeProvider value={workspaceTreeModel}>
-        <ProjectPinGutterProvider value={paseoPlusPlus.projectPinning}>
-          <SidebarRecencyClockProvider active={active}>{children}</SidebarRecencyClockProvider>
-        </ProjectPinGutterProvider>
-      </SidebarWorkspaceTreeProvider>
+      <ProjectPinGutterProvider value={projectPinningEnabled}>
+        <SidebarRecencyClockProvider active={active}>{children}</SidebarRecencyClockProvider>
+      </ProjectPinGutterProvider>
     </SidebarModelContext.Provider>
   );
 }

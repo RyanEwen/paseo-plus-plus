@@ -6,7 +6,7 @@ import DraggableFlatList, {
 } from "react-native-draggable-flatlist";
 import { Easing, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { describeDragReorderMove, isDragGroupOrderValid } from "./drag-reorder/reorder-items";
-import { usePositionTransitionDuration } from "./drag-reorder/use-position-transition";
+import { usePositionTransitionDuration } from "./drag-reorder/use-position-transition-duration";
 import { useUnistyles } from "react-native-unistyles";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 
@@ -133,13 +133,11 @@ export function DraggableList<T>({
     [shouldShowRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
   );
 
-  const motionKeys = data.flatMap((item, index) => {
-    if (getDragGroupKey && getDragGroupKey(item) === null) return [];
-    return [keyExtractor(item, index)];
-  });
   const motionDuration = usePositionTransitionDuration({
-    duration: positionTransitionDuration ?? 0,
-    keys: motionKeys,
+    data: data,
+    keyExtractor,
+    getDragGroupKey,
+    duration: positionTransitionDuration,
     dragging: isDragging || gestureHostPresented === false,
   });
   const itemLayoutAnimation = useMemo(

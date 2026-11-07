@@ -27,10 +27,11 @@ export function togglePinnedCollapsed(state: CollapsedProjectsState): CollapsedP
 }
 
 export interface ProjectCollapseOptions {
-  mode: "project" | "status";
-  oneProjectAtATime: boolean;
-  /** All known host-qualified project keys, without fetching hidden host directories. */
-  projectKeys: readonly string[];
+  /**
+   * Project keys to collapse when this project expands. The caller owns the policy (for example
+   * one project at a time) and passes an empty list when nothing else should close.
+   */
+  collapseOthers: readonly string[];
 }
 
 export function toggleProjectCollapsed(
@@ -66,8 +67,8 @@ export function setProjectCollapsed(
   options?: ProjectCollapseOptions,
 ): CollapsedProjectsState {
   const next = new Set(state.collapsedProjectKeys);
-  if (!collapsed && options?.mode === "project" && options.oneProjectAtATime) {
-    for (const key of options.projectKeys) next.add(key);
+  if (!collapsed && options) {
+    for (const key of options.collapseOthers) next.add(key);
   }
   if (collapsed) {
     next.add(projectKey);
@@ -83,32 +84,47 @@ export interface SidebarCollapseTargets {
   includePinned: boolean;
 }
 
-/** Set only the rendered sections, preserving preferences hidden by the current filters. */
+/** Copy `current` with every key in `keys` added (collapsed) or removed (expanded). */
+function withKeysCollapsed(
+  current: ReadonlySet<string>,
+  keys: readonly string[],
+  collapsed: boolean,
+): Set<string> {
+  const next = new Set(current);
+  for (const key of keys) {
+    if (collapsed) {
+      next.add(key);
+    } else {
+      next.delete(key);
+    }
+  }
+  return next;
+}
+
+/**
+ * Set only the rendered sections, preserving preferences hidden by the current filters.
+ *
+ * Expand all deliberately takes no ProjectCollapseOptions: it is an explicit override of
+ * one-project-at-a-time and expands every targeted project. The next individual toggle, which
+ * does receive the options, restores exclusivity.
+ */
 export function setSectionsCollapsed(
   state: CollapsedProjectsState,
   targets: SidebarCollapseTargets,
   collapsed: boolean,
 ): CollapsedProjectsState {
-  const projects = new Set(state.collapsedProjectKeys);
-  const groups = new Set(state.collapsedWorkspaceGroupKeys);
-  for (const key of targets.projectKeys) {
-    if (collapsed) {
-      projects.add(key);
-    } else {
-      projects.delete(key);
-    }
-  }
-  for (const key of targets.workspaceGroupKeys) {
-    if (collapsed) {
-      groups.add(key);
-    } else {
-      groups.delete(key);
-    }
-  }
   return {
     ...state,
-    collapsedProjectKeys: projects,
-    collapsedWorkspaceGroupKeys: groups,
+    collapsedProjectKeys: withKeysCollapsed(
+      state.collapsedProjectKeys,
+      targets.projectKeys,
+      collapsed,
+    ),
+    collapsedWorkspaceGroupKeys: withKeysCollapsed(
+      state.collapsedWorkspaceGroupKeys,
+      targets.workspaceGroupKeys,
+      collapsed,
+    ),
     collapsedPinned: targets.includePinned ? collapsed : state.collapsedPinned,
   };
 }

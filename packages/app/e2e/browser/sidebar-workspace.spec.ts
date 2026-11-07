@@ -8,6 +8,7 @@ import {
   closeSidebarDisplayPreferences,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  expectStatusOnRight,
   expectWorkspaceHoverCardClosed,
   expectWorkspaceHoverCardOpen,
   expectWorkspaceHoverCardStaysOpen,
@@ -109,10 +110,14 @@ async function expectHoverCardValueFits(page: Page, testID: string, value: strin
     .toBe(0);
 }
 
+/** The card's minimum width; long names must grow it past this floor. */
+const HOVER_CARD_MIN_WIDTH = 260;
+
 interface PaseoOwnedWorktree {
   projectName: string;
   workspaceId: string;
   worktreeSlug: string;
+  branchName: string;
 }
 
 async function withPaseoOwnedWorktree(
@@ -145,6 +150,7 @@ async function withPaseoOwnedWorktree(
       projectName: path.basename(project.repoPath),
       workspaceId: created.workspace.id,
       worktreeSlug,
+      branchName,
     });
   } finally {
     await project.cleanup();
@@ -589,25 +595,53 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
+  test("workspace status sits on the trailing rail beside its actions on desktop and compact", async ({
+    page,
+  }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "sidebar-trailing-status-",
+      title: "Trailing status",
+      initialPrompt: "Finish this test turn.",
+    });
+
+    try {
+      await workspace.client.waitForFinish(workspace.agentId, 20_000);
+      await workspace.client.clearWorkspaceAttention(workspace.workspaceId);
+      await gotoAppShell(page);
+
+      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      await expectStatusOnRight(row, "done");
+      await (await openWorkspaceReadAction(page, workspace.workspaceId, "unread")).click();
+      await expectStatusOnRight(row, "attention");
+
+      // Touch keeps the menu visible beside the status instead of revealing it on hover.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+      await expectStatusOnRight(row, "attention");
+      const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+      await expect(page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`)).toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("Paseo-owned worktree hover card fits long branch and directory names", async ({
     page,
   }, testInfo) => {
-    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeSlug }) => {
+    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeSlug, branchName }) => {
       await gotoAppShell(page);
       await waitForSidebarProject(page, projectName);
       await openWorkspaceHoverCard(page, workspaceId);
 
       await expectHoverCardValueFits(page, "hover-card-workspace-cwd", worktreeSlug);
-      await expectHoverCardValueFits(
-        page,
-        "hover-card-workspace-branch",
-        "feature/hover-card-with-a-long-branch-name-that-should-remain-readable",
-      );
+      await expectHoverCardValueFits(page, "hover-card-workspace-branch", branchName);
       const card = page.getByTestId("workspace-hover-card");
       const bounds = await card.boundingBox();
-      if (!bounds) throw new Error("Workspace hover card has no rendered bounds");
-      expect(bounds.width).toBeGreaterThan(260);
-      expect(bounds.x + bounds.width).toBeLessThanOrEqual(1280);
+      const viewport = page.viewportSize();
+      if (!bounds || !viewport) throw new Error("Workspace hover card has no rendered bounds");
+      expect(bounds.width).toBeGreaterThan(HOVER_CARD_MIN_WIDTH);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
       await page.screenshot({ path: testInfo.outputPath("workspace-hover-card-long-names.png") });
     });
   });

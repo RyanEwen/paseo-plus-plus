@@ -1,6 +1,12 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 import { projectEquivalenceViewKey } from "./project-view-key";
+import {
+  SIDEBAR_VIEW_STORE_VERSION,
+  defaultSidebarModeProfiles,
+  type SidebarModeProfiles,
+} from "../../../src/stores/sidebar-mode-preferences";
+import type { SidebarStateBucket } from "../../../src/utils/sidebar-agent-state";
 
 interface ContextMenuAnchor {
   x: number;
@@ -284,6 +290,22 @@ export async function selectSidebarProjectGrouping(page: Page): Promise<void> {
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 }
 
+/**
+ * Press Collapse all. On wide layouts it is a header button; on compact layouts open the
+ * Display menu first.
+ */
+export async function collapseAllSidebarSections(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-collapse-all").click();
+}
+
+/**
+ * Press Expand all. On wide layouts it is a header button; on compact layouts open the
+ * Display menu first.
+ */
+export async function expandAllSidebarSections(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-expand-all").click();
+}
+
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
   await page
     .getByTestId("menu-button")
@@ -368,4 +390,39 @@ export async function revealSidebarProjectWorkspaces(
     .toBe(true);
   if (!(await target.isVisible())) await showMore.click();
   await expect(target).toBeVisible();
+}
+
+/**
+ * Seed the persisted sidebar view before the app loads: default mode profiles adjusted by
+ * `configure`, Project grouping and the given upstream workspace sort.
+ */
+export async function seedSidebarModeProfiles(
+  page: Page,
+  {
+    workspaceSort,
+    configure,
+  }: {
+    workspaceSort: "manual" | "created" | "lastPrompt";
+    configure: (profiles: SidebarModeProfiles) => void;
+  },
+): Promise<void> {
+  const modeProfiles = defaultSidebarModeProfiles();
+  configure(modeProfiles);
+  await page.addInitScript(
+    ({ version, state }) => {
+      localStorage.setItem("sidebar-view", JSON.stringify({ version, state }));
+    },
+    {
+      version: SIDEBAR_VIEW_STORE_VERSION,
+      state: { groupMode: "project", workspaceSort, modeProfiles },
+    },
+  );
+}
+
+/** Assert a workspace row draws its status on the trailing rail, not the leading title rail. */
+export async function expectStatusOnRight(row: Locator, state: SidebarStateBucket): Promise<void> {
+  const rowBounds = await row.boundingBox();
+  const statusBounds = await row.getByTestId(`workspace-status-indicator-${state}`).boundingBox();
+  if (!rowBounds || !statusBounds) throw new Error("Workspace status has no rendered bounds");
+  expect(statusBounds.x).toBeGreaterThan(rowBounds.x + rowBounds.width / 2);
 }
