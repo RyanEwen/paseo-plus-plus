@@ -282,6 +282,28 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       await deps.store.put({ ...captured, pendingAcknowledgement: cursor });
     record.pendingAcknowledgement = cursor;
   }
+  /**
+   * Decide how one observation reaches the caller.
+   *
+   * Exact watches deliver only through their exact outcome evidence ("exact"); a missing or
+   * mismatched outcome is refused there and retried. The one exception is a child that no
+   * longer exists (null outcome and null final snapshot): it ends through the ordinary "is
+   * unavailable" notification with no child output. Legacy watches and host-visibility results
+   * use the ordinary notification ("ordinary").
+   */
+  function routeObservation(
+    record: FinishSubscription,
+    result: FinishObservationResult,
+  ): { kind: "exact" | "ordinary"; result: FinishObservationResult } {
+    if (!record.attention || result.reason) {
+      return { kind: "ordinary", result };
+    }
+    const childGone = result.attentionOutcome === null && result.final === null;
+    if (childGone) {
+      return { kind: "ordinary", result: { ...result, lastMessage: null } };
+    }
+    return { kind: "exact", result };
+  }
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
     const signal = watch.controller.signal;
     if (!(await watch.decision) || signal.aborted) return;
@@ -343,15 +365,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             stop(watch, group);
             return;
           }
-          // Only a child that no longer exists (null outcome and null final snapshot) ends an
-          // exact watch through the ordinary "is unavailable" notification. Any other missing
-          // or mismatched outcome stays refused: no child output reaches the caller without
-          // exact outcome evidence.
-          const childGone = pending.attentionOutcome === null && pending.final === null;
-          if (record.attention && !pending.reason && childGone) {
-            pending = { ...pending, lastMessage: null };
-          }
-          if (record.attention && !pending.reason && !childGone) {
+          const route = routeObservation(record, pending);
+          pending = route.result;
+          if (route.kind === "exact") {
             await captureExactAcknowledgement(record, watch, pending, signal);
             pending = undefined;
             continue;
