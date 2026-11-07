@@ -409,6 +409,22 @@ export async function selectGitHubPrInPicker(page: Page, number: number): Promis
   await prRow.click();
 }
 
+/** Assert that the element with `firstTestId` comes before `secondTestId` in document order. */
+export async function expectBefore(
+  page: Page,
+  firstTestId: string,
+  secondTestId: string,
+): Promise<void> {
+  const precedes = await page.getByTestId(firstTestId).evaluate((element, laterTestId) => {
+    const later = document.querySelector(`[data-testid="${laterTestId}"]`);
+    return (
+      later !== null &&
+      Boolean(element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING)
+    );
+  }, secondTestId);
+  expect(precedes).toBe(true);
+}
+
 /** Select the base ref for a new worktree or the starting ref for a local workspace. */
 function refPickerTrigger(page: Page) {
   return page.getByRole("button", { name: /^(Base branch|Starting ref)$/ });

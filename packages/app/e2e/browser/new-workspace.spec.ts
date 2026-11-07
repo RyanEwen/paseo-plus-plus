@@ -37,6 +37,7 @@ import {
   selectPickerOptionByKeyboard,
   selectWorkspaceIsolation,
   submitNewWorkspacePrompt,
+  expectBefore,
 } from "../support/helpers/new-workspace";
 import {
   commitLocalOnly,
@@ -279,6 +280,34 @@ async function selectWorkspaceBranchChoice(page: Page, label: string): Promise<v
   await option.click();
 }
 
+const ADD_PROJECT_SHORTCUT = /(?:⌘|Ctrl\+)O/;
+
+/** How the add-project flow differs between the desktop popover and the compact sheet. */
+const ADD_PROJECT_LAYOUTS = [
+  {
+    viewport: { width: 1440, height: 1000 },
+    revealSidebar: async (_page: Page) => {},
+    dismissPicker: async (page: Page) => {
+      await page.keyboard.press("Escape");
+    },
+    showsShortcut: true,
+  },
+  {
+    viewport: { width: 390, height: 844 },
+    revealSidebar: async (page: Page) => {
+      await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    },
+    dismissPicker: async (page: Page) => {
+      const backdrop = page
+        .getByRole("button", { name: "Bottom sheet backdrop", exact: true })
+        .first();
+      await backdrop.click({ position: { x: 12, y: 12 } });
+      await expect(backdrop).not.toBeVisible();
+    },
+    showsShortcut: false,
+  },
+];
+
 test.describe("New workspace flow", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
@@ -474,34 +503,18 @@ test.describe("New workspace flow", () => {
           await worktreeName.hover();
         }
 
-        expect(
-          await worktreeName.evaluate((element) =>
-            Boolean(
-              element.compareDocumentPosition(
-                document.querySelector('[data-testid="new-workspace-branch-name"]')!,
-              ) & Node.DOCUMENT_POSITION_FOLLOWING,
-            ),
-          ),
-        ).toBe(true);
+        await expectBefore(page, "new-workspace-worktree-name", "new-workspace-branch-name");
         // The mode decision precedes the branch picker on both layout surfaces.
-        expect(
-          await isolationControl.evaluate((element) =>
-            Boolean(
-              element.compareDocumentPosition(
-                document.querySelector('[data-testid="new-workspace-branch-picker-trigger"]')!,
-              ) & Node.DOCUMENT_POSITION_FOLLOWING,
-            ),
-          ),
-        ).toBe(true);
-        expect(
-          await modeControl.evaluate((element) =>
-            Boolean(
-              element.compareDocumentPosition(
-                document.querySelector('[data-testid="new-workspace-ref-picker-trigger"]')!,
-              ) & Node.DOCUMENT_POSITION_FOLLOWING,
-            ),
-          ),
-        ).toBe(true);
+        await expectBefore(
+          page,
+          "workspace-create-isolation-trigger",
+          "new-workspace-branch-picker-trigger",
+        );
+        await expectBefore(
+          page,
+          "new-workspace-branch-picker-trigger",
+          "new-workspace-ref-picker-trigger",
+        );
         await branchName.fill("Feature/New.Branch");
         await expect(worktreeName).toHaveValue("feature-new-branch");
         await worktreeName.fill("chosen-name");
@@ -709,12 +722,11 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  for (const viewport of [
-    { width: 1440, height: 1000 },
-    { width: 390, height: 844 },
-  ]) {
-    test(`adds a project from the selected empty host at ${viewport.width}px`, async ({ page }) => {
-      await page.setViewportSize(viewport);
+  for (const layout of ADD_PROJECT_LAYOUTS) {
+    test(`adds a project from the selected empty host at ${layout.viewport.width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(layout.viewport);
       const repo = await createTempGitRepo("new-workspace-project-picker-");
       const primaryServerId = getServerId();
       const emptyServerId = "empty-new-workspace-host";
@@ -736,36 +748,17 @@ test.describe("New workspace flow", () => {
         ]);
 
         await gotoAppShell(page);
-        if (viewport.width === 390) {
-          await page.getByRole("button", { name: "Open menu", exact: true }).click();
-        }
+        await layout.revealSidebar(page);
         await waitForSidebarHydration(page);
         await openGlobalNewWorkspaceComposer(page);
 
         const projectTrigger = page.getByTestId("new-workspace-project-picker-trigger");
-        const hostTrigger = page.getByTestId("host-picker-trigger");
-        expect(
-          await hostTrigger.evaluate((element) =>
-            Boolean(
-              element.compareDocumentPosition(
-                document.querySelector('[data-testid="new-workspace-project-picker-trigger"]')!,
-              ) & Node.DOCUMENT_POSITION_FOLLOWING,
-            ),
-          ),
-        ).toBe(true);
+        await expectBefore(page, "host-picker-trigger", "new-workspace-project-picker-trigger");
 
         await projectTrigger.click();
         await page.getByPlaceholder("Search projects").fill("no matching project");
         await expect(page.getByTestId("new-workspace-project-picker-add-project")).toBeVisible();
-        if (viewport.width === 390) {
-          const backdrop = page
-            .getByRole("button", { name: "Bottom sheet backdrop", exact: true })
-            .first();
-          await backdrop.click({ position: { x: 12, y: 12 } });
-          await expect(backdrop).not.toBeVisible();
-        } else {
-          await page.keyboard.press("Escape");
-        }
+        await layout.dismissPicker(page);
 
         await page.getByTestId("host-picker-trigger").click();
         await page.getByTestId(`new-workspace-host-picker-option-${emptyServerId}`).click();
@@ -774,11 +767,7 @@ test.describe("New workspace flow", () => {
 
         const addProject = page.getByTestId("new-workspace-project-picker-add-project");
         await expect(addProject).toContainText("Add project");
-        if (viewport.width === 1440) {
-          await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
-        } else {
-          await expect(addProject).not.toContainText(/(?:⌘|Ctrl\+)O/);
-        }
+        expect(ADD_PROJECT_SHORTCUT.test(await addProject.innerText())).toBe(layout.showsShortcut);
         await addProject.click();
 
         await expectAddProjectPage(page, "method");
