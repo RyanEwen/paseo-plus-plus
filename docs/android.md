@@ -13,19 +13,17 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 Fork preview builds use the Paseo++ app name, `sh.paseo.plusplus` package, and `paseo-plus-plus`
 link scheme. They install separately from upstream and former Debug previews, with fresh settings
-and connections. They check for
-published fork builds at startup, on resume, and every 30 minutes while active. Use Settings >
-About to check manually. Available updates also appear in the sidebar. Tap Install update to
-download the APK; Settings and the sidebar show downloaded bytes and a percentage when the
-download size is known, followed by verification. Approve Android's installer to finish.
-If Android asks you to allow this app to install packages, enable that permission,
-return to Paseo++, and tap Install update again. Cancelling installation leaves the update available.
+and connections.
 
-Updates require the same signing key and a newer preview build number. Draft releases are invisible.
-The install permission is enabled only for fork preview builds; store and F-Droid builds keep their
-existing update channels. See [fork distribution](release.md#fork-preview-distribution) and the
-[final prerelease bridge](release.md#final-prerelease-bridge-and-normal-latest-releases) for discovery
-across GitHub release classifications.
+Fork previews update themselves from published fork releases; the user flow is in
+[Automatic Android update checks](fork-features/automatic-android-update-checks.md). Updates
+require the same signing key and a newer preview build number. Draft releases are invisible. The
+install permission is injected only into fork preview builds; store and F-Droid builds keep their
+existing update channels. Checks use GitHub's unauthenticated API, which allows 60 requests per
+hour per network, so automatic checks stay at least 15 minutes apart. See
+[fork distribution](release.md#fork-preview-distribution) and the
+[final prerelease bridge](release.md#final-prerelease-bridge-and-normal-latest-releases) for
+discovery across GitHub release classifications.
 
 `development` uses Android `debug`.
 
