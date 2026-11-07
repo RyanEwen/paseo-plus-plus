@@ -362,7 +362,7 @@ interface NativePinnedMessageIdentity extends Pick<
 }
 
 /** Project the prepared body's visual cap after the transition has reset any old inner scroll. */
-function projectNativePinnedMessage(
+export function projectNativePinnedMessage(
   prepared: NativeMessagePreparation,
   identity: NativePinnedMessageIdentity,
 ): NativeMessagePresentation {

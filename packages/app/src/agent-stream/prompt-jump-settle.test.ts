@@ -14,6 +14,8 @@ import {
   ordinaryNativeMessagePresentation,
   nativeMessageRoleVisible,
   acceptsNativeMessageDisclosure,
+  nativeMessageViewportGeometry,
+  projectNativePinnedMessage,
   type MessageFlowMeasurements,
 } from "../components/prompt-message/flow-model";
 import {
@@ -244,17 +246,7 @@ describe("native presentation reaction inputs", () => {
     expect(flow?.compactHeight).toBe(input.legacy);
     const prepared = prepareNativeMessagePresentation({ measurements, flow, revision: 1 });
     if (!prepared) throw new Error("The measured compact body must prepare");
-    const filename = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../components/prompt-message/flow-model.ts",
-    );
-    const project = bindSourceFunction(
-      sourceFunction(filename, "projectNativePinnedMessage"),
-      filename,
-      {},
-      true,
-    );
-    const compact = project(
+    const compact = projectNativePinnedMessage(
       { ...prepared, maximumHeight: 240 },
       { binding: 17, revision: 1, cycle: 1, mode: "compact" },
     );
@@ -273,31 +265,21 @@ describe("native presentation reaction inputs", () => {
   });
 
   it("keeps Android painted clip offsets out of the natural body's width and origin", () => {
-    const filename = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../components/prompt-message/flow-model.ts",
-    );
-    const geometry = bindSourceFunction(
-      sourceFunction(filename, "nativeMessageViewportGeometry"),
-      filename,
-      {},
-      true,
-    );
     const measurements = naturalMessageMeasurements();
     const input = { width: measurements.width, bubble: measurements.bubble };
     const fullRail = { clipLeft: 0, clipWidth: 320, bodyLeft: 0, bodyWidth: 320 };
-    expect(geometry({ ...input, mode: "ordinary" })).toEqual(fullRail);
-    expect(geometry({ ...input, mode: "compact" })).toEqual(fullRail);
+    expect(nativeMessageViewportGeometry({ ...input, mode: "ordinary" })).toEqual(fullRail);
+    expect(nativeMessageViewportGeometry({ ...input, mode: "compact" })).toEqual(fullRail);
     // The narrow expanded bubble is clipped at its actual x, while the opposite
     // ScrollView offset preserves the natural body's physical origin and width.
-    expect(geometry({ ...input, mode: "expanded" })).toEqual({
+    expect(nativeMessageViewportGeometry({ ...input, mode: "expanded" })).toEqual({
       clipLeft: 60,
       clipWidth: 260,
       bodyLeft: -60,
       bodyWidth: 320,
     });
-    expect(geometry({ ...input, mode: "ordinary" })).toEqual(fullRail);
-    expect(geometry({ width: 0, bubble: null, mode: "ordinary" })).toEqual({
+    expect(nativeMessageViewportGeometry({ ...input, mode: "ordinary" })).toEqual(fullRail);
+    expect(nativeMessageViewportGeometry({ width: 0, bubble: null, mode: "ordinary" })).toEqual({
       clipLeft: 0,
       clipWidth: "100%",
       bodyLeft: 0,
