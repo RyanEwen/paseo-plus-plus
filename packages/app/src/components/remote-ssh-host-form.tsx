@@ -4,21 +4,17 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Eye, EyeOff, Terminal } from "lucide-react-native";
+import { Terminal } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import type { HostMutations } from "@/runtime/host-runtime";
 import type { SshKeyImport } from "@/hosts/ssh/ssh-key-import-model";
 import { Button } from "@/components/ui/button";
-import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { Field, FormTextInput } from "@/components/ui/form-field";
-import { controlHeightForLayout } from "@/components/ui/control-geometry";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { SecretFieldToggle } from "@/components/ui/secret-field-toggle";
 import { AdaptiveModalSheet, type SheetHeader } from "./adaptive-modal-sheet";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedTerminal = withUnistyles(Terminal);
-const ThemedEye = withUnistyles(Eye, (theme) => ({ color: theme.colors.foregroundMuted }));
-const ThemedEyeOff = withUnistyles(EyeOff, (theme) => ({ color: theme.colors.foregroundMuted }));
 
 const styles = StyleSheet.create((theme) => {
   return {
@@ -36,24 +32,6 @@ const styles = StyleSheet.create((theme) => {
     passwordInputWrap: {
       flex: 1,
       minWidth: 0,
-    },
-    // Boxed adornment next to the field: same height and radius as the md field
-    // chrome in each layout. ToolbarButton owns interaction feedback.
-    iconButtonWide: {
-      height: controlHeightForLayout("md", false),
-      width: controlHeightForLayout("md", false),
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: theme.borderRadius.md,
-      backgroundColor: theme.colors.surface2,
-    },
-    iconButtonCompact: {
-      height: controlHeightForLayout("md", true),
-      width: controlHeightForLayout("md", true),
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: theme.borderRadius.lg,
-      backgroundColor: theme.colors.surface2,
     },
     actions: {
       flexDirection: "row",
@@ -98,7 +76,6 @@ function OpenRemoteSshHostForm({
   keyImport,
 }: RemoteSshHostFormProps) {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
   const model = useRemoteSshFormModel({ probeHost: probeAndUpsertRemoteSshConnection, keyImport });
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const { keyName, fingerprint, isPasswordVisible } = state;
@@ -168,7 +145,6 @@ function OpenRemoteSshHostForm({
         testID="remote-ssh-target"
       >
         <FormTextInput
-          size="md"
           testID="remote-ssh-target-input"
           accessibilityLabel={t("pairing.remoteSsh.fields.target")}
           initialValue=""
@@ -194,7 +170,6 @@ function OpenRemoteSshHostForm({
         <View style={styles.passwordRow}>
           <View style={styles.passwordInputWrap}>
             <FormTextInput
-              size="md"
               testID="remote-ssh-password-input"
               accessibilityLabel={t("pairing.remoteSsh.fields.password")}
               initialValue=""
@@ -208,20 +183,14 @@ function OpenRemoteSshHostForm({
               onSubmitEditing={handleSubmit}
             />
           </View>
-          <ToolbarButton
-            style={isCompact ? styles.iconButtonCompact : styles.iconButtonWide}
-            compact={isCompact}
-            onPress={model.togglePasswordVisibility}
+          <SecretFieldToggle
+            isSecretVisible={isPasswordVisible}
+            onToggle={model.togglePasswordVisibility}
             disabled={isSaving}
-            label={
-              isPasswordVisible
-                ? t("pairing.remoteSsh.passwordVisibility.hide")
-                : t("pairing.remoteSsh.passwordVisibility.show")
-            }
+            showLabel={t("pairing.remoteSsh.passwordVisibility.show")}
+            hideLabel={t("pairing.remoteSsh.passwordVisibility.hide")}
             testID="remote-ssh-password-visibility-toggle"
-          >
-            {isPasswordVisible ? <ThemedEyeOff size={18} /> : <ThemedEye size={18} />}
-          </ToolbarButton>
+          />
         </View>
       </Field>
       <View style={styles.actions}>

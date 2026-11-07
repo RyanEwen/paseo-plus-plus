@@ -39,7 +39,6 @@ export function SshKeyImportFields({
       </Field>
       <Field label={t("pairing.remoteSsh.keyImport.passphrase")}>
         <FormTextInput
-          size="md"
           initialValue=""
           onChangeText={onPassphraseChange}
           secureTextEntry
