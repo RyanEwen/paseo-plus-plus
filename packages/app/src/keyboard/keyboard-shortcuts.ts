@@ -1278,7 +1278,9 @@ function hasNoModifier(combo: KeyCombo): boolean {
 
 /** Bare Space is the one key a focused control activates itself, so only it keeps the guard. */
 function isBareSpaceChord(parsedChord: readonly KeyCombo[]): boolean {
-  return parsedChord.length === 1 && parsedChord[0].code === "Space" && hasNoModifier(parsedChord[0]);
+  return (
+    parsedChord.length === 1 && parsedChord[0].code === "Space" && hasNoModifier(parsedChord[0])
+  );
 }
 
 function withoutDefaultComboGuard(

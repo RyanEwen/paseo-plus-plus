@@ -958,29 +958,26 @@ describe("unknown browser action outcomes", () => {
         broker.unregisterClient(host.id);
       },
     },
-  ])(
-    "does not advertise replay after an input $failure",
-    async ({ trigger }) => {
-      vi.useFakeTimers();
-      const broker = createBroker({ timeoutMs: 50 });
-      const host = new FakeBrowserHostClient("host-1");
-      broker.registerClient(host);
-      const result = broker.execute({
-        command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
-      });
-      await trigger(broker, host);
-      await expect(result).resolves.toMatchObject({ ok: false, error: { retryable: false } });
-      expect(broker.getPendingRequestCount()).toBe(0);
-      expect(
-        host.resolveLatestWith(broker, {
-          requestId: "late",
-          ok: true,
-          result: { command: "click", browserId: BROWSER_ID, ref: "@e1", x: 10, y: 20 },
-        }),
-      ).toBe(false);
-      expect(host.receivedRequests).toHaveLength(1);
-    },
-  );
+  ])("does not advertise replay after an input $failure", async ({ trigger }) => {
+    vi.useFakeTimers();
+    const broker = createBroker({ timeoutMs: 50 });
+    const host = new FakeBrowserHostClient("host-1");
+    broker.registerClient(host);
+    const result = broker.execute({
+      command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+    });
+    await trigger(broker, host);
+    await expect(result).resolves.toMatchObject({ ok: false, error: { retryable: false } });
+    expect(broker.getPendingRequestCount()).toBe(0);
+    expect(
+      host.resolveLatestWith(broker, {
+        requestId: "late",
+        ok: true,
+        result: { command: "click", browserId: BROWSER_ID, ref: "@e1", x: 10, y: 20 },
+      }),
+    ).toBe(false);
+    expect(host.receivedRequests).toHaveLength(1);
+  });
   test("arbitrary evaluate is not classified as a safe read-only retry", async () => {
     vi.useFakeTimers();
     const broker = createBroker({ timeoutMs: 50 });

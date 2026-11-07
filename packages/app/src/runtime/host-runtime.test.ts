@@ -640,7 +640,9 @@ function createMemoryReplicaRowStore(): ReplicaRowStore {
       for (const row of changes.upserts) rows.set(keyOf(row), row);
     },
     applyIfUnchanged: async (changes, expected) => {
-      if (!expected.every((condition) => matchesRowExpectation(rows.get(keyOf(condition)), condition)))
+      if (
+        !expected.every((condition) => matchesRowExpectation(rows.get(keyOf(condition)), condition))
+      )
         return false;
       for (const key of changes.deletes) rows.delete(keyOf(key));
       for (const row of changes.upserts) rows.set(keyOf(row), row);
