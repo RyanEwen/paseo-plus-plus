@@ -33,6 +33,28 @@ import { AttentionPermissionCompletion } from "./permission-completion.js";
 import { isRemotePeer } from "./peers.js";
 import { AttentionPresentation } from "./presentation.js";
 
+/** Shown to the human when a blocked task's requesting agent is verified gone. */
+export const REQUESTER_LOST_PERMISSION_MESSAGE =
+  "This task needs permission, but its requesting agent is no longer available.";
+export const REQUESTER_LOST_FAILURE_MESSAGE =
+  "This task failed, but its requesting agent is no longer available.";
+
+interface HumanAttentionClaim {
+  agent: ManagedAgent;
+  objectives: AgentAttentionObjectives;
+  lease: symbol;
+  reason: string;
+  turnId: string | null;
+  nextAttention: AttentionState;
+  isCurrent: () => boolean;
+}
+
+/** Whether the claim's candidate was written, and whether it then committed in memory. */
+interface HumanAttentionProgress {
+  persistenceObserved: boolean;
+  committed: boolean;
+}
+
 /**
  * The agent manager internals the attention coordinator drives. The manager supplies them as
  * closures over its own state; the coordinator never reaches into the manager otherwise.
@@ -427,24 +449,48 @@ export class AgentAttentionCoordinator {
     reason: string;
     isCurrent?: () => boolean;
   }): Promise<boolean> {
+    const claim = this.reserveHumanClaim(input);
+    if (!claim) {
+      return false;
+    }
+    const progress: HumanAttentionProgress = { persistenceObserved: false, committed: false };
+    try {
+      await this.persistHumanClaim(claim, progress);
+    } catch (error) {
+      return this.recoverHumanClaimFailure(claim, progress, error);
+    }
+    if (progress.committed) {
+      return true;
+    }
+    claim.objectives.releaseHumanAttention(claim.lease);
+    await this.repairRetiredHumanAttention(claim.agent.id);
+    throw new AttentionObjectiveError(input.objectiveId);
+  }
+
+  /**
+   * Reserve one human escalation reason for the objective, or null when the agent has no ledger
+   * or the same reason is already announced or pending. The claim stays current only while the
+   * agent, ledger, turn, attention state and reservation are the ones captured here.
+   */
+  private reserveHumanClaim(input: {
+    agent: ManagedAgent;
+    objectiveId: string;
+    reason: string;
+    isCurrent?: () => boolean;
+  }): HumanAttentionClaim | null {
     const { agent, objectiveId, reason } = input;
     const objectives = agent.attentionObjectives;
     if (!objectives) {
-      return false;
+      return null;
     }
     this.host.requireRegistry();
     const lease = objectives.reserveHumanAttention(objectiveId, reason);
     if (!lease) {
-      return false;
+      return null;
     }
     const turnId = agent.activeTurnId;
     const previousAttention = agent.attention;
     const previousMessage = agent.attentionMessage;
-    const nextAttention: AttentionState = {
-      requiresAttention: true,
-      attentionReason: "finished",
-      attentionTimestamp: new Date(),
-    };
     const isCurrent = () =>
       this.host.agents().get(agent.id) === agent &&
       agent.attentionObjectives === objectives &&
@@ -453,71 +499,92 @@ export class AgentAttentionCoordinator {
       agent.attentionMessage === previousMessage &&
       objectives.isHumanAttentionReservationCurrent(lease) &&
       (input.isCurrent === undefined || input.isCurrent());
-    let persistenceObserved = false;
-    let committed = false;
-    // Resolve and publish inside the writer so an intervening ordinary projection cannot erase
-    // this saved reason. Later chat updates keep their normal persistence path.
-    try {
-      await this.host.persistSnapshot(agent, {
-        operation: {
-          resolveSnapshot: () => {
-            if (!isCurrent()) {
-              return null;
-            }
-            return {
-              ...agent,
-              attention: nextAttention,
-              attentionMessage: reason,
-              attentionObjectives: objectives.humanAttentionCandidate(lease),
-            };
-          },
-          onCommitted: () => {
-            // The candidate was written even if its owner retired before this callback.
-            persistenceObserved = true;
-            if (!isCurrent()) {
-              return;
-            }
-            objectives.commitHumanAttention(lease);
-            agent.attention = nextAttention;
-            agent.attentionMessage = reason;
-            // Establish business success before any observer can fail or mutate newer state.
-            committed = true;
-            this.publishHumanAttention({ agent, reason, turnId });
-          },
-        },
-      });
-    } catch (error) {
-      if (committed) {
-        this.host
-          .logger()
-          .warn(
-            { err: error, agentId: agent.id },
-            "Storage acknowledgement failed after human attention committed",
-          );
-        return true;
-      }
-      objectives.releaseHumanAttention(lease);
-      if (persistenceObserved) {
-        try {
-          await this.repairRetiredHumanAttention(agent.id);
-        } catch (repairError) {
-          const combinedFailure = new AggregateError(
-            [error, repairError],
-            "Human attention acknowledgement and retired candidate repair failed",
-            { cause: repairError },
-          );
-          throw combinedFailure;
-        }
-      }
-      throw error;
-    }
+    return {
+      agent,
+      objectives,
+      lease,
+      reason,
+      turnId,
+      nextAttention: {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date(),
+      },
+      isCurrent,
+    };
+  }
 
-    if (committed) {
+  /**
+   * Write the claim's candidate through the storage queue and commit it in memory once written.
+   * Resolving and publishing inside the writer keeps an intervening ordinary projection from
+   * erasing the saved reason; later chat updates keep their normal persistence path.
+   */
+  private async persistHumanClaim(
+    claim: HumanAttentionClaim,
+    progress: HumanAttentionProgress,
+  ): Promise<void> {
+    const { agent, objectives, lease, reason, turnId, nextAttention, isCurrent } = claim;
+    await this.host.persistSnapshot(agent, {
+      operation: {
+        resolveSnapshot: () => {
+          if (!isCurrent()) {
+            return null;
+          }
+          return {
+            ...agent,
+            attention: nextAttention,
+            attentionMessage: reason,
+            attentionObjectives: objectives.humanAttentionCandidate(lease),
+          };
+        },
+        onCommitted: () => {
+          // The candidate was written even if its owner retired before this callback.
+          progress.persistenceObserved = true;
+          if (!isCurrent()) {
+            return;
+          }
+          objectives.commitHumanAttention(lease);
+          agent.attention = nextAttention;
+          agent.attentionMessage = reason;
+          // Establish business success before any observer can fail or mutate newer state.
+          progress.committed = true;
+          this.publishHumanAttention({ agent, reason, turnId });
+        },
+      },
+    });
+  }
+
+  /**
+   * A storage failure after commit only loses the acknowledgement, so the escalation stands.
+   * Otherwise release the claim, repair a written-but-retired candidate, and rethrow.
+   */
+  private async recoverHumanClaimFailure(
+    claim: HumanAttentionClaim,
+    progress: HumanAttentionProgress,
+    error: unknown,
+  ): Promise<boolean> {
+    if (progress.committed) {
+      this.host
+        .logger()
+        .warn(
+          { err: error, agentId: claim.agent.id },
+          "Storage acknowledgement failed after human attention committed",
+        );
       return true;
     }
-    objectives.releaseHumanAttention(lease);
-    await this.repairRetiredHumanAttention(agent.id);
-    throw new AttentionObjectiveError(objectiveId);
+    claim.objectives.releaseHumanAttention(claim.lease);
+    if (progress.persistenceObserved) {
+      try {
+        await this.repairRetiredHumanAttention(claim.agent.id);
+      } catch (repairError) {
+        throw new AggregateError(
+          [error, repairError],
+          "Human attention acknowledgement and retired candidate repair failed",
+          { cause: repairError },
+        );
+      }
+    }
+    throw error;
   }
 
   /** Repair a retired candidate from the instance current when the queue runs, never an old copy. */
@@ -692,8 +759,8 @@ export class AgentAttentionCoordinator {
         escalate: async ({ objectiveId, reason, isCurrent }) => {
           const message =
             reason === "permission"
-              ? "This task needs permission, but its requesting agent is no longer available."
-              : "This task failed, but its requesting agent is no longer available.";
+              ? REQUESTER_LOST_PERMISSION_MESSAGE
+              : REQUESTER_LOST_FAILURE_MESSAGE;
           await this.host.runForegroundMutation(agent.id, async () => {
             // A foreground write may retire the exact checkpoint while this lane is held.
             if (!isCurrent()) {

@@ -1,3 +1,7 @@
+import {
+  REQUESTER_LOST_FAILURE_MESSAGE,
+  REQUESTER_LOST_PERMISSION_MESSAGE,
+} from "./attention/coordinator.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -13547,8 +13551,8 @@ test.each(["permission", "error"] as const)(
       reason: "finished",
       message:
         blocker === "permission"
-          ? "This task needs permission, but its requesting agent is no longer available."
-          : "This task failed, but its requesting agent is no longer available.",
+          ? REQUESTER_LOST_PERMISSION_MESSAGE
+          : REQUESTER_LOST_FAILURE_MESSAGE,
     });
     await manager.flush();
     expect(notify).toHaveBeenCalledTimes(1);
@@ -14283,8 +14287,7 @@ test.each(["blocked", "resolved"] as const)(
         return "missing";
       },
     });
-    const orphanReason =
-      "This task needs permission, but its requesting agent is no longer available.";
+    const orphanReason = REQUESTER_LOST_PERMISSION_MESSAGE;
     const write = holdEscalationAtomicWrite(request.agentId, "fail");
     const first = manager.requestHumanAttention({ ...request, reason: orphanReason });
     void first.catch(() => undefined);
@@ -15863,7 +15866,7 @@ async function expectRequesterLossAttention(
     }),
   ).toBe("needs_input");
   expect(payload.humanAttentionRequired).toBe(true);
-  const message = "This task needs permission, but its requesting agent is no longer available.";
+  const message = REQUESTER_LOST_PERMISSION_MESSAGE;
   expect(fixture.notify).toHaveBeenCalledExactlyOnceWith({
     agentId: worker.id,
     provider: "codex",
@@ -16064,7 +16067,7 @@ test("requester loss earlier checkpoint is not suppressed by an available later 
   expect((await storage.get(secondRequester.id))?.archivedAt).toBeUndefined();
   expect(pushed).not.toHaveBeenCalled();
   await expectRequesterLossAttention(fixture, worker);
-  const message = "This task needs permission, but its requesting agent is no longer available.";
+  const message = REQUESTER_LOST_PERMISSION_MESSAGE;
   expect((await storage.get(worker.id))?.attentionObjectives?.objectives).toEqual([
     expect.objectContaining({
       id: firstLink.requestId,
@@ -16300,7 +16303,7 @@ test.each(["current", "historical"] as const)(
         agentId: worker.id,
         provider: "codex",
         reason: "finished",
-        message: "This task needs permission, but its requesting agent is no longer available.",
+        message: REQUESTER_LOST_PERMISSION_MESSAGE,
       });
     expect(notify.mock.calls.map(([event]) => event)).toEqual(expectedNotifications);
     expect((await storage.get(worker.id))?.requiresAttention).toBe(variant === "current");
