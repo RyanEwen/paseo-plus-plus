@@ -429,8 +429,22 @@ export type StickyPromptEvent =
   /** A new authoritative epoch resets prompt ownership; disabled panes stay cancelled. */
   | { type: "epochReplaced"; enabled: boolean };
 
-/** Pure transition for the sticky prompt state. */
+/** Pure transition for the sticky prompt state. An event that changes nothing returns the
+ * same state, so React skips the render exactly as it did for the equivalent setters. */
 export function reduceStickyPromptState(
+  state: StickyPromptState,
+  event: StickyPromptEvent,
+): StickyPromptState {
+  const next = transitionStickyPromptState(state, event);
+  const unchanged =
+    next.selected === state.selected &&
+    next.pending === state.pending &&
+    next.error === state.error &&
+    next.cancelled === state.cancelled;
+  return unchanged ? state : next;
+}
+
+function transitionStickyPromptState(
   state: StickyPromptState,
   event: StickyPromptEvent,
 ): StickyPromptState {

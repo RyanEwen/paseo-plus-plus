@@ -223,6 +223,15 @@ describe("reduceStickyPromptState", () => {
     cancelled: false,
   };
 
+  it("returns the same state when an event changes nothing", () => {
+    expect(reduceStickyPromptState(failed, { type: "readingSelected", selected: held })).toBe(
+      failed,
+    );
+    expect(reduceStickyPromptState(INITIAL_STICKY_PROMPT_STATE, { type: "previousNotFound" })).toBe(
+      INITIAL_STICKY_PROMPT_STATE,
+    );
+  });
+
   it("holds a navigated prompt and clears an earlier cancellation", () => {
     expect(
       reduceStickyPromptState(
