@@ -119,6 +119,9 @@ type SidebarReorderView = Pick<
 
 export function sidebarReorderSort(view: SidebarReorderView, domain: SidebarReorderDomain): string {
   if (domain === "workspace") {
+    // In Project grouping an automatic workspace sort (Created, Last prompt) owns ordinary rows,
+    // so it wins over Custom; none of its values equal "custom", which keeps ordinary drops off
+    // while manual pins still pass canCommitSidebarReorder.
     if (view.groupMode === "project" && view.workspaceSort !== "manual") return view.workspaceSort;
     return view.workspaceSortMode;
   }
