@@ -404,56 +404,8 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         fullPage: z.boolean().default(false),
       },
     },
-    async ({ browserId, fullPage }, execution) => {
-      const context = resolveBrowserToolContext(options);
-      const owner = options.resolveCallerAgent();
-      if (!owner || owner.id !== options.callerAgentId || !options.attachmentStore) {
-        return screenshotStorageFailure(
-          "Durable screenshot storage requires a registered caller and execution-host storage.",
-        );
-      }
-      let reservation: AttachmentWriter | null = null;
-      try {
-        const store = options.attachmentStore;
-        reservation = await asStorageOperation(execution.signal, () =>
-          store.reserve({ agentId: owner.id, workspaceId: owner.workspaceId }, execution.signal),
-        );
-        execution.signal?.throwIfAborted();
-        const payload = await options.broker.execute({
-          agentId: context.agentId,
-          cwd: context.cwd,
-          ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
-
-          command: {
-            command: "screenshot",
-            args: {
-              browserId,
-              fullPage: fullPage ?? false,
-            },
-          },
-        });
-        execution.signal?.throwIfAborted();
-        if (!payload.ok || payload.result.command !== "screenshot")
-          return browserToolResult({ payload, context: { ...context, browserId } });
-        const admitted = reservation;
-        const image = { data: payload.result.dataBase64, mimeType: payload.result.mimeType };
-        const reference = await asStorageOperation(execution.signal, () =>
-          admitted.commit(image, execution.signal),
-        );
-        return browserToolResult({
-          payload,
-          context: { ...context, browserId },
-          attachment: reference,
-        });
-      } catch (error) {
-        // Cancellation wins over whatever the aborted step threw.
-        if (execution.signal?.aborted) return screenshotCanceled({ ...context, browserId });
-        if (error instanceof AttachmentStoreError) return screenshotStorageFailure(error.message);
-        throw error;
-      } finally {
-        await reservation?.release();
-      }
-    },
+    async ({ browserId, fullPage }, execution) =>
+      captureOwnedScreenshot(options, { browserId, fullPage: fullPage ?? false }, execution),
   );
 
   options.registerTool(
@@ -743,6 +695,64 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       return browserToolResult({ payload, context: { ...context, browserId } });
     },
   );
+}
+
+/**
+ * Capture a browser screenshot whose original is saved durably on this execution host.
+ *
+ * Storage is reserved before the broker captures, so a full store rejects without capturing.
+ * The reservation is always released; a committed original returns its reference with the
+ * inline image. Storage failures and cancellation return tool errors; other failures propagate.
+ */
+async function captureOwnedScreenshot(
+  options: RegisterBrowserToolsOptions,
+  input: { browserId: string; fullPage: boolean },
+  execution: PaseoToolExecutionContext,
+): Promise<PaseoToolResult> {
+  const { browserId, fullPage } = input;
+  const context = resolveBrowserToolContext(options);
+  const owner = options.resolveCallerAgent();
+  if (!owner || owner.id !== options.callerAgentId || !options.attachmentStore) {
+    return screenshotStorageFailure(
+      "Durable screenshot storage requires a registered caller and execution-host storage.",
+    );
+  }
+  const store = options.attachmentStore;
+  const target = { ...context, browserId };
+  let reservation: AttachmentWriter | null = null;
+  try {
+    // Reserve worst-case storage first, so a full store rejects without capturing.
+    reservation = await asStorageOperation(execution.signal, () =>
+      store.reserve({ agentId: owner.id, workspaceId: owner.workspaceId }, execution.signal),
+    );
+    execution.signal?.throwIfAborted();
+
+    const payload = await options.broker.execute({
+      agentId: context.agentId,
+      cwd: context.cwd,
+      ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+      command: { command: "screenshot", args: { browserId, fullPage } },
+    });
+    execution.signal?.throwIfAborted();
+    if (!payload.ok || payload.result.command !== "screenshot") {
+      return browserToolResult({ payload, context: target });
+    }
+
+    // Publish the captured bytes; the reference is the durable handle returned to the agent.
+    const writer = reservation;
+    const image = { data: payload.result.dataBase64, mimeType: payload.result.mimeType };
+    const reference = await asStorageOperation(execution.signal, () =>
+      writer.commit(image, execution.signal),
+    );
+    return browserToolResult({ payload, context: target, attachment: reference });
+  } catch (error) {
+    // Cancellation wins over whatever the aborted step threw.
+    if (execution.signal?.aborted) return screenshotCanceled(target);
+    if (error instanceof AttachmentStoreError) return screenshotStorageFailure(error.message);
+    throw error;
+  } finally {
+    await reservation?.release();
+  }
 }
 
 /**
