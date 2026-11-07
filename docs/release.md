@@ -240,12 +240,11 @@ releases. Bridge clients accept either classification within the same exact fork
 Drafts, unrelated tags, incomplete newest builds and noncanonical asset URLs remain ineligible.
 Checksums, Android package/signing-key checks, installer approval and version checks still apply.
 
-The shipped Paseo++ `.27`, `.29` and `.30` Android and host selectors request 100 releases per page
-and continue until a page contains fewer than 100. They have no fixed page-count limit, so normal
-releases do not push the retained bridge outside their search. Each page still needs a successful
-API request; growing history adds latency and rate-limit exposure. Retain the bridge and legacy
-repository redirect without a calendar or release-count expiry. Removing them needs a separate
-compatibility decision after reviewing installed-client support.
+The shipped Android and host selectors page through the whole release history (see
+`packages/server/src/server/session/daemon/fork-preview.ts`), so normal releases do not push the
+retained bridge out of their search; growing history only adds latency and rate-limit exposure.
+Retain the bridge and legacy repository redirect without a calendar or release-count expiry.
+Removing them needs a separate compatibility decision after reviewing installed-client support.
 
 New desktop builds query `RyanEwen/paseo-plus-plus` directly. Android and standalone hosts use its API directly. Builds through preview32 query `RyanEwen/paseo` and depend on its retained redirect. Verify the legacy Atom feed, release API, channel manifests and installer URLs live before claiming those installs can update automatically. Never create a separate repository at the old name; that overrides the redirect.
 
@@ -311,7 +310,7 @@ It checks retained workspace state and another terminal command before stopping 
 This mode builds no app installers and publishes no release. Its log artifacts are the update
 acceptance evidence for both Linux architectures.
 
-`windows_powershell_probe=true` is a diagnostic mode for Windows process identity. It runs only the `windows-powershell-probe` job on Windows ARM64 and x64. That job measures Windows PowerShell startup, the terminal worker's exact self-query and process list, and inbox JScript with WMI, then uploads timings, date format shapes and equality booleans as `windows-powershell-probe-*` artifacts. It records no values or command lines, and changes no application backend. Every release job is excluded, and the job fails on any mix with `publish`, `bridge`, `latest` or daemon verification. It uses no signing or publishing credentials, builds nothing and creates no tag, draft or asset. Checkout uses the job's read-only `github.token` and does not persist it. It is not release qualification: it runs standalone Node without the release job's build load, so a clean result does not clear the packaged app. Each run consumes a `run_number`, which leaves a gap in preview numbers.
+`windows_powershell_probe=true` runs only the diagnostic `windows-powershell-probe` job; its scope and recorded fields are in `scripts/preview-release/windows-powershell-probe.mjs`. It is not release qualification: it runs standalone Node without the release job's build load, so a clean result does not clear the packaged app. It cannot be combined with `publish`, `bridge`, `latest` or daemon verification. Each run consumes a `run_number`, which leaves a gap in preview numbers.
 
 ### Signing configuration
 
@@ -387,10 +386,9 @@ on `main` checks the current ref context; it does not replace the preview publis
 requirement. Keep that event-routing failure separate from actual test failures when judging source
 qualification.
 
-Installed Android, standalone daemon, and desktop builds still discover releases through
-`RyanEwen/paseo`. Their existing bridges accept exact old and new release asset URLs. Preserve the
-old endpoint and GitHub redirect; creating another repository at the old name takes over that
-redirect. User-facing repository and release-note links use the new name.
+Which repository each installed build queries, and the rule for the legacy redirect, are in
+[the final prerelease bridge](#final-prerelease-bridge-and-normal-latest-releases). User-facing
+repository and release-note links use the new name.
 
 Keep published assets immutable and retain the existing preview workflow path, ID, and increasing
 run sequence. Do not change app IDs, profiles, package names, link schemes, signing keys, checksum
