@@ -1037,12 +1037,16 @@ export const WorkspaceTitleSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+/** Where a workspace pin applies: the top of the whole sidebar or the top of its project. */
+export const WorkspacePinScopeSchema = z.enum(["global", "project"]);
+export type WorkspacePinScope = z.infer<typeof WorkspacePinScopeSchema>;
+
 export const WorkspacePinSetRequestSchema = z.object({
   type: z.literal("workspace.pin.set.request"),
   workspaceId: z.string(),
   pinned: z.boolean(),
   // COMPAT(projectWorkspacePinning): added in v0.11.2, remove optional after 2027-02-11.
-  scope: z.enum(["global", "project"]).optional(),
+  scope: WorkspacePinScopeSchema.optional(),
   requestId: z.string(),
 });
 

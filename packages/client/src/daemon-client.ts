@@ -141,6 +141,7 @@ import type {
   AgentSkillSelection,
   AgentSkillsStatus,
   AgentSkillsSaveResult,
+  WorkspacePinScope,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -3552,7 +3553,7 @@ export class DaemonClient {
     workspaceId: string,
     pinned: boolean,
     requestId?: string,
-    scope?: "global" | "project",
+    scope?: WorkspacePinScope,
   ): Promise<{ pinnedAt: string | null }> {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,

@@ -16,7 +16,11 @@ import type {
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
-import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
+import type {
+  CreationSnapshot,
+  AgentCreateRequest,
+  WorkspacePinScope,
+} from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
@@ -3966,7 +3970,7 @@ export class Session {
     workspaceId: string,
     pinned: boolean,
     requestId: string,
-    scope: "global" | "project" = "global",
+    scope: WorkspacePinScope = "global",
   ): Promise<void> {
     const logContext = { workspaceId, pinned, requestId };
     this.sessionLogger.info(logContext, "session: workspace.pin.set.request");
