@@ -2065,6 +2065,10 @@ function createToolCatalog(
       notifyOnFinish = Boolean(callerAgentId),
       activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
     }) => {
+      if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
+        throw new PaseoToolInputError(`Agent ${agentId} not found`);
+      }
+      // Validate the recipient first: preparing persists a delegation in the caller's ledger.
       const attention = callerAgentId
         ? await agentManager.prepareAttentionMessage({
             agentId: callerAgentId,
@@ -2072,9 +2076,6 @@ function createToolCatalog(
             objectiveId,
           })
         : undefined;
-      if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
-        throw new PaseoToolInputError(`Agent ${agentId} not found`);
-      }
       const notifying = Boolean(callerAgentId && notifyOnFinish);
       const notification =
         notifying && callerAgentId

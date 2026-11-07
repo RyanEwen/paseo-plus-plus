@@ -3968,6 +3968,31 @@ describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
+  it("rejects an unknown recipient before recording any delegation", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(null);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "send_agent_prompt");
+    const parsed = await tool.inputSchema.safeParseAsync({
+      agentId: "mistyped-agent",
+      prompt: "Follow up",
+    });
+    if (!parsed.success) {
+      throw new Error("Expected caller send_agent_prompt input to parse");
+    }
+
+    await expect(tool.handler(parsed.data as Record<string, unknown>)).rejects.toThrow(
+      "Agent mistyped-agent not found",
+    );
+    expect(spies.agentManager.prepareAttentionMessage).not.toHaveBeenCalled();
+  });
+
   it("defaults agent-scoped prompts to background finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
