@@ -45,6 +45,9 @@ function HostAttentionControl({ serverId, label }: { serverId: string; label: st
   const mutation = useMutation({
     mutationFn: async (enabled: boolean) => {
       const saved = await patchConfig({ notifications: { agentAwareAttention: enabled } });
+      if (!saved) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
       if (saved.notifications?.agentAwareAttention !== enabled) {
         throw new Error(t("settings.notifications.notSaved"));
       }
