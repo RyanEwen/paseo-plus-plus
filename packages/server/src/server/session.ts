@@ -740,6 +740,7 @@ export class Session {
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly publishStoredAgentAttentionCleared: SessionOptions["publishStoredAgentAttentionCleared"];
   private readonly notificationReceipts: SessionOptions["notificationReceipts"];
+  private readonly workspaceAttention: WorkspaceAttention;
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -955,6 +956,14 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    // Without a host-wide publisher (standalone sessions and tests), publish to this session only.
+    this.workspaceAttention = new WorkspaceAttention({
+      manager: agentManager,
+      storage: agentStorage,
+      publishStored:
+        this.publishStoredAgentAttentionCleared ??
+        ((record, workspaceId) => this.forwardStoredAgentAttentionCleared(record, workspaceId)),
+    });
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
@@ -7706,10 +7715,14 @@ export class Session {
   ): Promise<void> {
     const { requestId, workspaceId, notification } = request;
     const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
+    const receipts = this.notificationReceipts;
     let agents: AgentSnapshotPayload[];
     try {
       if (notification && requestedWorkspaceIds.length !== 1) {
         throw new Error("A notification acknowledgement must name exactly one workspace");
+      }
+      if (notification && !receipts) {
+        throw new Error("Workspace notification sync is unavailable");
       }
       agents = await this.listAgentPayloads({ includeBackground: true });
     } catch (error) {
@@ -7745,13 +7758,6 @@ export class Session {
     const liveAgentIds = new Set(
       agents.filter((agent) => !agent.archivedAt).map((agent) => agent.id),
     );
-    const attention = new WorkspaceAttention({
-      manager: this.agentManager,
-      storage: this.agentStorage,
-      publishStored:
-        this.publishStoredAgentAttentionCleared ??
-        this.forwardStoredAgentAttentionCleared.bind(this),
-    });
 
     for (const requestedWorkspaceId of requestedWorkspaceIds) {
       const clearedAgentIds: string[] = [];
@@ -7764,11 +7770,8 @@ export class Session {
           );
         }
 
-        // Reject unavailable sync and impossible future receipts before any attention mutation.
-        if (notification && !this.notificationReceipts) {
-          throw new Error("Workspace notification sync is unavailable");
-        }
-        await attention.clear({
+        // An impossible future receipt is rejected inside clear, before any attention mutation.
+        await this.workspaceAttention.clear({
           workspace,
           agents,
           notification,
@@ -7777,12 +7780,8 @@ export class Session {
           },
         });
 
-        if (notification) {
-          await this.notificationReceipts!.acknowledge(
-            workspace.workspaceId,
-            notification,
-            liveAgentIds,
-          );
+        if (notification && receipts) {
+          await receipts.acknowledge(workspace.workspaceId, notification, liveAgentIds);
         }
         await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
         results.push({
