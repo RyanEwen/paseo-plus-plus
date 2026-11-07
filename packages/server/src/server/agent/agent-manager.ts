@@ -1398,11 +1398,11 @@ export class AgentManager {
     if (this.agents.has(resolvedAgentId))
       throw new Error(`Agent with id ${resolvedAgentId} already exists`);
     this.acknowledgeCreationAttempt(resolvedAgentId, options.creationAttempt);
-    const previousEmpty = await this.registry?.get(resolvedAgentId, {
+    const previousRecord = await this.registry?.get(resolvedAgentId, {
       includeHistoryIntents: true,
     });
-    const expectedRetry = this.captureCreationRetry(previousEmpty, options.creationAttempt);
-    const restoringEmpty = isBoundEmptyClaudeCreation(previousEmpty);
+    const expectedRetry = this.captureCreationRetry(previousRecord, options.creationAttempt);
+    const restoringEmpty = isBoundEmptyClaudeCreation(previousRecord);
     if (this.pluginLifecycle && !config.internal && !restoringEmpty) {
       const request = await this.pluginLifecycle.before("agent.create.before", {
         config,
@@ -3999,6 +3999,10 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  /**
+   * Map a submitted prompt's client ID to the provider's message ID for rewind.
+   * Throws when the agent has no session or the prompt is not yet acknowledged.
+   */
   private resolveRewindMessageId(agentId: string, messageId: string): string {
     this.requireSessionAgent(agentId);
     const submittedRow = this.timelineStore
@@ -4015,8 +4019,13 @@ export class AgentManager {
     return submittedRow?.providerMessageId ?? messageId;
   }
 
-  async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+  /** Refuse a rewind target before cancelling the current run for it. */
+  private assertRewindTarget(agentId: string, messageId: string): void {
     this.resolveRewindMessageId(agentId, messageId);
+  }
+
+  async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    this.assertRewindTarget(agentId, messageId);
     if (this.hasInFlightRun(agentId)) await this.cancelAgentRunBefore(agentId, "rewind");
     // Reserve synchronously before the first await so immediate prompts see the rewind barrier.
     const lock = this.runs.createPendingRun(agentId);
