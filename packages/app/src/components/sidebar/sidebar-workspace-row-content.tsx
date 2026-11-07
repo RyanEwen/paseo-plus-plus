@@ -57,7 +57,6 @@ export function SidebarWorkspaceRowFrame({
     isHovered: boolean;
     contextMenuOpen: boolean;
     onContextMenuOpenChange: (open: boolean) => void;
-    hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
   const family = useSidebarWorkspaceFamilyPresentation();
@@ -76,6 +75,7 @@ export function SidebarWorkspaceRowFrame({
     [handlePointerEnter, handlePointerLeave],
   );
 
+  // The frame owns the only hover tracker, so the family disclosure beside the row is inside it.
   return (
     <WorkspaceHoverCard
       workspace={workspace}
@@ -92,7 +92,6 @@ export function SidebarWorkspaceRowFrame({
           isHovered: isHovered && !contextMenuOpen && !isDragging,
           contextMenuOpen,
           onContextMenuOpenChange: handleContextMenuOpenChange,
-          hoverHandlers,
         })}
         {family.disclosure ? (
           <View style={styles.familyDisclosure}>{family.disclosure}</View>
