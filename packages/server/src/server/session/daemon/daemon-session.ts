@@ -328,6 +328,12 @@ export class DaemonSession {
     }
   }
 
+  async handleUpdateAvailabilityRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.update.check_availability.request" }>,
+  ): Promise<void> {
+    await this.selfUpdate.dispatch(msg);
+  }
+
   async handleUpdateRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.update.request" }>,
   ): Promise<void> {

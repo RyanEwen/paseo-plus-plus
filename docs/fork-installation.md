@@ -16,3 +16,5 @@ paseo-plus-plus daemon run
 ```
 
 Keep that terminal open, or use `paseo-plus-plus daemon run` as your service's command. The standalone daemon keeps its settings, host identity, agents, and workspaces in `~/.paseo-plus-plus` and listens on `127.0.0.1:6791`. Upstream Paseo and Paseo++ can run side by side with their defaults. Set up the new daemon independently and connect your app to it. These defaults apply to previews built with the `paseo-plus-plus` command.
+
+Source-built daemons need to switch to a release package before the app can update them. See [sidebar host updates](fork-features/sidebar-host-updates.md) for when the sidebar offers **Update**.

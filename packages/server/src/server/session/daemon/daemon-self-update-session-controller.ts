@@ -5,13 +5,24 @@ import {
   DaemonSelfUpdateInProgressError,
   type DaemonSelfUpdatePhase,
   type DaemonSelfUpdater,
+  type DaemonUpdateAvailability,
 } from "./daemon-self-updater.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { registerForkCapability } from "../../fork-capabilities.js";
+
+// Advertise the read-only update availability check this controller answers.
+registerForkCapability("daemonUpdateAvailability");
 
 type DaemonUpdateRequest = Extract<SessionInboundMessage, { type: "daemon.update.request" }>;
+type DaemonUpdateAvailabilityRequest = Extract<
+  SessionInboundMessage,
+  { type: "daemon.update.check_availability.request" }
+>;
+type DaemonSelfUpdateMessage = DaemonUpdateRequest | DaemonUpdateAvailabilityRequest;
 
 const DAEMON_SELF_UPDATE_MESSAGE_TYPES: ReadonlySet<SessionInboundMessage["type"]> = new Set([
   "daemon.update.request",
+  "daemon.update.check_availability.request",
 ]);
 
 interface DaemonSelfUpdateRestartIntent {
@@ -29,10 +40,10 @@ export interface DaemonSelfUpdateSessionControllerOptions {
   emit: (msg: SessionOutboundMessage) => void;
   emitLifecycleIntent: (intent: DaemonSelfUpdateRestartIntent) => void;
   sessionLogger: pino.Logger;
-  updater?: Pick<DaemonSelfUpdater, "update">;
+  updater?: Pick<DaemonSelfUpdater, "update" | "checkAvailability">;
 }
 
-function isDaemonSelfUpdateMessage(msg: SessionInboundMessage): msg is DaemonUpdateRequest {
+function isDaemonSelfUpdateMessage(msg: SessionInboundMessage): msg is DaemonSelfUpdateMessage {
   return DAEMON_SELF_UPDATE_MESSAGE_TYPES.has(msg.type);
 }
 
@@ -43,7 +54,7 @@ export class DaemonSelfUpdateSessionController {
   private readonly emit: (msg: SessionOutboundMessage) => void;
   private readonly emitLifecycleIntent: (intent: DaemonSelfUpdateRestartIntent) => void;
   private readonly sessionLogger: pino.Logger;
-  private readonly updater: Pick<DaemonSelfUpdater, "update">;
+  private readonly updater: Pick<DaemonSelfUpdater, "update" | "checkAvailability">;
 
   constructor(options: DaemonSelfUpdateSessionControllerOptions) {
     this.clientId = options.clientId;
@@ -59,7 +70,27 @@ export class DaemonSelfUpdateSessionController {
     if (!isDaemonSelfUpdateMessage(msg)) {
       return undefined;
     }
+    if (msg.type === "daemon.update.check_availability.request") {
+      return this.handleAvailabilityRequest(msg);
+    }
     return this.handleDaemonUpdateRequest(msg);
+  }
+
+  /** A failed check never establishes eligibility and never requests a restart. */
+  private async handleAvailabilityRequest(msg: DaemonUpdateAvailabilityRequest): Promise<void> {
+    let result: DaemonUpdateAvailability;
+    try {
+      result = await this.updater.checkAvailability({
+        daemonVersion: this.daemonVersion,
+        desktopManaged: this.desktopManaged,
+      });
+    } catch (error) {
+      result = { version: null, reason: getErrorMessage(error) };
+    }
+    this.emit({
+      type: "daemon.update.check_availability.response",
+      payload: { requestId: msg.requestId, ...result },
+    });
   }
 
   private async handleDaemonUpdateRequest(msg: DaemonUpdateRequest): Promise<void> {

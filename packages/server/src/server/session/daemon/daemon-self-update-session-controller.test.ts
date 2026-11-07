@@ -1,6 +1,7 @@
 import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { forkCapabilities } from "../../fork-capabilities.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import {
   DaemonSelfUpdateInProgressError,
@@ -13,6 +14,16 @@ import {
 } from "./daemon-self-update-session-controller.js";
 
 type TestUpdater = Pick<DaemonSelfUpdater, "update">;
+type TestAvailabilityCheck = DaemonSelfUpdater["checkAvailability"];
+
+/** Update tests never reach the availability check; fail loudly if one does. */
+const unexpectedAvailabilityCheck: TestAvailabilityCheck = async () => {
+  throw new Error("availability check should not run");
+};
+
+const unexpectedUpdate: TestUpdater["update"] = async () => {
+  throw new Error("update should not run");
+};
 type RestartIntent = Parameters<DaemonSelfUpdateSessionControllerOptions["emitLifecycleIntent"]>[0];
 
 interface ControllerHarness {
@@ -22,7 +33,8 @@ interface ControllerHarness {
 }
 
 function createController(input: {
-  updater: TestUpdater;
+  updater?: TestUpdater;
+  checkAvailability?: TestAvailabilityCheck;
   daemonVersion?: string | null;
   desktopManaged?: boolean;
 }): ControllerHarness {
@@ -39,7 +51,10 @@ function createController(input: {
       restartIntents.push(intent);
     },
     sessionLogger: createTestLogger(),
-    updater: input.updater,
+    updater: {
+      update: input.updater?.update ?? unexpectedUpdate,
+      checkAvailability: input.checkAvailability ?? unexpectedAvailabilityCheck,
+    },
   });
 
   return { controller, emitted, restartIntents };
@@ -48,6 +63,11 @@ function createController(input: {
 const updateRequest: SessionInboundMessage = {
   type: "daemon.update.request",
   requestId: "update-1",
+};
+
+const availabilityRequest: SessionInboundMessage = {
+  type: "daemon.update.check_availability.request",
+  requestId: "check-1",
 };
 
 describe("DaemonSelfUpdateSessionController", () => {
@@ -177,6 +197,52 @@ describe("DaemonSelfUpdateSessionController", () => {
     ]);
     expect(restartIntents).toEqual([]);
   });
+
+  test("answers an availability check without updating or requesting a restart", async () => {
+    const inputs: Parameters<TestAvailabilityCheck>[0][] = [];
+    const { controller, emitted, restartIntents } = createController({
+      async checkAvailability(input) {
+        inputs.push(input);
+        return { version: "0.1.16", reason: null };
+      },
+    });
+
+    await controller.dispatch(availabilityRequest);
+
+    expect(inputs).toEqual([{ daemonVersion: "0.1.15", desktopManaged: false }]);
+    expect(emitted).toEqual([
+      {
+        type: "daemon.update.check_availability.response",
+        payload: { requestId: "check-1", version: "0.1.16", reason: null },
+      },
+    ]);
+    expect(restartIntents).toEqual([]);
+  });
+
+  test("reports a failed availability check as a reason without a version", async () => {
+    const { controller, emitted } = createController({
+      async checkAvailability() {
+        throw new Error("npm is not available on this host");
+      },
+    });
+
+    await controller.dispatch(availabilityRequest);
+
+    expect(emitted).toEqual([
+      {
+        type: "daemon.update.check_availability.response",
+        payload: {
+          requestId: "check-1",
+          version: null,
+          reason: "npm is not available on this host",
+        },
+      },
+    ]);
+  });
+
+  test("advertises the availability capability once this controller is loaded", () => {
+    expect(forkCapabilities()).toMatchObject({ daemonUpdateAvailability: true });
+  });
 });
 
 test("self-update progress is request-owned through the final delivery boundary", async () => {
@@ -210,6 +276,7 @@ test("self-update progress is request-owned through the final delivery boundary"
         lateProgress = () => input.onProgress("starting");
         return { success: false, error: "Safe injected update stopped", newVersion: null };
       },
+      checkAvailability: unexpectedAvailabilityCheck,
     },
   });
   await delivery.request(source, updateRequest, async () => {

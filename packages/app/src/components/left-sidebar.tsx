@@ -34,6 +34,7 @@ import {
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
+import { useSidebarHostUpdates } from "@/components/hosts/sidebar-host-updates";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
@@ -348,6 +349,8 @@ function SidebarHostPicker({
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const closePicker = useCallback(() => setIsOpen(false), []);
+  const hostUpdates = useSidebarHostUpdates({ hosts, isOpen, onBeforeUpdate: closePicker });
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -359,33 +362,37 @@ function SidebarHostPicker({
   const handleOpen = useCallback(() => setIsOpen(true), []);
 
   return (
-    <HostPicker
-      hosts={hosts}
-      value=""
-      onSelect={handleSelect}
-      open={isOpen}
-      onOpenChange={setIsOpen}
-      anchorRef={triggerRef}
-      includeAddHost
-      onAddHost={onAddHost}
-      showActiveConnection
-      onOpenHostSettings={onOpenHostSettings}
-      searchable
-      desktopPlacement="top-start"
-      desktopMinWidth={240}
-      addHostTestID="sidebar-host-add"
-      hostOptionTestID={sidebarHostOptionTestID}
-    >
-      <FooterIconButton
-        buttonRef={triggerRef}
-        onPress={handleOpen}
-        testID="sidebar-hosts-trigger"
-        label={label}
-        icon={Server}
-        // Server's two boxes fill more of the square than the other glyphs.
-        iconSizeAdjustment={-1}
-      />
-    </HostPicker>
+    <>
+      <HostPicker
+        hosts={hosts}
+        value=""
+        onSelect={handleSelect}
+        open={isOpen}
+        onOpenChange={setIsOpen}
+        anchorRef={triggerRef}
+        includeAddHost
+        onAddHost={onAddHost}
+        showActiveConnection
+        onOpenHostSettings={onOpenHostSettings}
+        renderHostAction={hostUpdates.renderHostAction}
+        searchable
+        desktopPlacement="top-start"
+        desktopMinWidth={240}
+        addHostTestID="sidebar-host-add"
+        hostOptionTestID={sidebarHostOptionTestID}
+      >
+        <FooterIconButton
+          buttonRef={triggerRef}
+          onPress={handleOpen}
+          testID="sidebar-hosts-trigger"
+          label={label}
+          icon={Server}
+          // Server's two boxes fill more of the square than the other glyphs.
+          iconSizeAdjustment={-1}
+        />
+      </HostPicker>
+      {hostUpdates.sheet}
+    </>
   );
 }
 
