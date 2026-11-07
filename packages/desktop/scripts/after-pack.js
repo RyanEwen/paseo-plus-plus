@@ -5,8 +5,6 @@ const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
 const { installLinuxLauncher } = require("./linux-sandbox");
 
-const { resolveDesktopDistribution } = require("../dist/distribution.js");
-
 // electron-builder arch enum → Node.js arch string
 const ARCH_MAP = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
 
@@ -111,7 +109,25 @@ function fmtMB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-exports.default = async function afterPack(context) {
+/**
+ * Load the packaged identity resolver from the compiled desktop main. Packaging runs
+ * `build:main` before electron-builder calls this hook. Loading it on demand keeps the hook
+ * importable by unit tests, which run without compiled desktop output.
+ */
+function loadDesktopDistributionResolver() {
+  return require("../dist/distribution.js").resolveDesktopDistribution;
+}
+
+/**
+ * electron-builder afterPack hook.
+ * @param context electron-builder pack context.
+ * @param resolveDesktopDistribution maps package metadata to the desktop identity; tests pass
+ *   the source module's resolver instead of the compiled one.
+ */
+exports.default = async function afterPack(
+  context,
+  resolveDesktopDistribution = loadDesktopDistributionResolver(),
+) {
   const platform = context.electronPlatformName;
   const arch = ARCH_MAP[context.arch] || process.arch;
   const executableName =

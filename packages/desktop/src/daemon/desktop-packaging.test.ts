@@ -95,6 +95,25 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("loads the packaging hook without compiled desktop output", () => {
+    // CI runs desktop unit tests before build:main, so loading the hook must not read dist.
+    const script = [
+      'const Module = require("node:module");',
+      "const load = Module._load;",
+      "Module._load = function (request, parent, isMain) {",
+      `  const fromDesktop = parent?.filename?.startsWith(${JSON.stringify(packageRoot)}) &&`,
+      '    !parent.filename.includes("node_modules");',
+      "  if (fromDesktop && /(^|[\\\\/])dist([\\\\/]|$)/.test(request)) {",
+      "    throw new Error(`loaded compiled desktop output: ${request}`);",
+      "  }",
+      "  return load.call(this, request, parent, isMain);",
+      "};",
+      `require(${JSON.stringify(join(packageRoot, "scripts", "after-pack.js"))});`,
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("isolates the debug artifact even when launched without its logging shortcut", () => {
     expect(resolveDesktopDistribution({ paseoPreview: true, paseoDebug: true })).toEqual({
       isPreview: true,
