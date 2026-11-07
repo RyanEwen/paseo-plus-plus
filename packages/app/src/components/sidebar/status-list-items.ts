@@ -26,12 +26,15 @@ export function buildStatusListItems({
   expandedGroupKeys,
   initialCount,
   updatedWithin,
+  keep,
 }: {
   groups: SidebarWorkspaceGroup[];
   collapsedGroupKeys: ReadonlySet<string>;
   expandedGroupKeys: ReadonlySet<string>;
   initialCount: number | null;
   updatedWithin?: { days: number; now: number };
+  /** Rows that stay visible past a group's count and age windows, such as the open workspace. */
+  keep?: (workspace: SidebarWorkspaceEntry) => boolean;
 }): StatusListItem[] {
   const result: StatusListItem[] = [];
   for (const group of groups) {
@@ -46,6 +49,7 @@ export function buildStatusListItems({
       updatedWithin: updatedWithin
         ? { ...updatedWithin, getStatusEnteredAt: (workspace) => workspace.statusEnteredAt }
         : undefined,
+      keep,
     });
     for (const workspace of visibleItems) {
       result.push({ kind: "workspace", workspace, groupKey: group.key });

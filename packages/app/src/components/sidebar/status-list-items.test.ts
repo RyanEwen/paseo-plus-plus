@@ -168,3 +168,21 @@ describe("status-list age limits", () => {
     ).toHaveLength(2);
   });
 });
+
+describe("open workspace", () => {
+  test("stays visible past its group's count limit until Show more", () => {
+    const rows = ["one", "two", "three"].map((id) => workspace(id, []));
+    const open = rows[2]!;
+    const items = buildStatusListItems({
+      groups: [group("done", rows)],
+      collapsedGroupKeys: new Set(),
+      expandedGroupKeys: new Set(),
+      initialCount: 1,
+      keep: (row) => row.workspaceKey === open.workspaceKey,
+    });
+    expect(items.filter((item) => item.kind === "workspace").map((item) => item.workspace)).toEqual(
+      [rows[0], open],
+    );
+    expect(items.at(-1)).toMatchObject({ kind: "footer", canToggle: true, expanded: false });
+  });
+});

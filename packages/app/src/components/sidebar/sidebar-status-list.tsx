@@ -311,6 +311,7 @@ function StatusGroupList({
   const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
   const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
   const now = useSidebarRecencyClock();
+  const keepOpenWorkspace = useOpenWorkspaceKeep(useActiveWorkspaceSelection());
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<ReadonlySet<string>>(new Set());
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const items = useMemo(
@@ -321,8 +322,17 @@ function StatusGroupList({
         expandedGroupKeys,
         initialCount,
         updatedWithin: days === null ? undefined : { days, now },
+        keep: keepOpenWorkspace,
       }),
-    [groups, collapsedWorkspaceGroupKeys, expandedGroupKeys, initialCount, days, now],
+    [
+      groups,
+      collapsedWorkspaceGroupKeys,
+      expandedGroupKeys,
+      initialCount,
+      days,
+      now,
+      keepOpenWorkspace,
+    ],
   );
 
   const destinationGroupKeys = useMemo(() => {
