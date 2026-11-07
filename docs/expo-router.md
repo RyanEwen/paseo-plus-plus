@@ -124,6 +124,7 @@ Legacy `?open=` links seed this model state at the matched route boundary and
 then lose the query parameter. Internal navigation does not use the query as a
 handoff. Read matched route params locally; global search params let retained
 workspace screens observe requests for other workspaces.
+Opening a selected, ready workspace in the foreground acknowledges its existing notifications through the host. A retained route, unfocused pane, loading workspace, hidden window, or compact sidebar must not acknowledge it. Capture the displayed delivery boundary once per activation; receiving a later event while the workspace stays open does not create another acknowledgement. See [cross-device clearing](notifications.md#cross-device-clearing) for synchronization and OS limits.
 
 ## Params
 

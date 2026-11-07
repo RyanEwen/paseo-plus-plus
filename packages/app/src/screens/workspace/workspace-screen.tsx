@@ -2,6 +2,7 @@ import { resolveWorkspaceTabLaunchDestination } from "@/workspace-tabs/launcher/
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
 import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
+import { useWorkspaceNotificationAcknowledgement } from "@/notifications/use-workspace-notification-acknowledgement";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -1068,6 +1069,12 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  useWorkspaceNotificationAcknowledgement({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    focused: isRouteFocused,
+    workspace: workspaceDescriptor,
+  });
   useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
     void getHostRuntimeStore()

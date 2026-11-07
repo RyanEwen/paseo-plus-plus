@@ -2,6 +2,9 @@ import { desktopDistribution } from "../distribution.js";
 import { registerViewedAgentNotifications } from "./viewed-agent-notifications/ipc.js";
 import { createViewedToastRegistry } from "./viewed-agent-notifications/toast-tracking.js";
 import { createPackagedWindowsToastHistory } from "./windows-toast-history.js";
+import { DesktopNotificationReceipts } from "./notification-receipts.js";
+import { createNotificationDeliveryReceipts } from "./notification-receipt-handlers.js";
+import { cacheNotificationIcon, readNotificationIconBytes } from "./notification-icon.js";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -12,13 +15,13 @@ import {
   buildWindowsAgentNotificationArguments,
   createTimedOutNotificationRetention,
   createWindowsAgentNotificationOpener,
-  shouldRetainWindowsNotification,
 } from "./windows-agent-notification.js";
 
 interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
+  icon?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -31,13 +34,21 @@ interface NotificationIcon {
   path: string;
 }
 
+interface ProjectNotificationIcon {
+  image: Electron.NativeImage;
+  /** Cached file path for Windows toast XML, or null where no file is needed. */
+  path: string | null;
+}
+
 const activeNotifications = new Set<Notification>();
 const viewedToasts = createViewedToastRegistry<Notification>();
 const timedOutNotifications = createTimedOutNotificationRetention<Notification>();
+const deliveryReceipts = createNotificationDeliveryReceipts<Notification>();
 
 function releaseNotification(notification: Notification): void {
   activeNotifications.delete(notification);
   viewedToasts.forget(notification);
+  deliveryReceipts.forget(notification);
   timedOutNotifications.release(notification);
 }
 
@@ -73,6 +84,32 @@ function getNotificationIcon(): NotificationIcon | null {
   }
 
   return null;
+}
+
+/** Accept only small renderer-rasterized PNG bytes, never paths or remote URLs.
+ * Windows ToastGeneric requires a file URI; retain content-addressed files in the
+ * app-owned cache so Notification Center can render them after app restart.
+ */
+async function getProjectNotificationIcon(value: unknown): Promise<ProjectNotificationIcon | null> {
+  const inputBytes = readNotificationIconBytes(value);
+  if (!inputBytes) return null;
+  const image = nativeImage.createFromBuffer(inputBytes);
+  if (image.isEmpty()) return null;
+  const size = image.getSize();
+  if (size.width === 0 || size.width > 128 || size.width !== size.height) return null;
+  if (process.platform !== "win32") return { image, path: null };
+  const directory = path.join(app.getPath("userData"), "notification-icons");
+  try {
+    return { image, path: await cacheNotificationIcon({ directory, bytes: image.toPNG() }) };
+  } catch (error) {
+    console.warn("[notifications] Could not prepare project icon", error);
+    return null;
+  }
+}
+
+/** Send an argument-free event to every renderer window. */
+function broadcastToWindows(channel: string): void {
+  for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, {});
 }
 
 function focusSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
@@ -111,10 +148,18 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     appUserModelId: desktopDistribution.windowsAppUserModelId,
     executable: process.execPath,
   });
+  deliveryReceipts.register({
+    handle: (channel, handler) => ipcMain.handle(channel, handler),
+    broadcast: broadcastToWindows,
+    openReceipts: () => new DesktopNotificationReceipts(app.getPath("userData")),
+    history: toastHistory,
+    release: releaseNotification,
+  });
   const viewed = registerViewedAgentNotifications({
     toasts: viewedToasts,
     history: toastHistory,
     dismiss(notification) {
+      deliveryReceipts.markProgrammatic(notification);
       notification.close();
       releaseNotification(notification);
     },
@@ -150,7 +195,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     const target = viewed.targetOf(data);
     if (target && viewed.isViewed(target)) return true;
     const notificationId = randomUUID();
-    const icon = getNotificationIcon();
+    const icon = (await getProjectNotificationIcon(rawInput?.icon)) ?? getNotificationIcon();
     const settings = await getDesktopSettingsStore().get();
     const silent = !settings.notifications.playSound;
     // A Windows chat notification carries its target in the toast, so activation survives
@@ -171,6 +216,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
       silent,
     });
 
+    deliveryReceipts.retain(notification, { notificationId, data, launch });
     activeNotifications.add(notification);
     if (target) viewed.track(notification, { target, notificationId });
 
@@ -191,7 +237,11 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     });
 
     notification.on("close", (closeEvent) => {
-      if (process.platform === "win32" && shouldRetainWindowsNotification(closeEvent.reason)) {
+      const disposition = deliveryReceipts.closed(notification, {
+        notificationId,
+        reason: closeEvent.reason,
+      });
+      if (process.platform === "win32" && disposition === "retain") {
         // getHistory() is macOS-only and returns an empty list on Windows.
         // Keep this reference so foreground Center taps retain their listener, up to the
         // number of toasts Notification Center can still show.

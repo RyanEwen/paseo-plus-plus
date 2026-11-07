@@ -1,3 +1,5 @@
+import type { NotificationCloseEventParams } from "electron";
+import { NotificationReceiptDataSchema } from "@getpaseo/protocol/notification-receipts";
 import { buildAgentDeepLink, parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 
 interface WindowsAgentToastInput {
@@ -52,11 +54,14 @@ export function buildWindowsAgentNotificationArguments(input: {
   }
 
   // The tag correlates instance clicks with durable activations.
-  return new URLSearchParams({
+  const parameters = new URLSearchParams({
     type: "click",
     tag: input.notificationId,
     paseoAgent: buildAgentDeepLink({ serverId, agentId }),
-  }).toString();
+  });
+  const receipt = NotificationReceiptDataSchema.safeParse(input.data);
+  if (receipt.success) parameters.set("paseoReceipt", JSON.stringify(receipt.data));
+  return parameters.toString();
 }
 
 /** Embed the stable chat URL in the toast so activation survives renderer reloads and app restarts. */
@@ -70,9 +75,21 @@ export function buildWindowsAgentToast(input: WindowsAgentToastInput): string {
   return `<toast launch="${launch}" activationType="foreground"><visual><binding template="ToastGeneric"><text>${escapeXml(input.title)}</text>${body}${icon}</binding></visual>${audio}</toast>`;
 }
 
-/** A timed-out Windows banner is still available to click in Notification Center. */
-export function shouldRetainWindowsNotification(reason: string | undefined): boolean {
-  return reason === "timedOut";
+interface WindowsNotificationCloseInput {
+  reason: NotificationCloseEventParams["reason"];
+  programmatic: boolean;
+}
+
+type WindowsNotificationCloseDisposition = "retain" | "acknowledge" | "release";
+
+/** Classify an observed native callback; this policy cannot guarantee that Windows emits one. */
+export function classifyWindowsNotificationClose(
+  input: WindowsNotificationCloseInput,
+): WindowsNotificationCloseDisposition {
+  // A timed-out banner remains clickable in Notification Center, so retain its listener.
+  if (input.reason === "timedOut") return "retain";
+  if (!input.programmatic && input.reason === "userCanceled") return "acknowledge";
+  return "release";
 }
 
 /** Notification Center keeps at most this many toasts per app; older ones cannot be tapped. */

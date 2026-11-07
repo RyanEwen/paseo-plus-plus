@@ -1,3 +1,5 @@
+import { workspaceNotificationRuntime } from "@/notifications/workspace-receipts-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
 import { AppState } from "react-native";
@@ -36,7 +38,7 @@ import {
   useSessionStore,
   type SessionState,
 } from "@/stores/session-store";
-import { sendOsNotification } from "@/utils/os-notifications";
+import { sendWorkspaceOsNotification } from "@/notifications/workspace-notification";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
@@ -253,6 +255,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     focusedTerminalId,
   });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
+  const supportsNotificationReceipts = useHostFeature(serverId, "workspaceNotificationReceipts");
+  useEffect(() => {
+    if (!supportsNotificationReceipts) return;
+    return workspaceNotificationRuntime.start({
+      serverId,
+      client,
+      observeWorkspaces: (observer) => getHostRuntimeStore().observeWorkspaces(serverId, observer),
+    });
+  }, [client, serverId, supportsNotificationReceipts]);
+  useEffect(() => {
+    if (isAppVisible && supportsNotificationReceipts) workspaceNotificationRuntime.resume(serverId);
+  }, [isAppVisible, serverId, supportsNotificationReceipts]);
 
   const notifyAgentAttention = useCallback(
     (params: {
@@ -300,7 +314,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      void sendOsNotification({
+      void sendWorkspaceOsNotification({
         title: notification.title,
         body: notification.body,
         data: notification.data,
@@ -662,7 +676,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (!message.payload.shouldNotify) {
         return;
       }
-      void sendOsNotification({
+      void sendWorkspaceOsNotification({
         title: message.payload.title,
         body: message.payload.body,
         // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is
@@ -670,6 +684,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         data: {
           serverId: message.payload.serverId ?? serverId,
           terminalId: message.payload.terminalId,
+          notificationSequence: message.payload.notificationSequence,
           cwd: message.payload.cwd,
           ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
         },

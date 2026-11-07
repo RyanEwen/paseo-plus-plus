@@ -53,6 +53,22 @@ An arbitrary Activity launch with data extras does not exercise Expo's FCM path.
 Foreground pushes remain in Notification Center without a banner or sound.
 This preserves notifications sent with stale presence information.
 
+## Workspace names and icons
+
+Resolve notification labels through the agent or terminal's workspace registry record and its project relation. Working directories do not establish project ownership. The daemon creates the same text for push and connected clients, so renamed labels do not depend on a client's directory cache being loaded.
+
+Desktop and browser clients acquire icons through the existing project-icon cache. Rasterize images in a browser image element before passing PNG bytes to the OS adapter; this handles SVG without allowing repository markup to execute or load external resources. Client icon lookup has a 500 ms budget and cannot prevent alert delivery. Windows requires a local image file: retain small, content-addressed PNGs under desktop user data so Notification Center can still reference them after a restart. This cache has per-image limits; it does not have a total-size bound or expire files that notification history may still reference.
+
+Native push keeps the Paseo icon and receives the same workspace text. Project images on mobile are deferred: Expo requires a retrievable image URL, and iOS additionally requires a notification service extension. Keep project image bytes out of the size-limited push payload.
+
+## Cross-device clearing
+
+Delivery acknowledgements belong to the existing authorized workspace, not a new device account. Persist their event sequence with the workspace, publish committed changes through its existing subscriptions, and reconcile from the next snapshot after reconnect. Agent attention remains the source of unread work; clearing a delivery must not resolve a pending permission or a newer attention event. Clients capture the delivery boundary and observed attention before queuing an offline acknowledgement.
+
+Opening a foreground workspace and explicit OS dismissal synchronize existing deliveries. Windows reports explicit dismissals while Paseo is running, including minimized; Android records its own notification delete callbacks durably and uploads them when the app resumes. Connected apps remove matching notifications immediately; offline or closed apps reconcile on resume. Android force-stop cannot guarantee immediate cleanup. iOS and browser APIs do not expose a reliable explicit swipe callback. Browser cleanup covers only the current session's notifications. Windows durable history requires the executable-owned fork identity; upstream and Debug histories remain separate.
+
+Capture legacy own-notification identifiers at startup, then resolve missing workspace ownership through the same host's agent record. Unresolved ownership is retained for later lookup. Never infer a manual dismissal from a notification disappearing, and never clear a later unidentified notification as part of that startup backlog.
+
 ## Viewed chat
 
 A notification for the chat you are looking at is skipped, and delivered ones for it are dismissed. A chat counts as viewed only when its pane is focused, ready and in the foreground; on compact layouts the agent pane must also be settled at rest (`mobile-panels/rest.ts`). `notifications/seen-agent.ts` owns the app side; `packages/desktop/src/features/viewed-agent-notifications/` owns Electron.

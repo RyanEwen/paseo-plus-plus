@@ -8,10 +8,11 @@ import { getDesktopHost } from "@/desktop/host";
 import { parseNotificationOpenTarget, WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
 import { isNative } from "@/constants/platform";
 
-interface OsNotificationPayload {
+export interface OsNotificationPayload {
   title: string;
   body?: string;
   data?: Record<string, unknown>;
+  icon?: string;
 }
 
 export interface WebNotificationClickDetail {
@@ -26,6 +27,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
+      icon?: string;
     }) => Promise<boolean>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
@@ -34,6 +36,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
+        icon?: string;
       }) => Promise<boolean>)
     : null;
 }
@@ -161,7 +164,7 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
       const notification = new NotificationConstructor(payload.title, {
         body: payload.body,
         data: payload.data,
-        icon: getWebNotificationIconUrl(),
+        icon: payload.icon ?? getWebNotificationIconUrl(),
       }) as WebNotificationInstance;
       retainWebNotification(payload.data, notification);
       if (hasNotificationClickTarget(payload.data)) {
