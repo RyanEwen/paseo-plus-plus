@@ -1,11 +1,7 @@
 import { parseSshTransportUri } from "@getpaseo/protocol/ssh-transport";
 import type { HostMutations } from "@/runtime/host-runtime";
 import { DaemonConnectionTestError } from "@/utils/daemon-connection-error";
-import {
-  saveImportedSshHost,
-  type ImportedPrivateKey,
-  type SshKeyImportBridge,
-} from "./ssh-key-import-model";
+import { saveImportedSshHost, type SshKeyImport } from "./ssh-key-import-model";
 
 type ProbeSshHost = HostMutations["probeAndUpsertRemoteSshConnection"];
 export type SavedSshHost = Awaited<ReturnType<ProbeSshHost>>;
@@ -21,11 +17,8 @@ export interface RemoteSshFormState {
   error: FormError | null;
 }
 
-interface RemoteSshFormSnapshot {
-  keyImport: {
-    bridge: SshKeyImportBridge;
-    importPrivateKey: () => Promise<ImportedPrivateKey | null>;
-  } | null;
+export interface RemoteSshFormSnapshot {
+  keyImport: SshKeyImport | null;
   probeHost: ProbeSshHost;
 }
 

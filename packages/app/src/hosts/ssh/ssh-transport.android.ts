@@ -1,14 +1,22 @@
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { createBridgeDaemonTransportFactory } from "@/hosts/bridge-daemon-transport";
 import { sshCredentialId } from "./ssh-destination";
-import type { SshKeyImportBridge } from "./ssh-key-import-model";
+import { importPrivateKey } from "./import-private-key";
+import type { SshKeyImport } from "./ssh-key-import-model";
 import { createSshNativeBridge, type SshNativeModule } from "./ssh-native-bridge";
 
 const nativeModule = requireOptionalNativeModule<SshNativeModule>("PaseoSsh");
 // Every native call goes through the bridge so rejections carry displayable copy.
 const native = nativeModule ? createSshNativeBridge(nativeModule) : null;
-export const supportsSshKeyImport = true;
+// One stable value per process, so the form can take it as a prop without re-rendering.
+const keyImport: SshKeyImport | null = native ? { bridge: native, importPrivateKey } : null;
+
 export const isSshAvailable = () => native !== null;
+
+/** Key import is available whenever this build includes the native SSH module. */
+export function getSshKeyImport(): SshKeyImport | null {
+  return keyImport;
+}
 
 /** Select Android's native SSH bridge for probes and ordinary host reconnection alike. */
 export function createSshTransportFactory() {
@@ -33,10 +41,4 @@ export function createSshTransportFactory() {
 /** Erase imported secrets when the corresponding connection leaves the host registry. */
 export async function removeSshCredentials(id: string): Promise<void> {
   await native?.remove(id);
-}
-
-/** Fail explicitly on an old binary without the native module. */
-export function getSshKeyImportBridge(): SshKeyImportBridge {
-  if (!native) throw new Error("Update the Android app to import SSH keys.");
-  return native;
 }

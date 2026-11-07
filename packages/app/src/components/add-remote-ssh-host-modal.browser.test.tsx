@@ -3,35 +3,20 @@ import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
+import { SshBridgeError } from "@/hosts/ssh/ssh-native-bridge";
+import { createTestSshKeyImport, type TestSshKeyImport } from "@/hosts/ssh/test-ssh-key-import";
 import { RemoteSshHostForm } from "./remote-ssh-host-form";
 
 void testI18n;
-// The browser cannot execute Android Keystore or the native picker. Keep those boundaries
-// injectable here; the real form, editing primitives, and approval interaction run in Chromium.
-const native = vi.hoisted(() => ({
-  inspect: vi.fn(),
-  stage: vi.fn(),
-  commit: vi.fn(),
-  discard: vi.fn(),
-}));
-const save = vi.hoisted(() => vi.fn());
-const picker = vi.hoisted(() => vi.fn());
-vi.mock("@/hosts/ssh/ssh-transport", () => ({
-  supportsSshKeyImport: true,
-  getSshKeyImportBridge: () => native,
-}));
-vi.mock("@/hosts/ssh/import-private-key", () => ({
-  importPrivateKey: picker,
-}));
+// The browser cannot execute Android Keystore or the native picker. The form receives them
+// through its key import port; the real form, editing primitives, and approval run in Chromium.
+const save = vi.fn();
+let keyImport: TestSshKeyImport;
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal("React", React);
-  native.inspect.mockReset().mockResolvedValue("SHA256:test-server");
-  native.stage.mockReset().mockResolvedValue(undefined);
-  native.commit.mockReset().mockResolvedValue(undefined);
-  native.discard.mockReset().mockResolvedValue(undefined);
-  picker.mockReset().mockResolvedValue({ name: "id_ed25519", text: "test-private-key" });
+  keyImport = createTestSshKeyImport();
   save.mockReset().mockImplementation(async (input) => {
     await input.beforeSave();
     return { profile: { serverId: "srv_ssh" }, serverId: "srv_ssh", hostname: "server" };
@@ -65,6 +50,7 @@ function renderForm(visible: boolean, onSaved = vi.fn()) {
       <RemoteSshHostForm
         hosts={[]}
         probeAndUpsertRemoteSshConnection={save}
+        keyImport={keyImport}
         visible={visible}
         onClose={onClose}
         onSaved={onSaved}
@@ -96,7 +82,7 @@ describe("Android SSH key import form", () => {
     expect(save).toHaveBeenCalledTimes(0);
     await click("Trust and connect");
     expect(save).toHaveBeenCalledTimes(1);
-    expect(native.commit).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.commit).toHaveLength(1);
     expect(onSaved).toHaveBeenCalledWith({
       profile: { serverId: "srv_ssh" },
       serverId: "srv_ssh",
@@ -111,9 +97,7 @@ describe("Android SSH key import form", () => {
     expect((within(document.body).getByLabelText("SSH host") as HTMLInputElement).value).toBe("");
   });
   it("shows import errors in the form and lets the user retry without losing the target", async () => {
-    native.inspect.mockRejectedValueOnce(
-      new Error("Unable to read the private key. Check its format and passphrase."),
-    );
+    keyImport.failNextInspect(new SshBridgeError("ERR_SSH_KEY_UNREADABLE"));
     mount();
     typeTarget("ssh://deploy@example.com");
     await click("Import private key");
@@ -141,17 +125,11 @@ describe("Android SSH key import form", () => {
     typeTarget("ssh://deploy@other.example.com");
     expect(within(document.body).queryByTestId("ssh-server-fingerprint")).toBeNull();
     await click("Connect");
-    expect(native.inspect).toHaveBeenCalledTimes(2);
+    expect(keyImport.calls.inspect).toHaveLength(2);
     expect(save).toHaveBeenCalledTimes(0);
   });
   it("accepts dismissal while fingerprint inspection is pending and reopens with fresh inputs", async () => {
-    let finishInspection: (fingerprint: string) => void = () => {};
-    native.inspect.mockImplementationOnce(
-      () =>
-        new Promise<string>((resolve) => {
-          finishInspection = resolve;
-        }),
-    );
+    const inspection = keyImport.holdNext("inspect");
     mount();
     typeTarget("ssh://deploy@example.com");
     await click("Import private key");
@@ -159,46 +137,34 @@ describe("Android SSH key import form", () => {
     await click("Cancel");
     expect(within(document.body).queryByLabelText("SSH host")).toBeNull();
     mount();
-    await act(async () => finishInspection("SHA256:stale"));
+    await act(async () => inspection.release("SHA256:stale"));
     expect(within(document.body).queryByTestId("ssh-server-fingerprint")).toBeNull();
     expect((within(document.body).getByLabelText("SSH host") as HTMLInputElement).value).toBe("");
     expect(save).not.toHaveBeenCalled();
   });
   it("ignores a picker result after the parent hides the form", async () => {
-    let finishPicker: (key: { name: string; text: string }) => void = () => {};
-    picker.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishPicker = resolve;
-        }),
-    );
+    const pick = keyImport.holdNext("pick");
     mount();
     act(() => within(document.body).getByRole("button", { name: "Import private key" }).click());
     renderForm(false);
     mount();
-    await act(async () => finishPicker({ name: "stale-key", text: "private-key" }));
+    await act(async () => pick.release({ name: "stale-key", text: "private-key" }));
     expect(
       within(document.body).getByRole("button", { name: "Import private key" }).textContent,
     ).toBe("Import private key");
   });
   it("discards credentials staged after dismissal without starting a host probe", async () => {
-    let finishStage: () => void = () => {};
-    native.stage.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishStage = resolve;
-        }),
-    );
+    const staging = keyImport.holdNext("stage");
     mount();
     typeTarget("ssh://deploy@example.com");
     await click("Import private key");
     await click("Connect");
     act(() => within(document.body).getByRole("button", { name: "Trust and connect" }).click());
     await click("Cancel");
-    await act(async () => finishStage());
+    await act(async () => staging.release(undefined));
     expect(save).not.toHaveBeenCalled();
-    expect(native.commit).not.toHaveBeenCalled();
-    expect(native.discard).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.commit).toHaveLength(0);
+    expect(keyImport.calls.discard).toHaveLength(1);
   });
   it("rejects a late successful probe before committing credentials or publishing a host", async () => {
     let finishProbe: () => void = () => {};
@@ -217,8 +183,8 @@ describe("Android SSH key import form", () => {
     await act(async () => {});
     await click("Cancel");
     await act(async () => finishProbe());
-    expect(native.commit).not.toHaveBeenCalled();
-    expect(native.discard).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.commit).toHaveLength(0);
+    expect(keyImport.calls.discard).toHaveLength(1);
     expect(onSaved).not.toHaveBeenCalled();
   });
   it("serializes imports when a cancelled form is reopened for the same destination", async () => {
@@ -244,22 +210,16 @@ describe("Android SSH key import form", () => {
     await click("Connect");
     act(() => within(document.body).getByRole("button", { name: "Trust and connect" }).click());
     await act(async () => {});
-    expect(native.stage).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.stage).toHaveLength(1);
     await act(async () => finishOldProbe());
-    expect(native.stage).toHaveBeenCalledTimes(2);
-    expect(native.discard).toHaveBeenCalledTimes(2);
-    expect(native.commit).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.stage).toHaveLength(2);
+    expect(keyImport.calls.discard).toHaveLength(2);
+    expect(keyImport.calls.commit).toHaveLength(1);
     expect(oldSaved).not.toHaveBeenCalled();
     expect(newSaved).toHaveBeenCalledTimes(1);
   });
   it("finishes publishing the host if dismissed after durable commit has begun", async () => {
-    let finishCommit: () => void = () => {};
-    native.commit.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishCommit = resolve;
-        }),
-    );
+    const commit = keyImport.holdNext("commit");
     const published = vi.fn();
     save.mockImplementationOnce(async (input) => {
       await input.beforeSave();
@@ -272,11 +232,11 @@ describe("Android SSH key import form", () => {
     await click("Connect");
     act(() => within(document.body).getByRole("button", { name: "Trust and connect" }).click());
     await act(async () => {});
-    expect(native.commit).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.commit).toHaveLength(1);
     await click("Cancel");
-    await act(async () => finishCommit());
+    await act(async () => commit.release(undefined));
     expect(published).toHaveBeenCalledTimes(1);
-    expect(native.discard).toHaveBeenCalledTimes(1);
+    expect(keyImport.calls.discard).toHaveLength(1);
     expect(onSaved).not.toHaveBeenCalled();
   });
 });

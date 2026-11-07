@@ -18,6 +18,12 @@ export interface SshKeyImportBridge {
   discard(id: string): Promise<void>;
 }
 
+/** Android's key import capability: the native bridge plus the system file picker. */
+export interface SshKeyImport {
+  bridge: SshKeyImportBridge;
+  importPrivateKey: () => Promise<ImportedPrivateKey | null>;
+}
+
 export interface ApprovedSshKey {
   target: SshDestination;
   privateKey: string;

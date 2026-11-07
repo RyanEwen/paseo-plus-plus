@@ -1,4 +1,3 @@
-import { supportsSshKeyImport } from "@/hosts/ssh/ssh-transport";
 import { useRemoteSshFormModel } from "@/hosts/ssh/use-remote-ssh-form-model";
 import { SshKeyImportFields } from "./ssh-key-import-fields";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
@@ -8,6 +7,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Eye, EyeOff, Terminal } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import type { HostMutations } from "@/runtime/host-runtime";
+import type { SshKeyImport } from "@/hosts/ssh/ssh-key-import-model";
 import { Button } from "@/components/ui/button";
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { Field, FormTextInput } from "@/components/ui/form-field";
@@ -78,6 +78,8 @@ export interface AddRemoteSshHostModalProps {
 interface RemoteSshHostFormProps extends AddRemoteSshHostModalProps {
   hosts: HostProfile[];
   probeAndUpsertRemoteSshConnection: HostMutations["probeAndUpsertRemoteSshConnection"];
+  /** Android's key import; null where SSH authenticates through the system's OpenSSH. */
+  keyImport: SshKeyImport | null;
 }
 
 /** Destroy the open form on every dismissal, including Android Back and pan-down. */
@@ -93,10 +95,11 @@ function OpenRemoteSshHostForm({
   onSaved,
   hosts,
   probeAndUpsertRemoteSshConnection,
+  keyImport,
 }: RemoteSshHostFormProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const model = useRemoteSshFormModel(probeAndUpsertRemoteSshConnection);
+  const model = useRemoteSshFormModel({ probeHost: probeAndUpsertRemoteSshConnection, keyImport });
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const { keyName, fingerprint, isPasswordVisible } = state;
   const isSaving = state.phase !== "idle";
@@ -178,7 +181,7 @@ function OpenRemoteSshHostForm({
           onSubmitEditing={handleSubmit}
         />
       </Field>
-      {supportsSshKeyImport ? (
+      {keyImport ? (
         <SshKeyImportFields
           keyName={keyName}
           fingerprint={fingerprint}
