@@ -3,12 +3,12 @@ import React, { act, useCallback } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { within } from "@testing-library/dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostUpdateAction } from "./host-update-action";
 import type { HostUpdateSupport } from "./host-update-eligibility";
 import { HostPickerOption } from "./host-picker";
 import { defaultHostAppearance } from "@/hosts/appearance";
-import "@/i18n/i18next";
+import { i18n } from "@/i18n/i18next";
 import type { HostProfile } from "@/types/host-connection";
 
 const runtime = vi.hoisted(() => ({
@@ -76,6 +76,9 @@ const updateHost: HostProfile = {
   createdAt: "2026-10-14T00:00:00Z",
   updatedAt: "2026-10-14T00:00:00Z",
 };
+beforeAll(async () => {
+  await i18n.changeLanguage("en");
+});
 beforeEach(() => {
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
