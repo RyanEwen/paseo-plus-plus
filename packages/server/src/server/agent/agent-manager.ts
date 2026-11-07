@@ -1,4 +1,5 @@
 import type { CreationAgentAttempt } from "../creation/index.js";
+import type { CommitClaudeRewind } from "./provider-history/claude-identity-types.js";
 import {
   createClaudeIdentityStore,
   isBoundEmptyClaudeCreation,
@@ -44,7 +45,6 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
-  type CommitClaudeRewind,
   type AgentCreateSessionOptions,
   type AgentResumePurpose,
   type AgentResumeSessionOptions,

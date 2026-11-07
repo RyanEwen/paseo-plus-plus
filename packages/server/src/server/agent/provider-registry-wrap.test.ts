@@ -1,9 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
+import type { ClaudeFreshRewindContext } from "./provider-history/claude-identity-types.js";
 
 import type {
   AgentCapabilityFlags,
   AgentRewindInput,
-  ClaudeFreshRewindContext,
   AgentPromptInput,
   AgentSession,
   AgentStreamEvent,

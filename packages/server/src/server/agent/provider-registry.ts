@@ -1,13 +1,12 @@
 import type { Logger } from "pino";
+import {
+  mapClaudeIdentityLaunchContext,
+  mapClaudeRewindInput,
+} from "./provider-history/claude-identity-mapping.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import type {
   AgentClient,
-  AgentLaunchContext,
-  AgentRewindInput,
-  ClaudeFreshRewindContext,
-  ClaudeInitialHistoryContext,
-  CommitClaudeRewind,
   AgentCreateConfigUnattendedInput,
   AgentMode,
   AgentModelDefinition,
@@ -407,66 +406,6 @@ function mergeModelAdditions(
   );
 }
 
-function mapClaudeRewindCommit(
-  provider: AgentProvider,
-  commit: CommitClaudeRewind,
-): CommitClaudeRewind {
-  return (transition) =>
-    commit({
-      ...transition,
-      previous: mapPersistenceHandle(provider, transition.previous)!,
-      next: transition.next ? mapPersistenceHandle(provider, transition.next)! : undefined,
-      adopt: (fresh) =>
-        transition.adopt(fresh ? mapClaudeFreshContext(provider, fresh) : undefined),
-    });
-}
-function mapClaudeFreshContext(
-  provider: AgentProvider,
-  context: ClaudeFreshRewindContext,
-): ClaudeFreshRewindContext {
-  return {
-    ...context,
-    get admission() {
-      return context.admission;
-    },
-    commit: mapClaudeRewindCommit(provider, context.commit),
-  };
-}
-function mapInitialHistoryContext(
-  provider: AgentProvider,
-  context: ClaudeInitialHistoryContext,
-): ClaudeInitialHistoryContext {
-  return {
-    ...context,
-    get admission() {
-      return context.admission;
-    },
-    commit: (input) =>
-      context.commit({ ...input, next: mapPersistenceHandle(provider, input.next)! }),
-  };
-}
-function mapHistoryLaunchContext(
-  provider: AgentProvider,
-  context: AgentLaunchContext | undefined,
-): AgentLaunchContext | undefined {
-  return context && (context.claudeFreshRewind || context.claudeInitialHistory)
-    ? {
-        ...context,
-        claudeFreshRewind: context.claudeFreshRewind
-          ? mapClaudeFreshContext(provider, context.claudeFreshRewind)
-          : undefined,
-        claudeInitialHistory: context.claudeInitialHistory
-          ? mapInitialHistoryContext(provider, context.claudeInitialHistory)
-          : undefined,
-      }
-    : context;
-}
-function mapRewindInput(provider: AgentProvider, input: AgentRewindInput): AgentRewindInput {
-  return input.commitClaudeRewind
-    ? { ...input, commitClaudeRewind: mapClaudeRewindCommit(provider, input.commitClaudeRewind) }
-    : input;
-}
-
 // Every session member must cross this boundary, including optional capabilities.
 type ForwardedAgentSession = { [K in keyof Required<AgentSession>]: AgentSession[K] };
 
@@ -519,11 +458,17 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
       return inner.claudeFreshRewind;
     },
     revertConversation: inner.revertConversation
-      ? (input) => inner.revertConversation!(mapRewindInput(provider, input))
+      ? (input) =>
+          inner.revertConversation!(
+            mapClaudeRewindInput(input, (handle) => mapPersistenceHandle(provider, handle)),
+          )
       : undefined,
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth
-      ? (input) => inner.revertBoth!(mapRewindInput(provider, input))
+      ? (input) =>
+          inner.revertBoth!(
+            mapClaudeRewindInput(input, (handle) => mapPersistenceHandle(provider, handle)),
+          )
       : undefined,
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
   } satisfies ForwardedAgentSession;
@@ -578,7 +523,9 @@ function wrapClientProvider(
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
           },
-          mapHistoryLaunchContext(provider, launchContext),
+          mapClaudeIdentityLaunchContext(launchContext, (handle) =>
+            mapPersistenceHandle(provider, handle),
+          ),
           { ...options, configuredModelIds },
         ),
       ),
@@ -595,7 +542,9 @@ function wrapClientProvider(
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
           },
-          mapHistoryLaunchContext(provider, launchContext),
+          mapClaudeIdentityLaunchContext(launchContext, (handle) =>
+            mapPersistenceHandle(provider, handle),
+          ),
           { ...options, configuredModelIds },
         ),
       ),

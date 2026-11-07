@@ -1,9 +1,9 @@
-import type { StoredAgentRecord } from "./agent-storage.js";
+import type { ProviderHistoryBinding, ProviderHistoryStorage } from "./provider-history/binding.js";
 import type {
-  ConfiguredClaudeHistoryStorage,
-  ProviderHistoryBinding,
-  ProviderHistoryStorage,
-} from "./provider-history/binding.js";
+  ClaudeFreshRewindContext,
+  ClaudeInitialHistoryContext,
+  CommitClaudeRewind,
+} from "./provider-history/claude-identity-types.js";
 import type {
   AgentFeature,
   AgentFeatureSelect,
@@ -628,37 +628,6 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
-export interface ClaudeRewindTransition {
-  /** Exact provider query/admission must still own this queued mutation. */
-  assertCurrent?(): void;
-  previous: AgentPersistenceHandle;
-  storage: ConfiguredClaudeHistoryStorage;
-  /** Omitted only when staging a fresh rewind, before a provider has allocated a native ID. */
-  next?: AgentPersistenceHandle;
-  /** Local assignment only: called after durable commit, without IO, events or external hooks. */
-  adopt(fresh?: ClaudeFreshRewindContext): void;
-}
-export type CommitClaudeRewind = (transition: ClaudeRewindTransition) => Promise<void>;
-export interface ClaudeInitialHistoryContext {
-  readonly owner: object;
-  admit(): Promise<void>;
-  readonly admission?: StoredAgentRecord;
-  release(): void;
-  commit(input: {
-    storage: ConfiguredClaudeHistoryStorage;
-    assertCurrent?(): void;
-    next: AgentPersistenceHandle;
-    adopt(): void;
-  }): Promise<void>;
-}
-export interface ClaudeFreshRewindContext {
-  readonly owner: object;
-  admit(): Promise<void>;
-  readonly admission?: StoredAgentRecord;
-  release(): void;
-  operationId: string;
-  commit: CommitClaudeRewind;
-}
 export interface AgentRewindInput {
   messageId: string;
   commitClaudeRewind?: CommitClaudeRewind;

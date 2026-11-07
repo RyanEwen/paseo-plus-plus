@@ -1,4 +1,5 @@
-import type { AgentSession, CommitClaudeRewind } from "../agent-sdk-types.js";
+import type { AgentSession } from "../agent-sdk-types.js";
+import type { CommitClaudeRewind } from "../provider-history/claude-identity-types.js";
 
 export type RewindMode = "conversation" | "files" | "both";
 

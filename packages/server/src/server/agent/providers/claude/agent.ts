@@ -4,6 +4,11 @@ import {
   type ProviderHistoryStorage,
   type ConfiguredClaudeHistoryStorage,
 } from "../../provider-history/binding.js";
+import type {
+  ClaudeFreshRewindContext,
+  ClaudeInitialHistoryContext,
+  CommitClaudeRewind,
+} from "../../provider-history/claude-identity-types.js";
 import {
   checkClaudeHistoryRoute,
   checkClaudeRewindHandle,
@@ -117,8 +122,6 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentRewindInput,
-  type ClaudeFreshRewindContext,
-  type ClaudeInitialHistoryContext,
   type ResolveHistoryStorageInput,
   type AgentCreateSessionOptions,
   type AgentFeature,
@@ -131,7 +134,6 @@ import {
   type AgentPermissionResponse,
   type AgentPermissionUpdate,
   type AgentPersistenceHandle,
-  type CommitClaudeRewind,
   type AgentProviderNotice,
   type AgentPromptInput,
   type AgentRunOptions,

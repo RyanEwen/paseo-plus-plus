@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ClaudeFreshRewindContext,
+  ClaudeInitialHistoryContext,
+  ClaudeRewindTransition,
+} from "./claude-identity-types.js";
+import type {
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
-  ClaudeFreshRewindContext,
-  ClaudeInitialHistoryContext,
-  ClaudeRewindTransition,
 } from "../agent-sdk-types.js";
 import type { StoredAgentRecord } from "../agent-storage.js";
 import {
