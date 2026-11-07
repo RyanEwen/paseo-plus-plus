@@ -49,12 +49,12 @@ export async function serveReleases(
   };
 }
 
-function toGitHubRelease(release: ReleaseFixture) {
+function toGitHubRelease(fixture: ReleaseFixture) {
   return {
-    tag_name: `v${release.version}`,
-    draft: release.draft ?? false,
-    published_at: release.publishedAt,
-    body: release.body,
+    tag_name: `v${fixture.version}`,
+    draft: fixture.draft ?? false,
+    published_at: fixture.publishedAt,
+    body: fixture.body,
   };
 }
 
