@@ -2,6 +2,7 @@ import type { ArchivedWorkspaceSummary } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 import {
   listProjectArchivedWorkspaces,
+  resolveProjectRestoreHosts,
   selectArchivedWorkspaceRows,
   type ArchivedWorkspaceListingClient,
   type ArchivedWorkspaceListingPort,
@@ -40,6 +41,16 @@ function fakePort(input: {
   };
   return { port, requests };
 }
+
+describe("resolveProjectRestoreHosts", () => {
+  it("lists every host a multi-host project is open on", () => {
+    const hosts = [
+      { serverId: "host-a", projectId: "project-a" },
+      { serverId: "host-b", projectId: "project-b" },
+    ];
+    expect(resolveProjectRestoreHosts({ hosts })).toEqual(hosts);
+  });
+});
 
 describe("listProjectArchivedWorkspaces", () => {
   it("asks a connected, supporting host for the project's records with the background choice", async () => {

@@ -30,13 +30,13 @@ export interface ArchivedWorkspaceRow {
 }
 
 /**
- * The hosts the restore chooser lists for a sidebar project row.
- * Behaviour pinned before the multi-host fix: only the first host is listed.
+ * The hosts the restore chooser lists for a sidebar project row: every host the project is open
+ * on, like Archive all, so no host's archive is silently left out.
  */
 export function resolveProjectRestoreHosts(project: {
   hosts: readonly ProjectArchiveRestoreHost[];
 }): ProjectArchiveRestoreHost[] {
-  return project.hosts.slice(0, 1);
+  return [...project.hosts];
 }
 
 /** Load one host's archived records without letting its failure hide another host's. */
