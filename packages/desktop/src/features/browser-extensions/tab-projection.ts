@@ -16,6 +16,30 @@ export interface BrowserExtensionTab {
   index: number;
 }
 
+interface ContentsTabPlacement {
+  windowId: number;
+  active: boolean;
+  index: number;
+}
+
+/** Describe one page's contents as a Chrome tab at the given window position. */
+export function describeContentsTab(
+  contents: WebContents,
+  placement: ContentsTabPlacement,
+): BrowserExtensionTab {
+  return {
+    id: contents.id,
+    windowId: placement.windowId,
+    active: placement.active,
+    highlighted: placement.active,
+    url: contents.getURL(),
+    title: contents.getTitle(),
+    incognito: false,
+    status: contents.isLoading() ? "loading" : "complete",
+    index: placement.index,
+  };
+}
+
 /** Share the authoritative guest/window projection across tab APIs, native menus and browser events. */
 export function createBrowserTabProjection(profile: Session) {
   const registry = getPaseoBrowserWebviewRegistry();
@@ -46,18 +70,11 @@ export function createBrowserTabProjection(profile: Session) {
         registry.getRegistrationForWebContents(guest.id)?.hostWebContentsId ===
         registration.hostWebContentsId,
     );
-    const active = activeGuest?.id === contents.id;
-    return {
-      id: contents.id,
+    return describeContentsTab(contents, {
       windowId: owner ? owner.id : -1,
-      active,
-      highlighted: active,
-      url: contents.getURL(),
-      title: contents.getTitle(),
-      incognito: false,
-      status: contents.isLoading() ? "loading" : "complete",
+      active: activeGuest?.id === contents.id,
       index: windowTabs.findIndex((guest) => guest.id === contents.id),
-    };
+    });
   }
   return { list, describe };
 }

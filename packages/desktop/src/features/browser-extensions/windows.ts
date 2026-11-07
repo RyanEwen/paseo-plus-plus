@@ -1,8 +1,13 @@
 import { app, BrowserWindow, session, type Extension, type Session } from "electron";
 import { z } from "zod";
-import type { BrowserExtensionTab } from "./tab-projection.js";
+import { describeContentsTab, type BrowserExtensionTab } from "./tab-projection.js";
 import { observeExtensionTab, type BrowserExtensionTabChanges } from "./tab-observation.js";
-import { describeVisibleExtensionTab, describeVisibleExtensionTabChanges } from "./tab-access.js";
+import { describeVisibleExtensionTab } from "./tab-access.js";
+import {
+  emitTabCreatedToExtensions,
+  emitTabUpdatedToExtensions,
+  emitToExtensions,
+} from "./tab-events.js";
 import { openBrowserExtensionDocumentWindow } from "./document-window.js";
 
 const WindowIdSchema = z.number().int();
@@ -103,18 +108,11 @@ export function createExtensionWindows(options: ExtensionWindowsOptions) {
     if (!popout || popout.window.isDestroyed()) {
       return null;
     }
-    const contents = popout.window.webContents;
-    return {
-      id: contents.id,
+    return describeContentsTab(popout.window.webContents, {
       windowId: popout.window.id,
       active: true,
-      highlighted: true,
-      url: contents.getURL(),
-      title: contents.getTitle(),
-      incognito: false,
-      status: contents.isLoading() ? "loading" : "complete",
       index: 0,
-    };
+    });
   }
   function getPopupTabs(): BrowserExtensionTab[] {
     return [...popouts.values()].flatMap(({ window }) => {
@@ -156,32 +154,14 @@ export function createExtensionWindows(options: ExtensionWindowsOptions) {
     };
   }
 
-  /** Report public window lifecycle to enabled extensions in this browser profile. */
   function emit(name: string, ...args: unknown[]): void {
-    for (const extension of options.profile.extensions.getAllExtensions()) {
-      options.emit(extension.id, name, ...args);
-    }
+    emitToExtensions(options.profile, options.emit, name, ...args);
   }
-
-  /** Popout tabs follow the same per-extension visibility rules as ordinary browser tabs. */
   function emitTabCreated(tab: BrowserExtensionTab): void {
-    for (const extension of options.profile.extensions.getAllExtensions()) {
-      options.emit(extension.id, "tabs.onCreated", describeVisibleExtensionTab(extension, tab));
-    }
+    emitTabCreatedToExtensions(options.profile, options.emit, tab);
   }
   function emitTabUpdated(changes: BrowserExtensionTabChanges, tab: BrowserExtensionTab): void {
-    for (const extension of options.profile.extensions.getAllExtensions()) {
-      const visibleChanges = describeVisibleExtensionTabChanges(extension, changes, tab);
-      if (Object.keys(visibleChanges).length > 0) {
-        options.emit(
-          extension.id,
-          "tabs.onUpdated",
-          tab.id,
-          visibleChanges,
-          describeVisibleExtensionTab(extension, tab),
-        );
-      }
-    }
+    emitTabUpdatedToExtensions(options.profile, options.emit, changes, tab);
   }
 
   let focusedId = -1;

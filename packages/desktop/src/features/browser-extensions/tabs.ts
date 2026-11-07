@@ -2,7 +2,11 @@ import { BrowserWindow, webContents, type Session, type WebContents } from "elec
 import { getPaseoBrowserWebviewRegistry } from "../browser-webviews/index.js";
 import { createBrowserTabProjection, type BrowserExtensionTab } from "./tab-projection.js";
 import { observeExtensionTab, type BrowserExtensionTabChanges } from "./tab-observation.js";
-import { describeVisibleExtensionTab, describeVisibleExtensionTabChanges } from "./tab-access.js";
+import {
+  emitTabCreatedToExtensions,
+  emitTabUpdatedToExtensions,
+  emitToExtensions,
+} from "./tab-events.js";
 
 interface ExtensionTabsOptions {
   profile: Session;
@@ -42,30 +46,13 @@ export function registerExtensionTabs(options: ExtensionTabsOptions): void {
   }
 
   function emit(name: string, ...args: unknown[]): void {
-    for (const extension of options.profile.extensions.getAllExtensions()) {
-      options.emit(extension.id, name, ...args);
-    }
+    emitToExtensions(options.profile, options.emit, name, ...args);
   }
-
-  /** Tab creation and update payloads use each extension's own metadata grants. */
   function emitCreated(tab: BrowserExtensionTab): void {
-    for (const extension of options.profile.extensions.getAllExtensions()) {
-      options.emit(extension.id, "tabs.onCreated", describeVisibleExtensionTab(extension, tab));
-    }
+    emitTabCreatedToExtensions(options.profile, options.emit, tab);
   }
   function emitUpdated(changes: BrowserExtensionTabChanges, tab: BrowserExtensionTab): void {
-    for (const extension of options.profile.extensions.getAllExtensions()) {
-      const visibleChanges = describeVisibleExtensionTabChanges(extension, changes, tab);
-      if (Object.keys(visibleChanges).length > 0) {
-        options.emit(
-          extension.id,
-          "tabs.onUpdated",
-          tab.id,
-          visibleChanges,
-          describeVisibleExtensionTab(extension, tab),
-        );
-      }
-    }
+    emitTabUpdatedToExtensions(options.profile, options.emit, changes, tab);
   }
 
   function observe(contents: WebContents): void {
