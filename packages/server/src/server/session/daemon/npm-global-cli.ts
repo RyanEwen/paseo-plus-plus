@@ -155,16 +155,25 @@ export class DefaultNpmGlobalPaseoCli implements NpmGlobalPaseoCli {
 
   /** Use the same release channel as installation; fork builds have a durable preview counter. */
   async getNewerVersion(currentVersion: string): Promise<string | null> {
+    const latest = await this.resolveLatestVersion();
+    const newer = isNewerDaemonVersion({
+      current: currentVersion,
+      candidate: latest.version,
+      distribution: latest.distribution,
+    });
+    return newer ? latest.version : null;
+  }
+
+  /** Read the latest published version from this package's release channel without installing. */
+  private async resolveLatestVersion(): Promise<{
+    version: string;
+    distribution: DaemonVersionComparison["distribution"];
+  }> {
     if (this.packageName === FORK_DAEMON_PACKAGE) {
       const preview = await resolveForkPreview();
-      return isNewerDaemonVersion({
-        current: currentVersion,
-        candidate: preview.version,
-        distribution: "fork",
-      })
-        ? preview.version
-        : null;
+      return { version: preview.version, distribution: "fork" };
     }
+
     const result = await this.runCommand(
       "npm",
       ["view", `${this.packageName}@latest`, "version", "--json"],
@@ -173,16 +182,11 @@ export class DefaultNpmGlobalPaseoCli implements NpmGlobalPaseoCli {
         maxBuffer: NPM_MAX_BUFFER_BYTES,
       },
     );
-    if (result.exitCode !== 0)
+    if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || "Unable to check npm update");
+    }
     const version = z.string().parse(JSON.parse(result.stdout));
-    return isNewerDaemonVersion({
-      current: currentVersion,
-      candidate: version,
-      distribution: "upstream",
-    })
-      ? version
-      : null;
+    return { version, distribution: "upstream" };
   }
 
   async installLatest(options: NpmGlobalOptions = {}): Promise<CommandResult> {
