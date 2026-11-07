@@ -1,5 +1,9 @@
 import { AttachmentStore, ATTACHMENT_LIMITS, attachmentFileSystem, type AttachmentFileSystem, type AttachmentLimits, type AttachmentReadLease } from "./store.js";
-import { AttachmentSession } from "./session.js";
+import {
+  AttachmentSession,
+  type AttachmentSessionHost,
+  type AttachmentSessionStore,
+} from "./session.js";
 import { SessionDelivery } from "../session/owned-subscriptions/index.js";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,13 +71,13 @@ async function attachmentSubsystem(
   const started = new Promise<void>((resolve) => {
     began = resolve;
   });
-  const session = new AttachmentSession(store, {
+  const host: AttachmentSessionHost = {
     emit: (message) => emitted.push(message),
-    supportsOriginals: (candidate) => candidate === source && options.supported !== false,
+    hasAcknowledgedBinaryChannel: (candidate) => candidate === source && options.supported !== false,
     mayRead: () => options.allowed !== false,
     requestSignal: () => cancellation.signal,
     reportFailure: options.onFailure,
-    send: async (bytes, candidate) => {
+    emitBinary: async (bytes, candidate) => {
       expect(candidate).toBe(source);
       const frame = decodeFileTransferFrame(bytes);
       if (!frame) throw new Error("invalid fixture frame");
@@ -82,8 +86,20 @@ async function attachmentSubsystem(
       if (options.sendFailure) throw options.sendFailure;
       if (options.blockFirst && frames.length === 1) await blocked;
     },
-  });
-  return { store, reference, session, source, cancellation, emitted, frames, started, unblock };
+  };
+  const session = new AttachmentSession(store, host);
+  return {
+    store,
+    reference,
+    session,
+    host,
+    source,
+    cancellation,
+    emitted,
+    frames,
+    started,
+    unblock,
+  };
 }
 describe("owned original attachment retrieval", () => {
   test("list, metadata and acknowledged bytes use the same owner reference", async () => {
@@ -325,10 +341,10 @@ test.each(
         emit: (message, source) => {
           replies.push({ source, message });
         },
-        supportsOriginals: () => true,
+        hasAcknowledgedBinaryChannel: () => true,
         mayRead: () => true,
         requestSignal: () => delivery.requestSignal,
-        send: async (bytes, source) => {
+        emitBinary: async (bytes, source) => {
           const frame = decodeFileTransferFrame(bytes);
           if (!frame) throw new Error("invalid fixture frame");
           frames.push({ source, opcode: frame.opcode });
@@ -583,14 +599,21 @@ test("a lease closed before the next send continuation never invokes the still-c
   });
   const originalOpen = fixture.store.openRead.bind(fixture.store);
   let closedLease: AttachmentReadLease | undefined;
-  const opening = vi.spyOn(fixture.store, "openRead").mockImplementationOnce(async (...args) => {
-    const lease = await originalOpen(...args);
-    closedLease = lease;
-    await lease.close();
-    return lease;
-  });
+  // A store port whose lease is already closed when the session receives it.
+  const closingStore: AttachmentSessionStore = {
+    limits: fixture.store.limits,
+    list: (...args) => fixture.store.list(...args),
+    get: (...args) => fixture.store.get(...args),
+    openRead: async (...args) => {
+      const lease = await originalOpen(...args);
+      closedLease = lease;
+      await lease.close();
+      return lease;
+    },
+  };
+  const session = new AttachmentSession(closingStore, fixture.host);
   try {
-    await fixture.session.handle(
+    await session.handle(
       {
         type: "attachments.read.request",
         agentId: "owner-a",
@@ -622,7 +645,6 @@ test("a lease closed before the next send continuation never invokes the still-c
     const next = await originalOpen("owner-a", fixture.reference.id, {});
     await next.close();
   } finally {
-    opening.mockRestore();
     await fixture.store.close();
   }
 });

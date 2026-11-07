@@ -1299,21 +1299,19 @@ export class Session {
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
   }
 
+  /**
+   * Build the attachment session. Original bytes only travel to the requesting source; the
+   * attachment session re-checks permission and source support before each frame.
+   */
   private createAttachmentSession(options: SessionOptions): AttachmentSession {
-    const supportsOriginals = options.supportsAttachmentOriginals ?? (() => false);
     return new AttachmentSession(options.attachmentStore, {
       emit: (message, source) => this.emitForSource(message, source),
-      send: async (frame, source) => {
-        if (
-          !this.authorization.allowsPermission("workspace.read") ||
-          !supportsOriginals(source) ||
-          !this.onBinaryMessageToSource
-        )
-          throw new Error("Attachment source is unavailable");
-        this.delivery.authorizeFileReply(frame, source);
-        await this.onBinaryMessageToSource(source, frame);
+      emitBinary: async (frame, source) => {
+        // Never fall back to emitBinaryForFileTransfer's broadcast for an original.
+        if (!this.onBinaryMessageToSource) throw new Error("Attachment source is unavailable");
+        await this.emitBinaryForFileTransfer(frame, source);
       },
-      supportsOriginals,
+      hasAcknowledgedBinaryChannel: options.supportsAttachmentOriginals ?? (() => false),
       mayRead: () => this.authorization.allowsPermission("workspace.read"),
       requestSignal: () => this.delivery.requestSignal,
       reportFailure: (error) =>
