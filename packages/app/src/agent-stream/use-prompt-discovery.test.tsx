@@ -2,7 +2,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PROMPT_DISCOVERY_PAGE_BUDGET } from "@/timeline/timeline-fetch-policy";
-import { isDiscoverySettled, usePromptDiscovery } from "./use-prompt-discovery";
+import {
+  isDiscoverySettled,
+  usePromptDiscovery,
+  type PromptDiscoveryStatus,
+} from "./use-prompt-discovery";
 
 function heldPages() {
   const releases: ((started: boolean) => void)[] = [];
@@ -109,9 +113,10 @@ describe("usePromptDiscovery", () => {
   });
 
   it("treats failure, limits, exhaustion and cancellation as settled", () => {
-    expect(["error", "limited", "exhausted", "cancelled"].every(isDiscoverySettled)).toBe(true);
-    expect(
-      ["idle", "loading", "complete"].some((status) => isDiscoverySettled(status as never)),
-    ).toBe(false);
+    const settled: PromptDiscoveryStatus[] = ["error", "limited", "exhausted", "cancelled"];
+    const unsettled: PromptDiscoveryStatus[] = ["idle", "loading", "complete"];
+
+    expect(settled.every(isDiscoverySettled)).toBe(true);
+    expect(unsettled.some(isDiscoverySettled)).toBe(false);
   });
 });
