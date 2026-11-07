@@ -71,7 +71,7 @@ export function HostUpdateAction({
       size="sm"
       variant="outline"
       disabled={busy}
-      accessibilityLabel={`${t("settings.host.daemon.update.confirm")} ${host.label}`}
+      accessibilityLabel={t("settings.host.daemon.update.confirmTitle", { name: host.label })}
       testID={`sidebar-host-update-${host.serverId}`}
       onPress={handleUpdate}
     >
