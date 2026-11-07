@@ -8,17 +8,11 @@ import {
   collectDaemonDiagnostics,
   type DaemonWebSocketRuntimeDiagnosticSnapshot,
 } from "./diagnostics.js";
-import { daemonSelfUpdater } from "./daemon-self-updater.js";
-import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { DaemonSelfUpdateSessionController } from "./daemon-self-update-session-controller.js";
-import { registerForkCapability } from "../../fork-capabilities.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 import type { DaemonConfigReloadResult } from "../../daemon-config-store.js";
-
-// Advertise the read-only update availability check handled by this session.
-registerForkCapability("daemonUpdateAvailability");
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
@@ -334,23 +328,10 @@ export class DaemonSession {
     }
   }
 
-  /** A failed check never establishes eligibility and never requests a restart. */
   async handleUpdateAvailabilityRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.update.check_availability.request" }>,
   ): Promise<void> {
-    let result;
-    try {
-      result = await daemonSelfUpdater.checkAvailability({
-        daemonVersion: this.daemonVersion ?? null,
-        desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
-      });
-    } catch (error) {
-      result = { version: null, reason: getErrorMessage(error) };
-    }
-    this.host.emit({
-      type: "daemon.update.check_availability.response",
-      payload: { requestId: msg.requestId, ...result },
-    });
+    await this.selfUpdate.dispatch(msg);
   }
 
   async handleUpdateRequest(
