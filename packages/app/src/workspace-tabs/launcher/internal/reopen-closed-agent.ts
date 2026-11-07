@@ -59,7 +59,9 @@ function resolvePlacement(
   layout: ReopenAgentLayoutPort,
 ): WorkspaceTabPlacement {
   if (destination.kind === "open") {
-    return destination.paneId ? { mode: "pane", paneId: destination.paneId } : FOCUSED_PANE_PLACEMENT;
+    return destination.paneId
+      ? { mode: "pane", paneId: destination.paneId }
+      : FOCUSED_PANE_PLACEMENT;
   }
   const root = layout.layoutByWorkspace[workspaceKey]?.root;
   const pane = root ? findPaneContainingTab(root, destination.tabId) : null;

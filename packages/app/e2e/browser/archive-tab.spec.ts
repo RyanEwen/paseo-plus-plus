@@ -152,16 +152,18 @@ test.describe("Archive tab reconciliation", () => {
     expect(await fetchAgentArchivedAt(client, archived.id)).not.toBeNull();
     await page.getByRole("button", { name: "Unarchive", exact: true }).click();
     await expect.poll(() => fetchAgentArchivedAt(client, archived.id)).toBeNull();
-    await expect(page.getByText("This agent is archived").filter({ visible: true })).toHaveCount(
-      0,
-    );
+    await expect(page.getByText("This agent is archived").filter({ visible: true })).toHaveCount(0);
   }
 
   test("Reopen closed agent opens archived history from the compact workspace menu", async ({
     page,
   }, testInfo) => {
     const agents = await seedArchivedAgent(page, 390);
-    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).first().click();
+    await page
+      .getByTestId("workspace-header-menu-trigger")
+      .filter({ visible: true })
+      .first()
+      .click();
     await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
 
     await expectDialogReplacedMenu(page, "workspace-header-menu");
@@ -202,7 +204,9 @@ test.describe("Archive tab reconciliation", () => {
 
     await page.goto(buildHostWorkspaceRoute(getServerId(), workspaceId));
     await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first().click();
-    await expect(page.getByTestId("workspace-new-tab-menu").filter({ visible: true })).toBeVisible();
+    await expect(
+      page.getByTestId("workspace-new-tab-menu").filter({ visible: true }),
+    ).toBeVisible();
     await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);
   });
 
