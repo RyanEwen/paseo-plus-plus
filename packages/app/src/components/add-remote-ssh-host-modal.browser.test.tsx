@@ -103,12 +103,10 @@ describe("Android SSH key import form", () => {
     await click("Import private key");
     await click("Connect");
     expect(
-      within(document.body).getByText(
+      within(document.body).queryByText(
         "Unable to connect over SSH. Unable to read the private key. Check its format and passphrase.",
-      ).textContent,
-    ).toBe(
-      "Unable to connect over SSH. Unable to read the private key. Check its format and passphrase.",
-    );
+      ),
+    ).not.toBeNull();
     expect((within(document.body).getByLabelText("SSH host") as HTMLInputElement).value).toBe(
       "ssh://deploy@example.com",
     );
