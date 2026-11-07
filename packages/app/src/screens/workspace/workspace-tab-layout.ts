@@ -1,9 +1,21 @@
 import type { PaneHost } from "@/panels/panel-manifest";
-export const MIN_WORKSPACE_TAB_WIDTH = 96;
 
-/** Desktop main/sheet tabs retain the fork minimum; compact chips use the upstream touch layout. */
+/** Paseo++ minimum for main and sheet tabs on wide layouts, so short names stay easy to click. */
+export const MIN_WORKSPACE_TAB_WIDTH = 96;
+/** Upstream's tab minimum, kept wherever the wider fork minimum does not fit. */
+const UPSTREAM_TAB_MIN_WIDTH = 64;
+
+/**
+ * The narrowest a labelled tab may become in `host` before its strip scrolls.
+ *
+ * Wide main and sheet panes use the fork minimum. Compact chips keep upstream's touch layout, and
+ * the Explorer keeps upstream's minimum because its dock can be as narrow as 240 points, where
+ * 96-point tabs would make the strip scroll after a single tab.
+ */
 export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
-  if (compact || host === "explorer") return 64;
+  if (compact || host === "explorer") {
+    return UPSTREAM_TAB_MIN_WIDTH;
+  }
   return MIN_WORKSPACE_TAB_WIDTH;
 }
 

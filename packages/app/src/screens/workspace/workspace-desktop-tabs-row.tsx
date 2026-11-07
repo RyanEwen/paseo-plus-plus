@@ -47,7 +47,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
@@ -98,6 +98,7 @@ import {
   ExplorerIconOnlyMenuItem,
   ExplorerTabStripContextMenu,
   iconOnlyTabStyles,
+  iconOnlyTabWidth,
   useExplorerTabDisplay,
   type ExplorerTabDisplayControl,
 } from "@/screens/workspace/explorer-tab-display";
@@ -1240,13 +1241,8 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
-  // Icon-only tabs match the adjacent new-tab control: 28 on desktop, the 44 touch height on compact.
-  const iconOnlyTabWidth = useMemo(
-    () => (iconOnly ? controlHeightForLayout(isCompact ? "md" : "sm", isCompact) : null),
-    [iconOnly, isCompact],
-  );
   const { layout } = useWorkspaceTabLayout({
-    iconOnlyTabWidth,
+    iconOnlyTabWidth: iconOnly ? iconOnlyTabWidth(isCompact) : null,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
