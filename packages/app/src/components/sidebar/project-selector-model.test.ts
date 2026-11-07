@@ -1,6 +1,13 @@
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import type { WorkspaceStructureHostPlacement } from "@/projects/workspace-structure";
-import { resolveProjectIconTargets } from "./project-selector-model";
+import {
+  hostBranchIsActive,
+  projectsOnVisibleHosts,
+  resolveProjectIconTargets,
+  resolveSelectorHeading,
+  showsAllWorkspaces,
+} from "./project-selector-model";
 
 function placement(
   overrides: Partial<WorkspaceStructureHostPlacement> = {},
@@ -46,5 +53,80 @@ describe("resolveProjectIconTargets", () => {
         { viewKey: "none", hosts: [] },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("resolveSelectorHeading", () => {
+  beforeAll(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  const labels = new Map([
+    ["alpha", "Alpha"],
+    ["beta", "Beta"],
+  ]);
+
+  test("names all workspaces without an applied project filter", () => {
+    expect(resolveSelectorHeading(i18n.t, [], labels)).toBe("All Workspaces");
+  });
+
+  test("names the one selected project by its chooser label", () => {
+    expect(resolveSelectorHeading(i18n.t, ["beta"], labels)).toBe("Beta Workspaces");
+  });
+
+  test("counts several selected projects", () => {
+    expect(resolveSelectorHeading(i18n.t, ["alpha", "beta"], labels)).toBe(
+      "2 Projects\u2019 Workspaces",
+    );
+  });
+});
+
+describe("showsAllWorkspaces", () => {
+  test("is checked with no project filter and no host filter", () => {
+    expect(
+      showsAllWorkspaces({ resolvedProjectFilters: [], hostFilters: [], serverIds: ["home"] }),
+    ).toBe(true);
+  });
+
+  test("stays checked when the host filter names only unregistered hosts", () => {
+    expect(
+      showsAllWorkspaces({
+        resolvedProjectFilters: [],
+        hostFilters: ["retired"],
+        serverIds: ["home"],
+      }),
+    ).toBe(true);
+  });
+
+  test("is unchecked while a registered host or a project is selected", () => {
+    expect(
+      showsAllWorkspaces({ resolvedProjectFilters: [], hostFilters: ["home"], serverIds: ["home"] }),
+    ).toBe(false);
+    expect(
+      showsAllWorkspaces({ resolvedProjectFilters: ["alpha"], hostFilters: [], serverIds: ["home"] }),
+    ).toBe(false);
+  });
+});
+
+describe("projectsOnVisibleHosts", () => {
+  const home = { viewKey: "home-only", hosts: [placement({ serverId: "home" })] };
+  const wsl = { viewKey: "wsl-only", hosts: [placement({ serverId: "wsl" })] };
+
+  test("lists every project without a host filter", () => {
+    expect(projectsOnVisibleHosts([home, wsl], [])).toEqual([home, wsl]);
+  });
+
+  test("keeps projects placed on a selected host", () => {
+    expect(projectsOnVisibleHosts([home, wsl], ["wsl"])).toEqual([wsl]);
+  });
+});
+
+describe("hostBranchIsActive", () => {
+  test("marks the Hosts branch while a host is selected", () => {
+    expect(hostBranchIsActive({ hostFilters: ["home"], projectFilters: [] })).toBe(true);
+  });
+
+  test("leaves the Hosts branch unmarked with no filters", () => {
+    expect(hostBranchIsActive({ hostFilters: [], projectFilters: [] })).toBe(false);
   });
 });

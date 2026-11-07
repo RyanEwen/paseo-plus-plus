@@ -5,7 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -28,11 +28,16 @@ import { HostFilterPage } from "./sidebar-host-filter";
 import { useSidebarModel } from "./sidebar-model";
 import { SidebarProjectMenuItem } from "./sidebar-project-menu-item";
 import { resolveSidebarProjectLabels } from "./project-labels";
-import { resolveProjectIconTargets } from "./project-selector-model";
+import {
+  hostBranchIsActive,
+  projectsOnVisibleHosts,
+  resolveProjectIconTargets,
+  resolveSelectorHeading,
+  showsAllWorkspaces,
+} from "./project-selector-model";
+import { SIDEBAR_HEADER_TOUCH_TARGET } from "./header-icon-button";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
-// Touch layouts keep the full 44 px target the release uses for compact controls.
-const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /** Filter workspace rows by project and host, with the active filter visible in the heading. */
@@ -59,9 +64,9 @@ export function SidebarProjectSelector(): ReactElement {
     () => updateLocalFilters(() => ({ hostFilters: [], projectFilters: [] })),
     [updateLocalFilters],
   );
-  const visibleProjects = projects.filter(
-    (project) =>
-      hostFilters.length === 0 || project.hosts.some((host) => hostFilters.includes(host.serverId)),
+  const projectsOnSelectedHosts = useMemo(
+    () => projectsOnVisibleHosts(projects, hostFilters),
+    [projects, hostFilters],
   );
   const labels = useMemo(() => resolveSidebarProjectLabels(projects, hosts), [projects, hosts]);
   const [open, setOpen] = useState(false);
@@ -80,15 +85,8 @@ export function SidebarProjectSelector(): ReactElement {
     ],
     [t, hosts],
   );
-  let label = t("sidebar.projectSelector.allWorkspaces");
-  if (resolvedProjectFilters.length === 1)
-    label = t("sidebar.projectSelector.projectWorkspaces", {
-      project: labels.get(resolvedProjectFilters[0]),
-    });
-  else if (resolvedProjectFilters.length > 1)
-    label = t("sidebar.projectSelector.multipleWorkspaces", {
-      count: resolvedProjectFilters.length,
-    });
+  const label = resolveSelectorHeading(t, resolvedProjectFilters, labels);
+  const allSelected = showsAllWorkspaces({ resolvedProjectFilters, hostFilters, serverIds });
   const triggerStyle = useCallback(
     ({ hovered, pressed, open: active }: MenuTriggerState) => [
       styles.trigger,
@@ -122,7 +120,7 @@ export function SidebarProjectSelector(): ReactElement {
           <>
             <MenuSubTrigger
               id="hostFilter"
-              indicator={hostFilters.length > 0 || projectFilters.length > 0}
+              indicator={hostBranchIsActive({ hostFilters, projectFilters })}
               testID="sidebar-chooser-hosts"
             >
               {t("sidebar.display.hostFilter.label")}
@@ -131,17 +129,14 @@ export function SidebarProjectSelector(): ReactElement {
           </>
         ) : null}
         <MenuItem
-          selected={
-            resolvedProjectFilters.length === 0 &&
-            (hostFilters.length === 0 || !hosts.some((host) => hostFilters.includes(host.serverId)))
-          }
+          selected={allSelected}
           onSelect={clearAll}
           testID="sidebar-project-selector-all"
         >
           {t("sidebar.projectSelector.allWorkspaces")}
         </MenuItem>
         <MenuSeparator />
-        {visibleProjects.map((project) => (
+        {projectsOnSelectedHosts.map((project) => (
           <SidebarProjectMenuItem
             key={project.viewKey}
             viewKey={project.viewKey}
@@ -172,7 +167,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     minHeight: CONTROL_HEIGHTS.sm,
   },
-  touchTrigger: { minHeight: TOUCH_TARGET_SIZE },
+  touchTrigger: { minHeight: SIDEBAR_HEADER_TOUCH_TARGET },
   triggerHovered: { backgroundColor: theme.colors.surfaceSidebarHover },
   title: {
     flexShrink: 1,
