@@ -1020,6 +1020,30 @@ API is needed for OS Paste. Avoid DOM clipboard code in native plugins and the d
 The runnable [modal UI example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)
 contains a padded form, full-width rows, a virtualized list, horizontal tabs, and a copy/paste input.
 
+### Encoded video on Android
+
+`EncodedVideo` from `@getpaseo/plugin/client/ui` provides a host-owned Android canvas
+for raw WebCodecs chunks. Use the SDK containing this API and rebuild the Android app before
+adopting it. The renderer receives encoded bytes through the existing plugin RPC transport;
+it does not open a media URL or require another port. Other platforms report unsupported.
+
+Wait for `onReady` before configuring the decoder. Keep at most four submitted chunks awaiting
+`onDequeue`, and release every `onFrame` result after presenting or discarding it. `present(id)`
+resolves after that frame is drawn. Reset and unmount reject pending presentations and release
+retained frames. Surface `onError` to the user; older Android System WebView versions may lack
+WebCodecs or the source codec.
+
+The decoder fails, releasing every retained frame and dropping pending `onDequeue`
+acknowledgements, when you submit a fifth chunk, a chunk over 2 MiB, a chunk before `configure`,
+retain more than 64 frames, or present a frame no newer than the last one drawn. Reset your queue
+count, configure again and resume from a keyframe. If Android stops the canvas renderer, `onError`
+reports it and `onReady` fires again once a fresh canvas loads.
+
+Keep remote input outside the canvas. Revoke the previous frame's input authority before calling
+`present`, then recheck source identity and mutation epoch after it resolves. Receiving or decoding
+a packet does not establish that its pixels are displayed. Suspend reads and reset the decoder when
+the app or retained panel becomes inactive; resume with a fresh keyframe.
+
 ### Toasts
 
 `useToast()` returns two methods:
@@ -1510,6 +1534,7 @@ Every panel receives `PluginPanelProps<Params>` with `theme`, `host`, `layout`, 
 `workspaceId`, read-only `params`, `revision`, and `tab`. Workspace panels have empty
 `PluginWorkspacePanelParams`; agent panels have `PluginAgentPanelParams` containing `agentId`.
 `revision` increments whenever params are re-sent to the same tab, including an identical request.
+Every panel, including file panels, receives `active`, which is false while the retained panel is off-screen. Pause media and polling when inactive; retain local drafts and panel state. Older hosts omit this field.
 
 `tab.setModified(boolean)` marks unsaved work and asks before closing. `tab.state` is opaque
 persisted JSON, initially `undefined`; `tab.setState(value)` replaces it. Each tab owns its state.

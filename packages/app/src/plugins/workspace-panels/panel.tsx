@@ -12,6 +12,7 @@ import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { usePaneContext } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
@@ -34,6 +35,7 @@ const pluginThemeMapping = (theme: Theme) => ({
 });
 
 function PluginPanelBody({ theme }: { theme: PluginTheme }) {
+  const active = useRetainedPanelActive();
   const {
     serverId,
     workspaceId,
@@ -81,6 +83,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   let Surface: unknown;
   if (contribution.context === "workspace") {
     const props: PluginWorkspacePanelProps = {
+      active,
       // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
       context: "workspace",
       params: {},
@@ -97,6 +100,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
     panel = <Component {...props} />;
   } else if (agentExists && target.context === "agent") {
     const props: PluginAgentPanelProps = {
+      active,
       // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
       context: "agent",
       params: { agentId: target.agentId },
