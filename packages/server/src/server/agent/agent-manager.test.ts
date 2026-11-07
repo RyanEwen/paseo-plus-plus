@@ -8,6 +8,7 @@ import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, promises as fs } from "node:fs";
 import { basename, join } from "node:path";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -13212,7 +13213,9 @@ test("objective closure during callback reservation persistence prevents forward
 /** Real lifecycle/storage fixture whose provider turns finish only through explicit SDK events. */
 function createAttentionRegressionFixture(name: string) {
   const workdir = mkdtempSync(join(tmpdir(), `agent-attention-${name}-`));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const storage = new AgentStorage(join(workdir, "agents"), logger, {
+    writeRecordFile: recordWrites.write,
+  });
   const sessions: ControlledInterruptSession[] = [];
   class AttentionRegressionClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
@@ -13993,27 +13996,91 @@ function holdEscalationSnapshot(
 }
 
 /** Hold this worker's real atomic rename inside its storage queue, before the record commits. */
-function holdEscalationAtomicWrite(agentId: string, outcome: "fail" | "succeed") {
-  const entered = deferred<void>();
-  const release = deferred<void>();
-  const failure = new Error("Injected escalation atomic rename failure");
-  const rename = fs.rename.bind(fs);
-  let held = false;
-  const spy = vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
-    if (held || typeof destination !== "string" || basename(destination) !== `${agentId}.json`) {
-      return rename(source, destination);
+interface RecordWriteHold {
+  agentId: string;
+  outcome: "fail" | "succeed";
+  entered: ReturnType<typeof deferred<void>>;
+  release: ReturnType<typeof deferred<void>>;
+  failure: Error;
+}
+
+/**
+ * The durable record-write port of every attention regression fixture's storage. A test holds
+ * or fails one agent's next commit explicitly instead of patching the file system.
+ */
+class RecordWriteGate {
+  private readonly holds: RecordWriteHold[] = [];
+  private readonly failures: Array<{ agentId: string; error: Error; failed(): void }> = [];
+  private writeCount = 0;
+
+  readonly write = async (path: string, record: StoredAgentRecord): Promise<void> => {
+    this.writeCount += 1;
+    const failure = this.take(this.failures, path);
+    if (failure) {
+      failure.failed();
+      throw failure.error;
     }
-    held = true;
-    entered.resolve();
-    await release.promise;
-    if (outcome === "fail") throw failure;
-    await rename(source, destination);
-  });
+    const hold = this.take(this.holds, path);
+    if (hold) {
+      hold.entered.resolve();
+      await hold.release.promise;
+      if (hold.outcome === "fail") {
+        throw hold.failure;
+      }
+    }
+    await writeJsonFileAtomic(path, record);
+  };
+
+  get writes(): number {
+    return this.writeCount;
+  }
+
+  hold(hold: RecordWriteHold): void {
+    this.holds.push(hold);
+  }
+
+  /** Fail the agent's next record write once; resolves `failed` when it does. */
+  failNext(agentId: string, error: Error): { failed: () => boolean } {
+    let failed = false;
+    this.failures.push({
+      agentId,
+      error,
+      failed: () => {
+        failed = true;
+      },
+    });
+    return { failed: () => failed };
+  }
+
+  reset(): void {
+    for (const hold of this.holds.splice(0)) {
+      hold.release.resolve();
+    }
+    this.failures.splice(0);
+  }
+
+  private take<T extends { agentId: string }>(entries: T[], path: string): T | undefined {
+    const index = entries.findIndex((entry) => basename(path) === `${entry.agentId}.json`);
+    return index === -1 ? undefined : entries.splice(index, 1)[0];
+  }
+}
+const recordWrites = new RecordWriteGate();
+
+function holdEscalationAtomicWrite(agentId: string, outcome: "fail" | "succeed") {
+  const hold: RecordWriteHold = {
+    agentId,
+    outcome,
+    entered: deferred<void>(),
+    release: deferred<void>(),
+    failure: new Error("Injected escalation atomic rename failure"),
+  };
+  const writesBefore = recordWrites.writes;
+  recordWrites.hold(hold);
   onTestFinished(() => {
-    release.resolve();
-    spy.mockRestore();
+    hold.release.resolve();
+    recordWrites.reset();
   });
-  return { entered, release, failure, spy };
+  return { ...hold, writesSinceHold: () => recordWrites.writes - writesBefore };
 }
 
 test("escalation public competition retries the failed reason once", async () => {
@@ -14026,7 +14093,7 @@ test("escalation public competition retries the failed reason once", async () =>
   try {
     await write.entered.promise;
     const second = manager.requestHumanAttention(request);
-    expect(write.spy).toHaveBeenCalledTimes(1);
+    expect(write.writesSinceHold()).toBe(1);
     expect(notify).not.toHaveBeenCalled();
     write.release.resolve();
     await expect(first).rejects.toBe(write.failure);
@@ -14585,7 +14652,6 @@ test("escalation retired write repairs current attention after acknowledgement f
       nativeStart: true,
     },
   );
-  const rename = fs.rename.bind(fs);
   const io = holdEscalationAtomicWrite(worker.id, "succeed");
   const acknowledgement = holdEscalationSnapshot(storage, "fail-after-write");
   const first = manager.requestHumanAttention(request);
@@ -14617,18 +14683,7 @@ test("escalation retired write repairs current attention after acknowledgement f
 
     // One real later write fails, so queued ordinary saves cannot accidentally mask missing repair.
     const ordinaryFailure = new Error("Injected ordinary snapshot atomic rename failure");
-    let ordinaryRejected = false;
-    io.spy.mockImplementation(async (source, destination) => {
-      if (
-        !ordinaryRejected &&
-        typeof destination === "string" &&
-        basename(destination) === `${worker.id}.json`
-      ) {
-        ordinaryRejected = true;
-        throw ordinaryFailure;
-      }
-      await rename(source, destination);
-    });
+    const ordinaryWrite = recordWrites.failNext(worker.id, ordinaryFailure);
     io.release.resolve();
     await acknowledgement.entered.promise;
     expect(await Promise.allSettled([clearing, marking])).toEqual([
@@ -14636,7 +14691,7 @@ test("escalation retired write repairs current attention after acknowledgement f
       { status: "rejected", reason: ordinaryFailure },
     ]);
     await manager.flush();
-    expect(ordinaryRejected).toBe(true);
+    expect(ordinaryWrite.failed()).toBe(true);
     expect((await storage.get(worker.id))?.attentionMessage).toBe(request.reason);
     expect(manager.getAgent(worker.id)?.attention).toBe(manual);
 
