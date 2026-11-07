@@ -15,7 +15,9 @@ interface AccentAppearanceInput {
 export function applyAccentAppearance({ choice, contributedTheme }: AccentAppearanceInput): void {
   const keys = Object.keys(REGISTERED_THEMES) as (keyof typeof REGISTERED_THEMES)[];
   const active = UnistylesRuntime.themeName;
-  const ordered = keys.filter((key) => key === active).concat(keys.filter((key) => key !== active));
+  // Unistyles web emits after each registry patch, so patch the mounted theme first: its
+  // subscribers then receive the new accent in this render instead of one value behind.
+  const ordered = active ? [active, ...keys.filter((key) => key !== active)] : keys;
 
   for (const key of ordered) {
     let base: Theme = REGISTERED_THEMES[key];
@@ -24,7 +26,8 @@ export function applyAccentAppearance({ choice, contributedTheme }: AccentAppear
     }
     const colors = resolveAccentColors(base, choice);
     UnistylesRuntime.updateTheme(key, (theme) => {
-      // Keep each scheme's terminal palette correlated with its discriminant.
+      // Identical arms on purpose: narrowing on colorScheme lets each spread keep its own
+      // scheme's literal theme type, which a spread over the union would lose (as in apply.ts).
       if (theme.colorScheme === "light") {
         return { ...theme, colors: { ...theme.colors, ...colors } };
       }
