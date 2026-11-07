@@ -88,7 +88,7 @@ export class GuestCdpTransport {
   }
 
   /** Dialog responses and possibly delivered pointer releases retain their existing queue bypass. */
-  public sendImmediate(
+  public async sendImmediate(
     command: string,
     params?: Record<string, unknown>,
     onDispatch?: () => void,

@@ -1,4 +1,5 @@
 import type { TabContents } from "./service.js";
+import { isPointerRelease } from "./trusted-input.js";
 
 // Keep the command within the daemon broker's existing 15-second input budget.
 const INPUT_TIMEOUT_MS = 15_000;
@@ -12,6 +13,14 @@ export class BrowserInputTimeoutError extends Error {
   public constructor() {
     super("Browser input timed out. Input may already have been delivered.");
     this.name = "BrowserInputTimeoutError";
+  }
+}
+
+/** Abort reason that fences late continuations after a command has settled. */
+export class BrowserInputSettledError extends Error {
+  public constructor() {
+    super("Browser input command already settled.");
+    this.name = "BrowserInputSettledError";
   }
 }
 
@@ -76,11 +85,9 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
   };
   if (sendDebugCommand) {
     page.sendDebugCommand = (command, params) => {
-      const releasesPointer =
-        command === "Input.dispatchMouseEvent" && params?.type === "mouseReleased";
       // Release a possibly held pointer after cancellation. This cleans up the
       // original gesture without repeating a press or waiting on its acknowledgment.
-      if (signal.aborted && releasesPointer) {
+      if (signal.aborted && isPointerRelease(command, params)) {
         return sendDebugCommand.call(contents, command, params, signal);
       }
       return wait(() => {
@@ -104,7 +111,7 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
       clearTimeout(timeout);
       // Fence unfinished continuations even when a shorter actionability/paint
       // deadline settled the command before the overall input deadline.
-      controller.abort(new BrowserInputTimeoutError());
+      controller.abort(new BrowserInputSettledError());
     },
   };
 }

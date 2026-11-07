@@ -5,7 +5,7 @@ import type {
   BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage, DialogCaptureOperation } from "./service.js";
-import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
+import { isPointerRelease, type IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { waitForInput } from "./input-lifetime.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { getGuestCdpTransport, type GuestCdpTransport } from "./cdp-transport.js";
@@ -136,8 +136,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     reload: () => contents.reload(),
     captureFrame: (signal) => captureViewportFrame(contents, signal),
     invalidate: () => contents.invalidate(),
-    runInput: (task, signal) =>
-      getCommandQueue(contentsId, inputQueuesByContentsId).run(task, signal),
+    runInput: (task, signal) => getInputQueue(contentsId).run(task, signal),
     withFrameProduction: (capture) => withGuestFrameProduction(contents, capture),
     sendInputEvent: (event) => contents.sendInputEvent(event),
     insertText: (text) => contents.insertText(text),
@@ -146,11 +145,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     sendDebugCommand: (command: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
       // Like dialog responses, cancellation cleanup must unblock a possibly
       // delivered press even when its acknowledgment still owns the queue.
-      if (
-        signal?.aborted &&
-        command === "Input.dispatchMouseEvent" &&
-        params?.type === "mouseReleased"
-      ) {
+      if (signal?.aborted && isPointerRelease(command, params)) {
         return cdpTransport.sendImmediate(command, params);
       }
       return cdpTransport.send(command, params, signal);
@@ -194,16 +189,13 @@ function captureViewportFrame(
 }
 
 /** Keep input gestures atomic while still allowing screenshot activity to overlap. */
-function getCommandQueue(
-  contentsId: number,
-  queues: Map<number, CdpSessionQueue>,
-): CdpSessionQueue {
-  const existing = queues.get(contentsId);
+function getInputQueue(contentsId: number): CdpSessionQueue {
+  const existing = inputQueuesByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
   const queue = new CdpSessionQueue();
-  queues.set(contentsId, queue);
+  inputQueuesByContentsId.set(contentsId, queue);
   return queue;
 }
 
@@ -240,6 +232,15 @@ function getDialogMonitor(
   return monitor;
 }
 
+/** Run one dialog capture phase, stopping the wait when the command is cancelled. */
+function waitForPhase<Value>(
+  signal: AbortSignal | undefined,
+  phase: () => Promise<Value>,
+): Promise<Value> {
+  if (signal) return waitForInput(signal, phase);
+  return phase();
+}
+
 class DialogMonitor {
   private enabled = false;
   private listenerRegistered = false;
@@ -260,38 +261,43 @@ class DialogMonitor {
     signal,
   }: DialogCaptureOperation<T>): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
     const collector: DialogCollector = { dialogs: [] };
-    const setupDetachGeneration = this.detachGeneration;
-
-    function waitForPhase<Value>(phase: () => Promise<Value>): Promise<Value> {
-      if (signal) return waitForInput(signal, phase);
-      return phase();
-    }
-
     try {
-      try {
-        await waitForPhase(() => this.enable(signal));
-        signal?.throwIfAborted();
-        await waitForPhase(() => this.installPromptShim({ collector, signal }));
-      } catch (error) {
-        const cancelled = signal?.aborted === true;
-        const targetLost =
-          this.contents.isDestroyed() || this.detachGeneration !== setupDetachGeneration;
-        if (cancelled || targetLost) throw error;
-        console.warn(
-          "[browser-automation] Dialog capture unavailable; running command without it",
-          {
-            contentsId: this.contentsId,
-            error,
-          },
-        );
-        await this.releaseCollector(collector);
-        return { result: await waitForPhase(task), dialogs: [] };
+      const interception = await this.beginInterception(collector, signal);
+      if (interception === "degraded") {
+        return { result: await waitForPhase(signal, task), dialogs: [] };
       }
-      const result = await waitForPhase(task);
-      this.recordPromptShimDialogs(await waitForPhase(() => this.drainPromptShim(signal)));
+      const result = await waitForPhase(signal, task);
+      this.recordPromptShimDialogs(await waitForPhase(signal, () => this.drainPromptShim(signal)));
       return { result, dialogs: collector.dialogs };
     } finally {
       await this.releaseCollector(collector);
+    }
+  }
+
+  /** Enable dialog interception for one command. Setup failure degrades to running the
+   * command without capture, unless the command was cancelled or its target was lost.
+   */
+  private async beginInterception(
+    collector: DialogCollector,
+    signal: AbortSignal | undefined,
+  ): Promise<"intercepting" | "degraded"> {
+    const setupDetachGeneration = this.detachGeneration;
+    try {
+      await waitForPhase(signal, () => this.enable(signal));
+      signal?.throwIfAborted();
+      await waitForPhase(signal, () => this.installPromptShim({ collector, signal }));
+      return "intercepting";
+    } catch (error) {
+      const cancelled = signal?.aborted === true;
+      const targetLost =
+        this.contents.isDestroyed() || this.detachGeneration !== setupDetachGeneration;
+      if (cancelled || targetLost) throw error;
+      console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
+        contentsId: this.contentsId,
+        error,
+      });
+      await this.releaseCollector(collector);
+      return "degraded";
     }
   }
 
