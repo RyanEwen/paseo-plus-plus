@@ -262,8 +262,13 @@ export function normalizeSidebarModeState(persistedState: unknown) {
       ? parsed.data.localModeFilters
       : defaultSidebarLocalModeFilters();
   if (!profiles) {
+    // The legacy view is one flat object. Its filters stay device-local and workspaceSort is
+    // the upstream leaf outside the profiles, so the parse keeps only profile preferences.
     const { hostFilters, projectFilters, groupMode, ...preferences } = legacy;
-    modeProfiles[groupMode] = { ...modeProfiles[groupMode], ...preferences };
+    modeProfiles[groupMode] = SidebarModePreferencesSchema.parse({
+      ...modeProfiles[groupMode],
+      ...preferences,
+    });
     if (!(parsed.success && parsed.data.localModeFilters))
       localModeFilters[groupMode] = { hostFilters, projectFilters };
   }
