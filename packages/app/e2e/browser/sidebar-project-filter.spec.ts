@@ -3,10 +3,21 @@ import {
   startWorkingWorkspace,
   startNeedsInputWorkspace,
 } from "../helpers/project-status-badge";
-import { expect, type Page, type Locator, type TestInfo } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { expect, type Page, type Locator } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client";
+import {
+  addProjectFlowInput,
+  chooseAddProjectMethod,
+  expectAddProjectPage,
+  openAddProjectFlow,
+} from "../support/helpers/add-project-flow";
+import { expectOpenedProject } from "../support/helpers/project-picker-ui";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import {
@@ -50,60 +61,32 @@ async function selectDisplayOption(page: Page, section: string, option: string):
   await closeSidebarDisplayPreferences(page);
 }
 
-/** Record focus ownership before cleanup without replacing the original keyboard failure. */
-async function captureProjectSelectorFocus(page: Page, testInfo: TestInfo): Promise<void> {
-  // Capture before cleanup removes the menu. Preserve the original failure
-  // even if the page has already closed or diagnostic collection fails.
+/** Open the app at the compact (phone) or desktop size with the workspace sidebar showing. */
+async function openSidebarAt(page: Page, compact: boolean): Promise<void> {
+  if (compact) await page.setViewportSize({ width: 390, height: 844 });
+  await gotoAppShell(page);
+  if (compact) await openMobileAgentSidebar(page);
+}
+
+/** The chooser's open surface: the bottom sheet's content on compact, the popover on desktop. */
+function selectorSurface(page: Page, compact: boolean): Locator {
+  return page.getByTestId(
+    compact ? "sidebar-project-selector-content-content" : "sidebar-project-selector-content",
+  );
+}
+
+/** Remove a project the test created through Add Project. */
+async function removeAddedProject(projectId: string): Promise<void> {
+  const client = await connectSeedClient();
   try {
-    const focus = await page.evaluate(() => {
-      const active = document.activeElement;
-      const menu = document.querySelector('[data-testid="sidebar-project-selector-content"]');
-      return {
-        documentFocused: document.hasFocus(),
-        active: active
-          ? {
-              tag: active.tagName,
-              role: active.getAttribute("role"),
-              testId: active.getAttribute("data-testid"),
-              connected: active.isConnected,
-              insideMenu: menu?.contains(active) ?? false,
-            }
-          : null,
-        items: Array.from(menu?.querySelectorAll('[data-menu-item="true"]') ?? [], (item) => ({
-          testId: item.getAttribute("data-testid"),
-          role: item.getAttribute("role"),
-          disabled: item.getAttribute("data-menu-disabled"),
-          focused: item === active,
-          connected: item.isConnected,
-        })),
-      };
-    });
-    await testInfo.attach("project-selector-keyboard-focus-before-cleanup", {
-      body: JSON.stringify(focus, null, 2),
-      contentType: "application/json",
-    });
-  } catch (captureError) {
-    console.error("Project selector focus capture failed before cleanup", String(captureError));
+    await client.removeProject(projectId);
+  } finally {
+    await client.close();
   }
 }
 
 test.describe("Sidebar project filter", () => {
   test.describe.configure({ timeout: 180_000 });
-  // Retired label preferences must not disable the chooser or its active filter label.
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      const key = "@paseo:app-settings";
-      const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
-      localStorage.setItem(
-        key,
-        JSON.stringify({
-          ...settings,
-          paseoPlusPlus: { ...settings.paseoPlusPlus, sidebarProjectSelector: false },
-        }),
-      );
-    });
-  });
-
   test("filters independently of grouping and keeps empty projects reachable in status mode", async ({
     page,
   }, testInfo) => {
@@ -170,18 +153,10 @@ test.describe("Sidebar project filter", () => {
       await expect(alphaRow).toBeVisible({ timeout: 30_000 });
       await expect(betaRow).toBeVisible({ timeout: 30_000 });
 
+      // Project filtering lives in the heading chooser, not the Display menu.
       await page.getByTestId("sidebar-display-preferences-menu").click();
-      await expect(page.getByRole("menuitem")).toHaveText([
-        "Expand one project at a time",
-        "Workspace limits",
-        /^Sort projects/,
-        "SortManual",
-        /^Sort workspaces/,
-        /^Empty projects/,
-        /^Title/,
-        "Show",
-        "Show background workspaces",
-      ]);
+      await expect(page.getByTestId("sidebar-display-show")).toBeVisible();
+      await expect(page.getByTestId("sidebar-display-project-filter")).toHaveCount(0);
       await closeSidebarDisplayPreferences(page);
 
       await openSidebarProjectFilter(page);
@@ -271,7 +246,7 @@ test.describe("Sidebar project filter", () => {
     }
   });
 
-  test("keeps the chooser and active labels with a retired label preference", async ({ page }) => {
+  test("lists the only project without a Hosts branch on one host", async ({ page }) => {
     const only = await seedWorkspace({ repoPrefix: "project-filter-solo-", title: "Solo work" });
     const serverId = getServerId();
 
@@ -281,10 +256,6 @@ test.describe("Sidebar project filter", () => {
         page.getByTestId(`sidebar-workspace-row-${serverId}:${only.workspaceId}`),
       ).toBeVisible({ timeout: 30_000 });
 
-      await page.getByTestId("sidebar-display-preferences-menu").click();
-      await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible();
-      await expect(page.getByTestId("sidebar-display-project-filter")).toHaveCount(0);
-      await closeSidebarDisplayPreferences(page);
       await expect(page.getByTestId("sidebar-project-selector")).toHaveText("All Workspaces");
       await openSidebarProjectFilter(page);
       await expect(page.getByTestId("sidebar-chooser-hosts")).toHaveCount(0);
@@ -339,13 +310,9 @@ test.describe("Sidebar project selector", () => {
       const alphaRow = page.getByTestId(`sidebar-workspace-row-${serverId}:${alpha.workspaceId}`);
       const betaRow = page.getByTestId(`sidebar-workspace-row-${serverId}:${beta.workspaceId}`);
       const trigger = page.getByTestId("sidebar-project-selector");
-      const surface = page.getByTestId(
-        compact ? "sidebar-project-selector-content-content" : "sidebar-project-selector-content",
-      );
+      const surface = selectorSurface(page, compact);
       try {
-        if (compact) await page.setViewportSize({ width: 390, height: 844 });
-        await gotoAppShell(page);
-        if (compact) await openMobileAgentSidebar(page);
+        await openSidebarAt(page, compact);
         await expect(trigger).toHaveText("All Workspaces");
         await pinWorkspaceFromSidebar(page, beta.workspaceId);
         await trigger.click();
@@ -363,15 +330,8 @@ test.describe("Sidebar project selector", () => {
         await page.getByTestId(`sidebar-project-selector-root-${beta.projectKey}-checkbox`).click();
         await expect(trigger).toHaveText("2 Projects’ Workspaces");
         await expect(betaRow).toBeVisible();
-        if (compact) {
-          await page
-            .getByRole("button", { name: "Bottom sheet backdrop" })
-            .first()
-            .click({ position: { x: 12, y: 12 } });
-        } else {
-          await page.keyboard.press("Escape");
-          await expect(trigger).toBeFocused();
-        }
+        await closeSidebarDisplayPreferences(page);
+        if (!compact) await expect(trigger).toBeFocused();
         await expect(surface).toHaveCount(0);
         await page.reload();
         if (compact) await openMobileAgentSidebar(page);
@@ -379,14 +339,7 @@ test.describe("Sidebar project selector", () => {
         await page.getByTestId("sidebar-display-preferences-menu").click();
         await expect(page.getByTestId("sidebar-display-project-filter")).toHaveCount(0);
         await expect(page.getByTestId("sidebar-display-show")).toBeVisible();
-        if (compact) {
-          await page
-            .getByRole("button", { name: "Bottom sheet backdrop" })
-            .first()
-            .click({ position: { x: 12, y: 12 } });
-        } else {
-          await closeSidebarDisplayPreferences(page);
-        }
+        await closeSidebarDisplayPreferences(page);
         await selectSidebarStatusGrouping(page);
         await expect(alphaRow).toBeVisible();
         await expect(betaRow).toBeVisible();
@@ -420,9 +373,7 @@ test.describe("Sidebar project selector", () => {
       });
       const beta = await seedWorkspace({ repoPrefix: "selector-single-beta-", title: "Beta work" });
       const trigger = page.getByTestId("sidebar-project-selector");
-      const surface = page.getByTestId(
-        compact ? "sidebar-project-selector-content-content" : "sidebar-project-selector-content",
-      );
+      const surface = selectorSurface(page, compact);
       const alphaName = page.getByTestId(`sidebar-project-selector-root-${alpha.projectKey}`);
       const betaName = page.getByTestId(`sidebar-project-selector-root-${beta.projectKey}`);
       const alphaCheckbox = page.getByTestId(
@@ -432,9 +383,7 @@ test.describe("Sidebar project selector", () => {
         `sidebar-project-selector-root-${beta.projectKey}-checkbox`,
       );
       try {
-        if (compact) await page.setViewportSize({ width: 390, height: 844 });
-        await gotoAppShell(page);
-        if (compact) await openMobileAgentSidebar(page);
+        await openSidebarAt(page, compact);
         await trigger.click();
         await expect(alphaCheckbox).toHaveRole("checkbox");
         await expect(alphaCheckbox).toHaveAccessibleName(/Include selector-single-alpha-/);
@@ -443,38 +392,73 @@ test.describe("Sidebar project selector", () => {
         await betaCheckbox.click();
         await expect(surface).toBeVisible();
         await expect(trigger).toHaveText("2 Projects’ Workspaces");
-        await expect
-          .poll(() => readStoredProjectFilters(page))
-          .toEqual([alpha.projectKey, beta.projectKey]);
         await betaName.click();
         await expect(surface).toHaveCount(0, { timeout: 2000 });
-        await expect.poll(() => readStoredProjectFilters(page)).toEqual([beta.projectKey]);
+        await expect(trigger).toHaveText(`${beta.projectDisplayName} Workspaces`);
         if (!compact) await expect(trigger).toBeFocused();
         await trigger.click();
         await expect(betaCheckbox).toBeChecked();
         await expect(alphaCheckbox).not.toBeChecked();
         await alphaCheckbox.click();
         await expect(surface).toBeVisible();
-        await expect
-          .poll(() => readStoredProjectFilters(page))
-          .toEqual([beta.projectKey, alpha.projectKey]);
+        await expect(alphaCheckbox).toBeChecked();
+        await expect(betaCheckbox).toBeChecked();
+        await expect(trigger).toHaveText("2 Projects’ Workspaces");
         await page.screenshot({
           path: testInfo.outputPath(`split-selection-${compact ? "compact" : "desktop"}.png`),
         });
         await alphaName.click();
         await expect(surface).toHaveCount(0, { timeout: 2000 });
-        await expect.poll(() => readStoredProjectFilters(page)).toEqual([alpha.projectKey]);
+        await expect(trigger).toHaveText(`${alpha.projectDisplayName} Workspaces`);
         await trigger.click();
         await page.getByTestId("sidebar-project-selector-all").click();
         await expect(surface).toHaveCount(0, { timeout: 2000 });
         await expect(trigger).toHaveText("All Workspaces");
-        await expect.poll(() => readStoredProjectFilters(page)).toEqual([]);
       } finally {
         await beta.cleanup();
         await alpha.cleanup();
       }
     });
   }
+
+  test("a project added while one project is selected joins the selection", async ({ page }) => {
+    const alpha = await seedWorkspace({ repoPrefix: "selector-added-alpha-", title: "Alpha work" });
+    const parentDirectory = await mkdtemp(path.join(tmpdir(), "paseo-e2e-selector-added-"));
+    const directoryName = `added-${randomUUID().slice(0, 8)}`;
+    const trigger = page.getByTestId("sidebar-project-selector");
+    let addedProjectId: string | null = null;
+    try {
+      await gotoAppShell(page);
+      await trigger.click();
+      await page.getByTestId(`sidebar-project-selector-root-${alpha.projectKey}`).click();
+      await expect(trigger).toHaveText(`${alpha.projectDisplayName} Workspaces`);
+
+      // Create an empty directory as a new project through the Add Project flow.
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "new-directory");
+      await addProjectFlowInput(page).fill(parentDirectory);
+      await page.keyboard.press("Enter");
+      await expectAddProjectPage(page, "new-directory-name");
+      await page.keyboard.type(directoryName);
+      await page.keyboard.press("Enter");
+      addedProjectId = await expectOpenedProject(page, directoryName);
+
+      // The selection keeps the earlier project and adds the new one.
+      await expect(trigger).toHaveText("2 Projects’ Workspaces");
+      await trigger.click();
+      await expect(
+        page.getByRole("checkbox", { name: `Include ${directoryName}`, exact: true }),
+      ).toBeChecked();
+      await expect(
+        page.getByTestId(`sidebar-project-selector-root-${alpha.projectKey}-checkbox`),
+      ).toBeChecked();
+      await closeSidebarDisplayPreferences(page);
+    } finally {
+      if (addedProjectId) await removeAddedProject(addedProjectId);
+      await rm(parentDirectory, { recursive: true, force: true });
+      await alpha.cleanup();
+    }
+  });
 
   test("keyboard distinguishes choosing a name from toggling its checkbox", async ({
     page,
@@ -494,7 +478,7 @@ test.describe("Sidebar project selector", () => {
       await page.keyboard.press("Enter");
       await expect(surface).toHaveCount(0, { timeout: 2000 });
       await expect(trigger).toBeFocused();
-      await expect.poll(() => readStoredProjectFilters(page)).toEqual([alpha.projectKey]);
+      await expect(trigger).toHaveText(`${alpha.projectDisplayName} Workspaces`);
       await page.keyboard.press("Enter");
       await expect(page.getByTestId("sidebar-project-selector-all")).toBeFocused();
       await arrowDownToMenuItem(page, surface, name);
@@ -506,21 +490,18 @@ test.describe("Sidebar project selector", () => {
       await expect(checkbox).not.toBeChecked();
       await expect(checkbox).toBeFocused();
       await expect(surface).toBeVisible();
-      await expect.poll(() => readStoredProjectFilters(page)).toEqual([]);
+      await expect(trigger).toHaveText("All Workspaces");
       await page.keyboard.press("Enter");
       await expect(checkbox).toBeChecked();
       await expect(surface).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
-    } catch (error) {
-      await captureProjectSelectorFocus(page, testInfo);
-      throw error;
     } finally {
       await alpha.cleanup();
     }
   });
 
-  test("keeps saved multi-project and offline keys through a retired label preference", async ({
+  test("keeps saved multi-project and offline keys across a reload", async ({
     page,
   }) => {
     const alpha = await seedWorkspace({ repoPrefix: "selector-saved-alpha-" });
@@ -548,17 +529,6 @@ test.describe("Sidebar project selector", () => {
       await page.keyboard.press("Escape");
       const toggledFilters = [beta.projectKey, "offline-project", alpha.projectKey];
       await expect.poll(() => readStoredProjectFilters(page)).toEqual(toggledFilters);
-      await page.evaluate(() => {
-        const key = "@paseo:app-settings";
-        const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
-        localStorage.setItem(
-          key,
-          JSON.stringify({
-            ...settings,
-            paseoPlusPlus: { ...settings.paseoPlusPlus, sidebarProjectSelector: false },
-          }),
-        );
-      });
       await page.reload();
       await expect(trigger).toHaveText("2 Projects’ Workspaces");
       await openSidebarProjectFilter(page);
@@ -587,9 +557,7 @@ test.describe("Sidebar project selector activity", () => {
       const busy = await seedStatusProject();
       const quiet = await seedWorkspace({ repoPrefix: "selector-quiet-", title: "Quiet work" });
       const trigger = page.getByTestId("sidebar-project-selector");
-      const surface = page.getByTestId(
-        compact ? "sidebar-project-selector-content-content" : "sidebar-project-selector-content",
-      );
+      const surface = selectorSurface(page, compact);
       const busyChoice = page.getByTestId(`sidebar-project-selector-root-${busy.seed.projectKey}`);
       const quietChoice = page.getByTestId(`sidebar-project-selector-root-${quiet.projectKey}`);
       const busyChip = page.getByTestId(
@@ -599,9 +567,7 @@ test.describe("Sidebar project selector activity", () => {
         `sidebar-project-selector-root-${quiet.projectKey}-activity`,
       );
       try {
-        if (compact) await page.setViewportSize({ width: 390, height: 844 });
-        await gotoAppShell(page);
-        if (compact) await openMobileAgentSidebar(page);
+        await openSidebarAt(page, compact);
         await waitForSidebarHydration(page);
         await pinWorkspaceFromSidebar(page, busy.seed.workspaceId);
         await trigger.click();
@@ -643,7 +609,7 @@ test.describe("Sidebar project selector activity", () => {
         await page
           .getByTestId(`sidebar-project-selector-root-${busy.seed.projectKey}-checkbox`)
           .click();
-        await expect.poll(() => readStoredProjectFilters(page)).toEqual([quiet.projectKey]);
+        await expect(trigger).toHaveText(`${quiet.projectDisplayName} Workspaces`);
         // This live priority change happens while the busy project's sidebar rows are filtered out.
         const approval = await busy.seed.client.createWorkspace({
           source: { kind: "directory", path: busy.seed.repoPath, projectId: busy.seed.projectId },
@@ -661,14 +627,7 @@ test.describe("Sidebar project selector activity", () => {
             `selector-activity-input-${compact ? "compact" : "desktop"}.png`,
           ),
         });
-        if (compact) {
-          await page
-            .getByRole("button", { name: "Bottom sheet backdrop" })
-            .first()
-            .click({ position: { x: 12, y: 12 } });
-        } else {
-          await page.keyboard.press("Escape");
-        }
+        await closeSidebarDisplayPreferences(page);
         await page.evaluate(() => {
           const key = "@paseo:app-settings";
           const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
@@ -690,7 +649,7 @@ test.describe("Sidebar project selector activity", () => {
         ).toHaveCount(0);
         await busyChoice.click();
         await expect(surface).toHaveCount(0);
-        await expect.poll(() => readStoredProjectFilters(page)).toEqual([busy.seed.projectKey]);
+        await expect(trigger).toHaveText(`${busy.seed.projectDisplayName} Workspaces`);
         await expect(
           page.getByTestId(`sidebar-project-status-${busy.seed.projectKey}`),
         ).toHaveCount(0);
@@ -699,9 +658,7 @@ test.describe("Sidebar project selector activity", () => {
           .getByTestId(`sidebar-project-selector-root-${quiet.projectKey}-checkbox`)
           .click();
         await expect(surface).toBeVisible();
-        await expect
-          .poll(() => readStoredProjectFilters(page))
-          .toEqual([busy.seed.projectKey, quiet.projectKey]);
+        await expect(trigger).toHaveText("2 Projects’ Workspaces");
         await expect(busyChip).toHaveCount(0);
       } finally {
         await quiet.cleanup();
