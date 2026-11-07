@@ -46,10 +46,8 @@ result. Keep command paths relative to the executor's working directory; the cli
 resolve them against its own filesystem. Preserve every patch diff, including files after the
 first canonical edit detail.
 
-The app's **Readable tool activity** option changes labels and group counts. It defaults on and
-applies to every provider with canonical details. Turning it off restores classic presentation;
-it does not stop history processing or discard tool data. Group counts describe operations,
-including failed or canceled attempts, rather than claiming successful changes.
+The app's [Readable tool activity](fork-features/readable-tool-activity.md) option uses these
+details and metadata for every provider that emits them.
 
 ## Core adapter patterns
 
