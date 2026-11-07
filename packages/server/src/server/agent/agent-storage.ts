@@ -108,34 +108,34 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+/** A registered Claude creation in a configured home that has not received its first native ID. */
 export function isBoundEmptyClaudeCreation(record: StoredAgentRecord | null | undefined): boolean {
-  const binding = record?.providerHistory;
-  return (
-    !!record &&
-    !record.persistence &&
-    !record.claudeFreshRewind &&
+  if (!record) return false;
+  const binding = record.providerHistory;
+  const awaitingNativeIdentity = !record.persistence && !record.claudeFreshRewind;
+  const registeredCreation =
     binding?.origin === "created" &&
     binding.registration === "registered" &&
-    binding.sessionId === null &&
-    binding.storage.kind === "configured-home" &&
-    binding.storage.provider === "claude"
-  );
+    binding.sessionId === null;
+  const configuredClaudeHome =
+    binding?.storage.kind === "configured-home" && binding.storage.provider === "claude";
+  return awaitingNativeIdentity && registeredCreation && configuredClaudeHome;
 }
 function matchesEmptyClaudeRecreation(
   existing: StoredAgentRecord | null,
   requested: StoredAgentRecord,
 ): boolean {
-  return (
-    !!existing &&
-    isBoundEmptyClaudeCreation(existing) &&
-    requested.providerHistory?.origin === "created" &&
-    requested.providerHistory.sessionId === null &&
+  if (!existing || !isBoundEmptyClaudeCreation(existing)) return false;
+  const requestsEmptyCreation =
+    requested.providerHistory?.origin === "created" && requested.providerHistory.sessionId === null;
+  const samePlacement =
     existing.provider === requested.provider &&
     existing.cwd === requested.cwd &&
-    existing.workspaceId === requested.workspaceId &&
+    existing.workspaceId === requested.workspaceId;
+  const sameLaunch =
     digest(existing.config) === digest(requested.config) &&
-    digest(existing.launchEnv ?? null) === digest(requested.launchEnv ?? null)
-  );
+    digest(existing.launchEnv ?? null) === digest(requested.launchEnv ?? null);
+  return requestsEmptyCreation && samePlacement && sameLaunch;
 }
 
 // The pending initial/fresh query protects routing identity, not activity/status metadata.
@@ -163,13 +163,13 @@ function assertClaudeRewindNext(
   next: AgentPersistenceHandle,
   operationId: string | undefined,
 ): void {
-  if (
-    next.provider !== current.provider ||
-    !next.sessionId ||
-    next.sessionId === current.providerHistory?.sessionId ||
-    next.nativeHandle !== next.sessionId ||
-    current.claudeFreshRewind?.operationId !== operationId
-  )
+  const sameProvider = next.provider === current.provider;
+  const newNativeSession =
+    !!next.sessionId &&
+    next.sessionId !== current.providerHistory?.sessionId &&
+    next.nativeHandle === next.sessionId;
+  const matchesPendingOperation = current.claudeFreshRewind?.operationId === operationId;
+  if (!sameProvider || !newNativeSession || !matchesPendingOperation)
     throw new HistoryStorageConflictError("rewind-handle-conflict");
 }
 function assertPendingClaudeQuerySnapshot(
@@ -399,18 +399,18 @@ export class AgentStorage {
         const binding = current?.providerHistory;
         if (!current) throw new HistoryStorageConflictError("initial-handle-binding-conflict");
         assertClaudeQueryAdmission(input.expected, current);
-        if (
-          current.persistence ||
-          current.claudeFreshRewind ||
-          binding?.registration !== "registered" ||
-          binding.origin !== "created" ||
-          binding.sessionId !== null ||
-          binding.storage.kind !== "configured-home" ||
-          binding.storage.provider !== "claude" ||
-          !input.next.sessionId ||
-          input.next.provider !== current.provider ||
-          input.next.nativeHandle !== input.next.sessionId
-        )
+        const stillEmpty = !current.persistence && !current.claudeFreshRewind;
+        const registeredClaudeCreation =
+          binding?.registration === "registered" &&
+          binding.origin === "created" &&
+          binding.sessionId === null &&
+          binding.storage.kind === "configured-home" &&
+          binding.storage.provider === "claude";
+        const nextIsNativeSession =
+          !!input.next.sessionId &&
+          input.next.provider === current.provider &&
+          input.next.nativeHandle === input.next.sessionId;
+        if (!stillEmpty || !registeredClaudeCreation || !nextIsNativeSession || !binding)
           throw new HistoryStorageConflictError("initial-handle-binding-conflict");
         return {
           ...current,
@@ -450,19 +450,22 @@ export class AgentStorage {
       input.expected.id,
       (current) => {
         input.assertCurrent?.();
-        const binding = current?.providerHistory;
-        if (
-          !current ||
-          (input.freshOperationId && current.claudeFreshRewind
-            ? digest(claudeQueryIdentity(current)) !== digest(claudeQueryIdentity(input.expected))
-            : digest(current) !== digest(input.expected)) ||
-          !current.persistence ||
-          binding?.registration !== "registered" ||
-          binding.storage.kind !== "configured-home" ||
-          binding.storage.provider !== "claude" ||
-          binding.sessionId !== current.persistence.sessionId ||
-          current.persistence.provider !== current.provider
-        )
+        if (!current) throw new HistoryStorageConflictError("rewind-canonical-record-changed");
+        const binding = current.providerHistory;
+        // A pending fresh query may advance activity metadata; compare only its routing identity.
+        const comparesQueryIdentity = !!input.freshOperationId && !!current.claudeFreshRewind;
+        const recordUnchanged = comparesQueryIdentity
+          ? digest(claudeQueryIdentity(current)) === digest(claudeQueryIdentity(input.expected))
+          : digest(current) === digest(input.expected);
+        const registeredClaudeHome =
+          binding?.registration === "registered" &&
+          binding.storage.kind === "configured-home" &&
+          binding.storage.provider === "claude";
+        const bindingMatchesHandle =
+          !!current.persistence &&
+          binding?.sessionId === current.persistence.sessionId &&
+          current.persistence.provider === current.provider;
+        if (!recordUnchanged || !registeredClaudeHome || !bindingMatchesHandle || !binding)
           throw new HistoryStorageConflictError("rewind-canonical-record-changed");
         if (input.next) {
           const next = input.next;
@@ -784,17 +787,15 @@ function claudeEmptyCreationBinding(
   record: StoredAgentRecord,
 ): StoredAgentRecord["providerHistory"] {
   const previous = existing.providerHistory!;
-  if (
-    previous.origin !== "created" ||
-    previous.sessionId !== null ||
-    record.persistence ||
-    existing.persistence ||
-    previous.storage.kind !== "configured-home" ||
-    previous.storage.provider !== "claude" ||
-    current.provider !== existing.provider ||
-    current.providerHistory?.origin !== "created" ||
-    !sameHistoryStorage(previous.storage, current.providerHistory.storage)
-  )
+  const createdWithoutSession = previous.origin === "created" && previous.sessionId === null;
+  const noNativeHandle = !record.persistence && !existing.persistence;
+  const configuredClaudeHome =
+    previous.storage.kind === "configured-home" && previous.storage.provider === "claude";
+  const sameCreatedRoute =
+    current.provider === existing.provider &&
+    current.providerHistory?.origin === "created" &&
+    sameHistoryStorage(previous.storage, current.providerHistory.storage);
+  if (!createdWithoutSession || !noNativeHandle || !configuredClaudeHome || !sameCreatedRoute)
     throw new HistoryStorageConflictError("empty-creation-registration-conflict");
   return { ...previous, registration: "registered" };
 }

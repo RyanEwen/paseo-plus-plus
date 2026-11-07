@@ -602,6 +602,14 @@ interface AgentMetadataPatch {
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
+/** Two persistence handles name the same session when their serialized forms are identical. */
+function samePersistenceHandle(
+  left: AgentPersistenceHandle | null | undefined,
+  right: AgentPersistenceHandle | null | undefined,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function normalizePersistenceForConfig(
   handle: AgentPersistenceHandle | null,
   config: AgentSessionConfig,
@@ -1697,15 +1705,16 @@ export class AgentManager {
           throw new HistoryStorageConflictError("initial-query-admission-conflict");
         await this.persistSnapshot(agent);
         const captured = await this.requireRegistry().captureClaudeHistoryAdmission(agentId);
-        if (
-          agent.session.claudeInitialHistory?.owner !== context.owner ||
-          captured.provider !== agent.provider ||
-          !sameHistoryStorage(captured.providerHistory?.storage ?? { kind: "unknown" }, storage) ||
-          captured.providerHistory?.origin !== "created" ||
-          captured.providerHistory.sessionId !== null ||
-          captured.persistence ||
-          captured.claudeFreshRewind
-        )
+        const stillOwned = agent.session.claudeInitialHistory?.owner === context.owner;
+        const sameRoute =
+          captured.provider === agent.provider &&
+          sameHistoryStorage(captured.providerHistory?.storage ?? { kind: "unknown" }, storage);
+        const stillEmptyCreation =
+          captured.providerHistory?.origin === "created" &&
+          captured.providerHistory.sessionId === null &&
+          !captured.persistence &&
+          !captured.claudeFreshRewind;
+        if (!stillOwned || !sameRoute || !stillEmptyCreation)
           throw new HistoryStorageConflictError("initial-query-admission-conflict");
         admitted = captured;
       },
@@ -1771,16 +1780,17 @@ export class AgentManager {
           throw new HistoryStorageConflictError("fresh-query-admission-conflict");
         await this.persistSnapshot(agent);
         const captured = await this.requireRegistry().captureClaudeHistoryAdmission(agentId);
-        if (
-          agent.session.claudeFreshRewind?.owner !== context.owner ||
-          captured.claudeFreshRewind?.operationId !== operationId ||
-          captured.provider !== agent.provider ||
-          !sameHistoryStorage(
+        const stillOwned =
+          agent.session.claudeFreshRewind?.owner === context.owner &&
+          captured.claudeFreshRewind?.operationId === operationId;
+        const sameRoute =
+          captured.provider === agent.provider &&
+          sameHistoryStorage(
             captured.providerHistory?.storage ?? { kind: "unknown" },
             agent.session.historyStorage ?? { kind: "unknown" },
-          ) ||
-          captured.persistence?.sessionId !== agent.persistence?.sessionId
-        )
+          );
+        const sameRecoveryHandle = captured.persistence?.sessionId === agent.persistence?.sessionId;
+        if (!stillOwned || !sameRoute || !sameRecoveryHandle)
           throw new HistoryStorageConflictError("fresh-query-admission-conflict");
         admitted = captured;
       },
@@ -1810,18 +1820,26 @@ export class AgentManager {
     fresh: ClaudeFreshRewindContext | undefined,
   ): void {
     const binding = expected.providerHistory;
+    const stillRegistered = this.agents.get(agent.id) === agent;
+    const registeredClaudeRoute =
+      binding?.storage.kind === "configured-home" &&
+      binding.storage.provider === "claude" &&
+      binding.registration === "registered" &&
+      sameHistoryStorage(binding.storage, transition.storage);
+    const previousIsCanonicalHandle =
+      !!expected.persistence &&
+      expected.persistence.sessionId === binding?.sessionId &&
+      samePersistenceHandle(
+        expected.persistence,
+        normalizePersistenceForConfig(transition.previous, agent.config),
+      ) &&
+      transition.previous.provider === agent.provider;
+    const freshStillOwned = !fresh || agent.session.claudeFreshRewind?.owner === fresh.owner;
     if (
-      this.agents.get(agent.id) !== agent ||
-      binding?.storage.kind !== "configured-home" ||
-      binding.storage.provider !== "claude" ||
-      binding.registration !== "registered" ||
-      !sameHistoryStorage(binding.storage, transition.storage) ||
-      !expected.persistence ||
-      expected.persistence.sessionId !== binding.sessionId ||
-      JSON.stringify(expected.persistence) !==
-        JSON.stringify(normalizePersistenceForConfig(transition.previous, agent.config)) ||
-      transition.previous.provider !== agent.provider ||
-      (fresh && agent.session.claudeFreshRewind?.owner !== fresh.owner)
+      !stillRegistered ||
+      !registeredClaudeRoute ||
+      !previousIsCanonicalHandle ||
+      !freshStillOwned
     )
       throw new HistoryStorageConflictError("rewind-canonical-handle-conflict");
   }
