@@ -1033,6 +1033,12 @@ resolves after that frame is drawn. Reset and unmount reject pending presentatio
 retained frames. Surface `onError` to the user; older Android System WebView versions may lack
 WebCodecs or the source codec.
 
+The decoder fails, releasing every retained frame and dropping pending `onDequeue`
+acknowledgements, when you submit a fifth chunk, a chunk over 2 MiB, a chunk before `configure`,
+retain more than 64 frames, or present a frame no newer than the last one drawn. Reset your queue
+count, configure again and resume from a keyframe. If Android stops the canvas renderer, `onError`
+reports it and `onReady` fires again once a fresh canvas loads.
+
 Keep remote input outside the canvas. Revoke the previous frame's input authority before calling
 `present`, then recheck source identity and mutation epoch after it resolves. Receiving or decoding
 a packet does not establish that its pixels are displayed. Suspend reads and reset the decoder when

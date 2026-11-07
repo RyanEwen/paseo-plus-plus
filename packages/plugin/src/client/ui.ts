@@ -217,18 +217,33 @@ export interface EncodedVideoChunk {
   dataBase64: string;
 }
 
+/**
+ * Any decoder failure (including the limits below) tears the decoder down: it releases every
+ * retained frame, drops pending onDequeue acknowledgements and reports onError. Configure
+ * again and resume from a keyframe.
+ */
 export interface EncodedVideoHandle {
-  /** Replaces the decoder and releases all retained frames. */
+  /** Replaces the decoder and releases all retained frames. Throws until onReady. */
   configure(config: EncodedVideoConfig): void;
+  /**
+   * Submits one chunk. Keep at most four awaiting onDequeue; a fifth, a chunk over 2 MiB,
+   * or a chunk before configure fails the decoder. Throws until onReady.
+   */
   decode(chunk: EncodedVideoChunk): void;
+  /** Releases the decoder and retained frames and drops pending acknowledgements; reset your queue count. */
   reset(): void;
-  /** Resolves after drawing this frame. Rejects on reset, unmount, or host failure. */
+  /**
+   * Resolves after drawing this frame. Rejects on reset, unmount, or host failure.
+   * Presenting a frame no newer than the last drawn one fails the decoder.
+   */
   present(frameId: number): Promise<void>;
+  /** Frees a retained frame. More than 64 retained frames fails the decoder. */
   release(frameId: number): void;
 }
 
 export interface EncodedVideoProps {
   style?: StyleProp<ViewStyle>;
+  /** The canvas can accept configure(). Fires again after Android restarts a killed renderer. */
   onReady(): void;
   onFrame(frame: EncodedVideoFrame): void;
   /** One acknowledgement for each submitted chunk, even if it produces no frame. */
