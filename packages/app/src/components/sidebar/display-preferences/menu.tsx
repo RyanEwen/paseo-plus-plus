@@ -367,10 +367,10 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         ),
       });
     }
-    return definitions.map((page) => ({
-      ...page,
-      content: withDisabledHint(preferences.preferencesDisabledReason, page.content),
-    }));
+    const reason = preferences.preferencesDisabledReason;
+    return definitions.map((page) =>
+      Object.assign({}, page, { content: withDisabledHint(reason, page.content) }),
+    );
   }, [t, preferences, workspaceSortSupported, showLabelFilter, labels, openManager]);
 
   return (
