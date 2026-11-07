@@ -1,6 +1,6 @@
 import { AgentAttentionObjectives } from "./attention/objectives.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
-import { WorkspaceAttention } from "./workspace-attention.js";
+import { WorkspaceAttention, clearStoredAttentionIfUnchanged } from "./workspace-attention.js";
 import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import os from "node:os";
@@ -200,7 +200,9 @@ describe("AgentStorage", () => {
         attentionMessage: "Explicit event override",
       };
       await storage.upsert(original);
-      expect(await storage.clearAttentionIfUnchanged("read-agent", timestamp)).not.toBeNull();
+      expect(
+        await clearStoredAttentionIfUnchanged(storage, "read-agent", timestamp),
+      ).not.toBeNull();
       const loaded = await new AgentStorage(storagePath, logger).get("read-agent");
       if (!loaded) throw new Error("Cleared record missing after fresh load");
       expect(loaded).toMatchObject({
@@ -253,7 +255,7 @@ describe("AgentStorage", () => {
       const recordPath = path.join(storagePath, directory, "protected.json");
       const beforeBytes = await fs.readFile(recordPath);
       const oldTimestamp = refusal === "newer" ? "2026-10-26T09:59:59.000Z" : timestamp;
-      expect(await storage.clearAttentionIfUnchanged("protected", oldTimestamp)).toBeNull();
+      expect(await clearStoredAttentionIfUnchanged(storage, "protected", oldTimestamp)).toBeNull();
       expect(await new AgentStorage(storagePath, logger).get("protected")).toEqual(beforeRecord);
       expect(await fs.readFile(recordPath)).toEqual(beforeBytes);
     },
@@ -293,9 +295,7 @@ describe("AgentStorage", () => {
           await held;
           return record;
         },
-        upsert: (record) => storage.upsert(record),
-        clearAttentionIfUnchanged: (id, observed) =>
-          storage.clearAttentionIfUnchanged(id, observed),
+        update: (id, mutate) => storage.update(id, mutate),
       },
       publishStored: async (record) => {
         published.push(record);
@@ -355,7 +355,7 @@ describe("AgentStorage", () => {
     }
   });
 
-  test("clearAttentionIfUnchanged preserves a newer event and permission attention", async () => {
+  test("clearing stored attention preserves a newer event and permission attention", async () => {
     const oldTimestamp = "2026-10-21T12:00:00.000Z";
     const newTimestamp = "2026-10-21T12:00:01.000Z";
     await storage.applySnapshot(
@@ -369,7 +369,9 @@ describe("AgentStorage", () => {
         },
       }),
     );
-    expect(await storage.clearAttentionIfUnchanged("receipt-agent", oldTimestamp)).toBeNull();
+    expect(
+      await clearStoredAttentionIfUnchanged(storage, "receipt-agent", oldTimestamp),
+    ).toBeNull();
     expect((await storage.get("receipt-agent"))?.attentionTimestamp).toBe(newTimestamp);
     await storage.applySnapshot(
       createManagedAgent({
@@ -382,11 +384,13 @@ describe("AgentStorage", () => {
         },
       }),
     );
-    expect(await storage.clearAttentionIfUnchanged("receipt-agent", newTimestamp)).toBeNull();
+    expect(
+      await clearStoredAttentionIfUnchanged(storage, "receipt-agent", newTimestamp),
+    ).toBeNull();
     expect((await storage.get("receipt-agent"))?.requiresAttention).toBe(true);
   });
 
-  test("clearAttentionIfUnchanged serializes with a newer stored write", async () => {
+  test("clearing stored attention serializes with a newer stored write", async () => {
     const timestamp = "2026-10-21T12:00:00.000Z";
     await storage.applySnapshot(
       createManagedAgent({
@@ -403,12 +407,13 @@ describe("AgentStorage", () => {
     if (!current) throw new Error("Missing receipt agent");
     const newerTimestamp = "2026-10-21T12:00:01.000Z";
     const write = storage.upsert({ ...current, attentionTimestamp: newerTimestamp });
-    const clear = storage.clearAttentionIfUnchanged("receipt-agent", timestamp);
+    const clear = clearStoredAttentionIfUnchanged(storage, "receipt-agent", timestamp);
     await write;
     expect(await clear).toBeNull();
     expect((await storage.get("receipt-agent"))?.attentionTimestamp).toBe(newerTimestamp);
     expect(
-      (await storage.clearAttentionIfUnchanged("receipt-agent", newerTimestamp))?.requiresAttention,
+      (await clearStoredAttentionIfUnchanged(storage, "receipt-agent", newerTimestamp))
+        ?.requiresAttention,
     ).toBe(false);
     expect(
       (await new AgentStorage(storagePath, logger).get("receipt-agent"))?.requiresAttention,

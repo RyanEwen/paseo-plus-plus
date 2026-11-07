@@ -6,10 +6,53 @@ import type { AgentSnapshotPayload } from "../messages.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { AgentManager } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
+import { clearStoredAttentionEvent } from "./attention/stored-read.js";
+
+/** The attention fields a workspace read checks before clearing an agent. */
+interface AttentionState {
+  archivedAt?: string | null;
+  requiresAttention?: boolean;
+  attentionReason?: string | null;
+}
+
+/** Attention a workspace read may clear: unarchived, still raised and not a permission prompt. */
+export function hasClearableAttention(state: AttentionState): boolean {
+  return (
+    !state.archivedAt && state.requiresAttention === true && state.attentionReason !== "permission"
+  );
+}
+
+/** Stored records add one rule: internal agents are never cleared by a workspace read. */
+function hasClearableStoredAttention(record: StoredAgentRecord): boolean {
+  return !record.internal && hasClearableAttention(record);
+}
+
+/**
+ * Clear a stored agent's attention only while it is still the observed event, inside the
+ * storage's per-agent write queue, so a newer queued write is never overwritten.
+ *
+ * @param timestamp the attention timestamp the read observed (null for a legacy record).
+ * @returns the committed record, or null when the attention changed or is no longer clearable.
+ * @throws When the agent record does not exist.
+ */
+export async function clearStoredAttentionIfUnchanged(
+  storage: Pick<AgentStorage, "update">,
+  agentId: string,
+  timestamp: string | null | undefined,
+): Promise<StoredAgentRecord | null> {
+  let cleared: StoredAgentRecord | null = null;
+  await storage.update(agentId, (current) => {
+    const unchanged = current.attentionTimestamp === timestamp;
+    if (!unchanged || !hasClearableStoredAttention(current)) return current;
+    cleared = clearStoredAttentionEvent(current);
+    return cleared;
+  });
+  return cleared;
+}
 
 interface WorkspaceAttentionDependencies {
   manager: Pick<AgentManager, "getAgent" | "clearAgentAttention">;
-  storage: Pick<AgentStorage, "get" | "upsert" | "clearAttentionIfUnchanged">;
+  storage: Pick<AgentStorage, "get" | "update">;
   publishStored(record: StoredAgentRecord, workspaceId: string): Promise<void>;
 }
 
@@ -35,11 +78,9 @@ export class WorkspaceAttention {
     const observed = this.observedAttention(input.workspace, input.notification);
     // Sibling workspaces can share a directory; only workspaceId establishes ownership.
     const clearableAgentIds = input.agents
-      .filter((agent) => !agent.archivedAt)
       .filter((agent) => agent.workspaceId === input.workspace.workspaceId)
-      .filter((agent) => agent.requiresAttention === true)
+      .filter((agent) => hasClearableAttention(agent))
       .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
-      .filter((agent) => agent.attentionReason !== "permission")
       .filter((agent) => !observed || observed.get(agent.id) === agent.attentionTimestamp)
       .map((agent) => agent.id);
 
@@ -94,7 +135,7 @@ export class WorkspaceAttention {
   /** Publish only committed stored mutations, preserving existing shared-workspace visibility rules. */
   private async clearStoredAgent(input: AttentionTarget): Promise<boolean> {
     const record = await this.deps.storage.get(input.agentId);
-    if (!record || record.internal || record.archivedAt || record.requiresAttention !== true) {
+    if (!record || !hasClearableStoredAttention(record)) {
       return false;
     }
     if (input.observed && input.observed.get(input.agentId) !== record.attentionTimestamp) {
@@ -106,7 +147,11 @@ export class WorkspaceAttention {
       ? input.observed.get(input.agentId)
       : record.attentionTimestamp;
     if (input.observed && !timestamp) return false;
-    const nextRecord = await this.deps.storage.clearAttentionIfUnchanged(input.agentId, timestamp);
+    const nextRecord = await clearStoredAttentionIfUnchanged(
+      this.deps.storage,
+      input.agentId,
+      timestamp,
+    );
     if (!nextRecord) return false;
     await this.deps.publishStored(nextRecord, input.workspaceId);
     return true;

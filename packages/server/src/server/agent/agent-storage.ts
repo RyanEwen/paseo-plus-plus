@@ -7,7 +7,6 @@ import { writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
-import { clearStoredAttentionEvent } from "./attention/stored-read.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 import { StoredAttentionObjectivesSchema } from "./attention/objectives.js";
@@ -185,29 +184,6 @@ export class AgentStorage {
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     await this.queueRecordWrite(record);
-  }
-
-  /** Clear only the observed attention event inside the existing per-agent write queue. */
-  async clearAttentionIfUnchanged(
-    agentId: string,
-    timestamp: string | null | undefined,
-  ): Promise<StoredAgentRecord | null> {
-    await this.load();
-    let changed: StoredAgentRecord | null = null;
-    await this.queueRecordMutation(agentId, (current) => {
-      if (!current) throw new Error(`Agent not found: ${agentId}`);
-      if (
-        !current.requiresAttention ||
-        current.attentionTimestamp !== timestamp ||
-        current.attentionReason === "permission" ||
-        current.archivedAt ||
-        current.internal
-      )
-        return current;
-      changed = clearStoredAttentionEvent(current);
-      return changed;
-    });
-    return changed;
   }
 
   /** Apply a domain mutation to the current record inside its existing write queue. */

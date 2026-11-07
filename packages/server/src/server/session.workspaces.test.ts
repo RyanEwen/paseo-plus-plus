@@ -1894,10 +1894,10 @@ test("workspace clear attention broadcasts stored-only agents to a sibling sessi
     });
     const session = createSessionForWorkspaceTests({
       agentStorage: {
-        clearAttentionIfUnchanged: async (id: string, timestamp: string) => {
-          const changed = await queuedStorage.clearAttentionIfUnchanged(id, timestamp);
-          if (changed) storedRecord = changed;
-          return changed;
+        update: async (id: string, mutate: (record: StoredAgentRecord) => StoredAgentRecord) => {
+          await queuedStorage.update(id, mutate);
+          const committed = await queuedStorage.get(id);
+          if (committed) storedRecord = committed;
         },
       },
       onMessage: (message) => emitted.push(message),
@@ -2209,10 +2209,10 @@ test("workspace clear attention can clear multiple workspaces in one request", a
     const session = createSessionForWorkspaceTests({
       onMessage: (message) => emitted.push(message),
       agentStorage: {
-        clearAttentionIfUnchanged: async (id: string, timestamp: string) => {
-          const changed = await queuedStorage.clearAttentionIfUnchanged(id, timestamp);
-          if (changed) storedRecords.set(id, changed);
-          return changed;
+        update: async (id: string, mutate: (record: StoredAgentRecord) => StoredAgentRecord) => {
+          await queuedStorage.update(id, mutate);
+          const committed = await queuedStorage.get(id);
+          if (committed) storedRecords.set(id, committed);
         },
       },
     });
@@ -10132,8 +10132,8 @@ test.each(["legacy", "receipt"] as const)(
           list: () => storage.list(),
           get: (id: string) => storage.get(id),
           upsert: (record: StoredAgentRecord) => storage.upsert(record),
-          clearAttentionIfUnchanged: (id: string, observed: string) =>
-            storage.clearAttentionIfUnchanged(id, observed),
+          update: (id: string, mutate: (record: StoredAgentRecord) => StoredAgentRecord) =>
+            storage.update(id, mutate),
         },
         publishStoredAgentAttentionCleared: (record, workspaceId) =>
           session.forwardStoredAgentAttentionCleared(record, workspaceId),
@@ -10235,8 +10235,8 @@ test("T59 sequential bounded receipt chunks preserve intervening newer attention
         list: () => storage.list(),
         get: (id: string) => storage.get(id),
         upsert: (record: StoredAgentRecord) => storage.upsert(record),
-        clearAttentionIfUnchanged: (id: string, observed: string) =>
-          storage.clearAttentionIfUnchanged(id, observed),
+        update: (id: string, mutate: (record: StoredAgentRecord) => StoredAgentRecord) =>
+          storage.update(id, mutate),
       },
     });
     session.listAgentPayloads = async () =>
