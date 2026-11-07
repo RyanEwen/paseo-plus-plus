@@ -172,18 +172,21 @@ function installCompatibility(isWorker: boolean): void {
       },
     };
   }
-  // COMPAT(electronWorkerStorageEvents): added in v0.12.0; review removal after 2027-01-19 (#52451).
-  // Keep every storage method native. Only the broken worker Event objects use the existing facade.
-  if (
-    isWorker &&
-    chrome.storage?.onChanged &&
-    chrome.runtime.getManifest().permissions?.includes("storage")
-  ) {
-    Object.assign(chrome.storage.onChanged, event("storage.onChanged"));
-    for (const area of ["local", "session", "sync", "managed"]) {
-      const storageArea = chrome.storage[area] as { onChanged?: CompatibilityEvent } | undefined;
-      if (storageArea?.onChanged) {
-        Object.assign(storageArea.onChanged, event(`storage.${area}.onChanged`));
+  /** Repair worker storage events; storage methods stay native. */
+  function installStorageEvents(): void {
+    // COMPAT(electronWorkerStorageEvents): added in v0.12.0; review removal after 2027-01-19 (#52451).
+    // Keep every storage method native. Only the broken worker Event objects use the existing facade.
+    if (
+      isWorker &&
+      chrome.storage?.onChanged &&
+      chrome.runtime.getManifest().permissions?.includes("storage")
+    ) {
+      Object.assign(chrome.storage.onChanged, event("storage.onChanged"));
+      for (const area of ["local", "session", "sync", "managed"]) {
+        const storageArea = chrome.storage[area] as { onChanged?: CompatibilityEvent } | undefined;
+        if (storageArea?.onChanged) {
+          Object.assign(storageArea.onChanged, event(`storage.${area}.onChanged`));
+        }
       }
     }
   }
@@ -278,191 +281,213 @@ function installCompatibility(isWorker: boolean): void {
       return callbackResult(invoke(), callback);
     };
   }
-  // COMPAT(electronActionBadges): added in v0.12.0; review after 2027-01-19 when Electron's native action stubs gain a usable host API.
-  // Electron 44.5.1 explicitly no-ops these six methods; leave every other native action method intact.
-  const actionManifest = chrome.runtime.getManifest();
-  for (const namespace of ["action", "browserAction"] as const) {
-    if (namespace === "action" ? !actionManifest.action : !actionManifest.browser_action) continue;
-    installNamespace(namespace, {
-      setBadgeText: method(`${namespace}.setBadgeText`),
-      getBadgeText: method(`${namespace}.getBadgeText`),
-      setBadgeBackgroundColor: badgeColorMethod(`${namespace}.setBadgeBackgroundColor`),
-      getBadgeBackgroundColor: method(`${namespace}.getBadgeBackgroundColor`),
-      setBadgeTextColor: badgeColorMethod(`${namespace}.setBadgeTextColor`),
-      getBadgeTextColor: method(`${namespace}.getBadgeTextColor`),
-    });
+  /** Route the badge methods Electron no-ops to the host, per declared action namespace. */
+  function installBadgeActions(): void {
+    // COMPAT(electronActionBadges): added in v0.12.0; review after 2027-01-19 when Electron's native action stubs gain a usable host API.
+    // Electron 44.5.1 explicitly no-ops these six methods; leave every other native action method intact.
+    const actionManifest = chrome.runtime.getManifest();
+    for (const namespace of ["action", "browserAction"] as const) {
+      if (namespace === "action" ? !actionManifest.action : !actionManifest.browser_action) continue;
+      installNamespace(namespace, {
+        setBadgeText: method(`${namespace}.setBadgeText`),
+        getBadgeText: method(`${namespace}.getBadgeText`),
+        setBadgeBackgroundColor: badgeColorMethod(`${namespace}.setBadgeBackgroundColor`),
+        getBadgeBackgroundColor: method(`${namespace}.getBadgeBackgroundColor`),
+        setBadgeTextColor: badgeColorMethod(`${namespace}.setBadgeTextColor`),
+        getBadgeTextColor: method(`${namespace}.getBadgeTextColor`),
+      });
+    }
   }
 
-  installNamespace("webNavigation", {
-    onCommitted: event("webNavigation.onCommitted"),
-    onCompleted: event("webNavigation.onCompleted"),
-    onErrorOccurred: event("webNavigation.onErrorOccurred"),
-  });
-  /** Obtain document IDs from Chromium scripting results, so navigation races fail the caller's document guard. */
-  async function frames(input: { tabId: number; frameId?: number }, all: boolean) {
-    const methodName = all ? "webNavigation.getAllFrames" : "webNavigation.getFrame";
-    const metadata = await bridge.invoke(methodName, [input]);
-    if (metadata === null) {
-      return null;
-    }
-    const target = all
-      ? { tabId: input.tabId, allFrames: true }
-      : { tabId: input.tabId, frameIds: [input.frameId ?? 0] };
-    const injections = await chrome.scripting.executeScript({ target, func: () => location.href });
-    function enrich(detail: unknown) {
-      if (
-        typeof detail !== "object" ||
-        detail === null ||
-        !("frameId" in detail) ||
-        !("url" in detail)
-      ) {
-        throw new Error("Invalid navigation frame metadata.");
+  /** Deliver webNavigation events and read frames with their Chromium document IDs. */
+  function installNavigation(): void {
+    installNamespace("webNavigation", {
+      onCommitted: event("webNavigation.onCommitted"),
+      onCompleted: event("webNavigation.onCompleted"),
+      onErrorOccurred: event("webNavigation.onErrorOccurred"),
+    });
+    /** Obtain document IDs from Chromium scripting results, so navigation races fail the caller's document guard. */
+    async function frames(input: { tabId: number; frameId?: number }, all: boolean) {
+      const methodName = all ? "webNavigation.getAllFrames" : "webNavigation.getFrame";
+      const metadata = await bridge.invoke(methodName, [input]);
+      if (metadata === null) {
+        return null;
       }
-      const injection = injections.find((item) => item.frameId === detail.frameId);
-      if (
-        !injection ||
-        typeof injection.documentId !== "string" ||
-        injection.result !== detail.url
-      ) {
-        throw new Error("The browser document changed while reading frame details.");
-      }
-      return { ...detail, documentId: injection.documentId };
-    }
-    return all && Array.isArray(metadata) ? metadata.map(enrich) : enrich(metadata);
-  }
-  if (chrome.webNavigation) {
-    chrome.webNavigation.getFrame = (
-      input: { tabId: number; frameId?: number },
-      callback?: unknown,
-    ) => callbackResult(frames(input, false), callback);
-    chrome.webNavigation.getAllFrames = (input: { tabId: number }, callback?: unknown) =>
-      callbackResult(frames(input, true), callback);
-  }
-  installNamespace("notifications", {
-    onClicked: event("notifications.onClicked"),
-    onButtonClicked: event("notifications.onButtonClicked"),
-    onClosed: event("notifications.onClosed"),
-    create: method("notifications.create"),
-    clear: method("notifications.clear"),
-  });
-  installNamespace("alarms", {
-    onAlarm: event("alarms.onAlarm"),
-    create: method("alarms.create"),
-    get: method("alarms.get"),
-    getAll: method("alarms.getAll"),
-    clear: method("alarms.clear"),
-    clearAll: method("alarms.clearAll"),
-  });
-  const contextMenuClicked = event("contextMenus.onClicked");
-  const onclickHandlers = new Map<string | number, (...args: unknown[]) => void>();
-  contextMenuClicked.addListener((info, tab) => {
-    if (
-      typeof info === "object" &&
-      info !== null &&
-      "menuItemId" in info &&
-      (typeof info.menuItemId === "string" || typeof info.menuItemId === "number")
-    ) {
-      onclickHandlers.get(info.menuItemId)?.(info, tab);
-    }
-  });
-  function menuProperties(properties: unknown) {
-    if (typeof properties !== "object" || properties === null) {
-      throw new Error("Context menu properties are required.");
-    }
-    const input = { ...properties };
-    const onclick = "onclick" in input ? input.onclick : undefined;
-    if (onclick !== undefined && typeof onclick !== "function") {
-      throw new Error("Context menu onclick must be a function.");
-    }
-    if (typeof onclick === "function" && typeof window === "undefined") {
-      throw new Error("Service workers must use contextMenus.onClicked instead of onclick.");
-    }
-    if ("onclick" in input) {
-      delete input.onclick;
-    }
-    return { input, onclick };
-  }
-  installNamespace("contextMenus", {
-    onClicked: contextMenuClicked,
-    create(properties: unknown, callback?: unknown): string | number {
-      const { input, onclick } = menuProperties(properties);
-      const values = new Uint32Array(1);
-      crypto.getRandomValues(values);
-      const id = "id" in input ? input.id : values[0];
-      if (typeof id !== "string" && typeof id !== "number") {
-        throw new Error("A context menu ID must be a string or number.");
-      }
-      if ("id" in input) {
-        delete input.id;
-      }
-      const result = bridge.invoke("contextMenus.create", [id, input]).then(() => {
-        onclickHandlers.delete(id);
-        if (typeof onclick === "function") {
-          onclickHandlers.set(id, (...args) => onclick(...args));
+      const target = all
+        ? { tabId: input.tabId, allFrames: true }
+        : { tabId: input.tabId, frameIds: [input.frameId ?? 0] };
+      const injections = await chrome.scripting.executeScript({ target, func: () => location.href });
+      function enrich(detail: unknown) {
+        if (
+          typeof detail !== "object" ||
+          detail === null ||
+          !("frameId" in detail) ||
+          !("url" in detail)
+        ) {
+          throw new Error("Invalid navigation frame metadata.");
         }
-        return undefined;
-      });
-      if (typeof callback === "function") {
-        callbackResult(result, callback);
-      } else {
-        void result.catch((error) => console.error("Context menu creation failed", error));
-      }
-      return id;
-    },
-    update(id: unknown, properties: unknown, callback?: unknown) {
-      const { input, onclick } = menuProperties(properties);
-      async function update(): Promise<unknown> {
-        const result = await bridge.invoke("contextMenus.update", [id, input]);
-        if ((typeof id === "string" || typeof id === "number") && typeof onclick === "function") {
-          onclickHandlers.set(id, (...args) => onclick(...args));
+        const injection = injections.find((item) => item.frameId === detail.frameId);
+        if (
+          !injection ||
+          typeof injection.documentId !== "string" ||
+          injection.result !== detail.url
+        ) {
+          throw new Error("The browser document changed while reading frame details.");
         }
-        return result;
+        return { ...detail, documentId: injection.documentId };
       }
-      return callbackResult(update(), callback);
-    },
-    remove(id: unknown, callback?: unknown) {
-      async function remove(): Promise<unknown> {
-        const result = await bridge.invoke("contextMenus.remove", [id]);
-        if (typeof id === "string" || typeof id === "number") {
+      return all && Array.isArray(metadata) ? metadata.map(enrich) : enrich(metadata);
+    }
+    if (chrome.webNavigation) {
+      chrome.webNavigation.getFrame = (
+        input: { tabId: number; frameId?: number },
+        callback?: unknown,
+      ) => callbackResult(frames(input, false), callback);
+      chrome.webNavigation.getAllFrames = (input: { tabId: number }, callback?: unknown) =>
+        callbackResult(frames(input, true), callback);
+    }
+  }
+  /** Host-backed notifications and alarms, including their events. */
+  function installNotificationsAndAlarms(): void {
+    installNamespace("notifications", {
+      onClicked: event("notifications.onClicked"),
+      onButtonClicked: event("notifications.onButtonClicked"),
+      onClosed: event("notifications.onClosed"),
+      create: method("notifications.create"),
+      clear: method("notifications.clear"),
+    });
+    installNamespace("alarms", {
+      onAlarm: event("alarms.onAlarm"),
+      create: method("alarms.create"),
+      get: method("alarms.get"),
+      getAll: method("alarms.getAll"),
+      clear: method("alarms.clear"),
+      clearAll: method("alarms.clearAll"),
+    });
+  }
+  /** Host-backed context menus, keeping page onclick handlers local to this document. */
+  function installContextMenus(): void {
+    const contextMenuClicked = event("contextMenus.onClicked");
+    const onclickHandlers = new Map<string | number, (...args: unknown[]) => void>();
+    contextMenuClicked.addListener((info, tab) => {
+      if (
+        typeof info === "object" &&
+        info !== null &&
+        "menuItemId" in info &&
+        (typeof info.menuItemId === "string" || typeof info.menuItemId === "number")
+      ) {
+        onclickHandlers.get(info.menuItemId)?.(info, tab);
+      }
+    });
+    function menuProperties(properties: unknown) {
+      if (typeof properties !== "object" || properties === null) {
+        throw new Error("Context menu properties are required.");
+      }
+      const input = { ...properties };
+      const onclick = "onclick" in input ? input.onclick : undefined;
+      if (onclick !== undefined && typeof onclick !== "function") {
+        throw new Error("Context menu onclick must be a function.");
+      }
+      if (typeof onclick === "function" && typeof window === "undefined") {
+        throw new Error("Service workers must use contextMenus.onClicked instead of onclick.");
+      }
+      if ("onclick" in input) {
+        delete input.onclick;
+      }
+      return { input, onclick };
+    }
+    installNamespace("contextMenus", {
+      onClicked: contextMenuClicked,
+      create(properties: unknown, callback?: unknown): string | number {
+        const { input, onclick } = menuProperties(properties);
+        const values = new Uint32Array(1);
+        crypto.getRandomValues(values);
+        const id = "id" in input ? input.id : values[0];
+        if (typeof id !== "string" && typeof id !== "number") {
+          throw new Error("A context menu ID must be a string or number.");
+        }
+        if ("id" in input) {
+          delete input.id;
+        }
+        const result = bridge.invoke("contextMenus.create", [id, input]).then(() => {
           onclickHandlers.delete(id);
+          if (typeof onclick === "function") {
+            onclickHandlers.set(id, (...args) => onclick(...args));
+          }
+          return undefined;
+        });
+        if (typeof callback === "function") {
+          callbackResult(result, callback);
+        } else {
+          void result.catch((error) => console.error("Context menu creation failed", error));
         }
-        return result;
-      }
-      return callbackResult(remove(), callback);
-    },
-    removeAll(callback?: unknown) {
-      async function removeAll(): Promise<unknown> {
-        const result = await bridge.invoke("contextMenus.removeAll", []);
-        onclickHandlers.clear();
-        return result;
-      }
-      return callbackResult(removeAll(), callback);
-    },
-  });
-  installNamespace("permissions", {
-    onAdded: event("permissions.onAdded"),
-    onRemoved: event("permissions.onRemoved"),
-    contains: method("permissions.contains"),
-    request: method("permissions.request"),
-  });
-  installNamespace("windows", {
-    onCreated: event("windows.onCreated"),
-    onRemoved: event("windows.onRemoved"),
-    onFocusChanged: event("windows.onFocusChanged"),
-    WINDOW_ID_CURRENT: -2,
-    WINDOW_ID_NONE: -1,
-    getCurrent: method("windows.getCurrent"),
-    getAll: method("windows.getAll"),
-    get: method("windows.get"),
-    create: method("windows.create"),
-    update: method("windows.update"),
-    remove: method("windows.remove"),
-  });
-  chrome.tabs.onActivated = event("tabs.onActivated");
-  chrome.tabs.onCreated = event("tabs.onCreated");
-  chrome.tabs.onRemoved = event("tabs.onRemoved");
-  chrome.tabs.onUpdated = event("tabs.onUpdated");
-  chrome.tabs.getCurrent = method("tabs.getCurrent");
-  chrome.tabs.query = method("tabs.query");
-  chrome.tabs.get = method("tabs.get");
+        return id;
+      },
+      update(id: unknown, properties: unknown, callback?: unknown) {
+        const { input, onclick } = menuProperties(properties);
+        async function update(): Promise<unknown> {
+          const result = await bridge.invoke("contextMenus.update", [id, input]);
+          if ((typeof id === "string" || typeof id === "number") && typeof onclick === "function") {
+            onclickHandlers.set(id, (...args) => onclick(...args));
+          }
+          return result;
+        }
+        return callbackResult(update(), callback);
+      },
+      remove(id: unknown, callback?: unknown) {
+        async function remove(): Promise<unknown> {
+          const result = await bridge.invoke("contextMenus.remove", [id]);
+          if (typeof id === "string" || typeof id === "number") {
+            onclickHandlers.delete(id);
+          }
+          return result;
+        }
+        return callbackResult(remove(), callback);
+      },
+      removeAll(callback?: unknown) {
+        async function removeAll(): Promise<unknown> {
+          const result = await bridge.invoke("contextMenus.removeAll", []);
+          onclickHandlers.clear();
+          return result;
+        }
+        return callbackResult(removeAll(), callback);
+      },
+    });
+  }
+  /** Permission checks, window APIs and the tab APIs Paseo answers from its own browser projection. */
+  function installPermissionsWindowsTabs(): void {
+    installNamespace("permissions", {
+      onAdded: event("permissions.onAdded"),
+      onRemoved: event("permissions.onRemoved"),
+      contains: method("permissions.contains"),
+      request: method("permissions.request"),
+    });
+    installNamespace("windows", {
+      onCreated: event("windows.onCreated"),
+      onRemoved: event("windows.onRemoved"),
+      onFocusChanged: event("windows.onFocusChanged"),
+      WINDOW_ID_CURRENT: -2,
+      WINDOW_ID_NONE: -1,
+      getCurrent: method("windows.getCurrent"),
+      getAll: method("windows.getAll"),
+      get: method("windows.get"),
+      create: method("windows.create"),
+      update: method("windows.update"),
+      remove: method("windows.remove"),
+    });
+    chrome.tabs.onActivated = event("tabs.onActivated");
+    chrome.tabs.onCreated = event("tabs.onCreated");
+    chrome.tabs.onRemoved = event("tabs.onRemoved");
+    chrome.tabs.onUpdated = event("tabs.onUpdated");
+    chrome.tabs.getCurrent = method("tabs.getCurrent");
+    chrome.tabs.query = method("tabs.query");
+    chrome.tabs.get = method("tabs.get");
+  }
+
+  installStorageEvents();
+  installBadgeActions();
+  installNavigation();
+  installNotificationsAndAlarms();
+  installContextMenus();
+  installPermissionsWindowsTabs();
 }
