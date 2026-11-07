@@ -18,6 +18,11 @@ export interface AgentNotificationViewLease {
   isVisible(): boolean;
 }
 
+export interface AgentNotificationViewHandle {
+  settled: Promise<void>;
+  release(): Promise<void>;
+}
+
 export interface AgentNotificationView {
   foreground: boolean;
   panelVisible: boolean;
@@ -92,18 +97,27 @@ export function createSeenAgentNotifications(adapter: AgentNotificationAdapter) 
     }
   }
 
-  /** Release only this view lease; a retained tab's cleanup cannot cancel the newer focused chat. */
-  function view(input: AgentNotificationViewLease): () => void {
+  /**
+   * Show a chat as viewed until released.
+   *
+   * `settled` resolves once this view's visibility report and tray cleanup finish. `release`
+   * ends only this lease, so a retained tab's cleanup cannot cancel the newer focused chat, and
+   * resolves once the cleared report finishes.
+   */
+  function view(input: AgentNotificationViewLease): AgentNotificationViewHandle {
     target = input.target;
     canView = input.isVisible;
     const ownLease = Symbol("visible-agent-notification-owner");
     lease = ownLease;
-    void refreshVisibility();
-    return () => {
-      if (lease !== ownLease) return;
-      lease = null;
-      target = null;
-      void refreshVisibility();
+    const settled = refreshVisibility();
+    return {
+      settled,
+      release: async () => {
+        if (lease !== ownLease) return;
+        lease = null;
+        target = null;
+        await refreshVisibility();
+      },
     };
   }
 

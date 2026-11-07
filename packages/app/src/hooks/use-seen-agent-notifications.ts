@@ -33,7 +33,7 @@ export function useSeenAgentNotifications(input: {
   });
   useLayoutEffect(() => {
     if (!visible || !input.agentId) return;
-    const release = seenAgentNotifications.view({
+    const view = seenAgentNotifications.view({
       target: { serverId: input.serverId, agentId: input.agentId },
       isVisible: () =>
         getIsAppActivelyVisible() &&
@@ -46,7 +46,7 @@ export function useSeenAgentNotifications(input: {
       : () => {};
     return () => {
       unsubscribe();
-      release();
+      void view.release();
     };
   }, [compact, input.agentId, input.serverId, isAtRest, subscribe, visible]);
 }
