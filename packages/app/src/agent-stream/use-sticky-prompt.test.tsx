@@ -401,9 +401,25 @@ it("uses authoritative source positions for projected Markdown reading rows", ()
   const reading = createPromptReadingPublisher();
   const input = { ...stickyInput([older, latest], stickyOutline([1, 3])), reading };
   const { result } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() => reading.publish({ rowId: "projected-markdown-block", navigating: false, following: false, manual: true, seq: 2 }));
+  act(() =>
+    reading.publish({
+      rowId: "projected-markdown-block",
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    }),
+  );
   expect(result.current.message?.id).toBe("older");
-  act(() => reading.publish({ rowId: "same-block", navigating: false, following: true, manual: false, seq: 2 }));
+  act(() =>
+    reading.publish({
+      rowId: "same-block",
+      navigating: false,
+      following: true,
+      manual: false,
+      seq: 2,
+    }),
+  );
   expect(result.current.message?.id).toBe("latest");
 });
 
@@ -413,9 +429,13 @@ it("does not transfer an arrow selection to a different reading-edge prompt afte
   const input = { ...stickyInput(users, stickyOutline([1, 2, 3])), reading };
   const { result } = renderHook(useStickyPrompt, { initialProps: input });
   act(() => result.current.activate("third", -1));
-  act(() => reading.publish({ rowId: "first", navigating: false, following: false, manual: false, seq: 1 }));
+  act(() =>
+    reading.publish({ rowId: "first", navigating: false, following: false, manual: false, seq: 1 }),
+  );
   expect(result.current.message?.id).toBe("second");
-  act(() => reading.publish({ rowId: "first", navigating: false, following: false, manual: true, seq: 1 }));
+  act(() =>
+    reading.publish({ rowId: "first", navigating: false, following: false, manual: true, seq: 1 }),
+  );
   expect(result.current.message?.id).toBe("first");
 });
 it("preserves known attachment content when its indexed prompt leaves the loaded window", async () => {
@@ -430,7 +450,15 @@ it("preserves known attachment content when its indexed prompt leaves the loaded
   const input = { ...stickyInput([old, latest], stickyOutline([1, 3])), reading, fetchPrompt };
   const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
   rerender({ ...input, items: [latest] });
-  act(() => reading.publish({ rowId: "projected-old-response", navigating: false, following: false, manual: true, seq: 2 }));
+  act(() =>
+    reading.publish({
+      rowId: "projected-old-response",
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    }),
+  );
   await waitFor(() => expect(result.current.message?.id).toBe("old"));
   expect(result.current.message?.images).toBe(old.images);
   expect(result.current.message?.attachments).toBe(old.attachments);
@@ -506,7 +534,13 @@ describe("sticky optional feature", () => {
       timelineCursor: { epoch: "epoch-1", seq: 2 },
     } as const;
     const reading = createPromptReadingPublisher();
-    reading.publish({ rowId: answer.id, navigating: false, following: false, manual: true, seq: 2 });
+    reading.publish({
+      rowId: answer.id,
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    });
     const fetchPrompt = vi.fn(() => deferred<ReturnType<typeof stickyUser>>().promise);
     const input = {
       ...stickyInput([answer, user], stickyOutline([1, 3])),
@@ -529,7 +563,13 @@ describe("sticky optional feature", () => {
       timelineCursor: { epoch: "epoch-1", seq: 2 },
     } as const;
     const reading = createPromptReadingPublisher();
-    reading.publish({ rowId: answer.id, navigating: false, following: false, manual: true, seq: 2 });
+    reading.publish({
+      rowId: answer.id,
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    });
     const page = deferred<ReturnType<typeof stickyUser>>();
     const fetchPrompt = vi.fn(() => page.promise);
     const input = {
@@ -548,6 +588,7 @@ describe("sticky optional feature", () => {
     rerender({ ...input, enabled: true });
     expect(result.current.message).toBe(user);
     expect(fetchPrompt).toHaveBeenCalledTimes(1);
+  });
 });
 describe("return to the pinned prompt", () => {
   it("reveals this loaded prompt rather than an adjacent one and retains it through incoming prompts", () => {
@@ -558,7 +599,15 @@ describe("return to the pinned prompt", () => {
     act(() => result.current.reveal());
     expect(input.jumpToLoaded).toHaveBeenCalledWith(latest.id, "original");
     expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
-    act(() => reading.publish({ rowId: latest.id, navigating: false, following: false, manual: false, seq: 3 }));
+    act(() =>
+      reading.publish({
+        rowId: latest.id,
+        navigating: false,
+        following: false,
+        manual: false,
+        seq: 3,
+      }),
+    );
     const incoming = stickyUser("four", 4);
     rerender({ ...input, items: [latest, incoming], outline: stickyOutline([1, 2, 3, 4]) });
     expect(result.current.message?.id).toBe(latest.id);
@@ -576,7 +625,13 @@ describe("return to the pinned prompt", () => {
       timelineCursor: { epoch: "epoch-1", seq: 2 },
     } as const;
     const reading = createPromptReadingPublisher();
-    reading.publish({ rowId: answer.id, navigating: false, following: false, manual: true, seq: 2 });
+    reading.publish({
+      rowId: answer.id,
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    });
     const input = {
       ...stickyInput([answer, latest], stickyOutline([1, 3])),
       reading,
