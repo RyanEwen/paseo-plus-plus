@@ -13,23 +13,27 @@ export interface ShowContextMenuInput {
   };
 }
 
+/** The menu input arrives over IPC from the renderer, so its URL is checked rather than trusted. */
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Extend the existing terminal menu without moving navigation or clipboard ownership into main. */
 export function buildTerminalContextMenuTemplate(
   input: ShowContextMenuInput,
   choose: (action: TerminalLinkMenuAction) => void,
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
-  const link = input.link;
-  let eligible = false;
-  if (link && typeof link.url === "string") {
-    try {
-      const protocol = new URL(link.url).protocol;
-      eligible = protocol === "http:" || protocol === "https:";
-    } catch {
-      eligible = false;
-    }
-  }
-  if (eligible && link) {
+  const link = input.link && isHttpUrl(input.link.url) ? input.link : undefined;
+  if (link) {
     if (link.openInPaseo) {
       items.push({ label: link.labels.internal, click: () => choose("open-internal") });
     }
