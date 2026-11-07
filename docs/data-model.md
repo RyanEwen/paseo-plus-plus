@@ -83,17 +83,7 @@ The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` b
 
 **Path:** `$PASEO_HOME/agents/{project-dir}/{agentId}.json`
 
-Optional `providerHistory` belongs to this record, outside provider-owned persistence metadata.
-Adapters replace that metadata during resume and streaming updates. Keep unknown legacy
-provenance unknown, and preserve the binding through snapshots from older adapters. Configured
-Codex/Claude routes are bound in the same queued record before launch; changing a provider default must
-not silently redirect a persisted native ID. `legacy` remains an accepted unknown-initiation origin;
-ordinary creation/import never manufactures it. Migration guidance grants no record-rebind permission.
-Claude deliberately changes native IDs only through the queued managed-rewind transition. Optional
-`claudeFreshRewind` records the pending operation ID while preserving the old recovery handle;
-ordinary snapshots cannot create or consume it. See
-[provider history preview](fork-features/provider-history-preview.md#interpret-provenance)
-for its ownership limits.
+Optional `providerHistory` belongs to this record, outside provider-owned persistence metadata, because adapters replace that metadata on resume and streaming. Configured Codex and Claude routes are bound here before launch, so a changed provider default cannot redirect a persisted native ID; snapshots from older adapters preserve the binding and keep unknown legacy provenance unknown. Optional `claudeFreshRewind` records a pending rewind operation ID while the old recovery handle stays in `persistence`. See [provider history preview](fork-features/provider-history-preview.md#interpret-provenance) for its ownership limits.
 
 Each agent is stored as a separate JSON file, grouped by project directory.
 
