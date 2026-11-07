@@ -148,6 +148,7 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { useProjectArchive } from "@/workspace/use-project-archive";
+import { resolveProjectRestoreHosts } from "@/workspace/project-archive-restore";
 import {
   getCurrentProjectRemoveReadiness,
   removeProjectFromHosts,
@@ -937,6 +938,7 @@ function ProjectHeaderRow({
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
+  const restoreHosts = useMemo(() => resolveProjectRestoreHosts(project), [project]);
   const archiveAction = useProjectArchive({ projectName: displayName, hosts: project.hosts });
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
@@ -1111,7 +1113,7 @@ function ProjectHeaderRow({
       </ContextMenuContent>
       <RestoreProjectWorkspaceDialog
         visible={restoreProjectOpen}
-        target={settingsTarget}
+        hosts={restoreHosts}
         onClose={closeRestoreProject}
         onWorkspacePress={onWorkspacePress}
       />
