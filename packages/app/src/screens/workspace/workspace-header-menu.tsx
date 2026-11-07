@@ -226,7 +226,8 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
 }
 
 /**
- * Compact layouts retain creation and history actions independently of the tab-strip preference.
+ * Compact layouts keep New agent here because the Mobile workspace tabs setting can replace the
+ * strip and its + button with the tab chooser.
  *
  * The header has no room for a scripts button either, so scripts are a page of this menu, and the
  * ⋯ carries a dot while a running service is unhealthy. Plugin header buttons are rows here for the
