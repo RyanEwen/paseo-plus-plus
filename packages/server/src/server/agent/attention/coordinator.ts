@@ -222,51 +222,15 @@ export class AgentAttentionCoordinator {
     signal: AbortSignal;
     waitForSubmission?: boolean;
   }): Promise<AgentAttentionOutcome | null> {
-    let changed = 0;
-    let wake: (() => void) | undefined;
-    const unsubscribe = this.host.subscribe(
-      () => {
-        changed += 1;
-        wake?.();
-      },
-      { agentId: input.agentId, replayState: false },
-    );
-    const abort = () => wake?.();
-    input.signal.addEventListener("abort", abort, { once: true });
+    const changes = this.watchAgentChanges(input.agentId, input.signal);
     let query = input.query;
     try {
       for (;;) {
         input.signal.throwIfAborted();
-        const before = changed;
-        const state = await this.host.runForegroundMutation(input.agentId, async () => {
-          const agent = this.host.agents().get(input.agentId);
-          // Only a run that has not been admitted yet can still accept this request.
-          const submissionPossible = this.host.hasInFlightRun(input.agentId);
-          if (agent?.attentionObjectives) {
-            const result = agent.attentionObjectives.requests.read(query);
-            if (query.acknowledgeOutcomeId) {
-              await this.host.persistSnapshot(agent);
-            }
-            return { ...result, submissionPossible };
-          }
-          const record = await this.host.registry()?.get(input.agentId);
-          if (!record?.attentionObjectives) {
-            return { outcome: null, pending: false, known: false, submissionPossible };
-          }
-          if (query.acknowledgeOutcomeId) {
-            await this.host.registry()?.update(input.agentId, (current) => {
-              const ledger = this.createAttentionObjectives(current.attentionObjectives);
-              ledger.requests.read(query);
-              return { ...current, attentionObjectives: ledger.snapshot() };
-            });
-          }
-          const latest = await this.host.registry()?.get(input.agentId);
-          const result = this.createAttentionObjectives(latest?.attentionObjectives).requests.read({
-            link: query.link,
-            requester: query.requester,
-          });
-          return { ...result, submissionPossible };
-        });
+        const seen = changes.version();
+        const state = await this.host.runForegroundMutation(input.agentId, () =>
+          this.readAttentionOutcome(input.agentId, query),
+        );
         const wasAcknowledgement = query.acknowledgeOutcomeId !== undefined;
         query = { link: query.link, requester: query.requester };
         if (state.outcome) {
@@ -278,21 +242,80 @@ export class AgentAttentionCoordinator {
         if (!state.pending && (state.known || !awaitingSubmission)) {
           return null;
         }
-        if (before !== changed) {
-          continue;
-        }
-        await new Promise<void>((resumeWait) => {
-          wake = resumeWait;
-          if (input.signal.aborted || before !== changed) {
-            resumeWait();
+        await changes.after(seen);
+      }
+    } finally {
+      changes.close();
+    }
+  }
+
+  /**
+   * Read (and, for an acknowledgement query, consume) one request's outcome from the live or
+   * stored ledger. Runs inside the agent's foreground mutation lane.
+   */
+  private async readAttentionOutcome(agentId: string, query: AgentAttentionRequestQuery) {
+    const agent = this.host.agents().get(agentId);
+    // Only a run that has not been admitted yet can still accept this request.
+    const submissionPossible = this.host.hasInFlightRun(agentId);
+    if (agent?.attentionObjectives) {
+      const result = agent.attentionObjectives.requests.read(query);
+      if (query.acknowledgeOutcomeId) {
+        await this.host.persistSnapshot(agent);
+      }
+      return { ...result, submissionPossible };
+    }
+    const registry = this.host.registry();
+    const record = await registry?.get(agentId);
+    if (!registry || !record?.attentionObjectives) {
+      return { outcome: null, pending: false, known: false, submissionPossible };
+    }
+    if (query.acknowledgeOutcomeId) {
+      await registry.update(agentId, (current) => {
+        const ledger = this.createAttentionObjectives(current.attentionObjectives);
+        ledger.requests.read(query);
+        return { ...current, attentionObjectives: ledger.snapshot() };
+      });
+    }
+    const latest = await registry.get(agentId);
+    const result = this.createAttentionObjectives(latest?.attentionObjectives).requests.read({
+      link: query.link,
+      requester: query.requester,
+    });
+    return { ...result, submissionPossible };
+  }
+
+  /**
+   * Count change events for one agent so a waiter can sleep until something changed after the
+   * state it last read. `after(seen)` resolves at once if a change already arrived, and on abort.
+   */
+  private watchAgentChanges(agentId: string, signal: AbortSignal) {
+    let changed = 0;
+    let wake: (() => void) | undefined;
+    const unsubscribe = this.host.subscribe(
+      () => {
+        changed += 1;
+        wake?.();
+      },
+      { agentId, replayState: false },
+    );
+    const abort = () => wake?.();
+    signal.addEventListener("abort", abort, { once: true });
+    return {
+      version: () => changed,
+      after: async (seen: number): Promise<void> => {
+        await new Promise<void>((resume) => {
+          wake = resume;
+          if (signal.aborted || seen !== changed) {
+            resume();
           }
         });
         wake = undefined;
-      }
-    } finally {
-      unsubscribe();
-      input.signal.removeEventListener("abort", abort);
-    }
+      },
+      close: () => {
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
+      },
+    };
   }
 
   get agentAwareAttentionEnabled(): boolean {
