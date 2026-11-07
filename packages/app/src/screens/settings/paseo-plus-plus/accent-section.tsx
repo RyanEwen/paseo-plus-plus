@@ -12,7 +12,11 @@ import { StyleSheet } from "react-native-unistyles";
 import { resolveAccentColors } from "@/styles/accent";
 import { AccentPreview } from "./accent-preview";
 
-/** Share the standard settings save, sync, error and selected-option behavior on every platform. */
+/**
+ * Accent picker: one swatch per choice, each previewing its own bubble colors, saved through the
+ * shared settings save. Disabled while settings load, while a blocker holds edits, during a save,
+ * and when the selected settings host cannot store the accent.
+ */
 export function AccentSection() {
   const { t } = useTranslation();
   // adapt: this layer has no settings sync, so preferences stay on this device (no selected host).
@@ -79,7 +83,6 @@ function AccentOption({
   return (
     <Button
       variant="outline"
-      size="md"
       accessibilityRole="radio"
       accessibilityState={state}
       aria-checked={selected}
