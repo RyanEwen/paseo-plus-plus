@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { DEFAULT_SIDEBAR_ROW_ITEMS } from "@/components/sidebar/display-preferences/row-items";
-import type { AppSettings } from "@/hooks/use-settings/storage";
+import {
+  DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT,
+  type AppSettings,
+} from "@/hooks/use-settings/storage";
 
 export const SidebarModePreferencesSchema = z.object({
   sortMode: z.enum(["project", "status", "custom"]),
@@ -56,7 +59,7 @@ export function defaultSidebarModePreferences(mode: "project" | "status"): Sideb
     sidebarRowItems: { ...DEFAULT_SIDEBAR_ROW_ITEMS },
     sidebarChecksDisplay: "iconAndText",
     sidebarWorkspaceTrailing: "timestamp",
-    initialWorkspaceCount: 20,
+    initialWorkspaceCount: DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT,
     workspaceUpdatedWithinDays: null,
   };
 }
