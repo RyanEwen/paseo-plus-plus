@@ -1,4 +1,5 @@
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { workingDiffTabResourceId } from "@/workspace-tabs/identity";
 
 /** Where a tab renders: a split pane, the Explorer dock, or the compact workspace sheet. */
 export type PaneHost = "main" | "explorer" | "sheet";
@@ -128,8 +129,7 @@ const manifests = {
     showCloseButton: true,
     singleton: false,
     compactSheet: null,
-    resourceKey: (target) =>
-      target.filePath ? `working_diff_file_${target.filePath}` : "working_diff",
+    resourceKey: workingDiffTabResourceId,
   },
   plugin: {
     kind: "plugin",

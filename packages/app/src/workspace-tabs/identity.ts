@@ -195,6 +195,13 @@ function recordsShallowEqual(
   return true;
 }
 
+/** One working diff tab per scope: the whole checkout, or one literal changed file. */
+export function workingDiffTabResourceId(
+  target: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): string {
+  return target.filePath ? `working_diff_file_${target.filePath}` : "working_diff";
+}
+
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
   if (target.kind === "new_tab") {
     throw new Error("New tabs do not have deterministic target identities");
@@ -221,7 +228,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return `commit_diff_${target.sha}`;
   }
   if (target.kind === "working_diff") {
-    return target.filePath ? `working_diff_file_${target.filePath}` : "working_diff";
+    return workingDiffTabResourceId(target);
   }
   if (target.kind === "changes_tree" || target.kind === "files" || target.kind === "pull_request") {
     return target.kind;
