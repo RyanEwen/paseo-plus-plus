@@ -69,7 +69,9 @@ vi.mock("react-native-unistyles", async () => {
   };
 });
 
-vi.mock("@/constants/platform", () => ({
+// Spread the real module: the menu engine behind the browser destination rows imports more of it.
+vi.mock("@/constants/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/constants/platform")>()),
   isNative: false,
   isWeb: true,
 }));
@@ -171,7 +173,9 @@ vi.mock("@/components/ui/tooltip", () => ({
   ),
 }));
 
-vi.mock("lucide-react-native", () => {
+// The scripts UI icons stay stubbed so assertions can read them; every other icon is real.
+vi.mock("lucide-react-native", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react-native")>();
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", {
       "data-icon": name,
@@ -180,7 +184,7 @@ vi.mock("lucide-react-native", () => {
       "data-testid": props.testID,
     });
   return {
-    Check: createIcon("Check"),
+    ...actual,
     ChevronDown: createIcon("ChevronDown"),
     Copy: createIcon("Copy"),
     Eye: createIcon("Eye"),
