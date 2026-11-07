@@ -567,7 +567,7 @@ function StatusWorkspaceRowWithMenu({
   const handleOpenRename = useCallback(() => openRename(workspace), [openRename, workspace]);
   const isPinned = workspace.pinnedAt != null;
   const isProjectPinned = workspace.projectPinnedAt != null;
-  const onToggleProjectPin = useCallback(() => {
+  const handleToggleProjectPin = useCallback(() => {
     onToggleWorkspacePin(workspace, "project");
   }, [onToggleWorkspacePin, workspace]);
   const handleTogglePin = useCallback(() => {
@@ -627,7 +627,7 @@ function StatusWorkspaceRowWithMenu({
       isPinned={isPinned}
       onTogglePin={onTogglePin}
       isProjectPinned={isProjectPinned}
-      onToggleProjectPin={onToggleProjectPin}
+      onToggleProjectPin={handleToggleProjectPin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       inStatusGroup={inStatusGroup}
       drag={drag}
