@@ -45,6 +45,7 @@ env:
 
 jobs:
   source:
+    # COMPAT(forkRepositoryRename): added in v0.11.2, remove 'RyanEwen/paseo' after 2027-04-14 once cutover is complete.
     if: ${{ !inputs.windows_powershell_probe && (github.repository == 'RyanEwen/paseo' || github.repository == 'RyanEwen/paseo-plus-plus') }}
     runs-on: ubuntu-24.04
     permissions:
@@ -410,6 +411,7 @@ jobs:
   # signing or publishing credentials (checkout uses the job's read-only token and does not persist
   # it), and its artifact name stays outside the preview-* pattern the release job collects.
   windows-powershell-probe:
+    # COMPAT(forkRepositoryRename): added in v0.11.2, remove 'RyanEwen/paseo' after 2027-04-14 once cutover is complete.
     if: ${{ inputs.windows_powershell_probe && (github.repository == 'RyanEwen/paseo' || github.repository == 'RyanEwen/paseo-plus-plus') }}
     strategy:
       fail-fast: false

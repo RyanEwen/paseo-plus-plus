@@ -967,6 +967,7 @@ test("preview releases build one checked commit and require every approved platf
   const trigger = source.split("jobs:", 1)[0];
   assert.match(trigger, /workflow_dispatch:/);
   assert.doesNotMatch(trigger, /push:|pull_request:/);
+  // COMPAT(forkRepositoryRename): remove this legacy repository assertion after 2027-04-14.
   assert.match(source, /github\.repository == 'RyanEwen\/paseo'/);
   assert.match(source, /github\.repository == 'RyanEwen\/paseo-plus-plus'/);
   assert.match(source, /run: node scripts\/preview-release\/source\.mjs/);
@@ -1323,6 +1324,8 @@ test("fork overview review reruns on PR edits and has no write permissions", () 
 
 test("preview operations accept only exact fork repositories and integration refs during the rename", () => {
   const commit = "a".repeat(40);
+  // COMPAT(forkRepositoryRename, forkIntegrationRename): drop RyanEwen/paseo and ryan/preview
+  // from these lists after 2027-04-14.
   for (const repository of ["RyanEwen/paseo", "RyanEwen/paseo-plus-plus"]) {
     assert.equal(requirePreviewRepository(repository), repository);
     for (const branch of ["ryan/preview", "main"]) {
@@ -1357,6 +1360,7 @@ test("preview source CI rejects missing, mismatched, failed, or unfinished push 
   const commit = "a".repeat(40);
   const run = {
     head_sha: commit,
+    // COMPAT(forkIntegrationRename): use main here after 2027-04-14.
     head_branch: "ryan/preview",
     event: "push",
     status: "completed",
@@ -1403,6 +1407,7 @@ test("fork main keeps upstream deployment and automatic Nix writes disabled", ()
   assert.match(website, /!github\.event\.release\.prerelease && !github\.event\.release\.draft/);
   assert.match(nix, /update-hash:\n    if: github\.repository == 'getpaseo\/paseo'/);
   const ci = readFileSync(ciWorkflowPath, "utf8");
+  // COMPAT(forkIntegrationRename): drop ryan/dev and ryan/preview after 2027-04-14.
   assert.match(ci, /^  push:\n    branches: \[main, ryan\/dev, ryan\/preview\]$/m);
 });
 

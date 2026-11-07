@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  # COMPAT(forkIntegrationRename): added in v0.11.2, remove ryan/dev and ryan/preview after 2027-04-14 once cutover is complete.
   push:
     branches: [main, ryan/dev, ryan/preview]
   # Every base branch receives PR checks, including integration branches.
