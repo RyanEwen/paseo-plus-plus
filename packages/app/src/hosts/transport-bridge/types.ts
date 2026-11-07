@@ -1,4 +1,4 @@
-import type { SshDestination } from "./ssh/ssh-destination";
+import type { SshDestination } from "@/hosts/ssh/ssh-destination";
 
 export interface LocalTransportTarget {
   [key: string]: unknown;

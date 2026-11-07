@@ -7,8 +7,9 @@ import type {
   BridgeDaemonTransportTarget,
   BridgeDaemonTransportEvent,
   DaemonTransportBridge,
-} from "./daemon-transport-bridge";
+} from "./types";
 
+// Renderer-internal URL scheme. The name predates Android support; existing tests assert it.
 const BRIDGE_TRANSPORT_SCHEME = "paseo+desktop:";
 
 function encodeBinaryToBase64(data: Uint8Array | ArrayBuffer): string {
@@ -29,6 +30,7 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+/** Encode a bridge target as the URL the daemon client hands back to the transport factory. */
 export function buildBridgeDaemonTransportUrl(target: BridgeDaemonTransportTarget): string {
   const url = new URL(`${BRIDGE_TRANSPORT_SCHEME}//${target.transportType}`);
   if (target.transportType === "ssh") {
@@ -48,13 +50,13 @@ export function buildBridgeDaemonTransportUrl(target: BridgeDaemonTransportTarge
 function parseBridgeDaemonTransportUrl(url: string): BridgeDaemonTransportTarget {
   const parsed = new URL(url);
   if (parsed.protocol !== BRIDGE_TRANSPORT_SCHEME) {
-    throw new Error(`Unsupported desktop transport URL: ${url}`);
+    throw new Error(`Unsupported bridge transport URL: ${url}`);
   }
   const transportType = parsed.hostname;
   if (transportType === "ssh") return parseSshBridgeTransportUrl(parsed, url);
   const transportPath = parsed.searchParams.get("path")?.trim() ?? "";
   if ((transportType !== "socket" && transportType !== "pipe") || !transportPath) {
-    throw new Error(`Invalid desktop transport target: ${url}`);
+    throw new Error(`Invalid bridge transport target: ${url}`);
   }
   return {
     transportType,
@@ -86,7 +88,7 @@ function parseOptionalUrlPort(parsed: URL, key: string, label: string): number |
 /** Adapt an event-based platform bridge to the daemon client's transport lifecycle. */
 export function createBridgeDaemonTransportFactory(
   rpc: DaemonTransportBridge,
-): DaemonTransportFactory | null {
+): DaemonTransportFactory {
   return ({ url }) => {
     const target = parseBridgeDaemonTransportUrl(url);
     const sessionId = `local-session-${globalThis.crypto.randomUUID()}`;

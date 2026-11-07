@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from "expo-modules-core";
-import { createBridgeDaemonTransportFactory } from "@/hosts/bridge-daemon-transport";
+import { createBridgeDaemonTransportFactory } from "@/hosts/transport-bridge/transport";
 import { sshCredentialId } from "./ssh-destination";
 import { importPrivateKey } from "./import-private-key";
 import type { SshKeyImport } from "./ssh-key-import-model";
@@ -11,7 +11,10 @@ const native = nativeModule ? createSshNativeBridge(nativeModule) : null;
 // One stable value per process, so the form can take it as a prop without re-rendering.
 const keyImport: SshKeyImport | null = native ? { bridge: native, importPrivateKey } : null;
 
-export const isSshAvailable = () => native !== null;
+/** Android offers SSH only in builds that include the native module. */
+export function isSshAvailable(): boolean {
+  return native !== null;
+}
 
 /** Key import is available whenever this build includes the native SSH module. */
 export function getSshKeyImport(): SshKeyImport | null {

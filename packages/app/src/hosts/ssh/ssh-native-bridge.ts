@@ -1,5 +1,5 @@
 import type { EventSubscription } from "expo-modules-core";
-import type { BridgeDaemonTransportEvent } from "@/hosts/daemon-transport-bridge";
+import type { BridgeDaemonTransportEvent } from "@/hosts/transport-bridge/types";
 import type { SshDestination } from "./ssh-destination";
 import type { SshKeyImportBridge } from "./ssh-key-import-model";
 

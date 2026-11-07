@@ -4,6 +4,15 @@ import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 
+const styles = StyleSheet.create((theme) => ({
+  fingerprint: {
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+  },
+  instructions: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+}));
+
 interface SshKeyImportFieldsProps {
   keyName: string | null;
   fingerprint: string | null;
@@ -52,11 +61,3 @@ export function SshKeyImportFields({
     </>
   );
 }
-const styles = StyleSheet.create((theme) => ({
-  fingerprint: {
-    color: theme.colors.foreground,
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.sm,
-  },
-  instructions: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
-}));
