@@ -122,7 +122,7 @@ import {
   resolveProjectWorkspaceReorder,
 } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { type SidebarStateBucket } from "@/utils/sidebar-agent-state";
+import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
@@ -1016,12 +1016,7 @@ function ProjectHeaderRow({
             collapsed: chevron === "expand",
           })}
           projectViewKey={project.viewKey}
-          backdrop={getSidebarRowBackdrop({
-            isDragging,
-            isPressed,
-            selected,
-            isHovered,
-          })}
+          backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
