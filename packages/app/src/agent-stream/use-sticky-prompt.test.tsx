@@ -515,7 +515,7 @@ describe("sticky optional feature", () => {
       loadOlder,
       enabled: true,
     };
-    const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
+    const { rerender } = renderHook(useStickyPrompt, { initialProps: input });
     const acceptance = loadOlder.mock.calls[0]![0]!;
     rerender({ ...input, enabled: false });
     expect(acceptance.signal.aborted).toBe(true);
@@ -548,7 +548,7 @@ describe("sticky optional feature", () => {
       reading,
       fetchPrompt,
     };
-    const { result } = renderHook(useStickyPrompt, { initialProps: input });
+    renderHook(useStickyPrompt, { initialProps: input });
     expect(fetchPrompt).not.toHaveBeenCalled();
   });
   it("cancels late content reads on opt-out and preserves loaded data", async () => {
