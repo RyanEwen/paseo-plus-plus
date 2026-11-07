@@ -63,31 +63,31 @@ const HoverCardContext = createContext<HoverCardContextValue | null>(null);
  * ```
  */
 export function HoverCard({
-  openDelay = 0,
+  delayDuration = 0,
   disabled = false,
   children,
 }: {
   /** Closes the card and keeps it closed, e.g. while its trigger is dragged. */
   disabled?: boolean;
   /** Pointer dwell before mounting the card; keyboard activation stays immediate. */
-  openDelay?: number;
+  delayDuration?: number;
   children: ReactNode;
 }): ReactNode {
   if (!isWeb) return children;
   return (
-    <WebHoverCard disabled={disabled} openDelay={openDelay}>
+    <WebHoverCard disabled={disabled} delayDuration={delayDuration}>
       {children}
     </WebHoverCard>
   );
 }
 
 function WebHoverCard({
-  openDelay,
+  delayDuration,
   disabled,
   children,
 }: {
   disabled: boolean;
-  openDelay: number;
+  delayDuration: number;
   children: ReactNode;
 }): ReactElement {
   const layer = useOverlayLayer("floating");
@@ -154,7 +154,7 @@ function WebHoverCard({
   const scheduleOpen = useCallback(() => {
     clearGraceTimer();
     if (disabled || openTimerRef.current !== null) return;
-    if (openDelay <= 0) {
+    if (delayDuration <= 0) {
       openNow();
       return;
     }
@@ -168,8 +168,8 @@ function WebHoverCard({
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
       openNow();
-    }, openDelay);
-  }, [clearOpenTimer, clearGraceTimer, disabled, openDelay, openNow]);
+    }, delayDuration);
+  }, [clearOpenTimer, clearGraceTimer, disabled, delayDuration, openNow]);
 
   const keyPressed = useCallback(
     (event: KeyboardEvent): boolean => {

@@ -2,10 +2,15 @@ import { useMemo, type KeyboardEvent } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { isWeb } from "@/constants/platform";
 
-/** Add keyboard activation to actionable Text, whose web onPress handles clicks only.
- * Native Text retains its accessibility activation through onPress.
+/** The event an actionable Text reports: a press, or Enter on the focused web element. */
+export type TextLinkEvent = GestureResponderEvent | KeyboardEvent<HTMLElement>;
+
+/**
+ * Add keyboard activation to actionable Text, whose web onPress handles clicks only.
+ * Native Text retains its accessibility activation through onPress. The handler receives the
+ * keyboard event for Enter, so it must accept both event shapes.
  */
-export function useTextLink(onPress?: (event: GestureResponderEvent) => void) {
+export function useTextLink(onPress?: (event: TextLinkEvent) => void) {
   return useMemo(
     () =>
       isWeb && onPress
@@ -14,8 +19,7 @@ export function useTextLink(onPress?: (event: GestureResponderEvent) => void) {
             onKeyDown(event: KeyboardEvent<HTMLElement>) {
               if (event.key === "Enter") {
                 event.preventDefault();
-                // Both events expose currentTarget and nativeEvent to the platform guard.
-                onPress(event as unknown as GestureResponderEvent);
+                onPress(event);
               }
             },
           }
