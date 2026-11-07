@@ -1,5 +1,5 @@
-import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 import { describe, expect, it } from "vitest";
+import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 
 import {
   mapClaudeCanceledToolCall,

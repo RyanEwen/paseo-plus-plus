@@ -1,5 +1,5 @@
-import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 import { describe, expect, test } from "vitest";
+import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 
 import {
   extractTextFromToolResult,
