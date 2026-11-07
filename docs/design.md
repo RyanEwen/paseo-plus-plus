@@ -32,13 +32,13 @@ Hierarchy is conveyed through weight and color, not size. Most interface text is
 
 The authored interface ramp uses a 14px base. New native installs default to 15px; web and desktop default to 14px. The Appearance **Interface size** setting is the rendered `fontSize.base` value and scales the rest of the UI ramp proportionally. Primary readable content has its own `fontSize.content`, which defaults to 16px on native and 15px on web and desktop. It owns message bodies, composer input, Markdown, and PR prose. Controls, navigation, metadata, tool chrome, code, diffs, editors, and terminals stay on their interface or code tokens. **Code size** remains independent.
 
-Sidebar project names use `fontWeight.bold` to distinguish project headers from workspace names.
-
 Weight has three tiers, applied by role:
 
 - **Screen titles** — the title in app chrome — use `<ScreenTitle>` (`packages/app/src/components/headers/screen-title.tsx`), which renders `fontSize.base` at weight `400` on compact and `300` on desktop. The New workspace hero is the only larger product title; it uses `fontSize["2xl"]` (`packages/app/src/screens/new-workspace-screen.tsx`).
 - **Structural labels** use `fontWeight.medium`. This applies to section labels above a stack of rows (`packages/app/src/components/agent-list.tsx:519-523`, `packages/app/src/components/keyboard-shortcuts-dialog.tsx:63-67`), form field labels above an input inside a modal (`packages/app/src/components/add-host-modal.tsx:19-23`, `packages/app/src/components/pair-link-modal.tsx:24-28`), the title at the top of a modal/sheet/dialog (`packages/app/src/components/adaptive-modal-sheet.tsx:90-94`, `packages/app/src/components/ui/combobox.tsx:1607-1611`, `packages/app/src/components/welcome-screen.tsx:48-53`), action button labels in tight components such as the sidebar callout actions (`packages/app/src/components/sidebar-callout.tsx:218-221`), and inline data emphasis on dense metadata rows (`packages/app/src/components/git-diff-pane.tsx:2322-2327`, `packages/app/src/components/file-explorer-pane.tsx:1115-1122`).
 - **Content** uses `fontWeight.normal`. This applies to settings rows (`packages/app/src/styles/settings.ts`), sidebar primary list-item titles (`packages/app/src/components/sidebar-workspace-list.tsx:2680-2686`, `packages/app/src/components/agent-list.tsx:572-578`), `<StatusBadge>` text (`packages/app/src/components/ui/status-badge.tsx:56-60`), and `<SidebarCallout>` titles (`packages/app/src/components/sidebar-callout.tsx:175-180`).
+
+One fork exception sits outside the tiers: sidebar project headers use `fontWeight.bold` while the Paseo++ **Bold project names** switch is on (the default; see [Bold project names](fork-features/bold-project-names.md)). With the switch off they use Content weight, like the workspace rows under them.
 
 The rule, condensed: text that _names_ a surface or a group is `medium`. Text that lives _inside_ a surface or a group is `normal`. Top-of-screen titles are `<ScreenTitle>`, which is lighter still.
 
@@ -253,7 +253,7 @@ New status pills use `<StatusBadge>`. Identity, shortcut, and interactive link b
 
 ## 14. Forbidden
 
-- `fontWeight.medium` on row titles, body text, badge text, or `<SidebarCallout>` titles. Medium is reserved for the structural-label tier described in §3 — section labels, modal/sheet titles, dense metadata emphasis, and tight action labels. Anything else is `normal`. `<ScreenTitle>` is responsive `400/300` and is never overridden.
+- `fontWeight.medium` on row titles, body text, badge text, or `<SidebarCallout>` titles. Medium is reserved for the structural-label tier described in §3 — section labels, modal/sheet titles, dense metadata emphasis, and tight action labels. Anything else is `normal`, except the sidebar project header exception in §3. `<ScreenTitle>` is responsive `400/300` and is never overridden.
 - `<Pressable>` wrapping `<Text>` to make a button. `<Button>` exists.
 - Importing `Pressable` or a `Touchable*` outside `components/ui/`. A raw pressable has no standard press or hover feedback, so every one drifts. `paseo/no-raw-pressable` reports it; the files on its burn-down list in `.oxlintrc.json` may only leave it.
 - Bare `<Text>` for a section header inside settings. `<SettingsSection>` exists.
