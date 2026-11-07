@@ -3,6 +3,7 @@ import {
   WorkspaceListPage,
   WorkspaceUpdatedWithinPage,
 } from "./workspace-list";
+import { WORKSPACE_LIMIT_PAGES } from "./workspace-limit-pages";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   isSidebarTrailingItemEnabled,
@@ -236,22 +237,18 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
     projects.some((project) => project.workspaces.length === 0);
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
+    const workspaceLimitContent = {
+      workspaceList: <WorkspaceListPage preferences={preferences} />,
+      workspaceCount: <WorkspaceCountPage preferences={preferences} />,
+      workspaceUpdatedWithin: <WorkspaceUpdatedWithinPage preferences={preferences} />,
+    };
     const definitions: MenuPageDefinition[] = [
-      {
-        id: "workspaceList",
-        title: t("paseoPlusPlus.workspaceLimit.title"),
-        content: <WorkspaceListPage preferences={preferences} />,
-      },
-      {
-        id: "workspaceCount",
-        title: t("sidebar.display.workspaceList.countLimit"),
-        content: <WorkspaceCountPage preferences={preferences} />,
-      },
-      {
-        id: "workspaceUpdatedWithin",
-        title: t("sidebar.display.workspaceList.updatedWithin"),
-        content: <WorkspaceUpdatedWithinPage preferences={preferences} />,
-      },
+      ...WORKSPACE_LIMIT_PAGES.map(({ id, titleKey, hoverIntent }) => ({
+        id,
+        title: t(titleKey),
+        hoverIntent,
+        content: workspaceLimitContent[id],
+      })),
       {
         id: "sorting",
         title: t("sidebar.display.sorting.label"),
