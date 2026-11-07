@@ -1,7 +1,7 @@
 import { desktopDistribution } from "../distribution.js";
 import { registerViewedAgentNotifications } from "./viewed-agent-notifications/ipc.js";
 import { createViewedToastRegistry } from "./viewed-agent-notifications/toast-tracking.js";
-import { createWindowsToastHistory } from "./windows-toast-history.js";
+import { createPackagedWindowsToastHistory } from "./windows-toast-history.js";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -105,18 +105,15 @@ export function ensureNotificationCenterRegistration(): void {
 }
 
 export function registerNotificationHandlers(openAgentLink: (url: string) => void): void {
-  const canReadHistory =
-    process.platform === "win32" &&
-    app.isPackaged &&
-    desktopDistribution.windowsAppUserModelId !== null;
-  const history = createWindowsToastHistory({
+  const toastHistory = createPackagedWindowsToastHistory({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    appUserModelId: desktopDistribution.windowsAppUserModelId,
     executable: process.execPath,
-    isPackagedFork: app.isPackaged && desktopDistribution.windowsAppUserModelId !== null,
   });
   const viewed = registerViewedAgentNotifications({
     toasts: viewedToasts,
-    history,
-    canReadHistory,
+    history: toastHistory,
     dismiss(notification) {
       notification.close();
       releaseNotification(notification);

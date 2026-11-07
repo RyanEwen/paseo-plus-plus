@@ -1,5 +1,6 @@
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
-import type { DeliveredAgentToast, KnownAgentNotification } from "./controller.js";
+import type { DeliveredAgentToast } from "../windows-toast-history.js";
+import type { KnownAgentNotification } from "./controller.js";
 
 /** The part of an Electron Notification that viewed-chat tracking listens to. */
 export interface ShowableNotification {
@@ -21,21 +22,22 @@ export interface ViewedToastHistoryActions {
   removeViewedLive: ((notificationId: string) => Promise<void>) | null;
 }
 
-interface ViewedToastHistoryInput {
-  /** True only on a packaged Windows build whose toast identity is verified. */
-  canReadHistory: boolean;
-  history: ViewedToastHistory;
-}
-
-/** Decide once which toast-history operations a viewed chat may run on this build. */
+/**
+ * The toast-history operations a viewed chat may run on this build.
+ *
+ * @param history this build's Notification Center history, or null when it has none
+ *   (see createPackagedWindowsToastHistory); every operation is then a no-op.
+ */
 export function viewedToastHistoryActions(
-  input: ViewedToastHistoryInput,
+  history: ViewedToastHistory | null,
 ): ViewedToastHistoryActions {
+  if (!history) {
+    return { list: async () => [], remove: async () => {}, removeViewedLive: null };
+  }
   return {
-    list: () => (input.canReadHistory ? input.history.list() : Promise.resolve([])),
-    remove: (toasts) => input.history.remove(toasts),
-    // Removal needs the same verified packaged identity as reading.
-    removeViewedLive: input.canReadHistory ? (id) => input.history.removeCurrentLive(id) : null,
+    list: () => history.list(),
+    remove: (toasts) => history.remove(toasts),
+    removeViewedLive: (id) => history.removeCurrentLive(id),
   };
 }
 

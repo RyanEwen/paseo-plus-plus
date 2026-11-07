@@ -2,16 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { WINDOWS_FORK_APP_ID } from "../distribution.js";
 import { z } from "zod";
-import type { DeliveredAgentToast } from "./viewed-agent-notifications/controller.js";
 
 interface WindowsToastHistoryOwner {
   executable: string;
-  isPackagedFork: boolean;
-}
-
-interface WindowsToastHistoryOperation {
-  operation: "list" | "remove" | "removeCurrentLive";
-  toasts: DeliveredAgentToast[];
 }
 
 const execFileAsync = promisify(execFile);
@@ -20,9 +13,18 @@ const historySchema = z.array(
     tag: z.string(),
     group: z.string(),
     arguments: z.string(),
+    /** Native history provenance, supplied only by this verified adapter. */
     namespace: z.enum(["current", "legacy"]),
   }),
 );
+
+/** One entry in this app's Notification Center history. */
+export type DeliveredAgentToast = z.infer<typeof historySchema>[number];
+
+type WindowsToastHistoryOperation =
+  | { operation: "list" }
+  | { operation: "remove"; toasts: DeliveredAgentToast[] }
+  | { operation: "removeCurrentLive"; tag: string };
 
 // This is static code, not an interpolation target for provider-controlled text.
 // The owned installer shortcut authorizes the current identity and the one known
@@ -67,18 +69,14 @@ if ($inputData.operation -eq 'list') {
     }
   }
 } elseif ($inputData.operation -eq 'removeCurrentLive') {
-  foreach ($toast in $inputData.toasts) {
-    if ([string]::IsNullOrEmpty($toast.tag)) { throw 'A live notification tag is required' }
-    $history.Remove([string]$toast.tag, 'Notifications', $expectedId)
-  }
+  if ([string]::IsNullOrEmpty($inputData.tag)) { throw 'A live notification tag is required' }
+  $history.Remove([string]$inputData.tag, 'Notifications', $expectedId)
 } else { throw 'Unsupported toast operation' }
 `;
 
 /** Inspect only the executable-owned, verified fork shortcut; never change the process AUMID. */
 export function createWindowsToastHistory(owner: WindowsToastHistoryOwner) {
   async function run(request: WindowsToastHistoryOperation): Promise<string> {
-    if (!owner.isPackagedFork)
-      throw new Error("Durable notification history requires the packaged fork identity");
     const child = execFileAsync(
       "powershell.exe",
       [
@@ -91,30 +89,47 @@ export function createWindowsToastHistory(owner: WindowsToastHistoryOwner) {
       { windowsHide: true, timeout: 15_000, maxBuffer: 1024 * 1024 },
     );
     child.child.stdin?.end(
-      JSON.stringify({
-        executable: owner.executable,
-        appId: WINDOWS_FORK_APP_ID,
-        operation: request.operation,
-        toasts: request.toasts,
-      }),
+      JSON.stringify({ executable: owner.executable, appId: WINDOWS_FORK_APP_ID, ...request }),
     );
     const { stdout } = await child;
     return stdout.replace(/^\uFEFF/, "").trim();
   }
   return {
     async list(): Promise<DeliveredAgentToast[]> {
-      return historySchema.parse(JSON.parse(await run({ operation: "list", toasts: [] })));
+      return historySchema.parse(JSON.parse(await run({ operation: "list" })));
     },
     /** Only the main-process on-show path supplies its freshly created UUID.
      * This never searches or removes from legacy history. */
     async removeCurrentLive(tag: string): Promise<void> {
-      await run({
-        operation: "removeCurrentLive",
-        toasts: [{ tag, group: "Notifications", arguments: "" }],
-      });
+      await run({ operation: "removeCurrentLive", tag });
     },
     async remove(toasts: DeliveredAgentToast[]): Promise<void> {
       await run({ operation: "remove", toasts });
     },
   };
+}
+
+export type WindowsToastHistory = ReturnType<typeof createWindowsToastHistory>;
+
+interface PackagedToastHistoryInput {
+  platform: NodeJS.Platform;
+  isPackaged: boolean;
+  /** The distribution's explicit app user model ID, or null when it has none. */
+  appUserModelId: string | null;
+  executable: string;
+}
+
+/**
+ * Notification Center history for this build, or null when it has none to read.
+ *
+ * Only a packaged Windows build with an explicit app user model ID owns a verifiable
+ * installer shortcut; every other build skips history work instead of failing at run time.
+ */
+export function createPackagedWindowsToastHistory(
+  input: PackagedToastHistoryInput,
+): WindowsToastHistory | null {
+  if (input.platform !== "win32" || !input.isPackaged || input.appUserModelId === null) {
+    return null;
+  }
+  return createWindowsToastHistory({ executable: input.executable });
 }

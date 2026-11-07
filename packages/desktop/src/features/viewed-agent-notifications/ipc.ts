@@ -13,8 +13,8 @@ import {
 
 interface RegisterViewedAgentNotificationsInput {
   toasts: ViewedToastRegistry<Notification>;
-  history: ViewedToastHistory;
-  canReadHistory: boolean;
+  /** This build's Notification Center history, or null when it has none. */
+  history: ViewedToastHistory | null;
   /** Closes and releases a notification whose chat became visible. */
   dismiss(notification: Notification): void;
 }
@@ -39,10 +39,7 @@ export interface ViewedAgentNotifications {
 export function registerViewedAgentNotifications(
   input: RegisterViewedAgentNotificationsInput,
 ): ViewedAgentNotifications {
-  const historyActions = viewedToastHistoryActions({
-    canReadHistory: input.canReadHistory,
-    history: input.history,
-  });
+  const historyActions = viewedToastHistoryActions(input.history);
   const controller = createViewedAgentNotifications({
     canView(windowId) {
       const win = BrowserWindow.getAllWindows().find(

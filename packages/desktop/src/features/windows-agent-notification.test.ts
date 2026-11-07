@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createWindowsToastHistory } from "./windows-toast-history.js";
 import { buildAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
-import {
-  createViewedAgentNotifications,
-  type DeliveredAgentToast,
-} from "./viewed-agent-notifications/controller.js";
+import { createViewedAgentNotifications } from "./viewed-agent-notifications/controller.js";
+import type { DeliveredAgentToast } from "./windows-toast-history.js";
 import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
@@ -189,6 +187,7 @@ describe("viewed chat notification history", () => {
     return {
       tag,
       group: "Notifications",
+      namespace: "current",
       arguments: new URLSearchParams({
         paseoAgent: buildAgentDeepLink({ serverId: host, agentId: chat }),
       }).toString(),
@@ -287,7 +286,7 @@ describe("Normally installed Windows notification history", () => {
     async () => {
       const executable = process.env.PASEO_QA_EXECUTABLE;
       if (!executable) throw new Error("An exact installed QA executable is required");
-      const history = createWindowsToastHistory({ executable, isPackagedFork: true });
+      const history = createWindowsToastHistory({ executable });
       await expect(history.list()).resolves.toEqual(expect.any(Array));
     },
   );
@@ -295,11 +294,22 @@ describe("Normally installed Windows notification history", () => {
   it("preserves unrelated history with a colliding tag while clearing current and legacy chat records", async () => {
     const launch = (serverId: string, agentId: string) =>
       new URLSearchParams({ paseoAgent: buildAgentDeepLink({ serverId, agentId }) }).toString();
-    const current = { tag: "collision", group: "Notifications", arguments: launch("host", "chat") };
-    const legacy = { tag: "legacy", group: "Notifications", arguments: launch("host", "chat") };
-    const unrelated = {
+    const current: DeliveredAgentToast = {
       tag: "collision",
       group: "Notifications",
+      namespace: "current",
+      arguments: launch("host", "chat"),
+    };
+    const legacy: DeliveredAgentToast = {
+      tag: "legacy",
+      group: "Notifications",
+      namespace: "legacy",
+      arguments: launch("host", "chat"),
+    };
+    const unrelated: DeliveredAgentToast = {
+      tag: "collision",
+      group: "Notifications",
+      namespace: "current",
       arguments: launch("other-host", "chat"),
     };
     const removed: DeliveredAgentToast[] = [];
