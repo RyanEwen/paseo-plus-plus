@@ -29,8 +29,8 @@ describe("resolveCompactBackTarget", () => {
     expect(resolveCompactBackTarget("file-explorer")).toBe("agent");
   });
 
-  it("returns to the agent from the open sidebar", () => {
-    expect(resolveCompactBackTarget("agent-list")).toBe("agent");
+  it("leaves Back to the navigator from the open sidebar", () => {
+    expect(resolveCompactBackTarget("agent-list")).toBeNull();
   });
 });
 
@@ -50,5 +50,16 @@ describe("createCompactPanelBackHandler", () => {
     expect(handleBack()).toBe(true);
     expect(handleBack()).toBe(true);
     expect(panels.shown).toEqual(["agent", "agent-list"]);
+  });
+
+  it("lets Back leave the workspace once the sidebar is open", () => {
+    const panels = makePanels("agent");
+    const handleBack = createCompactPanelBackHandler(panels.navigator);
+
+    expect(handleBack()).toBe(true);
+    expect(handleBack()).toBe(false);
+    expect(handleBack()).toBe(false);
+    expect(panels.shown).toEqual(["agent-list"]);
+    expect(panels.current()).toBe("agent-list");
   });
 });

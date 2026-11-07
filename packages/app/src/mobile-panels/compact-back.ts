@@ -3,8 +3,9 @@ import type { MobilePanelView } from "@/stores/panel-store";
 /**
  * The compact panel that Android Back shows next.
  *
- * From the agent, Back opens the sidebar. From the open sidebar or explorer, Back returns to the
- * agent.
+ * From the agent, Back opens the sidebar, and from the explorer it returns to the agent. From the
+ * open sidebar there is nothing left to close, so the press falls through to the navigator and
+ * Android can leave the workspace or the app.
  *
  * @param current The compact panel showing when Back is pressed.
  * @returns The panel to show, or null to leave the press to the navigator and the system.
@@ -12,6 +13,10 @@ import type { MobilePanelView } from "@/stores/panel-store";
 export function resolveCompactBackTarget(current: MobilePanelView): MobilePanelView | null {
   if (current === "agent") {
     return "agent-list";
+  }
+
+  if (current === "agent-list") {
+    return null;
   }
 
   return "agent";
