@@ -1,38 +1,16 @@
-import { onTestFinished, vi } from "vitest";
-import * as images from "../server/agent/providers/provider-image-output.js";
-
+/** A complete 1x1 PNG that passes image admission. */
 export const VALID_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
-/** Hold a real materialization at its public boundary, independently of file-cache hits. */
-function gate() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-export function holdProviderImageMaterialization() {
-  const entered = gate();
-  const release = gate();
-  const settled = gate();
-  const materialize = images.materializeProviderImage;
-  let active = false;
-  const spy = vi.spyOn(images, "materializeProviderImage").mockImplementation(async (image) => {
-    active = true;
-    entered.resolve();
-    await release.promise;
-    try {
-      return await materialize(image);
-    } finally {
-      settled.resolve();
-    }
-  });
-  onTestFinished(async () => {
-    release.resolve();
-    if (active) await settled.promise;
-    spy.mockRestore();
-  });
-  return { entered: entered.promise, release: () => release.resolve(), settled: settled.promise };
+/**
+ * Base64 for `byteLength` bytes that start with the PNG signature, so admission accepts it.
+ * Large inputs keep the real materialization pipeline busy across several event-loop turns,
+ * which lets tests observe a provider while its image conversion is still running.
+ */
+export function signedPngBase64(byteLength: number, fill: number): string {
+  const bytes = Buffer.alloc(byteLength, fill);
+  PNG_SIGNATURE.copy(bytes);
+  return bytes.toString("base64");
 }

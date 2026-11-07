@@ -1,4 +1,4 @@
-import { holdProviderImageMaterialization } from "../../../../test-utils/provider-image-fixtures.js";
+import { signedPngBase64 } from "../../../../test-utils/provider-image-fixtures.js";
 import {
   closeSync,
   existsSync,
@@ -3602,12 +3602,11 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   let admitted = false;
-  const image = holdProviderImageMaterialization();
   const first = session
     .startTurn([
       {
         type: "image",
-        data: ONE_BY_ONE_PNG_BASE64,
+        data: signedPngBase64(16 * 1024 * 1024, 51),
         mimeType: "image/png",
       },
     ])
@@ -3615,12 +3614,11 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
       admitted = true;
       return result;
     });
-  await image.entered;
+  await waitForImmediate();
   expect(admitted).toBe(false);
   expect(pi.latestSession().prompts).toHaveLength(0);
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image interrupt");
-  image.release();
   const original = await first;
   expect(events).toContainEqual(
     expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
@@ -3633,19 +3631,17 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
 
 test("closing Pi during image conversion rejects its pending start", async () => {
   const { pi, session } = await createSession();
-  const image = holdProviderImageMaterialization();
   const first = session.startTurn([
     {
       type: "image",
-      data: ONE_BY_ONE_PNG_BASE64,
+      data: signedPngBase64(16 * 1024 * 1024, 52),
       mimeType: "image/png",
     },
   ]);
   const rejected = expect(first).rejects.toThrow("closed");
-  await image.entered;
+  await waitForImmediate();
   expect(pi.latestSession().prompts).toHaveLength(0);
   await session.close();
-  image.release();
   await rejected;
 });
 
@@ -3717,7 +3713,6 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
   session.subscribe((event) => emitted.push(event));
   const native = pi.latestSession();
   const first = await session.startTurn("read image");
-  const image = holdProviderImageMaterialization();
   native.emit({
     type: "tool_execution_end",
     toolCallId: "large-image",
@@ -3726,7 +3721,7 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
       content: [
         {
           type: "image",
-          data: ONE_BY_ONE_PNG_BASE64,
+          data: signedPngBase64(8 * 1024 * 1024, 73),
           mimeType: "image/png",
         },
       ],
@@ -3734,11 +3729,10 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
     isError: false,
   });
   native.finishTurn();
-  await image.entered;
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image");
-  image.release();
-  await image.settled;
+  await waitForImmediate();
+  await waitForImmediate();
   await expect
     .poll(() =>
       events

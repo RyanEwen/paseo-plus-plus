@@ -1,7 +1,4 @@
-import {
-  VALID_PNG_BASE64,
-  holdProviderImageMaterialization,
-} from "../../../../../test-utils/provider-image-fixtures.js";
+import { VALID_PNG_BASE64 } from "../../../../../test-utils/provider-image-fixtures.js";
 import { collectTimelineSnapshot } from "../test-utils/v2-timeline.js";
 import { V2Timeline } from "./timeline.js";
 import type { SessionMessageAssistant } from "@opencode/client";
@@ -220,7 +217,6 @@ test.each(["text", "reasoning"] as const)(
     const part = { assistantMessageID: "answer", type, ordinal: 0 };
     timeline.startPart(part);
     const emitted: AgentStreamEvent[] = [];
-    const image = holdProviderImageMaterialization();
     let settled = false;
     const snapshot = timeline
       .messages(
@@ -256,11 +252,10 @@ test.each(["text", "reasoning"] as const)(
         settled = true;
         return undefined;
       });
-    await image.entered;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     const delta = timeline.delta({ ...part, delta: "Hello world" });
     if (delta) emitted.push(delta);
-    image.release();
     await snapshot;
     const text = emitted.flatMap((event) => {
       if (event.type !== "timeline") return [];
