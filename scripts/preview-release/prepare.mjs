@@ -6,6 +6,7 @@ import { dump, load } from "js-yaml";
 import { isMainModule } from "../is-main-module.mjs";
 import { resolvePreviewRelease } from "./metadata.mjs";
 import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
+import { runNpm } from "./npm.mjs";
 
 const desktopRequire = createRequire(
   new URL("../../packages/desktop/package.json", import.meta.url),
@@ -95,8 +96,7 @@ if (isMainModule(import.meta.url)) {
   });
   // Refresh only lock metadata after changing workspace versions; installed external
   // dependency versions stay pinned and no lifecycle hooks run in this build checkout.
-  execFileSync(
-    process.platform === "win32" ? "npm.cmd" : "npm",
+  runNpm(
     [
       "install",
       "--package-lock-only",
@@ -106,7 +106,7 @@ if (isMainModule(import.meta.url)) {
       "--workspaces",
       "--include-workspace-root",
     ],
-    { stdio: "inherit", shell: process.platform === "win32" },
+    { stdio: "inherit" },
   );
   for (const [name, value] of Object.entries({
     version: release.version,

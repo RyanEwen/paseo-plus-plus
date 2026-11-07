@@ -5,6 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
+import { npmInvocation } from "./preview-release/npm.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -37,14 +38,11 @@ function run(command, args, options) {
 
 async function exportBrowserWebApp() {
   console.log("Exporting browser web app...");
-  await run(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["run", "build:web", "--workspace=@getpaseo/app"],
-    {
-      shell: process.platform === "win32",
-      cwd: REPO_ROOT,
-    },
-  );
+  const npm = npmInvocation();
+  await run(npm.command, ["run", "build:web", "--workspace=@getpaseo/app"], {
+    shell: npm.shell,
+    cwd: REPO_ROOT,
+  });
 }
 
 async function cleanTarget() {

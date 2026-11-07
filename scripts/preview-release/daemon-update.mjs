@@ -4,13 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { smokeRunningDaemon } from "./daemon-smoke.mjs";
 import { requirePreviewRepository } from "./source.mjs";
+import { runNpm } from "./npm.mjs";
 import {
   downloadForkPreview,
   selectForkPreview,
 } from "../../packages/server/dist/server/server/session/daemon/fork-preview.js";
 
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-const shell = process.platform === "win32";
 const repository = requirePreviewRepository(process.env.GITHUB_REPOSITORY);
 
 // Use the same release selector and checksum verifier that the running daemon uses.
@@ -40,8 +39,7 @@ const download = await downloadForkPreview({
 const directory = await mkdtemp(path.join(tmpdir(), "paseo-fork-update-proof-"));
 let smokePassed = false;
 try {
-  execFileSync(
-    npm,
+  runNpm(
     [
       "install",
       "-g",
@@ -52,12 +50,9 @@ try {
       "--no-fund",
       download.file,
     ],
-    { stdio: "inherit", shell, timeout: 300_000 },
+    { stdio: "inherit", timeout: 300_000 },
   );
-  const globalRoot = execFileSync(npm, ["root", "-g", "--prefix", directory], {
-    encoding: "utf8",
-    shell,
-  }).trim();
+  const globalRoot = runNpm(["root", "-g", "--prefix", directory], { encoding: "utf8" }).trim();
   await smokeRunningDaemon({
     packageRoot: path.join(globalRoot, "@ryanewen/paseo-daemon"),
     updateVersion: targetTag.slice(1),

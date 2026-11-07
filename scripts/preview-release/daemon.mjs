@@ -18,6 +18,7 @@ import { stageDaemonRuntime } from "./runtime.mjs";
 import assert from "node:assert/strict";
 import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
 import { loadNativePtyModules } from "../native-pty.mjs";
+import { runNpm } from "./npm.mjs";
 
 /**
  * Run the checkout's daemon trace and return the traced paths, one per output line.
@@ -170,13 +171,9 @@ if (isMainModule(import.meta.url) && process.argv[2] === "--smoke") {
   manifest.version = release.version;
   writeFileSync("package.json", JSON.stringify(manifest, null, 2));
   syncWorkspaceVersions(root);
-  execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build:server"], {
+  runNpm(["run", "build:server"], { stdio: "inherit" });
+  runNpm(["run", "build:daemon-web-ui"], {
     stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build:daemon-web-ui"], {
-    stdio: "inherit",
-    shell: process.platform === "win32",
     // Expo derives native metadata even for a browser export. Use the same preview identity
     // as the app jobs after syncing the workspace manifests to the preview version.
     env: {
