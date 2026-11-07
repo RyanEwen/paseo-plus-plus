@@ -72,6 +72,19 @@ export interface MessageFlowFrame {
   height: number;
 }
 
+/** Whether two measured frames are the same rectangle (both absent counts as the same). */
+export function sameFrame(left: MessageFlowFrame | null, right: MessageFlowFrame | null): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height)
+  );
+}
+
 export interface NaturalMessageGeometry {
   flowHeight: number;
   visualHeight: number;

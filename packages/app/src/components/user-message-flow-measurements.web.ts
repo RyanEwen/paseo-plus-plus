@@ -3,7 +3,11 @@ import type { ComponentRef } from "react";
 import type { View } from "react-native";
 import { SPACING } from "@/styles/theme";
 import type { MessageFlowContext, UserMessageFlowProps } from "./user-message-flow";
-import type { MessageFlowFrame, MessageFlowMeasurements } from "./user-message-flow-model";
+import {
+  sameFrame,
+  type MessageFlowFrame,
+  type MessageFlowMeasurements,
+} from "./user-message-flow-model";
 
 type FrameName = Parameters<MessageFlowContext["register"]>[0];
 interface WebMessageMeasurement {
@@ -16,18 +20,6 @@ interface WebMessageMeasurement {
   compactTrailingHeight: number | null;
   metrics: MessageFlowMeasurements;
   corners: string;
-}
-
-function sameFrame(left: MessageFlowFrame | null, right: MessageFlowFrame | null) {
-  return (
-    left === right ||
-    (left !== null &&
-      right !== null &&
-      left.x === right.x &&
-      left.y === right.y &&
-      left.width === right.width &&
-      left.height === right.height)
-  );
 }
 
 function sameMeasurement(left: WebMessageMeasurement | null, right: WebMessageMeasurement) {

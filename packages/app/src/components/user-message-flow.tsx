@@ -27,6 +27,7 @@ import {
   resolveMessageFlow,
   readMessageTextLayout,
   rebindMessageTextPrefix,
+  sameFrame,
   type MessageFlowFrame,
   type MessageFlowMeasurements,
   type MessageTextPrefix,
@@ -158,16 +159,6 @@ function emptyMeasurements(width: number): MessageFlowMeasurements {
     prefixHeight: null,
     controls: null,
   };
-}
-
-function sameFrame(left: MessageFlowFrame | null, right: MessageFlowFrame): boolean {
-  return (
-    left !== null &&
-    left.x === right.x &&
-    left.y === right.y &&
-    left.width === right.width &&
-    left.height === right.height
-  );
 }
 
 /** Rebind natural measurements when content, available width or font geometry changes. */

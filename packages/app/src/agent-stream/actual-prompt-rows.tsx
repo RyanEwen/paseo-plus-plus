@@ -1,15 +1,7 @@
 import { useWindowDimensions } from "react-native";
 import { SPACING } from "@/styles/theme";
 import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
-import {
-  createContext,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
 interface ActualPromptRows {
   scope: string;
@@ -38,6 +30,14 @@ export const ActualPromptFlowGeometryContext = createContext<
 export const ActualPinnedRowContext = createContext(false);
 
 export const ActualPromptRowsContext = createContext<ActualPromptRows | null>(null);
+
+/** A copy of the expanded ids for `scope`; ids from another scope do not carry over. */
+function scopedExpandedIds(
+  current: { scope: string; expandedIds: ReadonlySet<string> },
+  scope: string,
+): Set<string> {
+  return new Set(current.scope === scope ? current.expandedIds : []);
+}
 
 /** Disclosure belongs to the message, not its current live/history or virtual lane. */
 export function ActualPromptRowsProvider({
@@ -97,11 +97,7 @@ export function ActualPromptRowsProvider({
     };
   }, []);
   const [state, setState] = useState(() => ({ scope, expandedIds: new Set<string>() }));
-  useLayoutEffect(() => {
-    setState((current) =>
-      current.scope === scope ? current : { scope, expandedIds: new Set<string>() },
-    );
-  }, [scope]);
+  // A changed scope reads as empty below, and every write re-scopes the state.
   const expandedIds = useMemo(
     () => (state.scope === scope ? state.expandedIds : new Set<string>()),
     [scope, state],
@@ -110,7 +106,7 @@ export function ActualPromptRowsProvider({
     (id: string) => {
       viewportOwner.current?.(id);
       setState((current) => {
-        const ids = new Set(current.scope === scope ? current.expandedIds : []);
+        const ids = scopedExpandedIds(current, scope);
         if (ids.has(id)) ids.delete(id);
         else ids.add(id);
         return { scope, expandedIds: ids };
@@ -122,7 +118,7 @@ export function ActualPromptRowsProvider({
     (id: string, expanded: boolean) => {
       setState((current) => {
         if (current.scope === scope && current.expandedIds.has(id) === expanded) return current;
-        const ids = new Set(current.scope === scope ? current.expandedIds : []);
+        const ids = scopedExpandedIds(current, scope);
         if (expanded) ids.add(id);
         else ids.delete(id);
         return { scope, expandedIds: ids };
@@ -137,7 +133,7 @@ export function ActualPromptRowsProvider({
       if (nativeOwner?.scope === scope) nativeOwner.expand();
       setState((current) => {
         if (current.scope === scope && current.expandedIds.has(id)) return current;
-        const ids = new Set(current.scope === scope ? current.expandedIds : []);
+        const ids = scopedExpandedIds(current, scope);
         ids.add(id);
         return { scope, expandedIds: ids };
       });
