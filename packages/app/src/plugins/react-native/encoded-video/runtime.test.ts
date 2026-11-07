@@ -5,7 +5,7 @@ import type {
   EncodedVideoFrame,
   EncodedVideoConfig,
 } from "@getpaseo/plugin/client/ui";
-import { encodedVideoHtml } from "./runtime";
+import { encodedVideoRuntimeHtml } from "./runtime/html.gen";
 
 interface Message {
   type: string;
@@ -28,7 +28,7 @@ async function openCanvas() {
     });
   });
   await page.route("http://localhost/video", (route) =>
-    route.fulfill({ body: encodedVideoHtml, contentType: "text/html" }),
+    route.fulfill({ body: encodedVideoRuntimeHtml, contentType: "text/html" }),
   );
   await page.goto("http://localhost/video");
   await page.waitForFunction(() =>

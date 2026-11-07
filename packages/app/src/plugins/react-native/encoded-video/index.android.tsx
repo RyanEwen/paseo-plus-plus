@@ -8,35 +8,15 @@ import {
 } from "react";
 import { StyleSheet } from "react-native";
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
-import { z } from "zod";
 import type { EncodedVideoHandle, EncodedVideoProps } from "@getpaseo/plugin/client/ui";
-import { encodedVideoHtml } from "./runtime";
+import { encodedVideoRuntimeHtml } from "./runtime/html.gen";
+import { parseCanvasToHostMessage } from "./runtime/messages";
 
-const messageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ready") }),
-  z.object({ type: z.literal("error"), message: z.string(), generation: z.number().int() }),
-  z.object({ type: z.literal("dequeue"), generation: z.number().int() }),
-  z.object({
-    type: z.literal("frame"),
-    generation: z.number().int(),
-    frame: z.object({
-      id: z.number().int(),
-      timestamp: z.number(),
-      displayWidth: z.number().positive(),
-      displayHeight: z.number().positive(),
-    }),
-  }),
-  z.object({
-    type: z.literal("presented"),
-    generation: z.number().int(),
-    requestId: z.number().int(),
-  }),
-]);
 interface PendingPaint {
   resolve(): void;
   reject(error: Error): void;
 }
-const source = { html: encodedVideoHtml, baseUrl: "https://paseo-video.invalid/" };
+const source = { html: encodedVideoRuntimeHtml, baseUrl: "https://paseo-video.invalid/" };
 const originWhitelist = ["https://paseo-video.invalid"];
 function allowNavigation(request: WebViewNavigation): boolean {
   return request.url === source.baseUrl || request.url === "about:blank";
@@ -121,19 +101,11 @@ export const EncodedVideo = forwardRef<EncodedVideoHandle, EncodedVideoProps>(
     );
 
     const onMessage = useCallback((event: WebViewMessageEvent) => {
-      let value: unknown;
-      try {
-        value = JSON.parse(event.nativeEvent.data);
-      } catch {
+      const message = parseCanvasToHostMessage(event.nativeEvent.data);
+      if (!message) {
         failBridge(new Error("Invalid video decoder message"));
         return;
       }
-      const result = messageSchema.safeParse(value);
-      if (!result.success) {
-        failBridge(new Error("Invalid video decoder message"));
-        return;
-      }
-      const message = result.data;
       if (message.type === "ready") {
         ready.current = true;
         callbacks.current.onReady();
