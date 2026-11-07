@@ -6216,7 +6216,8 @@ export class CodexAppServerAgentSession implements AgentSession {
         error: parsed.errorMessage ?? "Codex turn failed",
       });
     } else if (parsed.status === "interrupted") {
-      // Async answers belong to the session, including across stopped or superseded turns.
+      // Unlike turn-scoped approvals, async questions stay pending after an interruption; see
+      // CodexAsyncQuestions, and survivesTurnCancellation for the manager's matching rule.
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
