@@ -146,7 +146,8 @@ export interface PaintedLandingHost {
   markVerified(): void;
   cancelPendingAttempt(): void;
   scheduleVerification(attempt: AttemptContext): void;
-  evaluate(reason: string): void;
+  /** Re-evaluate the request after its painted geometry changed. */
+  evaluate(reason: "painted_content_change"): void;
 }
 
 /**
