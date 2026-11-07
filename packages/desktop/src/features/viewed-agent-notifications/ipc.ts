@@ -1,5 +1,5 @@
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
-import { app, BrowserWindow, ipcMain, type Notification } from "electron";
+import { app, BrowserWindow, ipcMain, webContents, type Notification } from "electron";
 import {
   agentNotificationTargetSchema,
   createViewedAgentNotifications,
@@ -42,9 +42,8 @@ export function registerViewedAgentNotifications(
   const historyActions = viewedToastHistoryActions(input.history);
   const controller = createViewedAgentNotifications({
     canView(windowId) {
-      const win = BrowserWindow.getAllWindows().find(
-        (candidate) => candidate.webContents.id === windowId,
-      );
+      const contents = webContents.fromId(windowId);
+      const win = contents ? BrowserWindow.fromWebContents(contents) : null;
       return Boolean(
         win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused(),
       );
@@ -62,8 +61,8 @@ export function registerViewedAgentNotifications(
   // A navigation or destroyed renderer no longer shows the chat it last reported.
   app.on("web-contents-created", (_event, contents) => {
     const id = contents.id;
-    contents.on("did-start-navigation", (_navigationEvent, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) controller.removeWindow(id);
+    contents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame && !details.isSameDocument) controller.removeWindow(id);
     });
     contents.once("destroyed", () => controller.removeWindow(id));
   });
