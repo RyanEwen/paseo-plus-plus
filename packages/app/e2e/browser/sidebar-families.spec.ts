@@ -190,7 +190,9 @@ test.describe("Sidebar workspace families", () => {
     await expect(workspaceRow(page, scene.childA)).toHaveCount(0);
   });
 
-  test("dragging a child reorders its siblings and leaves the parent in place", async ({ page }) => {
+  test("dragging a child reorders its siblings and leaves the parent in place", async ({
+    page,
+  }) => {
     await openProjectViewWithCustomSort(page);
     const parentRow = workspaceRow(page, scene.parent);
     const parentTop = (await parentRow.boundingBox())!.y;

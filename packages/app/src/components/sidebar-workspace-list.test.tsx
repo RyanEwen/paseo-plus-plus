@@ -1071,7 +1071,6 @@ describe("workspace family disclosure controls", () => {
       "Collapse child workspaces of Renamed parent title",
     );
   });
-
 });
 
 const TRANSITION_OTHER_HOST = "sidebar-transition-other-host";

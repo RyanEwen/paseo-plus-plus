@@ -51,8 +51,7 @@ export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
       activeWorkspaceKeys,
     });
     // Already-visible active overflow needs no Show more; an expanded window keeps Show less.
-    const canToggle =
-      limited.canToggle && (limited.expanded || visibleItems.length < roots.length);
+    const canToggle = limited.canToggle && (limited.expanded || visibleItems.length < roots.length);
     return { visibleItems, canToggle };
   }, [
     roots,

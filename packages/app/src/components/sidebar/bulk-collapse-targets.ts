@@ -1,6 +1,10 @@
 import type { SidebarCollapseTargets } from "@/stores/sidebar-collapsed-sections-store/state";
 import type { SidebarProjection, SidebarProjectionInput } from "./sidebar-projection";
-import { EMPTY_WORKSPACE_TREE, workspaceCollapseKey, type WorkspaceTreeNode } from "./workspace-tree";
+import {
+  EMPTY_WORKSPACE_TREE,
+  workspaceCollapseKey,
+  type WorkspaceTreeNode,
+} from "./workspace-tree";
 
 /** The filtered projection the sidebar renders, plus the Empty projects grouping preference. */
 export interface SidebarCollapseTargetsInput

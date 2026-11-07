@@ -12,8 +12,7 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
  */
 export function useSidebarBulkCollapse() {
   const { settings } = useAppSettings();
-  const { projects, workspaceGroups, pinnedGroups, groupMode, workspaceTree } =
-    useSidebarModel();
+  const { projects, workspaceGroups, pinnedGroups, groupMode, workspaceTree } = useSidebarModel();
   const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
   const setSectionsCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.setSectionsCollapsed,

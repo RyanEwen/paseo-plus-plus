@@ -37,10 +37,7 @@ function sameRelationships(left: WorkspaceTreeSession[], right: WorkspaceTreeSes
   if (left.length !== right.length) return false;
   return left.every((session, index) => {
     const next = right[index];
-    if (
-      session.serverId !== next.serverId ||
-      session.hasHydratedAgents !== next.hasHydratedAgents
-    )
+    if (session.serverId !== next.serverId || session.hasHydratedAgents !== next.hasHydratedAgents)
       return false;
     return sameWorkspaceTreeAgents(session.agents, next.agents);
   });

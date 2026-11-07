@@ -26,9 +26,9 @@ describe("workspace tree agent comparison", () => {
     expect(sameWorkspaceTreeAgents(before, agents(parent, { ...child, parentAgentId: null }))).toBe(
       false,
     );
-    expect(sameWorkspaceTreeAgents(before, agents(parent, { ...child, workspaceId: "other" }))).toBe(
-      false,
-    );
+    expect(
+      sameWorkspaceTreeAgents(before, agents(parent, { ...child, workspaceId: "other" })),
+    ).toBe(false);
     expect(
       sameWorkspaceTreeAgents(before, agents(parent, { ...child, archivedAt: new Date(0) })),
     ).toBe(false);

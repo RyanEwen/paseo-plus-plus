@@ -288,7 +288,7 @@ const styles = StyleSheet.create((theme) => {
     toggle,
     // design.md States: a disabled control dims its outer pressable.
     toggleDisabled: { ...toggle, opacity: theme.opacity[50] },
-      summary: { marginTop: theme.spacing[1], gap: theme.spacing[1] },
+    summary: { marginTop: theme.spacing[1], gap: theme.spacing[1] },
     summaryText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
     attentionText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
   };
