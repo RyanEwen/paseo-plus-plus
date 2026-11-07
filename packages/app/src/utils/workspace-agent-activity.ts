@@ -1,7 +1,10 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { deriveSidebarStateBucket } from "./sidebar-agent-state";
-import { getWorkspaceStateBucketPriority } from "@getpaseo/protocol/agent-state-bucket";
+import {
+  getWorkspaceStateBucketPriority,
+  isOutrankedByExplicitReview,
+} from "@getpaseo/protocol/agent-state-bucket";
 
 export interface WorkspaceAgentActivity {
   agentId: string;
@@ -38,10 +41,10 @@ function shouldReplaceWorkspaceActivity(input: {
     getWorkspaceStateBucketPriority(status) - getWorkspaceStateBucketPriority(currentStatus);
   const explicitReview = candidate.agent.requiresAttention && candidate.agent.attentionMessage;
   const currentReview = current.agent.requiresAttention && current.agent.attentionMessage;
-  if (explicitReview && (currentStatus === "running" || currentStatus === "done")) {
+  if (explicitReview && isOutrankedByExplicitReview(currentStatus)) {
     priorityDifference = -1;
   }
-  if (currentReview && (status === "running" || status === "done")) {
+  if (currentReview && isOutrankedByExplicitReview(status)) {
     priorityDifference = 1;
   }
   if (usePriority && priorityDifference > 0) {

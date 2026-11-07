@@ -1,3 +1,4 @@
+import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import type { Agent } from "@/stores/session-store";
 
 interface ShouldClearAgentAttentionInput {
@@ -15,24 +16,20 @@ export type AgentAttentionClearTrigger =
   | "prompt-send"
   | "agent-blur";
 
-const ATTENTION_REASON_PRIORITY = {
-  permission: 0,
-  error: 1,
-  finished: 2,
-} as const;
-
+/**
+ * Blockers and failures rank as the shared status priority does; a finished result ranks after
+ * them, and an agent with no attention reason is not a candidate.
+ */
 function getAttentionPriority(agent: Agent): number | null {
-  if (agent.pendingPermissions.length > 0 || agent.attentionReason === "permission") {
-    return 0;
+  const statusPriority = getAgentStatusPriority({
+    status: agent.status,
+    pendingPermissionCount: agent.pendingPermissions.length,
+    attentionReason: agent.attentionReason,
+  });
+  if (statusPriority <= 1) {
+    return statusPriority;
   }
-  if (agent.status === "error" || agent.attentionReason === "error") {
-    return 1;
-  }
-  const reason = agent.attentionReason;
-  if (!reason) {
-    return null;
-  }
-  return ATTENTION_REASON_PRIORITY[reason];
+  return agent.attentionReason === "finished" ? 2 : null;
 }
 
 export function pickAttentionAgent(agents: Agent[]): string | null {

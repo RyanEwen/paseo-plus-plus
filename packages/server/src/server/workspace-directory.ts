@@ -9,6 +9,7 @@ import type {
 import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
+  isOutrankedByExplicitReview,
   type WorkspaceStateBucket,
 } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -306,8 +307,9 @@ export class WorkspaceDirectory {
           agent.attentionMessage &&
           agent.humanAttentionRequired === true,
       );
-      if (explicitReview && (descriptor.status === "running" || descriptor.status === "done"))
+      if (explicitReview && isOutrankedByExplicitReview(descriptor.status)) {
         descriptor.status = "attention";
+      }
 
       const result = this.resolveStatusEnteredAt({
         workspaceId,
@@ -418,8 +420,10 @@ export class WorkspaceDirectory {
       existing.humanAttentionRequired ||=
         isWorkspaceRoot &&
         hasHumanAgentAttention({
-          ...agent,
+          humanAttentionRequired: agent.humanAttentionRequired,
+          requiresAttention: agent.requiresAttention,
           pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+          status: agent.status,
         });
       if (
         getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
