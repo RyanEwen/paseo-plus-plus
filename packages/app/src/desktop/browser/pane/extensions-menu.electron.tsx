@@ -21,16 +21,13 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { MenuItemSecondary } from "@/components/ui/menu";
 
-import { ToolbarMenuContent, useToolbarMenuTriggerStyle } from "./toolbar-menu-trigger.electron";
+import { ToolbarMenuContent, useToolbarMenuTriggerStyle, mutedIconProps } from "./toolbar-menu-trigger.electron";
 
 const ThemedPuzzle = withUnistyles(BrowserExtensionsIcon);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 const ACTIONS_QUERY_KEY = ["desktop", "browser", "extension-actions"];
 
-const mutedIcon = (theme: { colors: { foregroundMuted: string } }) => ({
-  color: theme.colors.foregroundMuted,
-});
 
 interface ExtensionsMenuProps {
   browserId: string;
@@ -128,7 +125,7 @@ export function ExtensionsMenu({ browserId, triggerStyle, tooltipTextStyle }: Ex
               style={menuTriggerStyle}
             >
               <ToolbarMenuContent>
-                <ThemedPuzzle size={16} uniProps={mutedIcon} />
+                <ThemedPuzzle size={16} uniProps={mutedIconProps} />
               </ToolbarMenuContent>
             </DropdownMenuTrigger>
           </TooltipTrigger>
@@ -260,9 +257,9 @@ function ExtensionMenuItem({
   const pinIcon = useMemo(
     () =>
       extension.pinned ? (
-        <ThemedPinOff size={16} uniProps={mutedIcon} />
+        <ThemedPinOff size={16} uniProps={mutedIconProps} />
       ) : (
-        <ThemedPin size={16} uniProps={mutedIcon} />
+        <ThemedPin size={16} uniProps={mutedIconProps} />
       ),
     [extension.pinned],
   );
@@ -307,7 +304,7 @@ function ExtensionIcon({ extension }: { extension: DesktopBrowserExtensionAction
       {extension.iconDataUrl ? (
         <Image source={source} style={styles.icon} />
       ) : (
-        <ThemedPuzzle size={16} uniProps={mutedIcon} />
+        <ThemedPuzzle size={16} uniProps={mutedIconProps} />
       )}
       {badge?.text ? (
         <View pointerEvents="none" style={styles.badge(background)}>

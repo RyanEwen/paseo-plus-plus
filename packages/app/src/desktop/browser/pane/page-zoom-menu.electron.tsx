@@ -11,13 +11,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getBrowserWebviewZoom, setBrowserWebviewZoom } from "../resident-webviews";
-import { ToolbarMenuContent, useToolbarMenuTriggerStyle } from "./toolbar-menu-trigger.electron";
+import { ToolbarMenuContent, useToolbarMenuTriggerStyle, mutedIconProps } from "./toolbar-menu-trigger.electron";
 
 const ZOOM_FACTORS = [0.25, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
 const ThemedZoom = withUnistyles(ZoomIn);
-const mutedIcon = (theme: { colors: { foregroundMuted: string } }) => ({
-  color: theme.colors.foregroundMuted,
-});
 
 /** Use native guest zoom rather than the host window's application-wide zoom shortcuts. */
 export function PageZoomMenu({
@@ -62,7 +59,7 @@ export function PageZoomMenu({
             style={menuTriggerStyle}
           >
             <ToolbarMenuContent>
-              <ThemedZoom size={16} uniProps={mutedIcon} />
+              <ThemedZoom size={16} uniProps={mutedIconProps} />
             </ToolbarMenuContent>
           </DropdownMenuTrigger>
         </TooltipTrigger>

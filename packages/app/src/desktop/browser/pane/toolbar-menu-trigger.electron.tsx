@@ -4,7 +4,8 @@ import { ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
-const mutedIcon = (theme: { colors: { foregroundMuted: string } }) => ({
+/** Unistyles mapping for the muted icon color shared by browser toolbar menus. */
+export const mutedIconProps = (theme: { colors: { foregroundMuted: string } }) => ({
   color: theme.colors.foregroundMuted,
 });
 
@@ -28,7 +29,7 @@ export function ToolbarMenuContent({ children }: { children: ReactNode }) {
   return (
     <View style={toolbarMenuStyles.content}>
       {children}
-      <ThemedChevronDown size={12} uniProps={mutedIcon} />
+      <ThemedChevronDown size={12} uniProps={mutedIconProps} />
     </View>
   );
 }
