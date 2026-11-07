@@ -19,7 +19,10 @@ export interface FinishSubscription {
   callerAgentId: string;
   childAgentId: string;
   serverId?: string;
-  /** Creation subscriptions stop reporting after the child is detached. */
+  /**
+   * Creation subscriptions stop reporting after the child is detached. Exact attention watches
+   * ignore it: their request correlation, not the parent label, decides who is told.
+   */
   requireParentOwnership?: boolean;
   /** Correlated callbacks consume only this request's immutable outcomes. */
   attention?: AgentAttentionRequestQuery;
