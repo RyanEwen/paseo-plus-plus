@@ -8,7 +8,6 @@ import { UserMessageAttachments } from "./user-message-attachments";
 import {
   NaturalMessageBubble,
   NaturalMessageFlowContext,
-  UserMessageFlow,
   type NaturalMessageGeometry,
   type UserMessageBodyPresentation,
 } from "./user-message-flow";
@@ -350,12 +349,12 @@ function userMessageFlowConfiguration(
   hasBodyViewport: boolean,
   hasNativeDriver: boolean,
 ) {
-  const ordinaryFlow = isWeb ? WebUserMessageFlow : UserMessageFlow;
   return {
     actualWebPrompt: isWeb && hasBodyViewport,
     webNaturalFlow: isWeb && hasNaturalFlow,
     nativeNaturalFlow: !isWeb && hasNaturalFlow,
-    Flow: hasNativeDriver ? NativeUserMessageFlow : ordinaryFlow,
+    // Metro resolves WebUserMessageFlow to the web flow on web and to UserMessageFlow on native.
+    Flow: hasNativeDriver ? NativeUserMessageFlow : WebUserMessageFlow,
   };
 }
 
