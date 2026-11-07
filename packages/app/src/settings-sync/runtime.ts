@@ -9,7 +9,7 @@ import {
   exportSupportedChatPreferences,
 } from "@/appearance/chat-preferences-support";
 import type { QueryClient } from "@tanstack/react-query";
-import { SYNC_APP_SETTING_KEYS } from "@getpaseo/protocol/app-settings";
+import { SYNC_APP_SETTING_KEYS } from "@getpaseo/protocol/app-settings-keys";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { queryClient } from "@/data/query-client";
 import {

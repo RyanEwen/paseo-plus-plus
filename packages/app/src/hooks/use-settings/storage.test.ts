@@ -2,7 +2,7 @@ import {
   applyDeviceAppSettingsUpdate,
   deviceAppSettingsUpdate,
 } from "@/settings-sync/device-settings";
-import { SYNC_APP_SETTING_KEYS } from "@getpaseo/protocol/app-settings";
+import { SYNC_APP_SETTING_KEYS } from "@getpaseo/protocol/app-settings-keys";
 import { DEFAULT_PASEO_PLUS_PLUS_PREFERENCES } from "@/paseo-plus-plus/preferences";
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";

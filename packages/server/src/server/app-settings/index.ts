@@ -8,9 +8,9 @@ import {
 } from "@getpaseo/protocol/app-settings-values";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
+import { SYNC_SETTING_DOMAINS } from "@getpaseo/protocol/app-settings-keys";
 import {
   AppSettingsSnapshotSchema,
-  SYNC_SETTING_DOMAINS,
   type AppSettingsSnapshot,
   type AppSettingsPatch,
   type AppSettingsPatchInput,
