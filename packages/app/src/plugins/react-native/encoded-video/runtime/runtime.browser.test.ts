@@ -298,6 +298,20 @@ describe("Android video canvas document", () => {
     });
   });
 
+  it("reports decoding without a configured decoder separately from queue overflow", async () => {
+    const canvas = await mountCanvas();
+    const { dataBase64 } = await keyframe();
+    send(canvas, {
+      type: "decode",
+      generation: 1,
+      chunk: { type: "key", timestamp: 1000, dataBase64 },
+    });
+    expect(canvas.messages.at(-1)).toMatchObject({
+      type: "error",
+      message: "Video decoder is not configured",
+    });
+  });
+
   it("blocks network requests from the private decoder document", async () => {
     const canvas = await mountCanvas();
     // The test server's own page is reachable from the test, so only the document's

@@ -173,7 +173,10 @@ class EncodedVideoCanvas {
   }
 
   private decode(message: Extract<HostToCanvasMessage, { type: "decode" }>): void {
-    if (!this.decoder || this.queued.length >= MAX_QUEUED_CHUNKS) {
+    if (!this.decoder) {
+      throw new Error("Video decoder is not configured");
+    }
+    if (this.queued.length >= MAX_QUEUED_CHUNKS) {
       throw new Error("Video decode queue exceeded");
     }
     const { chunk } = message;
