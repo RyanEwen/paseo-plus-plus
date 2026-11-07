@@ -31,9 +31,18 @@ export class WorkspaceNotificationReceipts {
     return sequence;
   }
 
+  /**
+   * Commit an acknowledgement and publish the committed receipts.
+   *
+   * @param liveAgentIds agents that still exist and are not archived; settled attention events of
+   *   every other agent are forgotten in the same write.
+   * @throws NotificationRejectedError when the workspace is archived or gone, or the receipt names
+   *   a sequence this workspace never issued.
+   */
   async acknowledge(
     workspaceId: string,
     acknowledgement: NotificationAcknowledgement,
+    liveAgentIds: ReadonlySet<string>,
   ): Promise<void> {
     const updated = await this.workspaces.update(workspaceId, (workspace) => {
       if (workspace.archivedAt) {
@@ -41,6 +50,7 @@ export class WorkspaceNotificationReceipts {
       }
       const receipts = new NotificationReceipts(workspace.notificationReceipts);
       receipts.acknowledge(acknowledgement);
+      receipts.pruneAttention(liveAgentIds);
       return { ...workspace, notificationReceipts: receipts.snapshot() };
     });
     if (!updated) {

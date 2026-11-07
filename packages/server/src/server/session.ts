@@ -7741,6 +7741,10 @@ export class Session {
     }> = [];
 
     let notificationRejection: NotificationRejection | undefined;
+    // Receipts forget settled attention events of agents that are archived or gone.
+    const liveAgentIds = new Set(
+      agents.filter((agent) => !agent.archivedAt).map((agent) => agent.id),
+    );
     const attention = new WorkspaceAttention({
       manager: this.agentManager,
       storage: this.agentStorage,
@@ -7774,7 +7778,11 @@ export class Session {
         });
 
         if (notification) {
-          await this.notificationReceipts!.acknowledge(workspace.workspaceId, notification);
+          await this.notificationReceipts!.acknowledge(
+            workspace.workspaceId,
+            notification,
+            liveAgentIds,
+          );
         }
         await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
         results.push({

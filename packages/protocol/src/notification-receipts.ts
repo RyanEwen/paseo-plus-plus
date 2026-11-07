@@ -124,6 +124,25 @@ export class NotificationReceipts {
     this.value.dismissedSequences = dismissed;
   }
 
+  /**
+   * Forget the attention events of agents that no longer exist once those events are settled.
+   *
+   * An event stays while it is unacknowledged (a receipt may still name it) or while its agent
+   * exists (a later receipt may still clear that agent). Archived and deleted agents can never be
+   * cleared, so their settled events would otherwise accumulate for the workspace's lifetime.
+   *
+   * @param liveAgentIds agents that still exist and are not archived.
+   */
+  pruneAttention(liveAgentIds: ReadonlySet<string>): void {
+    const events = this.value.attentionEvents;
+    if (!events) return;
+    this.value.attentionEvents = Object.fromEntries(
+      Object.entries(events).filter(
+        ([agentId, event]) => liveAgentIds.has(agentId) || !this.includes(event.sequence),
+      ),
+    );
+  }
+
   /** Match a delivered event exactly; untagged legacy notifications are never inferred read. */
   includes(sequence: unknown): boolean {
     return (

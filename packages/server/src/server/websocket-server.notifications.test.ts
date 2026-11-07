@@ -345,13 +345,17 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
         timestamp: secondTimestamp,
       });
       const receipts = new WorkspaceNotificationReceipts(workspaces, async () => {});
-      await receipts.acknowledge(WORKSPACE_ID, {
-        kind: "workspace",
-        acknowledgementId: "opened-before-second",
-        observedReadId: null,
-        throughSequence: 1,
-        attention: [{ agentId: agent.id, timestamp: firstTimestamp }],
-      });
+      await receipts.acknowledge(
+        WORKSPACE_ID,
+        {
+          kind: "workspace",
+          acknowledgementId: "opened-before-second",
+          observedReadId: null,
+          throughSequence: 1,
+          attention: [{ agentId: agent.id, timestamp: firstTimestamp }],
+        },
+        new Set([agent.id]),
+      );
       const acknowledged = new NotificationReceipts(
         (await workspaces.get(WORKSPACE_ID))?.notificationReceipts,
       );

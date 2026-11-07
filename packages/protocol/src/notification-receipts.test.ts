@@ -87,6 +87,28 @@ describe("Workspace notification receipts", () => {
     });
   });
 
+  it("forgets settled attention events only for agents that no longer exist", () => {
+    const receipts = new NotificationReceipts();
+    receipts.issue({ agentId: "gone", timestamp: "first" });
+    receipts.issue({ agentId: "live", timestamp: "second" });
+    receipts.issue({ agentId: "gone-dismissed", timestamp: "third" });
+    receipts.issue({ agentId: "gone-unread", timestamp: "fourth" });
+    receipts.acknowledge({
+      kind: "workspace",
+      acknowledgementId: "open",
+      throughSequence: 2,
+      attention: [],
+    });
+    receipts.acknowledge({ kind: "event", acknowledgementId: "swipe", sequence: 3, attention: [] });
+
+    receipts.pruneAttention(new Set(["live"]));
+
+    expect(receipts.snapshot().attentionEvents).toEqual({
+      live: { sequence: 2, timestamp: "second" },
+      "gone-unread": { sequence: 4, timestamp: "fourth" },
+    });
+  });
+
   it("does not turn a retried workspace receipt into another legacy backlog opening", () => {
     const receipts = new NotificationReceipts();
     receipts.acknowledge({
