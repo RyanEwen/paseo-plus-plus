@@ -3,6 +3,7 @@ import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
 import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES } from "@/styles/theme";
 import { applyAppearance, type AppearanceInput } from "./apply";
 import { applyAccentAppearance } from "./accent";
+import { ACCENT_PALETTE } from "@/styles/accent";
 import type { Theme } from "@/styles/theme";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
@@ -207,10 +208,34 @@ describe("applyAppearance", () => {
   });
 });
 
+/** The accent updater recorded for registry `key`; fails the test when `key` was not patched. */
+function accentUpdaterFor(key: string): (theme: Theme) => Theme {
+  const call = updateTheme.mock.calls.find(([name]) => name === key);
+  if (!call) throw new Error(`No theme update recorded for ${key}`);
+  return call[1];
+}
+
 describe("applyAccentAppearance", () => {
   beforeEach(() => {
     updateTheme.mockClear();
     runtime.themeName = "pluginDark";
+  });
+
+  it("patches the active theme first and resolves built-in themes from the palette", () => {
+    runtime.themeName = "dark";
+
+    applyAccentAppearance({ choice: "blue", contributedTheme: null });
+
+    expect(updateTheme.mock.calls.map((call) => call[0])).toEqual([
+      "dark",
+      ...ALL_THEME_KEYS.filter((key) => key !== "dark"),
+    ]);
+    const dark = accentUpdaterFor("dark")(REGISTERED_THEMES.dark);
+    expect(dark.colors.accent).toBe(ACCENT_PALETTE.blue.dark);
+    expect(dark.colors.userMessageBackground).toBe(ACCENT_PALETTE.blue.dark);
+    const light = accentUpdaterFor("light")(REGISTERED_THEMES.light);
+    expect(light.colors.accent).toBe(ACCENT_PALETTE.blue.light);
+    expect(light.colors.userMessageBackground).toBe(ACCENT_PALETTE.blue.light);
   });
 
   it("restores a plugin's authored colors after a custom accent without resetting other choices", () => {
@@ -228,9 +253,7 @@ describe("applyAccentAppearance", () => {
     };
     const themed = { ...plugin, fontFamily: { ...plugin.fontFamily, ui: "custom-font" } };
     applyAccentAppearance({ choice: "blue", contributedTheme: plugin });
-    const blueUpdater = updateTheme.mock.calls.find(([key]) => key === "pluginDark")![1] as (
-      theme: Theme,
-    ) => Theme;
+    const blueUpdater = accentUpdaterFor("pluginDark");
     const blue = blueUpdater(themed);
     expect(blue.colors.userMessageBackground).toBe("#9bafc5");
     expect(blue.colors.statusDanger).toBe(plugin.colors.statusDanger);
@@ -241,9 +264,7 @@ describe("applyAccentAppearance", () => {
 
     updateTheme.mockClear();
     applyAccentAppearance({ choice: "default", contributedTheme: plugin });
-    const resetUpdater = updateTheme.mock.calls.find(([key]) => key === "pluginDark")![1] as (
-      theme: Theme,
-    ) => Theme;
+    const resetUpdater = accentUpdaterFor("pluginDark");
     const reset = resetUpdater(blue);
     expect(reset.colors.accent).toBe(plugin.colors.accent);
     expect(reset.colors.accentForeground).toBe(plugin.colors.accentForeground);
