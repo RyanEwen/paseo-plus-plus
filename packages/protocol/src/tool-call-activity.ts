@@ -23,11 +23,14 @@ const commandActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("unknown"), command: z.string() }),
 ]);
 const commandActionsSchema = z.array(commandActionSchema).min(1);
+// Codex is the only producer; it reports additions, updates and deletions, and anything else
+// arrives as "unknown" so a future kind is never claimed as a creation.
+const fileChangeKindSchema = z.enum(["add", "update", "delete", "unknown"]);
 const fileChangesSchema = z
   .array(
     z.object({
       path: z.string().min(1),
-      kind: z.enum(["add", "update", "delete", "write", "unknown"]),
+      kind: fileChangeKindSchema,
       diff: z.string().optional(),
     }),
   )
@@ -49,20 +52,37 @@ export interface ToolActivity {
   target?: string;
 }
 
+/** What each provider-reported file change proves; only an addition counts as a creation. */
+const FILE_CHANGE_ACTIVITY_KIND: Record<z.output<typeof fileChangeKindSchema>, ToolActivityKind> =
+  {
+    add: "create",
+    update: "edit",
+    delete: "delete",
+    unknown: "change",
+  };
+
+/**
+ * Validate one untrusted metadata batch as a whole. Returns undefined when any entry is
+ * malformed, so a partial batch never stands in for the provider's complete report.
+ */
+function parseBatch<Schema extends z.ZodType>(
+  schema: Schema,
+  value: unknown,
+): z.output<Schema> | undefined {
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /** Validate the entire action batch; malformed or future actions keep the command generic. */
 export function parseCommandActions(
   value: unknown,
 ): z.output<typeof commandActionsSchema> | undefined {
-  if (!Array.isArray(value) || value.length === 0) return undefined;
-  const parsed = commandActionsSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
+  return parseBatch(commandActionsSchema, value);
 }
 
-/** Preserve all file paths and distinguish proven additions from writes that may overwrite. */
+/** Preserve all file paths and distinguish proven additions from changes that may overwrite. */
 export function parseFileChanges(value: unknown): z.output<typeof fileChangesSchema> | undefined {
-  if (!Array.isArray(value) || value.length === 0) return undefined;
-  const parsed = fileChangesSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
+  return parseBatch(fileChangesSchema, value);
 }
 
 /** Recognize only a single script/test invocation, never infer its filesystem effects. */
@@ -86,16 +106,7 @@ export function describeToolActivity(input: {
   const { detail, metadata } = input;
   const changes = parseFileChanges(metadata?.fileChanges);
   if (changes && (detail.type === "edit" || detail.type === "write" || detail.type === "unknown")) {
-    return changes.map((file) => {
-      const kinds = {
-        add: "create",
-        update: "edit",
-        delete: "delete",
-        write: "write",
-        unknown: "change",
-      } as const;
-      return { kind: kinds[file.kind], target: file.path };
-    });
+    return changes.map((file) => ({ kind: FILE_CHANGE_ACTIVITY_KIND[file.kind], target: file.path }));
   }
   switch (detail.type) {
     case "read":
