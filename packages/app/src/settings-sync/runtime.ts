@@ -30,6 +30,7 @@ import {
 } from "./domains";
 import {
   listSettingsDomainAdapters,
+  type SettingsDomainAdapter,
   type SettingsDomainContext,
 } from "@/hooks/use-settings/domain-adapters";
 import { useSessionStore } from "@/stores/session-store";
@@ -48,6 +49,48 @@ export function observeSettingsSyncDomainEdits(): () => void {
   return trackDomainEdits();
 }
 
+/** Let any initial app settings hydration finish before reading or replacing that cache. */
+async function awaitAppSettingsHydration(): Promise<void> {
+  await queryClient.getQueryCache().find({ queryKey: APP_SETTINGS_QUERY_KEY })?.promise;
+}
+
+/**
+ * Plain app preferences from the synced key registry, minus wire-only keys and keys a domain
+ * projects itself. Registry keys of feature layers absent from this build have no stored value.
+ */
+function pickSharedAppPreferences(
+  settings: AppSettings,
+  ownedKeys: ReadonlySet<string>,
+): Record<string, unknown> {
+  const app: Record<string, unknown> = {};
+  const stored: Record<string, unknown> = { ...settings };
+  for (const key of SYNC_APP_SETTING_KEYS) {
+    if (WIRE_ONLY_APP_KEYS.has(key) || ownedKeys.has(key)) continue;
+    if (Object.hasOwn(stored, key)) app[key] = stored[key];
+  }
+  // The Usage report host stays on the device; only its display choices sync.
+  app.usage = { displayAs: settings.usage.displayAs, pins: settings.usage.pins };
+  return app;
+}
+
+/** Publication drops device-only and host-unsupported fields, then applies domain filters. */
+function publishableAppPreferences(
+  app: Record<string, unknown>,
+  domains: readonly SettingsDomainAdapter[],
+  context: SettingsDomainContext,
+): Record<string, unknown> {
+  const chatSupported = selectChatPreferencesSupport(
+    useSessionStore.getState(),
+    context.selectedHost,
+  );
+  const shared = exportSupportedChatPreferences(
+    exportSharedAppSettings(app),
+    chatSupported,
+    context.purpose,
+  );
+  return filterDomainAppExport(domains, shared, context);
+}
+
 /**
  * Read known preferences, excluding credentials, host selection, layouts and drafts.
  * Backup preserves every choice; publish alone omits a field unsupported by the chosen host.
@@ -56,48 +99,26 @@ export function observeSettingsSyncDomainEdits(): () => void {
 export async function getDeviceSettingsValues(
   purpose: "backup" | "publish" = "backup",
 ): Promise<Record<string, unknown>> {
-  await queryClient.getQueryCache().find({ queryKey: APP_SETTINGS_QUERY_KEY })?.promise;
+  await awaitAppSettingsHydration();
   const settings =
     queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage());
   const domains = listSettingsDomainAdapters();
   await initializeDomains(domains);
 
-  // Plain app preferences. Keys a domain projects itself are left to that domain.
-  const owned = ownedDomainAppKeys(domains);
-  const app: Record<string, unknown> = {};
-  // Registry keys of feature layers absent from this build have no stored value to send.
-  const stored: Record<string, unknown> = { ...settings };
-  for (const key of SYNC_APP_SETTING_KEYS) {
-    if (WIRE_ONLY_APP_KEYS.has(key) || owned.has(key)) continue;
-    if (Object.hasOwn(stored, key)) app[key] = stored[key];
-  }
-  app.usage = { displayAs: settings.usage.displayAs, pins: settings.usage.pins };
-
+  const app = pickSharedAppPreferences(settings, ownedDomainAppKeys(domains));
   const context: SettingsDomainContext = {
     purpose,
     selectedHost: settingsSync.getState().selectedHost,
   };
   const domainValues = await collectDomainDeviceValues(domains, context);
   if (purpose === "backup") return { ...domainValues, app };
-
-  // Publication: drop device-only and host-unsupported fields, then apply domain filters.
-  const chatSupported = selectChatPreferencesSupport(
-    useSessionStore.getState(),
-    context.selectedHost,
-  );
-  const shared = exportSupportedChatPreferences(
-    exportSharedAppSettings(app),
-    chatSupported,
-    purpose,
-  );
-  return { ...domainValues, app: filterDomainAppExport(domains, shared, context) };
+  return { ...domainValues, app: publishableAppPreferences(app, domains, context) };
 }
 
 /** Project host values through the existing normalization and durable app write path. */
 async function applyValues(values: Record<string, unknown>): Promise<void> {
-  // Let any initial hydration finish before replacing the same cache and durable storage.
-  await queryClient.getQueryCache().find({ queryKey: APP_SETTINGS_QUERY_KEY })?.promise;
+  await awaitAppSettingsHydration();
   const app = normalizeAppSettings(isSettingsObject(values.app) ? values.app : {});
   // Historical hosts may still store serverId. It remains untouched on the host and device.
   await saveAppSettingsLocally({
