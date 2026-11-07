@@ -5,19 +5,8 @@ import {
   ensureResidentBrowserWebview as ensureDesktopBrowserWebview,
   removeResidentBrowserWebview,
   resizeResidentBrowserWebview,
+  type BrowserDimensions,
 } from "@/desktop/browser/resident-webviews";
-
-type ResizeBrowser = (input: {
-  browserId: string;
-  width: number;
-  height: number;
-}) => { width: number; height: number } | null | Promise<{ width: number; height: number } | null>;
-
-type EnsureBrowser = (input: {
-  browserId: string;
-  workspaceId: string;
-  url: string;
-}) => unknown | Promise<unknown>;
 import {
   createFixedBrowserViewport,
   createWorkspaceBrowser,
@@ -26,6 +15,24 @@ import {
 } from "@/desktop/browser/store";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+
+interface ResidentBrowserTarget {
+  browserId: string;
+  workspaceId: string;
+  url: string;
+}
+
+interface ResidentBrowserResize extends BrowserDimensions {
+  browserId: string;
+}
+
+/** Resize a resident browser; resolves to the applied size, or null when it is absent. */
+type ResizeBrowser = (
+  input: ResidentBrowserResize,
+) => BrowserDimensions | null | Promise<BrowserDimensions | null>;
+
+/** Create or reuse a resident browser. Its result is ignored; a returned promise is awaited. */
+type EnsureBrowser = (input: ResidentBrowserTarget) => unknown;
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,

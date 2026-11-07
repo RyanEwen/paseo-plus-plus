@@ -16,7 +16,7 @@ const RESIDENT_VIEWPORT_HEIGHT = 800;
 
 const residentWebviewsByBrowserId = new Map<string, HTMLElement>();
 const residentSurfacesByBrowserId = new Map<string, HTMLElement>();
-interface BrowserDimensions {
+export interface BrowserDimensions {
   width: number;
   height: number;
   mode: "fixed" | "responsive";
