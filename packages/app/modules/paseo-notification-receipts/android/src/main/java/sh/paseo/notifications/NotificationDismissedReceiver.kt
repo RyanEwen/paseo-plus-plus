@@ -21,6 +21,14 @@ class NotificationDismissedReceiver : BroadcastReceiver() {
   }
 }
 
+/** Mirrors the routing caps the desktop and app receipt schemas apply to the same fields. */
+private const val MAX_CONTENT_LENGTH = 8192
+private const val MAX_ID_LENGTH = 256
+private const val MAX_TIMESTAMP_LENGTH = 64
+
+/** JavaScript's Number.MAX_SAFE_INTEGER, the largest sequence the receipt schema accepts. */
+private const val MAX_SAFE_SEQUENCE = 9007199254740991.0
+
 /** A fixed-event outbox, never a credential store or a notification-listener service. */
 internal object NotificationDismissals {
   val listeners = CopyOnWriteArraySet<() -> Unit>()
@@ -28,17 +36,24 @@ internal object NotificationDismissals {
 
   @Synchronized
   fun record(context: Context, content: String) {
-    require(content.length <= 8192) { "Invalid notification data" }
+    require(content.length <= MAX_CONTENT_LENGTH) { "Invalid notification data" }
     val input = JSONObject(content)
     val server = input.optString("serverId")
     val workspace = input.optString("workspaceId")
     val sequence = input.optDouble("notificationSequence", Double.NaN)
-    require(server.isNotBlank() && server.length <= 256 && workspace.isNotBlank() && workspace.length <= 256)
-    require(sequence.isFinite() && sequence >= 1 && sequence <= 9007199254740991.0 && sequence == sequence.toLong().toDouble())
-    val data = JSONObject().put("serverId", server).put("workspaceId", workspace).put("notificationSequence", sequence.toLong())
+    require(isBoundedId(server)) { "Invalid notification server" }
+    require(isBoundedId(workspace)) { "Invalid notification workspace" }
+    require(sequence.isFinite()) { "Notification sequence is not a number" }
+    require(sequence >= 1 && sequence <= MAX_SAFE_SEQUENCE) { "Notification sequence is out of range" }
+    require(sequence == sequence.toLong().toDouble()) { "Notification sequence is not an integer" }
+    val data = JSONObject()
+      .put("serverId", server)
+      .put("workspaceId", workspace)
+      .put("notificationSequence", sequence.toLong())
     val agent = input.optString("agentId")
     val timestamp = input.optString("attentionTimestamp")
-    if (agent.isNotBlank() && agent.length <= 256 && timestamp.isNotBlank() && timestamp.length <= 64) {
+    val hasTimestamp = timestamp.isNotBlank() && timestamp.length <= MAX_TIMESTAMP_LENGTH
+    if (isBoundedId(agent) && hasTimestamp) {
       data.put("agentId", agent).put("attentionTimestamp", timestamp)
     }
     val id = UUID.nameUUIDFromBytes(data.toString().toByteArray(Charsets.UTF_8)).toString()
@@ -48,6 +63,9 @@ internal object NotificationDismissals {
     check(preferences(context).edit().putString("pending", current.toString()).commit())
     listeners.forEach { it() }
   }
+
+  /** A present identifier within the shared routing length cap. */
+  private fun isBoundedId(value: String): Boolean = value.isNotBlank() && value.length <= MAX_ID_LENGTH
 
   @Synchronized
   fun pending(context: Context): List<String> {
