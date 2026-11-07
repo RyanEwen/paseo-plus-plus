@@ -30,7 +30,7 @@ export function isProjectPinnedEntry(
  * @param entriesByKey hydrated entries by workspace key.
  * @param enabled the Paseo++ project pinning switch.
  */
-export function projectPinnedKeys(
+export function collectProjectPinnedKeys(
   workspaces: readonly SidebarWorkspacePlacement[],
   entriesByKey: ReadonlyMap<string, ProjectPinSource>,
   enabled: boolean,

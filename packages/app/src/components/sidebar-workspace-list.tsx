@@ -11,7 +11,7 @@ import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import {
   isProjectPinnedEntry,
-  projectPinnedKeys as resolveProjectPinnedKeys,
+  collectProjectPinnedKeys,
 } from "@/components/sidebar/project-pins";
 import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
@@ -2480,7 +2480,7 @@ function ProjectModeList({
       move: DragReorderMove,
     ) => {
       const project = unpinnedProjects.find((entry) => entry.viewKey === projectViewKey);
-      const projectPinnedKeys = resolveProjectPinnedKeys(
+      const projectPinnedKeys = collectProjectPinnedKeys(
         reorderedWorkspaces,
         workspaceEntriesByKey,
         projectPinningEnabled,

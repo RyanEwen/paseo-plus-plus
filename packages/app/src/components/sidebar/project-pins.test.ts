@@ -3,7 +3,7 @@ import type { SidebarWorkspacePlacement } from "@/hooks/use-sidebar-workspaces-l
 import {
   arrangeProjectPinnedWorkspaces,
   isProjectPinnedEntry,
-  projectPinnedKeys,
+  collectProjectPinnedKeys,
 } from "./project-pins";
 
 function row(name: string): SidebarWorkspacePlacement {
@@ -42,11 +42,11 @@ describe("project pins", () => {
   });
 
   it("collects the pin partition's keys", () => {
-    expect([...projectPinnedKeys(rows, entriesByKey, true)]).toEqual([
+    expect([...collectProjectPinnedKeys(rows, entriesByKey, true)]).toEqual([
       "srv:older-pin",
       "srv:newer-pin",
     ]);
-    expect([...projectPinnedKeys(rows, entriesByKey, false)]).toEqual([]);
+    expect([...collectProjectPinnedKeys(rows, entriesByKey, false)]).toEqual([]);
   });
 
   it("puts the newest pin first and keeps ordinary rows in their sorted order", () => {
