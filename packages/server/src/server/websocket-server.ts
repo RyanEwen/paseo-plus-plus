@@ -1,5 +1,6 @@
 import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { forkCapabilities } from "./fork-capabilities.js";
+import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -715,33 +716,31 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
-      dispatch: async (batch) => {
-        try {
-          const { disposition } = await sendPreparedPromptToAgent({
-            agentManager,
-            agentStorage,
-            agentId: batch.recipientId,
-            prompt: batch.prompt,
-            activeTurnBehavior: batch.activeTurnBehavior,
-            sessionMode: batch.sessionMode,
-            clearPendingPermissions: batch.clearPendingPermissions,
-            unarchive: batch.unarchive,
-            runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
-            onDispatch: batch.onDispatch,
-            logger: this.logger,
-          });
-          if (disposition === "turn_started")
-            await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
-          return disposition;
-        } catch (error) {
-          await agentManager.recordAttentionRejection({
-            agentId: batch.recipientId,
-            admissions: batch.attention,
-            error: error instanceof Error ? error.message : "Agent request dispatch failed",
-          });
-          throw error;
-        }
-      },
+      dispatch: (batch) =>
+        dispatchWithAttentionRejection({
+          agentManager,
+          logger: this.logger,
+          recipientId: batch.recipientId,
+          admissions: batch.attention,
+          dispatch: async () => {
+            const { disposition } = await sendPreparedPromptToAgent({
+              agentManager,
+              agentStorage,
+              agentId: batch.recipientId,
+              prompt: batch.prompt,
+              activeTurnBehavior: batch.activeTurnBehavior,
+              sessionMode: batch.sessionMode,
+              clearPendingPermissions: batch.clearPendingPermissions,
+              unarchive: batch.unarchive,
+              runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
+              onDispatch: batch.onDispatch,
+              logger: this.logger,
+            });
+            if (disposition === "turn_started")
+              await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
+            return disposition;
+          },
+        }),
       onError: (err, batch) =>
         this.logger.error(
           { err, agentId: batch.recipientId, messageIds: batch.messageIds },
