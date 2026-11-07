@@ -1,6 +1,8 @@
 import { confirmRiskyWorktreeArchive, toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { WorkspaceArchiveTarget } from "@/workspace/workspace-archive";
+import { i18n } from "@/i18n/i18next";
+import type { ConfirmDialogInput } from "@/utils/confirm-dialog";
 
 export interface ProjectWorkspaceArchiveEntry extends Pick<
   SidebarWorkspaceEntry,
@@ -14,6 +16,165 @@ export interface ProjectWorkspaceArchiveEntry extends Pick<
 > {}
 
 type ConfirmWorktreeArchive = typeof confirmRiskyWorktreeArchive;
+
+export interface ProjectArchiveWorkspace extends ProjectWorkspaceArchiveEntry {
+  background: boolean;
+  agentIds: string[];
+  runningAgentCount: number;
+}
+
+export interface ProjectArchiveSelection {
+  workspaces: ProjectArchiveWorkspace[];
+  agentCount: number;
+  runningAgentCount: number;
+}
+
+/** Identity of one host's copy of a project, for de-duplication and comparison. */
+export function projectArchiveHostKey(host: { serverId: string; projectId: string }): string {
+  return JSON.stringify([host.serverId, host.projectId]);
+}
+
+/** Identity of one workspace on its host, for ordering and comparison. */
+export function workspaceArchiveKey(target: { serverId: string; workspaceId: string }): string {
+  return JSON.stringify([target.serverId, target.workspaceId]);
+}
+
+/** Share the counted warning between ordinary confirmations and the background opt-in sheet. */
+export function buildProjectArchiveConfirmation(input: {
+  projectName: string;
+  hostCount: number;
+  selection: ProjectArchiveSelection;
+}): ConfirmDialogInput {
+  return {
+    title: i18n.t("sidebar.project.archive.title"),
+    message: i18n.t("sidebar.project.archive.message", {
+      projectName: input.projectName,
+      hostCount: input.hostCount,
+      workspaceCount: input.selection.workspaces.length,
+      agentCount: input.selection.agentCount,
+      runningAgentCount: input.selection.runningAgentCount,
+    }),
+    confirmLabel: i18n.t("sidebar.project.archive.action"),
+    cancelLabel: i18n.t("common.actions.cancel"),
+    destructive: true,
+  };
+}
+
+/** The user's answer to the main Archive all confirmation. */
+export type ProjectArchiveConfirmation =
+  | { kind: "cancelled" }
+  | { kind: "confirmed"; includeBackground: boolean };
+
+export type ProjectArchiveOutcome =
+  | { kind: "cancelled" | "changed" }
+  | { kind: "archived"; archivedCount: number }
+  | {
+      kind: "failed";
+      archivedCount: number;
+      failed: ProjectArchiveWorkspace;
+      unprocessedCount: number;
+      error: unknown;
+    };
+
+/** Select background work only after an explicit opt-in, independently of sidebar visibility. */
+export function selectProjectArchiveScope(
+  workspaces: readonly ProjectArchiveWorkspace[],
+  includeBackground: boolean,
+): ProjectArchiveSelection {
+  const selected = workspaces.filter((workspace) => includeBackground || !workspace.background);
+  return {
+    workspaces: selected,
+    agentCount: selected.reduce((count, workspace) => count + workspace.agentIds.length, 0),
+    runningAgentCount: selected.reduce(
+      (count, workspace) => count + workspace.runningAgentCount,
+      0,
+    ),
+  };
+}
+
+/**
+ * The facts the user confirmed: membership, agents, running work and archive risk.
+ * Display fields such as the name and the live diff stat are left out, because a running
+ * agent refreshes them continuously and they do not change what Archive all will do.
+ */
+function confirmedArchiveFacts(workspace: ProjectArchiveWorkspace) {
+  return {
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    background: workspace.background,
+    agentIds: [...workspace.agentIds].sort(),
+    runningAgentCount: workspace.runningAgentCount,
+    archiveHasUncommittedChanges: workspace.archiveHasUncommittedChanges,
+    archiveUnpushedCommitCount: workspace.archiveUnpushedCommitCount,
+  };
+}
+
+/** Compare confirmed facts while ignoring listing order. */
+function archiveSelectionSignature(workspaces: readonly ProjectArchiveWorkspace[]): string {
+  return JSON.stringify(
+    workspaces
+      .map(confirmedArchiveFacts)
+      .sort((left, right) => workspaceArchiveKey(left).localeCompare(workspaceArchiveKey(right))),
+  );
+}
+
+/**
+ * Confirm every risky worktree before any mutation, then archive serially.
+ * A failure stops the batch so later targets retain their state and can be retried.
+ */
+export async function archiveProjectWorkspaces(input: {
+  workspaces: ProjectArchiveWorkspace[];
+  /** Ask the user to confirm, including the explicit background choice. */
+  confirm: (workspaces: ProjectArchiveWorkspace[]) => Promise<ProjectArchiveConfirmation>;
+  refresh: () => Promise<ProjectArchiveWorkspace[]>;
+  archive: (workspace: ProjectArchiveWorkspace) => Promise<void>;
+  onProgress: (completed: number, total: number) => void;
+  confirmWorktreeArchive?: ConfirmWorktreeArchive;
+}): Promise<ProjectArchiveOutcome> {
+  const confirmation = await input.confirm(input.workspaces);
+  if (confirmation.kind === "cancelled") {
+    return { kind: "cancelled" };
+  }
+  const { includeBackground } = confirmation;
+  const selection = selectProjectArchiveScope(input.workspaces, includeBackground);
+
+  const confirmed = await selectProjectWorkspacesToArchive(
+    selection.workspaces,
+    input.confirmWorktreeArchive,
+  );
+  if (confirmed.length !== selection.workspaces.length) {
+    return { kind: "cancelled" };
+  }
+
+  // Confirmation can remain open while another client adds work or Git state changes.
+  const refreshed = selectProjectArchiveScope(await input.refresh(), includeBackground);
+  if (
+    archiveSelectionSignature(selection.workspaces) !==
+    archiveSelectionSignature(refreshed.workspaces)
+  ) {
+    return { kind: "changed" };
+  }
+
+  let archivedCount = 0;
+  for (const workspace of selection.workspaces) {
+    input.onProgress(archivedCount, selection.workspaces.length);
+    try {
+      await input.archive(workspace);
+    } catch (error) {
+      return {
+        kind: "failed",
+        archivedCount,
+        failed: workspace,
+        unprocessedCount: selection.workspaces.length - archivedCount - 1,
+        error,
+      };
+    }
+    archivedCount += 1;
+  }
+
+  input.onProgress(archivedCount, selection.workspaces.length);
+  return { kind: "archived", archivedCount };
+}
 
 export async function selectProjectWorkspacesToArchive(
   workspaces: ProjectWorkspaceArchiveEntry[],

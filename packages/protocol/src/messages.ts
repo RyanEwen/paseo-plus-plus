@@ -1127,6 +1127,13 @@ export const WorkspaceRecoveryInspectRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceRecoveryListArchivedRequestSchema = z.object({
+  type: z.literal("workspace.recovery.list_archived.request"),
+  requestId: z.string(),
+  projectId: z.string().min(1),
+  includeBackground: z.boolean().optional(),
+});
+
 export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   type: z.literal("workspace.recovery.restore.request"),
   workspaceId: z.string(),
@@ -2258,6 +2265,24 @@ export const WorkspaceRecoveryInspectResponseSchema = z.object({
   }),
 });
 
+export const ArchivedWorkspaceSummarySchema = z.object({
+  workspaceId: z.string(),
+  workspaceName: z.string(),
+  workspaceDirectory: z.string(),
+  branch: z.string().nullable(),
+  archivedAt: z.string(),
+});
+
+export const WorkspaceRecoveryListArchivedResponseSchema = z.object({
+  type: z.literal("workspace.recovery.list_archived.response"),
+  payload: z.object({
+    requestId: z.string(),
+    projectId: z.string(),
+    entries: z.array(ArchivedWorkspaceSummarySchema),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceRecoveryRestoreResponseSchema = z.object({
   type: z.literal("workspace.recovery.restore.response"),
   payload: z.object({
@@ -3383,6 +3408,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelDeleteRequestSchema,
   WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
+  WorkspaceRecoveryListArchivedRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
@@ -7308,6 +7334,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
+  WorkspaceRecoveryListArchivedResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
@@ -7517,6 +7544,7 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
+export type ArchivedWorkspaceSummary = z.infer<typeof ArchivedWorkspaceSummarySchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
   typeof WorkspaceRecoveryInspectResponseSchema
 >;

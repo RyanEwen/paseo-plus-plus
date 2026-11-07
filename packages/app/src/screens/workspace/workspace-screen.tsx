@@ -173,6 +173,7 @@ import {
 import { renderWorkspaceRouteGate } from "@/screens/workspace/workspace-route-state-views";
 import { useWorkspaceRecovery } from "@/workspace-recovery/use-workspace-recovery";
 import type { WorkspaceRecoveryModel } from "@/workspace-recovery/model";
+import { useWorkspaceRecoveryRequested } from "@/workspace/workspace-recovery-intent";
 import {
   buildWorkspaceTabSnapshot,
   createWorkspaceAgentVisibilitySelector,
@@ -759,8 +760,13 @@ function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
   pendingOpenTarget: WorkspaceTabTarget | null,
+  recoveryRequested: boolean,
 ): boolean {
-  return pendingOpenTarget?.kind === "agent" && hasHydratedWorkspaces && workspace === null;
+  return (
+    (recoveryRequested || pendingOpenTarget?.kind === "agent") &&
+    hasHydratedWorkspaces &&
+    workspace === null
+  );
 }
 
 function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
@@ -1176,6 +1182,10 @@ function WorkspaceScreenContent({
     hasHydratedWorkspaces,
     workspaceExists: workspaceDescriptor !== null,
   });
+  const recoveryRequested = useWorkspaceRecoveryRequested({
+    workspaceKey: persistenceKey,
+    workspaceExists: workspaceDescriptor !== null,
+  });
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
@@ -1183,6 +1193,7 @@ function WorkspaceScreenContent({
       hasHydratedWorkspaces,
       workspaceDescriptor,
       pendingOpenTarget,
+      recoveryRequested,
     ),
   });
 
