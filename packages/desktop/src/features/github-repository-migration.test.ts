@@ -134,6 +134,8 @@ const repositoryTransitions = (["win32", "linux"] as const).flatMap((platform) =
   ),
 );
 
+// COMPAT(fork-repo-rename): added in v0.11.2-preview, remove after the final prerelease updater
+// bridge is retired (no calendar date; see docs/release.md, final prerelease bridge).
 describe("desktop GitHub repository rename bridge", () => {
   it("packages the current fork feed without requiring the legacy repository redirect", () => {
     const config = readFileSync(

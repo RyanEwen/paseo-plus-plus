@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { resolveDesktopDistribution } from "../distribution.js";
 
 // The launcher reads Linux /proc state as well as POSIX command interfaces.
 const it = test.runIf(process.platform === "linux");
@@ -58,8 +59,8 @@ async function launch(
         config: { extraMetadata: { paseoPreview: options.isPreview ?? false } },
       },
     };
-    await afterPack(context);
-    if (options.rerun) await afterPack(context);
+    await afterPack(context, resolveDesktopDistribution);
+    if (options.rerun) await afterPack(context, resolveDesktopDistribution);
     const executablePath = options.symlink ? join(root, "paseo") : join(app, executableName);
     if (options.symlink) symlinkSync(join(app, executableName), executablePath);
     const args = options.args ?? ["path with spaces", "$(touch never)", "semi;colon", "*.txt"];

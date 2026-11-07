@@ -1,6 +1,11 @@
-/** Read an opt-in per-fetch budget before HTTP starts; Node clamps overflowing timers to 1ms. */
-function getWarmupTimeoutMs() {
-  const configured = process.env.PASEO_E2E_METRO_WARMUP_TIMEOUT_MS;
+/**
+ * Parse the opt-in per-fetch warmup budget from PASEO_E2E_METRO_WARMUP_TIMEOUT_MS.
+ * Unset means 120 seconds. Node clamps overflowing timers to 1ms, so values above the largest
+ * timer are rejected instead of silently becoming instant.
+ * @param {string | undefined} configured
+ * @returns {number}
+ */
+export function parseWarmupTimeoutMs(configured) {
   if (configured === undefined) return 120_000;
 
   const timeoutMs = Number(configured);
@@ -17,9 +22,14 @@ function getWarmupTimeoutMs() {
   return timeoutMs;
 }
 
-/** @param {number} port */
-export async function warmMetro(port) {
-  const timeoutMs = getWarmupTimeoutMs();
+/**
+ * Fetch the Metro document and compile its same-origin scripts before tests start.
+ * @param {number} port
+ * @param {{ timeoutMs?: number }} [options] Per-fetch budget; defaults to the environment value.
+ */
+export async function warmMetro(port, options = {}) {
+  const timeoutMs =
+    options.timeoutMs ?? parseWarmupTimeoutMs(process.env.PASEO_E2E_METRO_WARMUP_TIMEOUT_MS);
   const origin = `http://127.0.0.1:${port}`;
   const documentResponse = await fetch(origin, { signal: AbortSignal.timeout(timeoutMs) });
   if (!documentResponse.ok) {

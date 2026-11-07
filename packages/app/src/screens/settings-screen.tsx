@@ -479,6 +479,9 @@ interface AboutSectionProps {
 }
 
 function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSectionProps) {
+  // Fork preview desktop builds carry a "-preview.N" version and update only from the
+  // preview channel.
+  const isPreviewBuild = appVersion?.includes("-preview.") === true;
   const { t } = useTranslation();
   return (
     <>
@@ -492,9 +495,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
             <Text style={styles.aboutValue}>{appVersionText}</Text>
           </View>
           <WhatsNewRow />
-          {isDesktopApp ? (
-            <DesktopAppUpdateRow isPreview={appVersion?.includes("-preview.") === true} />
-          ) : null}
+          {isDesktopApp ? <DesktopAppUpdateRow isPreview={isPreviewBuild} /> : null}
         </View>
       </SettingsSection>
       <ConnectedHostsSection clientVersion={appVersion} />

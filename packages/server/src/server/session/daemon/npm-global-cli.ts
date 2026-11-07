@@ -3,10 +3,8 @@ import { downloadForkPreview } from "./fork-preview.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { z } from "zod";
 import { execCommand } from "../../../utils/spawn.js";
-
 import { daemonDistribution, FORK_DAEMON_PACKAGE } from "../../daemon-distribution.js";
 
-export { FORK_DAEMON_PACKAGE };
 export const PASEO_CLI_PACKAGE = daemonDistribution.cliPackage;
 
 const NPM_PROBE_TIMEOUT_MS = 10_000;

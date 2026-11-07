@@ -1677,6 +1677,15 @@ test("agent config requires provider/model syntax", async () => {
   await client.close();
 });
 
+/** A lifecycle event of the GC fixture's child process, kept for failure diagnostics. */
+interface GcFixtureChildEvent {
+  event: string;
+  pid: number | undefined;
+  at: number;
+  code?: number | null;
+  signal?: string | null;
+}
+
 test("canceled timeline handles and captured state are collectible while their API stays alive", async () => {
   const source = `
     import assert from "node:assert/strict";
@@ -1735,13 +1744,7 @@ test("canceled timeline handles and captured state are collectible while their A
     ["--expose-gc", "--import", "tsx", "--input-type=module", "-e", source],
     { env, timeout: 15000 },
   );
-  const childEvents: Array<{
-    event: string;
-    pid: number | undefined;
-    at: number;
-    code?: number | null;
-    signal?: string | null;
-  }> = [];
+  const childEvents: GcFixtureChildEvent[] = [];
   execution.child.once("spawn", () =>
     childEvents.push({ event: "spawn", pid: execution.child.pid, at: Date.now() }),
   );
@@ -1770,8 +1773,8 @@ test("canceled timeline handles and captured state are collectible while their A
         : "";
     throw new Error(`GC fixture child failed: ${diagnostics(stdout, stderr)}`, { cause: error });
   });
+  // Diagnostics only appear in the failure message; a passing run stays quiet.
   const context = diagnostics(result.stdout, result.stderr);
-  console.info("gc_fixture_child_result", context);
   const completionLines = result.stderr
     .split("\n")
     .filter((line) => line === "paseo:timeline-gc:assertions-complete");

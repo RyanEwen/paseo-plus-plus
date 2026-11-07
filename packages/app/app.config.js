@@ -123,7 +123,7 @@ const nativeReleaseVersion = isPreviewBuild
 
 export default {
   expo: {
-    name: isPreviewBuild ? "Paseo++" : variant.name,
+    name: variant.name,
     slug: isPreviewBuild ? previewExpoProject.slug : "voice-mobile",
     version: isPreviewBuild ? nativeReleaseVersion.version : nativeReleaseVersion.appVersion,
     orientation: "default",
