@@ -35,3 +35,12 @@ test("reads every traced daemon path from the checkout's trace script", () => {
     ]);
   });
 });
+
+test("reads a trace list larger than Node's default 1 MiB output buffer", () => {
+  // 40,000 paths of 38 bytes are about 1.45 MiB of stdout.
+  withFakeTraceCheckout(40_000, (root) => {
+    const files = readTracedDaemonFiles(root);
+    assert.equal(files.length, 40_000);
+    assert.equal(files.at(-1), "packages/server/dist/module-039999.js");
+  });
+});

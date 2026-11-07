@@ -27,6 +27,8 @@ export function readTracedDaemonFiles(root) {
   return execFileSync(process.execPath, [path.join(root, "scripts/trace-daemon.mjs")], {
     cwd: root,
     encoding: "utf8",
+    // The traced closure lists thousands of paths; Node's default 1 MiB stdout buffer is too small.
+    maxBuffer: 64 * 1024 * 1024,
   })
     .trim()
     .split("\n");
