@@ -266,7 +266,9 @@ function normalizeFileTabTarget(
 function normalizeWorkingDiffTabTarget(
   value: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
 ): WorkspaceTabTarget | null {
-  const filePath = trimNonEmpty(value.filePath)?.replace(/\\/g, "/") ?? null;
+  // Single-file scopes are matched literally by the host: spaces, backslashes and pathspec
+  // punctuation are part of the filename, so only an empty scope is discarded.
+  const filePath = value.filePath ? value.filePath : null;
   const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
   const focusRequestId = normalizePositiveInteger(value.focusRequestId);
   return {

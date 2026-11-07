@@ -63,11 +63,16 @@ describe("working diff tab identity", () => {
     focusRequestId: 1,
   };
 
-  it("normalizes single-file scopes and distinguishes their tab identities", () => {
+  it("keeps single-file scopes literal and distinguishes their tab identities", () => {
     const scoped = { ...target, filePath: "src/example.ts" };
-    expect(normalizeWorkspaceTabTarget({ ...scoped, filePath: " src\\example.ts " })).toEqual(
-      scoped,
-    );
+    expect(normalizeWorkspaceTabTarget(scoped)).toEqual(scoped);
+    for (const literal of [" a.css", "dir\\file.ts", "src/trailing "]) {
+      expect(normalizeWorkspaceTabTarget({ ...target, filePath: literal })).toEqual({
+        ...target,
+        filePath: literal,
+      });
+    }
+    expect(normalizeWorkspaceTabTarget({ ...target, filePath: "" })).toEqual(target);
     expect(buildDeterministicWorkspaceTabId(scoped)).toBe("working_diff_file_src/example.ts");
     expect(buildDeterministicWorkspaceTabId(scoped)).not.toBe(
       buildDeterministicWorkspaceTabId(target),
