@@ -120,11 +120,7 @@ describe("viewed toast history actions", () => {
   it("reads history only when this build may read it", async () => {
     const history = recordingHistory();
 
-    const actions = viewedToastHistoryActions({
-      platform: "win32",
-      canReadHistory: false,
-      history,
-    });
+    const actions = viewedToastHistoryActions({ canReadHistory: false, history });
 
     await expect(actions.list()).resolves.toEqual([]);
     expect(history.calls).toEqual([]);
@@ -133,19 +129,18 @@ describe("viewed toast history actions", () => {
   it("removes a viewed live toast on a packaged Windows build", async () => {
     const history = recordingHistory();
 
-    const actions = viewedToastHistoryActions({ platform: "win32", canReadHistory: true, history });
+    const actions = viewedToastHistoryActions({ canReadHistory: true, history });
     await actions.removeViewedLive?.("toast-1");
 
     expect(history.calls).toEqual(["removeCurrentLive:toast-1"]);
   });
 
-  it("has no live removal off Windows", () => {
-    const actions = viewedToastHistoryActions({
-      platform: "darwin",
-      canReadHistory: false,
-      history: recordingHistory(),
-    });
+  it("has no live removal on a Windows build that cannot read its history", () => {
+    const history = recordingHistory();
 
+    const actions = viewedToastHistoryActions({ canReadHistory: false, history });
+
+    // An unpackaged build has no verified toast identity; removal would only fail and warn.
     expect(actions.removeViewedLive).toBeNull();
   });
 });

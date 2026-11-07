@@ -40,7 +40,6 @@ export function registerViewedAgentNotifications(
   input: RegisterViewedAgentNotificationsInput,
 ): ViewedAgentNotifications {
   const historyActions = viewedToastHistoryActions({
-    platform: process.platform,
     canReadHistory: input.canReadHistory,
     history: input.history,
   });

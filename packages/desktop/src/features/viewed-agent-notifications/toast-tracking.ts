@@ -22,8 +22,7 @@ export interface ViewedToastHistoryActions {
 }
 
 interface ViewedToastHistoryInput {
-  platform: NodeJS.Platform;
-  /** True only when this packaged build may read its Notification Center history. */
+  /** True only on a packaged Windows build whose toast identity is verified. */
   canReadHistory: boolean;
   history: ViewedToastHistory;
 }
@@ -35,8 +34,8 @@ export function viewedToastHistoryActions(
   return {
     list: () => (input.canReadHistory ? input.history.list() : Promise.resolve([])),
     remove: (toasts) => input.history.remove(toasts),
-    removeViewedLive:
-      input.platform === "win32" ? (id) => input.history.removeCurrentLive(id) : null,
+    // Removal needs the same verified packaged identity as reading.
+    removeViewedLive: input.canReadHistory ? (id) => input.history.removeCurrentLive(id) : null,
   };
 }
 
