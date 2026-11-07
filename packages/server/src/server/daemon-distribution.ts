@@ -5,43 +5,40 @@ import { z } from "zod";
 
 export const FORK_DAEMON_PACKAGE = "@ryanewen/paseo-daemon";
 
+/** Installed daemon identity: CLI package, command name and local defaults. */
+export interface DaemonDistribution {
+  cliPackage: string;
+  commandName: string;
+  /** Default PASEO_HOME, with a leading ~ for the user's home folder. */
+  defaultHome: string;
+  defaultPort: number;
+}
+
 const manifestNameSchema = z.object({ name: z.string().optional() });
 
 const desktopManifestSchema = z.object({
   name: z.string().optional(),
   paseoPreview: z.boolean().optional(),
-  paseoDebug: z.boolean().optional(),
 });
 
-const upstreamDistribution = {
+const upstreamDistribution: DaemonDistribution = {
   cliPackage: "@getpaseo/cli",
   commandName: "paseo",
   defaultHome: "~/.paseo",
   defaultPort: 6767,
-} as const;
+};
 
-const forkDistribution = {
+const forkDistribution: DaemonDistribution = {
   cliPackage: FORK_DAEMON_PACKAGE,
   commandName: "paseo-plus-plus",
   defaultHome: "~/.paseo-plus-plus",
   defaultPort: 6791,
-} as const;
+};
 
-const desktopPackageNames = new Set([
-  "@getpaseo/desktop",
-  "paseo-plus-plus",
-  "paseo-plus-plus-debug",
-]);
+const desktopPackageNames = new Set(["@getpaseo/desktop", "paseo-plus-plus"]);
 
-function resolveDesktopManifest(value: unknown) {
+function resolveDesktopManifest(value: unknown): DaemonDistribution | null {
   const manifest = desktopManifestSchema.parse(value);
-  if (manifest.paseoDebug) {
-    return {
-      ...upstreamDistribution,
-      defaultHome: "~/.paseo-plus-plus-debug-desktop",
-      defaultPort: 6791,
-    };
-  }
   if (manifest.paseoPreview) {
     return {
       ...upstreamDistribution,
@@ -53,7 +50,7 @@ function resolveDesktopManifest(value: unknown) {
 }
 
 /** Resolve installed identity from the enclosing package, independent of launch environment overrides. */
-export function resolveDaemonDistribution(moduleUrl: string) {
+export function resolveDaemonDistribution(moduleUrl: string): DaemonDistribution {
   let directory = path.dirname(fileURLToPath(moduleUrl));
   while (path.dirname(directory) !== directory) {
     const manifest = path.join(directory, "package.json");
