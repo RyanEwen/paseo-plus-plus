@@ -1,7 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
-  createContext,
-  useContext,
   Fragment,
   useCallback,
   useEffect,
@@ -96,88 +94,13 @@ import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
-import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
+import {
+  ExplorerIconOnlyMenuItem,
+  ExplorerTabStripContextMenu,
+  iconOnlyTabStyles,
+  useExplorerTabDisplay,
+} from "@/screens/workspace/explorer-tab-display";
 import { useSessionStore } from "@/stores/session-store";
-
-interface ExplorerTabDisplayControl {
-  enabled: boolean;
-  disabled: boolean;
-  pending: boolean;
-  failed: boolean;
-  toggle(): void;
-}
-const ExplorerTabDisplayContext = createContext<ExplorerTabDisplayControl | null>(null);
-
-function ExplorerIconOnlyMenuItem({ separator = false }: { separator?: boolean }) {
-  const control = useContext(ExplorerTabDisplayContext);
-  const { t } = useTranslation();
-  if (!control) return null;
-  return (
-    <>
-      {separator ? <ContextMenuSeparator /> : null}
-      <ContextMenuItem
-        selected={control.enabled}
-        showSelectedCheck
-        disabled={control.disabled}
-        status={control.pending ? "pending" : "idle"}
-        tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
-        closeOnSelect={false}
-        onSelect={control.toggle}
-        testID="explorer-icon-only-tabs-menu-item"
-      >
-        {t("explorerTabs.iconOnlyLabel")}
-      </ContextMenuItem>
-    </>
-  );
-}
-
-function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl {
-  const { settings, save, pending, failed, isLoading, error } =
-    useSettingsSave<"explorerIconOnlyTabs">();
-  const iconOnly = host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
-  const toggleIconOnly = useCallback(() => {
-    void save("explorerIconOnlyTabs", (current) => ({
-      paseoPlusPlus: {
-        ...current.paseoPlusPlus,
-        explorerIconOnlyTabs: !current.paseoPlusPlus.explorerIconOnlyTabs,
-      },
-    }));
-  }, [save]);
-  return useMemo<ExplorerTabDisplayControl>(
-    () => ({
-      enabled: iconOnly,
-      disabled: isLoading || error !== null || pending !== null,
-      pending: pending !== null,
-      failed: failed !== null,
-      toggle: toggleIconOnly,
-    }),
-    [iconOnly, isLoading, error, pending, failed, toggleIconOnly],
-  );
-}
-
-function ExplorerTabStripContextMenu({
-  host,
-  control,
-  children,
-}: {
-  host: PaneHost;
-  control: ExplorerTabDisplayControl;
-  children: React.ReactNode;
-}) {
-  if (host !== "explorer") return children;
-  return (
-    <ExplorerTabDisplayContext.Provider value={control}>
-      <ContextMenu>
-        <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
-          {children}
-        </ContextMenuTrigger>
-        <ContextMenuContent width={DROPDOWN_WIDTH} testID="explorer-tab-strip-menu">
-          <ExplorerIconOnlyMenuItem />
-        </ContextMenuContent>
-      </ContextMenu>
-    </ExplorerTabDisplayContext.Provider>
-  );
-}
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -773,7 +696,7 @@ function TabHandleContent({
 
   return (
     <View
-      style={showLabel ? styles.tabHandle : styles.iconOnlyTabHandle}
+      style={showLabel ? styles.tabHandle : iconOnlyTabStyles.handle}
       dataSet={tabHandleDataSet}
     >
       <View style={styles.tabIcon}>
@@ -881,7 +804,7 @@ function TabChip({
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
-      !showLabel && styles.iconOnlyTab,
+      !showLabel && iconOnlyTabStyles.tab,
       isFilled && styles.tabFill(chipBackdrop),
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
@@ -1778,15 +1701,6 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     overflow: "visible",
     marginHorizontal: TAB_CHIP_GAP / 2,
-  },
-  stripContextHost: { flex: 1, minWidth: 0 },
-  iconOnlyTab: { paddingHorizontal: 0, justifyContent: "center" },
-  iconOnlyTabHandle: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-    minWidth: 0,
   },
   tabHandle: {
     flexDirection: "row",
