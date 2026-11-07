@@ -19,14 +19,16 @@ export function AccentSection() {
   // Main reads the selected settings host from settings sync; restore that once a fork-base seam exposes it.
   const selectedHost: string | null = null;
   const supported = useSessionStore((state) => selectAccentColorSupport(state, selectedHost));
-  const { settings, save, pending, failed, isLoading, error } = useSettingsSave<"accentColor">();
+  const { settings, save, pending, failed, isLoading, isEditingBlocked, error } =
+    useSettingsSave<"accentColor">();
   const select = useCallback(
     (accentColor: AccentColor) => {
       void save("accentColor", { accentColor });
     },
     [save],
   );
-  const disabled = !supported || isLoading || error !== null || pending !== null;
+  const disabled =
+    !supported || isLoading || isEditingBlocked || error !== null || pending !== null;
   let hint = t("paseoPlusPlus.accent.hint");
   if (!supported) hint = t("paseoPlusPlus.accent.updateHost");
   if (pending !== null) hint = t("paseoPlusPlus.saving");
