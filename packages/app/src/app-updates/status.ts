@@ -1,10 +1,20 @@
 import { formatFileSize } from "@/utils/format-file-size";
 import { i18n } from "@/i18n/i18next";
-import { useAndroidUpdate } from "./store";
+import type { AndroidUpdateState } from "./store";
 
-/** Use the same operation feedback in Settings and the update callout. */
-export function androidUpdateStatus(): string {
-  const { status, update, error, progress } = useAndroidUpdate.getState();
+/** The update state the description depends on; callers pass the values they already selected. */
+export type AndroidUpdateDescriptionInput = Pick<
+  AndroidUpdateState,
+  "status" | "update" | "error" | "progress"
+>;
+
+/** User-facing copy for the current update operation, shared by Settings and the sidebar callout. */
+export function describeAndroidUpdate({
+  status,
+  update,
+  error,
+  progress,
+}: AndroidUpdateDescriptionInput): string {
   if (status === "downloading" && progress) {
     const bytes = formatFileSize(progress.bytesDownloaded);
     if (progress.totalBytes && progress.totalBytes > 0) {

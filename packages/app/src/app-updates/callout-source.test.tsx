@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PASEO_PLUS_PLUS_PREFERENCES } from "@/paseo-plus-plus/preferences";
 import type { SidebarCalloutOptions } from "@/contexts/sidebar-callout-context";
 import { AndroidUpdateCalloutSource } from "./callout-source";
-import { useAndroidUpdate } from "./store";
+import { androidUpdater } from "./use-android-updater";
 
 interface SettingsHydration {
   loading: boolean;
@@ -96,7 +96,7 @@ beforeEach(() => {
   fakes.native.download.mockResolvedValue(undefined);
   fakes.native.install.mockResolvedValue("installer_opened");
   fakes.show.mockReturnValue(() => {});
-  useAndroidUpdate.setState({ status: "idle", update: null, error: null });
+  androidUpdater.setState({ status: "idle", update: null, error: null, preparedVersionCode: null });
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -170,11 +170,11 @@ describe("Android automatic-check preference", () => {
     );
     hydration.loading = false;
     await render();
-    expect(useAndroidUpdate.getState().status).toBe("checking");
+    expect(androidUpdater.getState().status).toBe("checking");
     hydration.enabled = false;
     await render();
     await act(async () => finish());
-    expect(useAndroidUpdate.getState()).toMatchObject({ status: "available", update });
+    expect(androidUpdater.getState()).toMatchObject({ status: "available", update });
     expect(fakes.show.mock.lastCall?.[0]).toMatchObject({ id: "android-app-update" });
     expect(fakes.find).toHaveBeenCalledTimes(1);
   });
@@ -184,7 +184,7 @@ describe("Android automatic-check preference", () => {
     hydration.loading = false;
     fakes.find.mockResolvedValue(update);
     await render();
-    await act(async () => useAndroidUpdate.getState().check());
+    await act(async () => androidUpdater.getState().check({ intent: "manual" }));
     expect(fakes.find).toHaveBeenCalledTimes(1);
     const notice = fakes.show.mock.lastCall?.[0];
     if (!notice?.actions?.[0]) throw new Error("The manual update notice has no install action");
@@ -195,6 +195,6 @@ describe("Android automatic-check preference", () => {
       update.versionCode,
     );
     expect(fakes.native.install).toHaveBeenCalledWith(update.versionCode);
-    expect(useAndroidUpdate.getState().status).toBe("installer");
+    expect(androidUpdater.getState().status).toBe("installer");
   });
 });

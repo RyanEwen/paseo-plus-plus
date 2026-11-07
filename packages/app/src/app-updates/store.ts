@@ -1,95 +1,139 @@
-import type { AndroidUpdateDownloadProgress } from "./native-contract";
-import { create } from "zustand";
-import { androidUpdaterNative } from "./native";
-import {
-  findAndroidUpdate,
-  readApkChecksum,
-  requestUpdateResource,
-  type AndroidUpdate,
-} from "./releases";
+import { createStore, type StoreApi } from "zustand/vanilla";
+import type { AndroidUpdateDownloadProgress, AndroidUpdaterNative } from "./native-contract";
+import type { AndroidUpdate } from "./releases";
 
-interface UpdateState {
-  status:
-    | "idle"
-    | "checking"
-    | "current"
-    | "available"
-    | "downloading"
-    | "verifying"
-    | "permission"
-    | "installer"
-    | "error";
+export type AndroidUpdateStatus =
+  | "idle"
+  | "checking"
+  | "current"
+  | "available"
+  | "downloading"
+  | "verifying"
+  | "permission"
+  | "installer"
+  | "error";
+
+/** Automatic checks come from startup, resume and the interval; manual ones from a button. */
+export type AndroidUpdateCheckIntent = "automatic" | "manual";
+
+/** A check or download is running, so no other update operation may start. */
+export function isAndroidUpdateBusy(status: AndroidUpdateStatus): boolean {
+  return status === "checking" || isAndroidUpdateTransferring(status);
+}
+
+/** The APK is downloading or being verified. */
+export function isAndroidUpdateTransferring(status: AndroidUpdateStatus): boolean {
+  return status === "downloading" || status === "verifying";
+}
+
+/** Release discovery and checksum lookup, injected so tests need no network. */
+export interface AndroidUpdateReleasesPort {
+  /** The newest published preview newer than the installed version code, or null. */
+  find(installedCode: number): Promise<AndroidUpdate | null>;
+  /** The APK's SHA-256 from the release's SHA256SUMS; throws when absent or ambiguous. */
+  readChecksum(update: AndroidUpdate): Promise<string>;
+}
+
+export interface AndroidUpdaterDeps {
+  /** Null outside Android fork previews; the updater then never does anything. */
+  native: AndroidUpdaterNative | null;
+  releases: AndroidUpdateReleasesPort;
+}
+
+export interface AndroidUpdateState {
+  /** Whether this build can install its own updates at all. */
+  available: boolean;
+  status: AndroidUpdateStatus;
   update: AndroidUpdate | null;
+  /** Version code of the APK already downloaded and verified, so install can skip the download. */
+  preparedVersionCode: number | null;
   error: string | null;
   progress: AndroidUpdateDownloadProgress | null;
-  check: (automatic?: boolean) => Promise<void>;
+  check: (options: { intent: AndroidUpdateCheckIntent }) => Promise<void>;
   install: () => Promise<void>;
 }
 
-let preparedVersionCode: number | null = null;
+export type AndroidUpdater = StoreApi<AndroidUpdateState>;
 
-/** Share one operation across Settings and the sidebar; never overlap checks and downloads. */
-export const useAndroidUpdate = create<UpdateState>((set, get) => ({
-  status: "idle",
-  update: null,
-  error: null,
-  progress: null,
-  async check(automatic = false) {
-    const native = androidUpdaterNative;
-    const previous = get();
-    if (!native || ["checking", "downloading", "verifying"].includes(previous.status)) return;
-    // Automatic checks preserve a pending permission/install action and visible retry errors.
-    if (automatic && ["permission", "installer", "error"].includes(previous.status)) return;
-    set({ status: "checking", error: null, progress: null });
-    try {
-      const update = await findAndroidUpdate(native.getVersionCode());
-      set({ update, status: update ? "available" : "current" });
-    } catch (error) {
-      if (automatic) {
-        set({ status: previous.status });
-      } else {
-        set({
-          status: "error",
-          error: error instanceof Error ? error.message : "Unable to check for updates",
-        });
+/** Statuses an automatic check must not overwrite: pending user actions and visible retry errors. */
+function preservesUserAction(status: AndroidUpdateStatus): boolean {
+  return status === "permission" || status === "installer" || status === "error";
+}
+
+/**
+ * Create the shared update operation for Settings and the sidebar. Checks and downloads never
+ * overlap; automatic check failures are silent so a background request cannot replace visible state.
+ */
+export function createAndroidUpdater({ native, releases }: AndroidUpdaterDeps): AndroidUpdater {
+  return createStore<AndroidUpdateState>((set, get) => {
+    /** Download and verify the APK natively, publishing progress for this version only. */
+    async function prepare(updaterNative: AndroidUpdaterNative, update: AndroidUpdate) {
+      const sha256 = await releases.readChecksum(update);
+      // Scope native events to this download and remove the listener on every terminal path.
+      let acceptingProgress = true;
+      const subscription = updaterNative.addListener("downloadProgress", (progress) => {
+        if (!acceptingProgress || progress.versionCode !== update.versionCode) return;
+        set({ status: progress.phase, progress });
+      });
+      try {
+        await updaterNative.download(update.url, sha256, update.versionCode);
+      } finally {
+        acceptingProgress = false;
+        subscription.remove();
       }
+      set({ preparedVersionCode: update.versionCode });
     }
-  },
-  async install() {
-    const native = androidUpdaterNative;
-    const { update, status } = get();
-    if (!native || !update || ["checking", "downloading", "verifying"].includes(status)) return;
-    set({ status: "downloading", error: null, progress: null });
-    try {
-      if (preparedVersionCode !== update.versionCode) {
-        const response = await requestUpdateResource(update.checksumUrl);
-        const sha256 = readApkChecksum(response, update.filename);
-        // Scope native events to this download and remove the listener on every terminal path.
-        let acceptingProgress = true;
-        const subscription = native.addListener("downloadProgress", (progress) => {
-          if (!acceptingProgress || progress.versionCode !== update.versionCode) return;
-          set({ status: progress.phase, progress });
-        });
+
+    return {
+      available: native !== null,
+      status: "idle",
+      update: null,
+      preparedVersionCode: null,
+      error: null,
+      progress: null,
+
+      async check({ intent }) {
+        const previous = get();
+        if (!native || isAndroidUpdateBusy(previous.status)) return;
+        if (intent === "automatic" && preservesUserAction(previous.status)) return;
+        set({ status: "checking", error: null, progress: null });
         try {
-          await native.download(update.url, sha256, update.versionCode);
-        } finally {
-          acceptingProgress = false;
-          subscription.remove();
+          const update = await releases.find(native.getVersionCode());
+          set({ update, status: update ? "available" : "current" });
+        } catch (error) {
+          if (intent === "automatic") {
+            set({ status: previous.status });
+            return;
+          }
+          set({
+            status: "error",
+            error: error instanceof Error ? error.message : "Unable to check for updates",
+          });
         }
-        preparedVersionCode = update.versionCode;
-      }
-      const result = await native.install(update.versionCode);
-      set({
-        status: result === "permission_required" ? "permission" : "installer",
-        progress: null,
-      });
-    } catch (error) {
-      preparedVersionCode = null;
-      set({
-        status: "error",
-        progress: null,
-        error: error instanceof Error ? error.message : "Unable to install update",
-      });
-    }
-  },
-}));
+      },
+
+      async install() {
+        const { update, status, preparedVersionCode } = get();
+        if (!native || !update || isAndroidUpdateBusy(status)) return;
+        set({ status: "downloading", error: null, progress: null });
+        try {
+          if (preparedVersionCode !== update.versionCode) {
+            await prepare(native, update);
+          }
+          const result = await native.install(update.versionCode);
+          set({
+            status: result === "permission_required" ? "permission" : "installer",
+            progress: null,
+          });
+        } catch (error) {
+          set({
+            status: "error",
+            progress: null,
+            preparedVersionCode: null,
+            error: error instanceof Error ? error.message : "Unable to install update",
+          });
+        }
+      },
+    };
+  });
+}
