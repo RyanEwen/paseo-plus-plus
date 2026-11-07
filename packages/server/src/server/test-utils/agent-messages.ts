@@ -1,4 +1,5 @@
 import { createAgentMessageDelivery } from "../agent/agent-messages/index.js";
+import { dispatchWithAttentionRejection } from "../agent/attention/dispatch.js";
 import {
   sendPreparedPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -18,22 +19,30 @@ export function createTestAgentMessages(params: {
       const timer = setTimeout(callback, 0);
       return () => clearTimeout(timer);
     },
-    dispatch: async (request) => {
-      const result = await sendPreparedPromptToAgent({
-        ...params,
-        agentId: request.recipientId,
-        prompt: request.prompt,
-        sessionMode: request.sessionMode,
-        unarchive: request.unarchive,
-        activeTurnBehavior: request.activeTurnBehavior,
-        clearPendingPermissions: request.clearPendingPermissions,
-        onDispatch: request.onDispatch,
-        runOptions: { clientMessageId: request.messageIds[0] },
-      });
-      if (result.disposition === "turn_started")
-        await waitForAgentRunStartWithTimeout(params.agentManager, request.recipientId);
-      return result.disposition;
-    },
+    // Same rejection recording as the daemon, so tests observe production dispatch failures.
+    dispatch: (request) =>
+      dispatchWithAttentionRejection({
+        agentManager: params.agentManager,
+        logger: params.logger,
+        recipientId: request.recipientId,
+        admissions: request.attention,
+        dispatch: async () => {
+          const result = await sendPreparedPromptToAgent({
+            ...params,
+            agentId: request.recipientId,
+            prompt: request.prompt,
+            sessionMode: request.sessionMode,
+            unarchive: request.unarchive,
+            activeTurnBehavior: request.activeTurnBehavior,
+            clearPendingPermissions: request.clearPendingPermissions,
+            onDispatch: request.onDispatch,
+            runOptions: { clientMessageId: request.messageIds[0], attention: request.attention },
+          });
+          if (result.disposition === "turn_started")
+            await waitForAgentRunStartWithTimeout(params.agentManager, request.recipientId);
+          return result.disposition;
+        },
+      }),
     onError: (error, request) =>
       params.logger.error(
         { err: error, agentId: request.recipientId, messageIds: request.messageIds },

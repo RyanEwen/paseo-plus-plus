@@ -1,8 +1,10 @@
+import { hasHumanAgentAttention } from "./agent-attention.js";
 import { describe, expect, it } from "vitest";
 import {
   deriveAgentStateBucket,
   getAgentStatusPriority,
   getWorkspaceStateBucketPriority,
+  isOutrankedByExplicitReview,
 } from "./agent-state-bucket.js";
 
 describe("deriveAgentStateBucket", () => {
@@ -88,5 +90,29 @@ describe("getAgentStatusPriority", () => {
     expect(permission).toBeLessThan(
       getAgentStatusPriority({ status: "running", pendingPermissionCount: 0 }),
     );
+  });
+});
+
+it("keeps passive problems visible while using the daemon decision for human badges", () => {
+  const passiveProblem = {
+    status: "error" as const,
+    pendingPermissionCount: 1,
+    humanAttentionRequired: false,
+  };
+  expect(deriveAgentStateBucket(passiveProblem)).toBe("needs_input");
+  expect(hasHumanAgentAttention(passiveProblem)).toBe(false);
+  expect(hasHumanAgentAttention({ ...passiveProblem, humanAttentionRequired: true })).toBe(true);
+  expect(hasHumanAgentAttention({ requiresAttention: true })).toBe(true);
+});
+
+describe("isOutrankedByExplicitReview", () => {
+  it.each([
+    { bucket: "running", outranked: true },
+    { bucket: "done", outranked: true },
+    { bucket: "attention", outranked: false },
+    { bucket: "failed", outranked: false },
+    { bucket: "needs_input", outranked: false },
+  ] as const)("$bucket: $outranked", ({ bucket, outranked }) => {
+    expect(isOutrankedByExplicitReview(bucket)).toBe(outranked);
   });
 });

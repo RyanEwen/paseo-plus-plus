@@ -16,7 +16,11 @@ import type {
 } from "../terminal/terminal-manager.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
-import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
+import {
+  attentionAgentManagerStub,
+  attentionConfigStoreStub,
+  createProviderSnapshotManagerStub,
+} from "./test-utils/session-stubs.js";
 import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
@@ -119,6 +123,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
+    ...attentionAgentManagerStub(),
     subscribe: vi.fn(() => () => {}),
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),
@@ -133,6 +138,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     })),
   };
   const daemonConfigStore = {
+    ...attentionConfigStoreStub(),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };

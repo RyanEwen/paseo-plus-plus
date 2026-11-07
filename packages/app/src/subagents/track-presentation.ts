@@ -38,10 +38,28 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
-    statusBucket: deriveSidebarStateBucket({
-      status,
-      requiresAttention: false,
-    }),
+    statusBucket: deriveSidebarStateBucket({ status, ...subagentAttentionInput(row) }),
+  };
+}
+
+/**
+ * The attention part of a row's status bucket. A managed child reports its own human attention,
+ * blockers and review reason; a provider subagent reports only its lifecycle.
+ */
+function subagentAttentionInput(row: SubagentRow) {
+  if (row.kind !== "paseo") {
+    return {};
+  }
+  // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor
+  // includes audience metadata. Older hosts keep the track's lifecycle-only presentation.
+  if (row.humanAttentionRequired === undefined) {
+    return { requiresAttention: false, attentionMessage: row.attentionMessage };
+  }
+  return {
+    requiresAttention: row.humanAttentionRequired && row.requiresAttention,
+    attentionReason: row.attentionReason,
+    attentionMessage: row.attentionMessage,
+    pendingPermissionCount: row.pendingPermissionCount,
   };
 }
 
@@ -72,9 +90,9 @@ export interface SubagentPillPresentation {
  * "1 failed" over a child that is still working says the fan-out has stopped. Every state present
  * gets its own mark and its own count, in the order the sidebar's status groups list them.
  *
- * It stays one line because subagent rows only ever reach three states — see
- * `buildSubagentRowPresentationData`, which reports no attention of its own — so the pill is two
- * segments at worst, and falls back to naming what it opens once nothing is happening.
+ * It falls back to naming what it opens once nothing is happening. A managed child on an
+ * audience-aware host can also report needs input and attention, so a fan-out can show a mark
+ * for each of those states.
  */
 export function buildSubagentPillPresentation(
   t: TFunction,

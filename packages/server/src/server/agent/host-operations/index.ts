@@ -1,7 +1,7 @@
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   DaemonClient,
@@ -18,6 +18,16 @@ import { selectAgentListItems } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
 import { expandUserPath } from "../../path-utils.js";
 import type { PaseoToolExecutionContext, PaseoToolResult } from "../tools/types.js";
+import type {
+  AgentAttentionPeer,
+  AgentAttentionRequestQuery,
+  AgentMessageAttention,
+} from "@getpaseo/protocol/agent-attention";
+
+/** Internal dispatch provenance is stripped by the MCP catalog before returning the tool result. */
+export interface AgentHostOperationResult extends PaseoToolResult {
+  attention?: AgentMessageAttention;
+}
 
 export class HostOperationRejectedError extends Error {
   readonly code: unknown;
@@ -27,6 +37,16 @@ export class HostOperationRejectedError extends Error {
     this.code = error instanceof Error && "code" in error ? error.code : undefined;
   }
 }
+/** A destination answered a delegated create with an agent other than the reserved identity. */
+export class DelegatedIdentityMismatchError extends Error {
+  constructor(
+    readonly expectedAgentId: string,
+    readonly returnedAgentId: string,
+  ) {
+    super("Host returned a different agent identity for the delegated request");
+    this.name = "DelegatedIdentityMismatchError";
+  }
+}
 function isAmbiguousPromptFailure(error: unknown): boolean {
   if (error instanceof DaemonConnectionError) return true;
   return error instanceof Error && error.message.startsWith("Timeout waiting for message");
@@ -34,7 +54,7 @@ function isAmbiguousPromptFailure(error: unknown): boolean {
 export type HostOperation = (
   input: Record<string, unknown>,
   context: PaseoToolExecutionContext,
-) => Promise<PaseoToolResult>;
+) => Promise<AgentHostOperationResult>;
 export interface HostOperations {
   createAgent: HostOperation;
   createWorkspace: HostOperation;
@@ -55,7 +75,11 @@ export class HostObservationError extends Error {
   }
 }
 export interface HostObservation {
-  wait(agentId: string, signal: AbortSignal): Promise<WaitForFinishResult>;
+  wait(
+    agentId: string,
+    signal: AbortSignal,
+    attentionRequest?: AgentAttentionRequestQuery,
+  ): Promise<WaitForFinishResult>;
   observe(
     agentId: string,
     handler: (
@@ -178,6 +202,7 @@ const remoteCreate = z
     labels: z.record(z.string(), z.string()).optional(),
     notifyOnFinish: z.boolean().optional(),
     idempotencyKey: z.string().optional(),
+    objectiveId: z.string().optional(),
     settings: z
       .object({
         modeId: z.string().optional(),
@@ -198,12 +223,37 @@ export function createHostResolver(input: {
   hosts: () => ToolHosts;
   callerAgentId?: string;
   lockedCwd?: string;
+  prepareAttention?: (input: {
+    recipient: AgentAttentionPeer;
+    objectiveId?: string;
+    requestId?: string;
+  }) => Promise<AgentMessageAttention | undefined>;
 }) {
+  /**
+   * Stable caller-selected IDs preserve creation idempotency across tool retries and restarts.
+   *
+   * The sha256 is laid out as an RFC 9562 version 8 UUID (8-4-8xxx-8xxx-12: version nibble 8,
+   * variant bits 10) so it passes the z.uuid() check on create_agent_request.agentId.
+   */
+  function delegatedAgentId(destination: string, key?: string): string {
+    if (!key) return randomUUID();
+    const hex = createHash("sha256")
+      .update(
+        JSON.stringify(["agent-attention", input.serverId, input.callerAgentId, destination, key]),
+      )
+      .digest("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  }
   return {
     directory: () => input.hosts().directory(),
     async use<T>(
       serverId: string | undefined,
       action: (host: HostOperations) => Promise<T>,
+      beforeDispatch?: (input: {
+        agentId: string;
+        attention?: AgentMessageAttention;
+        requireParentOwnership?: boolean;
+      }) => Promise<void>,
     ): Promise<T> {
       const destination = serverId ?? input.serverId;
       if (destination === input.serverId) return action(input.local);
@@ -213,6 +263,18 @@ export function createHostResolver(input: {
         action({
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
+            const agentId = input.callerAgentId
+              ? delegatedAgentId(destination, parsed.idempotencyKey)
+              : undefined;
+            const attention = agentId
+              ? await input.prepareAttention?.({
+                  recipient: { serverId: destination, agentId },
+                  objectiveId: parsed.objectiveId,
+                  requestId: parsed.idempotencyKey
+                    ? delegatedAgentId(destination, `attention:${parsed.idempotencyKey}`)
+                    : undefined,
+                })
+              : undefined;
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
             const workspace = (await client.fetchWorkspaces({})).entries.find(
               (row) => row.id === parsed.workspaceId,
@@ -224,7 +286,14 @@ export function createHostResolver(input: {
                 ? parentAddressLabels({ agentId: input.callerAgentId, serverId: input.serverId })
                 : {}),
             };
+            if (agentId)
+              await beforeDispatch?.({ agentId, attention, requireParentOwnership: true });
             const snapshot = await client.createAgent({
+              agentId,
+              sourceAgentId: input.callerAgentId,
+              sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
+              agentAttention: attention,
+              clientMessageId: attention?.requesterObjective?.requestId,
               config: {
                 provider,
                 model,
@@ -239,36 +308,50 @@ export function createHostResolver(input: {
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
             });
-            return result({
-              agentId: snapshot.id,
-              type: snapshot.provider,
-              status: snapshot.status,
-              cwd: snapshot.cwd,
-              workspaceId: snapshot.workspaceId,
-              currentModeId: snapshot.currentModeId,
-              availableModes: snapshot.availableModes,
-            });
+            if (agentId && snapshot.id !== agentId) {
+              throw new DelegatedIdentityMismatchError(agentId, snapshot.id);
+            }
+            return {
+              ...result({
+                agentId: snapshot.id,
+                type: snapshot.provider,
+                status: snapshot.status,
+                cwd: snapshot.cwd,
+                workspaceId: snapshot.workspaceId,
+                currentModeId: snapshot.currentModeId,
+                availableModes: snapshot.availableModes,
+              }),
+              attention,
+            };
           },
           async sendPrompt(args) {
-            const agentId = args.agentId as string;
+            const target = (
+              await client.fetchAgent(z.string().parse(args.agentId)).catch((error) => {
+                throw new HostOperationRejectedError(error);
+              })
+            )?.agent;
+            if (!target)
+              throw new HostOperationRejectedError(
+                new Error(`Agent ${String(args.agentId)} not found`),
+              );
+            const agentId = target.id;
+            const attention = await input.prepareAttention?.({
+              recipient: { serverId: destination, agentId },
+              objectiveId: z.string().optional().parse(args.objectiveId),
+            });
             // Human sends retain the established mode RPC on older connected hosts.
             // Agent sends apply their requested mode when the recipient dispatches the batch.
             if (!input.callerAgentId && args.sessionMode !== undefined) {
               await client.setAgentMode(agentId, args.sessionMode as string);
             }
-            const agent = (
-              await client.fetchAgent(agentId).catch((error) => {
-                // Snapshot preflight precedes sendMessage, so failure is definitely unsent.
-                throw new HostOperationRejectedError(error);
-              })
-            )?.agent;
-            if (!agent)
-              throw new HostOperationRejectedError(new Error(`Agent ${agentId} not found`));
+            await beforeDispatch?.({ agentId, attention });
             const receipt = await client
               .sendMessage(agentId, args.prompt as string, {
                 sessionMode: input.callerAgentId
                   ? (args.sessionMode as string | undefined)
                   : undefined,
+                agentAttention: attention,
+                messageId: attention?.requesterObjective?.requestId,
                 sourceAgentId: input.callerAgentId,
                 sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
                 activeTurnBehavior:
@@ -282,7 +365,7 @@ export function createHostResolver(input: {
             return result({
               success: true,
               ...receipt,
-              status: agent.status,
+              status: target.status,
               guidance:
                 receipt.deliveryStatus === "queued"
                   ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
@@ -441,11 +524,14 @@ function remoteObservation(client: DaemonClient): HostObservation {
         await observation.release();
       };
     },
-    wait: (agentId, signal) => {
+    wait: (agentId, signal, attentionRequest) => {
       const close = () => void client.close();
       signal.addEventListener("abort", close, { once: true });
-      return client
-        .waitForFinish(agentId, 0)
+      return (
+        attentionRequest
+          ? client.waitForAttentionOutcome({ agentId, attentionRequest })
+          : client.waitForFinish(agentId, 0)
+      )
         .then((outcome) => {
           if (!outcome.final && outcome.error && outcome.error !== `Agent not found: ${agentId}`)
             throw new Error(outcome.error);
@@ -486,7 +572,7 @@ export function createHostObservationResolver(input: {
           (client) => {
             const remote = remoteObservation(client);
             return action({
-              wait: (agentId, lifetime) => remote.wait(agentId, lifetime).catch(fail),
+              wait: (agentId, lifetime, query) => remote.wait(agentId, lifetime, query).catch(fail),
               observe(agentId, handler, lifetime, onError) {
                 async function report(error: unknown): Promise<void> {
                   try {

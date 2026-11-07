@@ -49,3 +49,18 @@ test("invalid persisted records fail visibly", async () => {
   );
   await expect(createJsonFinishSubscriptionStore(directory).list()).rejects.toThrow();
 });
+
+test("round-trips exact request peers and pending target acknowledgment across restart", async () => {
+  const directory = await temporaryHome();
+  const exact = {
+    ...subscription,
+    serverId: "target-host",
+    attention: {
+      link: { objectiveId: "human-task", requestId: "exact-request", token: "private-capability" },
+      requester: { agentId: subscription.callerAgentId, serverId: "origin-host" },
+    },
+    pendingAcknowledgement: { outcomeId: "exact-outcome", terminal: true },
+  };
+  await createJsonFinishSubscriptionStore(directory).put(exact);
+  expect(await createJsonFinishSubscriptionStore(directory).list()).toEqual([exact]);
+});

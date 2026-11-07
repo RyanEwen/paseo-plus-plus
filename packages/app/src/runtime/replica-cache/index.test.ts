@@ -1297,3 +1297,57 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   await writer.flush();
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
 });
+
+it.each([
+  {
+    label: "agent false with a reason, workspace true",
+    agentAttention: false,
+    attentionMessage: "Intervention reason",
+    workspaceAttention: true,
+  },
+  {
+    label: "agent true, workspace absent",
+    agentAttention: true,
+    attentionMessage: undefined,
+    workspaceAttention: undefined,
+  },
+  {
+    label: "agent absent, workspace false",
+    agentAttention: undefined,
+    attentionMessage: undefined,
+    workspaceAttention: false,
+  },
+])(
+  "retains the audience decision across offline restoration: $label",
+  async ({ agentAttention, attentionMessage, workspaceAttention }) => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    const baseline = directory();
+    const cachedAgent = agent();
+    // Absent metadata models an older host: the cache must keep it absent, not false.
+    cachedAgent.humanAttentionRequired = agentAttention;
+    cachedAgent.attentionMessage = attentionMessage;
+    baseline.agents.set(cachedAgent.id, cachedAgent);
+    const cachedWorkspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      status: "failed",
+      humanAttentionRequired: workspaceAttention,
+    });
+    baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
+    commitDirectory(cache, SERVER_ID, baseline);
+    await cache.flush();
+    const writes = storage.writes;
+
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    const restoredAgent = restored.agents.get(cachedAgent.id);
+    expect(restoredAgent?.humanAttentionRequired).toBe(agentAttention);
+    expect(restoredAgent?.attentionMessage).toBe(attentionMessage);
+    expect(restored.workspaces.get(cachedWorkspace.id)?.humanAttentionRequired).toBe(
+      workspaceAttention,
+    );
+    const direct = await createCache(storage).readWorkspace(SERVER_ID, cachedWorkspace.id);
+    expect(direct?.workspace.humanAttentionRequired).toBe(workspaceAttention);
+    expect(storage.writes).toBe(writes);
+  },
+);

@@ -522,9 +522,23 @@ export class TimelineProjection {
     return last?.endSeq === seq ? this.rows[last.rowIndex].item : null;
   }
 
-  getLastAssistantMessage(): string | null {
-    const row = this.lastAssistantRowIndex === null ? null : this.rows[this.lastAssistantRowIndex];
-    return row?.item.type === "assistant_message" ? row.item.text : null;
+  /**
+   * Latest assistant text, optionally limited to one turn. Reads rows in place because
+   * streaming calls this on every assistant append.
+   */
+  getLastAssistantMessage(turnId?: string): string | null {
+    const latest =
+      this.lastAssistantRowIndex === null ? null : this.rows[this.lastAssistantRowIndex];
+    if (turnId === undefined || latest?.turnId === turnId) {
+      return latest?.item.type === "assistant_message" ? latest.item.text : null;
+    }
+    for (let index = this.rows.length - 1; index >= 0; index--) {
+      const row = this.rows[index]!;
+      if (row.item.type === "assistant_message" && row.turnId === turnId) {
+        return row.item.text;
+      }
+    }
+    return null;
   }
 
   enrichSubmittedUserMessage(

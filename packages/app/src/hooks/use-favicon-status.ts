@@ -5,8 +5,8 @@ import { getDesktopHost } from "@/desktop/host";
 import { useWorkspaceStatusesForBadges } from "@/stores/session-store-hooks";
 import { deriveMacDockBadgeCountFromWorkspaceStatuses } from "@/utils/desktop-badge-state";
 import { isNative } from "@/constants/platform";
+import { deriveFaviconStatus, type FaviconStatus } from "@/utils/favicon-status";
 
-type FaviconStatus = "none" | "running" | "attention";
 type ColorScheme = "dark" | "light";
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -23,21 +23,6 @@ const FAVICON_IMAGES: Record<ColorScheme, Record<FaviconStatus, { uri: string } 
   },
 };
 /* eslint-enable @typescript-eslint/no-require-imports */
-
-function deriveFaviconStatus(
-  agents: ReturnType<typeof useAggregatedAgents>["agents"],
-): FaviconStatus {
-  const hasRunning = agents.some((agent) => agent.status === "running");
-  if (hasRunning) {
-    return "running";
-  }
-  const hasAttention = agents.some((agent) => agent.requiresAttention);
-  const hasNeedsInput = agents.some((agent) => (agent.pendingPermissionCount ?? 0) > 0);
-  if (hasAttention || hasNeedsInput) {
-    return "attention";
-  }
-  return "none";
-}
 
 function getFaviconUri(status: FaviconStatus, colorScheme: ColorScheme): string {
   const image = FAVICON_IMAGES[colorScheme][status];
