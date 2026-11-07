@@ -3,14 +3,14 @@ import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons/github-icon";
-import { PRODUCT_LINKS } from "@/constants/product-links";
+import { FORK_LINKS } from "@/paseo-plus-plus/links";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 const renderGitHubIcon = (color: string) => <GitHubIcon color={color} size={14} />;
 
 export function CommunityLinks() {
   const handleOpenGitHub = useCallback(() => {
-    void openExternalUrl(PRODUCT_LINKS.repository);
+    void openExternalUrl(FORK_LINKS.repository);
   }, []);
 
   return (

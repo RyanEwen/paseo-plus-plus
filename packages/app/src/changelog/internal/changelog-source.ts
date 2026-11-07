@@ -1,5 +1,5 @@
-import { PRODUCT_LINKS } from "@/constants/product-links";
 import { useCallback, useEffect, useState } from "react";
+import { FORK_LINKS } from "@/paseo-plus-plus/links";
 import type { ChangelogRelease } from "./parse-changelog";
 import { parseGitHubReleases } from "./parse-github-releases";
 
@@ -42,7 +42,7 @@ export function useChangelog(enabled: boolean): Changelog {
 
     void (async () => {
       try {
-        const response = await fetch(PRODUCT_LINKS.changelogSource, { signal: controller.signal });
+        const response = await fetch(FORK_LINKS.changelogSource, { signal: controller.signal });
         if (!response.ok) throw new Error(`Changelog request failed: ${response.status}`);
         const body = await response.text();
         if (cached?.body === body) return;
