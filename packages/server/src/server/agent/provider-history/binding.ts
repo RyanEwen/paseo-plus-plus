@@ -153,10 +153,15 @@ export class HistoryStorageConflictError extends Error {
   constructor(
     readonly reason: HistoryConflictReason,
     /** Optional data appended to the message after the reason, separated by a colon. */
-    detail?: string,
+    readonly detail?: string,
   ) {
     super(historyConflictMessage(reason, detail));
     this.name = "HistoryStorageConflictError";
+  }
+
+  /** The reason as reported in wrapped failure messages, with its detail when present. */
+  describe(): string {
+    return this.detail === undefined ? this.reason : `${this.reason}:${this.detail}`;
   }
 }
 

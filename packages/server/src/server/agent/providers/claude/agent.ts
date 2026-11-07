@@ -3341,7 +3341,8 @@ class ClaudeAgentSession implements AgentSession {
         },
       });
     } catch (error) {
-      const reason = error instanceof HistoryStorageConflictError ? error.reason : "unavailable";
+      const reason =
+        error instanceof HistoryStorageConflictError ? error.describe() : "unavailable";
       throw new Error(
         `Claude rewind child ${sessionId} retained in ${storage.home}; identity commit failed (${reason})`,
         { cause: error },
@@ -3620,7 +3621,8 @@ class ClaudeAgentSession implements AgentSession {
           { cause: error },
         );
       }
-      const reason = error instanceof HistoryStorageConflictError ? error.reason : "unavailable";
+      const reason =
+        error instanceof HistoryStorageConflictError ? error.describe() : "unavailable";
       throw new Error(
         `Claude ${input.failure} ${input.id} retained in ${input.storage.home}; ${input.failedStep} (${reason})`,
         { cause: error },
