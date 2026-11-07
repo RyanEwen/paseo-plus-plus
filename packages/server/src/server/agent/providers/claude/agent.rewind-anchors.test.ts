@@ -993,7 +993,9 @@ describe("configured Claude managed rewind", () => {
             await f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation");
           }
           f.setBeforeInit(async () => {
-            await f.storage.update(f.agent.id, driftMutation(field));
+            const record = await f.storage.get(f.agent.id, { includeHistoryIntents: true });
+            if (!record) throw new Error("fixture agent record missing");
+            await f.storage.upsert(driftMutation(field)(record));
           });
           await runTurns(f.session, 1);
           const actual = await f.storage.get(f.agent.id);

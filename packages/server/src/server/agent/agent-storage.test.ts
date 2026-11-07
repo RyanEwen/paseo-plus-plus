@@ -145,6 +145,17 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
   };
 }
 
+/** Rewrite one stored record through the storage queue (this layer has no AgentStorage.update). */
+async function updateStoredRecord(
+  storage: AgentStorage,
+  agentId: string,
+  mutate: (record: StoredAgentRecord) => StoredAgentRecord,
+): Promise<void> {
+  const record = await storage.get(agentId, { includeHistoryIntents: true });
+  if (!record) throw new Error(`Agent ${agentId} not found`);
+  await storage.upsert(mutate(record));
+}
+
 describe("AgentStorage", () => {
   let tmpDir: string;
   let storagePath: string;
@@ -200,7 +211,10 @@ describe("AgentStorage", () => {
       persistence: { provider: "codex-work", sessionId: "native-selected" },
     });
     await storage.applySnapshot(agent);
-    await storage.update(agent.id, (record) => ({ ...record, archivedAt: "2026-01-01T00:00:00Z" }));
+    await updateStoredRecord(storage, agent.id, (record) => ({
+      ...record,
+      archivedAt: "2026-01-01T00:00:00Z",
+    }));
     await storage.applySnapshot({ ...agent, providerHistory: undefined });
     const record = await new AgentStorage(storagePath, logger).get(agent.id);
     expect(record?.providerHistory).toEqual(binding);
@@ -344,7 +358,8 @@ describe("AgentStorage", () => {
       if (field === "archive") changed.archivedAt = "2026-02-02T00:00:00Z";
       if (field === "fresh") changed.claudeFreshRewind = { operationId: "fresh-intent" };
       if (field === "binding") changed.providerHistory!.storage = { kind: "unknown" };
-      const mutation = storage.update(original.id, () => changed);
+      // Queued before the retry, exactly as a manager write would be.
+      const mutation = storage.upsert(changed);
       const consume = vi.fn();
       const retry = storage.reserveHistoryIntent(original, { expected, consume });
       await mutation;
@@ -371,7 +386,7 @@ describe("AgentStorage", () => {
         invalid.runtimeInfo = { provider: "codex", sessionId: "native-known" };
       if (field === "archive") invalid.archivedAt = "2026-02-02T00:00:00Z";
       if (field === "fresh") invalid.claudeFreshRewind = { operationId: "fresh-operation" };
-      await storage.update(original.id, () => invalid);
+      await storage.upsert(invalid);
       const consume = vi.fn();
       await expect(
         storage.reserveHistoryIntent(original, { expected: structuredClone(invalid), consume }),
@@ -1155,7 +1170,7 @@ describe("configured Claude rewind commits", () => {
   });
   const newHandle = { provider: "claude-work", sessionId: "new", nativeHandle: "new" };
   test("empty Claude registration and first snapshot publish atomically; failed write leaves hidden audit intent", async () => {
-    await registry.update("guarded", (r) => ({
+    await updateStoredRecord(registry, "guarded", (r) => ({
       ...r,
       persistence: null,
       providerHistory: {
@@ -1198,7 +1213,7 @@ describe("configured Claude rewind commits", () => {
     });
   });
   test("bound empty recreation reuses exact record and rejects changed config, audience or provenance", async () => {
-    await registry.update("guarded", (r) => ({
+    await updateStoredRecord(registry, "guarded", (r) => ({
       ...r,
       persistence: null,
       launchEnv: { CLAUDE_CODE_ENTRYPOINT: "saved-explicit-env" },
@@ -1232,7 +1247,7 @@ describe("configured Claude rewind commits", () => {
     );
   });
   test("initial lazy handle binds once through canonical queue; snapshots cannot supply or clear it", async () => {
-    await registry.update("guarded", (r) => ({
+    await updateStoredRecord(registry, "guarded", (r) => ({
       ...r,
       persistence: null,
       providerHistory: { ...r.providerHistory!, origin: "created", sessionId: null },
@@ -1278,7 +1293,7 @@ describe("configured Claude rewind commits", () => {
   test.each(["imported", "fresh", "codex"])(
     "initial binding rejects %s authority",
     async (kind) => {
-      await registry.update("guarded", (r) => ({
+      await updateStoredRecord(registry, "guarded", (r) => ({
         ...r,
         persistence: null,
         claudeFreshRewind: kind === "fresh" ? { operationId: "pending" } : undefined,
@@ -1454,7 +1469,7 @@ describe("configured Claude rewind commits", () => {
     async ({ kind, reason }) => {
       if (kind === "codex") {
         const old = (await registry.get("guarded"))!;
-        await registry.update("guarded", (r) => ({
+        await updateStoredRecord(registry, "guarded", (r) => ({
           ...r,
           providerHistory: {
             ...old.providerHistory!,
