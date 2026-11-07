@@ -13,7 +13,12 @@ const pinMapping = (theme: Theme) => ({
   size: theme.iconSize.xs,
 });
 
-/** Paint inside the existing leading gutter without participating in row layout. */
+/**
+ * Paint the project pin inside the existing leading gutter without participating in row layout.
+ *
+ * @param occupied the leading slot already shows something, so the pin shrinks to a corner badge.
+ * @param outside the leading slot is empty, so the pin sits in the gutter left of the row.
+ */
 export function WorkspaceProjectPinGutter({
   workspace,
   occupied = false,
@@ -21,7 +26,7 @@ export function WorkspaceProjectPinGutter({
 }: {
   occupied?: boolean;
   outside?: boolean;
-  workspace: Pick<SidebarWorkspaceEntry, "workspaceKey" | "projectPinnedAt" | "pinnedAt">;
+  workspace: Pick<SidebarWorkspaceEntry, "workspaceKey" | "projectPinnedAt">;
 }) {
   const enabled = useContext(ProjectPinGutterContext);
   if (!enabled || workspace.projectPinnedAt == null) return null;
@@ -32,22 +37,22 @@ export function WorkspaceProjectPinGutter({
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       aria-hidden
-      testID={`sidebar-project-pin-rail-${workspace.workspaceKey}`}
+      testID={`sidebar-project-pin-icon-${workspace.workspaceKey}`}
     >
-      {workspace.projectPinnedAt != null ? (
-        <View testID={`sidebar-project-pin-icon-${workspace.workspaceKey}`}>
-          <PinIcon uniProps={pinMapping} />
-        </View>
-      ) : null}
+      <PinIcon uniProps={pinMapping} />
     </View>
   );
 }
+
 const styles = StyleSheet.create((theme) => ({
+  // Optical offsets: the shrunken pin reads as a badge on the slot's lower right without covering
+  // the glyph's centre.
   annotation: {
     transform: [{ scale: 0.65 }],
     left: theme.iconSize.md / 2,
     top: theme.spacing[1],
   },
+  // An empty slot has no width, so the pin sits in the gutter one slot to the left of the title.
   outside: { left: -(theme.iconSize.md + theme.spacing[2]) },
   rail: {
     position: "absolute",
@@ -55,7 +60,6 @@ const styles = StyleSheet.create((theme) => ({
     top: 0,
     width: theme.iconSize.md,
     height: theme.iconSize.md + theme.spacing[1],
-    flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
