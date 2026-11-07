@@ -1,6 +1,4 @@
-import { selectChatPreferencesSupport } from "@/appearance/chat-preferences-support";
-import { useSettingsSyncState } from "@/settings-sync/bootstrap";
-import { useSessionStore } from "@/stores/session-store";
+import { useChatPreferencesSupport } from "@/settings-sync/use-chat-preferences-support";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,8 +14,7 @@ export function SendingSection() {
   const { settings, save, pending, failed, isLoading, isEditingBlocked, error } = useSettingsSave<
     "sendBehavior" | "sendShortcut"
   >();
-  const { selectedHost } = useSettingsSyncState();
-  const supported = useSessionStore((state) => selectChatPreferencesSupport(state, selectedHost));
+  const supported = useChatPreferencesSupport();
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const modifier = getShortcutOs() === "mac" ? "⌘" : "Ctrl";
   const options = useMemo(
