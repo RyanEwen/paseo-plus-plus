@@ -169,6 +169,11 @@ function isViewportUpwardKeyPress(event: KeyboardEvent, scrollContainer: HTMLEle
   return event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home";
 }
 
+/** Whether the viewport sits at its start edge, where upward input releases a pager latch. */
+function isAtHistoryStartEdge(scrollContainer: HTMLElement): boolean {
+  return scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON;
+}
+
 function canNestedScrollerConsumeInput(
   target: EventTarget | null,
   scrollContainer: HTMLElement,
@@ -586,8 +591,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       historyStartPaginationStateRef.current = rearmed;
       setHistoryStartPaginationState(rearmed);
     }
-    historyStartPaginationStateRef.current = rearmed;
-    setHistoryStartPaginationState(rearmed);
     evaluateHistoryStart();
   });
   const scheduleHistoryStartPrependSettle = useStableEvent(() => {
@@ -898,8 +901,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (followOutputRef.current) {
       setFollowOutput(false);
     }
-    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
-    rearmHistoryStartFromUserIntent(scrollTop <= USER_SCROLL_DELTA_EPSILON);
+    const scrollContainer = scrollContainerRef.current;
+    rearmHistoryStartFromUserIntent(!scrollContainer || isAtHistoryStartEdge(scrollContainer));
   });
 
   /** Upward input can only move this viewport when it scrolls and has a range to move through. */
@@ -1157,11 +1160,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
      * thumb drag does. The browser publishes the resulting scroll asynchronously, so waiting for
      * it would leave a late scroll looking like geometry, keep following on, and block paging.
      */
-    const markUpwardViewportInput = (asksViewportToMove: boolean) => {
+    const markUpwardViewportInput = ({ asksViewportToMove }: { asksViewportToMove: boolean }) => {
       markUpwardInputEvidence();
       if (asksViewportToMove && canUserMoveViewport()) {
         stopFollowingOutputFromUserIntent();
-      } else if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
+      } else if (isAtHistoryStartEdge(scrollContainer)) {
         rearmHistoryStartFromUserIntent();
       }
     };
@@ -1178,7 +1181,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         return;
       // Descendants ran first, so their cancellation is visible here. Ancestors run later and this
       // cannot see them, but the app's own wheel listeners above this viewport are all passive.
-      if (event.deltaY < 0) markUpwardViewportInput(isVerticalUpwardWheel(event));
+      if (event.deltaY < 0)
+        markUpwardViewportInput({ asksViewportToMove: isVerticalUpwardWheel(event) });
       markManualReading();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1187,7 +1191,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const downward = ["ArrowDown", "PageDown", "End", " "].includes(event.key);
       if (!upward && !downward) return;
       if (canNestedScrollerConsumeInput(event.target, scrollContainer, upward ? -1 : 1)) return;
-      if (upward) markUpwardViewportInput(isViewportUpwardKeyPress(event, scrollContainer));
+      if (upward)
+        markUpwardViewportInput({
+          asksViewportToMove: isViewportUpwardKeyPress(event, scrollContainer),
+        });
       markManualReading();
     };
     const handlePointerDown = (event: PointerEvent) => {
@@ -1265,8 +1272,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         !canNestedScrollerConsumeInput(event.target, scrollContainer, delta)
       ) {
         // A canceled move does not scroll, and a second finger is a pinch, which zooms instead.
-        if (delta < 0)
-          markUpwardViewportInput(event.touches.length === 1 && !event.defaultPrevented);
+        if (delta < 0) {
+          const singleFingerScroll = event.touches.length === 1 && !event.defaultPrevented;
+          markUpwardViewportInput({ asksViewportToMove: singleFingerScroll });
+        }
         markManualReading();
       }
       lastTouchClientYRef.current = touch.clientY;
