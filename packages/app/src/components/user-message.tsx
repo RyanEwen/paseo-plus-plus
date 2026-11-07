@@ -57,10 +57,6 @@ interface UserMessageProps {
   /** Measured source width keeps the sticky copy's glyph positions aligned at the edge. */
   bubbleWidth?: number;
   hideTextAccessibility?: boolean;
-  bubbleRef?: React.Ref<React.ComponentRef<typeof View>>;
-  onBubbleLayout?: () => void;
-  onBubbleTextLayout?: (event: import("react-native").TextLayoutEvent) => void;
-  copyMask?: { prefixHeight: number; expanded: boolean };
   /** Optional accessible content action, rendered inside the bubble. */
   contentAction?: ReactNode;
   /** Reserve space beside the compact preview for its disclosure. */
@@ -98,7 +94,6 @@ const EMPTY_MESSAGE_IMAGES: UserMessageImageAttachment[] = [];
 const EMPTY_MESSAGE_ATTACHMENTS: AgentAttachment[] = [];
 
 const userMessageStylesheet = StyleSheet.create((theme) => ({
-  suppressed: { opacity: 0 },
   contentPressTarget: {
     position: "absolute",
     top: 0,
@@ -207,8 +202,6 @@ function UserMessageText({
   previewExpanded,
   onPreviewOverflowChange,
   hideTextAccessibility,
-  onBubbleTextLayout,
-  copyMask,
   onContentPress,
   contentAccessibilityLabel,
 }: Pick<
@@ -218,8 +211,6 @@ function UserMessageText({
   | "previewExpanded"
   | "onPreviewOverflowChange"
   | "hideTextAccessibility"
-  | "onBubbleTextLayout"
-  | "copyMask"
   | "onContentPress"
   | "contentAccessibilityLabel"
 > & { hasText: boolean }) {
@@ -230,16 +221,8 @@ function UserMessageText({
       if (naturalFlow) {
         onPreviewOverflowChange?.(event.nativeEvent.lines.length > (previewLines ?? 1));
       }
-      onBubbleTextLayout?.(event);
     },
-    [naturalFlow, onBubbleTextLayout, onPreviewOverflowChange, previewLines],
-  );
-  const textMaskStyle = useMemo(
-    () => [
-      userMessageStylesheet.textMask,
-      inlineUnistylesStyle({ height: copyMask?.prefixHeight ?? 0 }),
-    ],
-    [copyMask?.prefixHeight],
+    [naturalFlow, onPreviewOverflowChange, previewLines],
   );
   const compactPrefixHeight = naturalFlow?.textPrefixHeight;
   const suffixMaskStyle = useMemo(
@@ -309,21 +292,8 @@ function UserMessageText({
           />
         )
       )}
-      {!!copyMask?.prefixHeight && (
-        <View
-          style={textMaskStyle}
-          pointerEvents="none"
-          testID="user-message-prefix-mask"
-          aria-hidden
-        />
-      )}
     </View>
   );
-}
-
-/** Expansion transfers painting and accessibility to the full sticky copy. */
-function isExpandedPromptCopy(copyMask: UserMessageProps["copyMask"]): boolean {
-  return copyMask?.expanded === true;
 }
 
 /** Preserve the original bubble geometry, with a square top edge only for its pinned copy. */
@@ -347,7 +317,6 @@ function areMessageActionsVisible(compact: boolean, hovered: boolean, navigation
 
 /** Keep ordinary action visibility independent of the native sticky paint mode. */
 interface UserMessageActionVisibility {
-  suppressed: boolean;
   pending: boolean;
   hasActions: boolean;
   compact: boolean;
@@ -356,23 +325,16 @@ interface UserMessageActionVisibility {
 }
 
 function shouldShowUserMessageActions({
-  suppressed,
   pending,
   hasActions,
   compact,
   hovered,
   navigationHeld,
 }: UserMessageActionVisibility) {
-  return (
-    !suppressed &&
-    !pending &&
-    hasActions &&
-    areMessageActionsVisible(compact, hovered, navigationHeld)
-  );
+  return !pending && hasActions && areMessageActionsVisible(compact, hovered, navigationHeld);
 }
 
-function userMessageHitAllocation(suppressed: boolean, actualWebPrompt: boolean) {
-  if (suppressed) return "none";
+function userMessageHitAllocation(actualWebPrompt: boolean) {
   if (actualWebPrompt) return "box-none";
   return "auto";
 }
@@ -407,10 +369,6 @@ export const UserMessage = memo(function UserMessage({
   contentAccessibilityLabel,
   bubbleWidth,
   hideTextAccessibility,
-  bubbleRef,
-  onBubbleLayout,
-  onBubbleTextLayout,
-  copyMask,
   contentAction,
   inlineContentAction,
   pinned,
@@ -437,7 +395,6 @@ export const UserMessage = memo(function UserMessage({
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const nativeDriver = useContext(NativeMessagePresentationContext);
-  const expandedCopy = isExpandedPromptCopy(copyMask);
   const flowConfiguration = userMessageFlowConfiguration(
     onNaturalFlowGeometry !== undefined,
     bodyViewportHeight !== undefined,
@@ -457,7 +414,6 @@ export const UserMessage = memo(function UserMessage({
   const showMessageActions = hasText;
   const hasTrailingRow = showMessageActions || !!navigationActions;
   const showTrailingRow = shouldShowUserMessageActions({
-    suppressed: !!copyMask,
     pending: isPending,
     hasActions: hasTrailingRow,
     compact: isCompact,
@@ -483,14 +439,13 @@ export const UserMessage = memo(function UserMessage({
   const containerStyle = useMemo(
     () => [
       userMessageStylesheet.container,
-      expandedCopy ? userMessageStylesheet.suppressed : undefined,
       !resolvedDisableOuterSpacing && [
         isFirstInGroup ? userMessageStylesheet.containerFirstInGroup : null,
         isLastInGroup ? userMessageStylesheet.containerLastInGroup : null,
         !isFirstInGroup || !isLastInGroup ? userMessageStylesheet.containerSpacing : null,
       ],
     ],
-    [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup, expandedCopy],
+    [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup],
   );
   const contentStyle = useMemo(
     () => [
@@ -573,8 +528,6 @@ export const UserMessage = memo(function UserMessage({
     <Bubble
       style={bubbleStyle}
       pointerEvents={actualWebPrompt || webNaturalFlow ? "auto" : undefined}
-      ref={bubbleRef}
-      onLayout={onBubbleLayout}
       testID="user-message-bubble"
     >
       {nativeDriver ? (
@@ -604,8 +557,6 @@ export const UserMessage = memo(function UserMessage({
           previewExpanded={previewExpanded}
           onPreviewOverflowChange={onPreviewOverflowChange}
           hideTextAccessibility={hideTextAccessibility}
-          onBubbleTextLayout={onBubbleTextLayout}
-          copyMask={copyMask}
           onContentPress={onContentPress}
           contentAccessibilityLabel={contentAccessibilityLabel}
         />
@@ -636,8 +587,6 @@ export const UserMessage = memo(function UserMessage({
           backdrop={trailingBackdrop}
           pointerEvents={showTrailingRow ? "auto" : "none"}
           testID="user-message-trailing-row"
-          aria-hidden={!!copyMask}
-          accessibilityElementsHidden={!!copyMask}
         >
           {showMessageActions ? (
             <UserMessageTextActions
@@ -658,7 +607,6 @@ export const UserMessage = memo(function UserMessage({
       trailingRowStyle,
       actionRowBackdrop,
       showTrailingRow,
-      copyMask,
       trailingBackdrop,
       showMessageActions,
       formattedTimestamp,
@@ -710,12 +658,7 @@ export const UserMessage = memo(function UserMessage({
       style={containerStyle}
       testID="user-message"
       aria-busy={isPending}
-      pointerEvents={
-        onNaturalFlowGeometry ? "box-none" : userMessageHitAllocation(expandedCopy, actualWebPrompt)
-      }
-      aria-hidden={expandedCopy}
-      accessibilityElementsHidden={expandedCopy}
-      importantForAccessibility={expandedCopy ? "no-hide-descendants" : "auto"}
+      pointerEvents={onNaturalFlowGeometry ? "box-none" : userMessageHitAllocation(actualWebPrompt)}
     >
       {content}
       <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />

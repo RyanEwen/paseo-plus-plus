@@ -22,7 +22,6 @@ type MessageProps = ComponentProps<typeof UserMessage>;
 type Presentation = Partial<
   Pick<
     MessageProps,
-    | "copyMask"
     | "previewLines"
     | "previewExpanded"
     | "bodyViewportHeight"
@@ -165,7 +164,6 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
   if (!rows) return {};
   if (nativeDriver) {
     return {
-      copyMask: undefined,
       // These nodes are prepared while ordinary. Android's UI owner alone
       // selects paint, controls, clipping and the full-row handoff boundary.
       previewLines: undefined,
@@ -181,7 +179,6 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
     };
   }
   return {
-    copyMask: undefined,
     // Ordinary history keeps its full body. Only the row currently pinned at
     // the viewport edge owns a compact preview and bounded sticky expansion.
     previewLines: pinned ? 1 : undefined,

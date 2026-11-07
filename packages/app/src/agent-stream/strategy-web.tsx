@@ -588,7 +588,6 @@ const promptPaintMutationSelector = [
   '[data-testid="user-message-disclosure"]',
   '[data-testid="user-message-content-target"]',
   '[data-testid="user-message-action-backdrop"]',
-  '[data-testid="user-message-prefix-mask"]',
   '[data-testid="user-message-suffix-mask"]',
   "[data-user-message-compact-occlusion]",
   "[data-user-message-paint-backdrop]",
