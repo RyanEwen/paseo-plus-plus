@@ -10,6 +10,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { useMenuContext } from "./menu-context";
 import { MENU_ITEM_HEIGHT } from "./menu-geometry";
+import { useMenuRowProps } from "./menu-row-props";
 
 const ThemedCheck = withUnistyles(Check);
 const checkboxCheckMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
@@ -73,10 +74,7 @@ function MenuSecondaryToggle({
     () => ({ checked: toggle.checked, disabled }),
     [toggle.checked, disabled],
   );
-  const dataSet = useMemo(
-    () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
-    [disabled],
-  );
+  const rowProps = useMenuRowProps({ disabled, role: "checkbox" });
   const controlStyle = useMemo(
     () => [styles.toggleControl, toggle.checked && styles.toggleControlChecked],
     [toggle.checked],
@@ -97,12 +95,10 @@ function MenuSecondaryToggle({
 
   return (
     <Pressable
-      accessibilityRole="checkbox"
+      {...rowProps}
       accessibilityLabel={toggle.accessibilityLabel}
       accessibilityState={accessibilityState}
       aria-checked={toggle.checked}
-      tabIndex={-1}
-      dataSet={dataSet}
       testID={toggle.testID}
       disabled={disabled}
       onPress={handlePress}
