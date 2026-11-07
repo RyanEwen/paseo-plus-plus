@@ -5,7 +5,6 @@ import {
   ensureResidentBrowserWebview as ensureDesktopBrowserWebview,
   removeResidentBrowserWebview,
   resizeResidentBrowserWebview,
-  type BrowserDimensions,
 } from "@/desktop/browser/resident-webviews";
 import {
   createFixedBrowserViewport,
@@ -22,14 +21,19 @@ interface ResidentBrowserTarget {
   url: string;
 }
 
-interface ResidentBrowserResize extends BrowserDimensions {
+interface BrowserSize {
+  width: number;
+  height: number;
+}
+
+interface ResidentBrowserResize extends BrowserSize {
   browserId: string;
 }
 
 /** Resize a resident browser; resolves to the applied size, or null when it is absent. */
 type ResizeBrowser = (
   input: ResidentBrowserResize,
-) => BrowserDimensions | null | Promise<BrowserDimensions | null>;
+) => BrowserSize | null | Promise<BrowserSize | null>;
 
 /** Create or reuse a resident browser. Its result is ignored; a returned promise is awaited. */
 type EnsureBrowser = (input: ResidentBrowserTarget) => unknown;
