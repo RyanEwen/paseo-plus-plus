@@ -41,7 +41,9 @@ export class AttentionPresentation {
 
   /** Intervention reasons stay visible even when legacy routine presentation is selected. */
   static project(input: AttentionProjectionInput): boolean | undefined {
-    if (input.requiresAttention && input.attentionMessage) return true;
+    if (input.requiresAttention && input.attentionMessage) {
+      return true;
+    }
     return input.enabled ? input.humanAttentionRequired : undefined;
   }
 
@@ -62,8 +64,12 @@ export class AttentionPresentation {
 
   /** Legacy parent suppression applies to routine output; explicit/verified intervention bypasses it. */
   allowsNotification(input: RoutineNotificationInput): boolean {
-    if (input.intervention) return true;
-    if (!this.enabled) return !input.delegated;
+    if (input.intervention) {
+      return true;
+    }
+    if (!this.enabled) {
+      return !input.delegated;
+    }
     return input.knownAudience || !input.delegated;
   }
 }

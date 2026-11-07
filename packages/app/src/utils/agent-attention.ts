@@ -22,8 +22,12 @@ const ATTENTION_REASON_PRIORITY = {
 } as const;
 
 function getAttentionPriority(agent: Agent): number | null {
-  if (agent.pendingPermissions.length > 0 || agent.attentionReason === "permission") return 0;
-  if (agent.status === "error" || agent.attentionReason === "error") return 1;
+  if (agent.pendingPermissions.length > 0 || agent.attentionReason === "permission") {
+    return 0;
+  }
+  if (agent.status === "error" || agent.attentionReason === "error") {
+    return 1;
+  }
   const reason = agent.attentionReason;
   if (!reason) {
     return null;

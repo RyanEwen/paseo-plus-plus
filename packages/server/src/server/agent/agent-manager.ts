@@ -960,7 +960,9 @@ export class AgentManager {
     return this.runForegroundMutation(input.agentId, async () => {
       const agent = this.requirePublicAgent(input.agentId);
       const ledger = agent.attentionObjectives;
-      if (!ledger) throw new AttentionObjectiveError(input.link.objectiveId);
+      if (!ledger) {
+        throw new AttentionObjectiveError(input.link.objectiveId);
+      }
       const reservation = { ...input, requester: this.attentionRequester(input.agentId) };
       const result = ledger.reserveCallback(reservation);
       try {
@@ -982,7 +984,9 @@ export class AgentManager {
           try {
             ledger.releaseCallback({ ...input, lease: result.lease });
           } catch (releaseError) {
-            if (!(releaseError instanceof AttentionObjectiveError)) throw releaseError;
+            if (!(releaseError instanceof AttentionObjectiveError)) {
+              throw releaseError;
+            }
           }
         }
         throw error;
@@ -1010,7 +1014,9 @@ export class AgentManager {
       try {
         agent.attentionObjectives?.releaseCallback(input);
       } catch (error) {
-        if (!(error instanceof AttentionObjectiveError)) throw error;
+        if (!(error instanceof AttentionObjectiveError)) {
+          throw error;
+        }
       }
       await this.persistSnapshot(agent);
     });
@@ -1031,14 +1037,18 @@ export class AgentManager {
         this.emitState(agent, { persist: false });
         return;
       }
-      if (!this.registry || !(await this.registry.get(input.agentId))) return;
+      if (!this.registry || !(await this.registry.get(input.agentId))) {
+        return;
+      }
       await this.registry.update(input.agentId, (record) => {
         const ledger = this.createAttentionObjectives(record.attentionObjectives);
         ledger.requests.reject(input.admissions, input.error);
         return { ...record, attentionObjectives: ledger.snapshot() };
       });
       const updated = await this.registry.get(input.agentId);
-      if (updated) this.dispatchStoredAgentState(updated);
+      if (updated) {
+        this.dispatchStoredAgentState(updated);
+      }
     });
   }
 
@@ -1076,7 +1086,9 @@ export class AgentManager {
           const submissionPossible = this.hasInFlightRun(input.agentId);
           if (agent?.attentionObjectives) {
             const result = agent.attentionObjectives.requests.read(query);
-            if (query.acknowledgeOutcomeId) await this.persistSnapshot(agent);
+            if (query.acknowledgeOutcomeId) {
+              await this.persistSnapshot(agent);
+            }
             return { ...result, submissionPossible };
           }
           const record = await this.registry?.get(input.agentId);
@@ -1108,10 +1120,14 @@ export class AgentManager {
         if (!state.pending && (state.known || !awaitingSubmission)) {
           return null;
         }
-        if (before !== changed) continue;
+        if (before !== changed) {
+          continue;
+        }
         await new Promise<void>((resumeWait) => {
           wake = resumeWait;
-          if (input.signal.aborted || before !== changed) resumeWait();
+          if (input.signal.aborted || before !== changed) {
+            resumeWait();
+          }
         });
         wake = undefined;
       }
@@ -1239,10 +1255,14 @@ export class AgentManager {
   }): Promise<boolean> {
     const { agent, objectiveId, reason } = input;
     const objectives = agent.attentionObjectives;
-    if (!objectives) return false;
+    if (!objectives) {
+      return false;
+    }
     this.requireRegistry();
     const lease = objectives.reserveHumanAttention(objectiveId, reason);
-    if (!lease) return false;
+    if (!lease) {
+      return false;
+    }
     const turnId = agent.activeTurnId;
     const previousAttention = agent.attention;
     const previousMessage = agent.attentionMessage;
@@ -1267,7 +1287,9 @@ export class AgentManager {
       await this.persistSnapshot(agent, {
         operation: {
           resolveSnapshot: () => {
-            if (!isCurrent()) return null;
+            if (!isCurrent()) {
+              return null;
+            }
             return {
               ...agent,
               attention: nextAttention,
@@ -1278,7 +1300,9 @@ export class AgentManager {
           onCommitted: () => {
             // The candidate was written even if its owner retired before this callback.
             persistenceObserved = true;
-            if (!isCurrent()) return;
+            if (!isCurrent()) {
+              return;
+            }
             objectives.commitHumanAttention(lease);
             agent.attention = nextAttention;
             agent.attentionMessage = reason;
@@ -1312,7 +1336,9 @@ export class AgentManager {
       throw error;
     }
 
-    if (committed) return true;
+    if (committed) {
+      return true;
+    }
     objectives.releaseHumanAttention(lease);
     await this.repairRetiredHumanAttention(agent.id);
     throw new AttentionObjectiveError(objectiveId);
@@ -1321,7 +1347,9 @@ export class AgentManager {
   /** Repair a retired candidate from the instance current when the queue runs, never an old copy. */
   private async repairRetiredHumanAttention(agentId: string): Promise<void> {
     const current = this.agents.get(agentId);
-    if (!current) return;
+    if (!current) {
+      return;
+    }
     await this.persistSnapshot(current, {
       operation: { resolveSnapshot: () => this.agents.get(agentId) ?? null },
     });
@@ -1433,9 +1461,13 @@ export class AgentManager {
     permissionId: string,
   ): void {
     const objectives = agent.attentionObjectives;
-    if (!objectives?.isAudienceKnown) return;
+    if (!objectives?.isAudienceKnown) {
+      return;
+    }
     const completion = this.permissionCompletions.get(agent);
-    if (completion?.matches(objectives, turnId)) completion.observePermission(permissionId);
+    if (completion?.matches(objectives, turnId)) {
+      completion.observePermission(permissionId);
+    }
   }
 
   /** Retire held response/terminal identities before a new admission or committed lifecycle change. */
@@ -1449,9 +1481,13 @@ export class AgentManager {
     agent: ManagedAgent,
     completion: AttentionPermissionCompletion,
   ): void {
-    if (this.permissionCompletions.get(agent) !== completion) return;
+    if (this.permissionCompletions.get(agent) !== completion) {
+      return;
+    }
     const notifyHuman = completion.reconcile(agent.pendingPermissions.size);
-    if (notifyHuman === undefined) return;
+    if (notifyHuman === undefined) {
+      return;
+    }
     agent.attentionTerminal = undefined;
     if (notifyHuman || !this.attentionPresentation.agentAware)
       this.setAgentAttention(agent, "finished");
@@ -2599,7 +2635,9 @@ export class AgentManager {
 
   /** Share captured-checkpoint verification for committed archive and hard-delete events. */
   private recheckCommittedRequesterLosses(committedLosses: ReadonlySet<string>): void {
-    if (committedLosses.size === 0) return;
+    if (committedLosses.size === 0) {
+      return;
+    }
     for (const worker of this.agents.values()) this.checkOrphanedAttention(worker, committedLosses);
   }
 
@@ -4005,14 +4043,18 @@ export class AgentManager {
 
     try {
       const result = await agent.session.respondToPermission(requestId, response);
-      if (!ownsResponse()) return result;
+      if (!ownsResponse()) {
+        return result;
+      }
       if (submission) {
         const disposition = result?.followUpPrompt ? "follow_up" : "no_follow_up";
         completion?.classify(submission, disposition);
       }
       agent.pendingPermissions.delete(requestId);
       agent.attentionObjectives?.blockers.resolvePermission(requestId);
-      if (completion) this.reconcilePermissionCompletion(agent, completion);
+      if (completion) {
+        this.reconcilePermissionCompletion(agent, completion);
+      }
 
       try {
         await this.refreshSessionState(agent);
@@ -4020,10 +4062,14 @@ export class AgentManager {
         // Ignore refresh errors - state sync after permission approval is best effort.
       }
 
-      if (!ownsResponse()) return result;
+      if (!ownsResponse()) {
+        return result;
+      }
       this.touchUpdatedAt(agent);
       await this.persistSnapshot(agent);
-      if (!ownsResponse()) return result;
+      if (!ownsResponse()) {
+        return result;
+      }
       this.emitState(agent);
 
       const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
@@ -4036,7 +4082,9 @@ export class AgentManager {
     } catch (error) {
       // Only an unclassified provider submission can become unknown; refresh errors cannot
       // rewrite a known follow-up decision or turn a rejected submission into final success.
-      if (submission) completion?.classify(submission, "unknown");
+      if (submission) {
+        completion?.classify(submission, "unknown");
+      }
       throw error;
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
@@ -5587,7 +5635,9 @@ export class AgentManager {
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
     agent.lastError = undefined;
-    if (deferred && completion) this.reconcilePermissionCompletion(agent, completion);
+    if (deferred && completion) {
+      this.reconcilePermissionCompletion(agent, completion);
+    }
     if (
       !isForegroundEvent &&
       !agent.activeForegroundTurnId &&
@@ -5757,8 +5807,12 @@ export class AgentManager {
         agent.attentionObjectives?.isAudienceKnown === true &&
         !agent.attentionObjectives.hasHumanAudience();
       const humanProblem = !this.attentionPresentation.agentAware || !agentProblem;
-      if (!hadPendingPermissions && humanProblem) this.broadcastAgentAttention(agent, "permission");
-      if (agentProblem) this.checkOrphanedAttention(agent);
+      if (!hadPendingPermissions && humanProblem) {
+        this.broadcastAgentAttention(agent, "permission");
+      }
+      if (agentProblem) {
+        this.checkOrphanedAttention(agent);
+      }
     }
     this.emitState(agent);
   }
@@ -6033,7 +6087,9 @@ export class AgentManager {
         agent.attentionObjectives.finish();
       agent.attentionTerminal = undefined;
     }
-    if (agent.internal) return;
+    if (agent.internal) {
+      return;
+    }
 
     const enteredError = previousStatus !== "error" && currentStatus === "error";
     const agentProblem =
@@ -6045,14 +6101,18 @@ export class AgentManager {
     }
 
     // Explicit/manual unread survives new quiet results. It does not retarget the new request.
-    if (agent.attention.requiresAttention) return;
+    if (agent.attention.requiresAttention) {
+      return;
+    }
     const reason = this.resolveAttentionReason({
       humanCompletion,
       finished,
       enteredError,
       humanProblem,
     });
-    if (!reason) return;
+    if (!reason) {
+      return;
+    }
     this.setAgentAttention(agent, reason);
   }
 
@@ -6065,14 +6125,20 @@ export class AgentManager {
   }): "finished" | "error" | null {
     const { humanCompletion, finished, enteredError, humanProblem } = input;
     const presentCompletion = this.attentionPresentation.agentAware ? humanCompletion : finished;
-    if (presentCompletion) return "finished";
-    if (enteredError && humanProblem) return "error";
+    if (presentCompletion) {
+      return "finished";
+    }
+    if (enteredError && humanProblem) {
+      return "error";
+    }
     return null;
   }
 
   /** Share normal completion publication with reconciled terminals, preserving manual unread. */
   private setAgentAttention(agent: ManagedAgent, reason: "finished" | "error"): void {
-    if (agent.internal || agent.attention.requiresAttention) return;
+    if (agent.internal || agent.attention.requiresAttention) {
+      return;
+    }
     agent.attentionMessage = undefined;
     agent.attention = {
       requiresAttention: true,
@@ -6088,7 +6154,9 @@ export class AgentManager {
     lostLocalRequesters?: ReadonlySet<string>,
   ): void {
     const objectives = agent.attentionObjectives;
-    if (!objectives || agent.internal) return;
+    if (!objectives || agent.internal) {
+      return;
+    }
     const task = objectives.blockers
       .verify({
         lostLocalRequesters,
@@ -6111,7 +6179,9 @@ export class AgentManager {
               : "This task failed, but its requesting agent is no longer available.";
           await this.runForegroundMutation(agent.id, async () => {
             // A foreground write may retire the exact checkpoint while this lane is held.
-            if (!isCurrent()) return;
+            if (!isCurrent()) {
+              return;
+            }
             await this.raiseHumanAttention({ agent, objectiveId, reason: message, isCurrent });
           });
         },
@@ -6141,8 +6211,12 @@ export class AgentManager {
       return "unknown";
     }
     const record = await this.registry?.get(requester.agentId);
-    if (record) return record.archivedAt ? "missing" : "available";
-    if (this.agents.has(requester.agentId)) return "available";
+    if (record) {
+      return record.archivedAt ? "missing" : "available";
+    }
+    if (this.agents.has(requester.agentId)) {
+      return "available";
+    }
     return this.registry ? "missing" : "unknown";
   }
 

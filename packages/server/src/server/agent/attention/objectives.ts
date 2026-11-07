@@ -127,8 +127,11 @@ export class AgentAttentionObjectives {
       requests: this.requests.snapshot(),
     };
     const blockers = this.blockers.snapshot();
-    if (blockers.length > 0) snapshot.blockers = blockers;
-    else delete snapshot.blockers;
+    if (blockers.length > 0) {
+      snapshot.blockers = blockers;
+    } else {
+      delete snapshot.blockers;
+    }
     return snapshot;
   }
 
@@ -165,12 +168,16 @@ export class AgentAttentionObjectives {
     const memberships = new Map<string, string>();
     const admittedIds = inputs.flatMap((input) => {
       const ids = this.admitInput(input);
-      if (input.kind === "agent" && ids[0]) memberships.set(input.requestId, ids[0]);
+      if (input.kind === "agent" && ids[0]) {
+        memberships.set(input.requestId, ids[0]);
+      }
       return ids;
     });
     if (acceptance?.accepted !== false) {
       for (const input of inputs) {
-        if (input.kind !== "agent" || !input.attention?.continuation) continue;
+        if (input.kind !== "agent" || !input.attention?.continuation) {
+          continue;
+        }
         const delegation = this.findDelegation(input.attention.continuation, input.requester);
         (delegation.acceptedMessageIds ??= []).push(input.requestId);
         const delivery = delegation.deliveries?.find(
@@ -182,13 +189,14 @@ export class AgentAttentionObjectives {
         }
       }
     }
-    if (acceptance?.turnId)
+    if (acceptance?.turnId) {
       this.requests.accept({
         admissions: inputs,
         turnId: acceptance.turnId,
         steering,
         objectives: memberships,
       });
+    }
     const previousIds = steering ? this.state.activeObjectiveIds : [];
     this.state.activeObjectiveIds = [...new Set([...previousIds, ...admittedIds])];
     this.state.admissionId = randomUUID();
@@ -213,21 +221,27 @@ export class AgentAttentionObjectives {
     if (input.admissionId !== this.state.admissionId) {
       throw new AttentionObjectiveError("retired permission continuation");
     }
-    for (const id of input.objectiveIds) this.requireActiveObjective(id);
+    for (const id of input.objectiveIds) {
+      this.requireActiveObjective(id);
+    }
   }
 
   /** Claimed continuations must validate before any provider or objective mutation. */
   assertAdmissions(inputs: readonly AttentionAdmission[]): void {
     for (const input of inputs) {
-      if (input.kind === "continuation") this.assertContinuation(input);
-      if (input.kind === "agent" && input.attention?.continuation)
+      if (input.kind === "continuation") {
+        this.assertContinuation(input);
+      }
+      if (input.kind === "agent" && input.attention?.continuation) {
         this.resolveAgentContinuation(input);
+      }
       if (
         input.kind === "agent" &&
         input.attention?.requesterObjective &&
         input.attention.requesterObjective.requestId !== input.requestId
-      )
+      ) {
         throw new AttentionObjectiveError("request identity mismatch");
+      }
       if (
         input.kind !== "continuation" &&
         !(input.kind === "agent" && input.attention?.continuation)
@@ -243,8 +257,9 @@ export class AgentAttentionObjectives {
                 right: input.requester,
                 localServerId: this.localServerId,
               })))
-        )
+        ) {
           throw new AttentionObjectiveError("request identity belongs to another audience");
+        }
       }
     }
   }
@@ -256,7 +271,9 @@ export class AgentAttentionObjectives {
 
   /** Unread is explicit human intent; a problem otherwise follows this turn's actual audience. */
   requiresHumanAttention(input: { hasUnread: boolean; hasProblem: boolean }): boolean | undefined {
-    if (!this.isAudienceKnown) return undefined;
+    if (!this.isAudienceKnown) {
+      return undefined;
+    }
     return input.hasUnread || (input.hasProblem && this.hasHumanAudience());
   }
 
@@ -309,7 +326,9 @@ export class AgentAttentionObjectives {
     }
     const snapshot = this.snapshot();
     const objective = snapshot.objectives[this.state.objectives.indexOf(owner.objective)];
-    if (!objective) throw new AttentionObjectiveError(owner.objective.id);
+    if (!objective) {
+      throw new AttentionObjectiveError(owner.objective.id);
+    }
     objective.announcedReasons.push(owner.reason);
     return new AgentAttentionObjectives(snapshot, this.localServerId);
   }
@@ -323,7 +342,9 @@ export class AgentAttentionObjectives {
   /** Commit only the exact owned objective's reason after persistence and current-attempt checks. */
   commitHumanAttention(lease: symbol): void {
     const owner = this.humanAttentionOwners.get(lease);
-    if (!owner) return;
+    if (!owner) {
+      return;
+    }
     owner.objective.announcedReasons.push(owner.reason);
     this.humanAttentionOwners.delete(lease);
   }
@@ -407,8 +428,9 @@ export class AgentAttentionObjectives {
     if (
       (input.outcome.kind === "rejected") !== (input.outcome.acceptedTurnId === null) ||
       (input.outcome.kind === "permission" && !input.outcome.permission)
-    )
+    ) {
       throw new AttentionObjectiveError("invalid request outcome evidence");
+    }
     if (
       input.outcome.requestId !== input.link.requestId ||
       !samePeer({
@@ -416,23 +438,30 @@ export class AgentAttentionObjectives {
         right: input.outcome.requester,
         localServerId: this.localServerId,
       })
-    )
+    ) {
       throw new AttentionObjectiveError("outcome identity mismatch");
+    }
     const deliveries = (delegation.deliveries ??= []);
     const existing = deliveries.find((entry) => entry.outcomeId === input.outcome.id);
     if (existing) {
-      if (existing.deliveryId !== input.deliveryId)
+      if (existing.deliveryId !== input.deliveryId) {
         throw new AttentionObjectiveError("outcome message identity changed");
-      if (existing.status === "consumed") return { status: "consumed" };
-      if (this.callbackOwners.has(existing))
+      }
+      if (existing.status === "consumed") {
+        return { status: "consumed" };
+      }
+      if (this.callbackOwners.has(existing)) {
         throw new AttentionObjectiveError("outcome already reserved");
+      }
     }
     const delivery = existing ?? {
       outcomeId: input.outcome.id,
       deliveryId: input.deliveryId,
       status: "reserved" as const,
     };
-    if (!existing) deliveries.push(delivery);
+    if (!existing) {
+      deliveries.push(delivery);
+    }
     const lease = Symbol("attention callback owner");
     this.callbackOwners.set(delivery, lease);
     return { status: "reserved", lease };
@@ -453,8 +482,9 @@ export class AgentAttentionObjectives {
       reservation.status !== "reserved" ||
       reservation.deliveryId !== input.deliveryId ||
       this.callbackOwners.get(reservation) !== input.lease
-    )
+    ) {
       throw new AttentionObjectiveError("callback reservation changed");
+    }
   }
 
   /** A failed queue/start admission leaves the same immutable outcome available for a retry. */
@@ -470,8 +500,9 @@ export class AgentAttentionObjectives {
         entry.deliveryId !== input.deliveryId ||
         entry.status === "consumed" ||
         this.callbackOwners.get(entry) !== input.lease
-      )
+      ) {
         return true;
+      }
       this.callbackOwners.delete(entry);
       return false;
     });
@@ -485,8 +516,9 @@ export class AgentAttentionObjectives {
         entry.requestId === link.requestId &&
         samePeer({ left: entry.recipient, right: peer, localServerId: this.localServerId }),
     );
-    if (!delegation || !this.state.objectives.some((entry) => entry.id === link.objectiveId))
+    if (!delegation || !this.state.objectives.some((entry) => entry.id === link.objectiveId)) {
       throw new AttentionObjectiveError(link.objectiveId);
+    }
     return delegation;
   }
 
@@ -497,11 +529,17 @@ export class AgentAttentionObjectives {
 
   /** Capture original agent recipients as object-owned members, never a later active-ID snapshot. */
   private captureBlockerMembers(ids?: readonly string[]): AttentionBlockerMember[] {
-    if (!this.isAudienceKnown) return [];
+    if (!this.isAudienceKnown) {
+      return [];
+    }
     const members: AttentionBlockerMember[] = [];
     for (const objective of this.activeObjectives()) {
-      if (objective.audience.kind !== "agent") continue;
-      if (ids && !ids.includes(objective.id)) continue;
+      if (objective.audience.kind !== "agent") {
+        continue;
+      }
+      if (ids && !ids.includes(objective.id)) {
+        continue;
+      }
       members.push({
         objectiveId: objective.id,
         requester: structuredClone(objective.audience.requester),
@@ -554,10 +592,13 @@ export class AgentAttentionObjectives {
     input: Extract<AttentionAdmission, { kind: "agent" }>,
   ): AttentionObjective {
     const link = input.attention?.continuation;
-    if (!link) throw new AttentionObjectiveError("missing continuation claim");
+    if (!link) {
+      throw new AttentionObjectiveError("missing continuation claim");
+    }
     const delegation = this.findDelegation(link, input.requester);
-    if (delegation.acceptedMessageIds?.includes(input.requestId))
+    if (delegation.acceptedMessageIds?.includes(input.requestId)) {
       throw new AttentionObjectiveError("replayed continuation");
+    }
     const deliveryClaim = input.attention?.delivery;
     if (deliveryClaim) {
       const reservation = delegation.deliveries?.find(
@@ -569,11 +610,14 @@ export class AgentAttentionObjectives {
         reservation.deliveryId !== deliveryClaim.deliveryId ||
         input.requestId !== deliveryClaim.deliveryId ||
         !this.callbackOwners.has(reservation)
-      )
+      ) {
         throw new AttentionObjectiveError("unreserved outcome delivery");
+      }
     }
     const objective = this.state.objectives.find(({ id }) => id === link.objectiveId);
-    if (!objective) throw new AttentionObjectiveError(link.objectiveId);
+    if (!objective) {
+      throw new AttentionObjectiveError(link.objectiveId);
+    }
     return objective;
   }
 }
