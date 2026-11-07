@@ -8,7 +8,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useFetchQuery } from "@/data/query";
-import { getDesktopHost, type DesktopBrowserExtensionAction } from "@/desktop/host";
+import {
+  getDesktopHost,
+  type DesktopBrowserExtensionAction,
+  type DesktopBrowserExtensionsBridge,
+} from "@/desktop/host";
 import { Alert } from "@/components/ui/alert";
 import { buildSettingsSectionRoute } from "@/utils/host-routes";
 import {
@@ -33,16 +37,22 @@ interface ExtensionsMenuProps {
   browserId: string;
   triggerStyle(state: { hovered?: boolean; pressed?: boolean }): StyleProp<ViewStyle>;
   tooltipTextStyle: StyleProp<TextStyle>;
+  /** The desktop extension bridge; defaults to the preload's. Tests pass a fake. */
+  bridge?: DesktopBrowserExtensionsBridge;
 }
 
 /** Expose actual extension popups alongside installation and management in browser chrome. */
-export function ExtensionsMenu({ browserId, triggerStyle, tooltipTextStyle }: ExtensionsMenuProps) {
+export function ExtensionsMenu({
+  browserId,
+  triggerStyle,
+  tooltipTextStyle,
+  bridge = getDesktopHost()?.browser?.extensions,
+}: ExtensionsMenuProps) {
   const { t } = useTranslation();
   const menuTriggerStyle = useToolbarMenuTriggerStyle(triggerStyle);
   const router = useRouter();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const bridge = getDesktopHost()?.browser?.extensions;
   const actions = useFetchQuery({
     queryKey: [...ACTIONS_QUERY_KEY, browserId],
     dataShape: "list",
