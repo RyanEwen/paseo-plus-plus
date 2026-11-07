@@ -1,10 +1,8 @@
-import { parseFileChanges } from "@getpaseo/protocol/tool-call-activity";
-import type { TFunction } from "i18next";
-import { buildActivityDisplay } from "./activity";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import type { PlanOutcome } from "@/components/plan-card";
 import type { ComponentType } from "react";
+import type { TFunction } from "i18next";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { ToolCallDisplayInput } from "@/utils/tool-call-display";
 import { buildToolCallDisplayModel } from "@/utils/tool-call-display";
@@ -13,6 +11,7 @@ import {
   hasMeaningfulToolCallDetail,
   isPendingToolCallDetail,
 } from "@/utils/tool-call-detail-state";
+import { activityIconDetail, buildActivityDisplay, detailWithFileBatch } from "./activity";
 
 type ToolCallStatus = "executing" | "running" | "completed" | "failed" | "canceled";
 export type ToolCallPresentationIcon = ComponentType<{ size?: number; color?: string }>;
@@ -27,6 +26,7 @@ interface BuildToolCallPresentationInput {
   metadata?: Record<string, unknown>;
   targetAgentTitle?: string;
   resolveIcon: ToolCallIconResolver;
+  /** Translator for readable activity labels; absent keeps the classic labels. */
   activityTranslation?: TFunction;
 }
 
@@ -65,7 +65,7 @@ export function buildToolCallPresentation(
   const sourceDetail = input.agentMessage
     ? buildAgentMessageDisplay(input.agentMessage).detail
     : input.detail;
-  const detail = detailForExpansion(sourceDetail, input);
+  const detail = detailWithFileBatch(sourceDetail, input);
   const detailForDisplay = displayDetail(sourceDetail);
   const displayModel = buildToolCallDisplayModel({
     name: input.toolName,
@@ -80,10 +80,8 @@ export function buildToolCallPresentation(
   const activity = input.activityTranslation
     ? buildActivityDisplay(
         {
-          name: input.toolName,
           agentMessage: input.agentMessage,
           status: displayStatus(input.status),
-          error: input.error,
           detail: detailForDisplay,
           metadata: input.metadata,
           cwd: input.cwd,
@@ -91,6 +89,7 @@ export function buildToolCallPresentation(
         input.activityTranslation,
       )
     : undefined;
+  const labels = activity ?? displayModel;
   const iconDetail = activityIconDetail(sourceDetail, activity?.kind);
   const isLoadingDetails = isPendingToolCallDetail({
     detail,
@@ -101,8 +100,8 @@ export function buildToolCallPresentation(
 
   return {
     detail,
-    displayName: activity?.displayName ?? displayModel.displayName,
-    summary: activity ? activity.summary : displayModel.summary,
+    displayName: labels.displayName,
+    summary: labels.summary,
     errorText: displayModel.errorText,
     icon: input.resolveIcon(input.toolName, iconDetail, input.agentMessage),
     isLoadingDetails,
@@ -120,30 +119,4 @@ function resolvePlanOutcome(input: BuildToolCallPresentationInput): PlanOutcome 
   if (input.metadata?.approved === true) return "approved";
   if (input.status === "running" || input.status === "executing") return "pending";
   return undefined;
-}
-
-/** Keep the complete source patch batch inspectable without inventing new wire details. */
-function detailForExpansion(
-  source: ToolCallDetail | undefined,
-  input: BuildToolCallPresentationInput,
-): ToolCallDetail | undefined {
-  if (input.agentMessage) return source;
-  const files = parseFileChanges(input.metadata?.fileChanges);
-  if (!files || files.length < 2) return source;
-  return {
-    type: "unknown",
-    input: { files: files.map(({ path, kind }) => ({ path, kind })) },
-    output: { files },
-  };
-}
-
-/** Shell read/search activities use the same icon as canonical provider details. */
-function activityIconDetail(
-  source: ToolCallDetail | undefined,
-  kind: NonNullable<ReturnType<typeof buildActivityDisplay>>["kind"] | undefined,
-): ToolCallDetail | undefined {
-  if (kind === "read" || kind === "list") return { type: "read", filePath: "" };
-  if (kind === "files") return { type: "edit", filePath: "" };
-  if (kind === "search") return { type: "search", query: "" };
-  return source;
 }

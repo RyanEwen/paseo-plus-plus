@@ -1,5 +1,5 @@
-import { describeToolActivity, type ToolActivity } from "@getpaseo/protocol/tool-call-activity";
 import { getPaseoToolActionLabel } from "@getpaseo/protocol/paseo-tool-presentation/index";
+import { describeToolActivity, type ToolActivity } from "@getpaseo/protocol/tool-call-activity";
 import { isTurnTrigger } from "@/agent-stream/turn-membership";
 
 import { describeToolCall, type GroupableItem, type ToolCallRun } from "../grouping";

@@ -1,5 +1,3 @@
-import { useSettings } from "@/hooks/use-settings";
-import { buildOverviewGroup } from "./model";
 import React, { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { ScrollView } from "react-native";
 import { Wrench } from "lucide-react-native";
@@ -7,8 +5,9 @@ import { StyleSheet } from "react-native-unistyles";
 import { IndentRail } from "@/components/indent-rail";
 import { ExpandableBadge } from "@/components/message";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useReadableToolActivity } from "@/tool-calls/use-readable-tool-activity";
 import { useOverviewSummaryLabel } from "./label";
-import type { OverviewToolCallGroup } from "./model";
+import { buildOverviewGroup, type OverviewToolCallGroup } from "./model";
 import { OverviewToolCallGroupSheet } from "./sheet";
 
 interface OverviewGroupProps {
@@ -30,7 +29,7 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
 }: OverviewGroupProps) {
   const scrollRef = useRef<ScrollView>(null);
   const isCompact = useIsCompactFormFactor();
-  const descriptive = useSettings((settings) => settings.paseoPlusPlus.descriptiveToolCalls);
+  const descriptive = useReadableToolActivity();
   const summary = useMemo(
     () =>
       descriptive ? buildOverviewGroup(group.run, { descriptive: true }).summary : group.summary,

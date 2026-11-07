@@ -1,4 +1,3 @@
-import { useSettings } from "@/hooks/use-settings";
 import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
@@ -21,6 +20,7 @@ import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
+import { useReadableActivityTranslation } from "@/tool-calls/use-readable-tool-activity";
 import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
@@ -2272,10 +2272,7 @@ export const ToolCall = memo(function ToolCall({
   standalone = true,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
-  const descriptiveToolCalls = useSettings(
-    (settings) => settings.paseoPlusPlus.descriptiveToolCalls,
-  );
-  const { t: activityTranslation } = useTranslation();
+  const activityTranslation = useReadableActivityTranslation();
   const { expanded: isExpanded, toggle: toggleExpanded } = useToolCallExpanded({
     callId: itemId,
     defaultExpanded: defaultExpanded ?? false,
@@ -2312,7 +2309,7 @@ export const ToolCall = memo(function ToolCall({
         cwd,
         targetAgentTitle,
         resolveIcon: resolveToolCallIcon,
-        activityTranslation: descriptiveToolCalls ? activityTranslation : undefined,
+        activityTranslation,
       }),
     [
       toolName,
@@ -2323,7 +2320,6 @@ export const ToolCall = memo(function ToolCall({
       cwd,
       agentMessage,
       targetAgentTitle,
-      descriptiveToolCalls,
       activityTranslation,
     ],
   );
