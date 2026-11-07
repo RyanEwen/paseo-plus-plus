@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { jobBlocks } from "../test-support/workflow-jobs.mjs";

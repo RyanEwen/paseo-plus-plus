@@ -101,7 +101,7 @@ export async function preparePreviewBuild({
 }
 
 if (isMainModule(import.meta.url)) {
-  const release = await preparePreviewBuild({
+  await preparePreviewBuild({
     root: process.cwd(),
     buildNumber: Number(process.env.PASEO_PREVIEW_BUILD_NUMBER),
     commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
