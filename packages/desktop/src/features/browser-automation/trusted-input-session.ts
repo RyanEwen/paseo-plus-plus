@@ -163,8 +163,7 @@ export async function withTrustedInput({
     return result;
   }
 
-  const capture = () =>
-    withDialogCapture(contents, { task: performInput, signal: lifetime.signal });
+  const capture = () => withDialogCapture(contents, performInput, lifetime.signal);
   const produceFrames = () => {
     lifetime.assertActive();
     if (contents.isDestroyed()) {
