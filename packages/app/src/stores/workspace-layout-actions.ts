@@ -1,4 +1,5 @@
 import invariant from "tiny-invariant";
+import { insertPairSizes, isSplitFraction, pairSizes } from "@/stores/workspace-layout-splits";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { MIN_SPLIT_SIZE } from "@/stores/workspace-layout-constants";
@@ -997,16 +998,13 @@ function insertSplitInternal(input: InsertSplitInternalInput): InsertSplitIntern
   const parentNode = findParentGroup(detached.root, targetPath);
 
   if (parentNode?.kind === "group" && parentNode.group.direction === direction) {
-    const targetSize = parentNode.group.sizes[targetIndex] ?? 0;
-    const nextSizes = parentNode.group.sizes.slice();
     const insertIndex = insertAfter ? targetIndex + 1 : targetIndex;
-    nextSizes.splice(
-      insertIndex,
-      0,
-      targetSize * (insertAfter ? 1 - firstFraction : firstFraction),
-    );
-    nextSizes[targetIndex + (insertAfter ? 0 : 1)] =
-      targetSize * (insertAfter ? firstFraction : 1 - firstFraction);
+    const nextSizes = insertPairSizes({
+      sizes: parentNode.group.sizes,
+      targetIndex,
+      insertAfter,
+      firstFraction,
+    });
 
     return {
       root: replaceNodeAtPath(detached.root, parentPath, () =>
@@ -1024,7 +1022,7 @@ function insertSplitInternal(input: InsertSplitInternalInput): InsertSplitIntern
     id: input.createNodeId("group"),
     direction,
     children: insertAfter ? [targetNode, newPaneNode] : [newPaneNode, targetNode],
-    sizes: [firstFraction, 1 - firstFraction],
+    sizes: pairSizes(firstFraction),
   });
 
   return {
@@ -1932,11 +1930,13 @@ export function reorderFocusedPaneTabsInLayout(
 
 /** Ratios are an explicit placement choice; invalid values must not create or move a tab. */
 function isValidSplitFraction(fraction: number | undefined): boolean {
-  return fraction === undefined || (Number.isFinite(fraction) && fraction > 0 && fraction < 1);
+  return fraction === undefined || isSplitFraction(fraction);
 }
 
 export function splitPaneInLayout(input: SplitPaneInLayoutInput): SplitPaneInLayoutResult | null {
-  if (!isValidSplitFraction(input.firstPaneFraction)) return null;
+  if (!isValidSplitFraction(input.firstPaneFraction)) {
+    return null;
+  }
   const layout = asInternalLayout(input.layout);
   if (!findPaneById(layout.root, input.targetPaneId)) {
     return null;
@@ -1970,7 +1970,9 @@ export function splitPaneInLayout(input: SplitPaneInLayoutInput): SplitPaneInLay
 export function splitPaneEmptyInLayout(
   input: SplitPaneEmptyInLayoutInput,
 ): SplitPaneInLayoutResult | null {
-  if (!isValidSplitFraction(input.firstPaneFraction)) return null;
+  if (!isValidSplitFraction(input.firstPaneFraction)) {
+    return null;
+  }
   const firstFraction = input.firstPaneFraction ?? 0.5;
   const layout = asInternalLayout(input.layout);
   if (!findPaneById(layout.root, input.targetPaneId)) {
@@ -1995,16 +1997,13 @@ export function splitPaneEmptyInLayout(
 
   let nextRoot: SplitNodeInternal;
   if (parentNode?.kind === "group" && parentNode.group.direction === direction) {
-    const targetSize = parentNode.group.sizes[targetIndex] ?? 0;
-    const nextSizes = parentNode.group.sizes.slice();
     const insertIndex = insertAfter ? targetIndex + 1 : targetIndex;
-    nextSizes.splice(
-      insertIndex,
-      0,
-      targetSize * (insertAfter ? 1 - firstFraction : firstFraction),
-    );
-    nextSizes[targetIndex + (insertAfter ? 0 : 1)] =
-      targetSize * (insertAfter ? firstFraction : 1 - firstFraction);
+    const nextSizes = insertPairSizes({
+      sizes: parentNode.group.sizes,
+      targetIndex,
+      insertAfter,
+      firstFraction,
+    });
     nextRoot = replaceNodeAtPath(layout.root, parentPath, () =>
       insertChildIntoGroup(parentNode, { index: insertIndex, node: newPaneNode, sizes: nextSizes }),
     );
@@ -2013,7 +2012,7 @@ export function splitPaneEmptyInLayout(
       id: input.createNodeId("group"),
       direction,
       children: insertAfter ? [targetNode, newPaneNode] : [newPaneNode, targetNode],
-      sizes: [firstFraction, 1 - firstFraction],
+      sizes: pairSizes(firstFraction),
     });
     nextRoot = replaceNodeAtPath(layout.root, targetPath, () => newGroup);
   }
