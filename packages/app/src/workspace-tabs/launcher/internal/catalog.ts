@@ -1,5 +1,6 @@
 export const PRIMARY_LAUNCH_ORDER = [
   "agent",
+  "reopenClosedAgent",
   "terminal",
   "changes",
   "diff",
@@ -14,6 +15,7 @@ export const SUPPORTING_LAUNCH_ORDER = [
   "diff",
   "files",
   "agent",
+  "reopenClosedAgent",
   "browser",
   "pullRequest",
 ] as const;

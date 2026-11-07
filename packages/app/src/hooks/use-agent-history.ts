@@ -76,8 +76,17 @@ export async function fetchAgentHistoryPage(input: {
   serverId: string;
   cursor: string | null;
   search?: string;
+  workspaceId?: string;
 }): Promise<AgentHistoryPage> {
   const payload = await input.client.fetchAgentHistory({
+    // A workspace-scoped read lists everything that workspace owns, including archived and
+    // background agents, because no other surface reopens those.
+    ...(input.workspaceId !== undefined
+      ? {
+          workspaceId: input.workspaceId,
+          filter: { includeArchived: true, includeBackground: true },
+        }
+      : {}),
     ...(input.search ? { search: input.search } : {}),
     sort: AGENT_HISTORY_SORT,
     page: input.cursor
@@ -104,6 +113,8 @@ export async function fetchAgentHistoryPage(input: {
       provider: agent.provider,
       pendingPermissionCount: agent.pendingPermissions.length,
       requiresAttention: agent.requiresAttention,
+      humanAttentionRequired: agent.humanAttentionRequired,
+      attentionMessage: agent.attentionMessage,
       attentionReason: agent.attentionReason,
       attentionTimestamp: agent.attentionTimestamp ?? null,
       archivedAt: agent.archivedAt ?? null,
@@ -161,6 +172,7 @@ export async function fetchAgentHistoryBatch(input: {
   hosts: readonly AgentHistoryHost[];
   cursorByServerId: AgentHistoryCursorByServerId | null;
   search?: string;
+  workspaceId?: string;
 }): Promise<AgentHistoryBatchPage> {
   const cursorByServerId = input.cursorByServerId ?? {};
   const hasCursorFilter = Object.keys(cursorByServerId).length > 0;
@@ -175,6 +187,7 @@ export async function fetchAgentHistoryBatch(input: {
         serverId: host.serverId,
         cursor: cursorByServerId[host.serverId] ?? null,
         ...(input.search ? { search: input.search } : {}),
+        ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
       });
       return { host, page };
     }),
@@ -257,6 +270,7 @@ export function useAgentHistory(options: {
   serverId?: string | null;
   enabled?: boolean;
   search?: string;
+  workspaceId?: string;
 }): AgentHistoryResult {
   const { t } = useTranslation();
   const daemons = useHosts();
@@ -288,8 +302,9 @@ export function useAgentHistory(options: {
     () => [
       ...(serverId ? agentHistoryQueryKey(serverId) : allAgentHistoryQueryKey(targetServerIds)),
       search,
+      options.workspaceId ?? null,
     ],
-    [search, serverId, targetServerIds],
+    [search, serverId, targetServerIds, options.workspaceId],
   );
   const serverLabelById = useMemo(
     () => new Map(daemons.map((daemon) => [daemon.serverId, daemon.label])),
@@ -315,6 +330,7 @@ export function useAgentHistory(options: {
       return fetchAgentHistoryBatch({
         hosts: targetHosts,
         cursorByServerId: pageParam,
+        workspaceId: options.workspaceId,
         ...(search ? { search } : {}),
       });
     },
