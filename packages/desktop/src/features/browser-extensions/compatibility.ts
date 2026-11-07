@@ -10,6 +10,7 @@ import { registerExtensionTabs } from "./tabs.js";
 import { describeVisibleExtensionTab } from "./tab-access.js";
 import { registerExtensionStorageObservers } from "./storage-observers.js";
 import { createExtensionEventDelivery } from "./events.js";
+import { createExtensionWorkerTracker } from "./worker-tracking.js";
 import {
   BrowserWindow,
   app,
@@ -98,9 +99,7 @@ export function registerBrowserExtensionCompatibility(
     workerListeners.delete(extension.id);
     workerGenerations.set(extension.id, (workerGenerations.get(extension.id) ?? 0) + 1);
   });
-  const readyWorkers = new Map<number, Promise<boolean>>();
-  const trackedWorkers = new Map<number, ServiceWorkerMain>();
-  const workerReadinessResolvers = new Map<number, (ready: boolean) => void>();
+  const workerTracker = createExtensionWorkerTracker<ServiceWorkerMain>();
   const deliverEvent = createExtensionEventDelivery({
     profile,
     emit,
@@ -113,11 +112,7 @@ export function registerBrowserExtensionCompatibility(
       );
     },
     async waitForWorkerReady(versionId) {
-      const ready = readyWorkers.get(versionId);
-      if (!ready) {
-        throw new Error("Extension worker has not started.");
-      }
-      return ready;
+      return workerTracker.waitReady(versionId);
     },
     onError({ name, error }) {
       if (name === "contextMenus.onClicked") {
@@ -209,7 +204,7 @@ export function registerBrowserExtensionCompatibility(
         contents.send(EVENTS, name, args);
       }
     }
-    for (const worker of trackedWorkers.values()) {
+    for (const worker of workerTracker.workers()) {
       if (!worker.isDestroyed() && worker.scope === `chrome-extension://${id}/`) {
         if (name === "storage.onChanged") {
           // Frames already receive native events. Match Chromium's area-before-global worker order.
@@ -462,29 +457,19 @@ export function registerBrowserExtensionCompatibility(
   });
   profile.serviceWorkers.on("running-status-changed", (details) => {
     if (details.runningStatus === "running") {
-      // Chromium reports running after evaluating the background entry script, including listener registration.
-      workerReadinessResolvers.get(details.versionId)?.(true);
-      workerReadinessResolvers.delete(details.versionId);
+      workerTracker.running(details.versionId);
       return;
     }
     if (details.runningStatus === "stopped" || details.runningStatus === "stopping") {
-      workerReadinessResolvers.get(details.versionId)?.(false);
-      workerReadinessResolvers.delete(details.versionId);
-      readyWorkers.delete(details.versionId);
-      trackedWorkers.delete(details.versionId);
+      workerTracker.stopped(details.versionId);
       return;
     }
     const worker = profile.serviceWorkers.getWorkerFromVersionID(details.versionId);
     if (!worker || !worker.scope.startsWith("chrome-extension://")) {
       return;
     }
-    trackedWorkers.set(details.versionId, worker);
+    workerTracker.starting(worker);
     storageObservers.trackWorker(worker);
-    workerReadinessResolvers.get(details.versionId)?.(false);
-    const ready = new Promise<boolean>((resolve) =>
-      workerReadinessResolvers.set(details.versionId, resolve),
-    );
-    readyWorkers.set(details.versionId, ready);
     worker.ipc.removeHandler(CHANNEL);
     const extensionId = new URL(worker.scriptURL).hostname;
     const generation = workerGenerations.get(extensionId) ?? 0;
@@ -492,7 +477,7 @@ export function registerBrowserExtensionCompatibility(
       // Stale IPC must not mutate subscriptions or state belonging to a replacement extension.
       if (
         worker.isDestroyed() ||
-        trackedWorkers.get(worker.versionId) !== worker ||
+        !workerTracker.isCurrent(worker) ||
         generation !== (workerGenerations.get(extensionId) ?? 0)
       ) {
         throw new Error("The extension worker is no longer active.");
