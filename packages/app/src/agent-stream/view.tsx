@@ -6,6 +6,7 @@ import {
   useTranscriptCursor,
   type TranscriptHistoryPagination,
 } from "./use-retained-canonical-transcript";
+import { mergeRetainedPrompts } from "@/timeline/canonical-prompt-context";
 import { shouldIndexUserPrompts } from "./chat-outline/model";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
