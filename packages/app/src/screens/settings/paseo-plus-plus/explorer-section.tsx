@@ -1,4 +1,5 @@
 import { PREFERENCE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
+import { DEVICE_LOCAL_APP_SETTING_KEYS } from "@/paseo-plus-plus/device-local-settings";
 import { SettingsExample } from "@/components/settings/settings-example";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,13 +14,12 @@ import { isWeb } from "@/constants/platform";
 import type { AppSettings } from "@/hooks/use-settings";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 
-type ExplorerSetting =
-  | "autoOpenExplorerSidebar"
-  | "explorerDiffScope"
-  | "workingDiffDefaultComparison"
-  | "workingDiffAutoSwitch";
+type ExplorerSwitchSetting = "autoOpenExplorerSidebar" | "workingDiffAutoSwitch";
+type ExplorerSelectSetting = "explorerDiffScope" | "workingDiffDefaultComparison";
+type ExplorerSetting = ExplorerSwitchSetting | ExplorerSelectSetting;
 
-const HELP_CONTENT = {
+/** Label and hint translation keys; the hint also captions the setting's help example. */
+const SETTING_TEXT: Record<ExplorerSetting, { label: string; hint: string }> = {
   autoOpenExplorerSidebar: {
     label: "settings.layout.explorer.autoOpen.label",
     hint: "settings.layout.explorer.autoOpen.description",
@@ -36,7 +36,22 @@ const HELP_CONTENT = {
     label: "settings.layout.explorer.autoSwitch.label",
     hint: "settings.layout.explorer.autoSwitch.description",
   },
-} as const;
+};
+
+/** Device-local settings stay editable while a settings host blocks shared edits. */
+const DEVICE_LOCAL_KEYS: ReadonlySet<string> = new Set(DEVICE_LOCAL_APP_SETTING_KEYS);
+
+/** Save state of one row: whether it can be edited, and whether its own save is pending or failed. */
+interface ExplorerRowState {
+  disabled: boolean;
+  pending: boolean;
+  failed: boolean;
+}
+
+type SaveExplorerSetting = <Key extends ExplorerSetting>(
+  key: Key,
+  value: AppSettings[Key],
+) => Promise<void>;
 
 /** Explorer defaults for new workspaces and changed-file navigation. */
 export function ExplorerSection() {
@@ -44,27 +59,9 @@ export function ExplorerSection() {
   const { settings, save, pending, failed, isLoading, isEditingBlocked, error } =
     useSettingsSave<ExplorerSetting>();
 
-  const disabled = isLoading || isEditingBlocked || error !== null || pending !== null;
-  const help = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(HELP_CONTENT).map(([key, content]) => [
-          key,
-          <SettingsExample
-            key={key}
-            title={t(content.label)}
-            caption={`${t(content.hint)} ${t("paseoPlusPlus.examples.explorer")}`}
-            images={PREFERENCE_EXAMPLE_IMAGES.explorer}
-            testID={`settings-example-${key}`}
-          />,
-        ]),
-      ),
-    [t],
-  );
-
   /** Keep each control's attempted value outside durable settings until its save succeeds. */
-  const saveSetting = useCallback(
-    async <Key extends ExplorerSetting>(key: Key, value: AppSettings[Key]) => {
+  const saveSetting = useCallback<SaveExplorerSetting>(
+    async (key, value) => {
       const updates: Partial<AppSettings> = {};
       updates[key] = value;
       await save(key, updates);
@@ -72,26 +69,16 @@ export function ExplorerSection() {
     [save],
   );
 
-  /** Use the same in-place save feedback for switches and selects. */
-  function feedback(key: ExplorerSetting, hint: string) {
+  /** Host-synced rows also wait for a settings host; device-local rows only for this device. */
+  function rowState(key: ExplorerSetting): ExplorerRowState {
+    const blockedByHost = isEditingBlocked && !DEVICE_LOCAL_KEYS.has(key);
     return {
-      disabled:
-        (key === "autoOpenExplorerSidebar" ? isLoading : isLoading || isEditingBlocked) ||
-        error !== null ||
-        pending !== null,
-      hint: pending === key ? t("paseoPlusPlus.saving") : hint,
-      error: failed === key ? t("paseoPlusPlus.saveFailed") : undefined,
+      disabled: isLoading || blockedByHost || error !== null || pending !== null,
+      pending: pending === key,
+      failed: failed === key,
     };
   }
 
-  const changeAutoOpen = useCallback(
-    (value: boolean) => void saveSetting("autoOpenExplorerSidebar", value),
-    [saveSetting],
-  );
-  const changeDiffScope = useCallback(
-    (value: AppSettings["explorerDiffScope"]) => void saveSetting("explorerDiffScope", value),
-    [saveSetting],
-  );
   const diffScopeOptions = useMemo(
     () =>
       (["all", "single"] as const).map((value) => ({
@@ -99,16 +86,6 @@ export function ExplorerSection() {
         label: t(`settings.layout.explorer.diffScope.options.${value}`),
       })),
     [t],
-  );
-
-  const changeDefaultComparison = useCallback(
-    (value: AppSettings["workingDiffDefaultComparison"]) =>
-      void saveSetting("workingDiffDefaultComparison", value),
-    [saveSetting],
-  );
-  const changeAutoSwitch = useCallback(
-    (value: boolean) => void saveSetting("workingDiffAutoSwitch", value),
-    [saveSetting],
   );
   const comparisonOptions = useMemo(
     () =>
@@ -122,54 +99,109 @@ export function ExplorerSection() {
     [t],
   );
 
+  // The default comparison applies only while automatic switching is off.
+  const defaultComparisonState = rowState("workingDiffDefaultComparison");
+  if (settings.workingDiffAutoSwitch) {
+    defaultComparisonState.disabled = true;
+  }
+
   return (
     <SettingsSection title={t("settings.layout.explorer.title")}>
       <SettingsCard>
         {/* Rows other features contribute to this section, e.g. the Icon-only tabs note. */}
         <SettingsSectionExtensionRows sectionId="explorer" />
         {isWeb ? (
-          <SettingsSwitch
-            label={t("settings.layout.explorer.autoOpen.label")}
-            labelAccessory={help.autoOpenExplorerSidebar}
-            {...feedback(
-              "autoOpenExplorerSidebar",
-              t("settings.layout.explorer.autoOpen.description"),
-            )}
+          <ExplorerSettingSwitch
+            setting="autoOpenExplorerSidebar"
             value={settings.autoOpenExplorerSidebar}
-            onValueChange={changeAutoOpen}
+            state={rowState("autoOpenExplorerSidebar")}
+            onSave={saveSetting}
           />
         ) : null}
-        <SettingsSelect
-          label={t("settings.layout.explorer.diffScope.label")}
-          labelAccessory={help.explorerDiffScope}
-          {...feedback("explorerDiffScope", t("settings.layout.explorer.diffScope.description"))}
+        <ExplorerSettingSelect
+          setting="explorerDiffScope"
           value={settings.explorerDiffScope}
           options={diffScopeOptions}
-          onValueChange={changeDiffScope}
+          state={rowState("explorerDiffScope")}
+          onSave={saveSetting}
         />
-        <SettingsSelect
-          label={t("settings.layout.explorer.comparison.label")}
-          labelAccessory={help.workingDiffDefaultComparison}
-          {...feedback(
-            "workingDiffDefaultComparison",
-            t("settings.layout.explorer.comparison.description"),
-          )}
+        <ExplorerSettingSelect
+          setting="workingDiffDefaultComparison"
           value={settings.workingDiffDefaultComparison}
           options={comparisonOptions}
-          disabled={disabled || settings.workingDiffAutoSwitch}
-          onValueChange={changeDefaultComparison}
+          state={defaultComparisonState}
+          onSave={saveSetting}
         />
-        <SettingsSwitch
-          label={t("settings.layout.explorer.autoSwitch.label")}
-          labelAccessory={help.workingDiffAutoSwitch}
-          {...feedback(
-            "workingDiffAutoSwitch",
-            t("settings.layout.explorer.autoSwitch.description"),
-          )}
+        <ExplorerSettingSwitch
+          setting="workingDiffAutoSwitch"
           value={settings.workingDiffAutoSwitch}
-          onValueChange={changeAutoSwitch}
+          state={rowState("workingDiffAutoSwitch")}
+          onSave={saveSetting}
         />
       </SettingsCard>
     </SettingsSection>
   );
+}
+
+/** Label, help example and in-place save feedback shared by every Explorer row. */
+function useExplorerRowPresentation(setting: ExplorerSetting, state: ExplorerRowState) {
+  const { t } = useTranslation();
+  const label = t(SETTING_TEXT[setting].label);
+  const hint = t(SETTING_TEXT[setting].hint);
+  const help = useMemo(
+    () => (
+      <SettingsExample
+        title={label}
+        caption={`${hint} ${t("paseoPlusPlus.examples.explorer")}`}
+        images={PREFERENCE_EXAMPLE_IMAGES.explorer}
+        testID={`settings-example-${setting}`}
+      />
+    ),
+    [hint, label, setting, t],
+  );
+  return {
+    label,
+    labelAccessory: help,
+    hint: state.pending ? t("paseoPlusPlus.saving") : hint,
+    error: state.failed ? t("paseoPlusPlus.saveFailed") : undefined,
+    disabled: state.disabled,
+  };
+}
+
+interface ExplorerSettingSwitchProps {
+  setting: ExplorerSwitchSetting;
+  value: boolean;
+  state: ExplorerRowState;
+  onSave: SaveExplorerSetting;
+}
+
+/** A boolean Explorer setting with a stable change callback. */
+function ExplorerSettingSwitch({ setting, value, state, onSave }: ExplorerSettingSwitchProps) {
+  const row = useExplorerRowPresentation(setting, state);
+  const change = useCallback((next: boolean) => void onSave(setting, next), [onSave, setting]);
+  return <SettingsSwitch {...row} value={value} onValueChange={change} />;
+}
+
+interface ExplorerSettingSelectProps<Key extends ExplorerSelectSetting> {
+  setting: Key;
+  value: AppSettings[Key];
+  options: readonly { label: string; value: AppSettings[Key] }[];
+  state: ExplorerRowState;
+  onSave: SaveExplorerSetting;
+}
+
+/** A choice-valued Explorer setting with a stable change callback. */
+function ExplorerSettingSelect<Key extends ExplorerSelectSetting>({
+  setting,
+  value,
+  options,
+  state,
+  onSave,
+}: ExplorerSettingSelectProps<Key>) {
+  const row = useExplorerRowPresentation(setting, state);
+  const change = useCallback(
+    (next: AppSettings[Key]) => void onSave(setting, next),
+    [onSave, setting],
+  );
+  return <SettingsSelect {...row} value={value} options={options} onValueChange={change} />;
 }
