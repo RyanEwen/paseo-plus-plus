@@ -1,7 +1,5 @@
 import { WorkspaceLayoutPersistedStateSchema } from "@/stores/workspace-layout-storage";
 import { collectAllPanes, collectAllTabs } from "@/stores/workspace-layout-actions";
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
 import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
 import {
   buildDefaultSettingsRoute,
@@ -232,9 +230,6 @@ test("tab move menus and divider presets preserve workspace tabs", async ({ page
     // Seven ratios expose both regions across horizontal and vertical splits.
     await expect(page.getByTestId(/^workspace-new-tab-layout-agent-/)).toHaveCount(28);
     await expect(main.getByRole("tab")).toHaveCount(countBefore);
-    const splitEvidence = resolve("../../docs/qa-evidence/workspace-split-presets");
-    mkdirSync(splitEvidence, { recursive: true });
-    await page.screenshot({ path: resolve(splitEvidence, "creation-split-choices.png") });
     await page.getByTestId("workspace-new-tab-layout-agent-right-60-40").click();
     await expect.poll(() => readSplitDraft(page, workspace.workspaceId)).not.toBeNull();
     const draft = await readSplitDraft(page, workspace.workspaceId);
@@ -268,15 +263,11 @@ test("tab move menus and divider presets preserve workspace tabs", async ({ page
     const divider = page.getByTestId("workspace-split-resize-handle");
     await divider.hover();
     await expect(page.getByTestId("workspace-split-presets")).toBeVisible();
-    const evidence = resolve("../../docs/qa-evidence/workspace-split-presets");
-    mkdirSync(evidence, { recursive: true });
-    await page.screenshot({ path: resolve(evidence, "divider-presets.png") });
     await page.getByTestId("workspace-split-preset-50-50").click();
     await expect.poll(ratio).toBeGreaterThan(0.48);
     await expect.poll(ratio).toBeLessThan(0.52);
     await tab.click({ button: "right" });
     await page.getByTestId(menu).click();
-    await page.screenshot({ path: resolve(evidence, "tab-move-menu.png") });
     await page.getByTestId(`${menu}-pane-main`).click();
     await expect(left.getByTestId(`workspace-tab-agent_${first.id}`)).toBeVisible();
     await expect(left.getByTestId(`workspace-tab-${tabId}`)).toBeVisible();

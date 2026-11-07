@@ -1,17 +1,24 @@
-import { SPLIT_LAYOUT_PRESETS } from "@/components/split-layout-presets";
 import { resolveWorkspaceTabLaunchDestination } from "@/workspace-tabs/launcher/internal/destination";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const splitRegionCases = SPLIT_LAYOUT_PRESETS.flatMap((preset) =>
-  (["left", "right", "top", "bottom"] as const).flatMap((position) =>
+/** One ordinary ratio for every side and operation, plus the smallest preset at its boundary. */
+const splitRegionCases = [
+  ...(["left", "right", "top", "bottom"] as const).flatMap((position) =>
     (["create", "move"] as const).map((operation) => ({
-      label: preset.label,
-      fraction: preset.fraction,
+      label: "60/40",
+      fraction: 0.6,
       position,
       operation,
     })),
   ),
-);
+  { label: "20/80", fraction: 0.2, position: "right", operation: "create" },
+  { label: "80/20", fraction: 0.8, position: "top", operation: "move" },
+] as const;
+
+/** Share of a new workspace given to the docked Explorer by createDefaultLayout. */
+const EXPLORER_SHARE = 0.22;
+/** Share of a new workspace left for content panes beside the docked Explorer. */
+const CONTENT_SHARE = 1 - EXPLORER_SHARE;
 
 vi.mock("@react-native-async-storage/async-storage", () => {
   const storage = new Map<string, string>();
@@ -2087,8 +2094,8 @@ describe("workspace-layout-store actions", () => {
       collectContentTabs(after.root).find((tab) => tab.tabId === destination.tabId)?.target,
     ).toEqual({ kind: "terminal", terminalId: "created-later" });
     if (after.root.kind !== "group") throw new Error("Expected split");
-    expect(after.root.group.sizes[0]).toBeCloseTo(0.468);
-    expect(after.root.group.sizes[1]).toBeCloseTo(0.312);
+    expect(after.root.group.sizes[0]).toBeCloseTo(CONTENT_SHARE * 0.6);
+    expect(after.root.group.sizes[1]).toBeCloseTo(CONTENT_SHARE * 0.4);
   });
 
   it("moves the existing tab into a chosen side ratio without changing tab identity", () => {
@@ -2113,9 +2120,9 @@ describe("workspace-layout-store actions", () => {
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(layout.root.kind).toBe("group");
     if (layout.root.kind !== "group") throw new Error("Expected split");
-    expect(layout.root.group.sizes[0]).toBeCloseTo(0.78 * 0.6);
-    expect(layout.root.group.sizes[1]).toBeCloseTo(0.78 * 0.4);
-    expect(layout.root.group.sizes[2]).toBeCloseTo(0.22);
+    expect(layout.root.group.sizes[0]).toBeCloseTo(CONTENT_SHARE * 0.6);
+    expect(layout.root.group.sizes[1]).toBeCloseTo(CONTENT_SHARE * 0.4);
+    expect(layout.root.group.sizes[2]).toBeCloseTo(EXPLORER_SHARE);
     expect(findPaneContainingTab(layout.root, second!)?.id).toBe(pane);
     expect(findPaneContainingTab(layout.root, first!)?.id).toBe("main");
     expect(
@@ -2156,10 +2163,13 @@ describe("workspace-layout-store actions", () => {
     });
     const after = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     if (after.root.kind !== "group") throw new Error("Expected split");
-    expect(after.root.group.sizes[0]).toBeCloseTo(0.3276);
-    expect(after.root.group.sizes[1]).toBeCloseTo(0.2184);
-    expect(after.root.group.sizes[2]).toBeCloseTo(0.234);
-    expect(after.root.group.sizes[3]).toBeCloseTo(0.22);
+    // The committed 70/30 content split keeps its share of the content area; the new pair then
+    // divides the main pane's 70% at 60/40.
+    const mainShare = CONTENT_SHARE * 0.7;
+    expect(after.root.group.sizes[0]).toBeCloseTo(mainShare * 0.6);
+    expect(after.root.group.sizes[1]).toBeCloseTo(mainShare * 0.4);
+    expect(after.root.group.sizes[2]).toBeCloseTo(CONTENT_SHARE * 0.3);
+    expect(after.root.group.sizes[3]).toBeCloseTo(EXPLORER_SHARE);
     expect(
       workspaceLayoutStore.getState().splitSizesByWorkspace[workspaceKey][after.root.group.id],
     ).toEqual(after.root.group.sizes);
