@@ -300,6 +300,35 @@ test.describe("Sidebar project filter", () => {
 test.describe("Sidebar project selector", () => {
   test.describe.configure({ timeout: 180_000 });
 
+  test("the chooser label shares the Pinned heading's rail", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "selector-rail-", title: "Rail work" });
+    try {
+      await gotoAppShell(page);
+      await expect(
+        page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`),
+      ).toBeVisible({ timeout: 30_000 });
+      await pinWorkspaceFromSidebar(page, workspace.workspaceId);
+
+      // Both headings sit in the same list, so their labels must start at the same x.
+      const pinnedLabel = page
+        .getByTestId("sidebar-pinned-section-header")
+        .getByText("Pinned", { exact: true });
+      const chooserLabel = page
+        .getByTestId("sidebar-project-selector")
+        .getByText("All Workspaces", { exact: true });
+      await expect(pinnedLabel).toBeVisible();
+      await expect(chooserLabel).toBeVisible();
+      const [pinned, chooser] = await Promise.all([
+        pinnedLabel.boundingBox(),
+        chooserLabel.boundingBox(),
+      ]);
+      if (!pinned || !chooser) throw new Error("Section headings have no rendered bounds");
+      expect(chooser.x).toBeCloseTo(pinned.x, 0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   for (const compact of [false, true]) {
     test(`preserves multi-selection and filters pinned workspaces on ${compact ? "compact" : "desktop"}`, async ({
       page,
