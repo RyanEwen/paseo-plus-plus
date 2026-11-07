@@ -80,12 +80,8 @@ export interface SidebarViewStoreState extends SidebarModePreferences {
       current: SidebarLocalModeFilters[SidebarGroupMode],
     ) => SidebarLocalModeFilters[SidebarGroupMode],
   ) => void;
+  // Profile preferences (sorting, visibility, presentation) come from SidebarModePreferences.
   groupMode: SidebarGroupMode;
-  sortMode: SidebarSortMode;
-  workspaceSortMode: SidebarWorkspaceSortMode;
-  projectVisibility: SidebarProjectVisibility;
-  groupEmptyProjects: boolean;
-  emptyProjectSortMode: SidebarEmptyProjectSortMode;
   workspaceSort: WorkspaceSort;
   showBackground: boolean;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
@@ -422,9 +418,7 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
   persist<SidebarViewStoreState, [], [], SidebarViewStorageState>(
     (set, get) => {
       const setPreferences = (
-        patch:
-          | Partial<SidebarViewStoreState>
-          | ((state: SidebarViewStoreState) => Partial<SidebarViewStoreState>),
+        patch: SidebarPreferencePatch,
         targetMode: SidebarGroupMode = get().groupMode,
       ) => {
         if (isSettingsEditingBlocked()) return;
