@@ -1242,11 +1242,10 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   // Icon-only tabs match the adjacent new-tab control: 28 on desktop, the 44 touch height on compact.
   const iconOnlyTabWidth = useMemo(
-    () => controlHeightForLayout(isCompact ? "md" : "sm", isCompact),
-    [isCompact],
+    () => (iconOnly ? controlHeightForLayout(isCompact ? "md" : "sm", isCompact) : null),
+    [iconOnly, isCompact],
   );
   const { layout } = useWorkspaceTabLayout({
-    host,
     iconOnlyTabWidth,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
@@ -1315,7 +1314,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       isActive,
     }: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => {
       const shouldShowCloseButton =
-        !iconOnly && layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
+        layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
       const layoutItem = layout.items[index] ?? null;
       const resolvedTabWidth = layoutItem?.width ?? 150;
       const showLabel = layoutItem?.showLabel ?? true;
@@ -1363,7 +1362,6 @@ function ResolvedWorkspaceDesktopTabsRow({
       activeDragTabId,
       explorerDisplay,
       isFocused,
-      iconOnly,
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,

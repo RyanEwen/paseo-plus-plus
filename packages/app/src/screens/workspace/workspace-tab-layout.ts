@@ -34,7 +34,7 @@ export interface WorkspaceTabLayoutInput {
   compact: boolean;
   /** Raise only the title-width ceiling; short tabs stay content-driven. */
   widerTabs?: boolean;
-  iconOnly?: boolean;
+  /** Present for icon-only tabs: every tab is a square cell of this width with no label. */
   iconOnlyTabWidth?: number;
 }
 
@@ -89,20 +89,21 @@ export function computeWorkspaceTabLayout(
   const rowOverhead =
     input.metrics.rowPaddingHorizontal * 2 + Math.max(tabCount - 1, 0) * input.metrics.tabGap;
   const availableTabsWidth = Math.max(0, availableWidth - rowOverhead);
+  if (input.iconOnlyTabWidth !== undefined) {
+    const width = input.iconOnlyTabWidth;
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      // A square cell has no room for an inline X; icon-only tabs close from their context menu.
+      closeButtonPolicy: "none",
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const tabChromeWidth =
     input.metrics.tabIconWidth +
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
   const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
-  if (input.iconOnly) {
-    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
-    return {
-      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
-      closeButtonPolicy,
-      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
-    };
-  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
