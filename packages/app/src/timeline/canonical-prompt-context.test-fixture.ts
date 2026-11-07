@@ -112,12 +112,11 @@ interface PromptRequestFixture {
     signal: AbortSignal,
     progress?: CanonicalPromptContextProgress,
   ): Promise<CanonicalPromptContext | undefined>;
-  knownContext?: CanonicalPromptContext;
   lookupAllowed?: boolean;
   retryToken?: number;
 }
 export function requestPromptFixture(owner: CanonicalPromptContexts, input: PromptRequestFixture) {
-  const request = {
+  return owner.request({
     agentId: input.agentId,
     source: input.source,
     channel: input.channel,
@@ -125,8 +124,5 @@ export function requestPromptFixture(owner: CanonicalPromptContexts, input: Prom
     lookup: rawPromptLookup(input.source, input.fetchContext, input.agentId),
     lookupAllowed: input.lookupAllowed ?? true,
     retryToken: input.retryToken ?? 0,
-  };
-  // Unknown render objects are deliberately extra fixture input, not an owner
-  // enrollment API. Direct adversarial cases also exercise this boundary.
-  return owner.request(Object.assign(request, { knownContext: input.knownContext }));
+  });
 }

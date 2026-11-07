@@ -1071,7 +1071,6 @@ describe("viewed owner source metadata acceptance", () => {
         channel,
         source,
         signal: new AbortController().signal,
-        knownContext: { ...proof },
         lookupAllowed: false,
         fetchContext: async () => {
           calls += 1;

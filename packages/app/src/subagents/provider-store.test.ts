@@ -688,7 +688,6 @@ describe("projected child history", () => {
         channel,
         source,
         signal: new AbortController().signal,
-        knownContext: { ...proof },
         lookupAllowed: false,
         fetchContext: async () => {
           calls += 1;
@@ -862,8 +861,29 @@ describe("projected child history", () => {
     owner.dispose();
   });
 
-  test("retires child certificate support on removal and epoch handoff even when the same epoch later returns", async () => {
-    for (const mode of ["remove", "epoch"]) {
+  test.each([
+    [
+      "removal",
+      () =>
+        useProviderSubagentStore.setState((state) => {
+          const timelines = new Map(state.timelines);
+          timelines.delete(key);
+          return { timelines };
+        }),
+    ],
+    [
+      "epoch handoff",
+      () =>
+        useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
+          ...response("answer", 500, 500),
+          epoch: "other",
+          startCursor: { epoch: "other", seq: 500 },
+          endCursor: { epoch: "other", seq: 500 },
+        }),
+    ],
+  ])(
+    "retires child certificate support on %s even when the same epoch later returns",
+    async (_label, retire) => {
       page("answer", 500, 500);
       const source = [...current().tail, ...current().head][0]!;
       const prior: Extract<StreamItem, { kind: "user_message" }> = {
@@ -896,19 +916,7 @@ describe("projected child history", () => {
       });
       const proof = owner.read(scope.agentId, "e", seed)[0]!;
       expect(owner.isSupportedContext(scope.agentId, proof)).toBe(true);
-      if (mode === "remove")
-        useProviderSubagentStore.setState((state) => {
-          const timelines = new Map(state.timelines);
-          timelines.delete(key);
-          return { timelines };
-        });
-      else
-        useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, {
-          ...response("answer", 500, 500),
-          epoch: "other",
-          startCursor: { epoch: "other", seq: 500 },
-          endCursor: { epoch: "other", seq: 500 },
-        });
+      retire();
       page("answer", 500, 500);
       expect(owner.read(scope.agentId, "e", seed)).toEqual([]);
       expect(owner.isSupportedContext(scope.agentId, proof)).toBe(false);
@@ -916,8 +924,8 @@ describe("projected child history", () => {
         owner.preview(scope.agentId, [...current().tail, ...current().head][0]!),
       ).toBeUndefined();
       owner.dispose();
-    }
-  });
+    },
+  );
 
   test("replaces overlapping fetched text and continues live streaming", () => {
     page("AB", 1, 2);
