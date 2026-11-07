@@ -196,11 +196,7 @@ function FileHeaderTooltip({
   children: ReactElement;
 }) {
   return (
-    <Tooltip
-      delayDuration={300}
-      enabledOnDesktop={enabled}
-      enabledOnMobile={false}
-    >
+    <Tooltip delayDuration={300} enabledOnDesktop={enabled} enabledOnMobile={false}>
       <TooltipTrigger asChild triggerRefProp={interactive ? "triggerRef" : "ref"}>
         {children}
       </TooltipTrigger>

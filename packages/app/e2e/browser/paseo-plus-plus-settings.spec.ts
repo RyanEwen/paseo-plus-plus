@@ -81,9 +81,7 @@ test.describe("Paseo++ feature switches", () => {
 });
 
 test.describe("Explorer and Changes settings", () => {
-  test("persist automatic Explorer opening and single-file Changes", async ({
-    page,
-  }) => {
+  test("persist automatic Explorer opening and single-file Changes", async ({ page }) => {
     await openPaseoPlusPlusSettings(page);
     const autoOpen = page.getByRole("switch", {
       name: "Open sidebar for new workspaces",
