@@ -43,9 +43,10 @@ export class AppSettingsSession {
       unsubscribe(),
     );
     let ready = false;
-    let pending: AppSettingsSnapshot | null = null;
+    // A field, not a local: the subscriber closure writes it while the read is in flight.
+    const buffer: { latest: AppSettingsSnapshot | null } = { latest: null };
     unsubscribe = this.store.subscribe((snapshot) => {
-      if (!ready) pending = snapshot;
+      if (!ready) buffer.latest = snapshot;
       else owner.emit({ type: "app.settings.changed", payload: { snapshot } });
     });
     try {
@@ -59,7 +60,7 @@ export class AppSettingsSession {
         payload: { requestId: request.requestId, subscriptionId: owner.responseId, snapshot },
       });
       ready = true;
-      const buffered = pending as AppSettingsSnapshot | null;
+      const buffered = buffer.latest;
       if (buffered && buffered.revision > snapshot.revision)
         owner.emit({ type: "app.settings.changed", payload: { snapshot: buffered } });
     } catch (error) {

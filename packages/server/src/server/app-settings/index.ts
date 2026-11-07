@@ -44,7 +44,8 @@ export class AppSettingsStore {
     try {
       return AppSettingsSnapshotSchema.parse(JSON.parse(await fs.readFile(this.file, "utf8")));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(EMPTY);
+      const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+      if (missing) return structuredClone(EMPTY);
       throw error;
     }
   }
