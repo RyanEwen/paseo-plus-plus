@@ -860,12 +860,8 @@ describe("workspace family queued-drop authority", () => {
           ],
         ]),
       );
-      root.render(
-        <WorkspaceFamilyDragProbe
-          probe={probe}
-          serverIds={[FAMILY_DRAG_SERVER_ID, FAMILY_DRAG_SERVER_ID]}
-        />,
-      );
+      // A fresh list naming the same hosts; callers pass distinct hosts (placementServerIds).
+      root.render(<WorkspaceFamilyDragProbe probe={probe} serverIds={[FAMILY_DRAG_SERVER_ID]} />);
     });
     expect(currentAuthority().getGeneration).toBe(admittedAuthority.getGeneration);
     const currentGuard = probe.guard;
