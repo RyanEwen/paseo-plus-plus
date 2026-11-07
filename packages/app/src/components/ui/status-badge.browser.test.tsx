@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { StatusBadge } from "./status-badge";
+import { StatusBadge, type StatusBadgeVariant } from "./status-badge";
 
 interface MountedBadge {
   root: Root;
@@ -10,7 +10,7 @@ interface MountedBadge {
 
 const mountedBadges: MountedBadge[] = [];
 
-function mountBadge(variant: "success" | "warning" | "error" | "muted"): HTMLElement {
+function mountBadge(variant: StatusBadgeVariant): HTMLElement {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -45,7 +45,7 @@ describe("StatusBadge", () => {
     expect(style.borderColor).toBe("rgb(228, 228, 231)");
   });
 
-  it.each(["success", "warning", "error"] as const)(
+  it.each(["success", "warning", "error", "info"] as const)(
     "fills the %s variant with a translucent tint of its own status color",
     (variant) => {
       const badge = mountBadge(variant);
@@ -65,6 +65,7 @@ describe("StatusBadge", () => {
     ["success", "rgb(21, 128, 61)"],
     ["warning", "rgb(217, 119, 6)"],
     ["error", "rgb(185, 28, 28)"],
+    ["info", "rgb(29, 78, 216)"],
     ["muted", "rgb(102, 102, 102)"],
   ] as const)("uses the semantic %s signal for its text", (variant, expectedColor) => {
     const badge = mountBadge(variant);

@@ -123,7 +123,7 @@ const darkDiffColors = {
   diffDeletion: "#ef4444", // red-500
 };
 
-// Status colors — semantic signals for success/danger/warning/merged. There is exactly one
+// Status colors — semantic signals for success/danger/warning/running/merged. There is exactly one
 // token per signal, and every status surface uses it: PR state icons, CI check icons and
 // pies, diff stats, file-change icons, status badges, usage bars. Status *dots* are the
 // exception and have their own band below. A surface does not otherwise get a quieter or
@@ -142,12 +142,13 @@ const darkDiffColors = {
 // Regenerate with the same rule rather than nudging one value.
 //
 // Hues are fixed per family across both themes: success 150, danger 27, warning 70.5,
-// merged 300.
+// merged 300, running 250.
 const lightStatusColors = {
   // L=0.50, chroma 60% of gamut max
   statusSuccess: "#3e704a",
   statusDanger: "#9d433b",
   statusWarning: "#7b5d39",
+  statusRunning: "#3b6692",
   statusMerged: "#7347af",
 };
 
@@ -156,6 +157,7 @@ const darkStatusColors = {
   statusSuccess: "#6cb17b",
   statusDanger: "#d8847b",
   statusWarning: "#c09664",
+  statusRunning: "#73a3d5",
   statusMerged: "#a890d5",
 };
 
@@ -167,6 +169,7 @@ function statusTints(colors: typeof lightStatusColors, alphaHex: string) {
     statusSuccessTint: `${colors.statusSuccess}${alphaHex}`,
     statusDangerTint: `${colors.statusDanger}${alphaHex}`,
     statusWarningTint: `${colors.statusWarning}${alphaHex}`,
+    statusRunningTint: `${colors.statusRunning}${alphaHex}`,
   };
 }
 
