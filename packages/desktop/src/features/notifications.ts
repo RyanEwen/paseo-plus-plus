@@ -1,9 +1,6 @@
-import { z } from "zod";
 import { desktopDistribution } from "../distribution.js";
-import {
-  createViewedAgentNotifications,
-  type KnownAgentNotification,
-} from "./viewed-agent-notifications.js";
+import { registerViewedAgentNotifications } from "./viewed-agent-notifications/ipc.js";
+import { createViewedToastRegistry } from "./viewed-agent-notifications/toast-tracking.js";
 import { createWindowsToastHistory } from "./windows-toast-history.js";
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -35,12 +32,12 @@ interface NotificationIcon {
 }
 
 const activeNotifications = new Set<Notification>();
-const agentNotifications = new Map<Notification, KnownAgentNotification>();
+const viewedToasts = createViewedToastRegistry<Notification>();
 const timedOutNotifications = createTimedOutNotificationRetention<Notification>();
 
 function releaseNotification(notification: Notification): void {
   activeNotifications.delete(notification);
-  agentNotifications.delete(notification);
+  viewedToasts.forget(notification);
   timedOutNotifications.release(notification);
 }
 
@@ -116,37 +113,14 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     executable: process.execPath,
     isPackagedFork: app.isPackaged && desktopDistribution.windowsAppUserModelId !== null,
   });
-  const viewed = createViewedAgentNotifications({
-    canView(windowId) {
-      const win = BrowserWindow.getAllWindows().find(
-        (candidate) => candidate.webContents.id === windowId,
-      );
-      return Boolean(
-        win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused(),
-      );
+  const viewed = registerViewedAgentNotifications({
+    toasts: viewedToasts,
+    history,
+    canReadHistory,
+    dismiss(notification) {
+      notification.close();
+      releaseNotification(notification);
     },
-    known: () => agentNotifications.values(),
-    list: () => (canReadHistory ? history.list() : Promise.resolve([])),
-    remove: (toasts) => history.remove(toasts),
-  });
-  const targetSchema = z.object({
-    serverId: z.string().trim().min(1),
-    agentId: z.string().trim().min(1),
-  });
-  const viewSchema = z.object({
-    revision: z.number().int().nonnegative(),
-    target: targetSchema.nullable(),
-  });
-  ipcMain.handle("paseo:notification:setViewedAgent", async (event, raw: unknown) => {
-    const view = viewSchema.parse(raw);
-    await viewed.setView(event.sender.id, view);
-  });
-  app.on("web-contents-created", (_event, contents) => {
-    const id = contents.id;
-    contents.on("did-start-navigation", (_navigationEvent, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) viewed.removeWindow(id);
-    });
-    contents.once("destroyed", () => viewed.removeWindow(id));
   });
   const openWindowsNotification = createWindowsAgentNotificationOpener(openAgentLink);
   if (process.platform === "win32") {
@@ -176,12 +150,11 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
 
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
-    const parsedTarget = targetSchema.safeParse(data);
-    const target = parsedTarget.success ? parsedTarget.data : null;
+    const target = viewed.targetOf(data);
+    if (target && viewed.isViewed(target)) return true;
     const notificationId = randomUUID();
     const icon = getNotificationIcon();
     const settings = await getDesktopSettingsStore().get();
-    if (target && viewed.isViewed(target)) return true;
     const silent = !settings.notifications.playSound;
     // A Windows chat notification carries its target in the toast, so activation survives
     // the Notification object and app restarts.
@@ -202,34 +175,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     });
 
     activeNotifications.add(notification);
-    if (target) {
-      let shown = false;
-      let dismissWhenShown = false;
-      const dismissKnown = () => {
-        // A pending native Show cannot be canceled by closing the JS wrapper.
-        // Preserve it until its show callback can remove this exact toast.
-        if (!shown) {
-          dismissWhenShown = true;
-          return;
-        }
-        notification.close();
-        releaseNotification(notification);
-      };
-      agentNotifications.set(notification, { target, close: dismissKnown });
-      notification.on("show", () => {
-        shown = true;
-        if (dismissWhenShown || viewed.isViewed(target)) {
-          dismissKnown();
-          if (process.platform === "win32") {
-            void history
-              .removeCurrentLive(notificationId)
-              .catch((error) =>
-                console.warn("[notifications] Failed to remove viewed toast from history", error),
-              );
-          }
-        }
-      });
-    }
+    if (target) viewed.track(notification, { target, notificationId });
 
     notification.on("click", () => {
       // Electron 44 can report a foreground body tap only on the instance.

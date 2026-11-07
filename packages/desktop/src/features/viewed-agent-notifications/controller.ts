@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 
@@ -8,14 +9,26 @@ export interface DeliveredAgentToast {
   group: string;
   arguments: string;
 }
+
 export interface KnownAgentNotification {
   target: AgentDeepLinkTarget;
   close(): void;
 }
-export interface ViewedAgentNotificationInput {
-  revision: number;
-  target: AgentDeepLinkTarget | null;
-}
+
+/** The chat an agent notification payload or a renderer view names. */
+export const agentNotificationTargetSchema = z.object({
+  serverId: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
+});
+
+/** A renderer's report of the chat it shows; a higher revision replaces an older report. */
+export const viewedAgentNotificationInputSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  target: agentNotificationTargetSchema.nullable(),
+});
+
+export type ViewedAgentNotificationInput = z.infer<typeof viewedAgentNotificationInputSchema>;
+
 interface ViewedAgentNotificationAdapter {
   canView(windowId: number): boolean;
   known(): Iterable<KnownAgentNotification>;

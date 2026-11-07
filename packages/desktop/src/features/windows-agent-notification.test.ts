@@ -4,7 +4,7 @@ import { buildAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import {
   createViewedAgentNotifications,
   type DeliveredAgentToast,
-} from "./viewed-agent-notifications.js";
+} from "./viewed-agent-notifications/controller.js";
 import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,

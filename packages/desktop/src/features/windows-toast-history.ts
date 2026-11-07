@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { WINDOWS_FORK_APP_ID } from "../distribution.js";
 import { z } from "zod";
-import type { DeliveredAgentToast } from "./viewed-agent-notifications.js";
+import type { DeliveredAgentToast } from "./viewed-agent-notifications/controller.js";
 
 interface WindowsToastHistoryOwner {
   executable: string;
