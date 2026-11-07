@@ -62,7 +62,10 @@ import {
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import {
+  useLimitedSidebarGroup,
+  useOpenWorkspaceKeep,
+} from "@/components/sidebar/use-limited-sidebar-group";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
@@ -112,6 +115,7 @@ export function SidebarStatusWorkspaceList({
   dragGestureHostActive,
 }: StatusWorkspaceListProps) {
   const { t } = useTranslation();
+  const keepOpenWorkspace = useOpenWorkspaceKeep(useActiveWorkspaceSelection());
   const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceGroupKeys,
   );
@@ -124,7 +128,7 @@ export function SidebarStatusWorkspaceList({
     expanded: pinnedWorkspacesExpanded,
     canToggle: canTogglePinnedWorkspaces,
     toggleExpanded: togglePinnedWorkspacesExpanded,
-  } = useLimitedSidebarGroup(pinnedWorkspaces, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(pinnedWorkspaces, getStatusEnteredAt, keepOpenWorkspace);
 
   const statusShortcutIndex = showShortcutBadges
     ? shortcutIndexByWorkspaceKey
@@ -337,12 +341,13 @@ function StatusGroupRows({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
 }) {
+  const keepOpenWorkspace = useOpenWorkspaceKeep(useActiveWorkspaceSelection());
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(group.rows, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(group.rows, getStatusEnteredAt, keepOpenWorkspace);
 
   // Custom sorting alone accepts drops; a sorted group keeps its rows interactive but fixed.
   const workspaceDrag = useSidebarReorderGuard("workspace");

@@ -112,7 +112,10 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import {
+  useLimitedSidebarGroup,
+  useOpenWorkspaceKeep,
+} from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -1614,12 +1617,15 @@ function ProjectBlock({
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
+  const keepOpenWorkspace = useOpenWorkspaceKeep(
+    selectionEnabled ? activeWorkspaceSelection : null,
+  );
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(project.workspaces, getStatusEnteredAt, keepOpenWorkspace);
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -2291,12 +2297,15 @@ function ProjectModeList({
       workspaceEntriesByKey.get(workspace.workspaceKey)?.statusEnteredAt ?? null,
     [workspaceEntriesByKey],
   );
+  const keepOpenWorkspace = useOpenWorkspaceKeep(
+    selectionEnabled ? activeWorkspaceSelection : null,
+  );
   const {
     visibleItems: visiblePinnedChats,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt);
+  } = useLimitedSidebarGroup(pinnedChats, getStatusEnteredAt, keepOpenWorkspace);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef

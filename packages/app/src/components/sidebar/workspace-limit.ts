@@ -7,6 +7,8 @@ interface SidebarWorkspaceLimitInput<T> {
     now: number;
     getStatusEnteredAt: (item: T) => Date | null;
   };
+  /** Rows that stay visible outside both windows, such as the open workspace. */
+  keep?: (item: T) => boolean;
 }
 
 /** Apply the same initial limit to project, pinned and flattened status groups without mutating their order. */
@@ -15,6 +17,7 @@ export function limitSidebarWorkspaces<T>({
   initialCount,
   expanded,
   updatedWithin,
+  keep,
 }: SidebarWorkspaceLimitInput<T>) {
   // Unknown status dates cannot establish recency; Show more always makes those rows reachable.
   const cutoff = updatedWithin ? updatedWithin.now - updatedWithin.days * 86_400_000 : 0;
@@ -25,9 +28,20 @@ export function limitSidebarWorkspaces<T>({
       })
     : items;
   const limitedItems = initialCount === null ? recentItems : recentItems.slice(0, initialCount);
-  const visibleItems = expanded ? items.slice() : limitedItems.slice();
+  const visibleItems = expanded ? items.slice() : withKeptItems(items, limitedItems, keep);
   const canToggle = limitedItems.length < items.length;
   return { visibleItems, canToggle };
+}
+
+/** Add kept rows to the limited window, in the group's saved order. */
+function withKeptItems<T>(
+  items: readonly T[],
+  limitedItems: readonly T[],
+  keep: ((item: T) => boolean) | undefined,
+): T[] {
+  if (!keep) return limitedItems.slice();
+  const limited = new Set(limitedItems);
+  return items.filter((item) => limited.has(item) || keep(item));
 }
 
 /** Validate a user-entered count without rounding, clamping or accepting partial numbers. */
