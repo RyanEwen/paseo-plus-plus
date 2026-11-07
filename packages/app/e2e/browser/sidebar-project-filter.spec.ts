@@ -76,6 +76,11 @@ function selectorSurface(page: Page, compact: boolean): Locator {
   );
 }
 
+/** Read the actual scroll owner so a stationary list cannot satisfy the geometry case. */
+async function readScrollTop(scroll: Locator): Promise<number> {
+  return scroll.evaluate((element) => element.scrollTop);
+}
+
 /** Remove a project the test created through Add Project. */
 async function removeAddedProject(projectId: string): Promise<void> {
   const client = await connectSeedClient();
@@ -307,8 +312,9 @@ test.describe("Sidebar project selector", () => {
     }, testInfo) => {
       const projects: Awaited<ReturnType<typeof seedWorkspace>>[] = [];
       try {
-        // Plain directories provide enough real rows to overflow without creating worktrees.
-        for (let index = 0; index < 12; index += 1) {
+        // Plain directories provide enough real rows to overflow the phone-height sidebar
+        // without creating worktrees.
+        for (let index = 0; index < 16; index += 1) {
           projects.push(
             await seedWorkspace({
               repoPrefix: `sticky-header-${index}-`,
@@ -317,9 +323,7 @@ test.describe("Sidebar project selector", () => {
             }),
           );
         }
-        await page.setViewportSize({ width: compact ? 390 : 1280, height: 600 });
-        await gotoAppShell(page);
-        if (compact) await openMobileAgentSidebar(page);
+        await openSidebarAt(page, compact);
         await waitForSidebarHydration(page);
 
         const selector = page.getByTestId("sidebar-project-selector");
