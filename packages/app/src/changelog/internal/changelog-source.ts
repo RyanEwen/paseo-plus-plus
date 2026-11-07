@@ -8,10 +8,10 @@ export type ChangelogState =
   | { status: "ready"; releases: ChangelogRelease[] }
   | { status: "error" };
 
-// Survives close/reopen so the second look paints without a spinner. The response
-// snapshot is kept alongside the releases so an unchanged revalidation can be
+// Survives close/reopen so the second look paints without a spinner. The raw
+// body is kept alongside the releases so an unchanged revalidation can be
 // dropped: handing back an equal-but-new array would re-render every release.
-let cached: { snapshot: string; releases: ChangelogRelease[] } | null = null;
+let cached: { body: string; releases: ChangelogRelease[] } | null = null;
 
 export interface Changelog {
   state: ChangelogState;
@@ -44,12 +44,12 @@ export function useChangelog(enabled: boolean): Changelog {
       try {
         const response = await fetch(PRODUCT_LINKS.changelogSource, { signal: controller.signal });
         if (!response.ok) throw new Error(`Changelog request failed: ${response.status}`);
-        const payload: unknown = await response.json();
-        const snapshot = JSON.stringify(payload);
-        if (cached?.snapshot === snapshot) return;
+        const body = await response.text();
+        if (cached?.body === body) return;
+        const payload: unknown = JSON.parse(body);
         const releases = parseGitHubReleases(payload);
         if (releases.length === 0) throw new Error("Changelog has no releases");
-        cached = { snapshot, releases };
+        cached = { body, releases };
         setState({ status: "ready", releases });
       } catch {
         if (controller.signal.aborted) return;
