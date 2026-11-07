@@ -2,6 +2,7 @@ import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import {
   useCallback,
+  useMemo,
   useState,
   type PropsWithChildren,
   type ReactElement,
@@ -324,9 +325,10 @@ function ChecksSummaryPressable({
     t("workspace.git.pr.sections.checks"),
     t,
   );
+  const checksUrl = useMemo(() => buildForgeChecksUrl(forge, url) ?? url, [forge, url]);
   const handlePress = useCallback(() => {
-    void openPrimary(buildForgeChecksUrl(forge, url) ?? url);
-  }, [forge, url, openPrimary]);
+    void openPrimary(checksUrl);
+  }, [checksUrl, openPrimary]);
 
   const renderChildren = useCallback(
     ({ hovered }: { pressed: boolean; hovered?: boolean }) => (
@@ -336,7 +338,7 @@ function ChecksSummaryPressable({
   );
 
   return (
-    <WorkspaceHttpLinkMenu url={buildForgeChecksUrl(forge, url) ?? url}>
+    <WorkspaceHttpLinkMenu url={checksUrl}>
       <Pressable
         accessibilityLabel={accessibilityLabel}
         accessibilityRole="link"

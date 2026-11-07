@@ -477,39 +477,6 @@ export function PullRequestPane({
       })
     : null;
 
-  const prHeader = (
-    <Pressable onPress={handleOpenPrUrl} style={styles.header}>
-      {({ hovered }) => (
-        <>
-          <Text style={styles.title} testID="pr-pane-title">
-            {data.title}
-            <Text style={styles.titleNumber}>
-              {" "}
-              {forgePresentation.numberPrefix}
-              {data.number}
-            </Text>
-          </Text>
-          <View style={styles.metaLine}>
-            <StateIcon size={14} uniProps={statePresentation.iconColor} />
-            <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
-              {t(getStateLabelKey(data.state))}
-            </Text>
-            {nativeHeaderMeta}
-            {repoIdentity ? (
-              <Text style={styles.repoRef} numberOfLines={1}>
-                {repoIdentity}
-              </Text>
-            ) : null}
-            <View style={hovered ? styles.headerLinkIcon : styles.headerLinkIconHidden}>
-              <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
-            </View>
-          </View>
-        </>
-      )}
-    </Pressable>
-  );
-  const prHeaderLink = <WorkspaceHttpLinkMenu url={data.url}>{prHeader}</WorkspaceHttpLinkMenu>;
-
   return (
     <View style={styles.root} testID="pr-pane">
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -559,7 +526,37 @@ export function PullRequestPane({
           ) : null}
         </PaneContentToolbar>
 
-        {prHeaderLink}
+        <WorkspaceHttpLinkMenu url={data.url}>
+          <Pressable onPress={handleOpenPrUrl} style={styles.header}>
+            {({ hovered }) => (
+              <>
+                <Text style={styles.title} testID="pr-pane-title">
+                  {data.title}
+                  <Text style={styles.titleNumber}>
+                    {" "}
+                    {forgePresentation.numberPrefix}
+                    {data.number}
+                  </Text>
+                </Text>
+                <View style={styles.metaLine}>
+                  <StateIcon size={14} uniProps={statePresentation.iconColor} />
+                  <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
+                    {t(getStateLabelKey(data.state))}
+                  </Text>
+                  {nativeHeaderMeta}
+                  {repoIdentity ? (
+                    <Text style={styles.repoRef} numberOfLines={1}>
+                      {repoIdentity}
+                    </Text>
+                  ) : null}
+                  <View style={hovered ? styles.headerLinkIcon : styles.headerLinkIconHidden}>
+                    <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
+                  </View>
+                </View>
+              </>
+            )}
+          </Pressable>
+        </WorkspaceHttpLinkMenu>
 
         {nativeChecksSection ?? (
           <ChecksSection
