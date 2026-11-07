@@ -128,11 +128,7 @@ export function SidebarProjectSelector(): ReactElement {
             <MenuSeparator />
           </>
         ) : null}
-        <MenuItem
-          selected={allSelected}
-          onSelect={clearAll}
-          testID="sidebar-project-selector-all"
-        >
+        <MenuItem selected={allSelected} onSelect={clearAll} testID="sidebar-project-selector-all">
           {t("sidebar.projectSelector.allWorkspaces")}
         </MenuItem>
         <MenuSeparator />

@@ -32,7 +32,10 @@ export function includeCreatedProjectFilter(input: {
  * so a narrowed sidebar shows it. Reads the projects on the hosts the sidebar currently shows:
  * the selected hosts, or every host when none is selected.
  */
-export function revealCreatedProjectInSidebar(input: { serverId: string; projectId: string }): void {
+export function revealCreatedProjectInSidebar(input: {
+  serverId: string;
+  projectId: string;
+}): void {
   const sidebar = useSidebarViewStore.getState();
   const allHostIds = getHostRuntimeStore()
     .getHosts()

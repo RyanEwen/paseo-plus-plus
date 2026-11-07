@@ -501,9 +501,7 @@ test.describe("Sidebar project selector", () => {
     }
   });
 
-  test("keeps saved multi-project and offline keys across a reload", async ({
-    page,
-  }) => {
+  test("keeps saved multi-project and offline keys across a reload", async ({ page }) => {
     const alpha = await seedWorkspace({ repoPrefix: "selector-saved-alpha-" });
     const beta = await seedWorkspace({ repoPrefix: "selector-saved-beta-" });
     const savedFilters = [alpha.projectKey, beta.projectKey, "offline-project"];

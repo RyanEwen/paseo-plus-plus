@@ -100,10 +100,18 @@ describe("showsAllWorkspaces", () => {
 
   test("is unchecked while a registered host or a project is selected", () => {
     expect(
-      showsAllWorkspaces({ resolvedProjectFilters: [], hostFilters: ["home"], serverIds: ["home"] }),
+      showsAllWorkspaces({
+        resolvedProjectFilters: [],
+        hostFilters: ["home"],
+        serverIds: ["home"],
+      }),
     ).toBe(false);
     expect(
-      showsAllWorkspaces({ resolvedProjectFilters: ["alpha"], hostFilters: [], serverIds: ["home"] }),
+      showsAllWorkspaces({
+        resolvedProjectFilters: ["alpha"],
+        hostFilters: [],
+        serverIds: ["home"],
+      }),
     ).toBe(false);
   });
 });
