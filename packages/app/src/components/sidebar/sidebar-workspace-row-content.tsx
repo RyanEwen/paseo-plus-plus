@@ -1,4 +1,4 @@
-import { WorkspaceBrowserOpeningProvider } from "@/workspace/browser/context";
+import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
@@ -72,7 +72,7 @@ export function SidebarWorkspaceRowFrame({
   );
 
   return (
-    <WorkspaceBrowserOpeningProvider value={openInPaseo}>
+    <WorkspaceBrowserOpenerProvider value={openInPaseo}>
       <WorkspaceHoverCard
         workspace={workspace}
         prHint={workspace.prHint}
@@ -86,7 +86,7 @@ export function SidebarWorkspaceRowFrame({
           hoverHandlers,
         })}
       </WorkspaceHoverCard>
-    </WorkspaceBrowserOpeningProvider>
+    </WorkspaceBrowserOpenerProvider>
   );
 }
 

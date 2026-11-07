@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import type {
   WorkspaceScriptLinkKind,
   WorkspaceScriptLinkTarget,
@@ -93,7 +93,7 @@ export function useWorkspaceScriptsMenuPages({
 }: UseWorkspaceScriptsMenuPagesInput): WorkspaceScriptsMenuPages {
   const { t } = useTranslation();
   // Capture workspace ownership before the native sheet portal leaves this provider tree.
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const actions = useWorkspaceScriptActions({
     serverId,
     workspaceId,

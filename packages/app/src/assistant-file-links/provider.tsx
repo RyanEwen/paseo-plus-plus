@@ -1,4 +1,5 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   createContext,
   useCallback,
@@ -26,7 +27,12 @@ export interface AssistantFileLinkResolverConfig {
   relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
-  onOpenHttpUrl?: (url: string) => void | Promise<void>;
+}
+
+/** Provider config plus the HTTP opener of the workspace link scope the provider sits in. */
+export interface AssistantFileLinkResolverState extends AssistantFileLinkResolverConfig {
+  /** Primary HTTP(S) activation; reads the Workspace links preference when called. */
+  openHttpLink: (url: string) => Promise<void>;
 }
 
 export interface AssistantFileLinkResolverProviderProps extends AssistantFileLinkResolverConfig {
@@ -34,11 +40,7 @@ export interface AssistantFileLinkResolverProviderProps extends AssistantFileLin
 }
 
 export interface AssistantFileLinkResolverContextValue {
-  configRef: MutableRefObject<AssistantFileLinkResolverConfig>;
-  /** Latest primary-click policy, read when an asynchronous resolution finishes. */
-  openHttpLinksInPaseoRef: MutableRefObject<boolean>;
-  /** Reactive menu metadata; the explicit workspace browser opener stays available. */
-  httpLinkDestination: "paseo" | "external";
+  configRef: MutableRefObject<AssistantFileLinkResolverState>;
   getDirectorySuggestions: GetDirectorySuggestions;
 }
 
@@ -63,21 +65,19 @@ export function AssistantFileLinkResolverProvider({
   workspaceRoot,
   relativePathBase,
   onOpenWorkspaceFile,
-  onOpenHttpUrl,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
-  const { enabledRef: openHttpLinksInPaseoRef, defaultDestination: httpLinkDestination } =
-    useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
 
-  const configRef = useRef<AssistantFileLinkResolverConfig>({
+  const configRef = useRef<AssistantFileLinkResolverState>({
     client,
     serverId,
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
-    onOpenHttpUrl,
     toast,
+    openHttpLink: openPrimary,
   });
   configRef.current = {
     client,
@@ -85,8 +85,8 @@ export function AssistantFileLinkResolverProvider({
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
-    onOpenHttpUrl,
     toast,
+    openHttpLink: openPrimary,
   };
 
   const getDirectorySuggestions = useCallback<GetDirectorySuggestions>(async (input) => {
@@ -100,13 +100,8 @@ export function AssistantFileLinkResolverProvider({
   }, []);
 
   const value = useMemo<AssistantFileLinkResolverContextValue>(
-    () => ({
-      configRef,
-      getDirectorySuggestions,
-      openHttpLinksInPaseoRef,
-      httpLinkDestination,
-    }),
-    [getDirectorySuggestions, openHttpLinksInPaseoRef, httpLinkDestination],
+    () => ({ configRef, getDirectorySuggestions }),
+    [getDirectorySuggestions],
   );
 
   return (
@@ -123,10 +118,13 @@ export function useAssistantFileLinkResolverContext(): AssistantFileLinkResolver
 
 export type { AssistantFileLinkContext };
 
+/** Without a resolver there is no workspace scope or toast: open externally and log failures. */
+async function openHttpLinkOutsideResolver(url: string): Promise<void> {
+  await openExternalUrl(url).catch((error: unknown) => console.error(error));
+}
+
 const EMPTY_CONTEXT: AssistantFileLinkResolverContextValue = {
-  configRef: { current: {} },
-  openHttpLinksInPaseoRef: { current: false },
-  httpLinkDestination: "external",
+  configRef: { current: { openHttpLink: openHttpLinkOutsideResolver } },
   getDirectorySuggestions: async () => ({ entries: [], error: null }),
 };
 

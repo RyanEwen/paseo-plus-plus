@@ -1,4 +1,4 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
 import { Info } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -309,7 +309,7 @@ function useWorkspaceScreenArchiveController({
 }
 
 export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): UseGitActionsResult {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const toast = useToast();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();

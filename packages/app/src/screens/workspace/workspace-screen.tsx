@@ -1,6 +1,6 @@
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
-import { WorkspaceBrowserScope } from "@/workspace/browser/context";
+import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -777,15 +777,15 @@ function WorkspaceContentProviders({
 }: {
   children: ReactNode;
   workspaceKey: string | null;
-  openBrowserUrl?: OpenWorkspaceBrowserUrl;
+  openBrowserUrl: OpenWorkspaceBrowserUrl | undefined;
   sheetPaneHost: SheetPaneHost | null;
 }) {
   return (
     <WorkspaceFocusProvider workspaceKey={workspaceKey}>
       <DiffDocumentWorkspaceCacheProvider>
-        <WorkspaceBrowserScope openUrl={openBrowserUrl}>
+        <WorkspaceBrowserOpenerProvider value={openBrowserUrl}>
           <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
-        </WorkspaceBrowserScope>
+        </WorkspaceBrowserOpenerProvider>
       </DiffDocumentWorkspaceCacheProvider>
     </WorkspaceFocusProvider>
   );
@@ -3778,7 +3778,7 @@ function WorkspaceScreenContent({
     <WorkspaceContentProviders
       key={persistenceKey}
       workspaceKey={persistenceKey}
-      openBrowserUrl={handleOpenUrlInBrowserTab}
+      openBrowserUrl={openOwnedBrowser}
       sheetPaneHost={sheetPaneHost}
     >
       <AssistantFileLinkResolverProvider
@@ -3786,7 +3786,6 @@ function WorkspaceScreenContent({
         serverId={normalizedServerId}
         workspaceRoot={workspaceDirectory ?? undefined}
         onOpenWorkspaceFile={openMarkdownPath}
-        onOpenHttpUrl={openOwnedBrowser}
         toast={toast}
       >
         {renderedWorkspaceScreen}

@@ -1,6 +1,6 @@
 "use dom";
 
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isHttpUrl } from "@/utils/http-url";
@@ -183,7 +183,7 @@ export default function TerminalEmulator({
   focusRequestToken = 0,
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
-  const { openPrimary, openInPaseo, reportError } = useWorkspaceLinkOpeningContext();
+  const { openPrimary, openInPaseo, reportError } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -588,7 +588,7 @@ export default function TerminalEmulator({
   const handleRootContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
-      void showTerminalContextMenu().catch(reportError ?? console.error);
+      void showTerminalContextMenu().catch(reportError);
     },
     [showTerminalContextMenu, reportError],
   );

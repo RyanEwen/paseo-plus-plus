@@ -151,7 +151,7 @@ import {
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -1877,7 +1877,7 @@ function ComposerContentImpl({
     [removeAttachment, selectedAttachments, setSelectedAttachments],
   );
 
-  const { openPrimary: openWorkspaceLink } = useWorkspaceLinkOpeningContext();
+  const { openPrimary: openWorkspaceLink } = useWorkspaceLinkOpening();
 
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {

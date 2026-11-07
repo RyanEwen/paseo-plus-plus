@@ -1,5 +1,4 @@
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
-import { useAssistantFileLinkResolverContext } from "@/assistant-file-links/provider";
 import { memo, useMemo, useState, type ComponentType } from "react";
 import {
   EnrichedMarkdownText,
@@ -29,9 +28,8 @@ import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fen
 /** Preserve workspace browser destinations around the engine's own link and tooltip. */
 function withWorkspaceLinkMenu(Link: ComponentType<LinkRendererProps>) {
   return function WorkspaceMarkdownLink(props: LinkRendererProps) {
-    const { httpLinkDestination } = useAssistantFileLinkResolverContext();
     return (
-      <WorkspaceHttpLinkMenu url={props.link.url} defaultDestination={httpLinkDestination}>
+      <WorkspaceHttpLinkMenu url={props.link.url}>
         <Link {...props} />
       </WorkspaceHttpLinkMenu>
     );

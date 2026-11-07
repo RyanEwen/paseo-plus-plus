@@ -1,4 +1,4 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import React, { useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -116,7 +116,7 @@ function GitLabPipelineSection({
   onToggle: () => void;
   canFetchCheckDetails: boolean;
 }) {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const { pipeline, isLoading, isPlaceholderData, error } = useGitLabPipeline({
     serverId,
@@ -223,7 +223,7 @@ function PipelineStageGroup({ stage }: { stage: CheckoutPipelineStage }) {
 }
 
 function PipelineJobRow({ job }: { job: CheckoutPipelineJob }) {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const handlePress = useCallback(() => {
     if (job.url) {

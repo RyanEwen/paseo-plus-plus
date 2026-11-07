@@ -2,7 +2,7 @@ import {
   WorkspaceBrowserMenuItem,
   WorkspaceExternalBrowserMenuItem,
 } from "@/workspace/browser/link-menu";
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useCallback, useMemo, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
@@ -329,7 +329,7 @@ function ScriptRow({
   const { start, stop, restart } = actions;
   const closeMenu = useDropdownMenuClose();
 
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const handleOpenService = useCallback(() => {
     if (!selectedLink) return;
     closeMenu();

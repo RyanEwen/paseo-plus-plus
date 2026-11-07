@@ -1,4 +1,4 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -187,7 +187,7 @@ function LabelsItem({
  * size, so the swap can't move the target out from under the cursor.
  */
 function PullRequestItem({ hint }: { hint: PrHint }) {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const presentation = getForgePresentation(normalizeForge(hint.forge));

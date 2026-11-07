@@ -1,5 +1,4 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
-import { useWorkspaceBrowserOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import {
   WorkspaceBrowserMenuItem,
   WorkspaceExternalBrowserMenuItem,
@@ -95,7 +94,7 @@ export function WorkspaceOpenInEditorButton({
   activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary, openInPaseo } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -196,7 +195,6 @@ export function WorkspaceOpenInEditorButton({
     [openMutation],
   );
 
-  const openInPaseo = useWorkspaceBrowserOpeningContext();
   const browserUrl = targets.find((target) => target.url)?.url;
   const canOpenInBrowser = Boolean(openInPaseo && browserUrl);
   const handleSelectTarget = useCallback(

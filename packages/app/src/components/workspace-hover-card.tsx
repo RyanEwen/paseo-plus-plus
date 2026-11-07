@@ -1,4 +1,4 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import {
   useCallback,
@@ -316,7 +316,7 @@ function ChecksSummaryPressable({
   forge: PrHint["forge"];
   url: string;
 }) {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const counts = countCheckPresentations(checks);
   const accessibilityLabel = formatCheckPresentationCountsLabel(

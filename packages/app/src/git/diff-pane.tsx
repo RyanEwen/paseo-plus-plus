@@ -1,4 +1,4 @@
-import { useWorkspaceLinkOpeningContext } from "@/workspace/browser/context";
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { floatingActionsClearance } from "@/components/ui/floating-action-button";
@@ -708,7 +708,7 @@ function ChangesPullRequestExternalLink({
   compact: boolean;
   model: ChangesPullRequestLinkModel;
 }) {
-  const { openPrimary } = useWorkspaceLinkOpeningContext();
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const presentation = getForgePresentation(model.forge);
   const label = t("workspace.git.pr.actions.openOn", { brand: presentation.brandLabel });

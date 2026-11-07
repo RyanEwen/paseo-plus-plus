@@ -12,7 +12,7 @@ import {
 import { useToast } from "@/contexts/toast-api-context";
 import { isWeb } from "@/constants/platform";
 import { isHttpUrl } from "@/utils/http-url";
-import { useWorkspaceBrowserOpeningContext, useWorkspaceLinkOpeningContext } from "./context";
+import { useWorkspaceLinkOpening } from "./context";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 /** Offer browser destinations while preserving the wrapped link's primary action. */
@@ -25,8 +25,8 @@ export function WorkspaceHttpLinkMenu({
   children: ReactNode;
   defaultDestination?: BrowserLinkDestination;
 }) {
-  const openInPaseo = useWorkspaceBrowserOpeningContext();
-  const policy = useWorkspaceLinkOpeningContext();
+  const policy = useWorkspaceLinkOpening();
+  const openInPaseo = policy.openInPaseo;
   const primaryDestination = defaultDestination ?? policy.defaultDestination;
   const destinations = workspaceBrowserLinkDestinations({
     url,
@@ -68,7 +68,7 @@ function BrowserLinkMenu({
 
 /** Add the same internal destination to an existing dropdown, without a nested menu. */
 export function WorkspaceBrowserMenuItem({ url }: { url: string | null | undefined }) {
-  const openInPaseo = useWorkspaceBrowserOpeningContext();
+  const { openInPaseo } = useWorkspaceLinkOpening();
   if (!isWeb || !url || !isHttpUrl(url) || !openInPaseo) {
     return null;
   }
@@ -104,7 +104,7 @@ function BrowserDestinationMenuItem({
 /** Keep pending and error ownership identical across link and existing-menu triggers. */
 function useBrowserLinkOpening(url: string | null | undefined) {
   const toast = useToast();
-  const openInPaseo = useWorkspaceBrowserOpeningContext();
+  const { openInPaseo } = useWorkspaceLinkOpening();
   const open = useMutation({
     mutationFn: async (destination: "paseo" | "external") => {
       if (!url) {
