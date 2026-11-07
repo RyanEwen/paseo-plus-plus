@@ -13,7 +13,7 @@ import {
   admitProviderImage,
   PROVIDER_IMAGE_MAX_BYTES,
 } from "../agent/providers/provider-image-output.js";
-import { withAttachmentResource } from "./io.js";
+import { closeAfterFailure, hasErrnoCode, withAttachmentResource } from "./io.js";
 import { AttachmentReferenceIds } from "./reference-id.js";
 
 export interface AttachmentFileSystem {
@@ -61,9 +61,6 @@ export class AttachmentStoreError extends Error {
     super(message, options);
     this.name = "AttachmentStoreError";
   }
-}
-function errno(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
 }
 /**
  * Order references by ID. IDs are time-ordered, and code-unit order matches the `after`
@@ -149,7 +146,7 @@ export class AttachmentStore {
         if (!existing.isDirectory() || existing.isSymbolicLink())
           throw new AttachmentStoreError("Attachment storage directory is unsafe.");
       } catch (error) {
-        if (!errno(error, "ENOENT")) throw error;
+        if (!hasErrnoCode(error, "ENOENT")) throw error;
         await this.io.mkdir(path.dirname(this.directory), { recursive: true, mode: 0o700 });
         await this.io.mkdir(this.directory, { mode: 0o700 });
         await this.syncDirectory(path.dirname(this.directory));
@@ -158,7 +155,7 @@ export class AttachmentStore {
       try {
         handle = await this.io.open(path.join(this.directory, "writer"), "wx", 0o600);
       } catch (error) {
-        if (errno(error, "EEXIST"))
+        if (hasErrnoCode(error, "EEXIST"))
           this.writeFailure =
             "Attachment writes are disabled because exclusive storage ownership is unavailable. Existing originals may still be readable.";
         else
@@ -167,16 +164,9 @@ export class AttachmentStore {
         await this.recover(false);
         return;
       }
-      let stats;
-      try {
-        stats = await handle.stat();
-      } catch (error) {
-        await withAttachmentResource(
-          () => Promise.reject(error),
-          () => handle.close(),
-        );
-        return;
-      }
+      const stats = await handle
+        .stat()
+        .catch((error: unknown) => closeAfterFailure(error, () => handle.close()));
       this.owner = { token: randomUUID(), dev: stats.dev, ino: stats.ino, handle };
       await handle.writeFile(this.owner.token, "utf8");
       await handle.sync();
@@ -186,7 +176,7 @@ export class AttachmentStore {
         try {
           await this.io.mkdir(directory, { mode: 0o700 });
         } catch (error) {
-          if (!errno(error, "EEXIST")) throw error;
+          if (!hasErrnoCode(error, "EEXIST")) throw error;
         }
         const directoryStats = await this.io.lstat(directory);
         if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink())
@@ -228,10 +218,7 @@ export class AttachmentStore {
         throw new AttachmentStoreError("Original attachment changed while opening.");
       return handle;
     } catch (error) {
-      return withAttachmentResource(
-        () => Promise.reject(error),
-        () => handle.close(),
-      );
+      return closeAfterFailure(error, () => handle.close());
     }
   }
   private async readReference(id: string, signal?: AbortSignal): Promise<AttachmentReference> {
@@ -271,7 +258,7 @@ export class AttachmentStore {
       try {
         stream = await this.io.opendir(directory);
       } catch (error) {
-        if (errno(error, "ENOENT")) return;
+        if (hasErrnoCode(error, "ENOENT")) return;
         throw error;
       }
       for await (const entry of stream) {
@@ -457,35 +444,18 @@ export class AttachmentStore {
       () => handle.close(),
     );
   }
+  /** Publish an admitted image, then always remove staging files and refresh accounting. */
   private async commit(
     owner: { agentId: string; workspaceId?: string },
     image: { data: string; mimeType: string },
     signal?: AbortSignal,
   ): Promise<AttachmentReference> {
     const staging = new Set<string>();
-    let result: { reference: AttachmentReference } | { failure: unknown };
-    try {
-      result = { reference: await this.publish(owner, image, staging, signal) };
-    } catch (failure) {
-      result = { failure };
-    }
-    let cleanupFailure: { failure: unknown } | undefined;
-    try {
-      await this.cleanupPublication(staging);
-    } catch (failure) {
-      cleanupFailure = { failure };
-    }
-    if (cleanupFailure) {
-      if ("failure" in result)
-        throw new AggregateError(
-          [result.failure, cleanupFailure.failure],
-          "Attachment publication failed and cleanup also failed.",
-          { cause: result.failure },
-        );
-      throw cleanupFailure.failure;
-    }
-    if ("failure" in result) throw result.failure;
-    return result.reference;
+    return withAttachmentResource(
+      () => this.publish(owner, image, staging, signal),
+      () => this.cleanupPublication(staging),
+      "Attachment publication failed and cleanup also failed.",
+    );
   }
   private async publish(
     owner: { agentId: string; workspaceId?: string },
@@ -505,7 +475,7 @@ export class AttachmentStore {
     try {
       await this.verifyBlob(admitted.sha256, admitted.bytes.length);
     } catch (error) {
-      if (!errno(error, "ENOENT")) throw error;
+      if (!hasErrnoCode(error, "ENOENT")) throw error;
       const temporary = await this.stage(admitted.bytes);
       staging.add(temporary);
       this.assertWriteActive(signal);
@@ -701,7 +671,7 @@ export class AttachmentStore {
       };
     } catch (error) {
       opened();
-      return withAttachmentResource(() => Promise.reject(error), close);
+      return closeAfterFailure(error, close);
     }
   }
   close(): Promise<void> {
@@ -728,12 +698,9 @@ export class AttachmentStore {
         }),
       ]);
     } catch (error) {
-      return withAttachmentResource(
-        () => Promise.reject(error),
-        async () => {
-          await this.owner?.handle.close();
-        },
-      );
+      return closeAfterFailure(error, async () => {
+        await this.owner?.handle.close();
+      });
     } finally {
       if (timeout) clearTimeout(timeout);
     }
