@@ -10,7 +10,6 @@ const manifestNameSchema = z.object({ name: z.string().optional() });
 const desktopManifestSchema = z.object({
   name: z.string().optional(),
   paseoPreview: z.boolean().optional(),
-  paseoDebug: z.boolean().optional(),
 });
 
 const upstreamDistribution = {
@@ -27,21 +26,10 @@ const forkDistribution = {
   defaultPort: 6791,
 } as const;
 
-const desktopPackageNames = new Set([
-  "@getpaseo/desktop",
-  "paseo-plus-plus",
-  "paseo-plus-plus-debug",
-]);
+const desktopPackageNames = new Set(["@getpaseo/desktop", "paseo-plus-plus"]);
 
 function resolveDesktopManifest(value: unknown) {
   const manifest = desktopManifestSchema.parse(value);
-  if (manifest.paseoDebug) {
-    return {
-      ...upstreamDistribution,
-      defaultHome: "~/.paseo-plus-plus-debug-desktop",
-      defaultPort: 6791,
-    };
-  }
   if (manifest.paseoPreview) {
     return {
       ...upstreamDistribution,

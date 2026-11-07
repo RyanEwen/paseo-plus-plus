@@ -57,22 +57,9 @@ describe("daemon distribution", () => {
       home: "~/.paseo-plus-plus-desktop",
       port: 6790,
     },
-    {
-      name: "paseo-plus-plus-debug",
-      paseoDebug: true,
-      home: "~/.paseo-plus-plus-debug-desktop",
-      port: 6791,
-    },
-    {
-      name: "paseo-plus-plus",
-      paseoPreview: true,
-      paseoDebug: true,
-      home: "~/.paseo-plus-plus-debug-desktop",
-      port: 6791,
-    },
     { name: "paseo-plus-plus", home: "~/.paseo", port: 6767 },
-    { name: "unrelated", paseoPreview: true, paseoDebug: true, home: "~/.paseo", port: 6767 },
-  ])("resolves packaged $name preview=$paseoPreview debug=$paseoDebug", (fixture) => {
+    { name: "unrelated", paseoPreview: true, home: "~/.paseo", port: 6767 },
+  ])("resolves packaged $name preview=$paseoPreview", (fixture) => {
     const parent = mkdtempSync(path.join(tmpdir(), "paseo-desktop-distribution-"));
     try {
       const asar = path.join(parent, "resources", "app.asar");
@@ -120,10 +107,7 @@ describe("daemon distribution", () => {
       );
       const manifest = path.join(nested, "package.json");
       const moduleUrl = pathToFileURL(path.join(nested, "dist", "daemon-distribution.js")).href;
-      writeFileSync(
-        manifest,
-        JSON.stringify({ name: "unrelated", paseoPreview: "yes", paseoDebug: 1 }),
-      );
+      writeFileSync(manifest, JSON.stringify({ name: "unrelated", paseoPreview: "yes" }));
       expect(resolveDaemonDistribution(moduleUrl).defaultPort).toBe(6790);
       writeFileSync(
         manifest,

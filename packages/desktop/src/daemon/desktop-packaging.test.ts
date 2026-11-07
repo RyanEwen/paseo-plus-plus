@@ -13,38 +13,31 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDaemonDistribution } from "../../../server/src/server/daemon-distribution.js";
 import { describe, expect, it } from "vitest";
-import {
-  resolveDesktopDistribution,
-  resolveDesktopUpdateChannel,
-  shouldEnableDesktopUpdates,
-} from "../distribution.js";
+import { resolveDesktopDistribution, resolveDesktopUpdateChannel } from "../distribution.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-it.each([{ paseoPreview: true }, { paseoDebug: true }, { paseoPreview: true, paseoDebug: true }])(
-  "agrees with the bundled daemon defaults for %j",
-  (metadata) => {
-    const root = mkdtempSync(join(tmpdir(), "paseo-desktop-defaults-"));
-    try {
-      const asar = join(root, "app.asar");
-      const server = join(asar, "node_modules", "@getpaseo", "server");
-      mkdirSync(server, { recursive: true });
-      writeFileSync(
-        join(asar, "package.json"),
-        JSON.stringify({ name: "paseo-plus-plus", ...metadata }),
-      );
-      const daemon = resolveDaemonDistribution(
-        pathToFileURL(join(server, "dist", "daemon-distribution.js")).href,
-      );
-      const desktop = resolveDesktopDistribution(metadata);
-      expect(`127.0.0.1:${daemon.defaultPort}`).toBe(desktop.daemonListen);
-      expect(daemon.defaultHome).toBe(`~/${desktop.daemonHomeName}`);
-      expect(daemon.cliPackage).toBe("@getpaseo/cli");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-);
+it.each([{ paseoPreview: true }])("agrees with the bundled daemon defaults for %j", (metadata) => {
+  const root = mkdtempSync(join(tmpdir(), "paseo-desktop-defaults-"));
+  try {
+    const asar = join(root, "app.asar");
+    const server = join(asar, "node_modules", "@getpaseo", "server");
+    mkdirSync(server, { recursive: true });
+    writeFileSync(
+      join(asar, "package.json"),
+      JSON.stringify({ name: "paseo-plus-plus", ...metadata }),
+    );
+    const daemon = resolveDaemonDistribution(
+      pathToFileURL(join(server, "dist", "daemon-distribution.js")).href,
+    );
+    const desktop = resolveDesktopDistribution(metadata);
+    expect(`127.0.0.1:${daemon.defaultPort}`).toBe(desktop.daemonListen);
+    expect(daemon.defaultHome).toBe(`~/${desktop.daemonHomeName}`);
+    expect(daemon.cliPackage).toBe("@getpaseo/cli");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function writeExecutable(filePath: string, contents: string): void {
   writeFileSync(filePath, contents, "utf8");
@@ -114,27 +107,11 @@ describe("desktop packaging", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("isolates the debug artifact even when launched without its logging shortcut", () => {
-    expect(resolveDesktopDistribution({ paseoPreview: true, paseoDebug: true })).toEqual({
-      isPreview: true,
-      appName: "Paseo++ Debug",
-      windowsAppUserModelId: null,
-      userDataName: "Paseo++ Debug",
-      desktopName: "paseo-plus-plus-debug.desktop",
-      daemonHomeName: ".paseo-plus-plus-debug-desktop",
-      daemonListen: "127.0.0.1:6791",
-    });
-    expect(shouldEnableDesktopUpdates(true, true)).toBe(false);
-    expect(shouldEnableDesktopUpdates(true, false)).toBe(true);
-    expect(shouldEnableDesktopUpdates(false, false)).toBe(false);
-  });
-
   it("keeps fork settings and the local daemon isolated while pinning preview updates", () => {
     expect(resolveDesktopDistribution({ paseoPreview: true })).toEqual({
       isPreview: true,
       appName: "Paseo++",
       windowsAppUserModelId: "sh.paseo.plusplus.desktop",
-      userDataName: "Paseo++",
       desktopName: "paseo-plus-plus.desktop",
       daemonHomeName: ".paseo-plus-plus-desktop",
       daemonListen: "127.0.0.1:6790",
