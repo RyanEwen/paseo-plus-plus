@@ -1125,7 +1125,7 @@ export class DirectorySync {
     for (const [entity, cursor] of Object.entries(snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
-    for (const delta of completion.deltas) {
+    for (const delta of deltas) {
       if (!advancesLiveCursor(delta)) continue;
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
       this.noteLiveCursor(entity, delta);

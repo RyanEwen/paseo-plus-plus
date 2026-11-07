@@ -143,7 +143,7 @@ export class WorkspaceNotificationSynchronizer {
             acknowledgementId: this.ports.newId(),
             throughSequence: receipts.latestSequence,
             observedReadId: receipts.lastWorkspaceReadId ?? null,
-            attention: observed.map((item) => ({ ...item })),
+            attention: observed.map((item) => Object.assign({}, item)),
           }
         : null,
     };
