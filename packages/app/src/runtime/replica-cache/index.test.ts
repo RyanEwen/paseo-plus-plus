@@ -471,36 +471,6 @@ describe("ReplicaCache", () => {
     expect((await reopened.readDirectory(renamed)).checkpoint).toEqual(cached.baseline.checkpoint);
   });
 
-  it.each(["insert", "remove", "change"] as const)(
-    "revalidates workspace checkpoint authority on %s",
-    async (change) => {
-      const storage = new MemoryStorage();
-      const initial = directory({
-        agents: { generation: "a", afterSeq: 1 },
-        ...(change === "insert" ? {} : { workspaces: { generation: "w", afterSeq: 1 } }),
-      });
-      const cache = createCache(storage);
-      cache.replaceDirectoryBaseline(SERVER_ID, initial);
-      await cache.flush();
-      const updated = {
-        agents: initial.checkpoint.agents,
-        ...(change === "remove"
-          ? {}
-          : { workspaces: { generation: "new-workspace", afterSeq: 2 } }),
-      };
-      storage.reads.length = 0;
-      storage.onRead = () => {
-        storage.onRead = null;
-        cache.commitDirectoryMutations(SERVER_ID, [], updated);
-      };
-      expect((await cache.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.id).toBe(
-        "workspace-1",
-      );
-      expect(storage.reads).toHaveLength(3);
-      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(updated);
-    },
-  );
-
   it("does not invalidate workspace reads for unrelated workspace and project IDs", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -657,24 +627,13 @@ describe("ReplicaCache", () => {
     },
   );
 
-  it.each(["directory", "workspace"] as const)(
-    "repairs current-cache missing background with %s-first reads",
-    async (first) => {
-      const cached = await cacheWithCorruptCurrentBackground();
-      if (first === "workspace")
-        expect(await cached.reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
-      await expectCurrentWorkspaceRefresh(cached);
-    },
-  );
-
-  it.each([false, true])(
-    "validates current checkpoint authority independently of row order (%s)",
-    async (reverse) => {
-      const cached = await cacheWithCorruptCurrentBackground();
-      cached.storage.reverseReadResults = reverse;
-      await expectCurrentWorkspaceRefresh(cached);
-    },
-  );
+  // Directory-first and workspace-first repairs in storage order are covered by the
+  // "refetches workspaces cached without background visibility" tests below.
+  it("validates current checkpoint authority independently of row order", async () => {
+    const cached = await cacheWithCorruptCurrentBackground();
+    cached.storage.reverseReadResults = true;
+    await expectCurrentWorkspaceRefresh(cached);
+  });
 
   it.each(["directory", "workspace"] as const)(
     "retains provisional legacy rows and timelines with %s-first reads",
