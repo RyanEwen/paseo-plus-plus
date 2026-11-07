@@ -1,7 +1,15 @@
 import { useWindowDimensions } from "react-native";
 import { SPACING } from "@/styles/theme";
 import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
-import { createContext, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 interface ActualPromptRows {
   scope: string;
@@ -97,7 +105,13 @@ export function ActualPromptRowsProvider({
     };
   }, []);
   const [state, setState] = useState(() => ({ scope, expandedIds: new Set<string>() }));
-  // A changed scope reads as empty below, and every write re-scopes the state.
+  // Drop the old scope's ids when the scope changes, so returning to an earlier epoch does
+  // not revive expansion state from before the change.
+  useLayoutEffect(() => {
+    setState((current) =>
+      current.scope === scope ? current : { scope, expandedIds: new Set<string>() },
+    );
+  }, [scope]);
   const expandedIds = useMemo(
     () => (state.scope === scope ? state.expandedIds : new Set<string>()),
     [scope, state],
