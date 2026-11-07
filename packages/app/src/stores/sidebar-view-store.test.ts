@@ -2,9 +2,10 @@ import { useSidebarQuickFilterStore } from "./sidebar-quick-filter-store";
 import {
   defaultSidebarModeProfiles,
   defaultSidebarLocalModeFilters,
+  SidebarModePreferencesSchema,
 } from "./sidebar-mode-preferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
-import { setSettingsHostSelected, setSettingsEditingBlocked } from "@/settings-sync/save-handler";
+import { registerSettingsEditingBlocker } from "@/hooks/use-settings/editing-blocker";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
@@ -14,6 +15,7 @@ import {
   sidebarPersistedState,
   initializeSidebarModePreferences,
   installSidebarPreferenceCommitter,
+  installSidebarSettingsHostSource,
   reduceSidebarPreferences,
   type SidebarPreferencePatch,
   type SidebarGroupMode,
@@ -24,6 +26,22 @@ import {
   SIDEBAR_UNLABELLED_LABEL_KEY,
   useSidebarViewStore,
 } from "./sidebar-view-store";
+
+// Stand-ins for the settings sync adapter: whether a host is selected and whether edits wait.
+const syncFake = { hostSelected: false, editingBlocked: false };
+registerSettingsEditingBlocker({
+  isBlocked: () => syncFake.editingBlocked,
+  subscribe: () => () => {},
+});
+installSidebarSettingsHostSource(() => syncFake.hostSelected);
+
+function setSettingsHostSelected(selected: boolean): void {
+  syncFake.hostSelected = selected;
+}
+
+function setSettingsEditingBlocked(blocked: boolean): void {
+  syncFake.editingBlocked = blocked;
+}
 
 interface MemoryStorage extends StateStorage<Promise<void>> {
   reads: string[];
@@ -625,6 +643,27 @@ describe("separate sidebar modes", () => {
     expect(saved.localModeFilters.status.hostFilters).toEqual(["host"]);
     expect(saved.localModeFilters.project.hostFilters).toEqual([]);
   });
+});
+
+it("seeds a legacy view into its mode profile without the upstream workspace sort leaf", () => {
+  const legacy = {
+    groupMode: "status",
+    sortMode: "project",
+    workspaceSortMode: "name",
+    workspaceSort: "created",
+    hostFilters: ["host-a"],
+    projectFilters: ["project-a"],
+  };
+  const normalized = normalizeSidebarModeState(legacy);
+  expect(normalized.workspaceSort).toBe("created");
+  expect(normalized.modeProfiles.status).toEqual(
+    SidebarModePreferencesSchema.parse({
+      ...defaultSidebarModeProfiles().status,
+      sortMode: "project",
+      workspaceSortMode: "name",
+    }),
+  );
+  expect(normalized.modeProfiles.status).not.toHaveProperty("workspaceSort");
 });
 
 it("hydrates a real version-11 envelope once and preserves the intermediate restart before app settings arrive", async () => {

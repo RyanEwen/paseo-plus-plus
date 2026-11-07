@@ -32,6 +32,7 @@ import {
   type ThemePreference,
 } from "@/styles/theme";
 import { z } from "zod";
+import { DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT } from "@/components/sidebar/workspace-limit";
 import { APP_SETTINGS_KEY, LEGACY_SETTINGS_KEY } from "./keys";
 import { migrateAppSettings } from "./migrations";
 
@@ -80,8 +81,6 @@ export const MAX_FONT_FAMILY_LENGTH = 200;
 export { DEFAULT_CONTENT_MAX_WIDTH };
 export const MIN_CONTENT_MAX_WIDTH = 600;
 export const MAX_CONTENT_MAX_WIDTH = 4000;
-
-export const DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT = 20;
 
 export interface AppSettings {
   /** Optional fork feature preferences, synced when a settings host is selected. */

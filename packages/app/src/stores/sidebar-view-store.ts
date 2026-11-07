@@ -1,4 +1,5 @@
 import {
+  SIDEBAR_VIEW_STORE_VERSION,
   SidebarModePreferencesSchema,
   SidebarModeProfilesSchema,
   SidebarLocalModeFiltersSchema,
@@ -10,7 +11,7 @@ import {
   type SidebarLocalModeFilters,
 } from "./sidebar-mode-preferences";
 import type { AppSettings } from "@/hooks/use-settings/storage";
-import { getSettingsHostSelected, getSettingsEditingBlocked } from "@/settings-sync/save-handler";
+import { isSettingsEditingBlocked } from "@/hooks/use-settings/editing-blocker";
 import type { WorkspaceSort } from "@/projects/workspace-structure";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
@@ -27,7 +28,6 @@ export type SidebarProjectVisibility = "all" | "unarchived";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 12;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -80,12 +80,8 @@ export interface SidebarViewStoreState extends SidebarModePreferences {
       current: SidebarLocalModeFilters[SidebarGroupMode],
     ) => SidebarLocalModeFilters[SidebarGroupMode],
   ) => void;
+  // Profile preferences (sorting, visibility, presentation) come from SidebarModePreferences.
   groupMode: SidebarGroupMode;
-  sortMode: SidebarSortMode;
-  workspaceSortMode: SidebarWorkspaceSortMode;
-  projectVisibility: SidebarProjectVisibility;
-  groupEmptyProjects: boolean;
-  emptyProjectSortMode: SidebarEmptyProjectSortMode;
   workspaceSort: WorkspaceSort;
   showBackground: boolean;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
@@ -264,8 +260,13 @@ export function normalizeSidebarModeState(persistedState: unknown) {
       ? parsed.data.localModeFilters
       : defaultSidebarLocalModeFilters();
   if (!profiles) {
+    // The legacy view is one flat object. Its filters stay device-local and workspaceSort is
+    // the upstream leaf outside the profiles, so the parse keeps only profile preferences.
     const { hostFilters, projectFilters, groupMode, ...preferences } = legacy;
-    modeProfiles[groupMode] = { ...modeProfiles[groupMode], ...preferences };
+    modeProfiles[groupMode] = SidebarModePreferencesSchema.parse({
+      ...modeProfiles[groupMode],
+      ...preferences,
+    });
     if (!(parsed.success && parsed.data.localModeFilters))
       localModeFilters[groupMode] = { hostFilters, projectFilters };
   }
@@ -387,6 +388,20 @@ export function createSidebarPersistStorage(backingStorage: StateStorage = Async
   );
 }
 
+/** Reports whether a settings host owns the synced profiles; the settings sync adapter installs it. */
+let settingsHostSelected: () => boolean = () => false;
+
+/**
+ * Install the source that tells the store whether a settings host is selected. Returns an
+ * uninstall function that restores "no host" unless a newer source replaced this one.
+ */
+export function installSidebarSettingsHostSource(source: () => boolean): () => void {
+  settingsHostSelected = source;
+  return () => {
+    if (settingsHostSelected === source) settingsHostSelected = () => false;
+  };
+}
+
 const preferenceEditListeners = new Set<
   (next: SidebarViewStoreState, previous: SidebarViewStoreState) => void
 >();
@@ -405,15 +420,13 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
   persist<SidebarViewStoreState, [], [], SidebarViewStorageState>(
     (set, get) => {
       const setPreferences = (
-        patch:
-          | Partial<SidebarViewStoreState>
-          | ((state: SidebarViewStoreState) => Partial<SidebarViewStoreState>),
+        patch: SidebarPreferencePatch,
         targetMode: SidebarGroupMode = get().groupMode,
       ) => {
-        if (getSettingsEditingBlocked()) return;
+        if (isSettingsEditingBlocked()) return;
         if (!get().modeProfilesInitialized) return;
         const commit = preferenceCommitter;
-        if (getSettingsHostSelected() && !commit) {
+        if (settingsHostSelected() && !commit) {
           set({ preferenceError: "Settings synchronization is unavailable" });
           return;
         }
@@ -516,7 +529,9 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
         clearLabelFilter: () => setPreferences({ labelFilter: emptyLabelFilter() }),
         reconcileLabelFilter: (labels) =>
           set((state) => {
-            if (getSettingsHostSelected()) return state;
+            // A synced profile's labels may come from another client's catalog. Pruning them here
+            // would be a silent synced edit, so only a local profile is reconciled.
+            if (settingsHostSelected()) return state;
             const available = new Set(labels.map(workspaceLabelKey));
             const next = state.labelFilter.labels.filter(
               (label) => label === SIDEBAR_UNLABELLED_LABEL_KEY || available.has(label),

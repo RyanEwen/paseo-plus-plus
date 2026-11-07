@@ -141,6 +141,7 @@ import type {
   AgentSkillSelection,
   AgentSkillsStatus,
   AgentSkillsSaveResult,
+  WorkspacePinScope,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -2898,10 +2899,12 @@ export class DaemonClient {
   }
 
   /** Send touched leaves with their original host revisions. Never replay a full local snapshot. */
-  patchAppSettings(
-    patches: import("@getpaseo/protocol/app-settings").AppSettingsPatch[],
+  patchAppSettings({
+    patches,
     initialize = false,
-  ): Promise<CorrelatedResponsePayload<"app.settings.patch.response">> {
+  }: import("@getpaseo/protocol/app-settings").AppSettingsPatchInput): Promise<
+    CorrelatedResponsePayload<"app.settings.patch.response">
+  > {
     return this.sendNamespacedCorrelatedSessionRequest({
       message: { type: "app.settings.patch.request", patches, initialize },
     });
@@ -3550,7 +3553,7 @@ export class DaemonClient {
     workspaceId: string,
     pinned: boolean,
     requestId?: string,
-    scope?: "global" | "project",
+    scope?: WorkspacePinScope,
   ): Promise<{ pinnedAt: string | null }> {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,

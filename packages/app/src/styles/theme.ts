@@ -123,7 +123,7 @@ const darkDiffColors = {
   diffDeletion: "#ef4444", // red-500
 };
 
-// Status colors — semantic signals for success/danger/warning/merged. There is exactly one
+// Status colors — semantic signals for success/danger/warning/running/merged. There is exactly one
 // token per signal, and every status surface uses it: PR state icons, CI check icons and
 // pies, diff stats, file-change icons, status badges, usage bars. Status *dots* are the
 // exception and have their own band below. A surface does not otherwise get a quieter or

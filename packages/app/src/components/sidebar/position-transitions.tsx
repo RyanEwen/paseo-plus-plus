@@ -3,6 +3,12 @@ import { AccessibilityInfo } from "react-native";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 
+/**
+ * How long a sidebar row takes to slide to its new position: quick enough to read as the same row
+ * moving, not as a new row appearing.
+ */
+export const SIDEBAR_POSITION_TRANSITION_MS = 100;
+
 const PositionTransitionDurationContext = createContext(0);
 
 /** Read the shared policy without installing another accessibility subscription per row. */
@@ -38,7 +44,7 @@ export function SidebarPositionTransitions({ children }: { children: ReactNode }
   const enabled =
     active && !isLoading && !reducedMotion && settings.paseoPlusPlus.sidebarWorkspaceTransitions;
   return (
-    <PositionTransitionDurationContext value={enabled ? 100 : 0}>
+    <PositionTransitionDurationContext value={enabled ? SIDEBAR_POSITION_TRANSITION_MS : 0}>
       {children}
     </PositionTransitionDurationContext>
   );

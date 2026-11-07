@@ -5,15 +5,13 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { createWorkspaceStructureProjectsSelector } from "@/stores/session-store-hooks/selectors";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useProjectIcons } from "@/projects/icons";
-import { resolveSidebarProjectIconTargets } from "@/utils/sidebar-project-row-model";
-import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { Theme } from "@/styles/theme";
 import {
   MenuRoot,
@@ -29,11 +27,17 @@ import { useSidebarProjectActivity } from "./use-sidebar-project-activity";
 import { HostFilterPage } from "./sidebar-host-filter";
 import { useSidebarModel } from "./sidebar-model";
 import { SidebarProjectMenuItem } from "./sidebar-project-menu-item";
-import { resolveSidebarProjectLabels } from "./sidebar-project-filter";
+import { resolveSidebarProjectLabels } from "./project-labels";
+import {
+  hostBranchIsActive,
+  projectsOnVisibleHosts,
+  resolveProjectIconTargets,
+  resolveSelectorHeading,
+  showsAllWorkspaces,
+} from "./project-selector-model";
+import { SIDEBAR_HEADER_TOUCH_TARGET } from "./header-icon-button";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
-// Touch layouts keep the full 44 px target the release uses for compact controls.
-const TOUCH_TARGET_SIZE = controlHeightForLayout("md", true);
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /** Filter workspace rows by project and host, with the active filter visible in the heading. */
@@ -47,69 +51,42 @@ export function SidebarProjectSelector(): ReactElement {
     () => createWorkspaceStructureProjectsSelector(serverIds),
     [serverIds],
   );
-  const catalog = useSessionStore(selectCatalog);
-  // This is cached registry metadata, independent of either local allowlist. No directory demand here.
-  const projects = useMemo<SidebarProjectEntry[]>(
-    () => catalog.map((project) => ({ ...project, workspaces: [] })),
-    [catalog],
-  );
+  // Cached registry metadata, independent of either local allowlist. No directory demand here.
+  const projects = useSessionStore(selectCatalog);
   const { resolvedProjectFilters, allProjects, allWorkspaceEntriesByKey } = useSidebarModel();
   const activity = useSidebarProjectActivity(allProjects, allWorkspaceEntriesByKey);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
-  const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
-  const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
+  const selectProject = useSidebarViewStore((state) => state.selectProjectFilter);
+  const toggleProject = useSidebarViewStore((state) => state.toggleProjectFilter);
   const updateLocalFilters = useSidebarViewStore((state) => state.updateLocalFilters);
   const clearAll = useCallback(
     () => updateLocalFilters(() => ({ hostFilters: [], projectFilters: [] })),
     [updateLocalFilters],
   );
-  const visibleProjects = projects.filter(
-    (project) =>
-      hostFilters.length === 0 || project.hosts.some((host) => hostFilters.includes(host.serverId)),
-  );
-  const selectProject = useCallback(
-    (viewKey: string) =>
-      updateLocalFilters((current) => ({ ...current, projectFilters: [viewKey] })),
-    [updateLocalFilters],
-  );
-  const toggleProject = useCallback(
-    (viewKey: string) =>
-      updateLocalFilters((current) => ({
-        ...current,
-        projectFilters: current.projectFilters.includes(viewKey)
-          ? current.projectFilters.filter((key) => key !== viewKey)
-          : [...current.projectFilters, viewKey],
-      })),
-    [updateLocalFilters],
-  );
-  const hostPreferences = useMemo(
-    () => ({ hostFilters, toggleHostFilter, clearHostFilters }),
-    [hostFilters, toggleHostFilter, clearHostFilters],
+  const projectsOnSelectedHosts = useMemo(
+    () => projectsOnVisibleHosts(projects, hostFilters),
+    [projects, hostFilters],
   );
   const labels = useMemo(() => resolveSidebarProjectLabels(projects, hosts), [projects, hosts]);
   const [open, setOpen] = useState(false);
   const iconTargets = useMemo(
-    () => (open ? resolveSidebarProjectIconTargets(projects) : []),
+    () => (open ? resolveProjectIconTargets(projects) : []),
     [open, projects],
   );
   const icons = useProjectIcons({ projects: iconTargets });
-  const pages: MenuPageDefinition[] = [
-    {
-      id: "hostFilter",
-      title: t("sidebar.display.hostFilter.label"),
-      content: <HostFilterPage preferences={hostPreferences} hosts={hosts} />,
-    },
-  ];
-  let label = t("sidebar.projectSelector.allWorkspaces");
-  if (resolvedProjectFilters.length === 1)
-    label = t("sidebar.projectSelector.projectWorkspaces", {
-      project: labels.get(resolvedProjectFilters[0]),
-    });
-  else if (resolvedProjectFilters.length > 1)
-    label = t("sidebar.projectSelector.multipleWorkspaces", {
-      count: resolvedProjectFilters.length,
-    });
+  const pages = useMemo<MenuPageDefinition[]>(
+    () => [
+      {
+        id: "hostFilter",
+        title: t("sidebar.display.hostFilter.label"),
+        content: <HostFilterPage hosts={hosts} />,
+      },
+    ],
+    [t, hosts],
+  );
+  const label = resolveSelectorHeading(t, resolvedProjectFilters, labels);
+  const allSelected = showsAllWorkspaces({ resolvedProjectFilters, hostFilters, serverIds });
   const triggerStyle = useCallback(
     ({ hovered, pressed, open: active }: MenuTriggerState) => [
       styles.trigger,
@@ -143,7 +120,7 @@ export function SidebarProjectSelector(): ReactElement {
           <>
             <MenuSubTrigger
               id="hostFilter"
-              indicator={hostFilters.length > 0 || projectFilters.length > 0}
+              indicator={hostBranchIsActive({ hostFilters })}
               testID="sidebar-chooser-hosts"
             >
               {t("sidebar.display.hostFilter.label")}
@@ -151,18 +128,11 @@ export function SidebarProjectSelector(): ReactElement {
             <MenuSeparator />
           </>
         ) : null}
-        <MenuItem
-          selected={
-            resolvedProjectFilters.length === 0 &&
-            (hostFilters.length === 0 || !hosts.some((host) => hostFilters.includes(host.serverId)))
-          }
-          onSelect={clearAll}
-          testID="sidebar-project-selector-all"
-        >
+        <MenuItem selected={allSelected} onSelect={clearAll} testID="sidebar-project-selector-all">
           {t("sidebar.projectSelector.allWorkspaces")}
         </MenuItem>
         <MenuSeparator />
-        {visibleProjects.map((project) => (
+        {projectsOnSelectedHosts.map((project) => (
           <SidebarProjectMenuItem
             key={project.viewKey}
             viewKey={project.viewKey}
@@ -193,7 +163,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     minHeight: CONTROL_HEIGHTS.sm,
   },
-  touchTrigger: { minHeight: TOUCH_TARGET_SIZE },
+  touchTrigger: { minHeight: SIDEBAR_HEADER_TOUCH_TARGET },
   triggerHovered: { backgroundColor: theme.colors.surfaceSidebarHover },
   title: {
     flexShrink: 1,

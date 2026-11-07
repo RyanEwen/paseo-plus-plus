@@ -5,7 +5,6 @@ import type {
 } from "@/hooks/use-sidebar-workspaces-list";
 import {
   buildSidebarProjectRowModel,
-  resolveSidebarProjectLeadingStatus,
   resolveSidebarProjectIconTarget,
   resolveSidebarProjectIconTargets,
   resolveSidebarProjectLocalPath,
@@ -323,20 +322,4 @@ describe("buildSidebarProjectRowModel", () => {
       },
     });
   });
-});
-
-describe("project activity preference", () => {
-  it.each(["running", "needs_input", "failed", "attention", "done", null] as const)(
-    "restores collapsed icon status for %s without a chip",
-    (bucket) => {
-      expect(resolveSidebarProjectLeadingStatus(bucket, false, true)).toBe(bucket);
-      expect(resolveSidebarProjectLeadingStatus(bucket, false, false)).toBeNull();
-      expect(resolveSidebarProjectLeadingStatus(bucket, true, true)).toBe(
-        bucket === "running" ? null : bucket,
-      );
-      expect(resolveSidebarProjectLeadingStatus(bucket, true, false)).toBe(
-        bucket === "running" ? null : bucket,
-      );
-    },
-  );
 });

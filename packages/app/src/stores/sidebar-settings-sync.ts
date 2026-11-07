@@ -1,4 +1,5 @@
-import { SYNC_SIDEBAR_SETTING_KEYS } from "@getpaseo/protocol/app-settings";
+import { SYNC_SIDEBAR_SETTING_KEYS } from "@getpaseo/protocol/app-settings-keys";
+import { useEffect } from "react";
 import { queryClient } from "@/data/query-client";
 import { loadAppSettingsFromStorage } from "@/hooks/use-settings";
 import { APP_SETTINGS_QUERY_KEY, type AppSettings } from "@/hooks/use-settings/storage";
@@ -16,6 +17,7 @@ import { exportLegacySidebarPresentation } from "@/stores/sidebar-mode-preferenc
 import {
   initializeSidebarModePreferences,
   installSidebarPreferenceCommitter,
+  installSidebarSettingsHostSource,
   projectSidebarMode,
   useSidebarViewStore,
 } from "@/stores/sidebar-view-store";
@@ -147,5 +149,11 @@ const SIDEBAR_SETTINGS_DOMAIN_ADAPTER: SettingsDomainAdapter = {
  */
 export function SidebarSettingsSyncRegistration(): null {
   useSettingsDomainAdapter(SIDEBAR_SETTINGS_DOMAIN_ADAPTER);
+  useEffect(() => installSidebarSettingsHostSource(isSettingsHostSelected), []);
   return null;
+}
+
+/** A selected settings host owns the synced profiles; edits must go through its outbox. */
+function isSettingsHostSelected(): boolean {
+  return settingsSync.getState().selectedHost !== null;
 }

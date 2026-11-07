@@ -42,6 +42,7 @@ import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
@@ -810,27 +811,27 @@ function DesktopSidebar({
 function WorkspacesSectionHeader() {
   return (
     <View>
-      <View style={styles.workspacesSectionHeader}>
-        <SidebarProjectSelector />
-        <View style={styles.workspacesSectionActions}>
-          <SidebarViewModeButton />
-          <SidebarQuickFilterButton />
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <View>
-                <SidebarDisplayPreferencesMenu />
-              </View>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="center" offset={8}>
-              <IconTooltipContent label="Display preferences" />
-            </TooltipContent>
-          </Tooltip>
-        </View>
-      </View>
+      <SidebarSectionHeader title={projectSelectorElement}>
+        <SidebarViewModeButton />
+        <SidebarQuickFilterButton />
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <View>
+              <SidebarDisplayPreferencesMenu />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <IconTooltipContent label="Display preferences" />
+          </TooltipContent>
+        </Tooltip>
+      </SidebarSectionHeader>
       <SidebarQuickFilterInput />
     </View>
   );
 }
+
+// The project chooser replaces the Workspaces label; a module element keeps the title prop stable.
+const projectSelectorElement = <SidebarProjectSelector />;
 
 // Stable element above the scrollable list keeps header controls anchored across
 // renders (WorkspacesSectionHeader takes no props).
@@ -858,23 +859,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarHeaderGroupBelowChrome: {
     paddingTop: 0,
-  },
-  workspacesSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    // Preserve the list's horizontal inset now that the header lives outside its scroll.
-    // Settings2's painted path stops inside its SVG, so retain the optical right inset.
-    paddingLeft: theme.spacing[4],
-    paddingRight: theme.spacing[2] + 4,
-    paddingTop: theme.spacing[1],
-    paddingBottom: theme.spacing[1],
-  },
-  workspacesSectionActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
   },
   sidebarContent: {
     flex: 1,
