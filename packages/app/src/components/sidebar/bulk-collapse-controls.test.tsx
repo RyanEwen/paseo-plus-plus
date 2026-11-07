@@ -39,7 +39,10 @@ vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: () => null,
   TooltipTrigger: ({ testID, style, children }: TriggerProps) => (
-    <div data-testid={testID} data-style={JSON.stringify(flattenStyle(style({ pressed: false, hovered: false })))}>
+    <div
+      data-testid={testID}
+      data-style={JSON.stringify(flattenStyle(style({ pressed: false, hovered: false })))}
+    >
       {children}
     </div>
   ),

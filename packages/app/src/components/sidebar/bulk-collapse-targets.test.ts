@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { SidebarProjectEntry, SidebarWorkspacePlacement } from "@/hooks/use-sidebar-workspaces-list";
+import type {
+  SidebarProjectEntry,
+  SidebarWorkspacePlacement,
+} from "@/hooks/use-sidebar-workspaces-list";
 import type { SidebarWorkspaceGroup } from "./sidebar-labels";
 import { resolveSidebarCollapseTargets } from "./bulk-collapse-targets";
 
@@ -85,7 +88,11 @@ describe("bulk collapse targets", () => {
       ...allPinnedProject("project"),
       groupEmptyProjects: true,
     });
-    expect(targets).toEqual({ projectKeys: ["project"], workspaceGroupKeys: [], includePinned: true });
+    expect(targets).toEqual({
+      projectKeys: ["project"],
+      workspaceGroupKeys: [],
+      includePinned: true,
+    });
   });
 
   it.each([

@@ -115,7 +115,11 @@ export function setSectionsCollapsed(
 ): CollapsedProjectsState {
   return {
     ...state,
-    collapsedProjectKeys: withKeysCollapsed(state.collapsedProjectKeys, targets.projectKeys, collapsed),
+    collapsedProjectKeys: withKeysCollapsed(
+      state.collapsedProjectKeys,
+      targets.projectKeys,
+      collapsed,
+    ),
     collapsedWorkspaceGroupKeys: withKeysCollapsed(
       state.collapsedWorkspaceGroupKeys,
       targets.workspaceGroupKeys,
