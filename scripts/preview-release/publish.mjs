@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { getGitHubRelease, getReleaseLookupTag } from "../github-release.mjs";
 import { requireUploadedDraftAssets, waitForGitHubRelease } from "./github.mjs";
@@ -24,7 +25,8 @@ export async function publishPreviewRelease({ directory, repo, notes, publish, k
   if (existing && (!existing.draft || existing.target_commitish !== release.commit)) {
     throw new Error("Refusing to overwrite a published preview or a draft from another commit");
   }
-  const notesFile = path.join(process.env.RUNNER_TEMP, "preview-notes.md");
+  // A private temporary directory works on runners and in a local publish=false dry run.
+  const notesFile = path.join(mkdtempSync(path.join(tmpdir(), "paseo-preview-notes-")), "notes.md");
   const body = `${notes.trim()}
 
 Windows (x64 and ARM64), Linux (x64 and ARM64), standalone Linux daemon/CLI packages, and Android builds are attached.
