@@ -128,7 +128,9 @@ async function confirmUpdate(
 /** Install with progress, then wait for the replacement worker to report the new version. */
 async function runVerifiedUpdate(attempt: DaemonUpdateAttempt, port: DaemonUpdatePort) {
   const { host, t, onState } = attempt;
-  const requestId = `settings_daemon_update_${host.serverId}`;
+  // Unique per attempt: the daemon answers a concurrent update with an rpc_error matched by
+  // request ID alone, which would otherwise reject every surface's pending update for this host.
+  const requestId = `daemon_update_${host.serverId}_${crypto.randomUUID()}`;
   const progressLabels: Record<DaemonUpdatePhase, string> = {
     starting: t("settings.host.daemon.update.phaseStarting"),
     downloading: t("settings.host.daemon.update.phaseDownloading"),

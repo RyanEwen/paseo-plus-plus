@@ -181,6 +181,18 @@ describe("runDaemonUpdateAttempt", () => {
     expect(daemon.listeners.size).toBe(0);
   });
 
+  test("each attempt uses its own request ID, so one surface's error cannot settle another's", async () => {
+    const daemon = createFakeDaemon();
+    const first = createAttempt({ port: daemon.port });
+    const second = createAttempt({ port: daemon.port });
+
+    await runDaemonUpdateAttempt(first.attempt);
+    await runDaemonUpdateAttempt(second.attempt);
+
+    expect(daemon.requestIds).toHaveLength(2);
+    expect(new Set(daemon.requestIds).size).toBe(2);
+  });
+
   test("keeps an actionable failure when installation fails", async () => {
     const daemon = createFakeDaemon(() => ({
       success: false,
