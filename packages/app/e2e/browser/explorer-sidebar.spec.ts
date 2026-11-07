@@ -9,6 +9,7 @@ import {
   expectTabTitleFits,
 } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedAppSettings } from "../support/helpers/app-settings-seed";
 import {
   ensureExplorerSidebar,
   openFilesPanel,
@@ -38,48 +39,32 @@ async function expectExplorerActiveTabForeground(
   await expect(activeFiles.getByText("Files", { exact: true })).toHaveCSS("color", foreground);
 }
 
-test("automatic Explorer opening applies only to new workspace layouts", async ({ page }) => {
-  const workspace = await seedWorkspace({ repoPrefix: "explorer-sidebar-auto-open-" });
-  await page.addInitScript(() => {
-    const settings = JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}");
-    if (!Object.hasOwn(settings, "autoOpenExplorerSidebar")) {
-      localStorage.setItem(
-        "@paseo:app-settings",
-        JSON.stringify({ ...settings, autoOpenExplorerSidebar: true }),
-      );
+test.describe("Explorer sidebar", () => {
+  test("automatic Explorer opening applies only to new workspace layouts", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-sidebar-auto-open-" });
+    await seedAppSettings(page, { autoOpenExplorerSidebar: true });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await waitForWorkspaceTabsVisible(page);
+      await expect(explorerSidebar(page)).toBeVisible();
+      // Check the first render before toggling registers the Explorer pane id.
+      await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
+      await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(1);
+      await page.reload();
+      await waitForWorkspaceTabsVisible(page);
+      await expect(explorerSidebar(page)).toBeVisible();
+      await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
+      await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(1);
+      await page.getByTestId("workspace-explorer-toggle").first().click();
+      await expect(explorerSidebar(page)).toHaveCount(0);
+      await page.reload();
+      await waitForWorkspaceTabsVisible(page);
+      await expect(explorerSidebar(page)).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
     }
   });
-  try {
-    await gotoWorkspace(page, workspace.workspaceId);
-    await waitForWorkspaceTabsVisible(page);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}").autoOpenExplorerSidebar,
-        ),
-      )
-      .toBe(true);
-    await expect(explorerSidebar(page)).toBeVisible();
-    // Check the first render before toggling registers the Explorer pane id.
-    await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
-    await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(1);
-    await page.reload();
-    await waitForWorkspaceTabsVisible(page);
-    await expect(explorerSidebar(page)).toBeVisible();
-    await expect(page.getByTestId("workspace-pane-explorer")).toHaveCount(0);
-    await expect(page.getByTestId("changes-tree-panel").filter({ visible: true })).toHaveCount(1);
-    await page.getByTestId("workspace-explorer-toggle").first().click();
-    await expect(explorerSidebar(page)).toHaveCount(0);
-    await page.reload();
-    await waitForWorkspaceTabsVisible(page);
-    await expect(explorerSidebar(page)).toHaveCount(0);
-  } finally {
-    await workspace.cleanup();
-  }
-});
 
-test.describe("Explorer sidebar", () => {
   test("starts with Files and Changes, switches views, and toggles without changing main", async ({
     page,
   }) => {

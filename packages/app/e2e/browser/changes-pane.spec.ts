@@ -1,4 +1,5 @@
 import { selectChangesComparison } from "../support/helpers/branch-switcher";
+import { seedAppSettings } from "../support/helpers/app-settings-seed";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -1023,9 +1024,7 @@ test("single-file Changes keeps compact navigation when the selected diff disapp
   page,
 }) => {
   const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
-  await page.addInitScript((key) => {
-    localStorage.setItem(key, JSON.stringify({ explorerDiffScope: "single" }));
-  }, APP_SETTINGS_KEY);
+  await seedAppSettings(page, { explorerDiffScope: "single" });
   const explorer = await openCompactChanges(page, workspace);
   await openChangedFilesOverview(page);
   await jumpToOverviewFile(page, explorer, "src/use-mounted-tab-set.ts");
@@ -1046,9 +1045,7 @@ test("single-file Changes opens a scoped desktop diff and restores it on reload"
   page,
 }) => {
   const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
-  await page.addInitScript((key) => {
-    localStorage.setItem(key, JSON.stringify({ explorerDiffScope: "single" }));
-  }, APP_SETTINGS_KEY);
+  await seedAppSettings(page, { explorerDiffScope: "single" });
   await openWorkspaceChanges(page, workspace);
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   await expect(diffHeaderForPath(panel, "src/use-mounted-tab-set.ts")).toBeVisible();
@@ -1514,10 +1511,7 @@ async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
 
 /** Exercises the opt-in dirtiness-following behavior independently of the new default. */
 async function useAutomaticChangesComparison(page: Page): Promise<void> {
-  await page.addInitScript((key) => {
-    const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
-    localStorage.setItem(key, JSON.stringify({ ...settings, workingDiffAutoSwitch: true }));
-  }, APP_SETTINGS_KEY);
+  await seedAppSettings(page, { workingDiffAutoSwitch: true });
 }
 
 async function useUnwrappedDiffLines(page: Page): Promise<void> {
