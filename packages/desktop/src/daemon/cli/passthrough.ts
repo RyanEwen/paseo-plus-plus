@@ -3,6 +3,8 @@ import { resolvePassthroughCliEntrypoint } from "./entrypoints.js";
 
 const DESKTOP_CLI_ENV = "PASEO_DESKTOP_CLI";
 const IGNORED_ARG_PREFIXES = ["-psn_", "--class=", "--no-sandbox", "--remote-debugging-port="];
+// NSIS passes this GUI lifecycle flag after an update. It is not a CLI command.
+const IGNORED_ARGS = new Set(["--updated"]);
 
 export type PassthroughCliRunner = (argv: string[]) => Promise<number>;
 
@@ -15,8 +17,7 @@ export function parsePassthroughCliArgs(input: {
   const effective: string[] = [];
 
   for (const arg of input.argv.slice(startIndex)) {
-    // NSIS passes this GUI lifecycle flag after an update. It is not a CLI command.
-    if (arg === "--updated" || IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
+    if (IGNORED_ARGS.has(arg) || IGNORED_ARG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
       continue;
     }
     effective.push(arg);
