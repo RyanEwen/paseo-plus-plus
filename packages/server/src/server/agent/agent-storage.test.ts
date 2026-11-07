@@ -6,6 +6,7 @@ import {
   preserveSnapshotHistoryBinding,
 } from "./provider-history/binding.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import { createClaudeIdentityStore } from "./provider-history/claude-identity.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
 import os from "node:os";
 import path from "node:path";
@@ -170,6 +171,33 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("mutateRecord skips a null result and reports the committed record after a write", async () => {
+    const record = retryIntent("queued-mutation");
+    await storage.reserveHistoryIntent(record);
+    let read: StoredAgentRecord | null = null;
+    const committed: StoredAgentRecord[] = [];
+    await storage.mutateRecord(
+      record.id,
+      (existing) => {
+        read = existing;
+        return null;
+      },
+      (value) => committed.push(value),
+    );
+    expect(read).toEqual(record);
+    expect(committed).toEqual([]);
+    const titled = { ...record, title: "queued title" };
+    await storage.mutateRecord(
+      record.id,
+      () => titled,
+      (value) => committed.push(value),
+    );
+    expect(committed).toEqual([titled]);
+    expect(
+      await new AgentStorage(storagePath, logger).get(record.id, { includeHistoryIntents: true }),
+    ).toEqual(normalizeStoredRecord(titled));
   });
 
   test("internal history admission waits for queued records and never creates provenance", async () => {
@@ -1263,13 +1291,13 @@ describe("configured Claude rewind commits", () => {
         }),
       ),
     ).rejects.toThrow("initial-handle-binding-required");
-    await registry.commitClaudeInitialHandle({
+    await createClaudeIdentityStore(registry).commitInitialHandle({
       expected: empty,
       next: newHandle,
       onCommitted: () => {},
     });
     await expect(
-      registry.commitClaudeInitialHandle({
+      createClaudeIdentityStore(registry).commitInitialHandle({
         expected: empty,
         next: { ...newHandle, sessionId: "second", nativeHandle: "second" },
         onCommitted: () => {},
@@ -1314,7 +1342,11 @@ describe("configured Claude rewind commits", () => {
       }));
       const expected = (await registry.get("guarded"))!;
       await expect(
-        registry.commitClaudeInitialHandle({ expected, next: newHandle, onCommitted: () => {} }),
+        createClaudeIdentityStore(registry).commitInitialHandle({
+          expected,
+          next: newHandle,
+          onCommitted: () => {},
+        }),
       ).rejects.toThrow("initial-handle-binding-conflict");
     },
   );
@@ -1353,7 +1385,11 @@ describe("configured Claude rewind commits", () => {
   test("only explicit queued rewind advances ID and preserves all other canonical metadata", async () => {
     const before = (await registry.get("guarded"))!;
     const adopted = vi.fn();
-    await registry.commitClaudeRewind({ expected: before, next: newHandle, onCommitted: adopted });
+    await createClaudeIdentityStore(registry).commitRewind({
+      expected: before,
+      next: newHandle,
+      onCommitted: adopted,
+    });
     const after = (await new AgentStorage(directory, log).get("guarded"))!;
     expect(after).toEqual(
       normalizeStoredRecord({
@@ -1377,7 +1413,7 @@ describe("configured Claude rewind commits", () => {
   });
   test("fresh intent survives ordinary snapshots/reload and is consumed only by exact operation", async () => {
     const before = (await registry.get("guarded"))!;
-    await registry.commitClaudeRewind({
+    await createClaudeIdentityStore(registry).commitRewind({
       expected: before,
       freshOperationId: "operation",
       onCommitted: () => {},
@@ -1397,14 +1433,14 @@ describe("configured Claude rewind commits", () => {
     expect(pending.claudeFreshRewind).toEqual({ operationId: "operation" });
     expect(pending.persistence?.sessionId).toBe("old");
     await expect(
-      registry.commitClaudeRewind({
+      createClaudeIdentityStore(registry).commitRewind({
         expected: pending,
         next: newHandle,
         freshOperationId: "wrong",
         onCommitted: () => {},
       }),
     ).rejects.toThrow("rewind-handle-conflict");
-    await registry.commitClaudeRewind({
+    await createClaudeIdentityStore(registry).commitRewind({
       expected: pending,
       next: newHandle,
       freshOperationId: "operation",
@@ -1419,7 +1455,11 @@ describe("configured Claude rewind commits", () => {
     await registry.setTitle("guarded", "newer title");
     const adopt = vi.fn();
     await expect(
-      registry.commitClaudeRewind({ expected: before, next: newHandle, onCommitted: adopt }),
+      createClaudeIdentityStore(registry).commitRewind({
+        expected: before,
+        next: newHandle,
+        onCommitted: adopt,
+      }),
     ).rejects.toThrow("rewind-canonical-record-changed");
     expect(adopt).not.toHaveBeenCalled();
     expect(await new AgentStorage(directory, log).get("guarded")).toMatchObject({
@@ -1437,7 +1477,11 @@ describe("configured Claude rewind commits", () => {
       .mockRejectedValueOnce(new Error("fixture-record-write-failed"));
     const adopt = vi.fn();
     await expect(
-      registry.commitClaudeRewind({ expected: before, next: newHandle, onCommitted: adopt }),
+      createClaudeIdentityStore(registry).commitRewind({
+        expected: before,
+        next: newHandle,
+        onCommitted: adopt,
+      }),
     ).rejects.toThrow("fixture-record-write-failed");
     writer.mockRestore();
     expect(adopt).not.toHaveBeenCalled();
@@ -1448,7 +1492,7 @@ describe("configured Claude rewind commits", () => {
   test("post-commit adoption failure reports committed disk identity", async () => {
     const before = (await registry.get("guarded"))!;
     await expect(
-      registry.commitClaudeRewind({
+      createClaudeIdentityStore(registry).commitRewind({
         expected: before,
         next: newHandle,
         onCommitted: () => {
@@ -1484,7 +1528,7 @@ describe("configured Claude rewind commits", () => {
       }
       const before = (await registry.get("guarded"))!;
       await expect(
-        registry.commitClaudeRewind({
+        createClaudeIdentityStore(registry).commitRewind({
           expected: before,
           next: kind === "codex" ? newHandle : { ...newHandle, provider: "other" },
           onCommitted: () => {},

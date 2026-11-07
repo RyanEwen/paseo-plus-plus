@@ -1,5 +1,9 @@
 import type { CreationAgentAttempt } from "../creation/index.js";
-import { isBoundEmptyClaudeCreation } from "./agent-storage.js";
+import {
+  createClaudeIdentityStore,
+  isBoundEmptyClaudeCreation,
+  type ClaudeIdentityStore,
+} from "./provider-history/claude-identity.js";
 import {
   registerProviderHistory,
   sameHistoryStorage,
@@ -356,6 +360,8 @@ export interface AgentManagerOptions {
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
   registry?: AgentStorage;
+  /** Claude configured-home identity transitions; defaults to one over `registry`. */
+  claudeIdentityStore?: ClaudeIdentityStore;
   onAgentAttention?: AgentAttentionCallback;
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   timelineStore?: InMemoryAgentTimelineStore;
@@ -810,6 +816,7 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
+  private readonly claudeIdentityStore?: ClaudeIdentityStore;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -847,6 +854,9 @@ export class AgentManager {
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.claudeIdentityStore =
+      options?.claudeIdentityStore ??
+      (options?.registry ? createClaudeIdentityStore(options.registry) : undefined);
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1704,7 +1714,7 @@ export class AgentManager {
         if (agent.session.claudeInitialHistory?.owner !== context.owner)
           throw new HistoryStorageConflictError("initial-query-admission-conflict");
         await this.persistSnapshot(agent);
-        const captured = await this.requireRegistry().captureClaudeHistoryAdmission(agentId);
+        const captured = await this.requireClaudeIdentityStore().captureAdmission(agentId);
         const stillOwned = agent.session.claudeInitialHistory?.owner === context.owner;
         const sameRoute =
           captured.provider === agent.provider &&
@@ -1731,7 +1741,7 @@ export class AgentManager {
         )
           throw new HistoryStorageConflictError("stale-initial-history-callback");
         try {
-          await this.requireRegistry().commitClaudeInitialHandle({
+          await this.requireClaudeIdentityStore().commitInitialHandle({
             expected,
             next: normalizePersistenceForConfig(transition.next, agent.config)!,
             assertCurrent: () => {
@@ -1779,7 +1789,7 @@ export class AgentManager {
         if (agent.session.claudeFreshRewind?.owner !== context.owner)
           throw new HistoryStorageConflictError("fresh-query-admission-conflict");
         await this.persistSnapshot(agent);
-        const captured = await this.requireRegistry().captureClaudeHistoryAdmission(agentId);
+        const captured = await this.requireClaudeIdentityStore().captureAdmission(agentId);
         const stillOwned =
           agent.session.claudeFreshRewind?.owner === context.owner &&
           captured.claudeFreshRewind?.operationId === operationId;
@@ -1856,7 +1866,7 @@ export class AgentManager {
       : undefined;
     const pending = !next ? this.claudeFreshRewindContext(agent.id, randomUUID()) : undefined;
     try {
-      await this.requireRegistry().commitClaudeRewind({
+      await this.requireClaudeIdentityStore().commitRewind({
         expected,
         next,
         freshOperationId: fresh?.operationId ?? pending?.operationId,
@@ -4890,6 +4900,13 @@ export class AgentManager {
       throw new Error("Agent storage unavailable");
     }
     return this.registry;
+  }
+
+  private requireClaudeIdentityStore(): ClaudeIdentityStore {
+    if (!this.claudeIdentityStore) {
+      throw new Error("Agent storage unavailable");
+    }
+    return this.claudeIdentityStore;
   }
 
   /**

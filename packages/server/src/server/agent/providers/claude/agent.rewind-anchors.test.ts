@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { AgentManager } from "../../agent-manager.js";
 import type { PluginLifecycle } from "../../../plugins/lifecycle/index.js";
 import { AgentStorage, type StoredAgentRecord } from "../../agent-storage.js";
+import {
+  createClaudeIdentityStore,
+  type ClaudeIdentityStore,
+  type CommitClaudeInitialHandleInput,
+  type CommitClaudeRewindInput,
+} from "../../provider-history/claude-identity.js";
 import { ensureAgentLoaded } from "../../agent-loading.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import type { ClaudeQueryInput } from "./query.js";
@@ -280,6 +286,57 @@ describe("Claude rewind after a turn whose last assistant message came from a su
   });
 });
 
+type Interceptor<Input> = (input: Input, next: (input: Input) => Promise<void>) => Promise<void>;
+
+/** One commit step's interceptors: the first runs around the real commit; `once` entries expire. */
+function interceptorQueue<Input>(inner: (input: Input) => Promise<void>) {
+  const entries: { run: Interceptor<Input>; once: boolean }[] = [];
+  return {
+    run(input: Input): Promise<void> {
+      const current = entries[0];
+      if (!current) return inner(input);
+      if (current.once) entries.shift();
+      return current.run(input, inner);
+    },
+    add(run: Interceptor<Input>, once: boolean): () => void {
+      const entry = { run, once };
+      entries.push(entry);
+      return () => {
+        const index = entries.indexOf(entry);
+        if (index >= 0) entries.splice(index, 1);
+      };
+    },
+  };
+}
+
+/**
+ * The manager's identity store port with test interception: a test can run code around one
+ * commit, or every commit until it releases the interceptor, without patching storage.
+ */
+function interceptingIdentityStore(inner: ClaudeIdentityStore) {
+  const initial = interceptorQueue<CommitClaudeInitialHandleInput>((input) =>
+    inner.commitInitialHandle(input),
+  );
+  const rewind = interceptorQueue<CommitClaudeRewindInput>((input) => inner.commitRewind(input));
+  return {
+    captureAdmission: (agentId: string) => inner.captureAdmission(agentId),
+    commitInitialHandle: (input: CommitClaudeInitialHandleInput) => initial.run(input),
+    commitRewind: (input: CommitClaudeRewindInput) => rewind.run(input),
+    /** Intercept the next initial-handle commit only. */
+    interceptNextInitialHandle(run: Interceptor<CommitClaudeInitialHandleInput>): void {
+      initial.add(run, true);
+    },
+    /** Intercept the next rewind commit only. */
+    interceptNextRewind(run: Interceptor<CommitClaudeRewindInput>): void {
+      rewind.add(run, true);
+    },
+    /** Intercept every rewind commit; call the returned function to stop. */
+    interceptRewinds(run: Interceptor<CommitClaudeRewindInput>): () => void {
+      return rewind.add(run, false);
+    },
+  } satisfies ClaudeIdentityStore;
+}
+
 async function configuredRewindFixture(
   outcomes: TurnOutcome[],
   fixtureOptions: { env?: Record<string, string>; pluginLifecycle?: PluginLifecycle } = {},
@@ -351,9 +408,11 @@ async function configuredRewindFixture(
   vi.spyOn(client, "isAvailable").mockResolvedValue(true);
   const storagePath = path.join(root, "agents");
   const storage = new AgentStorage(storagePath, createTestLogger());
+  const identity = interceptingIdentityStore(createClaudeIdentityStore(storage));
   const manager = new AgentManager({
     clients: { claude: client },
     registry: storage,
+    claudeIdentityStore: identity,
     logger: createTestLogger(),
     pluginLifecycle: fixtureOptions.pluginLifecycle,
   });
@@ -375,6 +434,7 @@ async function configuredRewindFixture(
     client,
     storagePath,
     storage,
+    identity,
     manager,
     agent,
     failures,
@@ -716,8 +776,7 @@ describe("configured Claude managed rewind", () => {
         }),
       );
       let committed = false;
-      const commit = f.storage.commitClaudeRewind.bind(f.storage);
-      vi.spyOn(f.storage, "commitClaudeRewind").mockImplementationOnce((input) =>
+      f.identity.interceptNextRewind((input, commit) =>
         commit({
           ...input,
           onCommitted: (record) => {
@@ -896,8 +955,7 @@ describe("configured Claude managed rewind", () => {
         }
         const before = (await f.storage.get(f.agent.id))!;
         if (phase === "initial") {
-          const commit = f.storage.commitClaudeInitialHandle.bind(f.storage);
-          vi.spyOn(f.storage, "commitClaudeInitialHandle").mockImplementationOnce(async (input) => {
+          f.identity.interceptNextInitialHandle(async (input, commit) => {
             entered.resolve();
             await release.promise;
             try {
@@ -913,8 +971,7 @@ describe("configured Claude managed rewind", () => {
             }
           });
         } else {
-          const commit = f.storage.commitClaudeRewind.bind(f.storage);
-          vi.spyOn(f.storage, "commitClaudeRewind").mockImplementationOnce(async (input) => {
+          f.identity.interceptNextRewind(async (input, commit) => {
             entered.resolve();
             await release.promise;
             try {
@@ -1053,8 +1110,7 @@ describe("configured Claude managed rewind", () => {
     ]);
     try {
       await runTurns(f.session, 2);
-      const original = f.storage.commitClaudeRewind.bind(f.storage);
-      const spy = vi.spyOn(f.storage, "commitClaudeRewind").mockImplementation((input) =>
+      const release = f.identity.interceptRewinds((input, original) =>
         original({
           ...input,
           onCommitted: (record) => {
@@ -1066,7 +1122,7 @@ describe("configured Claude managed rewind", () => {
       await expect(
         f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation"),
       ).rejects.toThrow("retained");
-      spy.mockRestore();
+      release();
       const disk = await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id);
       expect(disk?.persistence?.sessionId).toBe("forked-session-1");
       expect(f.manager.getAgent(f.agent.id)).toBeNull();
@@ -1187,8 +1243,7 @@ describe("configured Claude managed rewind", () => {
     try {
       await runTurns(f.session, 2);
       await f.manager.rewind(f.agent.id, f.conversation.userMessageIds[1], "conversation");
-      const original = f.storage.commitClaudeRewind.bind(f.storage);
-      const spy = vi.spyOn(f.storage, "commitClaudeRewind").mockImplementation((input) =>
+      const release = f.identity.interceptRewinds((input, original) =>
         original({
           ...input,
           onCommitted: (record) => {
@@ -1198,7 +1253,7 @@ describe("configured Claude managed rewind", () => {
         }),
       );
       await runTurns(f.session, 1);
-      spy.mockRestore();
+      release();
       expect(JSON.stringify(f.failures)).toContain(
         "identity fresh-actual-session committed; runtime adoption failed; reload required",
       );

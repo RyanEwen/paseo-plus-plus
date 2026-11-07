@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const ProviderHistoryStorageSchema = z.union([
@@ -270,4 +271,9 @@ export class HistoryIntentConflictError extends Error {
     super(`Agent ${agentId} already has durable state; history intent was not reserved`);
     this.name = "HistoryIntentConflictError";
   }
+}
+
+/** SHA-256 of a value's JSON form, for exact record comparisons inside the write queue. */
+export function stableDigest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
