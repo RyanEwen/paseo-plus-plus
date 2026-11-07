@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import { useTranslation } from "react-i18next";
@@ -10,6 +10,8 @@ import { getDesktopHost, type DesktopBrowserExtension } from "@/desktop/host";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
+const EXTENSIONS_QUERY_KEY = ["desktop", "browser", "extensions"] as const;
+
 type ExtensionAction =
   | { kind: "store" | "unpacked" }
   | { kind: "enable"; id: string; enabled: boolean }
@@ -20,9 +22,8 @@ export function BrowserExtensionsSection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const bridge = getDesktopHost()?.browser?.extensions;
-  const queryKey = ["desktop", "browser", "extensions"];
   const extensions = useFetchQuery({
-    queryKey,
+    queryKey: EXTENSIONS_QUERY_KEY,
     dataShape: "list",
     staleTimeMs: 1000,
     queryFn: async () => {
@@ -31,9 +32,15 @@ export function BrowserExtensionsSection() {
       }
       return bridge.list();
     },
-    // Installs happen in a separate Store window. Keep the visible settings list current.
-    refetchInterval: 2000,
   });
+  // Store-window installs, removals and runtime failures all publish a change from main.
+  useEffect(
+    () =>
+      bridge?.onChanged(() => {
+        void queryClient.invalidateQueries({ queryKey: EXTENSIONS_QUERY_KEY });
+      }),
+    [bridge, queryClient],
+  );
   const action = useMutation({
     mutationFn: async (input: ExtensionAction) => {
       if (!bridge) {
@@ -62,7 +69,7 @@ export function BrowserExtensionsSection() {
       }
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({ queryKey: EXTENSIONS_QUERY_KEY });
     },
   });
   const busy = action.isPending;
