@@ -85,7 +85,6 @@ describe("desktop packaging", () => {
     const bin = join(resources, "bin");
     const artifactDir = join(root, "artifacts");
     const program = join(bin, "cold-start.cjs");
-    const previousArtifactDir = process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR;
     mkdirSync(bin, { recursive: true });
     writeFileSync(
       program,
@@ -108,9 +107,10 @@ describe("desktop packaging", () => {
         ? '@echo off\r\nnode "%~dp0cold-start.cjs" %*\r\nexit /b %errorlevel%\r\n'
         : '#!/bin/sh\nexec node "$(dirname "$0")/cold-start.cjs" "$@"\n',
     );
-    process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR = artifactDir;
     try {
-      await expect(smokeColdCliDaemonStart({ appPath })).rejects.toThrow("fixture startup failure");
+      await expect(smokeColdCliDaemonStart({ appPath, artifactDir })).rejects.toThrow(
+        "fixture startup failure",
+      );
       expect(existsSync(join(artifactDir, "terminal-worker.log"))).toBe(true);
       expect(readFileSync(join(artifactDir, "terminal-worker.log"), "utf8")).toBe(
         "fixture worker detail\n",
@@ -121,8 +121,6 @@ describe("desktop packaging", () => {
       );
       expect(existsSync(readFileSync(program + ".home", "utf8"))).toBe(false);
     } finally {
-      if (previousArtifactDir === undefined) delete process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR;
-      else process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR = previousArtifactDir;
       rmSync(root, { recursive: true, force: true });
     }
   });

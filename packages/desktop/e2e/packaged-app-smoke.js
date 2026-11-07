@@ -357,34 +357,48 @@ function formatLogs({ stdout, stderr, userData, daemonHome }) {
   ].join("\n\n");
 }
 
-async function writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome, error, child }) {
-  const artifactDir = process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR?.trim();
+/**
+ * Save the dialogs and windows of a Windows app that failed to start, for the smoke artifacts.
+ * Diagnostics are best effort: a failure to capture them is logged, never thrown.
+ */
+function captureWindowsStartupDialogs({ child, artifactDir }) {
+  try {
+    const startupDialogs = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        path.join(__dirname, "windows-startup-diagnostics.ps1"),
+        "-AppProcessId",
+        String(child.pid),
+      ],
+      { encoding: "utf8", timeout: 15000, windowsHide: true },
+    );
+    fs.writeFileSync(path.join(artifactDir, "windows-startup.txt"), startupDialogs);
+    console.error(`Packaged desktop smoke: Windows startup diagnostics\n${startupDialogs}`);
+  } catch (diagnosticError) {
+    console.warn(`Packaged desktop smoke: Windows startup diagnostics failed: ${diagnosticError}`);
+  }
+}
+
+async function writeSmokeArtifacts({
+  page,
+  stdout,
+  stderr,
+  userData,
+  daemonHome,
+  error,
+  child,
+  artifactDir = process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR?.trim(),
+}) {
   if (!artifactDir) {
     return;
   }
 
   fs.mkdirSync(artifactDir, { recursive: true });
   if (error && process.platform === "win32" && child?.pid) {
-    try {
-      const startupDialogs = execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-File",
-          path.join(__dirname, "windows-startup-diagnostics.ps1"),
-          "-AppProcessId",
-          String(child.pid),
-        ],
-        { encoding: "utf8", timeout: 15000, windowsHide: true },
-      );
-      fs.writeFileSync(path.join(artifactDir, "windows-startup.txt"), startupDialogs);
-      console.error(`Packaged desktop smoke: Windows startup diagnostics\n${startupDialogs}`);
-    } catch (diagnosticError) {
-      console.warn(
-        `Packaged desktop smoke: Windows startup diagnostics failed: ${diagnosticError}`,
-      );
-    }
+    captureWindowsStartupDialogs({ child, artifactDir });
   }
   fs.writeFileSync(
     path.join(artifactDir, error ? "failure.txt" : "success.txt"),
@@ -720,8 +734,11 @@ async function smokeCliShim({ appPath, env }) {
   assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
 }
 
-/** Preserve startup failure evidence before removing the cold CLI smoke profile. */
-async function smokeColdCliDaemonStart({ appPath }) {
+/**
+ * Preserve startup failure evidence before removing the cold CLI smoke profile.
+ * `artifactDir` overrides PASEO_DESKTOP_SMOKE_ARTIFACT_DIR for where failure evidence is saved.
+ */
+async function smokeColdCliDaemonStart({ appPath, artifactDir }) {
   const home = createTempDir("paseo-smoke-cli-daemon-home-");
   const pidPath = path.join(home, "paseo.pid");
   const port = await reserveLocalTcpPort();
@@ -767,6 +784,7 @@ async function smokeColdCliDaemonStart({ appPath }) {
       userData: home,
       daemonHome: home,
       error,
+      artifactDir,
     }).catch((artifactError) => {
       console.warn(`Packaged desktop smoke: failed to save cold CLI diagnostics: ${artifactError}`);
     });
@@ -1107,7 +1125,6 @@ async function smokePackagedDesktopApp({
 
 module.exports = {
   createIsolatedHomeEnv,
-  getTerminalHookSmokeCommand,
   prepareTerminalHookSmokeCommand,
   getCliShimScript,
   hasTerminalSmokeMarker,
