@@ -99,6 +99,7 @@ import {
   ExplorerTabStripContextMenu,
   iconOnlyTabStyles,
   useExplorerTabDisplay,
+  type ExplorerTabDisplayControl,
 } from "@/screens/workspace/explorer-tab-display";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -744,6 +745,7 @@ function TabChip({
   onNavigateTab,
   onCloseTab,
   dragHandleProps,
+  explorerDisplay,
 }: {
   serverId: string;
   workspaceId: string;
@@ -766,6 +768,8 @@ function TabChip({
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
+  /** Explorer display control for the Icon-only tabs row, or null outside the Explorer. */
+  explorerDisplay: ExplorerTabDisplayControl | null;
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
   const { t } = useTranslation();
@@ -957,7 +961,7 @@ function TabChip({
           pages={openWith.pages}
           testID={contextMenuTestId}
         >
-          <ExplorerIconOnlyMenuItem />
+          <ExplorerIconOnlyMenuItem control={explorerDisplay} />
           {menuEntries.map((entry) => {
             if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
             if (entry.kind === "file-panel-open-with") {
@@ -1072,7 +1076,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const explorerDisplay = useExplorerTabDisplay(host);
-  const iconOnly = explorerDisplay.enabled;
+  const iconOnly = explorerDisplay !== null && explorerDisplay.enabled;
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const [labelMeasurements, setLabelMeasurements] = useState(
     () => new Map<string, WorkspaceTabLabelMeasurement>(),
@@ -1349,6 +1353,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCloseTab={onCloseTab}
           labels={tabMenuLabels}
           dragHandleProps={dragHandleProps}
+          explorerDisplay={explorerDisplay}
           showDropIndicatorBefore={showDropIndicatorBefore}
           showDropIndicatorAfter={showDropIndicatorAfter}
         />
@@ -1356,6 +1361,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     },
     [
       activeDragTabId,
+      explorerDisplay,
       isFocused,
       iconOnly,
       layout.closeButtonPolicy,
@@ -1482,9 +1488,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   return (
     <RenderProfile id="WorkspaceDesktopTabsRow">
-      <ExplorerTabStripContextMenu host={host} control={explorerDisplay}>
-        {row}
-      </ExplorerTabStripContextMenu>
+      <ExplorerTabStripContextMenu control={explorerDisplay}>{row}</ExplorerTabStripContextMenu>
     </RenderProfile>
   );
 }
@@ -1514,6 +1518,7 @@ function ResolvedDesktopTabChip({
   onCloseTab,
   labels,
   dragHandleProps,
+  explorerDisplay,
   showDropIndicatorBefore,
   showDropIndicatorAfter,
 }: {
@@ -1542,6 +1547,7 @@ function ResolvedDesktopTabChip({
   onCloseTab: (tabId: string) => Promise<void> | void;
   labels: WorkspaceTabMenuLabels;
   dragHandleProps: DraggableListDragHandleProps | undefined;
+  explorerDisplay: ExplorerTabDisplayControl | null;
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
 }) {
@@ -1620,6 +1626,7 @@ function ResolvedDesktopTabChip({
         onNavigateTab={onNavigateTab}
         onCloseTab={onCloseTab}
         dragHandleProps={dragHandleProps}
+        explorerDisplay={explorerDisplay}
       />
       {showDropIndicatorAfter ? (
         <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />

@@ -1,11 +1,10 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
@@ -21,36 +20,48 @@ export interface ExplorerTabDisplayControl {
   failed: boolean;
   toggle(): void;
 }
-const ExplorerTabDisplayContext = createContext<ExplorerTabDisplayControl | null>(null);
 
-export function ExplorerIconOnlyMenuItem({ separator = false }: { separator?: boolean }) {
-  const control = useContext(ExplorerTabDisplayContext);
+/**
+ * The checked Icon-only tabs row, for a tab's context menu or the empty strip's menu.
+ *
+ * The control arrives as a prop, never through React context: on compact layouts the menu renders
+ * in a bottom sheet portal that only carries the menu's own contexts, so a provider around the
+ * tab row would be invisible here. Renders nothing for a null control (outside the Explorer).
+ */
+export function ExplorerIconOnlyMenuItem({
+  control,
+}: {
+  control: ExplorerTabDisplayControl | null;
+}) {
   const { t } = useTranslation();
   if (!control) return null;
   return (
-    <>
-      {separator ? <ContextMenuSeparator /> : null}
-      <ContextMenuItem
-        selected={control.enabled}
-        showSelectedCheck
-        disabled={control.disabled}
-        status={control.pending ? "pending" : "idle"}
-        tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
-        closeOnSelect={false}
-        onSelect={control.toggle}
-        testID="explorer-icon-only-tabs-menu-item"
-      >
-        {t("explorerTabs.iconOnlyLabel")}
-      </ContextMenuItem>
-    </>
+    <ContextMenuItem
+      selected={control.enabled}
+      showSelectedCheck
+      disabled={control.disabled}
+      status={control.pending ? "pending" : "idle"}
+      tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
+      closeOnSelect={false}
+      onSelect={control.toggle}
+      testID="explorer-icon-only-tabs-menu-item"
+    >
+      {t("explorerTabs.iconOnlyLabel")}
+    </ContextMenuItem>
   );
 }
 
-export function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl {
+/**
+ * The Explorer's icon-only display state and toggle for a tab row in `host`.
+ *
+ * Returns null outside the Explorer, so callers render no toggle there. The preference is
+ * device-local, so only this device's settings loading disables the toggle.
+ */
+export function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl | null {
   const { settings, save, pending, failed, isLoading, error } =
     useSettingsSave<"explorerIconOnlyTabs">();
-  const iconOnly = host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
-  const toggleIconOnly = useCallback(() => {
+  const enabled = settings.paseoPlusPlus.explorerIconOnlyTabs;
+  const toggle = useCallback(() => {
     void save("explorerIconOnlyTabs", (current) => ({
       paseoPlusPlus: {
         ...current.paseoPlusPlus,
@@ -58,39 +69,40 @@ export function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl
       },
     }));
   }, [save]);
-  return useMemo<ExplorerTabDisplayControl>(
+  const control = useMemo<ExplorerTabDisplayControl>(
     () => ({
-      enabled: iconOnly,
+      enabled,
       disabled: isLoading || error !== null || pending !== null,
       pending: pending !== null,
       failed: failed !== null,
-      toggle: toggleIconOnly,
+      toggle,
     }),
-    [iconOnly, isLoading, error, pending, failed, toggleIconOnly],
+    [enabled, isLoading, error, pending, failed, toggle],
   );
+  return host === "explorer" ? control : null;
 }
 
+/**
+ * Adds the Icon-only tabs toggle to a right-click on the empty Explorer strip (pointer layouts
+ * only). Renders `children` unchanged for a null control.
+ */
 export function ExplorerTabStripContextMenu({
-  host,
   control,
   children,
 }: {
-  host: PaneHost;
-  control: ExplorerTabDisplayControl;
+  control: ExplorerTabDisplayControl | null;
   children: ReactNode;
 }) {
-  if (host !== "explorer") return children;
+  if (!control) return children;
   return (
-    <ExplorerTabDisplayContext.Provider value={control}>
-      <ContextMenu>
-        <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
-          {children}
-        </ContextMenuTrigger>
-        <ContextMenuContent width={STRIP_MENU_WIDTH} testID="explorer-tab-strip-menu">
-          <ExplorerIconOnlyMenuItem />
-        </ContextMenuContent>
-      </ContextMenu>
-    </ExplorerTabDisplayContext.Provider>
+    <ContextMenu>
+      <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
+        {children}
+      </ContextMenuTrigger>
+      <ContextMenuContent width={STRIP_MENU_WIDTH} testID="explorer-tab-strip-menu">
+        <ExplorerIconOnlyMenuItem control={control} />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
