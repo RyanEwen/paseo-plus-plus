@@ -66,13 +66,11 @@ export function selectKnownSidebarProjectKeys(): string[] {
 /** Read the current mode, preference and cached catalog at the action boundary. */
 function toggleSidebarProjectCollapsed(projectViewKey: string) {
   const view = useSidebarViewStore.getState();
-  const projectKeys =
-    view.groupMode === "project" && view.oneProjectAtATime ? selectKnownSidebarProjectKeys() : [];
-  useSidebarCollapsedSectionsStore.getState().toggleProjectCollapsed(projectViewKey, {
-    mode: view.groupMode,
-    oneProjectAtATime: view.oneProjectAtATime,
-    projectKeys,
-  });
+  const oneProjectAtATime = view.groupMode === "project" && view.oneProjectAtATime;
+  const collapseOthers = oneProjectAtATime ? selectKnownSidebarProjectKeys() : [];
+  useSidebarCollapsedSectionsStore
+    .getState()
+    .toggleProjectCollapsed(projectViewKey, { collapseOthers });
 }
 
 export function SidebarModelProvider({
