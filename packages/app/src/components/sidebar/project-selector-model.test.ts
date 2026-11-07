@@ -123,10 +123,16 @@ describe("projectsOnVisibleHosts", () => {
 
 describe("hostBranchIsActive", () => {
   test("marks the Hosts branch while a host is selected", () => {
-    expect(hostBranchIsActive({ hostFilters: ["home"], projectFilters: [] })).toBe(true);
+    expect(hostBranchIsActive({ hostFilters: ["home"] })).toBe(true);
   });
 
   test("leaves the Hosts branch unmarked with no filters", () => {
-    expect(hostBranchIsActive({ hostFilters: [], projectFilters: [] })).toBe(false);
+    expect(hostBranchIsActive({ hostFilters: [] })).toBe(false);
+  });
+
+  test("leaves the Hosts branch unmarked when only a project is selected", () => {
+    // The stored local filters, as the selector reads them from the sidebar view store.
+    const stored = { hostFilters: [], projectFilters: ["alpha"] };
+    expect(hostBranchIsActive(stored)).toBe(false);
   });
 });

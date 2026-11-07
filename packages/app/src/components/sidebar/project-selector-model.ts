@@ -67,10 +67,10 @@ export function projectsOnVisibleHosts<T extends Pick<WorkspaceStructureProject,
   );
 }
 
-/** Whether the Hosts branch carries the active-filter dot. */
-export function hostBranchIsActive(input: {
-  hostFilters: readonly string[];
-  projectFilters: readonly string[];
-}): boolean {
-  return input.hostFilters.length > 0 || input.projectFilters.length > 0;
+/**
+ * Whether the Hosts branch carries the active-filter dot. The branch holds only host filters,
+ * so a project selection alone leaves it unmarked.
+ */
+export function hostBranchIsActive(filters: { hostFilters: readonly string[] }): boolean {
+  return filters.hostFilters.length > 0;
 }

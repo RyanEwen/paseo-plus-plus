@@ -120,7 +120,7 @@ export function SidebarProjectSelector(): ReactElement {
           <>
             <MenuSubTrigger
               id="hostFilter"
-              indicator={hostBranchIsActive({ hostFilters, projectFilters })}
+              indicator={hostBranchIsActive({ hostFilters })}
               testID="sidebar-chooser-hosts"
             >
               {t("sidebar.display.hostFilter.label")}
