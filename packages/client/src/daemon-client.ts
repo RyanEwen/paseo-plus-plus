@@ -799,6 +799,7 @@ export interface DaemonPairingOfferOptions {
   timeout?: number;
 }
 type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
+type DaemonUpdateAvailabilityResponse = z.infer<typeof DaemonUpdateAvailabilityResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_agents_response" }
@@ -4218,7 +4219,7 @@ export class DaemonClient {
   }
 
   /** Read installable update availability without changing the selected host. */
-  async checkDaemonUpdateAvailability() {
+  async checkDaemonUpdateAvailability(): Promise<DaemonUpdateAvailabilityResponse["payload"]> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "daemon.update.check_availability.request",
@@ -4227,6 +4228,8 @@ export class DaemonClient {
     return this.sendRequest({
       requestId,
       message,
+      // The daemon bounds its own probes (npm 10 s, fork release lookup 120 s) and answers a
+      // failed check with a reason; this only covers a daemon that never answers.
       timeout: 300_000,
       select: (msg) => {
         const parsed = DaemonUpdateAvailabilityResponseSchema.safeParse(msg);
