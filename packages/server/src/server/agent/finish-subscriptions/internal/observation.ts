@@ -15,7 +15,7 @@ import { createHostObservationResolver, type ToolHosts } from "../../host-operat
 import { openFinishObservation } from "./observation-stream.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { AgentAttentionOutcome, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import type { FinishObservation } from "../index.js";
+import type { FinishObservation, FinishSubscription } from "../index.js";
 
 export function createFinishObservation(input: {
   agentManager: AgentManager;
@@ -26,6 +26,11 @@ export function createFinishObservation(input: {
   hosts(): ToolHosts;
   serverId: string;
   logger: Logger;
+  /**
+   * Awaited after an exact callback outcome is reserved and before it is enqueued. A watcher
+   * retired or superseded meanwhile releases the reservation instead of dispatching.
+   */
+  beforeCallbackEnqueue?(input: { record: FinishSubscription; outcomeId: string }): Promise<void>;
 }): FinishObservation {
   const { agentManager, agentStorage } = input;
   async function exactSnapshot(agentId: string) {
@@ -192,6 +197,7 @@ export function createFinishObservation(input: {
         return { outcomeId: outcome.id, terminal: isTerminalOutcome(outcome.kind) };
       }
       try {
+        await input.beforeCallbackEnqueue?.({ record, outcomeId: outcome.id });
         // Archive and retirement may occur while the durable reservation is written.
         if ((await agentStorage.get(record.callerAgentId))?.archivedAt)
           throw new Error("Finish caller is archived");
