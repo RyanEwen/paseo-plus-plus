@@ -395,9 +395,34 @@ test("keeps a failed answer pending for retry", async () => {
   }
 });
 
-test.each(["Stop", "notification abort", "steering"] as const)(
-  "%s keeps async questions pending through cancellation and resume",
-  async (trigger) => {
+type QuestionSetup = Awaited<ReturnType<typeof setup>>;
+
+const turnCancellations: { name: string; cancel: (turn: QuestionSetup) => Promise<void> }[] = [
+  {
+    name: "Stop",
+    cancel: async (turn) => {
+      await turn.session.interrupt();
+      await turn.finish("interrupted");
+    },
+  },
+  {
+    name: "a turn_aborted notification",
+    cancel: async (turn) => {
+      const canceled = waitForNextEvent(turn.session, "turn_canceled");
+      turn.appServer.child.stdout.write(
+        JSON.stringify({
+          method: "codex/event/turn_aborted",
+          params: { threadId: "thread-1", msg: { type: "turn_aborted", reason: "interrupted" } },
+        }) + "\n",
+      );
+      await canceled;
+    },
+  },
+];
+
+test.each(turnCancellations)(
+  "$name keeps async questions pending through cancellation and resume",
+  async ({ cancel }) => {
     const first = await setup();
     let metadata: Record<string, unknown> | undefined;
     try {
@@ -409,28 +434,9 @@ test.each(["Stop", "notification abort", "steering"] as const)(
           metadata = first.session.describePersistence()!.metadata;
         }
       });
-      if (trigger === "Stop") {
-        await first.session.interrupt();
-      } else if (trigger === "steering") {
-        expect(
-          await first.session.steerActiveTurn("Inspect the tests first.", {
-            expectedTurnId: first.turnId,
-            clearPendingPermissions: true,
-          }),
-        ).toEqual({ status: "accepted" });
-      }
-      if (trigger === "notification abort") {
-        const canceled = waitForNextEvent(first.session, "turn_canceled");
-        first.appServer.child.stdout.write(
-          JSON.stringify({
-            method: "codex/event/turn_aborted",
-            params: { threadId: "thread-1", msg: { type: "turn_aborted", reason: "interrupted" } },
-          }) + "\n",
-        );
-        await canceled;
-      } else {
-        await first.finish("interrupted");
-      }
+
+      await cancel(first);
+
       expect(first.session.getPendingPermissions()).toEqual(pending);
       expect(metadata?.asyncQuestions).toEqual([
         {
@@ -443,12 +449,10 @@ test.each(["Stop", "notification abort", "steering"] as const)(
         },
       ]);
       expect(first.events.filter((event) => event.type === "permission_resolved")).toEqual([]);
-      // Duplicate terminal notifications must not resolve the session-owned question either.
-      await first.finish("interrupted");
-      expect(first.session.getPendingPermissions()).toEqual(pending);
     } finally {
       await first.session.close();
     }
+
     const resumed = await setup(metadata);
     try {
       await resumed.ask();
@@ -464,6 +468,26 @@ test.each(["Stop", "notification abort", "steering"] as const)(
     }
   },
 );
+
+test("steering with clearPendingPermissions leaves async questions pending", async () => {
+  const { session, events, ask, turnId } = await setup();
+  try {
+    await ask();
+    const pending = session.getPendingPermissions();
+
+    expect(
+      await session.steerActiveTurn("Inspect the tests first.", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).toEqual({ status: "accepted" });
+
+    expect(session.getPendingPermissions()).toEqual(pending);
+    expect(events.filter((event) => event.type === "permission_resolved")).toEqual([]);
+  } finally {
+    await session.close();
+  }
+});
 
 test("late answers use the existing follow-up prompt and dismissal does not interrupt", async () => {
   const { session, appServer, ask, finish } = await setup();
