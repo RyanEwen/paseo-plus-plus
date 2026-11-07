@@ -10,11 +10,7 @@ import {
 } from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
-import {
-  EMPTY_PROMPT_READING_SOURCE,
-  type PromptReadingSource,
-  type PromptReadingPosition,
-} from "./prompt-reading-position";
+import { EMPTY_PROMPT_READING_SOURCE, type PromptReadingSource } from "./prompt-reading-position";
 import { useReadingPrompt, type ReadingPromptRequest } from "./use-reading-prompt";
 import { isDiscoverySettled, usePromptDiscovery } from "./use-prompt-discovery";
 import type { StreamItem } from "@/types/stream";

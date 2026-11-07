@@ -301,7 +301,8 @@ function recordClientRequest(
   directoryStarts.total[directory] += 1;
 }
 
-export async function installDaemonWebSocketGate(page: Page) {
+/** Gates the shared E2E daemon, or the daemon on `port` for a spec that runs its own. */
+export async function installDaemonWebSocketGate(page: Page, options: { port?: number } = {}) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
   let suppressAgentStream = false;
@@ -455,7 +456,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     return true;
   };
 
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+  const routePattern =
+    options.port === undefined
+      ? daemonWsRoutePattern()
+      : wsRoutePatternForPort(String(options.port));
+  await page.routeWebSocket(routePattern, (ws) => {
     if (!acceptingConnections) {
       blockedConnectionCount += 1;
       for (const resolve of blockedConnectionWaiters) resolve();
