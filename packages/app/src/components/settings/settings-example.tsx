@@ -1,5 +1,6 @@
 import { ScreenshotAnnotations, type ScreenshotOutline } from "./screenshot-annotations";
 import type { ScreenshotArrow } from "./screenshot-arrow";
+import { useMemo } from "react";
 import { Image, Text, View, useWindowDimensions, type ImageRequireSource } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -42,28 +43,28 @@ export function SettingsExample({ title, caption, images, testID }: SettingsExam
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const exampleWidth = Math.min(EXAMPLE_MAX_WIDTH, width - EXAMPLE_SCREEN_INSET);
-  const hasImages = images !== undefined && images.length > 0;
-  const annotated = hasImages && images.some((image) => image.arrows?.length);
-
-  const content = hasImages ? (
-    <View style={[styles.example, inlineUnistylesStyle({ width: exampleWidth })]}>
-      {images.map((image) => (
-        <SettingsExampleImageFrame
-          key={image.id}
-          image={image}
-          maxWidth={exampleWidth}
-          title={title}
-          caption={caption}
-        />
-      ))}
-      <Text style={styles.caption}>
-        {caption}
-        {annotated ? ` ${t("paseoPlusPlus.examples.annotated")}` : ""}
-      </Text>
-    </View>
-  ) : (
-    caption
-  );
+  // A stable element keeps the tip's info prop from changing on every render.
+  const content = useMemo(() => {
+    if (!images || images.length === 0) return caption;
+    const annotated = images.some((image) => image.arrows?.length);
+    return (
+      <View style={[styles.example, inlineUnistylesStyle({ width: exampleWidth })]}>
+        {images.map((image) => (
+          <SettingsExampleImageFrame
+            key={image.id}
+            image={image}
+            maxWidth={exampleWidth}
+            title={title}
+            caption={caption}
+          />
+        ))}
+        <Text style={styles.caption}>
+          {caption}
+          {annotated ? ` ${t("paseoPlusPlus.examples.annotated")}` : ""}
+        </Text>
+      </View>
+    );
+  }, [images, exampleWidth, title, caption, t]);
 
   return (
     <SettingsInfoTip
