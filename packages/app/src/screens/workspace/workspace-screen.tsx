@@ -880,21 +880,16 @@ function shouldShowWorkspaceScreenHeader(input: {
   return !input.isFocusModeEnabled || input.isMobile;
 }
 
-/**
- * Resolve compact navigation chrome and the chooser's empty-selection value.
- * Desktop fallback visibility remains caller-owned; retained tab IDs and layout are never mutated.
- */
+/** Choose between the standalone tab strip and the compact tab chooser. */
 function resolveWorkspaceTabNavigationPresentation(input: {
   isMobile: boolean;
   mobileWorkspaceTabsEnabled: boolean;
   shouldRenderDesktopPaneFallback: boolean;
-  activeTabId: string | null | undefined;
 }) {
   return {
     showStandaloneTabs:
       (input.isMobile && input.mobileWorkspaceTabsEnabled) || input.shouldRenderDesktopPaneFallback,
     showLegacyMobileSwitcher: input.isMobile && !input.mobileWorkspaceTabsEnabled,
-    activeTabKey: input.activeTabId ?? "",
   };
 }
 
@@ -2919,7 +2914,6 @@ function WorkspaceScreenContent({
       isMobile,
       mobileWorkspaceTabsEnabled,
       shouldRenderDesktopPaneFallback,
-      activeTabId,
     });
   useEffect(() => {
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
