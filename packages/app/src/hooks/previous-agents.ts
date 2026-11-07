@@ -2,11 +2,16 @@ import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import type { AgentHistoryResult } from "./use-agent-history";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 
-/** Keep unopened conversations once each; runtime status does not indicate tab visibility. */
-export function selectPreviousAgents(
-  agents: readonly AggregatedAgent[],
+/**
+ * Keep the history rows that have no open tab, once each per host.
+ *
+ * Runtime status does not say whether a tab is open: a running hidden subagent and an idle
+ * agent whose tab was closed both belong in the list.
+ */
+export function selectPreviousAgents<T extends Pick<AggregatedAgent, "id" | "serverId">>(
+  agents: readonly T[],
   tabs: readonly WorkspaceTab[],
-): AggregatedAgent[] {
+): T[] {
   const openIds = new Set(
     tabs.flatMap((tab) => (tab.target.kind === "agent" ? [tab.target.agentId] : [])),
   );
