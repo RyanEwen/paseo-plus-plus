@@ -287,6 +287,17 @@ export async function saveAppSettings(input: {
   });
 }
 
+/**
+ * Save through ordinary local storage without consulting the settings sync handler. Settings
+ * sync uses it for its own writes: adopted host values and device-only leaves.
+ */
+export async function saveAppSettingsLocally(input: {
+  queryClient: QueryClient;
+  updates: AppSettingsUpdate;
+}): Promise<void> {
+  await saveAppSettingsPure({ ...input, deps: productionDeps });
+}
+
 export async function loadAppSettingsFromStorage(deps?: SettingsDeps): Promise<AppSettings> {
   return loadAppSettingsFromStoragePure(deps ?? productionDeps);
 }

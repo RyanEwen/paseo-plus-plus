@@ -15,12 +15,9 @@ import { queryClient } from "@/data/query-client";
 import {
   APP_SETTINGS_QUERY_KEY,
   normalizeAppSettings,
-  saveAppSettings,
   type AppSettings,
-  type SettingsDeps,
 } from "@/hooks/use-settings/storage";
-import { loadAppSettingsFromStorage } from "@/hooks/use-settings";
-import { DEFAULT_DESKTOP_SETTINGS } from "@/desktop/settings/desktop-settings";
+import { loadAppSettingsFromStorage, saveAppSettingsLocally } from "@/hooks/use-settings";
 import { isSettingsObject } from "@getpaseo/protocol/app-settings-values";
 import { SettingsSyncModel } from "./model";
 import {
@@ -40,15 +37,6 @@ import { useSessionStore } from "@/stores/session-store";
 const STORAGE_KEY = "app-settings-sync";
 // Optional legacy wire keys stay accepted by hosts, but this client stores no value for them.
 const WIRE_ONLY_APP_KEYS = new Set<string>(["useLegacyTerminalRenderer", "toolCallDetailLevel"]);
-
-const deps: SettingsDeps = {
-  storage: AsyncStorage,
-  desktop: {
-    isElectron: () => false,
-    loadDesktopSettings: async () => DEFAULT_DESKTOP_SETTINGS,
-    migrateLegacyDesktopSettings: async () => {},
-  },
-};
 
 /** Let every registered domain load its local state before sync reads or replaces it. */
 export async function initializeSettingsSyncDomains(): Promise<void> {
@@ -112,10 +100,9 @@ async function applyValues(values: Record<string, unknown>): Promise<void> {
   await queryClient.getQueryCache().find({ queryKey: APP_SETTINGS_QUERY_KEY })?.promise;
   const app = normalizeAppSettings(isSettingsObject(values.app) ? values.app : {});
   // Historical hosts may still store serverId. It remains untouched on the host and device.
-  await saveAppSettings({
+  await saveAppSettingsLocally({
     queryClient,
     updates: (current) => preserveDeviceAppSettings(app, current),
-    deps,
   });
   // Domains project their own values only after the app preferences are durable.
   await applyDomainValues(listSettingsDomainAdapters(), values, app);
@@ -136,10 +123,9 @@ export async function saveLocalUsageHost(
   client: QueryClient,
   serverId: string | null,
 ): Promise<void> {
-  await saveAppSettings({
+  await saveAppSettingsLocally({
     queryClient: client,
     updates: (current) => ({ usage: { ...current.usage, serverId } }),
-    deps,
   });
 }
 
@@ -148,9 +134,8 @@ export async function saveLocalDeviceSettings(
   client: QueryClient,
   updates: DeviceAppSettingsUpdate,
 ): Promise<void> {
-  await saveAppSettings({
+  await saveAppSettingsLocally({
     queryClient: client,
     updates: (current) => applyDeviceAppSettingsUpdate(updates, current),
-    deps,
   });
 }
