@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
-import { promises as fs } from "node:fs";
+import { afterEach, expect, test } from "vitest";
 import type {
   AgentSnapshotPayload,
   CreationSnapshot,
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
+import { writeFileAtomic } from "../atomic-file.js";
 import { CreationService, type CreationInput, type CreationAgentAttempt } from "./index.js";
 
 const silentLogger = pino({ level: "silent" });
@@ -529,34 +529,36 @@ test("safe retry rechecks registered resources and exact request config and env"
 test("failed safe-receipt publication cannot grant retry authority after restart", async () => {
   const f = await fixture();
   let callbacks = 0;
-  const rename = fs.rename;
   let failSafeWrite = false;
-  const spy = vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
-    if (failSafeWrite) {
-      failSafeWrite = false;
-      throw new Error("safe receipt write refused");
-    }
-    return rename(...args);
-  });
-  try {
-    f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
-      callbacks++;
-      attempt.acknowledgeManager(id);
-      attempt.certifyHistoryIntentReservation(id, workspace.id);
-      failSafeWrite = true;
-      throw new Error("safe hook failure");
-    };
-    await expect(f.service.create(f.input)).rejects.toThrow("safe receipt write refused");
-    const durable = (await readReceipt(f.directory)).record;
-    expect(durable.inFlight).toBe("agent");
-    expect(durable.preDispatchAgentFailure).toBeUndefined();
-    const result = await new CreationService(f.directory, silentLogger).create(f.input);
-    expect(result).toMatchObject({ failedStage: "agent", outcomeUnknown: true });
-    expect(callbacks).toBe(1);
-    expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
-  } finally {
-    spy.mockRestore();
-  }
+  // Refuses the one receipt write that would publish the safe-failure classification.
+  const service = new CreationService(
+    f.directory,
+    silentLogger,
+    undefined,
+    undefined,
+    async (filePath, contents) => {
+      if (failSafeWrite) {
+        failSafeWrite = false;
+        throw new Error("safe receipt write refused");
+      }
+      await writeFileAtomic(filePath, contents);
+    },
+  );
+  f.input.createAgent = async (id, _workspace, _onReady, attempt) => {
+    callbacks++;
+    attempt.acknowledgeManager(id);
+    attempt.certifyHistoryIntentReservation(id, workspace.id);
+    failSafeWrite = true;
+    throw new Error("safe hook failure");
+  };
+  await expect(service.create(f.input)).rejects.toThrow("safe receipt write refused");
+  const durable = (await readReceipt(f.directory)).record;
+  expect(durable.inFlight).toBe("agent");
+  expect(durable.preDispatchAgentFailure).toBeUndefined();
+  const result = await new CreationService(f.directory, silentLogger).create(f.input);
+  expect(result).toMatchObject({ failedStage: "agent", outcomeUnknown: true });
+  expect(callbacks).toBe(1);
+  expect((await readReceipt(f.directory)).record.preDispatchAgentFailure).toBeUndefined();
 });
 
 test("manager entry without a successful exclusive reservation cannot certify another intention", async () => {

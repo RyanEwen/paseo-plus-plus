@@ -14,6 +14,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 import {
   AgentStorage,
   parseStoredAgentRecord as normalizeStoredRecord,
@@ -1169,13 +1170,31 @@ describe("AgentStorage", () => {
   });
 });
 
+/** A record writer that can be told to fail its next write, standing in for a full disk. */
+function faultableWriter() {
+  let nextFailure: Error | undefined;
+  return {
+    failNextWrite(error: Error) {
+      nextFailure = error;
+    },
+    write: async (filePath: string, value: unknown) => {
+      const failure = nextFailure;
+      nextFailure = undefined;
+      if (failure) throw failure;
+      await writeJsonFileAtomic(filePath, value);
+    },
+  };
+}
+
 describe("configured Claude rewind commits", () => {
   let directory: string;
   let registry: AgentStorage;
+  let writer: ReturnType<typeof faultableWriter>;
   const log = createTestLogger();
   beforeEach(async () => {
     directory = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-rewind-storage-"));
-    registry = new AgentStorage(directory, log);
+    writer = faultableWriter();
+    registry = new AgentStorage(directory, log, { writeJsonFile: writer.write });
     await registry.applySnapshot(
       createManagedAgent({
         id: "guarded",
@@ -1215,16 +1234,10 @@ describe("configured Claude rewind commits", () => {
       persistence: null,
       providerHistory: { ...intent.providerHistory!, registration: "registered" },
     });
-    const writer = vi
-      .spyOn(
-        registry as unknown as { writeRecord(record: StoredAgentRecord): Promise<void> },
-        "writeRecord",
-      )
-      .mockRejectedValueOnce(new Error("fixture-registration-write-failed"));
+    writer.failNextWrite(new Error("fixture-registration-write-failed"));
     await expect(
       registry.applySnapshot(snapshot, { registerClaudeEmptyCreation: true }),
     ).rejects.toThrow("fixture-registration-write-failed");
-    writer.mockRestore();
     expect(await new AgentStorage(directory, log).get("guarded")).toBeNull();
     expect(
       (await registry.get("guarded", { includeHistoryIntents: true }))?.providerHistory
@@ -1469,12 +1482,7 @@ describe("configured Claude rewind commits", () => {
   });
   test("failed atomic record writer never adopts or overwrites the prior native identity", async () => {
     const before = (await registry.get("guarded"))!;
-    const writer = vi
-      .spyOn(
-        registry as unknown as { writeRecord(record: StoredAgentRecord): Promise<void> },
-        "writeRecord",
-      )
-      .mockRejectedValueOnce(new Error("fixture-record-write-failed"));
+    writer.failNextWrite(new Error("fixture-record-write-failed"));
     const adopt = vi.fn();
     await expect(
       createClaudeIdentityStore(registry).commitRewind({
@@ -1483,7 +1491,6 @@ describe("configured Claude rewind commits", () => {
         onCommitted: adopt,
       }),
     ).rejects.toThrow("fixture-record-write-failed");
-    writer.mockRestore();
     expect(adopt).not.toHaveBeenCalled();
     expect(await new AgentStorage(directory, log).get("guarded")).toEqual(
       normalizeStoredRecord(before),

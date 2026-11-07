@@ -183,9 +183,18 @@ export class AgentStorage {
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
 
-  constructor(baseDir: string, logger: Logger) {
+  private readonly writeJsonFile: (filePath: string, value: unknown) => Promise<void>;
+
+  constructor(
+    baseDir: string,
+    logger: Logger,
+    /** Record file writer; tests inject failures here. Defaults to the atomic JSON writer. */
+    options: { writeJsonFile?: (filePath: string, value: unknown) => Promise<void> } = {},
+  ) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+    this.writeJsonFile =
+      options.writeJsonFile ?? ((filePath, value) => writeJsonFileAtomic(filePath, value));
   }
 
   async initialize(): Promise<void> {
@@ -352,7 +361,7 @@ export class AgentStorage {
     const previousPath = this.pathById.get(agentId);
     const nextPath = this.buildRecordPath(record);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await this.writeJsonFile(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {

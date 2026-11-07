@@ -198,6 +198,11 @@ export class CreationService {
       snapshot: CreationSnapshot,
     ) => Promise<void> = async () => {},
     private readonly legacyDirectory?: string,
+    /** Receipt file writer; tests inject failures here. Defaults to the atomic writer. */
+    private readonly writeReceiptFile: (filePath: string, contents: string) => Promise<void> = (
+      filePath,
+      contents,
+    ) => writeFileAtomic(filePath, contents),
   ) {}
 
   async create(input: CreationInput, observer?: Observer): Promise<CreationSnapshot> {
@@ -503,7 +508,7 @@ export class CreationService {
     // Serialize now: the runner mutates the record after queueing this write.
     const contents = JSON.stringify(record, null, 2);
     return this.accessReceipt(identity, () =>
-      writeFileAtomic(join(this.directory, `${identity}.json`), contents),
+      this.writeReceiptFile(join(this.directory, `${identity}.json`), contents),
     );
   }
   private read(identity: string): Promise<Record | null> {
