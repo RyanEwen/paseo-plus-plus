@@ -61,11 +61,8 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
-import type {
-  PaintedNativeTailBinding,
-  PaintedNativeTailEvidence,
-  PaintedNativeTailRow,
-} from "./painted-landing";
+import { usePaintedNativeRows } from "./actual-prompt/use-painted-native-rows";
+import type { PaintedNativeTailBinding, PaintedNativeTailEvidence } from "./painted-landing";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type {
   StreamRenderInput,
@@ -181,8 +178,9 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
     // An animated ref returns a shadow node, never React's cleanup function.
     flatListRef(viewport);
   });
+  const paintedRows = usePaintedNativeRows();
   const clearPaintedRows = useStableEvent(() => {
-    paintedRows.current.clear();
+    paintedRows.clear();
   });
   const invalidatePendingViewportReads = useStableEvent(() => {
     readingRequest.current += 1;
@@ -247,7 +245,6 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
   const [pinnedId, setPinnedId] = useState<string | null>(null);
   const mountedRows = useRef(new Set<string>());
   const actualGeometry = useRef(new Map<string, ActualNativeRowGeometry>());
-  const paintedRows = useRef(new Map<string, PaintedNativeTailRow>());
   const measuredViewportIdentity = useRef<object | null>(null);
   const measuredContentIdentity = useRef<object | null>(null);
   const [geometryRevision, setGeometryRevision] = useState(0);
@@ -455,17 +452,8 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
       measuredViewportIdentity.current === viewport &&
       measuredContentIdentity.current === viewport;
     if (!nativeOwnerAlive.current || !currentViewport) return null;
-    for (const id of mountedRows.current) {
-      const row = paintedRows.current.get(id);
-      if (
-        row?.binding === paintedBinding &&
-        row.height > 0 &&
-        paintedBinding.items[row.index]?.id === id
-      ) {
-        return { current: paintedBinding, row };
-      }
-    }
-    return null;
+    const row = paintedRows.find(paintedBinding, mountedRows.current);
+    return row ? { current: paintedBinding, row } : null;
   });
 
   const bottomAnchorController = useBottomAnchorController({
@@ -1039,20 +1027,12 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
     if (mounted) mountedRows.current.add(id);
     else {
       mountedRows.current.delete(id);
-      paintedRows.current.delete(id);
+      paintedRows.forget(id);
     }
   });
   const recordPaintedRow = useStableEvent((measurement: PaintedNativeRowMeasurement) => {
-    const { binding, item, index, height } = measurement;
-    if (binding.items[index] !== item) return;
-    if (!(height > 0) || !Number.isFinite(height)) {
-      // A later zero frame invalidates this binding's earlier positive frame.
-      if (paintedRows.current.get(item.id)?.binding === binding)
-        paintedRows.current.delete(item.id);
-      return;
-    }
-    paintedRows.current.set(item.id, { binding, id: item.id, index, height, mounted: true });
-    bottomAnchorController.notifyPaintedNativeTailMaybeChanged();
+    if (paintedRows.record(measurement))
+      bottomAnchorController.notifyPaintedNativeTailMaybeChanged();
   });
   const CellRendererComponent = useMemo(
     () =>
