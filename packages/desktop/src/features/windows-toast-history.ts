@@ -21,7 +21,7 @@ const historySchema = z.array(
 /** One entry in this app's Notification Center history. */
 export type DeliveredAgentToast = z.infer<typeof historySchema>[number];
 
-type WindowsToastHistoryOperation =
+export type WindowsToastHistoryOperation =
   | { operation: "list" }
   | { operation: "remove"; toasts: DeliveredAgentToast[] }
   | { operation: "removeCurrentLive"; tag: string };
@@ -74,9 +74,12 @@ if ($inputData.operation -eq 'list') {
 } else { throw 'Unsupported toast operation' }
 `;
 
-/** Inspect only the executable-owned, verified fork shortcut; never change the process AUMID. */
-export function createWindowsToastHistory(owner: WindowsToastHistoryOwner) {
-  async function run(request: WindowsToastHistoryOperation): Promise<string> {
+/** Runs one history operation and returns the script's trimmed stdout. */
+export type WindowsToastHistoryRunner = (request: WindowsToastHistoryOperation) => Promise<string>;
+
+/** Run the history script in PowerShell against the given executable's identity. */
+function createPowerShellRunner(owner: WindowsToastHistoryOwner): WindowsToastHistoryRunner {
+  return async (request) => {
     const child = execFileAsync(
       "powershell.exe",
       [
@@ -93,18 +96,53 @@ export function createWindowsToastHistory(owner: WindowsToastHistoryOwner) {
     );
     const { stdout } = await child;
     return stdout.replace(/^\uFEFF/, "").trim();
+  };
+}
+
+/**
+ * Inspect only the executable-owned, verified fork shortcut; never change the process AUMID.
+ *
+ * Every operation starts a PowerShell process, so concurrent reads share one in-flight list,
+ * and removals run one at a time so two processes never change history at once.
+ *
+ * @param run replaces the PowerShell runner in tests.
+ */
+export function createWindowsToastHistory(
+  owner: WindowsToastHistoryOwner,
+  run: WindowsToastHistoryRunner = createPowerShellRunner(owner),
+) {
+  let pendingList: Promise<DeliveredAgentToast[]> | null = null;
+  let changes: Promise<void> = Promise.resolve();
+
+  function change(request: WindowsToastHistoryOperation): Promise<void> {
+    const next = changes.then(async () => {
+      await run(request);
+    });
+    // A failed removal reports to its caller without blocking later removals.
+    changes = next.catch(() => {});
+    return next;
   }
-  return {
-    async list(): Promise<DeliveredAgentToast[]> {
+
+  async function readList(): Promise<DeliveredAgentToast[]> {
+    try {
       return historySchema.parse(JSON.parse(await run({ operation: "list" })));
+    } finally {
+      pendingList = null;
+    }
+  }
+
+  return {
+    list(): Promise<DeliveredAgentToast[]> {
+      pendingList ??= readList();
+      return pendingList;
     },
     /** Only the main-process on-show path supplies its freshly created UUID.
      * This never searches or removes from legacy history. */
-    async removeCurrentLive(tag: string): Promise<void> {
-      await run({ operation: "removeCurrentLive", tag });
+    removeCurrentLive(tag: string): Promise<void> {
+      return change({ operation: "removeCurrentLive", tag });
     },
-    async remove(toasts: DeliveredAgentToast[]): Promise<void> {
-      await run({ operation: "remove", toasts });
+    remove(toasts: DeliveredAgentToast[]): Promise<void> {
+      return change({ operation: "remove", toasts });
     },
   };
 }
