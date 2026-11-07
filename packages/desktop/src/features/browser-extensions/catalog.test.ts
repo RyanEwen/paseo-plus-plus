@@ -211,7 +211,11 @@ describe("browser extension catalog", () => {
       manifest: { manifest_version: 3, name: "Fixture extension", permissions: ["storage"] },
       url: `chrome-extension://${f.extension.id}/`,
     };
-    f.runtime.load = async () => nativeExtension;
+    // Like the fixture's own load, mark the runtime loaded so list() does not prune the entry.
+    f.runtime.load = async () => {
+      f.loadExternally();
+      return nativeExtension;
+    };
     const expected = { ...f.extension, source: "store", enabled: true };
 
     const catalog = f.create();
