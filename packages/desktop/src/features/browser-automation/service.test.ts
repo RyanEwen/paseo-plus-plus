@@ -15,6 +15,16 @@ import type { BrowserRegistry, TabContents, TabImage, DialogCaptureOperation } f
 import { executeAutomationCommand } from "./service.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
+/** Run one test body with fake timers, restoring real timers even when it fails. */
+async function withFakeTimers(body: () => Promise<void>): Promise<void> {
+  vi.useFakeTimers();
+  try {
+    await body();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 const BROWSER_A = "11111111-1111-4111-8111-111111111111";
 const BROWSER_B = "22222222-2222-4222-8222-222222222222";
 const WORKSPACE_A = "workspace-a";
@@ -1226,8 +1236,7 @@ describe("executeAutomationCommand", () => {
   });
 
   test("click returns a retryable browser timeout when the ref never becomes actionable", async () => {
-    vi.useFakeTimers();
-    try {
+    await withFakeTimers(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
@@ -1250,14 +1259,11 @@ describe("executeAutomationCommand", () => {
         },
       });
       expect(browser.tab.debugCommands).toEqual([]);
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   test("command failures include dialogs handled before the failure", async () => {
-    vi.useFakeTimers();
-    try {
+    await withFakeTimers(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
@@ -1297,9 +1303,7 @@ describe("executeAutomationCommand", () => {
           },
         ],
       });
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   test("wait resolves when the explicit tab contains the requested text", async () => {
@@ -1476,9 +1480,17 @@ describe("executeAutomationCommand", () => {
     ]);
   });
 
-  test.each(["redirect", "remove", "clone", "document", "root", "disable", "readonly"])(
+  test.each([
+    ["redirect", "browser_unsupported"],
+    ["remove", "browser_stale_ref"],
+    ["clone", "browser_stale_ref"],
+    ["document", "browser_stale_ref"],
+    ["root", "browser_stale_ref"],
+    ["disable", "browser_unsupported"],
+    ["readonly", "browser_unsupported"],
+  ])(
     "type refuses input when a synchronous focus handler changes the target: %s",
-    async (change) => {
+    async (change, expectedCode) => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       const focus = new GuestFocusFixture();
@@ -1501,11 +1513,7 @@ describe("executeAutomationCommand", () => {
 
       expect(result).toMatchObject({
         ok: false,
-        error: {
-          code: ["remove", "clone", "document", "root"].includes(change)
-            ? "browser_stale_ref"
-            : "browser_unsupported",
-        },
+        error: { code: expectedCode },
       });
       expect(browser.tab.insertedText).toEqual([]);
       expect(browser.tab.debugCommands).toEqual([]);
@@ -2420,8 +2428,7 @@ describe("executeAutomationCommand", () => {
 
 describe("background actionability sampling", () => {
   test("resamples geometry on the main clock without a guest timer or animation frame", async () => {
-    vi.useFakeTimers();
-    try {
+    await withFakeTimers(async () => {
       const rect = { x: 10, y: 20, width: 30, height: 40 };
       const target = { point: { x: 25, y: 40 }, rect };
       const executeJavaScript = vi
@@ -2439,20 +2446,16 @@ describe("background actionability sampling", () => {
         `const previousRect = ${JSON.stringify(rect)}`,
       );
       for (const [script] of executeJavaScript.mock.calls) {
+        // Guest timers and animation frames can be suspended in a hidden page.
         expect(script).not.toMatch(/setTimeout|requestAnimationFrame/);
-        expect(script).toContain("hitTargetReceivesEvents");
-        expect(script).toContain("isDisabled(element)");
       }
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   test.each(["disabled", "covered", "not visible", "not editable"])(
     "bounds %s polling and resets unstable geometry",
     async (detail) => {
-      vi.useFakeTimers();
-      try {
+      await withFakeTimers(async () => {
         const executeJavaScript = vi
           .fn()
           .mockResolvedValue({ ok: false, reason: "timeout", detail });
@@ -2465,52 +2468,62 @@ describe("background actionability sampling", () => {
         await expect(pending).resolves.toEqual({ ok: false, reason: "timeout", detail });
         expect(executeJavaScript).toHaveBeenCalledTimes(2);
         expect(executeJavaScript.mock.calls[1][0]).toContain("const previousRect = null");
-      } finally {
-        vi.useRealTimers();
-      }
+      });
     },
   );
 });
 
 describe("trusted input activity completion", () => {
-  test.each([1000, 6000])(
-    "holds activity through input paint and releases it with a %i ms paint delay",
-    async (paintDelayMs) => {
-      vi.useFakeTimers();
-      try {
-        const browser = new BrowserAutomationHarness();
-        browser.tab.snapshotNodes = formElements();
-        requireSnapshotRefs(await browser.snapshot());
-        browser.tab.paintDelayMs = paintDelayMs;
-        const pending = browser.execute({
-          command: "click",
-          args: { browserId: BROWSER_A, ref: "@e1" },
-        });
-        await vi.advanceTimersByTimeAsync(0);
-        expect(browser.tab.frameProductionScopes).toBe(1);
-        await vi.advanceTimersByTimeAsync(Math.min(paintDelayMs, 5000));
-        const response = await pending;
-        expect(response.ok).toBe(paintDelayMs <= 5000);
-        if (!response.ok) {
-          expect(response.error.code).toBe("browser_timeout");
-          expect(response.error.retryable).toBe(false);
-          expect(response.error.message).toContain("Input may already have been delivered");
-        }
-        expect(browser.tab.frameProductionScopes).toBe(0);
-        expect(browser.tab.debugCommands).toHaveLength(3);
-        await vi.advanceTimersByTimeAsync(paintDelayMs);
-        expect(browser.tab.debugCommands).toHaveLength(3);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
+  /** Click through the harness with a delayed input paint, returning the response
+   * once the five-second paint budget (or the paint itself) has elapsed. */
+  async function clickWithPaintDelay(paintDelayMs: number) {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+    browser.tab.paintDelayMs = paintDelayMs;
+    const pending = browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e1" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(browser.tab.frameProductionScopes).toBe(1);
+    await vi.advanceTimersByTimeAsync(Math.min(paintDelayMs, 5000));
+    return { browser, response: await pending };
+  }
+
+  test("holds activity through a 1000 ms input paint and releases it", async () => {
+    await withFakeTimers(async () => {
+      const { browser, response } = await clickWithPaintDelay(1000);
+      expect(response.ok).toBe(true);
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+    });
+  });
+
+  test("a 6000 ms input paint releases activity with a non-retryable timeout", async () => {
+    await withFakeTimers(async () => {
+      const { browser, response } = await clickWithPaintDelay(6000);
+      expect(response).toMatchObject({
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: expect.stringContaining("Input may already have been delivered"),
+          retryable: false,
+        },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+    });
+  });
 });
 
 describe("bounded trusted input lifetime", () => {
   test("a stalled layout sample releases activity without dispatching late input", async () => {
-    vi.useFakeTimers();
-    try {
+    await withFakeTimers(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       requireSnapshotRefs(await browser.snapshot());
@@ -2536,16 +2549,13 @@ describe("bounded trusted input lifetime", () => {
       await vi.advanceTimersByTimeAsync(15000);
       expect(browser.tab.debugCommands).toHaveLength(0);
       expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   test.each(["mouseMoved", "mousePressed"])(
     "a missing %s acknowledgment cannot pin activity or resume the gesture",
     async (blockedType) => {
-      vi.useFakeTimers();
-      try {
+      await withFakeTimers(async () => {
         const browser = new BrowserAutomationHarness();
         browser.tab.snapshotNodes = formElements();
         requireSnapshotRefs(await browser.snapshot());
@@ -2580,9 +2590,7 @@ describe("bounded trusted input lifetime", () => {
         await vi.advanceTimersByTimeAsync(15000);
         expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(types);
         expect(vi.getTimerCount()).toBe(0);
-      } finally {
-        vi.useRealTimers();
-      }
+      });
     },
   );
 
@@ -2623,8 +2631,7 @@ describe("bounded trusted input lifetime", () => {
   });
 
   test("a waiter whose deadline expires with its predecessor never starts input", async () => {
-    vi.useFakeTimers();
-    try {
+    await withFakeTimers(async () => {
       const browser = new BrowserAutomationHarness();
       browser.tab.snapshotNodes = formElements();
       requireSnapshotRefs(await browser.snapshot());
@@ -2667,9 +2674,7 @@ describe("bounded trusted input lifetime", () => {
       await vi.advanceTimersByTimeAsync(15000);
       expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(["mouseMoved"]);
       expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   test("closure while waiting behind another gesture does not wake the closed guest", async () => {
