@@ -526,37 +526,15 @@ export function PullRequestPane({
           ) : null}
         </PaneContentToolbar>
 
-        <WorkspaceHttpLinkMenu url={data.url}>
-          <Pressable onPress={handleOpenPrUrl} style={styles.header}>
-            {({ hovered }) => (
-              <>
-                <Text style={styles.title} testID="pr-pane-title">
-                  {data.title}
-                  <Text style={styles.titleNumber}>
-                    {" "}
-                    {forgePresentation.numberPrefix}
-                    {data.number}
-                  </Text>
-                </Text>
-                <View style={styles.metaLine}>
-                  <StateIcon size={14} uniProps={statePresentation.iconColor} />
-                  <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
-                    {t(getStateLabelKey(data.state))}
-                  </Text>
-                  {nativeHeaderMeta}
-                  {repoIdentity ? (
-                    <Text style={styles.repoRef} numberOfLines={1}>
-                      {repoIdentity}
-                    </Text>
-                  ) : null}
-                  <View style={hovered ? styles.headerLinkIcon : styles.headerLinkIconHidden}>
-                    <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
-                  </View>
-                </View>
-              </>
-            )}
-          </Pressable>
-        </WorkspaceHttpLinkMenu>
+        <PullRequestHeaderLink
+          data={data}
+          numberPrefix={forgePresentation.numberPrefix}
+          StateIcon={StateIcon}
+          stateIconColor={statePresentation.iconColor}
+          meta={nativeHeaderMeta}
+          repoIdentity={repoIdentity}
+          onPress={handleOpenPrUrl}
+        />
 
         {nativeChecksSection ?? (
           <ChecksSection
@@ -622,6 +600,63 @@ export function PullRequestPane({
         </Section>
       </ScrollView>
     </View>
+  );
+}
+
+/**
+ * The pane's title block, which opens the pull request. Kept as its own component so the workspace
+ * link menu around it does not deepen the pane's JSX.
+ */
+function PullRequestHeaderLink({
+  data,
+  numberPrefix,
+  StateIcon,
+  stateIconColor,
+  meta,
+  repoIdentity,
+  onPress,
+}: {
+  data: PrPaneData;
+  numberPrefix: string;
+  StateIcon: PrStatePresentation["Icon"];
+  stateIconColor: IconColorMapping;
+  meta: React.ReactNode;
+  repoIdentity: string | null;
+  onPress: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <WorkspaceHttpLinkMenu url={data.url}>
+      <Pressable onPress={onPress} style={styles.header}>
+        {({ hovered }) => (
+          <>
+            <Text style={styles.title} testID="pr-pane-title">
+              {data.title}
+              <Text style={styles.titleNumber}>
+                {" "}
+                {numberPrefix}
+                {data.number}
+              </Text>
+            </Text>
+            <View style={styles.metaLine}>
+              <StateIcon size={14} uniProps={stateIconColor} />
+              <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
+                {t(getStateLabelKey(data.state))}
+              </Text>
+              {meta}
+              {repoIdentity ? (
+                <Text style={styles.repoRef} numberOfLines={1}>
+                  {repoIdentity}
+                </Text>
+              ) : null}
+              <View style={hovered ? styles.headerLinkIcon : styles.headerLinkIconHidden}>
+                <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
+              </View>
+            </View>
+          </>
+        )}
+      </Pressable>
+    </WorkspaceHttpLinkMenu>
   );
 }
 
