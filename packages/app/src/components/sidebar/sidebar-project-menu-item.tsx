@@ -7,7 +7,10 @@ import { MenuItem, type MenuItemSecondary } from "@/components/ui/menu";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 
-/** A project option shared by the sidebar selector and legacy multi-select filter. */
+/**
+ * A project row in the sidebar chooser: the name selects only this project, and a separate
+ * checkbox adds or removes it from a multi-project selection.
+ */
 export function SidebarProjectMenuItem({
   viewKey,
   label,
@@ -16,7 +19,6 @@ export function SidebarProjectMenuItem({
   activity,
   onSelect,
   onToggle,
-  closeOnSelect = true,
   testID,
 }: {
   viewKey: string;
@@ -25,26 +27,22 @@ export function SidebarProjectMenuItem({
   selected: boolean;
   activity?: SidebarProjectActivity;
   onSelect: (viewKey: string) => void;
-  /** Supplying a toggle splits single selection from an independent multi-select checkbox. */
-  onToggle?: (viewKey: string) => void;
-  closeOnSelect?: boolean;
+  /** Adds or removes this project from the selection without closing the menu. */
+  onToggle: (viewKey: string) => void;
   testID: string;
 }): ReactElement {
   const { t } = useTranslation();
   const handleSelect = useCallback(() => onSelect(viewKey), [viewKey, onSelect]);
-  const handleToggle = useCallback(() => onToggle?.(viewKey), [onToggle, viewKey]);
-  const secondary = useMemo<MenuItemSecondary | undefined>(
-    () =>
-      onToggle
-        ? {
-            kind: "toggle",
-            checked: selected,
-            accessibilityLabel: t("sidebar.projectSelector.includeProject", { project: label }),
-            onSelect: handleToggle,
-            testID: `${testID}-checkbox`,
-          }
-        : undefined,
-    [onToggle, selected, t, label, handleToggle, testID],
+  const handleToggle = useCallback(() => onToggle(viewKey), [onToggle, viewKey]);
+  const secondary = useMemo<MenuItemSecondary>(
+    () => ({
+      kind: "toggle",
+      checked: selected,
+      accessibilityLabel: t("sidebar.projectSelector.includeProject", { project: label }),
+      onSelect: handleToggle,
+      testID: `${testID}-checkbox`,
+    }),
+    [selected, t, label, handleToggle, testID],
   );
   const trailing = useMemo(
     () =>
@@ -74,14 +72,10 @@ export function SidebarProjectMenuItem({
 
   return (
     <MenuItem
-      selected={onToggle ? undefined : selected}
       secondary={secondary}
       trailing={trailing}
-      accessibilityLabel={
-        onToggle ? t("sidebar.projectSelector.selectOnlyProject", { project: label }) : label
-      }
+      accessibilityLabel={t("sidebar.projectSelector.selectOnlyProject", { project: label })}
       leading={leading}
-      closeOnSelect={closeOnSelect}
       onSelect={handleSelect}
       testID={testID}
     >

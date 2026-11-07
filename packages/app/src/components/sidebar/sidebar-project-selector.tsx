@@ -52,8 +52,8 @@ export function SidebarProjectSelector(): ReactElement {
   const activity = useSidebarProjectActivity(allProjects, allWorkspaceEntriesByKey);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
-  const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
-  const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
+  const selectProject = useSidebarViewStore((state) => state.selectProjectFilter);
+  const toggleProject = useSidebarViewStore((state) => state.toggleProjectFilter);
   const updateLocalFilters = useSidebarViewStore((state) => state.updateLocalFilters);
   const clearAll = useCallback(
     () => updateLocalFilters(() => ({ hostFilters: [], projectFilters: [] })),
@@ -63,25 +63,6 @@ export function SidebarProjectSelector(): ReactElement {
     (project) =>
       hostFilters.length === 0 || project.hosts.some((host) => hostFilters.includes(host.serverId)),
   );
-  const selectProject = useCallback(
-    (viewKey: string) =>
-      updateLocalFilters((current) => ({ ...current, projectFilters: [viewKey] })),
-    [updateLocalFilters],
-  );
-  const toggleProject = useCallback(
-    (viewKey: string) =>
-      updateLocalFilters((current) => ({
-        ...current,
-        projectFilters: current.projectFilters.includes(viewKey)
-          ? current.projectFilters.filter((key) => key !== viewKey)
-          : [...current.projectFilters, viewKey],
-      })),
-    [updateLocalFilters],
-  );
-  const hostPreferences = useMemo(
-    () => ({ hostFilters, toggleHostFilter, clearHostFilters }),
-    [hostFilters, toggleHostFilter, clearHostFilters],
-  );
   const labels = useMemo(() => resolveSidebarProjectLabels(projects, hosts), [projects, hosts]);
   const [open, setOpen] = useState(false);
   const iconTargets = useMemo(
@@ -89,13 +70,16 @@ export function SidebarProjectSelector(): ReactElement {
     [open, projects],
   );
   const icons = useProjectIcons({ projects: iconTargets });
-  const pages: MenuPageDefinition[] = [
-    {
-      id: "hostFilter",
-      title: t("sidebar.display.hostFilter.label"),
-      content: <HostFilterPage preferences={hostPreferences} hosts={hosts} />,
-    },
-  ];
+  const pages = useMemo<MenuPageDefinition[]>(
+    () => [
+      {
+        id: "hostFilter",
+        title: t("sidebar.display.hostFilter.label"),
+        content: <HostFilterPage hosts={hosts} />,
+      },
+    ],
+    [t, hosts],
+  );
   let label = t("sidebar.projectSelector.allWorkspaces");
   if (resolvedProjectFilters.length === 1)
     label = t("sidebar.projectSelector.projectWorkspaces", {
