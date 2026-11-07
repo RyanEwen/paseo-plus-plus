@@ -982,31 +982,11 @@ test.each(["human", "agent"] as const)(
       ],
     });
     // Codex publishes the next turn's actual prompt echo before its assistant output.
-    worker.session.pushEvent({
-      type: "turn_started",
-      provider: "codex",
+    publishImplementationTurn({
+      session: worker.session,
       turnId: handoff.nextTurnId,
-    });
-    worker.session.pushEvent({
-      type: "timeline",
-      provider: "codex",
-      turnId: handoff.nextTurnId,
-      item: {
-        type: "user_message",
-        messageId: "implementation-prompt-echo",
-        text: handoff.followUpPrompt,
-      },
-    });
-    worker.session.pushEvent({
-      type: "timeline",
-      provider: "codex",
-      turnId: handoff.nextTurnId,
-      item: { type: "assistant_message", text: "Exact implementation result" },
-    });
-    worker.session.pushEvent({
-      type: "turn_completed",
-      provider: "codex",
-      turnId: handoff.nextTurnId,
+      prompt: handoff.followUpPrompt,
+      echoMessageId: "implementation-prompt-echo",
     });
     await manager.flush();
     expect(manager.getTimeline(worker.id)).toContainEqual({
@@ -2018,6 +1998,33 @@ async function expectPermissionDispositionFinished(input: {
   ]);
 }
 
+/**
+ * Publish the follow-up implementation turn the way Codex does: turn start, the echo of the
+ * submitted prompt, the assistant result, then completion.
+ */
+function publishImplementationTurn(input: {
+  session: { pushEvent(event: AgentStreamEvent): void };
+  turnId: string;
+  prompt: string;
+  echoMessageId: string;
+}) {
+  const { session, turnId } = input;
+  session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+  session.pushEvent({
+    type: "timeline",
+    provider: "codex",
+    turnId,
+    item: { type: "user_message", messageId: input.echoMessageId, text: input.prompt },
+  });
+  session.pushEvent({
+    type: "timeline",
+    provider: "codex",
+    turnId,
+    item: { type: "assistant_message", text: "Exact implementation result" },
+  });
+  session.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+}
+
 /** Finish only the helper's real next accepted turn, including Codex's prompt echo boundary. */
 async function finishPermissionDispositionImplementation(
   handoff: Awaited<ReturnType<typeof createPermissionHandoffFixture>>,
@@ -2035,27 +2042,11 @@ async function finishPermissionDispositionImplementation(
   );
   expect(manager.getAgent(worker.id)?.activeTurnId).toBe(handoff.nextTurnId);
   expect(manager.getAttentionObjectives(worker.id).activeObjectiveIds).toEqual([objectiveId]);
-  worker.session.pushEvent({ type: "turn_started", provider: "codex", turnId: handoff.nextTurnId });
-  worker.session.pushEvent({
-    type: "timeline",
-    provider: "codex",
+  publishImplementationTurn({
+    session: worker.session,
     turnId: handoff.nextTurnId,
-    item: {
-      type: "user_message",
-      messageId: "disposition-implementation-echo",
-      text: handoff.followUpPrompt,
-    },
-  });
-  worker.session.pushEvent({
-    type: "timeline",
-    provider: "codex",
-    turnId: handoff.nextTurnId,
-    item: { type: "assistant_message", text: "Exact implementation result" },
-  });
-  worker.session.pushEvent({
-    type: "turn_completed",
-    provider: "codex",
-    turnId: handoff.nextTurnId,
+    prompt: handoff.followUpPrompt,
+    echoMessageId: "disposition-implementation-echo",
   });
   await manager.flush();
   await expectPermissionDispositionFinished({

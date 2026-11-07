@@ -7205,3 +7205,52 @@ describe("remote delegated creation", () => {
     }
   });
 });
+
+describe("attention tools bound to a caller", () => {
+  const logger = createTestLogger();
+
+  it("reads the caller's human objective and records its waiting disposition", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-attention-tools-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    try {
+      const caller = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        undefined,
+        { workspaceId: "wks_caller" },
+      );
+      // A human prompt opens the caller's accepted turn and its human objective.
+      const run = manager.runAgent(caller.id, "Delegate the report", {
+        clientMessageId: "human-report",
+      });
+      void run.catch(() => undefined);
+      await manager.waitForAgentRunStart(caller.id);
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: caller.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const context = await registeredTool(server, "get_attention_context").handler({});
+      expect(context.structuredContent).toEqual({
+        activeObjectiveIds: ["human-report"],
+        objectives: [{ id: "human-report", audience: { kind: "human" }, disposition: "normal" }],
+      });
+      await registeredTool(server, "report_objective_status").handler({
+        objectiveId: "human-report",
+        disposition: "waiting",
+      });
+      expect(manager.getAttentionObjectives(caller.id).objectives).toEqual([
+        { id: "human-report", audience: { kind: "human" }, disposition: "waiting" },
+      ]);
+
+      client.sessions[0]?.finishTurn();
+      await run.catch(() => undefined);
+    } finally {
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+});
