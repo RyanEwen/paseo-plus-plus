@@ -22,3 +22,17 @@ export function scopeAgentsToWorkspace<T extends { workspaceId?: string | null }
   if (!workspaceId) return agents;
   return agents.filter((agent) => agent.workspaceId === workspaceId);
 }
+
+/**
+ * Scope a directory read to the workspace a history request names.
+ *
+ * Only fetch_agent_history_request carries a workspace scope; active-agent reads pass through.
+ * Keeping this branch here leaves the upstream Session directory reader at its own complexity.
+ */
+export function scopeAgentsToRequestedWorkspace<T extends { workspaceId?: string | null }>(
+  agents: T[],
+  request: { type: string; workspaceId?: string },
+): T[] {
+  if (request.type !== "fetch_agent_history_request") return agents;
+  return scopeAgentsToWorkspace(agents, request.workspaceId);
+}

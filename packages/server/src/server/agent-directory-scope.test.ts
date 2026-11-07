@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { scopeAgentsToWorkspace } from "./agent-directory-scope.js";
+import {
+  scopeAgentsToRequestedWorkspace,
+  scopeAgentsToWorkspace,
+} from "./agent-directory-scope.js";
 
 const agents = [
   { id: "a", workspaceId: "ws-a" },
@@ -18,5 +21,25 @@ describe("scopeAgentsToWorkspace", () => {
 
   it("returns nothing when no agent belongs to the workspace", () => {
     expect(scopeAgentsToWorkspace(agents, "ws-missing")).toEqual([]);
+  });
+});
+
+describe("scopeAgentsToRequestedWorkspace", () => {
+  it("scopes a history request to its workspace", () => {
+    const scoped = scopeAgentsToRequestedWorkspace(agents, {
+      type: "fetch_agent_history_request",
+      workspaceId: "ws-b",
+    });
+    expect(scoped.map((agent) => agent.id)).toEqual(["b"]);
+  });
+
+  it("leaves an unscoped history request global", () => {
+    expect(scopeAgentsToRequestedWorkspace(agents, { type: "fetch_agent_history_request" })).toBe(
+      agents,
+    );
+  });
+
+  it("leaves an active-agent directory read unscoped", () => {
+    expect(scopeAgentsToRequestedWorkspace(agents, { type: "fetch_agents_request" })).toBe(agents);
   });
 });
