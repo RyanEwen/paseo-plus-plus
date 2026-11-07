@@ -208,7 +208,9 @@ async function main() {
   });
   const [coldFirst, outputPath] = process.argv.slice(2);
   if (!coldFirst || !outputPath) {
-    throw new Error("Usage: windows-powershell-probe.mjs <jscript|query|startup> <output.json>");
+    throw new Error(
+      "Usage: windows-powershell-probe/index.mjs <jscript|query|startup> <output.json>",
+    );
   }
   await measure({ coldFirst, outputPath });
   // A timed-out child can hold a handle open. The results are written, so end the process here.
