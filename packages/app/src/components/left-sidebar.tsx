@@ -426,6 +426,7 @@ function SidebarFooter({
   // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end.
   return (
     <UsageSidebarRoot>
+      <SidebarCalloutSlot />
       <View style={styles.footerContainer} testID="sidebar-footer">
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
         <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
@@ -778,8 +779,6 @@ function DesktopSidebar({
             listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
-
-        <SidebarCalloutSlot />
 
         <SidebarFooter
           handleOpenProject={handleOpenProject}

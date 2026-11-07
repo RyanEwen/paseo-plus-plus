@@ -15,6 +15,16 @@ Fork preview builds use the Paseo++ app name, `sh.paseo.plusplus` package, and `
 link scheme. They install separately from upstream and former Debug previews, with fresh settings
 and connections.
 
+Fork previews update themselves from published fork releases; the user flow is in
+[Automatic Android update checks](fork-features/automatic-android-update-checks.md). Updates
+require the same signing key and a newer preview build number. Draft releases are invisible. The
+install permission is injected only into fork preview builds; store and F-Droid builds keep their
+existing update channels. Checks use GitHub's unauthenticated API, which allows 60 requests per
+hour per network, so automatic checks stay at least 15 minutes apart. See
+[fork distribution](release.md#fork-preview-distribution) and the
+[final prerelease bridge](release.md#final-prerelease-bridge-and-normal-latest-releases) for
+discovery across GitHub release classifications.
+
 `development` uses Android `debug`.
 
 ## SSH connections
