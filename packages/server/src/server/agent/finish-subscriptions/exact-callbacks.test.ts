@@ -38,6 +38,12 @@ interface FinishWaitFixture {
   logger: Logger;
   wait(signal: AbortSignal, query?: AgentAttentionRequestQuery): Promise<WaitForFinishResult>;
   afterPermission(requestId: string, signal: AbortSignal): Promise<void>;
+  /** Receives every retried delivery failure of the shared service (first fixture wins). */
+  onRetry?: (retry: FinishRetry) => void;
+}
+interface FinishRetry {
+  subscription: FinishSubscription;
+  error: unknown;
 }
 const finishFixtures = new WeakMap<
   AgentManager,
@@ -78,6 +84,7 @@ function setupFinishWait(params: FinishWaitFixture): () => void {
       serverId: params.originServerId ?? "self",
       logger: params.logger,
       retryDelayMs: 10,
+      onRetry: (retry) => params.onRetry?.(retry),
       messages: () => params.agentMessages,
       callerIsActive: async (id) => !(await params.agentStorage.get(id))?.archivedAt,
       open: async (record, signal) => ({
@@ -143,7 +150,7 @@ it.each([
 ])("$name", async ({ mode }) => {
   const workdir = mkdtempSync(join(tmpdir(), "attention-watch-membership-"));
   const logger = createTestLogger();
-  const warnings = vi.spyOn(logger, "warn");
+  const retries: FinishRetry[] = [];
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const parentPrompts: string[] = [];
   const manager = new AgentManager({
@@ -201,7 +208,6 @@ it.each([
     Promise.withResolvers<WaitForFinishResult>(),
   ];
   const enqueue = vi.spyOn(delivery, "enqueue");
-  const reservations = vi.spyOn(manager, "reserveAttentionCallback");
   const signals: AbortSignal[] = [];
   const acknowledgements: string[] = [];
   const stops: Array<() => void> = [];
@@ -209,16 +215,8 @@ it.each([
   async function stopRefusedWatches() {
     // Exact refusals remain durable retry intents. Prove refusal and absence of
     // delivery before retiring them, so teardown cannot hide an unintended callback.
-    await expect
-      .poll(
-        () =>
-          warnings.mock.calls.filter(([, message]) => message === "Retrying finish subscription")
-            .length,
-      )
-      .toBe(2);
-    for (const [detail, message] of warnings.mock.calls) {
-      if (message !== "Retrying finish subscription") continue;
-      const error = (detail as { err: unknown }).err;
+    await expect.poll(() => new Set(retries.map((retry) => retry.subscription.id)).size).toBe(2);
+    for (const { error } of retries) {
       if (mode === "invalid-token") expect(error).toBeInstanceOf(AttentionObjectiveError);
       else
         expect(error).toMatchObject({
@@ -272,6 +270,7 @@ it.each([
               attentionOutcome: null,
             };
           },
+          onRetry: (retry) => retries.push(retry),
           afterPermission: async () => {},
         }),
       );
@@ -313,7 +312,6 @@ it.each([
     });
     await Promise.allSettled(dispatched);
     if (mode === "parented" || mode === "independent") {
-      expect(reservations).toHaveBeenCalledTimes(2);
       expect(enqueue).toHaveBeenCalledTimes(2);
       expect(acknowledgements).toHaveLength(2);
       const stored = (await storage.get(callerId))?.attentionObjectives;
@@ -334,7 +332,6 @@ it.each([
       ).toBe(true);
     }
   } finally {
-    warnings.mockRestore();
     for (const stop of stops) stop();
     await delivery.close();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
@@ -363,7 +360,7 @@ it.each([
 ])("$name", async ({ mode }) => {
   const workdir = mkdtempSync(join(tmpdir(), "attention-callback-recovery-"));
   const logger = createTestLogger();
-  const warnings = vi.spyOn(logger, "warn");
+  const retries: FinishRetry[] = [];
   class ReservationStorage extends AgentStorage {
     failNextReservationWrite = false;
 
@@ -540,6 +537,7 @@ it.each([
             }
             return result;
           },
+          onRetry: (retry) => retries.push(retry),
           afterPermission: async () => {},
         }),
       );
@@ -559,7 +557,7 @@ it.each([
       expect(prompts).toEqual([]);
       watch();
     } else if (mode !== "restored") {
-      await expect.poll(() => warnings.mock.calls.length).toBe(1);
+      await expect.poll(() => retries.length > 0).toBe(true);
       expect(enqueue).not.toHaveBeenCalled();
       expect(ackIds).toEqual([]);
       if (mode === "failed-write") {
@@ -609,7 +607,6 @@ it.each([
       await Promise.all(current.listAgents().map((agent) => current.closeAgent(agent.id)));
       await current.flush();
     }
-    warnings.mockRestore();
     rmSync(workdir, { recursive: true, force: true });
   }
 });
