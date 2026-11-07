@@ -7,7 +7,10 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useMobilePanelRestCheck } from "@/mobile-panels/use-mobile-panel-rest-check";
 import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { seenAgentNotifications } from "@/notifications/seen-agent-client";
+import {
+  seenAgentNotifications,
+  startSeenAgentNotifications,
+} from "@/notifications/seen-agent-client";
 
 /** Acknowledge only a painted chat in the focused pane of the foreground workspace. */
 export function useSeenAgentNotifications(input: {
@@ -36,6 +39,7 @@ export function useSeenAgentNotifications(input: {
     // Panel, focus and readiness change only through renders, which re-run this effect. Window
     // focus, the requested compact pane and UI-thread motion change without one, so the lease
     // re-reads only those when a notification arrives or the panel's rest changes.
+    const stopListening = startSeenAgentNotifications();
     const view = seenAgentNotifications.view({
       target: { serverId: input.serverId, agentId: input.agentId },
       isVisible: () =>
@@ -49,6 +53,7 @@ export function useSeenAgentNotifications(input: {
       : () => {};
     return () => {
       unsubscribe();
+      stopListening();
       void view.release();
     };
   }, [compact, input.agentId, input.serverId, isAtRest, subscribe, visible]);
