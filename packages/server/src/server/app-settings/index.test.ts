@@ -22,25 +22,26 @@ describe("host app settings authority", () => {
     const a = await createStore();
     const b = await createStore();
     expect((await a.store.read()).initialized).toBe(false);
-    await expect(a.store.patch([theme("dark")])).rejects.toThrow("initialize");
-    await a.store.patch([theme("dark")], true);
+    await expect(a.store.patch({ patches: [theme("dark")] })).rejects.toThrow("initialize");
+    await a.store.patch({ patches: [theme("dark")], initialize: true });
     expect((await b.store.read()).initialized).toBe(false);
     expect((await new AppSettingsStore(a.home).read()).values).toEqual({ app: { theme: "dark" } });
-    expect((await a.store.patch([theme("light")], true)).conflicts).toEqual([["app", "theme"]]);
+    expect(
+      (await a.store.patch({ patches: [theme("light")], initialize: true })).conflicts,
+    ).toEqual([["app", "theme"]]);
   });
   it("merges concurrent different leaves and rejects same-field conflicts atomically", async () => {
     const { store } = await createStore();
-    await store.patch([theme("dark")], true);
+    await store.patch({ patches: [theme("dark")], initialize: true });
     const results = await Promise.all([
-      store.patch([theme("light", 1)]),
-      store.patch([{ path: ["app", "language"], value: "fr", expectedRevision: 0 }]),
+      store.patch({ patches: [theme("light", 1)] }),
+      store.patch({ patches: [{ path: ["app", "language"], value: "fr", expectedRevision: 0 }] }),
     ]);
     expect(results.every((result) => !result.conflicts.length)).toBe(true);
     const before = await store.read();
-    const result = await store.patch([
-      theme("auto", 1),
-      { path: ["app", "language"], value: "en", expectedRevision: 3 },
-    ]);
+    const result = await store.patch({
+      patches: [theme("auto", 1), { path: ["app", "language"], value: "en", expectedRevision: 3 }],
+    });
     expect(result.conflicts).toEqual([["app", "theme"]]);
     expect(await store.read()).toEqual(before);
   });
@@ -58,9 +59,11 @@ describe("host app settings authority", () => {
         fieldRevisions: {},
       }),
     );
-    await store.patch([
-      { path: ["app", "paseoPlusPlus", "previousAgents"], value: false, expectedRevision: 0 },
-    ]);
+    await store.patch({
+      patches: [
+        { path: ["app", "paseoPlusPlus", "previousAgents"], value: false, expectedRevision: 0 },
+      ],
+    });
     expect((await store.read()).values).toEqual({
       future: { enabled: true },
       app: { theme: "dark", paseoPlusPlus: { previousAgents: false, futureFlag: false } },
@@ -74,9 +77,14 @@ describe("host app settings authority", () => {
       ["app", "paseoPlusPlus", "__proto__"],
     ])
       await expect(
-        store.patch([{ path, value: "secret", expectedRevision: 0 }], true),
+        store.patch({
+          patches: [{ path, value: "secret", expectedRevision: 0 }],
+          initialize: true,
+        }),
       ).rejects.toThrow();
-    await expect(store.patch([theme("dark"), theme("light")], true)).rejects.toThrow("Overlapping");
+    await expect(
+      store.patch({ patches: [theme("dark"), theme("light")], initialize: true }),
+    ).rejects.toThrow("Overlapping");
     expect((await store.read()).initialized).toBe(false);
   });
   it("does not publish or acknowledge failed durable writes, and releases the queue", async () => {
@@ -86,7 +94,9 @@ describe("host app settings authority", () => {
     });
     const changes: unknown[] = [];
     store.subscribe((value) => changes.push(value));
-    await expect(store.patch([theme("dark")], true)).rejects.toThrow("disk full");
+    await expect(store.patch({ patches: [theme("dark")], initialize: true })).rejects.toThrow(
+      "disk full",
+    );
     expect(changes).toEqual([]);
     expect((await store.read()).initialized).toBe(false);
   });
@@ -94,7 +104,7 @@ describe("host app settings authority", () => {
     const { home, store } = await createStore();
     await writeFile(join(home, "app-settings.json"), "bad json");
     await expect(store.read()).rejects.toThrow();
-    await expect(store.patch([theme("dark")], true)).rejects.toThrow();
+    await expect(store.patch({ patches: [theme("dark")], initialize: true })).rejects.toThrow();
   });
 });
 
@@ -115,10 +125,10 @@ it("rejects Usage host selection and parent replacement while preserving histori
     { path: ["app", "usage", "serverId"], value: "other-host", expectedRevision: 0 },
     { path: ["app", "usage"], value: null, expectedRevision: 0 },
   ])
-    await expect(store.patch([patch])).rejects.toThrow("Usage host selection");
-  await store.patch([
-    { path: ["app", "usage", "displayAs"], value: "remaining", expectedRevision: 0 },
-  ]);
+    await expect(store.patch({ patches: [patch] })).rejects.toThrow("Usage host selection");
+  await store.patch({
+    patches: [{ path: ["app", "usage", "displayAs"], value: "remaining", expectedRevision: 0 }],
+  });
   expect((await store.read()).values).toEqual({
     app: { usage: { serverId: "legacy-host", displayAs: "remaining", futureChoice: true } },
   });

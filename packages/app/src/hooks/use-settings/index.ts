@@ -1,8 +1,4 @@
-import {
-  getSettingsSyncSaveHandler,
-  getSettingsReadAvailable,
-  subscribeSettingsReadAvailable,
-} from "@/settings-sync/save-handler";
+import { settingsSyncGate } from "@/settings-sync/gate";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
@@ -155,12 +151,14 @@ export interface UseSettingsReturn {
 
 type SettingsSelector<TSelected> = (settings: Settings) => TSelected;
 
+const readSettingsAvailable = () => settingsSyncGate.getState().readAvailable;
+
 export function useAppSettings(): UseAppSettingsReturn {
   const queryClient = useQueryClient();
   const readAvailable = useSyncExternalStore(
-    subscribeSettingsReadAvailable,
-    getSettingsReadAvailable,
-    getSettingsReadAvailable,
+    settingsSyncGate.subscribe,
+    readSettingsAvailable,
+    readSettingsAvailable,
   );
   const { data, isPending, error } = useQuery({
     queryKey: APP_SETTINGS_QUERY_KEY,
@@ -278,13 +276,24 @@ export async function saveAppSettings(input: {
   updates: AppSettingsUpdate;
   deps?: SettingsDeps;
 }): Promise<void> {
-  const syncHandler = getSettingsSyncSaveHandler();
+  const syncHandler = settingsSyncGate.getState().saveHandler;
   if (syncHandler && (await syncHandler(input.queryClient, input.updates))) return;
   await saveAppSettingsPure({
     queryClient: input.queryClient,
     updates: input.updates,
     deps: input.deps ?? productionDeps,
   });
+}
+
+/**
+ * Save through ordinary local storage without consulting the settings sync handler. Settings
+ * sync uses it for its own writes: adopted host values and device-only leaves.
+ */
+export async function saveAppSettingsLocally(input: {
+  queryClient: QueryClient;
+  updates: AppSettingsUpdate;
+}): Promise<void> {
+  await saveAppSettingsPure({ ...input, deps: productionDeps });
 }
 
 export async function loadAppSettingsFromStorage(deps?: SettingsDeps): Promise<AppSettings> {

@@ -10,6 +10,7 @@ import {
 import { useHosts } from "@/runtime/host-runtime";
 import { useSettingsSyncState } from "@/settings-sync/bootstrap";
 import { settingsSync } from "@/settings-sync/runtime";
+import { SYNC_STATUS_POLICY } from "@/settings-sync/status-policy";
 
 /** Explicit settings authority selection, remote adoption and empty-host initialization. */
 export function SettingsSyncSection() {
@@ -99,8 +100,7 @@ export function SettingsSyncSection() {
             disabled={busy}
           />
         ) : null}
-        {state.selectedHost &&
-        ["ready", "offline", "readonly", "conflict"].includes(state.status) ? (
+        {state.selectedHost && SYNC_STATUS_POLICY[state.status].canRestoreBackup ? (
           <SettingsAction
             label={t("settingsSync.restoreHint")}
             actionLabel={t("settingsSync.restore")}
@@ -108,7 +108,7 @@ export function SettingsSyncSection() {
             disabled={busy}
           />
         ) : null}
-        {state.status === "error" || state.status === "readonly" ? (
+        {SYNC_STATUS_POLICY[state.status].canRetry ? (
           <SettingsAction
             label={t("settingsSync.retryHint")}
             actionLabel={t("common.actions.retry")}
