@@ -207,6 +207,22 @@ function FileHeaderTooltip({
   );
 }
 
+/**
+ * Whether the path tooltip opens on desktop. A plain Changes tree row shows only the file name
+ * and its place in the tree already gives the directory, so its tooltip opens only when the name
+ * is truncated. Document headers, rows labelled with their directory and canvas headers keep the
+ * always-available tooltip.
+ */
+function isPathTooltipEnabled(input: {
+  showsBodyState: boolean;
+  showDir: boolean;
+  canvasRendered: boolean;
+  nameOverflowing: boolean;
+}): boolean {
+  const isTreeRow = !input.showsBodyState && !input.showDir && !input.canvasRendered;
+  return !isTreeRow || input.nameOverflowing;
+}
+
 export const FileHeader = memo(function FileHeader({
   file,
   workspaceFileDragScope,
@@ -274,10 +290,6 @@ export const FileHeader = memo(function FileHeader({
   );
   const fileName = fileNameForPath(file.path);
   const nameOverflow = useTextOverflow(fileName);
-  // A plain Changes tree row shows only the file name and its place in the tree already gives the
-  // directory, so its path tooltip opens only when the name is truncated. Document headers,
-  // rows labelled with their directory and canvas headers keep the always-available tooltip.
-  const isTreeRow = !showsBodyState && !showDir && !canvasRendered;
   const nameStyle = fileHeaderNameStyle(showsBodyState, hover.isHovered);
   const changeIcon = <FileChangeIcon change={fileChange(file)} />;
   const content = (
@@ -385,7 +397,12 @@ export const FileHeader = memo(function FileHeader({
         <FileHeaderTooltip
           path={file.path}
           interactive={interactive}
-          enabled={!isTreeRow || nameOverflow.overflowing}
+          enabled={isPathTooltipEnabled({
+            showsBodyState,
+            showDir,
+            canvasRendered,
+            nameOverflowing: nameOverflow.overflowing,
+          })}
         >
           {trigger}
         </FileHeaderTooltip>
