@@ -7,6 +7,7 @@ import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { useMobilePanelRestCheck } from "@/mobile-panels/use-mobile-panel-rest-check";
 import { usePanelStore } from "@/stores/panel-store";
 import { workspaceNotificationRuntime } from "./workspace-receipts-runtime";
+import { canAcknowledgeWorkspace } from "./acknowledgement-visibility";
 
 /** Only a selected, foreground workspace whose compact pane has settled acknowledges existing events. */
 export function useWorkspaceNotificationAcknowledgement(input: {
@@ -24,12 +25,16 @@ export function useWorkspaceNotificationAcknowledgement(input: {
   const { isAtRest, subscribe } = useMobilePanelRestCheck("agent");
   const [settled, setSettled] = useState(() => isAtRest());
   useLayoutEffect(() => subscribe(() => setSettled(isAtRest())), [isAtRest, subscribe]);
-  const visible =
-    foreground &&
-    panelVisible &&
-    input.focused &&
-    Boolean(currentReceipts) &&
-    (!compact || (centerVisible && centerRequested && settled));
+  const visible = canAcknowledgeWorkspace({
+    foreground,
+    panelVisible,
+    focused: input.focused,
+    hasReceipts: Boolean(currentReceipts),
+    compact,
+    centerVisible,
+    centerRequested,
+    settled,
+  });
   const receipts = useRef(currentReceipts);
   receipts.current = currentReceipts;
   // Read current layout at admission without making resize a new read lease.
