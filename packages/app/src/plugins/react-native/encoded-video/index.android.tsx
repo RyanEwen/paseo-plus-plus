@@ -9,13 +9,9 @@ import {
 import { StyleSheet } from "react-native";
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 import type { EncodedVideoHandle, EncodedVideoProps } from "@getpaseo/plugin/client/ui";
+import { createEncodedVideoBridge, type EncodedVideoBridge } from "./bridge";
 import { encodedVideoRuntimeHtml } from "./runtime/html.gen";
-import { parseCanvasToHostMessage } from "./runtime/messages";
 
-interface PendingPaint {
-  resolve(): void;
-  reject(error: Error): void;
-}
 const source = { html: encodedVideoRuntimeHtml, baseUrl: "https://paseo-video.invalid/" };
 const originWhitelist = ["https://paseo-video.invalid"];
 function allowNavigation(request: WebViewNavigation): boolean {
@@ -23,113 +19,36 @@ function allowNavigation(request: WebViewNavigation): boolean {
 }
 const styles = StyleSheet.create({ canvas: { backgroundColor: "transparent" } });
 
-/** A private secure-origin canvas. Bridge generations fence reset/unmount and late decoder output. */
+/**
+ * A private secure-origin canvas. The bridge owns readiness, the generation fence and
+ * pending paints; this component only connects it to the WebView.
+ */
 export const EncodedVideo = forwardRef<EncodedVideoHandle, EncodedVideoProps>(
   function EncodedVideo(props, ref) {
     const webview = useRef<WebView>(null);
     const callbacks = useRef(props);
     callbacks.current = props;
-    const generation = useRef(0);
-    const nextRequest = useRef(0);
-    const pending = useRef(new Map<number, PendingPaint>());
-    const ready = useRef(false);
+    const bridgeRef = useRef<EncodedVideoBridge | null>(null);
+    bridgeRef.current ??= createEncodedVideoBridge({
+      transport: () => webview.current,
+      callbacks: () => callbacks.current,
+    });
+    const bridge = bridgeRef.current;
 
-    function rejectPending(error: Error) {
-      for (const paint of pending.current.values()) paint.reject(error);
-      pending.current.clear();
-    }
-    function send(message: object) {
-      if (!ready.current || !webview.current) throw new Error("Video decoder is not ready");
-      const payload = JSON.stringify({ ...message, generation: generation.current });
-      webview.current.injectJavaScript(`window.__PASEO_VIDEO__(${payload});true;`);
-    }
-    function fail(error: Error) {
-      generation.current += 1;
-      rejectPending(error);
-      callbacks.current.onError(error);
-    }
-    /** Document failures require readiness again; codec errors keep the loaded bridge usable. */
-    function failBridge(error: Error) {
-      ready.current = false;
-      fail(error);
-    }
+    useImperativeHandle(ref, () => bridge.handle, [bridge]);
+    useEffect(() => () => bridge.dispose(), [bridge]);
 
-    useImperativeHandle(
-      ref,
-      () => ({
-        configure(config) {
-          generation.current += 1;
-          rejectPending(new Error("Video decoder replaced"));
-          send({ type: "configure", config });
-        },
-        decode(chunk) {
-          send({ type: "decode", chunk });
-        },
-        reset() {
-          generation.current += 1;
-          rejectPending(new Error("Video decoder reset"));
-          // React clears native refs before passive unmount cleanup. A plugin's
-          // decoder cleanup may still hold this handle during that interval.
-          if (ready.current && webview.current) send({ type: "reset" });
-        },
-        present(frameId) {
-          const requestId = ++nextRequest.current;
-          return new Promise<void>((resolve, reject) => {
-            pending.current.set(requestId, { resolve, reject });
-            try {
-              send({ type: "present", frameId, requestId });
-            } catch (error) {
-              pending.current.delete(requestId);
-              reject(error);
-            }
-          });
-        },
-        release(frameId) {
-          if (ready.current && webview.current) send({ type: "release", frameId });
-        },
-      }),
-      [],
+    const onMessage = useCallback(
+      (event: WebViewMessageEvent) => bridge.receive(event.nativeEvent.data),
+      [bridge],
     );
-
-    useEffect(
-      () => () => {
-        ready.current = false;
-        generation.current += 1;
-        rejectPending(new Error("Video surface unmounted"));
-      },
-      [],
-    );
-
-    const onMessage = useCallback((event: WebViewMessageEvent) => {
-      const message = parseCanvasToHostMessage(event.nativeEvent.data);
-      if (!message) {
-        failBridge(new Error("Invalid video decoder message"));
-        return;
-      }
-      if (message.type === "ready") {
-        ready.current = true;
-        callbacks.current.onReady();
-        return;
-      }
-      if ("generation" in message && message.generation !== generation.current) return;
-      if (message.type === "error") {
-        fail(new Error(message.message));
-        return;
-      }
-      if (message.type === "frame") callbacks.current.onFrame(message.frame);
-      if (message.type === "dequeue") callbacks.current.onDequeue();
-      if (message.type === "presented") {
-        pending.current.get(message.requestId)?.resolve();
-        pending.current.delete(message.requestId);
-      }
-    }, []);
     const onError = useCallback<NonNullable<ComponentProps<typeof WebView>["onError"]>>(
-      (event) => failBridge(new Error(event.nativeEvent.description)),
-      [],
+      (event) => bridge.documentFailed(new Error(event.nativeEvent.description)),
+      [bridge],
     );
     const onRenderProcessGone = useCallback(
-      () => failBridge(new Error("Video decoder process stopped")),
-      [],
+      () => bridge.documentFailed(new Error("Video decoder process stopped")),
+      [bridge],
     );
 
     return (
