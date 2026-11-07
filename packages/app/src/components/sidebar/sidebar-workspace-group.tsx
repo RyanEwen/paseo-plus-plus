@@ -81,12 +81,26 @@ interface SidebarWorkspaceGroupHeading {
 interface SidebarWorkspaceGroupHeaderProps {
   group: SidebarWorkspaceGroupHeading;
   collapsed: boolean;
+  /** Full projected membership, before collapse and Show more hide any workspace rows. */
+  workspaceCount?: number;
+}
+
+/**
+ * Group name for the header's accessible name. When the heading shows a count, the count is
+ * announced with the name so screen readers hear the same total the row displays.
+ */
+function statusGroupSpokenLabel(label: string, workspaceCount: number | undefined): string {
+  if (workspaceCount === undefined) {
+    return label;
+  }
+  return `${label} (${workspaceCount})`;
 }
 
 /** Collapsible section header shared by status buckets and the empty-project section. */
 export function SidebarWorkspaceGroupHeader({
   group,
   collapsed,
+  workspaceCount,
 }: SidebarWorkspaceGroupHeaderProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -113,28 +127,38 @@ export function SidebarWorkspaceGroupHeader({
 
   const renderContent = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => (
-      <View style={styles.statusGroupRowLeft}>
-        <View style={styles.statusGroupLeadingVisualSlot}>
-          <StatusGroupLeadingVisual
-            leading={group.leading}
-            collapsed={collapsed}
-            showChevron={hovered || platformIsNative || isCompact}
-          />
+      <>
+        <View style={styles.statusGroupRowLeft}>
+          <View style={styles.statusGroupLeadingVisualSlot}>
+            <StatusGroupLeadingVisual
+              leading={group.leading}
+              collapsed={collapsed}
+              showChevron={hovered || platformIsNative || isCompact}
+            />
+          </View>
+          <View style={styles.statusGroupTitleGroup}>
+            <Text style={styles.statusGroupTitle} numberOfLines={1}>
+              {group.label}
+            </Text>
+          </View>
         </View>
-        <View style={styles.statusGroupTitleGroup}>
-          <Text style={styles.statusGroupTitle} numberOfLines={1}>
-            {group.label}
+        {workspaceCount !== undefined ? (
+          <Text style={styles.statusGroupCount} testID={`sidebar-status-group-count-${group.key}`}>
+            {workspaceCount}
           </Text>
-        </View>
-      </View>
+        ) : null}
+      </>
     ),
-    [collapsed, group.leading, group.label, isCompact],
+    [collapsed, group.leading, group.label, group.key, isCompact, workspaceCount],
   );
+  const accessibilityLabel = t("sidebar.statusGroupAccessibility", {
+    label: statusGroupSpokenLabel(group.label, workspaceCount),
+  });
 
   return (
     <PressHighlight
       accessibilityRole={platformIsWeb ? undefined : "button"}
-      accessibilityLabel={t("sidebar.statusGroupAccessibility", { label: group.label })}
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
       style={rowStyle}
       highlightStyle={highlightStyle}
@@ -231,5 +255,11 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
+  },
+  statusGroupCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    flexShrink: 0,
   },
 }));

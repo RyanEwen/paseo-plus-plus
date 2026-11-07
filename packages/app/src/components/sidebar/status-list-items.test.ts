@@ -95,6 +95,29 @@ describe("stable status-list cells", () => {
     expect(expanded.filter((item) => item.kind === "workspace")).toHaveLength(21);
     expect(expanded.filter((item) => item.kind === "header")).toHaveLength(2);
   });
+
+  test("gives collapsed and limited headers every workspace in their group for the heading count", () => {
+    const many = Array.from({ length: 21 }, (_, i) => workspace(String(i), []));
+    const items = buildStatusListItems({
+      groups: [group("running", many), group("done", [first, second])],
+      collapsedGroupKeys: new Set(["done"]),
+      initialCount: 20,
+      expandedGroupKeys: new Set(),
+    });
+
+    // The heading count reads the header's group, not the rows left visible below it.
+    const headerCounts: Array<[string, number]> = [];
+    for (const item of items) {
+      if (item.kind === "header") {
+        headerCounts.push([item.group.key, item.group.rows.length]);
+      }
+    }
+    expect(headerCounts).toEqual([
+      ["running", 21],
+      ["done", 2],
+    ]);
+    expect(items.filter((item) => item.kind === "workspace")).toHaveLength(20);
+  });
   test("uses the same configurable policy for status groups and project/pinned groups", () => {
     const rows = Array.from({ length: 25 }, (_, i) => workspace(String(i), []));
     const keys = rows.map((row) => row.workspaceKey);
