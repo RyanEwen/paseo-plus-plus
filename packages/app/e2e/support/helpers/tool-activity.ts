@@ -1,109 +1,64 @@
-import type { ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
-import { mapCodexToolCallFromThreadItem } from "../../../../server/dist/server/server/agent/providers/codex/tool-call-mapper.js";
-import { mapClaudeFailedToolCall } from "../../../../server/dist/server/server/agent/providers/claude/tool-call-mapper.js";
-import { mapOpencodeToolCall } from "../../../../server/dist/server/server/agent/providers/opencode/tool-call-mapper.js";
-import {
-  mapToolDetail,
-  parseToolArgs,
-} from "../../../../server/dist/server/server/agent/providers/pi/tool-call-mapper.js";
+import type { Locator, Page } from "@playwright/test";
 
+/**
+ * The readable tool activity scene the mock provider emits when it receives
+ * TOOL_ACTIVITY_SCENE_PROMPT (packages/server/src/server/agent/providers/mock-tool-activity-scene.ts).
+ * These strings are what the rows and details must show.
+ */
+export const TOOL_ACTIVITY_SCENE_PROMPT = "Emit the readable tool activity scene.";
+export const TOOL_ACTIVITY_SCENE_SIZE = 7;
 export const ACTIVITY_READ_COMMAND = "cat src/notifications.ts";
 export const ACTIVITY_READ_OUTPUT = "export const notification = 'exact preserved output';";
 export const ACTIVITY_OPAQUE_COMMAND = "python - <<'PY'\nprint('opaque script output')\nPY";
+export const ACTIVITY_PATCH_DIFFS = [
+  "created-file-exact-diff",
+  "updated-file-exact-diff",
+  "deleted-file-exact-diff",
+] as const;
 
-function mapped(call: ToolCallTimelineItem | null): ToolCallTimelineItem {
-  if (!call) throw new Error("Expected canonical provider activity fixture");
-  return call;
-}
+export type ActivityLabelMode = "readable" | "classic";
 
-/** Exercise the shipped provider mappers, then deliver their canonical data through a real app socket. */
-export function buildToolActivityScene(cwd: string): ToolCallTimelineItem[] {
-  return [
-    mapped(
-      mapCodexToolCallFromThreadItem({
-        type: "commandExecution",
-        id: "read",
-        status: "completed",
-        cwd,
-        command: ACTIVITY_READ_COMMAND,
-        aggregatedOutput: ACTIVITY_READ_OUTPUT,
-        exitCode: 0,
-        commandActions: [
-          {
-            type: "read",
-            command: ACTIVITY_READ_COMMAND,
-            name: "notifications.ts",
-            path: `${cwd}/src/notifications.ts`,
-          },
-        ],
-      }),
-    ),
-    mapped(
-      mapClaudeFailedToolCall({
-        name: "Edit",
-        callId: "failed-edit",
-        input: { file_path: "src/failed-edit.ts", old_string: "before", new_string: "after" },
-        error: "Edit failed before writing",
-      }),
-    ),
-    {
-      type: "tool_call",
-      callId: "canceled-write",
-      name: "write",
-      status: "canceled",
-      error: null,
-      detail: mapToolDetail(
-        parseToolArgs("write", { path: "src/canceled-write.ts", content: "unchanged" }),
-        null,
-      ),
-    },
-    mapped(
-      mapOpencodeToolCall({
-        toolName: "grep",
-        callId: "search",
-        status: "completed",
-        input: { pattern: "notification" },
-        output: "src/notifications.ts",
-      }),
-    ),
-    mapped(
-      mapCodexToolCallFromThreadItem(
-        {
-          type: "fileChange",
-          id: "multi-patch",
-          status: "completed",
-          changes: [
-            { path: "src/created.ts", kind: { type: "add" }, diff: "+created-file-exact-diff" },
-            {
-              path: "src/updated.ts",
-              kind: { type: "update" },
-              diff: "-before\n+updated-file-exact-diff",
-            },
-            { path: "src/deleted.ts", kind: { type: "delete" }, diff: "-deleted-file-exact-diff" },
-          ],
-        },
-        { cwd },
-      ),
-    ),
-    mapped(
-      mapCodexToolCallFromThreadItem({
-        type: "commandExecution",
-        id: "running-script",
-        status: "inProgress",
-        command: "npm run test",
-        cwd,
-      }),
-    ),
-    mapped(
-      mapCodexToolCallFromThreadItem({
-        type: "commandExecution",
-        id: "opaque-failed",
-        status: "failed",
-        command: ACTIVITY_OPAQUE_COMMAND,
-        cwd,
-        aggregatedOutput: "opaque script output",
-        exitCode: 1,
-      }),
-    ),
-  ];
+/** What the scene shows in each label mode: the group summary and each row's label, in order. */
+export const ACTIVITY_SCENE_LABELS: Record<
+  ActivityLabelMode,
+  { groupParts: readonly string[]; readSummary: string; rows: readonly string[] }
+> = {
+  readable: {
+    groupParts: ["5 file operations", "1 file read"],
+    readSummary: "src/notifications.ts",
+    rows: [
+      "Read",
+      "Failed: Edit",
+      "Canceled: Write",
+      "Searched",
+      "Changed files",
+      "Running script",
+      "Failed: Run command",
+    ],
+  },
+  classic: {
+    groupParts: ["Edited 3 files", "ran 3 commands"],
+    readSummary: ACTIVITY_READ_COMMAND,
+    rows: ["Shell", "Edit", "Write", "Search", "Edit", "Shell", "Shell"],
+  },
+};
+
+/**
+ * Open a tool-call row's details: inline under the row on desktop, in the tool-call sheet on
+ * compact layouts. Returns the surface that shows them and a function that closes it again.
+ */
+export async function openToolDetails(
+  page: Page,
+  badge: Locator,
+  compact: boolean,
+): Promise<{ surface: Locator; close: () => Promise<void> }> {
+  const toggle = badge.getByRole("button").first();
+  await toggle.click();
+  if (compact) {
+    return {
+      surface: page.getByTestId("tool-call-sheet"),
+      close: () => page.getByTestId("tool-call-sheet-close").click(),
+    };
+  }
+  return { surface: badge, close: () => toggle.click() };
 }

@@ -1,10 +1,4 @@
 import type { ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
-import {
-  buildToolActivityScene,
-  ACTIVITY_READ_COMMAND,
-  ACTIVITY_READ_OUTPUT,
-  ACTIVITY_OPAQUE_COMMAND,
-} from "../support/helpers/tool-activity";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
@@ -12,6 +6,17 @@ import { gateSecondToolCall } from "../support/helpers/tool-call-gate";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedAppSettings } from "../support/helpers/app-settings";
+import {
+  ACTIVITY_OPAQUE_COMMAND,
+  ACTIVITY_PATCH_DIFFS,
+  ACTIVITY_READ_COMMAND,
+  ACTIVITY_READ_OUTPUT,
+  ACTIVITY_SCENE_LABELS,
+  openToolDetails,
+  TOOL_ACTIVITY_SCENE_PROMPT,
+  TOOL_ACTIVITY_SCENE_SIZE,
+} from "../support/helpers/tool-activity";
 import {
   readReactRenders,
   recordReactRenders,
@@ -459,35 +464,33 @@ for (const compact of [false, true]) {
       viewport: compact ? { width: 390, height: 844 } : { width: 1280, height: 900 },
       hasTouch: compact,
     });
-    for (const enabled of [true, false]) {
-      test(`preserves provider details with readable labels ${enabled ? "On by default" : "Off"}`, async ({
+    for (const mode of ["readable", "classic"] as const) {
+      test(`labels daemon-delivered provider activity in ${mode} mode and keeps every detail`, async ({
         page,
       }, testInfo) => {
         test.setTimeout(120_000);
-        await page.addInitScript((descriptive) => {
-          const settings = descriptive
-            ? { toolCallDetailLevel: "overview" }
-            : { toolCallDetailLevel: "overview", paseoPlusPlus: { descriptiveToolCalls: false } };
-          localStorage.setItem(
-            "@paseo:app-settings",
-            JSON.stringify({ ...settings, autoExpandReasoning: true }),
-          );
-        }, enabled);
+        const labels = ACTIVITY_SCENE_LABELS[mode];
+        await seedAppSettings(page, {
+          chatDisplay: "collapseToolCalls",
+          autoExpandReasoning: true,
+          paseoPlusPlus: { descriptiveToolCalls: mode === "readable" },
+        });
         const agent = await seedMockAgentWorkspace({
           repoPrefix: "readable-tool-activity-",
           title: "Readable tool activity",
           model: "ten-second-stream",
         });
         try {
-          const scene = buildToolActivityScene(agent.cwd);
-          const gate = await holdStreamAfterFirstCompletedToolCall(page, agent.agentId, scene);
           await openOverviewAgent(page, agent);
-          await agent.client.sendAgentMessage(agent.agentId, "Show readable provider operations.");
-          await gate.waitForFirstCompleted();
-          gate.release();
+          await agent.client.sendAgentMessage(agent.agentId, TOOL_ACTIVITY_SCENE_PROMPT);
+
+          // The group summary counts the scene's operations in the selected wording.
           const group = page.getByTestId("tool-call-group").first();
-          await expect(group).toContainText(enabled ? "5 file operations" : "Edited 3 files");
-          await expect(group).toContainText(enabled ? "1 file read" : "ran 3 commands");
+          for (const part of labels.groupParts) {
+            await expect(group).toContainText(part);
+          }
+
+          // Opening the group with the keyboard lists every call with its label.
           const groupButton = group.getByRole("button").first();
           await groupButton.focus();
           await expect(groupButton).toBeFocused();
@@ -495,51 +498,35 @@ for (const compact of [false, true]) {
           const root = compact ? page.getByTestId("tool-call-group-sheet") : group;
           await expect(root).toBeVisible();
           const badges = root.getByTestId("tool-call-badge");
-          await expect(badges).toHaveCount(scene.length);
-          const read = badges.nth(0);
-          await expect(read).toContainText(enabled ? "Read" : "Shell");
-          await expect(read).toContainText(
-            enabled ? "src/notifications.ts" : ACTIVITY_READ_COMMAND,
-          );
-          await expect(badges.nth(1)).toContainText(enabled ? "Failed: Edit" : "Edit");
-          await expect(badges.nth(2)).toContainText(enabled ? "Canceled: Write" : "Write");
-          await expect(badges.nth(3)).toContainText(enabled ? "Searched" : "Search");
-          await expect(badges.nth(4)).toContainText(enabled ? "Changed files" : "Edit");
-          await expect(badges.nth(5)).toContainText(enabled ? "Running script" : "Shell");
-          await expect(badges.nth(6)).toContainText(enabled ? "Failed: Run command" : "Shell");
-          await testInfo.attach("readable-activity-provider-scene", {
-            body: JSON.stringify(scene, null, 2),
-            contentType: "application/json",
-          });
+          await expect(badges).toHaveCount(TOOL_ACTIVITY_SCENE_SIZE);
+          for (const [index, label] of labels.rows.entries()) {
+            await expect(badges.nth(index)).toContainText(label);
+          }
+          await expect(badges.nth(0)).toContainText(labels.readSummary);
           await testInfo.attach("readable-activity-labels", {
             body: await page.screenshot(),
             contentType: "image/png",
           });
-          await read.getByRole("button").first().click();
-          const details = compact ? page.getByTestId("tool-call-sheet") : read;
-          await expect(details).toContainText(ACTIVITY_READ_COMMAND);
-          await expect(details).toContainText(ACTIVITY_READ_OUTPUT);
-          if (compact) await page.getByTestId("tool-call-sheet-close").click();
-          else await read.getByRole("button").first().click();
-          await badges.nth(4).getByRole("button").first().click();
-          const patchDetails = compact ? page.getByTestId("tool-call-sheet") : badges.nth(4);
-          for (const diff of [
-            "created-file-exact-diff",
-            "updated-file-exact-diff",
-            "deleted-file-exact-diff",
-          ]) {
-            await expect(patchDetails).toContainText(diff);
+
+          // Details keep the exact command, output and every file of the patch in both modes.
+          const read = await openToolDetails(page, badges.nth(0), compact);
+          await expect(read.surface).toContainText(ACTIVITY_READ_COMMAND);
+          await expect(read.surface).toContainText(ACTIVITY_READ_OUTPUT);
+          await read.close();
+
+          const patch = await openToolDetails(page, badges.nth(4), compact);
+          for (const diff of ACTIVITY_PATCH_DIFFS) {
+            await expect(patch.surface).toContainText(diff);
           }
           await testInfo.attach("readable-activity-multi-file-details", {
             body: await page.screenshot(),
             contentType: "image/png",
           });
-          if (compact) await page.getByTestId("tool-call-sheet-close").click();
-          else await badges.nth(4).getByRole("button").first().click();
-          await badges.nth(6).getByRole("button").first().click();
-          const opaqueDetails = compact ? page.getByTestId("tool-call-sheet") : badges.nth(6);
-          await expect(opaqueDetails).toContainText(ACTIVITY_OPAQUE_COMMAND);
-          await expect(opaqueDetails).toContainText("opaque script output");
+          await patch.close();
+
+          const opaque = await openToolDetails(page, badges.nth(6), compact);
+          await expect(opaque.surface).toContainText(ACTIVITY_OPAQUE_COMMAND);
+          await expect(opaque.surface).toContainText("opaque script output");
         } finally {
           await agent.cleanup();
         }
