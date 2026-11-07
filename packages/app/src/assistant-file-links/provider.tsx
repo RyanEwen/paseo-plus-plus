@@ -1,3 +1,5 @@
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   createContext,
   useCallback,
@@ -27,12 +29,18 @@ export interface AssistantFileLinkResolverConfig {
   toast?: ToastApi | null;
 }
 
+/** Provider config plus the HTTP opener of the workspace link scope the provider sits in. */
+export interface AssistantFileLinkResolverState extends AssistantFileLinkResolverConfig {
+  /** Primary HTTP(S) activation; reads the Workspace links preference when called. */
+  openHttpLink: (url: string) => Promise<void>;
+}
+
 export interface AssistantFileLinkResolverProviderProps extends AssistantFileLinkResolverConfig {
   children: ReactNode;
 }
 
 export interface AssistantFileLinkResolverContextValue {
-  configRef: MutableRefObject<AssistantFileLinkResolverConfig>;
+  configRef: MutableRefObject<AssistantFileLinkResolverState>;
   getDirectorySuggestions: GetDirectorySuggestions;
 }
 
@@ -60,13 +68,16 @@ export function AssistantFileLinkResolverProvider({
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
-  const configRef = useRef<AssistantFileLinkResolverConfig>({
+  const { openPrimary } = useWorkspaceLinkOpening();
+
+  const configRef = useRef<AssistantFileLinkResolverState>({
     client,
     serverId,
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
     toast,
+    openHttpLink: openPrimary,
   });
   configRef.current = {
     client,
@@ -75,6 +86,7 @@ export function AssistantFileLinkResolverProvider({
     relativePathBase,
     onOpenWorkspaceFile,
     toast,
+    openHttpLink: openPrimary,
   };
 
   const getDirectorySuggestions = useCallback<GetDirectorySuggestions>(async (input) => {
@@ -106,8 +118,13 @@ export function useAssistantFileLinkResolverContext(): AssistantFileLinkResolver
 
 export type { AssistantFileLinkContext };
 
+/** Without a resolver there is no workspace scope or toast: open externally and log failures. */
+async function openHttpLinkOutsideResolver(url: string): Promise<void> {
+  await openExternalUrl(url).catch((error: unknown) => console.error(error));
+}
+
 const EMPTY_CONTEXT: AssistantFileLinkResolverContextValue = {
-  configRef: { current: {} },
+  configRef: { current: { openHttpLink: openHttpLinkOutsideResolver } },
   getDirectorySuggestions: async () => ({ entries: [], error: null }),
 };
 

@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
 import type { InlinePathTarget } from "./parse";
 import {
@@ -335,7 +334,8 @@ async function dispatchExternalUrl(input: {
   ) {
     return;
   }
-  await openExternalUrl(input.url);
+  // The scope's opener applies the Workspace links preference as of this moment and reports failures.
+  await current.openHttpLink(input.url);
 }
 
 async function dispatchUnresolvedError(input: {

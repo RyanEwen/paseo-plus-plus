@@ -8,12 +8,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
+import { darkTheme as theme } from "@/styles/theme";
 import { WorkspaceScriptsButton } from "./workspace-scripts-button";
 
 void testI18n;
 
 const {
-  theme,
   startWorkspaceScriptMock,
   killTerminalMock,
   setStringAsyncMock,
@@ -22,25 +22,6 @@ const {
   routePreferenceListenersMock,
   setPreferredRouteMock,
 } = vi.hoisted(() => {
-  const hoistedTheme = {
-    spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12 },
-    borderWidth: { 1: 1 },
-    borderRadius: { md: 6, lg: 8 },
-    fontSize: { xs: 11, sm: 13 },
-    fontWeight: { normal: "400", medium: "500" },
-    colors: {
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      surface2: "#222",
-      borderAccent: "#444",
-      palette: {
-        blue: { 500: "#0a84ff" },
-        green: { 500: "#30d158" },
-        red: { 300: "#ff9f99", 500: "#ff453a" },
-      },
-    },
-  };
-
   const routePreferenceByServerId: Record<string, "public" | "paseo" | "direct"> = {};
   const routePreferenceListeners = new Set<() => void>();
   const setPreferredRoute = vi.fn((serverId: string, kind: "public" | "paseo" | "direct") => {
@@ -49,7 +30,6 @@ const {
   });
 
   return {
-    theme: hoistedTheme,
     startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
     killTerminalMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
@@ -68,24 +48,30 @@ vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
 });
 
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: unknown) => (typeof factory === "function" ? factory(theme) : factory),
-  },
-  withUnistyles:
-    (Component: React.ComponentType<Record<string, unknown>>) =>
-    ({
-      uniProps,
-      ...rest
-    }: {
-      uniProps?: (theme: unknown) => Record<string, unknown>;
-    } & Record<string, unknown>) => {
-      const themed = uniProps ? uniProps(theme) : {};
-      return React.createElement(Component, { ...rest, ...themed });
+// The real theme: the menu engine's stylesheets read more of it than a hand-built subset holds.
+vi.mock("react-native-unistyles", async () => {
+  const { darkTheme } = await import("@/styles/theme");
+  return {
+    StyleSheet: {
+      create: (factory: unknown) => (typeof factory === "function" ? factory(darkTheme) : factory),
     },
-}));
+    withUnistyles:
+      (Component: React.ComponentType<Record<string, unknown>>) =>
+      ({
+        uniProps,
+        ...rest
+      }: {
+        uniProps?: (theme: unknown) => Record<string, unknown>;
+      } & Record<string, unknown>) => {
+        const themed = uniProps ? uniProps(darkTheme) : {};
+        return React.createElement(Component, { ...rest, ...themed });
+      },
+  };
+});
 
-vi.mock("@/constants/platform", () => ({
+// Spread the real module: the menu engine behind the browser destination rows imports more of it.
+vi.mock("@/constants/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/constants/platform")>()),
   isNative: false,
   isWeb: true,
 }));
@@ -187,7 +173,9 @@ vi.mock("@/components/ui/tooltip", () => ({
   ),
 }));
 
-vi.mock("lucide-react-native", () => {
+// The scripts UI icons stay stubbed so assertions can read them; every other icon is real.
+vi.mock("lucide-react-native", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react-native")>();
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", {
       "data-icon": name,
@@ -196,6 +184,7 @@ vi.mock("lucide-react-native", () => {
       "data-testid": props.testID,
     });
   return {
+    ...actual,
     ChevronDown: createIcon("ChevronDown"),
     Copy: createIcon("Copy"),
     Eye: createIcon("Eye"),
@@ -487,6 +476,23 @@ describe("WorkspaceScriptsButton", () => {
     ]);
 
     expect(requireRow("dev").textContent).toContain("dev--proj--repo.services.example.com");
+  });
+
+  it("adds no browser destination rows to a service without a workspace browser", () => {
+    current = renderScripts([
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        terminalId: "terminal-script-1",
+      }),
+    ]);
+
+    // The service row itself opens the link; without a built-in browser there is nothing else.
+    expect(requireRow("dev").textContent).toContain("localhost:57483");
+    expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openExternally"));
+    expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openInPaseo"));
   });
 
   it("stops a running script through its terminal", async () => {

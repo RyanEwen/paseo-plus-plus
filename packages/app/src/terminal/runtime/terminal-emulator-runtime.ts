@@ -247,6 +247,7 @@ export class TerminalEmulatorRuntime {
   ) {}
 
   private callbacks: TerminalEmulatorRuntimeCallbacks = {};
+  private hoveredLinkUrl: string | null = null;
   private pendingModifiers: PendingTerminalModifiers = {
     ctrl: false,
     shift: false,
@@ -331,6 +332,11 @@ export class TerminalEmulatorRuntime {
       });
     }
   };
+
+  /** Snapshot the hovered OSC 8 or detected URL before awaiting a native context menu. */
+  getHoveredLinkUrl(): string | null {
+    return this.hoveredLinkUrl;
+  }
 
   setCallbacks(input: { callbacks: TerminalEmulatorRuntimeCallbacks }): void {
     this.callbacks = input.callbacks;
@@ -554,6 +560,12 @@ export class TerminalEmulatorRuntime {
       event.preventDefault();
       void this.callbacks.onOpenExternalUrl?.(uri);
     };
+    const hoverLink = (_event: MouseEvent, uri: string) => {
+      this.hoveredLinkUrl = uri;
+    };
+    const leaveLink = () => {
+      this.hoveredLinkUrl = null;
+    };
     const terminal = new Terminal({
       allowProposedApi: true,
       convertEol: false,
@@ -562,7 +574,7 @@ export class TerminalEmulatorRuntime {
       fontFamily: resolveTerminalFontFamily(input.fontFamily),
       fontSize: resolveTerminalFontSize(input.fontSize),
       // OSC 8 hyperlinks; without a handler xterm prompts and calls window.open().
-      linkHandler: { activate: openExternalLink },
+      linkHandler: { activate: openExternalLink, hover: hoverLink, leave: leaveLink },
       lineHeight: 1.0,
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
@@ -580,7 +592,7 @@ export class TerminalEmulatorRuntime {
     terminal.loadAddon(new Unicode11Addon());
     terminal.loadAddon(new UnicodeGraphemesAddon());
     applyCharacterWidths(terminal, this.characterWidths);
-    terminal.loadAddon(new WebLinksAddon(openExternalLink));
+    terminal.loadAddon(new WebLinksAddon(openExternalLink, { hover: hoverLink, leave: leaveLink }));
     const localFileLinkProvider = terminal.registerLinkProvider(
       createTerminalLocalFileLinkProvider(terminal, {
         resolveLink: async (source) => {
@@ -1077,6 +1089,7 @@ export class TerminalEmulatorRuntime {
   }
 
   unmount(): void {
+    this.hoveredLinkUrl = null;
     this.releaseFindOutputAnchor();
     this.clearInFlightOutputTimeout();
     const inFlightOperation = this.inFlightOutputOperation;
