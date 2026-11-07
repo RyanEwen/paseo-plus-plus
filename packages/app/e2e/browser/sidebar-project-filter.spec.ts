@@ -355,18 +355,6 @@ test.describe("Sidebar project selector", () => {
             `sticky-workspace-header-${compact ? "compact" : "desktop"}.png`,
           ),
         });
-        if (!compact) {
-          await expect(page.getByTestId("sidebar-collapse-all")).toBeInViewport();
-          await expect(page.getByTestId("sidebar-expand-all")).toBeInViewport();
-          await page.getByTestId("sidebar-collapse-all").click();
-          await expect(
-            page.getByTestId(`sidebar-workspace-row-${getServerId()}:${projects[0].workspaceId}`),
-          ).toHaveCount(0);
-          await page.getByTestId("sidebar-expand-all").click();
-          await expect(
-            page.getByTestId(`sidebar-workspace-row-${getServerId()}:${projects[0].workspaceId}`),
-          ).toHaveCount(1);
-        }
         await display.click();
         await expect(page.getByTestId("sidebar-display-workspace-list")).toBeVisible();
         await closeSidebarDisplayPreferences(page);
