@@ -15,6 +15,12 @@ export interface DaemonSelfUpdateResult {
   newVersion: string | null;
 }
 
+/** A read-only update check: the newer installable version, or why none is offered. */
+export interface DaemonUpdateAvailability {
+  version: string | null;
+  reason: string | null;
+}
+
 export interface DaemonSelfUpdateInput {
   daemonVersion: string | null;
   desktopManaged: boolean;
@@ -52,12 +58,25 @@ export class DaemonSelfUpdater {
 
   constructor(private readonly runtime: DaemonSelfUpdateRuntime = defaultRuntime) {}
 
-  /** Check eligibility without package downloads, installation, progress, or restart intent. */
-  async checkAvailability(input: Pick<DaemonSelfUpdateInput, "daemonVersion" | "desktopManaged">) {
-    if (input.desktopManaged) return { version: null, reason: DESKTOP_MANAGED_UPDATE_ERROR };
-    if (!input.daemonVersion) return { version: null, reason: "Daemon version is unknown" };
+  /**
+   * Check eligibility without package downloads, installation, progress, or restart intent.
+   * Returns the newer installable version, or null with the reason this host cannot update.
+   */
+  async checkAvailability(
+    input: Pick<DaemonSelfUpdateInput, "daemonVersion" | "desktopManaged">,
+  ): Promise<DaemonUpdateAvailability> {
+    if (input.desktopManaged) {
+      return { version: null, reason: DESKTOP_MANAGED_UPDATE_ERROR };
+    }
+    if (!input.daemonVersion) {
+      return { version: null, reason: "Daemon version is unknown" };
+    }
+
     const { unsupportedReason } = await this.inspectOrigin(input.daemonVersion);
-    if (unsupportedReason) return { version: null, reason: unsupportedReason };
+    if (unsupportedReason) {
+      return { version: null, reason: unsupportedReason };
+    }
+
     const version = await this.runtime.npm.getNewerVersion(input.daemonVersion);
     return { version, reason: null };
   }
