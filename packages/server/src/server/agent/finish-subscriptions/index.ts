@@ -343,9 +343,15 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             stop(watch, group);
             return;
           }
-          // A null exact outcome means the child can never answer this request, so the
-          // caller is told through the ordinary finish notification and the intent ends.
-          if (record.attention && !pending.reason && pending.attentionOutcome !== null) {
+          // Only a child that no longer exists (null outcome and null final snapshot) ends an
+          // exact watch through the ordinary "is unavailable" notification. Any other missing
+          // or mismatched outcome stays refused: no child output reaches the caller without
+          // exact outcome evidence.
+          const childGone = pending.attentionOutcome === null && pending.final === null;
+          if (record.attention && !pending.reason && childGone) {
+            pending = { ...pending, lastMessage: null };
+          }
+          if (record.attention && !pending.reason && !childGone) {
             await captureExactAcknowledgement(record, watch, pending, signal);
             pending = undefined;
             continue;
