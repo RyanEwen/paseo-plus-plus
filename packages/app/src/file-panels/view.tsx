@@ -5,6 +5,7 @@ import type { PluginFilePanelProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { usePaneContext } from "@/panels/pane-context";
 import { useHosts } from "@/runtime/host-runtime";
 import { usePluginHostNavigation } from "@/plugins/host-navigation";
@@ -19,6 +20,7 @@ type Props = Pick<PluginFilePanelProps, "file" | "tab" | "params" | "revision"> 
   panel: FilePanel;
 };
 function FilePanelHost({ panel, theme, ...input }: Props & { theme: PluginTheme }) {
+  const active = useRetainedPanelActive();
   const { workspaceId, serverId } = usePaneContext();
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();
@@ -27,7 +29,15 @@ function FilePanelHost({ panel, theme, ...input }: Props & { theme: PluginTheme 
   const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
   const navigation = usePluginHostNavigation(serverId);
-  const props: PluginFilePanelProps = { ...input, workspaceId, theme, host, layout, navigation };
+  const props: PluginFilePanelProps = {
+    ...input,
+    active,
+    workspaceId,
+    theme,
+    host,
+    layout,
+    navigation,
+  };
   if (panel.builtin)
     return (
       <PluginClientStateProvider source={stateSource}>
