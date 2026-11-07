@@ -1,4 +1,4 @@
-import { waitForInput } from "../browser-automation/input-lifetime.js";
+import { settleUnlessAborted } from "../browser-automation/abort-race.js";
 
 const METADATA_TIMEOUT_MS = 1_000;
 interface CommittedNavigation {
@@ -35,7 +35,7 @@ export function createNavigationDelivery(reportFailure: () => void) {
   /** Keep cancellation distinct from native failure and enforce the clock even between timer turns. */
   async function resolveMetadata(current: PendingNavigation): Promise<void> {
     try {
-      const transitionType = await waitForInput(current.controller.signal, () =>
+      const transitionType = await settleUnlessAborted(current.controller.signal, () =>
         current.read(current.controller.signal, current.deadline),
       );
       if (pending !== current) return;

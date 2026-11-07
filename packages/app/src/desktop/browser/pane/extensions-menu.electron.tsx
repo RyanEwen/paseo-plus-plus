@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { MenuItemSecondary } from "@/components/ui/menu";
 
 import { ToolbarMenuContent, useToolbarMenuTriggerStyle } from "./toolbar-menu-trigger.electron";
 
@@ -265,25 +266,28 @@ function ExtensionMenuItem({
       ),
     [extension.pinned],
   );
-  const secondaryAction = useMemo(
-    () => (
-      <DropdownMenuItem
-        iconOnly
-        closeOnSelect={false}
-        accessibilityLabel={pinLabel}
-        tooltip={pinLabel}
-        disabled={pinBusy}
-        onSelect={toggle}
-        leading={pinIcon}
-      />
-    ),
+  const secondary = useMemo<MenuItemSecondary>(
+    () => ({
+      kind: "action",
+      element: (
+        <DropdownMenuItem
+          iconOnly
+          closeOnSelect={false}
+          accessibilityLabel={pinLabel}
+          tooltip={pinLabel}
+          disabled={pinBusy}
+          onSelect={toggle}
+          leading={pinIcon}
+        />
+      ),
+    }),
     [pinLabel, pinBusy, toggle, pinIcon],
   );
   return (
     <DropdownMenuItem
       leading={leading}
       accessibilityLabel={actionLabel(extension, extension.name)}
-      secondaryAction={secondaryAction}
+      secondary={secondary}
       disabled={!extension.hasPopup || busy}
       description={extension.hasPopup ? undefined : noPopupLabel}
       onSelect={select}

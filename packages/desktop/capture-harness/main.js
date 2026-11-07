@@ -3078,8 +3078,8 @@ async function stopCompatibilityWorker(guest, profile, extensionId) {
   // Navigation metadata and this fixture share the exact guest's CDP lifetime.
   // Fixture cleanup must leave that transport attached.
   const transport = getGuestCdpTransport(guest);
-  await transport.send("ServiceWorker.enable");
-  await transport.send("ServiceWorker.stopWorker", { versionId: entry[0] });
+  await transport.send({ command: "ServiceWorker.enable" });
+  await transport.send({ command: "ServiceWorker.stopWorker", params: { versionId: entry[0] } });
   const deadline = Date.now() + BROWSER_PROFILE_TIMEOUT_MS;
   while (profile.serviceWorkers.getAllRunning()[entry[0]]) {
     if (Date.now() >= deadline) {
@@ -3484,8 +3484,8 @@ async function assertPrivateExtensionFrameDenied({ guest, privateUrl, extensionI
   const transport = getGuestCdpTransport(guest);
   guest.debugger.on("message", onMessage);
   try {
-    await transport.send("Page.enable");
-    await transport.send("Network.enable");
+    await transport.send({ command: "Page.enable" });
+    await transport.send({ command: "Network.enable" });
     await guest.executeJavaScript(`(() => {
       const frame = document.createElement("iframe");
       frame.name = "paseo-private-extension-frame";
