@@ -553,6 +553,67 @@ function recordViewportMismatch(failures, label, actual, expected) {
   );
 }
 
+async function evaluateDesktopWindow(inspectorPort, expression) {
+  const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
+  const socket = new WebSocket(target.webSocketDebuggerUrl);
+  try {
+    return await new Promise((resolve, reject) => {
+      socket.addEventListener("error", reject, { once: true });
+      socket.addEventListener("message", ({ data }) => {
+        const response = JSON.parse(data);
+        if (response.id !== 1) return;
+        if (response.error || response.result?.exceptionDetails) reject(new Error(data));
+        else resolve(response.result.result.value);
+      });
+      socket.addEventListener(
+        "open",
+        () =>
+          socket.send(
+            JSON.stringify({
+              id: 1,
+              method: "Runtime.evaluate",
+              params: {
+                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); ${expression} })()`,
+                returnByValue: true,
+              },
+            }),
+          ),
+        { once: true },
+      );
+    });
+  } finally {
+    socket.close();
+  }
+}
+
+// Main-process expressions for inspectWindowPresentation. `win` is the Paseo app window.
+const APP_WINDOW_EXPRESSION =
+  "process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:'))";
+const PRESENTATION_EXPRESSION =
+  "{ runtime: process.versions.electron, arch: process.arch, visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(), contents: process.mainModule.require('electron').webContents.getAllWebContents().map(contents => ({ id: contents.id, type: contents.getType(), throttling: contents.getBackgroundThrottling(), url: contents.getURL(), captured: contents.isBeingCaptured(), widgetVisibility: contents.mainFrame?.visibilityState })) }";
+
+/** Decode a base64 PNG in the renderer and return its centre pixel as RGBA. */
+async function readCenterPixel(base64) {
+  const image = new Image();
+  image.src = `data:image/png;base64,${base64}`;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0);
+  const center = context.getImageData(
+    Math.floor(image.width / 2),
+    Math.floor(image.height / 2),
+    1,
+    1,
+  );
+  return [...center.data];
+}
+
+/** Run an optional main-process action against the app window, then read its presentation
+ * (or `value`, another main-process expression) without focusing or presenting it.
+ */
 async function inspectWindowPresentation(inspectorPort, action = "", value = null) {
   const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
   const socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -573,7 +634,7 @@ async function inspectWindowPresentation(inspectorPort, action = "", value = nul
               id: 1,
               method: "Runtime.evaluate",
               params: {
-                expression: `(async () => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); ${action} return ${value ?? "{ runtime: process.versions.electron, arch: process.arch, visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(), contents: process.mainModule.require('electron').webContents.getAllWebContents().map(contents => ({ id: contents.id, type: contents.getType(), throttling: contents.getBackgroundThrottling(), url: contents.getURL(), captured: contents.isBeingCaptured(), widgetVisibility: contents.mainFrame?.visibilityState })) }"}; })()`,
+                expression: `(async () => { const win = ${APP_WINDOW_EXPRESSION}; ${action} return ${value ?? PRESENTATION_EXPRESSION}; })()`,
                 returnByValue: true,
                 awaitPromise: true,
               },
@@ -695,25 +756,12 @@ async function verifyHiddenBrowserScreenshots({ client, browserId, artifactDir, 
       path.join(artifactDir, "hidden-browser-viewport.png"),
       Buffer.from(screenshot.data, "base64"),
     );
+    // Decode in the hidden app renderer through the main process; Playwright is detached here.
+    const decodeCall = `(${String(readCenterPixel)})(${JSON.stringify(screenshot.data)})`;
     const pixel = await inspectWindowPresentation(
       inspectorPort,
       "",
-      `win.webContents.executeJavaScript("(" + ${JSON.stringify(
-        String(async (base64) => {
-          const image = new Image();
-          image.src = `data:image/png;base64,${base64}`;
-          await image.decode();
-          const canvas = document.createElement("canvas");
-          canvas.width = image.width;
-          canvas.height = image.height;
-          const context = canvas.getContext("2d");
-          context.drawImage(image, 0, 0);
-          return [
-            ...context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1)
-              .data,
-          ];
-        }),
-      )} + " )(" + ${JSON.stringify(JSON.stringify(screenshot.data))} + ")")`,
+      `win.webContents.executeJavaScript(${JSON.stringify(decodeCall)})`,
     );
     assert(
       JSON.stringify(pixel) === "[0,255,0,255]",
@@ -1119,6 +1167,12 @@ async function runRegression({
         artifactDir,
         inspectorPort,
       });
+    } else {
+      // Some window managers refuse to minimise. Record the skipped check explicitly.
+      fs.appendFileSync(
+        path.join(artifactDir, "background-agent-access.jsonl"),
+        `${JSON.stringify({ label: "window-minimized", browserId, supported: false })}\n`,
+      );
     }
   } finally {
     await inspectWindowPresentation(inspectorPort, "win.restore(); win.showInactive();");
@@ -1607,10 +1661,6 @@ async function main() {
 }
 
 await main();
-
-async function evaluateDesktopWindow(inspectorPort, expression) {
-  return inspectWindowPresentation(inspectorPort, "", `(async () => { ${expression} })()`);
-}
 
 async function resizeDesktopWindow(inspectorPort, { width, height }) {
   return evaluateDesktopWindow(

@@ -14,6 +14,8 @@ configureDesktopRendererClient({
 
 const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
 const { getGuestCdpTransport } = require("../dist/features/browser-automation/cdp-transport.js");
+const { executeAutomationCommand } = require("../dist/features/browser-automation/service.js");
+const { BrowserSnapshotEngine } = require("../dist/features/browser-automation/snapshot-engine.js");
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
@@ -2119,11 +2121,20 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   return checks;
 }
 
+/** Read the ref of a snapshot entry such as 'button "Background click"', failing when absent. */
+function requireRef(snapshot, entry) {
+  const marker = `${entry} [ref=`;
+  const start = snapshot.snapshot.indexOf(marker);
+  const ref =
+    start === -1 ? null : snapshot.snapshot.slice(start + marker.length).match(/^(@e\d+)\]/)?.[1];
+  if (!ref) fail(`${entry} ref missing: ${snapshot.snapshot}`);
+  return ref;
+}
+
 /** Check trusted pointer events, held buttons, click options and wheel direction. */
 async function verifyBackgroundPointerDelivery(command, guest, ref, snapshot, state) {
   await command("hover", { ref });
-  const dropRef = snapshot.snapshot.match(/button "Background drop" \[ref=(@e\d+)\]/)?.[1];
-  if (!dropRef) fail("background drop ref missing");
+  const dropRef = requireRef(snapshot, 'button "Background drop"');
   await command("drag", { sourceRef: ref, targetRef: dropRef });
   await command("click", { ref, doubleClick: true, modifiers: ["Control", "Shift"] });
   await command("scroll", { ref, deltaX: 0, deltaY: 120 });
@@ -2142,23 +2153,21 @@ async function verifyBackgroundPointerDelivery(command, guest, ref, snapshot, st
     fail(`${state}: wheel changed direction or trust: ${JSON.stringify(wheel)}`);
 }
 
-/** Exercise production commands without presenting or focusing the resident guest. */
-async function verifyBackgroundAutomation(win, guest) {
-  const { executeAutomationCommand } = require("../dist/features/browser-automation/service.js");
-  const {
-    BrowserSnapshotEngine,
-  } = require("../dist/features/browser-automation/snapshot-engine.js");
-  const browserId = "background-automation";
+/** Register one fixture guest as the only browser in a production command registry. */
+function createBackgroundRegistry(guest, browserId) {
   const contents = adaptWebContents(guest);
-  const snapshotEngine = new BrowserSnapshotEngine();
-  const registry = {
+  return {
     listRegisteredBrowserIds: () => [browserId],
     listRegisteredBrowserIdsForWorkspace: () => [browserId],
     getTabContents: (id) => (id === browserId && !guest.isDestroyed() ? contents : null),
     getBrowserWorkspaceId: () => "fixture-workspace",
     getWorkspaceActiveBrowserId: () => null,
   };
-  const command = async (name, args = {}) => {
+}
+
+/** Run production automation commands against the fixture, failing the harness on any error. */
+function createBackgroundCommandRunner({ registry, snapshotEngine, browserId }) {
+  return async (name, args = {}) => {
     const response = await withTimeout(
       Promise.resolve(
         executeAutomationCommand(
@@ -2178,6 +2187,10 @@ async function verifyBackgroundAutomation(win, guest) {
     if (!response.ok) fail(`background ${name}: ${JSON.stringify(response)}`);
     return response.result;
   };
+}
+
+/** Install the background click/drop fixture page with trusted-event and frame counters. */
+async function installBackgroundFixture(guest) {
   await guest.executeJavaScript(`(() => {
     document.body.innerHTML = '<button id="background-click">Background click</button><button id="background-drop" style="margin-left: 80px">Background drop</button><div style="height: 2400px"></div>';
     window.backgroundInput = [];
@@ -2192,31 +2205,48 @@ async function verifyBackgroundAutomation(win, guest) {
     requestAnimationFrame(tick);
     document.getElementById('background-click').onclick = () => window.backgroundClicks++;
   })()`);
+}
+
+/** Put the harness window into one background state without focusing it.
+ * Returns supported: false when the window manager refuses to minimise.
+ */
+async function presentWindowState(win, state) {
+  if (state === "visible-unfocused") win.showInactive();
+  if (state === "hidden") win.hide();
+  if (state === "minimized") {
+    // Windows tool windows skipped from the taskbar cannot actually minimize.
+    win.setMinimizable(true);
+    if (process.platform === "win32") win.setSkipTaskbar(false);
+    win.showInactive();
+    win.minimize();
+    await delay(500);
+    if (!win.isMinimized()) return { supported: false };
+  }
+  return { supported: true };
+}
+
+/** Exercise production commands without presenting or focusing the resident guest. */
+async function verifyBackgroundAutomation(win, guest) {
+  const browserId = "background-automation";
+  const snapshotEngine = new BrowserSnapshotEngine();
+  const registry = createBackgroundRegistry(guest, browserId);
+  const command = createBackgroundCommandRunner({ registry, snapshotEngine, browserId });
+  await installBackgroundFixture(guest);
   const results = [];
   for (const state of ["visible-unfocused", "hidden", "minimized"]) {
-    if (state === "visible-unfocused") win.showInactive();
-    if (state === "hidden") win.hide();
-    if (state === "minimized") {
-      // Windows tool windows skipped from the taskbar cannot actually minimize.
-      win.setMinimizable(true);
-      if (process.platform === "win32") win.setSkipTaskbar(false);
-      win.showInactive();
-      win.minimize();
-      await delay(500);
-      if (!win.isMinimized()) {
-        console.log(
-          "SKIP production minimized automation: window manager did not minimize the window",
-        );
-        results.push({ group: "automation", check: state, supported: false });
-        continue;
-      }
+    const { supported } = await presentWindowState(win, state);
+    if (!supported) {
+      console.log(
+        "SKIP production minimized automation: window manager did not minimize the window",
+      );
+      results.push({ group: "automation", check: state, supported: false });
+      continue;
     }
     await delay(500);
     const focused = win.isFocused();
     const before = await guest.executeJavaScript("window.backgroundClicks");
     const snapshot = await command("snapshot");
-    const ref = snapshot.snapshot.match(/button "Background click" \[ref=(@e\d+)\]/)?.[1];
-    if (!ref) fail(`background ref missing: ${snapshot.snapshot}`);
+    const ref = requireRef(snapshot, 'button "Background click"');
     const startedAt = Date.now();
     const originalUrl = guest.getURL();
     const originalId = guest.id;
@@ -2261,13 +2291,11 @@ async function verifyBackgroundAutomation(win, guest) {
 
 /** Verify bounded input and late-continuation fencing using an owned paused renderer. */
 async function verifyStalledInput({ win, guest, command, registry, snapshotEngine, browserId }) {
-  const { executeAutomationCommand } = require("../dist/features/browser-automation/service.js");
   // Pause only this owned fixture guest to exercise a real stalled renderer.
   // The timeout must release activity and fence input before the guest resumes.
   win.hide();
   const pausedSnapshot = await command("snapshot");
-  const pausedRef = pausedSnapshot.snapshot.match(/button "Background click" \[ref=(@e\d+)\]/)?.[1];
-  if (!pausedRef) fail("paused fixture button ref missing");
+  const pausedRef = requireRef(pausedSnapshot, 'button "Background click"');
   const beforePause = await guest.executeJavaScript("window.backgroundClicks");
   await guest.debugger.sendCommand("Debugger.enable");
   const paused = new Promise((resolve) => {
@@ -2331,12 +2359,10 @@ async function verifyCancelledDragCleanup({
   browserId,
   command,
 }) {
-  const { executeAutomationCommand } = require("../dist/features/browser-automation/service.js");
   win.hide();
   const snapshot = await command("snapshot");
-  const ref = snapshot.snapshot.match(/button "Background click" \[ref=(@e\d+)\]/)?.[1];
-  const targetRef = snapshot.snapshot.match(/button "Background drop" \[ref=(@e\d+)\]/)?.[1];
-  if (!ref || !targetRef) fail("cancelled drag fixture refs missing");
+  const ref = requireRef(snapshot, 'button "Background click"');
+  const targetRef = requireRef(snapshot, 'button "Background drop"');
   const before = await guest.executeJavaScript(`(() => {
     window.promptBeforeCancelledDrag = window.prompt;
     return { drops: window.backgroundDrops, presses: window.backgroundInput.filter(event => event.type === "mousedown").length };

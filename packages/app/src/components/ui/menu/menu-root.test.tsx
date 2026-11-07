@@ -14,7 +14,7 @@ import {
 import { ExtensionsMenu } from "@/desktop/browser/pane/extensions-menu.electron";
 import type { DesktopBrowserExtensionAction } from "@/desktop/host";
 import { MenuRoot, MenuTrigger } from "./menu-root";
-import { MenuItem } from "./menu-item";
+import { MenuItem, type MenuItemSecondary } from "./menu-item";
 import { useMenuContext } from "./menu-context";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
@@ -50,14 +50,22 @@ function MenuOpenState() {
   return <Text>{open ? "open" : "closed"}</Text>;
 }
 function CreationRow({ create, split }: { create: () => void; split: () => void }) {
-  const secondary = useMemo(
-    () => (
-      <MenuItem iconOnly accessibilityLabel="Choose split" onSelect={split} closeOnSelect={false} />
-    ),
+  const secondary = useMemo<MenuItemSecondary>(
+    () => ({
+      kind: "action",
+      element: (
+        <MenuItem
+          iconOnly
+          accessibilityLabel="Choose split"
+          onSelect={split}
+          closeOnSelect={false}
+        />
+      ),
+    }),
     [split],
   );
   return (
-    <MenuItem onSelect={create} secondaryAction={secondary}>
+    <MenuItem onSelect={create} secondary={secondary}>
       Create view
     </MenuItem>
   );
