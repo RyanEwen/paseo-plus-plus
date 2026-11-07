@@ -1,8 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { isMainModule } from "../is-main-module.mjs";
 import { requirePreviewRepository } from "./source.mjs";
+
+const require = createRequire(import.meta.url);
+const { PREVIEW_BUILD_NUMBER_MAX } = require("../../packages/app/native-release-version.js");
 
 export const updaterBridgeMarker = "<!-- paseo-plus-plus-updater-bridge:v1 -->";
 
@@ -20,7 +24,7 @@ export function requirePreviewNotes(notes, kind) {
 function releaseIdentity(tag) {
   const match = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.([1-9]\d*)$/.exec(tag);
   const build = Number(match?.[4]);
-  if (!match || !Number.isSafeInteger(build) || build > 1_100_000_000) {
+  if (!match || !Number.isSafeInteger(build) || build > PREVIEW_BUILD_NUMBER_MAX) {
     throw new Error("Expected a canonical fork workflow tag and valid build number");
   }
   return { core: match.slice(1, 4).map((part) => BigInt(part)), build };
