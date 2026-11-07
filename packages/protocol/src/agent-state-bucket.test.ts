@@ -4,6 +4,7 @@ import {
   deriveAgentStateBucket,
   getAgentStatusPriority,
   getWorkspaceStateBucketPriority,
+  isOutrankedByExplicitReview,
 } from "./agent-state-bucket.js";
 
 describe("deriveAgentStateBucket", () => {
@@ -102,4 +103,16 @@ it("keeps passive problems visible while using the daemon decision for human bad
   expect(hasHumanAgentAttention(passiveProblem)).toBe(false);
   expect(hasHumanAgentAttention({ ...passiveProblem, humanAttentionRequired: true })).toBe(true);
   expect(hasHumanAgentAttention({ requiresAttention: true })).toBe(true);
+});
+
+describe("isOutrankedByExplicitReview", () => {
+  it.each([
+    { bucket: "running", outranked: true },
+    { bucket: "done", outranked: true },
+    { bucket: "attention", outranked: false },
+    { bucket: "failed", outranked: false },
+    { bucket: "needs_input", outranked: false },
+  ] as const)("$bucket: $outranked", ({ bucket, outranked }) => {
+    expect(isOutrankedByExplicitReview(bucket)).toBe(outranked);
+  });
 });

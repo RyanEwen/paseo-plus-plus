@@ -249,7 +249,9 @@ The project menu's **Restore archived workspace** opens that project's archived 
 
 The workspace + menu opens the **Reopen closed agent** dialog, scoped to that host and workspace identity.
 It includes archived agents and unarchived agents without open tabs. Runtime `closed` status
-does not mean a tab was closed. Selection uses the same navigation as History.
+does not mean a tab was closed. Selection opens the agent as a pinned tab in the pane the dialog
+was launched from, replacing an empty pane's launcher tab, so archived agents stay open like a
+History selection.
 
 History navigation opens the selected agent without changing either archive state. Workspace
 **Restore** recovers only the workspace; the selected archived agent stays open with its callout.
@@ -299,7 +301,7 @@ The asymmetry is intentional: a subagent's persistent relationship lives in the 
 
 Agent lifecycle status stays literal: a parent agent is `idle` when its own turn is idle, even if a child is running.
 
-Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
+Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. With [agent-aware attention](fork-features/agent-aware-attention.md), a host that reports an agent's audience (`humanAttentionRequired`) treats that agent as its own contributor, so a same-workspace descendant that needs the human can still mark the workspace failed or needs input. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 

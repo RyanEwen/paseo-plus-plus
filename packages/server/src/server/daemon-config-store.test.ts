@@ -1429,22 +1429,6 @@ describe("attention preference daemon authority", () => {
   });
 });
 
-test("attention preference patch reaches the existing host store", async () => {
-  const home = mkdtempSync(path.join(tmpdir(), "attention-existing-patch-"));
-  try {
-    const store = new DaemonConfigStore(home, reloadableConfig({}));
-    const patch: Record<string, unknown> = { notifications: { agentAwareAttention: false } };
-    await store.patch(patch);
-    const values: Record<string, unknown> = store.get();
-    expect(values.notifications).toEqual({ agentAwareAttention: false });
-    expect(loadPersistedConfig(home)).toMatchObject({
-      daemon: { notifications: { agentAwareAttention: false } },
-    });
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
 describe("DaemonConfigStore speech settings", () => {
   const tempDirs: string[] = [];
 

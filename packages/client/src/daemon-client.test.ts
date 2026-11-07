@@ -8411,7 +8411,6 @@ test("carries workspace history identity on every page while unscoped history st
   expect(mock.sent).toHaveLength(3);
 });
 
-// Existing SDK interface: a deterministic reply lets the predecessor resolve its incorrect global request.
 test("rejects explicitly empty workspace history scope without sending a global request", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
@@ -8429,8 +8428,8 @@ test("rejects explicitly empty workspace history scope without sending a global 
     (value) => ({ status: "fulfilled", value }),
     (reason: unknown) => ({ status: "rejected", reason }),
   );
-  // Reply to every recorded request before checking the outcome. On the predecessor,
-  // this settles the unscoped request instead of waiting for a request timeout.
+  // Reply to every sent frame so an implementation that wrongly sends an unscoped request
+  // fails on the assertion rather than on the request timeout.
   for (const frame of mock.sent) {
     const request = parseSentFrame(frame);
     mock.triggerMessage(

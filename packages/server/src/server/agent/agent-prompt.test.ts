@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager, AgentRunCancellationError } from "./agent-manager.js";
+import { AgentManager } from "./agent-manager.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentStorage } from "./agent-storage.js";
 import { waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
@@ -494,19 +494,6 @@ it.each([
     for (const stop of stops) stop();
   }
 
-  /** Report fixed failure categories without leaking error payloads, paths, or endpoint details. */
-  function callbackErrorKind(error: unknown): string {
-    if (error instanceof AttentionObjectiveError) return "attention-objective-refused";
-    if (error instanceof AgentRunCancellationError) return "run-cancellation-refused";
-    if (!(error instanceof Error)) return "non-error-rejection";
-    if (error.message === "Active turn changed before steering could be delivered")
-      return "active-turn-changed-before-dispatch";
-    if (error.message === "A foreground turn is already active")
-      return "provider-foreground-already-active";
-    if (error.name === "AbortError") return "aborted";
-    return "unclassified-error";
-  }
-
   try {
     for (const [index, link] of links.entries()) {
       if (!link) throw new Error("Expected exact request link");
@@ -582,32 +569,18 @@ it.each([
       if (result.type === "return") return [result.value.dispatched];
       return [];
     });
-    const settlements = await Promise.allSettled(dispatched);
-    const dispatches = settlements.map((result) => {
-      if (result.status === "fulfilled")
-        return { status: result.status, disposition: result.value };
-      return { status: result.status, rejection: callbackErrorKind(result.reason) };
-    });
-    const watchFailures = warnings.mock.calls.flatMap(([detail, message]) => {
-      if (message !== "Retrying finish subscription") return [];
-      const context: unknown = detail;
-      if (typeof context === "object" && context !== null && "err" in context)
-        return [callbackErrorKind(context.err)];
-      return ["unclassified-watch-warning"];
-    });
-    const diagnostic = `Exact routed callback evidence: ${JSON.stringify({ watchFailures, dispatches })}`;
+    await Promise.allSettled(dispatched);
     if (mode === "parented" || mode === "independent") {
-      expect(reservations, diagnostic).toHaveBeenCalledTimes(2);
-      expect(enqueue, diagnostic).toHaveBeenCalledTimes(2);
-      expect(acknowledgements, diagnostic).toHaveLength(2);
+      expect(reservations).toHaveBeenCalledTimes(2);
+      expect(enqueue).toHaveBeenCalledTimes(2);
+      expect(acknowledgements).toHaveLength(2);
       const stored = (await storage.get(callerId))?.attentionObjectives;
       expect(
         stored?.delegations.map((entry) => entry.deliveries?.map((item) => item.status)),
-        diagnostic,
       ).toEqual([["consumed"], ["consumed"]]);
-      expect(parentPrompts.join("\n"), diagnostic).toContain("EXACT_RESULT_0");
-      expect(parentPrompts.join("\n"), diagnostic).toContain("EXACT_RESULT_1");
-      expect(parentPrompts.join("\n"), diagnostic).not.toContain("Untrusted current message");
+      expect(parentPrompts.join("\n")).toContain("EXACT_RESULT_0");
+      expect(parentPrompts.join("\n")).toContain("EXACT_RESULT_1");
+      expect(parentPrompts.join("\n")).not.toContain("Untrusted current message");
     } else {
       expect(parentPrompts).toEqual([]);
       expect(enqueue).not.toHaveBeenCalled();

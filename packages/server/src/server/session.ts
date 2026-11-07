@@ -8,6 +8,7 @@ import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
+import { scopeAgentsToRequestedWorkspace } from "./agent-directory-scope.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
 import type {
@@ -1134,12 +1135,12 @@ export class Session {
         })
       : null;
     this.daemonConfigStore = daemonConfigStore;
-    this.appSettingsSession = new AppSettingsSession(
-      (message) => this.emit(message),
-      this.delivery,
+    this.appSettingsSession = new AppSettingsSession({
+      emit: (message) => this.emit(message),
+      delivery: this.delivery,
+      store: options.appSettingsStore,
       paseoHome,
-      options.appSettingsStore,
-    );
+    });
     this.terminalManager = terminalManager;
     this.terminalController = new TerminalSessionController({
       terminalManager,
@@ -1492,8 +1493,15 @@ export class Session {
     const records = await this.agentStorage.list();
     for (const record of records) {
       const live = this.agentManager.getAgent(record.id);
-      if (live) await this.agentUpdates.forwardLiveAgent(live);
-      else await this.agentUpdates.emitStoredRecord(record);
+      // The preference only changes projections that carry an audience decision; agents
+      // without one project the same either way, so re-emitting them sends identical rows.
+      if (live) {
+        if (live.attentionObjectives) {
+          await this.agentUpdates.forwardLiveAgent(live);
+        }
+      } else if (record.humanAttentionRequired !== undefined) {
+        await this.agentUpdates.emitStoredRecord(record);
+      }
     }
     const workspaces = await this.workspaceRegistry.list();
     await this.emitWorkspaceUpdatesForWorkspaceIds(
@@ -5632,15 +5640,6 @@ export class Session {
     return matchedEntries;
   }
 
-  /** Apply workspace identity before cursor pagination; cwd is not an ownership key. */
-  private scopeHistoryAgents(
-    agents: AgentSnapshotPayload[],
-    request: AgentDirectoryRequestMessage,
-  ): AgentSnapshotPayload[] {
-    if (request.type !== "fetch_agent_history_request" || !request.workspaceId) return agents;
-    return agents.filter((agent) => agent.workspaceId === request.workspaceId);
-  }
-
   private async listFetchAgentsEntries(request: AgentDirectoryRequestMessage): Promise<{
     entries: FetchAgentsResponseEntry[];
     pageInfo: FetchAgentsResponsePageInfo;
@@ -5662,7 +5661,7 @@ export class Session {
         (request.type === "fetch_agents_request" && request.includeBackground),
       includeUnavailablePersisted: request.type === "fetch_agent_history_request",
     });
-    agents = this.scopeHistoryAgents(agents, request);
+    agents = scopeAgentsToRequestedWorkspace(agents, request);
     const activePlacementsByWorkspaceId =
       scope === "active" ? await this.buildActiveProjectPlacementsByWorkspaceId() : null;
     if (activePlacementsByWorkspaceId) {

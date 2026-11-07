@@ -7,6 +7,7 @@ import { AgentList } from "@/components/agent-list";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useAgentHistory } from "@/hooks/use-agent-history";
+import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { resolveClosedAgentDialogState, selectPreviousAgents } from "@/hooks/previous-agents";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSessionStore } from "@/stores/session-store";
@@ -23,10 +24,13 @@ const SNAP_POINTS = ["70%", "92%"];
 export function ReopenClosedAgentDialog({
   serverId,
   workspaceId,
+  onOpenAgent,
   onClose,
 }: {
   serverId: string;
   workspaceId: string;
+  /** Open the picked agent where the dialog was launched from. */
+  onOpenAgent: (agentId: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -50,9 +54,17 @@ export function ReopenClosedAgentDialog({
     closedAgentCount: agents.length,
     history,
   });
+  // The daemon cannot know which agents have open tabs, so while every loaded row is already
+  // open, keep paging until a closed agent appears or the history runs out.
   useEffect(() => {
     if (scanningOpenPages && !isLoadingMore) loadMore();
   }, [scanningOpenPages, isLoadingMore, loadMore]);
+  const openAgent = useCallback(
+    (agent: AggregatedAgent) => {
+      onOpenAgent(agent.id);
+    },
+    [onOpenAgent],
+  );
   const refresh = useCallback(() => {
     void refreshAll();
   }, [refreshAll]);
@@ -92,7 +104,7 @@ export function ReopenClosedAgentDialog({
   } else if (showLoading) {
     content = (
       <View style={styles.state} testID="reopen-closed-agent-loading">
-        <ThemedLoadingSpinner color="" uniProps={mutedSpinnerColor} />
+        <ThemedLoadingSpinner uniProps={mutedSpinnerColor} />
       </View>
     );
   } else {
@@ -120,6 +132,7 @@ export function ReopenClosedAgentDialog({
             showCheckoutInfo={false}
             showAttentionIndicator={false}
             onAgentSelect={onClose}
+            onAgentOpen={openAgent}
             onRefresh={refresh}
             isRefreshing={history.isRevalidating}
             listFooterComponent={footer}

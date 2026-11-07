@@ -403,3 +403,31 @@ it("keeps an explicit escalating child Ready while its parent works and lets blo
   });
   expect(buildWorkspaceAgentActivityIndex(agents).get("same")?.status).toBe("failed");
 });
+
+it("selects the same activity for a mixed-metadata workspace in any agent order", () => {
+  const reviewed = agent({
+    id: "reviewed",
+    workspaceId: "workspace",
+    updatedAt: "2026-01-01T00:00:01.000Z",
+    requiresAttention: true,
+    humanAttentionRequired: true,
+    attentionReason: "finished",
+  });
+  const running = agent({
+    id: "running",
+    workspaceId: "workspace",
+    status: "running",
+    updatedAt: "2026-01-01T00:00:03.000Z",
+  });
+  const idle = agent({
+    id: "idle",
+    workspaceId: "workspace",
+    updatedAt: "2026-01-01T00:00:05.000Z",
+  });
+  const forward = new Map([reviewed, running, idle].map((entry) => [entry.id, entry]));
+  const reverse = new Map([idle, running, reviewed].map((entry) => [entry.id, entry]));
+
+  const expected = { agentId: "running", status: "running" };
+  expect(buildWorkspaceAgentActivityIndex(forward).get("workspace")).toMatchObject(expected);
+  expect(buildWorkspaceAgentActivityIndex(reverse).get("workspace")).toMatchObject(expected);
+});

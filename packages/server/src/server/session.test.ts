@@ -1,3 +1,4 @@
+import { REQUESTER_LOST_PERMISSION_MESSAGE } from "./agent/attention/coordinator.js";
 import {
   createWorkspaceRuntimeStore,
   type WorkspaceRuntimeStore,
@@ -6207,7 +6208,7 @@ test.each(["committed", "rejected"] as const)(
           agentId: worker.id,
           provider: "codex",
           reason: "finished",
-          message: "This task needs permission, but its requesting agent is no longer available.",
+          message: REQUESTER_LOST_PERMISSION_MESSAGE,
         });
       } else {
         expect(notify).not.toHaveBeenCalled();

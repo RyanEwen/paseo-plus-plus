@@ -13,14 +13,12 @@ export function AgentStatusDot({
   status,
   requiresAttention,
   attentionReason,
-  attentionMessage,
   pendingPermissionCount,
   showInactive = false,
 }: {
   status: string | null | undefined;
   requiresAttention: boolean | null | undefined;
   attentionReason?: "finished" | "error" | "permission" | null;
-  attentionMessage?: string | null;
   pendingPermissionCount?: number;
   showInactive?: boolean;
 }) {
@@ -37,7 +35,6 @@ export function AgentStatusDot({
     status,
     requiresAttention: Boolean(requiresAttention),
     attentionReason: attentionReason ?? null,
-    attentionMessage,
     pendingPermissionCount: pendingPermissionCount ?? 0,
   });
   const color = getStatusDotColor({ theme, bucket, showDoneAsInactive: showInactive });

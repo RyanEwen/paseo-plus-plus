@@ -27,7 +27,7 @@ import {
 } from "@getpaseo/protocol/terminal-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
-import { useWorkspaceTabLaunchCatalog } from "@/workspace-tabs/launcher";
+import { useReopenClosedAgentLaunchItem } from "@/workspace-tabs/launcher";
 import { WorkspaceNewTabMenuItem } from "./workspace-new-tab-menu";
 import {
   useWorkspaceScriptsMenuPages,
@@ -239,15 +239,7 @@ export function WorkspaceHeaderMenuMobile({
   const router = useRouter();
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
   const { config } = useDaemonConfig(normalizedServerId);
-  const launchGroups = useWorkspaceTabLaunchCatalog({
-    serverId: normalizedServerId,
-    purpose: "primary",
-    host: "main",
-    surface: "menu",
-  });
-  const previousAgents = launchGroups
-    .flatMap((group) => group.items)
-    .find((item) => item.id === "reopen-closed-agent");
+  const reopenClosedAgentItem = useReopenClosedAgentLaunchItem();
   const profiles = useMemo(
     () => resolveTerminalProfiles(config?.terminalProfiles),
     [config?.terminalProfiles],
@@ -289,7 +281,7 @@ export function WorkspaceHeaderMenuMobile({
         pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
-        {previousAgents ? <WorkspaceNewTabMenuItem item={previousAgents} /> : null}
+        {reopenClosedAgentItem ? <WorkspaceNewTabMenuItem item={reopenClosedAgentItem} /> : null}
         {scriptsMenu.trigger}
         {pluginMenu.rows}
         {pluginMenu.rows.length > 0 ? <DropdownMenuSeparator /> : null}

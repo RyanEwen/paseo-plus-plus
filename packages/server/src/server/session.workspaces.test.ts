@@ -1919,6 +1919,56 @@ test("workspace clear attention clears stored-only agents and responds", async (
   }
 });
 
+test("attention preference refresh re-emits only agents with an audience decision", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: REPO_CWD,
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const known: StoredAgentRecord = {
+    ...makeStoredAgent({ id: "known-audience", cwd: REPO_CWD, updatedAt: workspace.updatedAt }),
+    workspaceId: workspace.workspaceId,
+    humanAttentionRequired: false,
+  };
+  const unknown: StoredAgentRecord = {
+    ...makeStoredAgent({ id: "unknown-audience", cwd: REPO_CWD, updatedAt: workspace.updatedAt }),
+    workspaceId: workspace.workspaceId,
+  };
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.agentStorage.list = async () => [known, unknown];
+  session.agentStorage.get = async (agentId: string) =>
+    [known, unknown].find((record) => record.id === agentId) ?? null;
+  await activateAgentUpdatesSubscription(session, "attention-refresh", {});
+  emitted.length = 0;
+
+  await session.refreshAttentionPresentation();
+
+  const upserted = emitted.flatMap((message) =>
+    message.type === "agent_update" && message.payload.kind === "upsert"
+      ? [message.payload.agent.id]
+      : [],
+  );
+  expect(upserted).toEqual([known.id]);
+});
+
 test("workspace clear attention responds with an error instead of timing out", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });

@@ -127,9 +127,20 @@ export class AgentStorage {
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
 
-  constructor(baseDir: string, logger: Logger) {
+  private readonly writeRecordFile: (path: string, record: StoredAgentRecord) => Promise<void>;
+
+  /**
+   * `options.writeRecordFile` replaces the durable per-record write (an atomic JSON write by
+   * default); tests use it to hold or fail one record's commit.
+   */
+  constructor(
+    baseDir: string,
+    logger: Logger,
+    options?: { writeRecordFile?: (path: string, record: StoredAgentRecord) => Promise<void> },
+  ) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+    this.writeRecordFile = options?.writeRecordFile ?? writeJsonFileAtomic;
   }
 
   async initialize(): Promise<void> {
@@ -224,7 +235,7 @@ export class AgentStorage {
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await this.writeRecordFile(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {

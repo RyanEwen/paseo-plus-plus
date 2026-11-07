@@ -1,3 +1,7 @@
+import {
+  REQUESTER_LOST_FAILURE_MESSAGE,
+  REQUESTER_LOST_PERMISSION_MESSAGE,
+} from "./attention/coordinator.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -6,8 +10,9 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, promises as fs } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -6243,6 +6248,35 @@ test("getAgent does not expose committed history internals once manager owns the
     limit: 0,
   });
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
+});
+
+test("an exact wait ends when no run can still admit the request", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unadmitted-request-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new StreamingAssistantClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000121",
+  });
+  const idle = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const query = {
+    requester: { agentId: "waiting-requester" },
+    link: { objectiveId: "caller-job", requestId: "never-submitted", token: "cap-lost" },
+  };
+
+  for (const agentId of [idle.id, "00000000-0000-4000-8000-000000000999"]) {
+    await expect(
+      manager.waitForAttentionOutcome({
+        agentId,
+        query,
+        signal: AbortSignal.timeout(5_000),
+        waitForSubmission: true,
+      }),
+    ).resolves.toBeNull();
+  }
 });
 
 test("streams coalesced assistant chunks and retains the projected message", async () => {
@@ -12699,103 +12733,6 @@ test("a self-escalating child keeps the reason, deduplicates, and rejects unrela
   expect(calls).toHaveLength(1);
 });
 
-test("waiting human objectives survive serialization, unrelated work, and authenticated callbacks", () => {
-  let objectives = new AgentAttentionObjectives(undefined, "home");
-  objectives.admit({ inputs: [{ kind: "human", requestId: "human-job" }], steering: false });
-  objectives.declare("human-job", "waiting");
-  const reply = objectives.outgoing({
-    recipient: { agentId: "worker", serverId: "remote" },
-    objectiveId: undefined,
-    requestId: "first-request",
-  });
-  expect(reply?.requesterObjective).toBeDefined();
-  expect(
-    objectives.outgoing({
-      recipient: { agentId: "worker", serverId: "remote" },
-      objectiveId: undefined,
-      requestId: "first-request",
-    }),
-  ).toEqual(reply);
-  expect(objectives.finish()).toBe(false);
-  objectives = new AgentAttentionObjectives(objectives.snapshot(), "home");
-  expect(JSON.stringify(objectives.describe())).not.toContain(reply?.requesterObjective?.token);
-  objectives.admit({
-    inputs: [{ kind: "agent", requestId: "unrelated", requester: { agentId: "other" } }],
-    steering: false,
-  });
-  expect(() => objectives.declare("human-job", "final")).toThrow(AttentionObjectiveError);
-  expect(objectives.finish()).toBe(false);
-  expect(() =>
-    objectives.admit({
-      inputs: [
-        {
-          kind: "agent",
-          requestId: "spoofed-reply",
-          requester: { agentId: "worker", serverId: "wrong-host" },
-          attention: { continuation: reply?.requesterObjective },
-        },
-      ],
-      steering: false,
-    }),
-  ).toThrow(AttentionObjectiveError);
-  expect(objectives.hasHumanAudience()).toBe(false);
-  expect(objectives.finish()).toBe(false);
-  objectives.admit({
-    inputs: [
-      {
-        kind: "agent",
-        requestId: "actual-reply",
-        requester: { agentId: "worker", serverId: "remote" },
-        attention: { continuation: reply?.requesterObjective },
-      },
-    ],
-    steering: false,
-  });
-  expect(objectives.hasHumanAudience()).toBe(true);
-  expect(objectives.finish()).toBe(false);
-  objectives.declare("human-job", "final");
-  expect(objectives.finish()).toBe(true);
-  expect(() =>
-    objectives.admit({
-      inputs: [
-        {
-          kind: "agent",
-          requestId: "late-reply",
-          requester: { agentId: "worker", serverId: "remote" },
-          attention: { continuation: reply?.requesterObjective },
-        },
-      ],
-      steering: false,
-    }),
-  ).toThrow(AttentionObjectiveError);
-  expect(objectives.hasHumanAudience()).toBe(false);
-});
-
-test("steering joins human obligations while unrelated replacement keeps objectives separate", () => {
-  const objectives = new AgentAttentionObjectives();
-  objectives.admit({ inputs: [{ kind: "human", requestId: "human" }], steering: false });
-  objectives.admit({
-    inputs: [{ kind: "agent", requestId: "agent", requester: { agentId: "caller" } }],
-    steering: true,
-  });
-  expect(objectives.hasHumanAudience()).toBe(true);
-  expect(() => objectives.outgoing({ recipient: { agentId: "worker" } })).toThrow(
-    AttentionObjectiveError,
-  );
-  objectives.declare("human", "waiting");
-  objectives.admit({
-    inputs: [{ kind: "agent", requestId: "other", requester: { agentId: "caller" } }],
-    steering: false,
-  });
-  expect(objectives.hasHumanAudience()).toBe(false);
-  expect(objectives.requiresHumanAttention({ hasUnread: false, hasProblem: true })).toBe(false);
-  expect(objectives.requiresHumanAttention({ hasUnread: true, hasProblem: false })).toBe(true);
-  objectives.requestHuman("other", "Pick an account");
-  const restored = new AgentAttentionObjectives(objectives.snapshot());
-  expect(restored.requestHuman("other", "Pick an account")).toBe(false);
-  expect(restored.requestHuman("other", "Approve deployment")).toBe(true);
-});
-
 test.each(["available", "missing", "unknown"] as const)(
   "agent permission fallback requires verified requester loss: %s",
   async (availability) => {
@@ -12845,22 +12782,6 @@ test.each(["available", "missing", "unknown"] as const)(
     await running;
   },
 );
-
-test("permission continuation admission rejects later accepted work even for the same objective", () => {
-  const objectives = new AgentAttentionObjectives();
-  objectives.admit({
-    inputs: [{ kind: "agent", requestId: "task", requester: { agentId: "requester" } }],
-    steering: false,
-  });
-  const captured = objectives.capture();
-  if (captured.kind !== "continuation") throw new Error("Expected a permission continuation");
-  objectives.assertContinuation(captured);
-  objectives.admit({
-    inputs: [{ kind: "agent", requestId: "task", requester: { agentId: "requester" } }],
-    steering: true,
-  });
-  expect(() => objectives.assertContinuation(captured)).toThrow(AttentionObjectiveError);
-});
 
 test.each(["closed", "wrong-peer", "wrong-token"])(
   "claimed %s continuation is rejected before provider dispatch while ordinary agent work still runs",
@@ -12914,189 +12835,6 @@ test.each(["closed", "wrong-peer", "wrong-token"])(
     expect(start).toHaveBeenCalledTimes(1);
   },
 );
-
-test("exact completed outcomes retain their own full content through later acceptance and restart", () => {
-  const requester = { agentId: "caller", serverId: "origin" };
-  const a = {
-    kind: "agent" as const,
-    requestId: "request-A",
-    requester,
-    attention: {
-      requesterObjective: { objectiveId: "caller-job", token: "cap-A", requestId: "request-A" },
-    },
-  };
-  const b = {
-    kind: "agent" as const,
-    requestId: "request-B",
-    requester,
-    attention: {
-      requesterObjective: { objectiveId: "caller-job", token: "cap-B", requestId: "request-B" },
-    },
-  };
-  let target = new AgentAttentionObjectives(undefined, "target");
-  target.admit({ inputs: [a], steering: false, acceptance: { turnId: "SDK-A" } });
-  target.requests.updateContent("SDK-A", "Complete A result".repeat(1000));
-  target.requests.record({ turnId: "SDK-A", kind: "finished" });
-  target.finish();
-  target.admit({ inputs: [b], steering: false, acceptance: { turnId: "SDK-B" } });
-  target.requests.updateContent("SDK-B", "Unrelated B");
-  target.requests.record({ turnId: "SDK-B", kind: "finished" });
-  target = new AgentAttentionObjectives(target.snapshot(), "target");
-  const query = { requester, link: a.attention.requesterObjective };
-  const outcome = target.requests.read(query).outcome;
-  expect(outcome).toMatchObject({
-    kind: "finished",
-    requestId: "request-A",
-    acceptedTurnId: "SDK-A",
-    lastMessage: "Complete A result".repeat(1000),
-  });
-  expect(target.requests.read({ ...query, acknowledgeOutcomeId: outcome?.id }).outcome).toBeNull();
-  expect(
-    target.requests.read({ requester, link: b.attention.requesterObjective }).outcome?.lastMessage,
-  ).toBe("Unrelated B");
-});
-
-test("a rejected queued request and a replaced active request cannot borrow a later result", () => {
-  const requester = { agentId: "caller" };
-  const request = (id: string) => ({
-    kind: "agent" as const,
-    requestId: id,
-    requester,
-    attention: { requesterObjective: { objectiveId: "caller-job", token: id, requestId: id } },
-  });
-  const target = new AgentAttentionObjectives();
-  const failed = request("failed");
-  target.requests.reject([failed], "Exact submission failed");
-  const a = request("active-A");
-  target.admit({ inputs: [a], steering: false, acceptance: { turnId: "SDK-A" } });
-  target.requests.updateContent("SDK-A", "A partial result");
-  const b = request("later-B");
-  target.admit({ inputs: [b], steering: false, acceptance: { turnId: "SDK-B" } });
-  target.requests.updateContent("SDK-B", "B output");
-  target.requests.record({ turnId: "SDK-B", kind: "finished" });
-  expect(
-    target.requests.read({ requester, link: failed.attention.requesterObjective }).outcome,
-  ).toMatchObject({
-    kind: "rejected",
-    acceptedTurnId: null,
-    lastMessage: null,
-    error: "Exact submission failed",
-  });
-  expect(
-    target.requests.read({ requester, link: a.attention.requesterObjective }).outcome,
-  ).toMatchObject({ kind: "canceled", acceptedTurnId: "SDK-A", lastMessage: "A partial result" });
-});
-
-test("one SDK turn gives later steers only their own subsequent permission and terminal outcomes", () => {
-  const requester = { agentId: "caller" };
-  const request = (id: string) => ({
-    kind: "agent" as const,
-    requestId: id,
-    requester,
-    attention: { requesterObjective: { objectiveId: "caller-job", token: id, requestId: id } },
-  });
-  const target = new AgentAttentionObjectives();
-  const a = request("A");
-  const b = request("B");
-  target.admit({ inputs: [a], steering: false, acceptance: { turnId: "SDK" } });
-  const first = { id: "permission-1", provider: "codex", name: "Run", kind: "tool" as const };
-  target.requests.record({ turnId: "SDK", kind: "permission", permission: first });
-  target.admit({ inputs: [b], steering: true, acceptance: { turnId: "SDK" } });
-  target.requests.record({ turnId: "SDK", kind: "permission", permission: first });
-  expect(
-    target.requests.read({ requester, link: b.attention.requesterObjective }).outcome,
-  ).toBeNull();
-  target.requests.record({
-    turnId: "SDK",
-    kind: "permission",
-    permission: { ...first, id: "permission-2" },
-  });
-  const bQuery = { requester, link: b.attention.requesterObjective };
-  const checkpoint = target.requests.read(bQuery).outcome;
-  expect(checkpoint?.permission?.id).toBe("permission-2");
-  target.requests.record({ turnId: "SDK", kind: "finished", lastMessage: "Final SDK response" });
-  const terminal = target.requests.read({
-    ...bQuery,
-    acknowledgeOutcomeId: checkpoint?.id,
-  }).outcome;
-  expect(terminal?.kind).toBe("finished");
-  expect(terminal?.id).not.toBe(checkpoint?.id);
-});
-
-test("outcome reservation is exclusive, failed admission is retryable, and only acceptance consumes it", () => {
-  const source = new AgentAttentionObjectives(undefined, "origin");
-  source.admit({ inputs: [{ kind: "human", requestId: "human-job" }], steering: false });
-  source.declare("human-job", "waiting");
-  const peer = { agentId: "worker", serverId: "target" };
-  const attention = source.outgoing({ recipient: peer });
-  if (!attention?.requesterObjective) throw new Error("Expected exact request link");
-  const link = attention.requesterObjective;
-  const requester = { agentId: "caller", serverId: "origin" };
-  const outcome = {
-    id: "outcome",
-    requestId: link.requestId,
-    requester,
-    acceptedTurnId: "SDK",
-    kind: "finished" as const,
-    lastMessage: "Own result",
-    error: null,
-  };
-  const original = source.reserveCallback({
-    link,
-    peer,
-    requester,
-    outcome,
-    deliveryId: "delivery-1",
-  });
-  if (original.status !== "reserved") throw new Error("Expected original reservation");
-  expect(() =>
-    source.reserveCallback({ link, peer, requester, outcome, deliveryId: "competitor" }),
-  ).toThrow(AttentionObjectiveError);
-  expect(() =>
-    source.reserveCallback({ link, peer, requester, outcome, deliveryId: "delivery-1" }),
-  ).toThrow(AttentionObjectiveError);
-  source.releaseCallback({ link, peer, deliveryId: "delivery-1", lease: original.lease });
-  const retry = source.reserveCallback({ link, peer, requester, outcome, deliveryId: "retry" });
-  if (retry.status !== "reserved") throw new Error("Expected retry reservation");
-  // Releasing a retired watcher must not release the replacement's live ownership.
-  source.releaseCallback({ link, peer, deliveryId: "retry", lease: original.lease });
-  const callback = {
-    kind: "agent" as const,
-    requestId: "retry",
-    requester: peer,
-    attention: { continuation: link, delivery: { outcomeId: outcome.id, deliveryId: "retry" } },
-  };
-  source.assertAdmissions([callback]);
-  source.admit({ inputs: [callback], steering: false, acceptance: { accepted: false } });
-  source.assertCallbackReservation({
-    link,
-    peer,
-    outcomeId: outcome.id,
-    deliveryId: "retry",
-    lease: retry.lease,
-  });
-  source.admit({ inputs: [callback], steering: false, acceptance: { turnId: "source-SDK" } });
-  expect(source.reserveCallback({ link, peer, requester, outcome, deliveryId: "retry" })).toEqual({
-    status: "consumed",
-  });
-  expect(() => source.assertAdmissions([callback])).toThrow(AttentionObjectiveError);
-  source.declare("human-job", "final");
-  source.finish();
-  expect(() =>
-    source.reserveCallback({ link, peer, requester, outcome, deliveryId: "new" }),
-  ).toThrow(AttentionObjectiveError);
-});
-
-test("an ordinary agent request cannot claim a human objective by reusing its message ID", () => {
-  const objectives = new AgentAttentionObjectives();
-  objectives.admit({ inputs: [{ kind: "human", requestId: "human-message" }], steering: false });
-  expect(() =>
-    objectives.assertAdmissions([
-      { kind: "agent", requestId: "human-message", requester: { agentId: "worker" } },
-    ]),
-  ).toThrow(AttentionObjectiveError);
-  expect(objectives.hasHumanAudience()).toBe(true);
-});
 
 test("objective closure during callback reservation persistence prevents forwarding the outcome", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "attention-reservation-fence-"));
@@ -13176,7 +12914,9 @@ test("objective closure during callback reservation persistence prevents forward
 /** Real lifecycle/storage fixture whose provider turns finish only through explicit SDK events. */
 function createAttentionRegressionFixture(name: string) {
   const workdir = mkdtempSync(join(tmpdir(), `agent-attention-${name}-`));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const storage = new AgentStorage(join(workdir, "agents"), logger, {
+    writeRecordFile: recordWrites.write,
+  });
   const sessions: ControlledInterruptSession[] = [];
   class AttentionRegressionClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
@@ -13508,8 +13248,8 @@ test.each(["permission", "error"] as const)(
       reason: "finished",
       message:
         blocker === "permission"
-          ? "This task needs permission, but its requesting agent is no longer available."
-          : "This task failed, but its requesting agent is no longer available.",
+          ? REQUESTER_LOST_PERMISSION_MESSAGE
+          : REQUESTER_LOST_FAILURE_MESSAGE,
     });
     await manager.flush();
     expect(notify).toHaveBeenCalledTimes(1);
@@ -13957,27 +13697,91 @@ function holdEscalationSnapshot(
 }
 
 /** Hold this worker's real atomic rename inside its storage queue, before the record commits. */
-function holdEscalationAtomicWrite(agentId: string, outcome: "fail" | "succeed") {
-  const entered = deferred<void>();
-  const release = deferred<void>();
-  const failure = new Error("Injected escalation atomic rename failure");
-  const rename = fs.rename.bind(fs);
-  let held = false;
-  const spy = vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
-    if (held || typeof destination !== "string" || basename(destination) !== `${agentId}.json`) {
-      return rename(source, destination);
+interface RecordWriteHold {
+  agentId: string;
+  outcome: "fail" | "succeed";
+  entered: ReturnType<typeof deferred<void>>;
+  release: ReturnType<typeof deferred<void>>;
+  failure: Error;
+}
+
+/**
+ * The durable record-write port of every attention regression fixture's storage. A test holds
+ * or fails one agent's next commit explicitly instead of patching the file system.
+ */
+class RecordWriteGate {
+  private readonly holds: RecordWriteHold[] = [];
+  private readonly failures: Array<{ agentId: string; error: Error; failed(): void }> = [];
+  private writeCount = 0;
+
+  readonly write = async (path: string, record: StoredAgentRecord): Promise<void> => {
+    this.writeCount += 1;
+    const failure = this.take(this.failures, path);
+    if (failure) {
+      failure.failed();
+      throw failure.error;
     }
-    held = true;
-    entered.resolve();
-    await release.promise;
-    if (outcome === "fail") throw failure;
-    await rename(source, destination);
-  });
+    const hold = this.take(this.holds, path);
+    if (hold) {
+      hold.entered.resolve();
+      await hold.release.promise;
+      if (hold.outcome === "fail") {
+        throw hold.failure;
+      }
+    }
+    await writeJsonFileAtomic(path, record);
+  };
+
+  get writes(): number {
+    return this.writeCount;
+  }
+
+  hold(hold: RecordWriteHold): void {
+    this.holds.push(hold);
+  }
+
+  /** Fail the agent's next record write once; resolves `failed` when it does. */
+  failNext(agentId: string, error: Error): { failed: () => boolean } {
+    let failed = false;
+    this.failures.push({
+      agentId,
+      error,
+      failed: () => {
+        failed = true;
+      },
+    });
+    return { failed: () => failed };
+  }
+
+  reset(): void {
+    for (const hold of this.holds.splice(0)) {
+      hold.release.resolve();
+    }
+    this.failures.splice(0);
+  }
+
+  private take<T extends { agentId: string }>(entries: T[], path: string): T | undefined {
+    const index = entries.findIndex((entry) => basename(path) === `${entry.agentId}.json`);
+    return index === -1 ? undefined : entries.splice(index, 1)[0];
+  }
+}
+const recordWrites = new RecordWriteGate();
+
+function holdEscalationAtomicWrite(agentId: string, outcome: "fail" | "succeed") {
+  const hold: RecordWriteHold = {
+    agentId,
+    outcome,
+    entered: deferred<void>(),
+    release: deferred<void>(),
+    failure: new Error("Injected escalation atomic rename failure"),
+  };
+  const writesBefore = recordWrites.writes;
+  recordWrites.hold(hold);
   onTestFinished(() => {
-    release.resolve();
-    spy.mockRestore();
+    hold.release.resolve();
+    recordWrites.reset();
   });
-  return { entered, release, failure, spy };
+  return { ...hold, writesSinceHold: () => recordWrites.writes - writesBefore };
 }
 
 test("escalation public competition retries the failed reason once", async () => {
@@ -13990,7 +13794,7 @@ test("escalation public competition retries the failed reason once", async () =>
   try {
     await write.entered.promise;
     const second = manager.requestHumanAttention(request);
-    expect(write.spy).toHaveBeenCalledTimes(1);
+    expect(write.writesSinceHold()).toBe(1);
     expect(notify).not.toHaveBeenCalled();
     write.release.resolve();
     await expect(first).rejects.toBe(write.failure);
@@ -14017,7 +13821,8 @@ test("escalation postcommit acknowledgement error keeps one durable announcement
   void first.catch(() => undefined);
   try {
     await write.entered.promise;
-    // Ryan's accepted boundary is the queue-owned durable commit, before this outer ACK.
+    // Notification fires once the storage queue has committed the record; the outer
+    // applySnapshot acknowledgement is not part of the guarantee.
     expect(notify).toHaveBeenCalledExactlyOnceWith({
       agentId: request.agentId,
       provider: "codex",
@@ -14179,8 +13984,7 @@ test.each(["blocked", "resolved"] as const)(
         return "missing";
       },
     });
-    const orphanReason =
-      "This task needs permission, but its requesting agent is no longer available.";
+    const orphanReason = REQUESTER_LOST_PERMISSION_MESSAGE;
     const write = holdEscalationAtomicWrite(request.agentId, "fail");
     const first = manager.requestHumanAttention({ ...request, reason: orphanReason });
     void first.catch(() => undefined);
@@ -14548,7 +14352,6 @@ test("escalation retired write repairs current attention after acknowledgement f
       nativeStart: true,
     },
   );
-  const rename = fs.rename.bind(fs);
   const io = holdEscalationAtomicWrite(worker.id, "succeed");
   const acknowledgement = holdEscalationSnapshot(storage, "fail-after-write");
   const first = manager.requestHumanAttention(request);
@@ -14580,18 +14383,7 @@ test("escalation retired write repairs current attention after acknowledgement f
 
     // One real later write fails, so queued ordinary saves cannot accidentally mask missing repair.
     const ordinaryFailure = new Error("Injected ordinary snapshot atomic rename failure");
-    let ordinaryRejected = false;
-    io.spy.mockImplementation(async (source, destination) => {
-      if (
-        !ordinaryRejected &&
-        typeof destination === "string" &&
-        basename(destination) === `${worker.id}.json`
-      ) {
-        ordinaryRejected = true;
-        throw ordinaryFailure;
-      }
-      await rename(source, destination);
-    });
+    const ordinaryWrite = recordWrites.failNext(worker.id, ordinaryFailure);
     io.release.resolve();
     await acknowledgement.entered.promise;
     expect(await Promise.allSettled([clearing, marking])).toEqual([
@@ -14599,7 +14391,7 @@ test("escalation retired write repairs current attention after acknowledgement f
       { status: "rejected", reason: ordinaryFailure },
     ]);
     await manager.flush();
-    expect(ordinaryRejected).toBe(true);
+    expect(ordinaryWrite.failed()).toBe(true);
     expect((await storage.get(worker.id))?.attentionMessage).toBe(request.reason);
     expect(manager.getAgent(worker.id)?.attention).toBe(manual);
 
@@ -15771,7 +15563,7 @@ async function expectRequesterLossAttention(
     }),
   ).toBe("needs_input");
   expect(payload.humanAttentionRequired).toBe(true);
-  const message = "This task needs permission, but its requesting agent is no longer available.";
+  const message = REQUESTER_LOST_PERMISSION_MESSAGE;
   expect(fixture.notify).toHaveBeenCalledExactlyOnceWith({
     agentId: worker.id,
     provider: "codex",
@@ -15972,7 +15764,7 @@ test("requester loss earlier checkpoint is not suppressed by an available later 
   expect((await storage.get(secondRequester.id))?.archivedAt).toBeUndefined();
   expect(pushed).not.toHaveBeenCalled();
   await expectRequesterLossAttention(fixture, worker);
-  const message = "This task needs permission, but its requesting agent is no longer available.";
+  const message = REQUESTER_LOST_PERMISSION_MESSAGE;
   expect((await storage.get(worker.id))?.attentionObjectives?.objectives).toEqual([
     expect.objectContaining({
       id: firstLink.requestId,
@@ -16208,7 +16000,7 @@ test.each(["current", "historical"] as const)(
         agentId: worker.id,
         provider: "codex",
         reason: "finished",
-        message: "This task needs permission, but its requesting agent is no longer available.",
+        message: REQUESTER_LOST_PERMISSION_MESSAGE,
       });
     expect(notify.mock.calls.map(([event]) => event)).toEqual(expectedNotifications);
     expect((await storage.get(worker.id))?.requiresAttention).toBe(variant === "current");

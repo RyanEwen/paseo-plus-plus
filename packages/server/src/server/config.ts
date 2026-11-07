@@ -850,6 +850,7 @@ function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
   };
 }
 
+/** The host-owned Agent-aware attention preference; absent means enabled. */
 function resolveAgentAwareAttention(persisted: PersistedConfig): boolean {
   return isAgentAwareAttentionEnabled({ notifications: persisted.daemon?.notifications });
 }
