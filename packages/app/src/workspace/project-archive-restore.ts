@@ -74,7 +74,9 @@ export async function listProjectArchivedWorkspaces(input: {
   port: ArchivedWorkspaceListingPort;
 }): Promise<ArchivedHostListing[]> {
   return Promise.all(
-    input.hosts.map((host) => listHostArchivedWorkspaces(host, input.includeBackground, input.port)),
+    input.hosts.map((host) =>
+      listHostArchivedWorkspaces(host, input.includeBackground, input.port),
+    ),
   );
 }
 

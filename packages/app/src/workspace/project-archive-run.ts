@@ -99,7 +99,9 @@ async function runProjectArchiveSteps<TClient extends ProjectArchiveDiscoveryCli
   return archiveProjectWorkspaces({
     workspaces,
     confirm: async (entries) =>
-      ports.isActive() ? ports.confirm({ workspaces: entries, hostCount: hosts.length }) : CANCELLED,
+      ports.isActive()
+        ? ports.confirm({ workspaces: entries, hostCount: hosts.length })
+        : CANCELLED,
     refresh: async () => {
       requireSameHosts(hosts, resolveRunHosts(ports));
       return discover();

@@ -44,19 +44,15 @@ function project(hosts: Array<{ serverId: string; projectId: string }>): Workspa
     projectName: "Paseo++",
     projectKind: "git",
     iconWorkingDir: "/repo",
-    hosts: hosts.map((host) => ({
-      ...host,
-      iconWorkingDir: "/repo",
-      worktreeSupport: "supported" as const,
-    })),
+    hosts: hosts.map((host) =>
+      Object.assign({}, host, { iconWorkingDir: "/repo", worktreeSupport: "supported" as const }),
+    ),
     workspaceKeys: [],
   };
 }
 
 /** In-memory ports for one project on host-a; tests override what they exercise. */
-function runPorts(
-  overrides: Partial<ProjectArchiveRunPorts<ProjectArchiveDiscoveryClient>> = {},
-) {
+function runPorts(overrides: Partial<ProjectArchiveRunPorts<ProjectArchiveDiscoveryClient>> = {}) {
   const archived: string[] = [];
   const confirmations: Array<{ workspaceIds: string[]; hostCount: number }> = [];
   const ports: ProjectArchiveRunPorts<ProjectArchiveDiscoveryClient> = {

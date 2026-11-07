@@ -41,7 +41,9 @@ export function consumeWorkspaceRecoveryRequest(workspaceKey: string): void {
 
 /** Whether a recovery request is waiting for this workspace key. */
 export function isWorkspaceRecoveryRequested(workspaceKey: string | null): boolean {
-  return workspaceKey !== null && workspaceKey in useWorkspaceRecoveryIntentStore.getState().requested;
+  return (
+    workspaceKey !== null && workspaceKey in useWorkspaceRecoveryIntentStore.getState().requested
+  );
 }
 
 /**

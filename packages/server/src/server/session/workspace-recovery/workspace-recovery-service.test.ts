@@ -30,7 +30,10 @@ import {
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
-import { listArchivedProjectWorkspaces, ProjectUnavailableError } from "./list-archived-workspaces.js";
+import {
+  listArchivedProjectWorkspaces,
+  ProjectUnavailableError,
+} from "./list-archived-workspaces.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
 const tempDirectories: string[] = [];

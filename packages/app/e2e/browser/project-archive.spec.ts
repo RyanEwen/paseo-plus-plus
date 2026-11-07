@@ -130,7 +130,11 @@ async function prepareRecoveryFixture() {
 }
 
 /** Select a row without mutation, then restore through the existing confirmation. */
-async function confirmWorktreeRecovery(page: Page, workspace: ArchivedWorktree, frames: RecoveryFrame[]) {
+async function confirmWorktreeRecovery(
+  page: Page,
+  workspace: ArchivedWorktree,
+  frames: RecoveryFrame[],
+) {
   expect(sentRestoreRequests(frames, workspace.workspaceId)).toEqual([]);
   await page.getByTestId(`restore-project-workspace-${workspace.workspaceId}`).click();
   await expect(page.getByTestId("restore-project-workspace-dialog")).toHaveCount(0);
@@ -177,9 +181,15 @@ test("the project archive chooser restores zero-agent worktrees and keeps archiv
     });
 
     const chooser = await openArchiveChooser(page, project.projectKey);
-    await expect(chooser.getByTestId(`restore-project-workspace-${zeroAgent.workspaceId}`)).toBeVisible();
-    await expect(chooser.getByTestId(`restore-project-workspace-${withAgent.workspaceId}`)).toBeVisible();
-    await expect(chooser.getByTestId(`restore-project-workspace-${project.workspaceId}`)).toHaveCount(0);
+    await expect(
+      chooser.getByTestId(`restore-project-workspace-${zeroAgent.workspaceId}`),
+    ).toBeVisible();
+    await expect(
+      chooser.getByTestId(`restore-project-workspace-${withAgent.workspaceId}`),
+    ).toBeVisible();
+    await expect(
+      chooser.getByTestId(`restore-project-workspace-${project.workspaceId}`),
+    ).toHaveCount(0);
     await expect(chooser.getByTestId(`restore-project-workspace-${sentinelId}`)).toHaveCount(0);
     const initialListCount = listRequests(wire.frames).length;
     expect(listRequests(wire.frames).at(-1)?.projectId).toBe(project.projectId);
@@ -188,13 +198,19 @@ test("the project archive chooser restores zero-agent worktrees and keeps archiv
     expect((await client.fetchAgent({ agentId: agent.id }))?.agent.archivedAt).toBe(archivedAt);
 
     const refreshed = await openArchiveChooser(page, project.projectKey);
-    await expect(refreshed.getByTestId(`restore-project-workspace-${withAgent.workspaceId}`)).toBeVisible();
-    await expect(refreshed.getByTestId(`restore-project-workspace-${zeroAgent.workspaceId}`)).toHaveCount(0);
+    await expect(
+      refreshed.getByTestId(`restore-project-workspace-${withAgent.workspaceId}`),
+    ).toBeVisible();
+    await expect(
+      refreshed.getByTestId(`restore-project-workspace-${zeroAgent.workspaceId}`),
+    ).toHaveCount(0);
     expect(listRequests(wire.frames).length).toBeGreaterThan(initialListCount);
 
     await confirmWorktreeRecovery(page, withAgent, wire.frames);
     expect((await client.fetchAgent({ agentId: agent.id }))?.agent.archivedAt).toBe(archivedAt);
-    expect((await client.fetchAgents()).entries.map((entry) => entry.agent.id)).not.toContain(agent.id);
+    expect((await client.fetchAgents()).entries.map((entry) => entry.agent.id)).not.toContain(
+      agent.id,
+    );
     expect(
       wire.frames.filter(
         (frame) => frame.direction === "sent" && frame.message.type === "refresh_agent_request",
@@ -274,7 +290,10 @@ test("Archive all stops and leaves every workspace when the project changes duri
   await expect(page.getByTestId("app-toast-message")).toHaveText(
     "The project changed during confirmation. Review the counts and try Archive all again.",
   );
-  await waitForWorkspaceInSidebar(page, { serverId: getServerId(), workspaceId: project.workspaceId });
+  await waitForWorkspaceInSidebar(page, {
+    serverId: getServerId(),
+    workspaceId: project.workspaceId,
+  });
   await waitForWorkspaceInSidebar(page, { serverId: getServerId(), workspaceId: secondId });
   expect(await activeProjectWorkspaceIds(project.projectId)).toEqual(
     [...before, added.workspace?.id ?? ""].sort(),

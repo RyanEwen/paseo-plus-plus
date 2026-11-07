@@ -11,7 +11,7 @@ export interface RecoveryFrame {
 function isRecoveryMessage(message: RecoveryFrame["message"] | undefined): boolean {
   return Boolean(
     message &&
-      (message.type.startsWith("workspace.recovery.") || message.type === "refresh_agent_request"),
+    (message.type.startsWith("workspace.recovery.") || message.type === "refresh_agent_request"),
   );
 }
 

@@ -135,8 +135,8 @@ describe("selectArchivedWorkspaceRows", () => {
     expect(
       selectArchivedWorkspaceRows(listings, "  FEATURE/API ").map((row) => row.entry.workspaceId),
     ).toEqual(["a-2", "b-1"]);
-    expect(selectArchivedWorkspaceRows(listings, "docs").map((row) => row.entry.workspaceId)).toEqual([
-      "a-1",
-    ]);
+    expect(
+      selectArchivedWorkspaceRows(listings, "docs").map((row) => row.entry.workspaceId),
+    ).toEqual(["a-1"]);
   });
 });
