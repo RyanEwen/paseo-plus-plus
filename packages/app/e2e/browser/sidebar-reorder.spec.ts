@@ -327,32 +327,33 @@ async function expectWorkspaceSortingRestoresCustomOrder(
   await expect.poll(() => rowTestIds(rows)).toEqual([zetaId, alphaId]);
 }
 
-async function expectOrdinaryDragInert(rows: Locator) {
-  const source = rows.first();
-  const target = rows.nth(1);
-  const before = await rowTestIds(rows);
+/** Press the source row and move onto the target row with the button held, as a user drags. */
+async function dragRowOnto(source: Locator, target: Locator): Promise<void> {
   const sourceBox = await visibleBoundingBox(source);
   const targetBox = await visibleBoundingBox(target);
-  const border = await source.evaluate((node) => getComputedStyle(node).borderTopWidth);
-  const page = rows.page();
+  const page = source.page();
   await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
     steps: 8,
   });
+}
+
+/** Drag the first ordinary row onto the second and expect no drag feedback and no reorder. */
+async function expectOrdinaryDragInert(rows: Locator) {
+  const source = rows.first();
+  const before = await rowTestIds(rows);
+  const border = await source.evaluate((node) => getComputedStyle(node).borderTopWidth);
+  await dragRowOnto(source, rows.nth(1));
   await expect(source).toHaveCSS("border-top-width", border);
-  await finishSidebarDrag(page);
+  await finishSidebarDrag(rows.page());
   await expect.poll(() => rowTestIds(rows)).toEqual(before);
 }
 
+/** Try to drop the first pin onto the last ordinary row, across the partition. */
 async function attemptPinAcrossOrdinaryRows(pins: Locator, ordinary: Locator) {
-  const source = await visibleBoundingBox(pins.first());
-  const target = await visibleBoundingBox(ordinary.last());
-  const page = pins.page();
-  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 });
-  await finishSidebarDrag(page);
+  await dragRowOnto(pins.first(), ordinary.last());
+  await finishSidebarDrag(pins.page());
 }
 
 test("project pins remain independently draggable while workspace sort owns ordinary rows", async ({
