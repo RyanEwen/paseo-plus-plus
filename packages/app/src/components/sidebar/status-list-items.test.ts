@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { SidebarWorkspaceGroup } from "./sidebar-labels";
-import { buildStatusListItems, statusListItemKey } from "./status-list-items";
+import {
+  buildStatusListItems,
+  resolveStatusGroupReorder,
+  statusListItemKey,
+  type StatusListItem,
+} from "./status-list-items";
 import { limitSidebarWorkspaces } from "./workspace-limit";
 
 function workspace(
@@ -184,5 +189,42 @@ describe("open workspace", () => {
       [rows[0], open],
     );
     expect(items.at(-1)).toMatchObject({ kind: "footer", canToggle: true, expanded: false });
+  });
+});
+
+describe("status-list drops", () => {
+  const [a, b, c] = ["a", "b", "c"].map((id) => workspace(id, []));
+  const items = buildStatusListItems({
+    groups: [group("running", [a!, b!]), group("done", [c!])],
+    collapsedGroupKeys: new Set(),
+    expandedGroupKeys: new Set(),
+    initialCount: null,
+  });
+
+  /** Move one cell to another index, as the list reports a drop. */
+  function moveCell(from: number, to: number): StatusListItem[] {
+    const reordered = items.slice();
+    const [cell] = reordered.splice(from, 1);
+    reordered.splice(to, 0, cell!);
+    return reordered;
+  }
+
+  test("returns the moved row's group order", () => {
+    const reordered = moveCell(2, 1);
+    const move = { activeKey: statusListItemKey(items[2]!), overKey: "", from: 2, to: 1 };
+    expect(resolveStatusGroupReorder({ items, reordered, move })).toEqual([
+      b!.workspaceKey,
+      a!.workspaceKey,
+    ]);
+  });
+
+  test("returns null when the group's order is unchanged", () => {
+    const move = { activeKey: statusListItemKey(items[1]!), overKey: "", from: 1, to: 1 };
+    expect(resolveStatusGroupReorder({ items, reordered: items.slice(), move })).toBeNull();
+  });
+
+  test("ignores a move whose active cell is a header or footer", () => {
+    const move = { activeKey: statusListItemKey(items[0]!), overKey: "", from: 0, to: 0 };
+    expect(resolveStatusGroupReorder({ items, reordered: items.slice(), move })).toBeNull();
   });
 });

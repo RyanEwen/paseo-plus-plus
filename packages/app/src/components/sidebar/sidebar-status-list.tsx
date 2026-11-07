@@ -1,16 +1,11 @@
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
-import { useSidebarRecencyClock } from "./workspace-recency-clock";
-import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { mergeWithRemainder, hasVisibleOrderChanged } from "@/utils/sidebar-reorder";
 import { SidebarEmptyProjectGroup, SidebarWorkspaceGroupHeader } from "./sidebar-workspace-group";
 import {
   memo,
   useCallback,
   useMemo,
   useState,
-  useRef,
   type MutableRefObject,
   type ReactNode,
   type Ref,
@@ -75,12 +70,11 @@ import { DraggableList, type DraggableRenderItemInfo } from "@/components/dragga
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useSidebarPositionTransitionDuration } from "./position-transitions";
 import {
-  buildStatusListItems,
   statusListItemKey,
   statusListDragGroupKey,
   type StatusListItem,
 } from "./status-list-items";
-import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
+import { useStatusListItems, useStatusReorderPersistence } from "./use-status-list";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
@@ -308,101 +302,13 @@ function StatusGroupList({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
 }) {
-  const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
-  const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
-  const now = useSidebarRecencyClock();
-  const keepOpenWorkspace = useOpenWorkspaceKeep(useActiveWorkspaceSelection());
-  const [expandedGroupKeys, setExpandedGroupKeys] = useState<ReadonlySet<string>>(new Set());
+  const { items, toggleExpanded, resolveDestinationGroupKey } = useStatusListItems({
+    groups,
+    collapsedGroupKeys: collapsedWorkspaceGroupKeys,
+  });
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
-  const items = useMemo(
-    () =>
-      buildStatusListItems({
-        groups,
-        collapsedGroupKeys: collapsedWorkspaceGroupKeys,
-        expandedGroupKeys,
-        initialCount,
-        updatedWithin: days === null ? undefined : { days, now },
-        keep: keepOpenWorkspace,
-      }),
-    [
-      groups,
-      collapsedWorkspaceGroupKeys,
-      expandedGroupKeys,
-      initialCount,
-      days,
-      now,
-      keepOpenWorkspace,
-    ],
-  );
-
-  const destinationGroupKeys = useMemo(() => {
-    const result = new Map<string, string>();
-    for (const group of groups) {
-      for (const workspace of group.rows) result.set(workspace.workspaceKey, group.key);
-    }
-    return result;
-  }, [groups]);
-
-  const destinationGroupKeysRef = useRef(destinationGroupKeys);
-  destinationGroupKeysRef.current = destinationGroupKeys;
-  // Cleanup needs the new projection, even when a disappearing cell did not render again.
-  const resolveDestinationGroupKey = useCallback(
-    (workspaceKey: string) => destinationGroupKeysRef.current.get(workspaceKey),
-    [],
-  );
-
-  const toggleExpanded = useCallback((key: string) => {
-    setExpandedGroupKeys((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
   const workspaceDrag = useSidebarReorderGuard("workspace");
-  const canCommitWorkspaceDrag = workspaceDrag.canCommit;
-  const handleWorkspaceReorder = useCallback(
-    (reordered: StatusListItem[]) => {
-      if (!canCommitWorkspaceDrag()) return;
-      if (
-        !isDragGroupOrderValid({
-          original: items,
-          reordered,
-          keyExtractor: statusListItemKey,
-          getDragGroupKey: statusListDragGroupKey,
-        })
-      )
-        return;
-      // Preserve the former per-group persistence policy. Headers and other groups stay fixed.
-      for (const group of groups) {
-        const originalKeys = items
-          .filter((item) => item.kind === "workspace" && item.groupKey === group.key)
-          .map(statusListItemKey);
-        const reorderedRows = reordered.filter(
-          (item): item is Extract<StatusListItem, { kind: "workspace" }> =>
-            item.kind === "workspace" && item.groupKey === group.key,
-        );
-        const reorderedKeys = reorderedRows.map(statusListItemKey);
-        if (
-          !hasVisibleOrderChanged({
-            currentOrder: originalKeys,
-            reorderedVisibleKeys: reorderedKeys,
-          })
-        )
-          continue;
-        const store = useSidebarOrderStore.getState();
-        store.setStatusWorkspaceOrder(
-          mergeWithRemainder({
-            currentOrder: store.statusWorkspaceOrder,
-            reorderedVisibleKeys: reorderedRows.map((item) => item.workspace.workspaceKey),
-          }),
-        );
-        break;
-      }
-    },
-    [groups, items, canCommitWorkspaceDrag],
-  );
+  const handleWorkspaceReorder = useStatusReorderPersistence(items, workspaceDrag.canCommit);
 
   const renderItem = useCallback(
     ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<StatusListItem>) => {
