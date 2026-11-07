@@ -7,13 +7,10 @@ import { useCallback, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  ContextMenu,
-  ContextMenuTrigger,
-  ContextMenuContent,
-  ContextMenuItem,
-} from "@/components/ui/context-menu";
-import { useToast } from "@/contexts/toast-api-context";
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent } from "@/components/ui/context-menu";
+import { MenuItem } from "@/components/ui/menu";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
 import { isWeb } from "@/constants/platform";
 import { WorkspaceLinkPolicyProvider, useWorkspaceLinkOpening } from "./context";
 import { LinkMenuContext, type LinkMenuWrapper } from "@/components/ui/link-menu-context";
@@ -98,27 +95,26 @@ function BrowserDestinationMenuItem({
   destination: BrowserLinkDestination;
 }) {
   const { t } = useTranslation();
-  const { open } = useBrowserLinkOpening(url);
-  const { mutate, isPending } = open;
+  const { mutate, isPending } = useBrowserLinkOpening(url);
   const select = useCallback(() => mutate(destination), [mutate, destination]);
   const labelKey =
     destination === "paseo" ? "workspace.browser.openInPaseo" : "workspace.browser.openExternally";
   return (
-    <ContextMenuItem onSelect={select} disabled={isPending}>
+    <MenuItem onSelect={select} disabled={isPending}>
       {t(labelKey)}
-    </ContextMenuItem>
+    </MenuItem>
   );
 }
 
-/** Keep pending and error ownership identical across link and existing-menu triggers. */
-function useBrowserLinkOpening(url: string | null | undefined) {
+/**
+ * Open `url` at an explicit destination. Pending and error ownership is the same whether the row
+ * sits in a link's context menu or in an existing dropdown; failures become a toast.
+ */
+function useBrowserLinkOpening(url: string) {
   const toast = useToast();
   const { openInPaseo } = useWorkspaceLinkOpening();
-  const open = useMutation({
-    mutationFn: async (destination: "paseo" | "external") => {
-      if (!url) {
-        throw new Error("A browser destination URL is required.");
-      }
+  return useMutation({
+    mutationFn: async (destination: BrowserLinkDestination) => {
       if (destination === "paseo") {
         if (!openInPaseo) {
           throw new Error("A workspace browser is unavailable.");
@@ -128,10 +124,8 @@ function useBrowserLinkOpening(url: string | null | undefined) {
         await openExternalUrl(url);
       }
     },
-    onError: (error: unknown) =>
-      toast.error(error instanceof Error ? error.message : String(error)),
+    onError: (error: unknown) => toast.error(toErrorMessage(error)),
   });
-  return { open, openInPaseo };
 }
 
 /** Generic link components get workspace destinations; an always-external link keeps that default. */

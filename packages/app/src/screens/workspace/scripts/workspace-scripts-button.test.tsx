@@ -131,10 +131,6 @@ vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ show: vi.fn(), error: vi.fn(), copied: copiedToastMock }),
 }));
 
-vi.mock("@/contexts/toast-api-context", () => ({
-  useToast: () => ({ show: vi.fn(), error: vi.fn(), copied: copiedToastMock }),
-}));
-
 vi.mock("expo-clipboard", () => ({
   setStringAsync: setStringAsyncMock,
 }));
@@ -182,18 +178,6 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   ),
   useDropdownMenuClose: () => () => {},
 }));
-
-// Browser destinations share the same menu-item contract as the script dropdown.
-// Keep their real link actions while isolating the portal and sheet presentation.
-vi.mock("@/components/ui/context-menu", async () => {
-  const dropdown = await import("@/components/ui/dropdown-menu");
-  return {
-    ContextMenu: dropdown.DropdownMenu,
-    ContextMenuContent: dropdown.DropdownMenuContent,
-    ContextMenuItem: dropdown.DropdownMenuItem,
-    ContextMenuTrigger: dropdown.DropdownMenuTrigger,
-  };
-});
 
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children as ReactElement,
