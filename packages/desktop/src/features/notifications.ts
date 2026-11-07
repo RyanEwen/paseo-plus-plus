@@ -6,6 +6,7 @@ import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.j
 import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
+  createTimedOutNotificationRetention,
   createWindowsAgentNotificationOpener,
   shouldRetainWindowsNotification,
 } from "./windows-agent-notification.js";
@@ -21,9 +22,11 @@ interface NotificationClickPayload {
 }
 
 const activeNotifications = new Set<Notification>();
+const timedOutNotifications = createTimedOutNotificationRetention<Notification>();
 
 function releaseNotification(notification: Notification): void {
   activeNotifications.delete(notification);
+  timedOutNotifications.release(notification);
 }
 
 function toTrimmedString(value: unknown): string | null {
@@ -166,7 +169,11 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     notification.on("close", (closeEvent) => {
       if (process.platform === "win32" && shouldRetainWindowsNotification(closeEvent.reason)) {
         // getHistory() is macOS-only and returns an empty list on Windows.
-        // Keep this reference so foreground Center taps retain their listener.
+        // Keep this reference so foreground Center taps retain their listener, up to the
+        // number of toasts Notification Center can still show.
+        for (const evicted of timedOutNotifications.retain(notification)) {
+          releaseNotification(evicted);
+        }
         return;
       }
       releaseNotification(notification);

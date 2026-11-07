@@ -5,6 +5,7 @@ import {
   openWindowsAgentNotification,
   shouldRetainWindowsNotification,
   createWindowsAgentNotificationOpener,
+  createTimedOutNotificationRetention,
 } from "./windows-agent-notification.js";
 
 describe("Windows chat notification activation", () => {
@@ -142,5 +143,26 @@ describe("Windows chat notification activation", () => {
       openWindowsAgentNotification(input, (url) => links.push(url));
     }
     expect(links).toEqual([]);
+  });
+});
+
+describe("timed-out Windows notification retention", () => {
+  it("releases the oldest retained notification once Notification Center's limit is exceeded", () => {
+    const retention = createTimedOutNotificationRetention<string>(2);
+
+    expect(retention.retain("first")).toEqual([]);
+    expect(retention.retain("second")).toEqual([]);
+    expect(retention.retain("third")).toEqual(["first"]);
+  });
+
+  it("does not count a released notification against the limit", () => {
+    const retention = createTimedOutNotificationRetention<string>(2);
+    retention.retain("first");
+    retention.retain("second");
+
+    retention.release("first");
+
+    expect(retention.retain("third")).toEqual([]);
+    expect(retention.retain("fourth")).toEqual(["second"]);
   });
 });

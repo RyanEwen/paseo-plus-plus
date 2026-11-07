@@ -88,6 +88,35 @@ export function shouldRetainWindowsNotification(reason: string | undefined): boo
   return reason === "timedOut";
 }
 
+/** Notification Center keeps at most this many toasts per app; older ones cannot be tapped. */
+const NOTIFICATION_CENTER_TOAST_LIMIT = 20;
+
+/**
+ * Bounds the timed-out notifications kept alive for Notification Center taps.
+ * `retain` returns the instances that fell out of the bound, oldest first, so the caller can
+ * release them; `release` forgets an instance that was clicked or closed.
+ */
+export function createTimedOutNotificationRetention<T>(limit = NOTIFICATION_CENTER_TOAST_LIMIT) {
+  const retained = new Set<T>();
+
+  return {
+    retain(item: T): T[] {
+      retained.delete(item);
+      retained.add(item);
+      const evicted: T[] = [];
+      for (const oldest of retained) {
+        if (retained.size <= limit) break;
+        retained.delete(oldest);
+        evicted.push(oldest);
+      }
+      return evicted;
+    },
+    release(item: T): void {
+      retained.delete(item);
+    },
+  };
+}
+
 interface WindowsNotificationActivation {
   type: string;
   arguments: string;
