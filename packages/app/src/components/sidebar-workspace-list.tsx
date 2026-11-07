@@ -14,6 +14,14 @@ import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinni
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
 import { getProjectActivity, projectBlockActivityEqual } from "./sidebar/project-block-activity";
 import { resolveProjectLeadingStatus } from "./sidebar/project-leading-status";
+import {
+  PROJECT_ACTION_GAP,
+  PROJECT_ACTION_OPTICAL_OFFSET,
+  PROJECT_ACTION_SIZE,
+  PROJECT_KEBAB_COMPACT_OVERHANG,
+  PROJECT_KEBAB_COMPACT_SIZE,
+  projectTrailingActionsWidth,
+} from "./sidebar/project-trailing-actions";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
 import { useAppSettings } from "@/hooks/use-settings";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
@@ -436,14 +444,6 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
   },
 }));
 
-const PROJECT_ACTION_SIZE = 24;
-const PROJECT_ACTION_GAP = 2;
-const PROJECT_ACTION_OPTICAL_OFFSET = 6;
-// Phones get a larger kebab tap target. It overhangs the 24px box equally on every side, so its
-// dots stay on the desktop rail and the row keeps its height; only its left edge takes extra width.
-const PROJECT_KEBAB_COMPACT_SIZE = 32;
-const PROJECT_KEBAB_COMPACT_OVERHANG = (PROJECT_KEBAB_COMPACT_SIZE - PROJECT_ACTION_SIZE) / 2;
-
 function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
@@ -470,18 +470,15 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
-  const controlCount = Number(Boolean(worktreeTarget)) + Number(Boolean(onRemoveProject));
-  // The compact kebab's left overhang pushes the other actions aside, so reserve it too.
-  const kebabOverhang = onRemoveProject && isMobileBreakpoint ? PROJECT_KEBAB_COMPACT_OVERHANG : 0;
-  const actionsWidth =
-    controlCount * PROJECT_ACTION_SIZE +
-    Math.max(0, controlCount - 1) * PROJECT_ACTION_GAP +
-    kebabOverhang -
-    PROJECT_ACTION_OPTICAL_OFFSET;
+  const actionsWidth = projectTrailingActionsWidth({
+    hasNewWorkspaceAction: worktreeTarget !== null,
+    hasKebab: onRemoveProject !== undefined,
+    compact: isMobileBreakpoint,
+  });
   return (
     <HoverRevealActions
       visible={actionsVisible}
-      width={Math.max(0, actionsWidth)}
+      width={actionsWidth}
       height={PROJECT_ACTION_SIZE}
     >
       <View style={styles.projectTrailingActions}>
