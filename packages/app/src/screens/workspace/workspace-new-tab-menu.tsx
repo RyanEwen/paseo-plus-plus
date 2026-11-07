@@ -1,6 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { PanelRightOpen } from "lucide-react-native";
-import { MenuSubTrigger, useMenuContext, type MenuPageDefinition } from "@/components/ui/menu";
+import {
+  MenuSubTrigger,
+  useMenuContext,
+  type MenuItemSecondary,
+  type MenuPageDefinition,
+} from "@/components/ui/menu";
 import { SplitLayoutPicker } from "@/components/split-layout-picker";
 import type { SplitSide } from "@/components/split-layout-presets";
 import { useSettings } from "@/hooks/use-settings";
@@ -73,9 +78,13 @@ function WorkspaceNewTabMenuItem({
       item.shortcutActionId ? <LaunchItemShortcut actionId={item.shortcutActionId} /> : undefined,
     [item.shortcutActionId],
   );
-  const splitAction = useMemo(
-    () =>
-      splitPageId ? (
+  const splitAction = useMemo<MenuItemSecondary | undefined>(() => {
+    if (!splitPageId) {
+      return undefined;
+    }
+    return {
+      kind: "action",
+      element: (
         <MenuSubTrigger
           id={splitPageId}
           iconOnly
@@ -84,9 +93,9 @@ function WorkspaceNewTabMenuItem({
           disabled={item.disabled}
           testID={splitPageId}
         />
-      ) : undefined,
-    [splitPageId, item.label, item.disabled, t],
-  );
+      ),
+    };
+  }, [splitPageId, item.label, item.disabled, t]);
   const handleSelect = useCallback(() => item.launch({ kind: "open", paneId }), [item, paneId]);
 
   return (
@@ -94,7 +103,7 @@ function WorkspaceNewTabMenuItem({
       testID={`workspace-new-tab-menu-${item.id}`}
       leading={leading}
       trailing={trailing}
-      secondaryAction={splitAction}
+      secondary={splitAction}
       disabled={item.disabled}
       onSelect={handleSelect}
     >
