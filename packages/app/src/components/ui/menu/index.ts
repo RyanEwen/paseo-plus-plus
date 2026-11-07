@@ -32,6 +32,12 @@ export {
 } from "./menu-item";
 export { MENU_ITEM_HEIGHT } from "./menu-geometry";
 export {
+  menuRowProps,
+  useMenuRowProps,
+  type MenuRowProps,
+  type MenuRowRole,
+} from "./menu-row-props";
+export {
   useMenuContext,
   useMenuDepth,
   type MenuCompactMode,
