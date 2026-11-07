@@ -20,8 +20,8 @@ import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useWorkspaceFamilyDrag } from "./use-workspace-family-drag";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
+import { SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT } from "./sidebar-workspace-row-content";
 import {
-  SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT,
   SidebarWorkspaceFamilyPresentationProvider,
   useSidebarWorkspaceTree,
   type SidebarWorkspaceFamilyPresentation,

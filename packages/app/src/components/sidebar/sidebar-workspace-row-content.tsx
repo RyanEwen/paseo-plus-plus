@@ -21,10 +21,7 @@ import {
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
 import { density, densityIconBox } from "@/styles/density";
-import {
-  SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT as TITLE_LINE_HEIGHT,
-  useSidebarWorkspaceFamilyPresentation,
-} from "./workspace-tree-context";
+import { useSidebarWorkspaceFamilyPresentation } from "./workspace-tree-context";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -479,6 +476,10 @@ export function SidebarWorkspaceTrailingStatusActions({
 }
 
 // The status dot centres on the title's first line, so both share its line height.
+const TITLE_LINE_HEIGHT = 20;
+/** The row title's first-line height, which the family disclosure glyph centres on. */
+export const SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT = TITLE_LINE_HEIGHT;
+
 const styles = StyleSheet.create((theme) => ({
   // Metadata, status and actions share one row. Hidden actions take no width; the reveal
   // widens the row only while its controls show, so idle titles keep that space.

@@ -2,8 +2,6 @@ import { createContext, useContext, type ReactNode, type ReactElement } from "re
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { EMPTY_WORKSPACE_TREE, type WorkspaceTreeNode } from "./workspace-tree";
 
-export const SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT = 20;
-
 /** Row-only presentation, relative to each Project, Status or Pinned row's established rail. */
 export interface SidebarWorkspaceFamilyPresentation {
   /** Cumulative child indentation in pixels; never applied to a row's highlight or drag cell. */
