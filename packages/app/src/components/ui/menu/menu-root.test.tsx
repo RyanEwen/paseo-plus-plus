@@ -134,10 +134,10 @@ function renderPicker(
 }
 
 // One first-pane region and one second-pane region prove the fraction is never complemented.
-const regionCases = [
+const regionCases: Array<{ side: SplitSide; id: string; label: string; fraction: number }> = [
   { side: "left", id: "80-20", label: "80/20", fraction: 0.8 },
   { side: "bottom", id: "30-70", label: "30/70", fraction: 0.3 },
-] as const;
+];
 
 describe("literal split regions", () => {
   it.each(regionCases)(
