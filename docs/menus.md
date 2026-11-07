@@ -149,10 +149,13 @@ opens on press.
 
 ## Separate actions in one row
 
-Use `MenuItem.secondaryToggle` when choosing a row and including it in a multi-selection are
-separate actions. The checkbox is a sibling of the primary pressable, has its own accessible
-label, and stays open after a change. Both controls use the menu engine for selection and keyboard
-navigation. `trailing` is for decorations, not another pressable nested inside the row.
+Pass `MenuItem.secondary` when a row needs a second, separate control. `{ kind: "toggle", ... }`
+adds a checkbox for when choosing a row and including it in a multi-selection are separate
+actions; the checkbox has its own accessible label and stays open after a change.
+`{ kind: "action", element }` places a caller-built sibling, such as an `iconOnly` `MenuItem` that
+opens a submenu. An `iconOnly` row renders only its leading icon, so give it an
+`accessibilityLabel`. Both controls use the menu engine for selection and keyboard navigation.
+`trailing` is for decorations, not another pressable nested inside the row.
 
 ## Item states
 

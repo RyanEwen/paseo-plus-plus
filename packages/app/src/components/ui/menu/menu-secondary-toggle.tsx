@@ -10,6 +10,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { useMenuContext } from "./menu-context";
 import { MENU_ITEM_HEIGHT } from "./menu-geometry";
+import { useMenuRowProps } from "./menu-row-props";
 
 const ThemedCheck = withUnistyles(Check);
 const checkboxCheckMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
@@ -22,23 +23,33 @@ export interface MenuItemSecondaryToggle {
   testID?: string;
 }
 
+/**
+ * A second control beside a menu item's primary action: a checkbox toggle, or a caller-built
+ * sibling element such as an icon-only menu row.
+ */
+export type MenuItemSecondary =
+  | ({ kind: "toggle" } & MenuItemSecondaryToggle)
+  | { kind: "action"; element: ReactElement };
+
 /** Keep primary and secondary hit targets separate; each action retains its own selection policy. */
 export function MenuItemActions({
   children,
-  toggle,
-  action,
+  secondary,
   disabled,
 }: {
   children: ReactElement;
-  toggle?: MenuItemSecondaryToggle;
-  action?: ReactElement;
+  secondary?: MenuItemSecondary;
   disabled: boolean;
 }): ReactElement {
-  if (!toggle && !action) return children;
+  if (!secondary) return children;
   return (
     <View style={styles.splitRow}>
       {children}
-      {action ?? (toggle ? <MenuSecondaryToggle toggle={toggle} disabled={disabled} /> : null)}
+      {secondary.kind === "action" ? (
+        secondary.element
+      ) : (
+        <MenuSecondaryToggle toggle={secondary} disabled={disabled} />
+      )}
     </View>
   );
 }
@@ -63,10 +74,7 @@ function MenuSecondaryToggle({
     () => ({ checked: toggle.checked, disabled }),
     [toggle.checked, disabled],
   );
-  const dataSet = useMemo(
-    () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
-    [disabled],
-  );
+  const rowProps = useMenuRowProps({ disabled, role: "checkbox" });
   const controlStyle = useMemo(
     () => [styles.toggleControl, toggle.checked && styles.toggleControlChecked],
     [toggle.checked],
@@ -87,12 +95,10 @@ function MenuSecondaryToggle({
 
   return (
     <Pressable
-      accessibilityRole="checkbox"
+      {...rowProps}
       accessibilityLabel={toggle.accessibilityLabel}
       accessibilityState={accessibilityState}
       aria-checked={toggle.checked}
-      tabIndex={-1}
-      dataSet={dataSet}
       testID={toggle.testID}
       disabled={disabled}
       onPress={handlePress}
