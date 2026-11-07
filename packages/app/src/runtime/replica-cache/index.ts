@@ -1113,14 +1113,97 @@ function bindWorkspaceAuthority(read: ReplicaRead, rows: ReplicaRow[]): void {
   if ([...authority.changes].some((value) => value !== authority.observed)) read.invalidated = true;
 }
 
+/**
+ * The host a queued repair belongs to. Host removal cancels it and a rename moves it to the new
+ * id, so a repair that commits late never fences cursors for a host that was removed, re-added
+ * or replaced while it waited.
+ */
+interface RepairNamespace {
+  serverId: string;
+  incarnation: symbol | undefined;
+  cancelled: boolean;
+}
+
+/** What one read-time repair deletes and rewrites, and the raw rows it was planned from. */
+interface RepairPlan {
+  serverId: string;
+  /** Rows to delete: invalid entity rows and, when unreadable, the checkpoint row itself. */
+  invalidRows: ReplicaRow[];
+  /**
+   * Cursors to write back, already without those the invalid rows voided. Omitted when the
+   * checkpoint row is left as it is.
+   */
+  checkpoint?: DirectoryCheckpoint;
+  /** The checkpoint row as read, or undefined when the read found none. */
+  checkpointRow?: ReplicaRow;
+  /** The read scope the repair belongs to; the repair is abandoned once it can no longer publish. */
+  revision: ReplicaRead;
+  /** Raw rows the plan depends on, compared by payload before applying. Defaults to invalidRows. */
+  observedRows?: readonly ReplicaRow[];
+  /**
+   * `as-read` also compares the checkpoint row, including its absence. `unguarded` is for rows
+   * with no directory cursor (timelines), whose repair does not depend on the checkpoint.
+   */
+  checkpointGuard: "as-read" | "unguarded";
+}
+
+/** Deletes the invalid rows and, when the checkpoint stays readable, rewrites its cursors. */
+function planRepairChanges(plan: RepairPlan): ReplicaRowChanges {
+  const { serverId, invalidRows, checkpoint } = plan;
+  const checkpointWasInvalid = invalidRows.some(
+    (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+  );
+  return {
+    deletes: invalidRows,
+    upserts:
+      checkpoint !== undefined && !checkpointWasInvalid
+      ? [
+          {
+            serverId,
+            kind: "checkpoint",
+            id: REPLICA_SINGLETON_ROW_ID,
+            payload: JSON.stringify(serializeDirectoryCheckpoint(checkpoint)),
+          },
+        ]
+      : [],
+  };
+}
+
+/**
+ * The compare-and-apply expectations for a repair: every observed row by payload and, unless
+ * unguarded, the checkpoint as read. Comparing in the same storage transaction keeps a repair
+ * planned in one browser context from deleting a newer baseline written by another.
+ *
+ * @throws When an observation has no string payload; such a row cannot be compared.
+ */
+function repairExpectations(plan: RepairPlan): ReplicaRowExpectation[] {
+  const { serverId, checkpointRow } = plan;
+  const observedRows = plan.observedRows ?? plan.invalidRows;
+  const observations = [...observedRows, ...(checkpointRow ? [checkpointRow] : [])];
+  if (observations.some((row) => typeof row.payload !== "string")) {
+    throw new Error("Replica repair requires string payload observations");
+  }
+  const expected = new Map<string, ReplicaRowExpectation>();
+  for (const row of observedRows) {
+    expected.set(rowKey(row), row);
+  }
+  if (plan.checkpointGuard === "as-read") {
+    const key = { serverId, kind: "checkpoint" as const, id: REPLICA_SINGLETON_ROW_ID };
+    expected.set(rowKey(key), { ...key, payload: checkpointRow ? checkpointRow.payload : null });
+  }
+  return [...expected.values()];
+}
+
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
+  /**
+   * A fresh symbol each time a host id is added, removed or renamed. Work captured under an older
+   * symbol belongs to an earlier registration of that id and must not touch the current fences.
+   */
   private readonly hostIncarnations = new Map<string, symbol>();
-  private readonly repairNamespaces = new Set<{
-    serverId: string;
-    incarnation: symbol | undefined;
-    cancelled: boolean;
-  }>();
+  /** Repairs queued on the write queue, so host removal and renaming can retarget them. */
+  private readonly repairNamespaces = new Set<RepairNamespace>();
+  /** Entity cursors a repair invalidated; only a persisted complete baseline restores them. */
   private readonly invalidDirectoryCursors = new Map<string, Set<keyof DirectoryCheckpoint>>();
   private readonly activeReads = new Set<ReplicaRead>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
@@ -1187,6 +1270,7 @@ export class ReplicaCache {
               checkpointRow,
               revision,
               observedRows: [workspaceRow, ...invalidRows],
+              checkpointGuard: "as-read",
             }),
           );
           if (outcome === "retry") return RETRY_REPLICA_READ;
@@ -1238,6 +1322,7 @@ export class ReplicaCache {
               checkpoint: result.checkpoint,
               checkpointRow,
               revision,
+              checkpointGuard: "as-read",
             }),
           );
           if (outcome === "retry") return RETRY_REPLICA_READ;
@@ -1367,6 +1452,13 @@ export class ReplicaCache {
     }
   }
 
+  /**
+   * Deletes one invalid row. A directory entity row also drops its entity cursor, so a later
+   * launch cannot trust a checkpoint for a partial baseline.
+   *
+   * @returns false when the scope was invalidated or the stored rows changed since they were
+   *   read; the caller retries. Rejects when storage fails.
+   */
   private async deleteInvalidRow(row: ReplicaRow, revision: ReplicaRead): Promise<boolean> {
     if (!this.canPublishRead(revision)) return false;
     const entity = directoryEntityForRow(row);
@@ -1375,14 +1467,17 @@ export class ReplicaCache {
         serverId: row.serverId,
         invalidRows: [row],
         revision,
-        guardCheckpoint: false,
+        checkpointGuard: "unguarded",
       });
     }
+    // The repair now also depends on the checkpoint row. Widen the scope to it so a concurrent
+    // checkpoint write invalidates this read instead of letting a stale repair publish.
     revision.workspaceAuthority = undefined;
     revision.kinds = [...new Set([...revision.kinds, "checkpoint" as const])];
     revision.keys?.push({ kind: "checkpoint", id: REPLICA_SINGLETON_ROW_ID });
     revision.ids = undefined;
-    // The second read is only on invalid data. CAS retains both raw observations.
+    // Reread the row with the checkpoint. This only happens for invalid data, and the repair
+    // compares both raw rows, so a row another context replaced in between is never deleted.
     const rows = await this.rowStore.read(
       row.serverId,
       [row.kind, "checkpoint"],
@@ -1412,92 +1507,90 @@ export class ReplicaCache {
       checkpoint,
       checkpointRow,
       revision,
+      checkpointGuard: "as-read",
     });
   }
 
-  private repairInvalidDirectoryRows(input: {
-    serverId: string;
-    invalidRows: ReplicaRow[];
-    checkpoint?: DirectoryCheckpoint;
-    checkpointRow?: ReplicaRow;
-    revision: ReplicaRead;
-    observedRows?: readonly ReplicaRow[];
-    guardCheckpoint?: boolean;
-  }): Promise<boolean> {
-    const { serverId, invalidRows, checkpoint, checkpointRow, revision } = input;
-    const namespace = {
+  /**
+   * Deletes invalid rows and rewrites the checkpoint without their entity cursors, compared
+   * against the raw rows the plan was made from. The repair is queued behind earlier writes;
+   * once committed, its entity cursors stay withheld from ordinary checkpoint writes.
+   *
+   * @returns Whether the repair committed while the scope could still publish; false when the
+   *   comparison failed or the scope was invalidated. Rejects when storage fails.
+   */
+  private async repairInvalidDirectoryRows(plan: RepairPlan): Promise<boolean> {
+    const { serverId, revision } = plan;
+    const namespace: RepairNamespace = {
       serverId,
       incarnation: this.hostIncarnations.get(serverId),
       cancelled: false,
     };
-    // Mutation planning depends on the complete raw checkpoint, including unrelated cursors.
+    // A repair rewrites the whole checkpoint row, so it is planned and compared against the
+    // complete raw checkpoint. Tracking only the workspace cursor would let a write to another
+    // cursor slip between planning and commit.
     revision.workspaceAuthority = undefined;
-    const checkpointWasInvalid = invalidRows.some(
-      (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
-    );
-    const changes: ReplicaRowChanges = {
-      deletes: invalidRows,
-      upserts:
-        checkpoint !== undefined && !checkpointWasInvalid
-          ? [
-              {
-                serverId,
-                kind: "checkpoint",
-                id: REPLICA_SINGLETON_ROW_ID,
-                payload: JSON.stringify(serializeDirectoryCheckpoint(checkpoint)),
-              },
-            ]
-          : [],
-    };
-    const observations = [
-      ...(input.observedRows ?? invalidRows),
-      ...(checkpointRow ? [checkpointRow] : []),
-    ];
-    if (observations.some((row) => typeof row.payload !== "string")) {
-      return Promise.reject(new Error("Replica repair requires string payload observations"));
-    }
-    const expected = new Map<string, ReplicaRowExpectation>();
-    for (const row of input.observedRows ?? invalidRows) expected.set(rowKey(row), row);
-    if (input.guardCheckpoint !== false) {
-      const key = { serverId, kind: "checkpoint" as const, id: REPLICA_SINGLETON_ROW_ID };
-      expected.set(rowKey(key), { ...key, payload: checkpointRow ? checkpointRow.payload : null });
-    }
+    const changes = planRepairChanges(plan);
+    const expected = repairExpectations(plan);
     this.repairNamespaces.add(namespace);
-    // Retain the caller-visible mismatch/error outcome; the queue tail only sequences work.
-    const repair = this.writeQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await this.prepareStore();
-        if (!this.canPublishRead(revision)) return false;
-        const committed = await this.rowStore.applyIfUnchanged(changes, [...expected.values()]);
-        if (!committed) return false;
-        // A committed repair changes durable byte accounting even when publication is stale.
-        // Rebuild before the next budget decision, without recreating removed/renamed namespaces.
-        this.storedIndexPromise = null;
-        if (
-          !namespace.cancelled &&
-          this.activeServerIds.has(namespace.serverId) &&
-          this.hostIncarnations.get(namespace.serverId) === namespace.incarnation
-        ) {
-          const invalid =
-            this.invalidDirectoryCursors.get(namespace.serverId) ??
-            new Set<keyof DirectoryCheckpoint>();
-          for (const row of invalidRows) {
-            const entity = directoryEntityForRow(row);
-            if (entity) invalid.add(entity);
-          }
-          if (invalid.size) this.invalidDirectoryCursors.set(namespace.serverId, invalid);
-        }
-        return this.canPublishRead(revision);
-      })
-      .finally(() => {
-        this.repairNamespaces.delete(namespace);
-      });
+    const repair = this.commitRepair(this.writeQueue, namespace, plan, changes, expected);
+    // Later writes wait for the repair; the queue tail only sequences work.
     this.writeQueue = repair.then(
       () => undefined,
       () => undefined,
     );
     return repair;
+  }
+
+  /**
+   * Applies a planned repair once the queue ahead of it settles, then fences the repaired
+   * cursors when the repair still belongs to the current registration of its host.
+   */
+  private async commitRepair(
+    queueTail: Promise<void>,
+    namespace: RepairNamespace,
+    plan: RepairPlan,
+    changes: ReplicaRowChanges,
+    expected: ReplicaRowExpectation[],
+  ): Promise<boolean> {
+    try {
+      await queueTail.catch(() => undefined);
+      await this.prepareStore();
+      if (!this.canPublishRead(plan.revision)) return false;
+      const committed = await this.rowStore.applyIfUnchanged(changes, expected);
+      if (!committed) return false;
+      // A committed repair changes durable byte accounting even when publication is stale.
+      // Rebuild before the next budget decision, without recreating removed/renamed namespaces.
+      this.storedIndexPromise = null;
+      if (this.isCurrentNamespace(namespace)) {
+        this.fenceRepairedCursors(namespace.serverId, plan.invalidRows);
+      }
+      return this.canPublishRead(plan.revision);
+    } finally {
+      this.repairNamespaces.delete(namespace);
+    }
+  }
+
+  /** Whether a repair's host is still active under the registration the repair started in. */
+  private isCurrentNamespace(namespace: RepairNamespace): boolean {
+    return (
+      !namespace.cancelled &&
+      this.activeServerIds.has(namespace.serverId) &&
+      this.hostIncarnations.get(namespace.serverId) === namespace.incarnation
+    );
+  }
+
+  /** Withholds the entity cursors of repaired rows until a complete baseline is persisted. */
+  private fenceRepairedCursors(serverId: string, repairedRows: readonly ReplicaRow[]): void {
+    const invalid =
+      this.invalidDirectoryCursors.get(serverId) ?? new Set<keyof DirectoryCheckpoint>();
+    for (const row of repairedRows) {
+      const entity = directoryEntityForRow(row);
+      if (entity) invalid.add(entity);
+    }
+    if (invalid.size) {
+      this.invalidDirectoryCursors.set(serverId, invalid);
+    }
   }
 
   commitDirectoryMutations(
