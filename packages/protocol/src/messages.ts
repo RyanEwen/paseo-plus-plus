@@ -2189,6 +2189,8 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
   requestId: z.string(),
   workspaceId: z.string(),
   accepted: z.boolean(),
+  // The global pin only: an accepted project pin answers null here. The workspace update that
+  // follows carries projectPinnedAt.
   pinnedAt: z.string().nullable(),
   error: z.string().nullable(),
 });

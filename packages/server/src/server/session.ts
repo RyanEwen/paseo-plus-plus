@@ -3969,7 +3969,7 @@ export class Session {
     requestId: string,
     scope: WorkspacePinScope = "global",
   ): Promise<void> {
-    const logContext = { workspaceId, pinned, requestId };
+    const logContext = { workspaceId, pinned, scope, requestId };
     this.sessionLogger.info(logContext, "session: workspace.pin.set.request");
     const emitResponse = (accepted: boolean, pinnedAt: string | null, error: string | null) => {
       this.emit({
