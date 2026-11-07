@@ -434,6 +434,10 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
 const PROJECT_ACTION_SIZE = 24;
 const PROJECT_ACTION_GAP = 2;
 const PROJECT_ACTION_OPTICAL_OFFSET = 6;
+// Phones get a larger kebab tap target. It overhangs the 24px box equally on every side, so its
+// dots stay on the desktop rail and the row keeps its height; only its left edge takes extra width.
+const PROJECT_KEBAB_COMPACT_SIZE = 32;
+const PROJECT_KEBAB_COMPACT_OVERHANG = (PROJECT_KEBAB_COMPACT_SIZE - PROJECT_ACTION_SIZE) / 2;
 
 function ProjectRowTrailingActions({
   projectViewKey,
@@ -462,9 +466,12 @@ function ProjectRowTrailingActions({
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
   const controlCount = Number(Boolean(worktreeTarget)) + Number(Boolean(onRemoveProject));
+  // The compact kebab's left overhang pushes the other actions aside, so reserve it too.
+  const kebabOverhang = onRemoveProject && isMobileBreakpoint ? PROJECT_KEBAB_COMPACT_OVERHANG : 0;
   const actionsWidth =
     controlCount * PROJECT_ACTION_SIZE +
-    Math.max(0, controlCount - 1) * PROJECT_ACTION_GAP -
+    Math.max(0, controlCount - 1) * PROJECT_ACTION_GAP +
+    kebabOverhang -
     PROJECT_ACTION_OPTICAL_OFFSET;
   return (
     <HoverRevealActions
@@ -3003,8 +3010,10 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -PROJECT_ACTION_OPTICAL_OFFSET,
   },
   projectKebabButton: {
-    width: PROJECT_ACTION_SIZE,
-    height: PROJECT_ACTION_SIZE,
+    width: { xs: PROJECT_KEBAB_COMPACT_SIZE, md: PROJECT_ACTION_SIZE },
+    height: { xs: PROJECT_KEBAB_COMPACT_SIZE, md: PROJECT_ACTION_SIZE },
+    marginRight: { xs: -PROJECT_KEBAB_COMPACT_OVERHANG, md: 0 },
+    marginVertical: { xs: -PROJECT_KEBAB_COMPACT_OVERHANG, md: 0 },
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
