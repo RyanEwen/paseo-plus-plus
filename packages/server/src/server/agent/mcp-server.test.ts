@@ -6179,27 +6179,39 @@ describe("speak MCP tool", () => {
 describe("agent snapshot MCP serialization", () => {
   const logger = createTestLogger();
 
-  it.each(["live", "stored"] as const)(
-    "omits absent attention metadata from %s MCP snapshots and list items",
-    async (source) => {
-      const { agentManager, agentStorage, spies } = createTestDeps();
-      const id = "legacy-attention-agent";
-      const now = new Date().toISOString();
-      if (source === "live") {
-        const agent = createManagedAgent({ id });
-        spies.agentManager.getAgent.mockReturnValue(agent);
-        spies.agentManager.listAgents.mockReturnValue([agent]);
-      } else {
-        const record = createStoredRecord({
-          id,
-          archivedAt: null,
-          updatedAt: now,
-          lastActivityAt: now,
-        });
-        spies.agentManager.getAgent.mockReturnValue(null);
-        spies.agentStorage.get.mockResolvedValue(record);
-        spies.agentStorage.list.mockResolvedValue([record]);
-      }
+  const legacyAttentionId = "legacy-attention-agent";
+
+  /** Serve one agent with no attention metadata as a live manager agent. */
+  function seedLiveLegacyAgent({ spies }: TestDeps) {
+    const agent = createManagedAgent({ id: legacyAttentionId });
+    spies.agentManager.getAgent.mockReturnValue(agent);
+    spies.agentManager.listAgents.mockReturnValue([agent]);
+  }
+
+  /** Serve the same agent only from storage. */
+  function seedStoredLegacyAgent({ spies }: TestDeps) {
+    const now = new Date().toISOString();
+    const record = createStoredRecord({
+      id: legacyAttentionId,
+      archivedAt: null,
+      updatedAt: now,
+      lastActivityAt: now,
+    });
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentStorage.get.mockResolvedValue(record);
+    spies.agentStorage.list.mockResolvedValue([record]);
+  }
+
+  it.each([
+    { source: "live", seed: seedLiveLegacyAgent },
+    { source: "stored", seed: seedStoredLegacyAgent },
+  ])(
+    "omits absent attention metadata from $source MCP snapshots and list items",
+    async ({ seed }) => {
+      const deps = createTestDeps();
+      const { agentManager, agentStorage } = deps;
+      const id = legacyAttentionId;
+      seed(deps);
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -7188,6 +7200,55 @@ describe("remote delegated creation", () => {
         error: "Host returned a different agent identity for the delegated request",
       });
       expect([...serverSubscriptionRecords.get(server)!.values()]).toEqual([]);
+    } finally {
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+});
+
+describe("attention tools bound to a caller", () => {
+  const logger = createTestLogger();
+
+  it("reads the caller's human objective and records its waiting disposition", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-attention-tools-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    try {
+      const caller = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        undefined,
+        { workspaceId: "wks_caller" },
+      );
+      // A human prompt opens the caller's accepted turn and its human objective.
+      const run = manager.runAgent(caller.id, "Delegate the report", {
+        clientMessageId: "human-report",
+      });
+      void run.catch(() => undefined);
+      await manager.waitForAgentRunStart(caller.id);
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: caller.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const context = await registeredTool(server, "get_attention_context").handler({});
+      expect(context.structuredContent).toEqual({
+        activeObjectiveIds: ["human-report"],
+        objectives: [{ id: "human-report", audience: { kind: "human" }, disposition: "normal" }],
+      });
+      await registeredTool(server, "report_objective_status").handler({
+        objectiveId: "human-report",
+        disposition: "waiting",
+      });
+      expect(manager.getAttentionObjectives(caller.id).objectives).toEqual([
+        { id: "human-report", audience: { kind: "human" }, disposition: "waiting" },
+      ]);
+
+      client.sessions[0]?.finishTurn();
+      await run.catch(() => undefined);
     } finally {
       await removeAgentStateDir(manager, storage, workdir);
     }

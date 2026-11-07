@@ -21,7 +21,11 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { ScheduleService } from "./schedule/service.js";
 import { createStub } from "./test-utils/class-mocks.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
-import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
+import {
+  attentionAgentManagerStub,
+  attentionConfigStoreStub,
+  createProviderSnapshotManagerStub,
+} from "./test-utils/session-stubs.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
@@ -282,9 +286,7 @@ function createVoiceAssistantWebSocketServer(params: {
   const { httpServer, broker } = params;
   const agentManager = {
     setAgentAttentionCallback() {},
-    setAttentionHost() {},
-    setAttentionPresentationEnabled() {},
-    agentAwareAttentionEnabled: true,
+    ...attentionAgentManagerStub(),
     subscribe: () => () => {},
     getMetricsSnapshot: () => ({
       total: 0,
@@ -294,7 +296,7 @@ function createVoiceAssistantWebSocketServer(params: {
     }),
   };
   const daemonConfigStore = {
-    get: () => ({ notifications: { agentAwareAttention: true } }),
+    ...attentionConfigStoreStub(),
     onApply: () => () => {},
     onChange: () => () => {},
   };

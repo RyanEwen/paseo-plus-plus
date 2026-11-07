@@ -325,9 +325,13 @@ describe("workspace agent activity index", () => {
   });
 });
 
-it.each(["same", "other", undefined])(
-  "projects human escalation in its owning workspace with parent workspace %s",
-  (parentWorkspace) => {
+it.each([
+  { parentWorkspace: "same", otherStatus: undefined },
+  { parentWorkspace: "other", otherStatus: "done" },
+  { parentWorkspace: undefined, otherStatus: undefined },
+] as const)(
+  "projects human escalation in its owning workspace with parent workspace $parentWorkspace",
+  ({ parentWorkspace, otherStatus }) => {
     const parent = agent({
       id: "parent",
       workspaceId: parentWorkspace ?? "same",
@@ -350,7 +354,7 @@ it.each(["same", "other", undefined])(
       ]),
     );
     expect(index.get("same")).toMatchObject({ agentId: "worker", status: "attention" });
-    if (parentWorkspace === "other") expect(index.get("other")?.status).toBe("done");
+    expect(index.get("other")?.status).toBe(otherStatus);
     const quiet = buildWorkspaceAgentActivityIndex(
       new Map([
         [parent.id, parent],
