@@ -314,7 +314,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
 
-      if (workspaceNotificationRuntime.isAcknowledged(notification.data)) return;
       void sendWorkspaceOsNotification({
         title: notification.title,
         body: notification.body,

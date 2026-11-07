@@ -5,6 +5,9 @@ interface WorkspaceNotificationPorts {
   send(payload: OsNotificationPayload): Promise<boolean>;
 }
 
+// The default ports load the icon cache, the OS adapter and the receipt runtime on first delivery.
+// Those modules pull in AsyncStorage, the session store and native notification bindings, which
+// this module's callers and unit tests must not load just to import the sender.
 const defaultPorts: WorkspaceNotificationPorts = {
   async getIcon(data) {
     const { getNotificationProjectIcon } = await import("./project-icon");
@@ -13,10 +16,12 @@ const defaultPorts: WorkspaceNotificationPorts = {
   async send(payload) {
     const { sendOsNotification } = await import("@/utils/os-notifications");
     const { workspaceNotificationRuntime } = await import("./workspace-receipts-runtime");
+    // An event another device already acknowledged must not resurface here.
     if (workspaceNotificationRuntime.isAcknowledged(payload.data)) return true;
     const sent = await sendOsNotification(payload);
-    if (sent && typeof payload.data?.serverId === "string")
+    if (sent && typeof payload.data?.serverId === "string") {
       workspaceNotificationRuntime.resume(payload.data.serverId);
+    }
     return sent;
   },
 };
