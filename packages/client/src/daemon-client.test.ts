@@ -194,7 +194,7 @@ test("lists archived project workspace records with correlated errors and no res
   mock.triggerOpen({ features: { ownedSubscriptions: true, projectArchivedWorkspaces: true } });
   await connectPromise;
 
-  const pending = client.listArchivedProjectWorkspaces("project-one");
+  const pending = client.listArchivedProjectWorkspaces({ projectId: "project-one" });
   const request = parseSentFrame(mock.sent[0]);
   expect(request).toMatchObject({
     type: "workspace.recovery.list_archived.request",
@@ -221,7 +221,7 @@ test("lists archived project workspace records with correlated errors and no res
   );
   await expect(pending).resolves.toEqual([entry]);
 
-  const rejected = client.listArchivedProjectWorkspaces("deleted-project");
+  const rejected = client.listArchivedProjectWorkspaces({ projectId: "deleted-project" });
   const rejectedAssertion = expect(rejected).rejects.toThrow("Project removed");
   const second = parseSentFrame(mock.sent[1]);
   mock.triggerMessage(
