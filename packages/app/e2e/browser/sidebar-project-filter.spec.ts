@@ -99,6 +99,29 @@ async function requireBox(locator: Locator, name: string) {
   return box;
 }
 
+/**
+ * Show the grouping under test and return its scroll owner. Status groups cap Done rows behind
+ * Show more, so status mode expands the group to give the list enough rows to overflow.
+ */
+async function openGroupingList(page: Page, grouping: "project" | "status"): Promise<Locator> {
+  if (grouping === "project") {
+    return page.getByTestId("sidebar-project-workspace-list-scroll");
+  }
+
+  await selectSidebarStatusGrouping(page);
+  const showMore = page.locator('[data-testid^="sidebar-status-group-show-more-"]').first();
+  await expect(showMore).toBeVisible();
+  await showMore.click();
+  return page.getByTestId("sidebar-status-list-scroll");
+}
+
+/** Layouts and groupings whose list scrolls under the fixed heading. Status mode has its own scroll owner. */
+const ANCHORED_HEADING_CASES = [
+  { compact: false, grouping: "project" },
+  { compact: true, grouping: "project" },
+  { compact: false, grouping: "status" },
+] as const;
+
 /** The vertical positions of the heading's project selector and display menu trigger. */
 async function readHeadingGeometry(page: Page): Promise<{ selectorY: number; displayY: number }> {
   const selector = await requireBox(page.getByTestId("sidebar-project-selector"), "Selector");
@@ -334,8 +357,8 @@ test.describe("Sidebar project selector", () => {
     }
   });
 
-  for (const compact of [false, true]) {
-    test(`workspace controls stay anchored while the list scrolls on ${compact ? "compact" : "desktop"}`, async ({
+  for (const { compact, grouping } of ANCHORED_HEADING_CASES) {
+    test(`workspace controls stay anchored while the ${grouping} list scrolls on ${compact ? "compact" : "desktop"}`, async ({
       page,
     }, testInfo) => {
       // Enough rows to overflow the phone-height sidebar that openSidebarAt opens.
@@ -349,21 +372,24 @@ test.describe("Sidebar project selector", () => {
         await openSidebarAt(page, compact);
         await waitForSidebarHydration(page);
 
+        const scroll = await openGroupingList(page, grouping);
         const selector = page.getByTestId("sidebar-project-selector");
         const display = page.getByTestId("sidebar-display-preferences-menu");
-        const scroll = page.getByTestId("sidebar-project-workspace-list-scroll");
-        const firstProject = page.getByTestId(`sidebar-project-row-${projects[0].projectKey}`);
+        // Every grouping lists each seeded workspace as a row; any row moves with the scroll.
+        const row = page.getByTestId(
+          `sidebar-workspace-row-${getServerId()}:${projects[0].workspaceId}`,
+        );
         await expect(selector).toHaveText("All Workspaces");
-        await expect(firstProject).toBeVisible();
+        await expect(row).toBeVisible();
         const headingBefore = await readHeadingGeometry(page);
-        const projectBefore = await requireBox(firstProject, "First project row");
+        const rowBefore = await requireBox(row, "Seeded workspace row");
 
         // Scroll, then expect the rows to have moved and the heading to be where it was.
         await scrollToEnd(scroll);
         await expect.poll(() => readScrollTop(scroll)).toBeGreaterThan(150);
         await expect
-          .poll(async () => (await firstProject.boundingBox())?.y ?? Infinity)
-          .toBeLessThan(projectBefore.y - 150);
+          .poll(async () => (await row.boundingBox())?.y ?? Infinity)
+          .toBeLessThan(rowBefore.y - 150);
         await expect(selector).toBeInViewport();
         await expect(display).toBeInViewport();
         const headingAfter = await readHeadingGeometry(page);
@@ -371,7 +397,7 @@ test.describe("Sidebar project selector", () => {
         expect(headingAfter.displayY).toBeCloseTo(headingBefore.displayY, 0);
         await page.screenshot({
           path: testInfo.outputPath(
-            `sticky-workspace-header-${compact ? "compact" : "desktop"}.png`,
+            `sticky-workspace-header-${grouping}-${compact ? "compact" : "desktop"}.png`,
           ),
         });
         await display.click();
