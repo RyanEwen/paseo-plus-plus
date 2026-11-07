@@ -3,6 +3,7 @@ import {
   SidebarQuickFilterInput,
 } from "@/components/sidebar/quick-filter";
 import { SidebarViewModeButton } from "@/components/sidebar/view-mode-button";
+import { SidebarBulkCollapseControls } from "@/components/sidebar/bulk-collapse-controls";
 import { router } from "expo-router";
 import {
   CircleGauge,
@@ -815,6 +816,7 @@ function WorkspacesSectionHeader() {
   return (
     <View>
       <SidebarSectionHeader title="Workspaces">
+        <SidebarBulkCollapseControls />
         <SidebarViewModeButton />
         <SidebarQuickFilterButton />
         <Tooltip delayDuration={300}>

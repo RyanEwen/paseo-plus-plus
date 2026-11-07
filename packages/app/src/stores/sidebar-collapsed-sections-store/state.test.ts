@@ -4,6 +4,7 @@ import {
   mergePersistedCollapsedProjects,
   serializeCollapsedProjects,
   setProjectCollapsed,
+  setSectionsCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
@@ -73,6 +74,49 @@ describe("sidebar collapsed projects transitions", () => {
   });
 });
 
+describe("bulk sidebar collapse", () => {
+  it("changes rendered sections atomically without losing hidden preferences", () => {
+    const initial = {
+      collapsedProjectKeys: new Set(["hidden-host:project"]),
+      collapsedWorkspaceGroupKeys: new Set(["hidden-group"]),
+      collapsedPinned: false,
+    };
+    const targets = {
+      projectKeys: ["visible-host:project"],
+      workspaceGroupKeys: ["running", "no-unarchived-workspaces"],
+      includePinned: true,
+    };
+    const collapsed = setSectionsCollapsed(initial, targets, true);
+    expect(serializeCollapsedProjects(collapsed)).toEqual({
+      collapsedProjectKeys: ["hidden-host:project", "visible-host:project"],
+      collapsedWorkspaceGroupKeys: ["hidden-group", "running", "no-unarchived-workspaces"],
+      collapsedPinned: true,
+    });
+    expect(setSectionsCollapsed(collapsed, targets, true)).toEqual(collapsed);
+    const restored = mergePersistedCollapsedProjects(
+      serializeCollapsedProjects(collapsed),
+      emptyState(),
+    );
+    expect(setSectionsCollapsed(restored, targets, false)).toEqual(initial);
+    expect(toggleProjectCollapsed(collapsed, "visible-host:project").collapsedProjectKeys).toEqual(
+      new Set(["hidden-host:project"]),
+    );
+  });
+  it("preserves a hidden pinned section and unrelated grouping preferences", () => {
+    const initial = {
+      ...emptyState(),
+      collapsedPinned: true,
+      collapsedProjectKeys: new Set(["project"]),
+    };
+    const next = setSectionsCollapsed(
+      initial,
+      { projectKeys: [], workspaceGroupKeys: ["done"], includePinned: false },
+      false,
+    );
+    expect(next).toEqual(initial);
+  });
+});
+
 describe("one project at a time", () => {
   const projectKeys = ["host-a:project-a", "host-b:project-a", "offline:project-b"];
   const options = { collapseOthers: projectKeys };
@@ -103,5 +147,18 @@ describe("one project at a time", () => {
     const initial = { ...emptyState(), collapsedProjectKeys: new Set([projectKeys[1]]) };
     const next = toggleProjectCollapsed(initial, projectKeys[1], { collapseOthers: [] });
     expect(next.collapsedProjectKeys.size).toBe(0);
+  });
+
+  it("expand all remains explicit and the next individual expansion restores exclusivity", () => {
+    const initial = setProjectCollapsed(emptyState(), projectKeys[0], false, options);
+    const targets = { projectKeys, workspaceGroupKeys: [], includePinned: false };
+    const all = setSectionsCollapsed(initial, targets, false);
+    expect(all.collapsedProjectKeys.size).toBe(0);
+    const closed = toggleProjectCollapsed(all, projectKeys[1], options);
+    expect([...closed.collapsedProjectKeys]).toEqual([projectKeys[1]]);
+    const reopened = toggleProjectCollapsed(closed, projectKeys[1], options);
+    expect([...reopened.collapsedProjectKeys].sort()).toEqual(
+      [projectKeys[0], projectKeys[2]].sort(),
+    );
   });
 });

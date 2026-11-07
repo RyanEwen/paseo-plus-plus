@@ -78,6 +78,57 @@ export function setProjectCollapsed(
   return { ...state, collapsedProjectKeys: next };
 }
 
+export interface SidebarCollapseTargets {
+  projectKeys: readonly string[];
+  workspaceGroupKeys: readonly string[];
+  includePinned: boolean;
+}
+
+/** Copy `current` with every key in `keys` added (collapsed) or removed (expanded). */
+function withKeysCollapsed(
+  current: ReadonlySet<string>,
+  keys: readonly string[],
+  collapsed: boolean,
+): Set<string> {
+  const next = new Set(current);
+  for (const key of keys) {
+    if (collapsed) {
+      next.add(key);
+    } else {
+      next.delete(key);
+    }
+  }
+  return next;
+}
+
+/**
+ * Set only the rendered sections, preserving preferences hidden by the current filters.
+ *
+ * Expand all deliberately takes no ProjectCollapseOptions: it is an explicit override of
+ * one-project-at-a-time and expands every targeted project. The next individual toggle, which
+ * does receive the options, restores exclusivity.
+ */
+export function setSectionsCollapsed(
+  state: CollapsedProjectsState,
+  targets: SidebarCollapseTargets,
+  collapsed: boolean,
+): CollapsedProjectsState {
+  return {
+    ...state,
+    collapsedProjectKeys: withKeysCollapsed(
+      state.collapsedProjectKeys,
+      targets.projectKeys,
+      collapsed,
+    ),
+    collapsedWorkspaceGroupKeys: withKeysCollapsed(
+      state.collapsedWorkspaceGroupKeys,
+      targets.workspaceGroupKeys,
+      collapsed,
+    ),
+    collapsedPinned: targets.includePinned ? collapsed : state.collapsedPinned,
+  };
+}
+
 export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
   collapsedWorkspaceGroupKeys: string[];

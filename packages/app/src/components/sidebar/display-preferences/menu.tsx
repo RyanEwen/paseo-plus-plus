@@ -3,6 +3,7 @@ import {
   WorkspaceListPage,
   WorkspaceUpdatedWithinPage,
 } from "./workspace-list";
+import { SidebarBulkCollapseMenuItems } from "../bulk-collapse-controls";
 import { WORKSPACE_LIMIT_PAGES } from "./workspace-limit-pages";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -398,6 +399,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             sheetTitle={`${t(`sidebar.display.grouping.${preferences.grouping}`)}: ${t("sidebar.display.heading")}`}
             testID="sidebar-display-preferences-content"
           >
+            <SidebarBulkCollapseMenuItems />
             {preferences.preferencesDisabledReason ? (
               <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
             ) : null}
