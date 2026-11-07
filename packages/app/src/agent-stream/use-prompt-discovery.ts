@@ -12,6 +12,13 @@ export type PromptDiscoveryStatus =
   | "limited"
   | "cancelled";
 
+/** Discovery stopped without reaching its target: failed, limited, exhausted or cancelled. */
+export function isDiscoverySettled(status: PromptDiscoveryStatus): boolean {
+  return (
+    status === "error" || status === "limited" || status === "exhausted" || status === "cancelled"
+  );
+}
+
 function createOperation(stopped = false) {
   return {
     stopped,

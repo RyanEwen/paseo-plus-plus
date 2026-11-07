@@ -9,7 +9,7 @@ import {
   type PromptReadingPosition,
 } from "./prompt-reading-position";
 import { useReadingPrompt, type ReadingPromptRequest } from "./use-reading-prompt";
-import { usePromptDiscovery } from "./use-prompt-discovery";
+import { isDiscoverySettled, usePromptDiscovery } from "./use-prompt-discovery";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutline } from "./chat-outline/use-chat-outline";
 import {
@@ -299,11 +299,7 @@ export function useStickyPrompt(input: StickyPromptInput) {
   ]);
 
   useEffect(() => {
-    if (
-      error ||
-      outline.jumpError ||
-      ["error", "limited", "exhausted", "cancelled"].includes(discovery.status)
-    ) {
+    if (error || outline.jumpError || isDiscoverySettled(discovery.status)) {
       clearNavigationActions();
     }
   }, [error, outline.jumpError, discovery.status, clearNavigationActions]);
@@ -316,8 +312,7 @@ export function useStickyPrompt(input: StickyPromptInput) {
     if (previous) {
       retargetNavigationActions(previous.key);
       selectTarget(previous);
-    } else if (["error", "limited", "exhausted", "cancelled"].includes(discovery.status))
-      setPending(null);
+    } else if (isDiscoverySettled(discovery.status)) setPending(null);
   }, [
     enabled,
     discoveringPrevious,
