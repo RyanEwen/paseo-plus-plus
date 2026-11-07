@@ -160,7 +160,7 @@ export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>(
           disabled={activeDescendant}
           onPress={toggle}
           testID={`sidebar-workspace-children-toggle-${key}`}
-          style={styles.toggle}
+          style={activeDescendant ? styles.toggleDisabled : styles.toggle}
         >
           <TreeChevron expanded={!collapsed} />
         </PressHighlight>
@@ -257,8 +257,8 @@ function workspaceKey(workspace: SidebarWorkspacePlacement): string {
   return workspace.workspaceKey;
 }
 
-const styles = StyleSheet.create((theme) => ({
-  toggle: {
+const styles = StyleSheet.create((theme) => {
+  const toggle = {
     width: density.iconButton,
     height: "100%",
     alignItems: "center",
@@ -266,8 +266,13 @@ const styles = StyleSheet.create((theme) => ({
     // Keep the full density hit target while the glyph stays centered on the first title line.
     paddingTop:
       theme.spacing[2] + (SIDEBAR_WORKSPACE_TITLE_LINE_HEIGHT - WORKSPACE_TREE_ICON_SIZE) / 2,
-  },
-  summary: { marginTop: theme.spacing[1], gap: theme.spacing[1] },
-  summaryText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
-  attentionText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
-}));
+  } as const;
+  return {
+    toggle,
+    // design.md States: a disabled control dims its outer pressable.
+    toggleDisabled: { ...toggle, opacity: theme.opacity[50] },
+      summary: { marginTop: theme.spacing[1], gap: theme.spacing[1] },
+    summaryText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+    attentionText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
+  };
+});
