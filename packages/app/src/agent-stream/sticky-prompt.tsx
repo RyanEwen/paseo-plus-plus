@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
+import type { CanonicalPromptContextControls } from "@/timeline/use-canonical-prompt-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { PromptDiscoverySurface } from "./prompt-navigation-surface";
@@ -16,16 +16,13 @@ import {
 import { normalContextPageReader } from "./fetch-reading-prompt-context";
 import type { StreamItem } from "@/types/stream";
 import { fetchPromptContent } from "./fetch-prompt-content";
-import { useStickyPrompt } from "./use-sticky-prompt";
+import { useStickyPrompt, type StickyPromptInput } from "./use-sticky-prompt";
 import { resolvePromptFeedback } from "./sticky-prompt-model";
 import { useStreamTopOverlayInset } from "./top-overlay";
 
-type Props = Parameters<typeof useStickyPrompt>[0] & {
+type Props = StickyPromptInput & {
   contextPageReader?: ContextPageReader | null;
-  retainedContext?: Pick<
-    ReturnType<typeof useCanonicalPromptContext>,
-    "loading" | "error" | "exhausted" | "limited" | "cancelled" | "cancel" | "retry"
-  >;
+  retainedContext?: CanonicalPromptContextControls;
   agentId: string;
   client: DaemonClient | null;
   contentMaxWidth: number;

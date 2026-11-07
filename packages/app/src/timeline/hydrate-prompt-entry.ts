@@ -1,22 +1,17 @@
 import { hydrateStreamState } from "@/types/stream";
 import type { StreamItem } from "@/types/stream";
+import type { ContextEntry } from "./read-canonical-prompt-context";
 type UserPrompt = Extract<StreamItem, { kind: "user_message" }>;
 
 /** Decode canonical prompt content with the transcript renderer, preserving attachments. */
-export function hydratePromptEntry(
-  entry: import("./read-canonical-prompt-context").ContextEntry,
-  epoch: string,
-): UserPrompt {
+export function hydratePromptEntry(entry: ContextEntry, epoch: string): UserPrompt {
   const item = decodePromptEntry(entry, epoch);
   if (!item) throw new Error("Prompt content is unavailable");
   return item;
 }
 
 /** A valid USER can have no painted row; use the ordinary renderer's content policy. */
-export function decodePromptEntry(
-  entry: import("./read-canonical-prompt-context").ContextEntry,
-  epoch: string,
-): UserPrompt | undefined {
+export function decodePromptEntry(entry: ContextEntry, epoch: string): UserPrompt | undefined {
   return hydrateStreamState(
     [
       {

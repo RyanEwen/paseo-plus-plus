@@ -332,3 +332,9 @@ function contextLookupState(
 ): CanonicalPromptContextState {
   return { scope, key, loading: false, error: false, limited: false, exhausted: false, ...flags };
 }
+
+/** Retained-context feedback and recovery the sticky prompt host merges into navigation. */
+export type CanonicalPromptContextControls = Pick<
+  ReturnType<typeof useCanonicalPromptContext>,
+  "loading" | "error" | "exhausted" | "limited" | "cancelled" | "cancel" | "retry"
+>;

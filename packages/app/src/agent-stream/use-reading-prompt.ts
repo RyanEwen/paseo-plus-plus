@@ -5,6 +5,22 @@ import { retainBounded } from "@/timeline/canonical-prompt-model";
 import { contextSourceKey } from "@/timeline/read-canonical-prompt-context";
 import type { UserPrompt } from "./sticky-prompt-model";
 
+/** The prompt to read for the reading position: the user row before a response source, or
+ * an indexed prompt by sequence. The reader is absent while another owner supplies it. */
+export type ReadingPromptRequest =
+  | {
+      kind: "context";
+      source: StreamItem;
+      fetchContext:
+        | ((source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>)
+        | undefined;
+    }
+  | {
+      kind: "prompt";
+      seq: number;
+      fetchPrompt: ((seq: number) => Promise<UserPrompt>) | undefined;
+    };
+
 /** Prompts and reading contexts kept per epoch for revisiting nearby responses. */
 const MAX_CACHED_PROMPTS = 16;
 
@@ -12,23 +28,22 @@ const MAX_CACHED_PROMPTS = 16;
  * transcript window or owns scrolling. Epoch-scoped state and cancellation isolate its bounded contents without remounting the viewport.
  */
 export function useReadingPrompt(input: {
-  seq: number | undefined;
   epoch: string | null;
   knownPrompts: readonly UserPrompt[];
-  fetchPrompt?: (seq: number) => Promise<UserPrompt>;
-  source?: StreamItem;
-  fetchContext?: (source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>;
+  request: ReadingPromptRequest | undefined;
 }) {
-  const { fetchPrompt, epoch } = input;
-  const desiredKey = readingCacheKey(input.source, input.seq);
+  const { epoch, request } = input;
+  const desiredKey = readingCacheKey(request);
   const readContent = useStableEvent(async (signal: AbortSignal) => {
-    const source = input.source;
-    const item = source
-      ? await input.fetchContext!(source, signal)
-      : await input.fetchPrompt!(input.seq!);
-    if (source && item && item.timelineCursor?.epoch !== source.timelineCursor?.epoch)
-      throw new Error("Reading prompt belongs to a different epoch");
-    return item;
+    const current = input.request;
+    if (current?.kind === "context" && current.fetchContext) {
+      const item = await current.fetchContext(current.source, signal);
+      if (item && item.timelineCursor?.epoch !== current.source.timelineCursor?.epoch)
+        throw new Error("Reading prompt belongs to a different epoch");
+      return item;
+    }
+    if (current?.kind === "prompt" && current.fetchPrompt) return current.fetchPrompt(current.seq);
+    throw new Error("Reading prompt has no reader");
   });
   const contentScope = useMemo(
     () => ({ epoch, cache: new Map<string, UserPrompt | undefined>() }),
@@ -78,7 +93,7 @@ export function useReadingPrompt(input: {
       retainBounded(cache, `prompt:${seq}`, item, MAX_CACHED_PROMPTS);
     }
   }, [input.knownPrompts, cache, epoch]);
-  const canRead = input.source ? !!input.fetchContext : !!fetchPrompt;
+  const canRead = hasReadingPromptReader(request);
   useEffect(() => {
     const key = desiredKey;
     if (key === undefined || suppressedSeq.current === key || !canRead) return;
@@ -122,8 +137,14 @@ export function useReadingPrompt(input: {
 }
 
 /** Keep source identity stable while response text streams; both read types share one cache. */
-function readingCacheKey(source: StreamItem | undefined, seq: number | undefined) {
-  if (source) return `context:${contextSourceKey(source)}`;
-  if (seq !== undefined) return `prompt:${seq}`;
+function readingCacheKey(request: ReadingPromptRequest | undefined) {
+  if (request?.kind === "context") return `context:${contextSourceKey(request.source)}`;
+  if (request?.kind === "prompt") return `prompt:${request.seq}`;
   return undefined;
+}
+
+/** A known request can still lack its reader, for example while retained context manages it. */
+function hasReadingPromptReader(request: ReadingPromptRequest | undefined): boolean {
+  if (request?.kind === "context") return !!request.fetchContext;
+  return !!request?.fetchPrompt;
 }

@@ -8,7 +8,7 @@ import {
   type PromptReadingSource,
   type PromptReadingPosition,
 } from "./prompt-reading-position";
-import { useReadingPrompt } from "./use-reading-prompt";
+import { useReadingPrompt, type ReadingPromptRequest } from "./use-reading-prompt";
 import { usePromptDiscovery } from "./use-prompt-discovery";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutline } from "./chat-outline/use-chat-outline";
@@ -37,7 +37,7 @@ import {
   type UserPrompt,
 } from "./sticky-prompt-model";
 
-interface Input {
+export interface StickyPromptInput {
   enabled?: boolean;
   /** The timeline owner admits passive context as actual rows. */
   contextManaged?: boolean;
@@ -57,7 +57,7 @@ interface Input {
 }
 
 /** Own the sticky selection while the existing timeline owner loads and scrolls prompts. */
-export function useStickyPrompt(input: Input) {
+export function useStickyPrompt(input: StickyPromptInput) {
   const {
     enabled = true,
     items,
@@ -149,10 +149,12 @@ export function useStickyPrompt(input: Input) {
   const readingContent = useReadingPrompt({
     knownPrompts,
     epoch,
-    seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
-    fetchPrompt: input.fetchPrompt,
-    source: contextSource,
-    fetchContext: input.fetchContext,
+    request: resolveReadingPromptRequest({
+      source: contextSource,
+      seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
+      fetchContext: input.fetchContext,
+      fetchPrompt: input.fetchPrompt,
+    }),
   });
   const targets = useMemo(
     () => mergeCachedPromptTarget(loadedTargets, readingContent.item, selected, epoch),
@@ -598,7 +600,7 @@ function resolveActionVisibleMessageId(targets: PromptTarget[], key: string | nu
 }
 
 /** Backward pagination can materialize only targets preceding the ordinary window. */
-function canPageToContextTarget(seq: number, input: Input): boolean {
+function canPageToContextTarget(seq: number, input: StickyPromptInput): boolean {
   if (!input.hasOlder && !input.loadingOlder) return false;
   let firstOrdinarySeq = Infinity;
   for (const item of input.items) {
@@ -609,3 +611,20 @@ function canPageToContextTarget(seq: number, input: Input): boolean {
   }
   return Number.isFinite(firstOrdinarySeq) && seq < firstOrdinarySeq;
 }
+
+/** A response source reads its own context; otherwise an indexed sequence reads its prompt. */
+function resolveReadingPromptRequest(input: {
+  source: StreamItem | undefined;
+  seq: number | undefined;
+  fetchContext: StickyPromptInput["fetchContext"];
+  fetchPrompt: StickyPromptInput["fetchPrompt"];
+}): ReadingPromptRequest | undefined {
+  if (input.source)
+    return { kind: "context", source: input.source, fetchContext: input.fetchContext };
+  if (input.seq !== undefined)
+    return { kind: "prompt", seq: input.seq, fetchPrompt: input.fetchPrompt };
+  return undefined;
+}
+
+/** Navigation state and actions the sticky prompt host and its controls render. */
+export type StickyPromptNavigation = ReturnType<typeof useStickyPrompt>;

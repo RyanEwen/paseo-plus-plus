@@ -3,14 +3,10 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import type { useStickyPrompt } from "./use-sticky-prompt";
+import type { StickyPromptNavigation } from "./use-sticky-prompt";
 
 /** Keep discovery usable before a full prompt exists; an empty exhausted chat has no controls. */
-export function PromptDiscoverySurface({
-  navigation,
-}: {
-  navigation: ReturnType<typeof useStickyPrompt>;
-}) {
+export function PromptDiscoverySurface({ navigation }: { navigation: StickyPromptNavigation }) {
   const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
   const size = compact ? "md" : "sm";
@@ -58,10 +54,7 @@ export function PromptDiscoverySurface({
 
 /** Keep failure and cancellation copy ahead of bounded/exhausted discovery. */
 function resolvePromptDiscoveryLabel(
-  navigation: Pick<
-    ReturnType<typeof useStickyPrompt>,
-    "error" | "cancelled" | "message" | "discoveryStatus"
-  >,
+  navigation: Pick<StickyPromptNavigation, "error" | "cancelled" | "message" | "discoveryStatus">,
 ):
   | "common.loading"
   | "stickyPrompt.failed"

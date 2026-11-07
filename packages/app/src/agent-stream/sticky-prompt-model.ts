@@ -1,5 +1,6 @@
 import { coversCanonicalInterval } from "@/timeline/canonical-reading-source";
 import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
+import type { PromptHandoff } from "./prompt-handoff";
 import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
@@ -274,7 +275,7 @@ export function resolvePromptOcclusionTop(
 
 /** Accept only real source-bubble measurements; unknown/index-only prompts retain the rail. */
 export function resolvePromptGeometry(
-  frame: import("./prompt-handoff").PromptHandoff | undefined,
+  frame: PromptHandoff | undefined,
   viewportWidth?: number | null,
 ) {
   if (
