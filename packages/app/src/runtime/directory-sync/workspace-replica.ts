@@ -23,6 +23,20 @@ export type WorkspaceDirectoryDelta =
   | { kind: "accepted_workspace"; workspace: WorkspaceDescriptor }
   | { kind: "script_status"; update: ScriptStatusUpdateMessage["payload"] };
 
+/** A daemon directory delta, which carries the live cursor of its entity. */
+type LiveCursorDelta = Exclude<
+  WorkspaceDirectoryDelta,
+  { kind: "accepted_workspace" } | { kind: "script_status" }
+>;
+
+/**
+ * Script status updates and accepted creation results replay over snapshots, but neither
+ * comes from the daemon's directory stream, so neither may advance a live cursor.
+ */
+export function advancesLiveCursor(delta: WorkspaceDirectoryDelta): delta is LiveCursorDelta {
+  return delta.kind !== "script_status" && delta.kind !== "accepted_workspace";
+}
+
 export interface WorkspaceDirectorySnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
   projects: Map<string, ProjectDescriptor>;

@@ -327,7 +327,7 @@ function DelayedHoverDetails() {
 function renderDelayedHover(disabled = false): void {
   act(() =>
     root?.render(
-      <HoverCard openDelay={250} disabled={disabled}>
+      <HoverCard delayDuration={250} disabled={disabled}>
         <HoverCardTrigger focusable accessibilityLabel="Workspace hover trigger">
           <View testID="delayed-hover-trigger">
             <Text>Workspace</Text>
