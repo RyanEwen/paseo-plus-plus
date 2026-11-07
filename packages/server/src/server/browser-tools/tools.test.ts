@@ -1,8 +1,9 @@
 import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AttachmentStore, ATTACHMENT_LIMITS } from "../attachments/store.js";
-import { AttachmentStoreError } from "../attachments/store.js";
+import { AttachmentStore } from "../attachments/store.js";
+import { AttachmentStoreError } from "../attachments/io.js";
+import { ATTACHMENT_LIMITS } from "../attachments/limits.js";
 import type { AttachmentReference } from "@getpaseo/protocol/attachments";
 import { describe, expect, test } from "vitest";
 import { z } from "zod";

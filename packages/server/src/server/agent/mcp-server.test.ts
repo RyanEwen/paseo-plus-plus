@@ -1,4 +1,5 @@
-import { AttachmentStore, ATTACHMENT_LIMITS } from "../attachments/store.js";
+import { AttachmentStore } from "../attachments/store.js";
+import { ATTACHMENT_LIMITS } from "../attachments/limits.js";
 import { AttachmentReferenceSchema } from "@getpaseo/protocol/attachments";
 import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import {

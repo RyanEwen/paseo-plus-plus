@@ -3,7 +3,9 @@ import {
   encodeFileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/file-transfer";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../messages.js";
-import { AttachmentStoreError, type AttachmentReadLease, type AttachmentStore } from "./store.js";
+import { AttachmentStoreError } from "./io.js";
+import type { AttachmentReadLease } from "./read-lease.js";
+import type { AttachmentStore } from "./store.js";
 import { withAttachmentResource } from "./io.js";
 
 type AttachmentRequest = Extract<

@@ -1,3 +1,36 @@
+import type { Dir, Stats, StatsFs } from "node:fs";
+import { open, mkdir, lstat, link, unlink, opendir, statfs } from "node:fs/promises";
+
+/** The file-system operations the attachment store uses; tests inject failures through it. */
+export interface AttachmentFileSystem {
+  open: typeof open;
+  mkdir(directory: string, options: { recursive?: boolean; mode: number }): Promise<void>;
+  lstat(file: string): Promise<Stats>;
+  link(source: string, destination: string): Promise<void>;
+  unlink(file: string): Promise<void>;
+  opendir(directory: string): Promise<Dir>;
+  statfs(directory: string): Promise<StatsFs>;
+}
+export const attachmentFileSystem: AttachmentFileSystem = Object.freeze({
+  open,
+  mkdir: async (directory: string, options: { recursive?: boolean; mode: number }) => {
+    await mkdir(directory, options);
+  },
+  lstat,
+  link,
+  unlink,
+  opendir,
+  statfs,
+});
+
+/** A storage failure whose message is safe to show to the agent or client. */
+export class AttachmentStoreError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AttachmentStoreError";
+  }
+}
+
 /**
  * Run an operation, then always close its resource, preserving both failures in operation
  * order. When both fail, the AggregateError carries `message` and the operation failure as

@@ -1,4 +1,7 @@
-import { AttachmentStore, ATTACHMENT_LIMITS, attachmentFileSystem, type AttachmentFileSystem, type AttachmentLimits, type AttachmentReadLease } from "./store.js";
+import { AttachmentStore } from "./store.js";
+import { attachmentFileSystem, type AttachmentFileSystem } from "./io.js";
+import { ATTACHMENT_LIMITS, type AttachmentLimits } from "./limits.js";
+import type { AttachmentReadLease } from "./read-lease.js";
 import {
   AttachmentSession,
   type AttachmentSessionHost,

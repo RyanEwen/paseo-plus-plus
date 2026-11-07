@@ -1,4 +1,6 @@
-import { AttachmentStore, ATTACHMENT_LIMITS, attachmentFileSystem, type AttachmentFileSystem } from "./store.js";
+import { AttachmentStore } from "./store.js";
+import { attachmentFileSystem, type AttachmentFileSystem } from "./io.js";
+import { ATTACHMENT_LIMITS } from "./limits.js";
 import { mkdtemp, rm, writeFile, readFile, lstat, unlink, symlink, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";

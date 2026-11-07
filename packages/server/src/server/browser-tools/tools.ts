@@ -1,9 +1,6 @@
 import { z } from "zod";
-import {
-  AttachmentStoreError,
-  type AttachmentStore,
-  type AttachmentWriter,
-} from "../attachments/store.js";
+import { AttachmentStoreError } from "../attachments/io.js";
+import type { AttachmentStore, AttachmentWriter } from "../attachments/store.js";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
 import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
