@@ -89,39 +89,77 @@ export class NotificationReceipts {
     return sequence;
   }
 
-  /** A receipt can acknowledge only already-issued events, never a reconnect-time future. */
+  /**
+   * Apply an acknowledgement: a workspace read settles everything through its boundary, an event
+   * dismissal settles one sequence, and contiguous dismissals then fold into the boundary.
+   *
+   * @throws NotificationRejectedError when the receipt names a sequence never issued.
+   */
   acknowledge(acknowledgement: NotificationAcknowledgement): void {
+    this.assertAcknowledgeable(acknowledgement);
+    if (acknowledgement.kind === "workspace") {
+      this.acknowledgeWorkspace(acknowledgement);
+    } else {
+      this.dismissEvent(acknowledgement.sequence);
+    }
+    this.compactDismissals();
+  }
+
+  /**
+   * Check, without changing anything, that a receipt names only already-issued events, never a
+   * reconnect-time future.
+   *
+   * @throws NotificationRejectedError for an unknown sequence.
+   */
+  assertAcknowledgeable(acknowledgement: NotificationAcknowledgement): void {
     const sequence =
       acknowledgement.kind === "workspace"
         ? acknowledgement.throughSequence
         : acknowledgement.sequence;
+    // A workspace read may settle nothing (boundary 0); an event names a delivered sequence.
     const minimum = acknowledgement.kind === "event" ? 1 : 0;
-    if (
-      !Number.isSafeInteger(sequence) ||
-      sequence < minimum ||
-      sequence > this.value.latestSequence
-    ) {
+    const issued =
+      Number.isSafeInteger(sequence) &&
+      sequence >= minimum &&
+      sequence <= this.value.latestSequence;
+    if (!issued) {
       throw new NotificationRejectedError("unknown_sequence", "Unknown notification sequence");
     }
-    if (acknowledgement.kind === "workspace") {
-      this.value.acknowledgedThrough = Math.max(this.value.acknowledgedThrough, sequence);
-      // A delayed retry must not become a new workspace opening for a legacy startup backlog.
-      if (
-        acknowledgement.observedReadId === undefined ||
-        acknowledgement.observedReadId === (this.value.lastWorkspaceReadId ?? null)
-      ) {
-        this.value.lastWorkspaceReadId = acknowledgement.acknowledgementId;
-      }
-    } else if (sequence > this.value.acknowledgedThrough) {
+  }
+
+  private acknowledgeWorkspace(
+    acknowledgement: Extract<NotificationAcknowledgement, { kind: "workspace" }>,
+  ): void {
+    this.value.acknowledgedThrough = Math.max(
+      this.value.acknowledgedThrough,
+      acknowledgement.throughSequence,
+    );
+    // A delayed retry must not become a new workspace opening for a legacy startup backlog.
+    const observedCurrentRead =
+      acknowledgement.observedReadId === undefined ||
+      acknowledgement.observedReadId === (this.value.lastWorkspaceReadId ?? null);
+    if (observedCurrentRead) {
+      this.value.lastWorkspaceReadId = acknowledgement.acknowledgementId;
+    }
+  }
+
+  private dismissEvent(sequence: number): void {
+    if (sequence > this.value.acknowledgedThrough) {
       this.value.dismissedSequences.push(sequence);
     }
+  }
+
+  /** Fold dismissals that continue the acknowledged boundary into it and drop settled ones. */
+  private compactDismissals(): void {
     const dismissed = [...new Set(this.value.dismissedSequences)]
       .filter((item) => item > this.value.acknowledgedThrough)
       .sort((a, b) => a - b);
-    while (dismissed[0] === this.value.acknowledgedThrough + 1) {
-      this.value.acknowledgedThrough = dismissed.shift()!;
+    let folded = 0;
+    while (folded < dismissed.length && dismissed[folded] === this.value.acknowledgedThrough + 1) {
+      this.value.acknowledgedThrough = dismissed[folded];
+      folded++;
     }
-    this.value.dismissedSequences = dismissed;
+    this.value.dismissedSequences = dismissed.slice(folded);
   }
 
   /**
@@ -144,9 +182,8 @@ export class NotificationReceipts {
   }
 
   /** Match a delivered event exactly; untagged legacy notifications are never inferred read. */
-  includes(sequence: unknown): boolean {
+  includes(sequence: number): boolean {
     return (
-      typeof sequence === "number" &&
       Number.isSafeInteger(sequence) &&
       sequence > 0 &&
       sequence <= this.value.latestSequence &&

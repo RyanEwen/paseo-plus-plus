@@ -56,7 +56,7 @@ export class WorkspaceAttention {
     notification: NotificationAcknowledgement | undefined,
   ): Map<string, string> | null {
     if (!notification) return null;
-    new NotificationReceipts(workspace.notificationReceipts).acknowledge(notification);
+    new NotificationReceipts(workspace.notificationReceipts).assertAcknowledgeable(notification);
     const observed = new Map(notification.attention.map((item) => [item.agentId, item.timestamp]));
     const events = workspace.notificationReceipts?.attentionEvents ?? {};
     if (notification.kind === "workspace") {

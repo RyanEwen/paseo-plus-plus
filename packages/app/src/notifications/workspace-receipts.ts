@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   NotificationAcknowledgementSchema,
   WORKSPACE_NOTIFICATION_ATTENTION_LIMIT,
+  NotificationReceiptDataSchema,
   NotificationReceipts,
   isNotificationRejection,
   type NotificationAcknowledgement,
@@ -294,12 +295,12 @@ export class WorkspaceNotificationSynchronizer {
 
   /** Prevent an event acknowledged before its delayed delivery from resurfacing locally. */
   isAcknowledged(data: Record<string, unknown> | undefined): boolean {
-    if (data?.serverId !== this.ports.serverId || typeof data.workspaceId !== "string")
-      return false;
-    const snapshot = this.snapshots.get(data.workspaceId);
-    return snapshot
-      ? new NotificationReceipts(snapshot).includes(data.notificationSequence)
-      : false;
+    // Untagged legacy notifications are never inferred read.
+    const receipt = NotificationReceiptDataSchema.safeParse(data);
+    if (!receipt.success || receipt.data.serverId !== this.ports.serverId) return false;
+    const snapshot = this.snapshots.get(receipt.data.workspaceId);
+    if (!snapshot) return false;
+    return new NotificationReceipts(snapshot).includes(receipt.data.notificationSequence);
   }
 
   /** Resolve only after all joined resume/reconnect requests finish their fixed receipt passes. */

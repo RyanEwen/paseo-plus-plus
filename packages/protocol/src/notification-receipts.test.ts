@@ -70,7 +70,6 @@ describe("Workspace notification receipts", () => {
         attention: [],
       }),
     ).toThrow("Unknown notification sequence");
-    expect(receipts.includes(undefined)).toBe(false);
     expect(receipts.includes(0)).toBe(false);
     expect(receipts.includes(1)).toBe(false);
   });
