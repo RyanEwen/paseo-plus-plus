@@ -1,58 +1,10 @@
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
+import { describe, expect, it } from "vitest";
 import {
   createSeenAgentNotifications,
   isAgentNotificationViewVisible,
   type PresentedAgentNotification,
-} from "@/notifications/seen-agent";
-import { describe, expect, it } from "vitest";
-
-import { resolveNotificationTarget } from "./notification-routing";
-
-describe("resolveNotificationTarget", () => {
-  it("extracts non-empty server and agent ids", () => {
-    expect(
-      resolveNotificationTarget({
-        serverId: " server-123 ",
-        agentId: " agent-456 ",
-      }),
-    ).toEqual({
-      serverId: "server-123",
-      agentId: "agent-456",
-      workspaceId: null,
-      terminalId: null,
-    });
-  });
-
-  it("returns null for missing/empty ids", () => {
-    expect(resolveNotificationTarget({ serverId: "", agentId: "   " })).toEqual({
-      serverId: null,
-      agentId: null,
-      workspaceId: null,
-      terminalId: null,
-    });
-    expect(resolveNotificationTarget(undefined)).toEqual({
-      serverId: null,
-      agentId: null,
-      workspaceId: null,
-      terminalId: null,
-    });
-  });
-
-  it("does not treat cwd as a workspace id alias", () => {
-    expect(
-      resolveNotificationTarget({
-        serverId: "srv-1",
-        agentId: "agent-1",
-        cwd: "/tmp/repo",
-      }),
-    ).toEqual({
-      serverId: "srv-1",
-      agentId: "agent-1",
-      workspaceId: null,
-      terminalId: null,
-    });
-  });
-});
+} from "./seen-agent";
 
 // The notification adapter represents a real platform tray, not app component internals.
 
@@ -90,6 +42,10 @@ describe("seen chat notification dismissal", () => {
       { identifier: "other-chat", data: { serverId: "host", agentId: "other" } },
       { identifier: "other-host", data: { serverId: "other", agentId: "chat" } },
       { identifier: "workspace-only", data: { serverId: "host", workspaceId: "workspace" } },
+      {
+        identifier: "terminal",
+        data: { serverId: "host", agentId: "chat", workspaceId: "workspace", terminalId: "term" },
+      },
     ]);
     tray.seen.view({ target: { serverId: "host", agentId: "chat" }, isVisible: () => true });
     await new Promise<void>((resolve) => queueMicrotask(resolve));

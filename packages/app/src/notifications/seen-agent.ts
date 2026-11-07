@@ -1,5 +1,5 @@
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
-import { resolveNotificationTarget } from "@/utils/notification-routing";
+import { parseNotificationOpenTarget } from "@/notification-open";
 
 export interface PresentedAgentNotification {
   identifier: string;
@@ -40,8 +40,12 @@ export function notificationMatchesAgent(
   data: Record<string, unknown> | undefined,
   target: AgentDeepLinkTarget,
 ): boolean {
-  const resolved = resolveNotificationTarget(data);
-  return resolved.serverId === target.serverId && resolved.agentId === target.agentId;
+  const parsed = parseNotificationOpenTarget(data);
+  return (
+    parsed?.kind === "agent" &&
+    parsed.serverId === target.serverId &&
+    parsed.agentId === target.agentId
+  );
 }
 
 /** Keep dismissal tied to the latest committed visible chat, including arrivals during history reads. */
