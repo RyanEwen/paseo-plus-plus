@@ -2,7 +2,7 @@ import {
   REQUESTER_LOST_FAILURE_MESSAGE,
   REQUESTER_LOST_PERMISSION_MESSAGE,
 } from "./attention/coordinator.js";
-import { expect, test, vi, onTestFinished } from "vitest";
+import { expect, test, vi, onTestFinished, type Mock } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -43,6 +43,26 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "./agent-sdk-types.js";
+
+/** Record every human attention notification the manager raises. */
+function observeAttentionNotifications(manager: AgentManager): Mock<AgentAttentionCallback> {
+  const notify = vi.fn<AgentAttentionCallback>();
+  manager.setAgentAttentionCallback(notify);
+  return notify;
+}
+
+/** The human was notified exactly once that `agentId` finished, with `message` (or none). */
+function expectNotifiedOnce(
+  notify: Mock<AgentAttentionCallback>,
+  input: { agentId: string; message: string | undefined },
+) {
+  expect(notify).toHaveBeenCalledExactlyOnceWith({
+    agentId: input.agentId,
+    provider: "codex",
+    reason: "finished",
+    message: input.message,
+  });
+}
 
 test.each([false, true])(
   "completion follows the accepted recipient even with parent label = %s",
@@ -426,8 +446,7 @@ test.each(["human", "agent"] as const)(
     const { manager, storage } = fixture;
     const requester = await fixture.createAgent("Requester");
     const worker = await fixture.createAgent("Worker");
-    const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-    manager.setAgentAttentionCallback(notify);
+    const notify = observeAttentionNotifications(manager);
     await startAttentionRegressionTurn({
       manager,
       agentId: requester.id,
@@ -582,8 +601,7 @@ test.each(["permission", "error"] as const)(
     const { manager, storage } = fixture;
     const requester = await fixture.createAgent("Independent requester");
     const worker = await fixture.createAgent("Independent worker");
-    const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-    manager.setAgentAttentionCallback(notify);
+    const notify = observeAttentionNotifications(manager);
     const pushed = vi.spyOn(worker.session, "pushEvent");
     const { running } = await startAttentionRegressionTurn({
       manager,
@@ -661,8 +679,7 @@ test("human escalation write failure retries once without losing the notificatio
   const { manager, storage } = fixture;
   const requester = await fixture.createAgent("Requester");
   const worker = await fixture.createAgent("Escalating worker");
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(manager);
   const { running } = await startAttentionRegressionTurn({
     manager,
     agentId: worker.id,
@@ -697,12 +714,7 @@ test("human escalation write failure retries once without losing the notificatio
     expect(snapshotWrite).toHaveBeenCalledTimes(1);
     expect(notify).not.toHaveBeenCalled();
     expect(await manager.requestHumanAttention(request)).toEqual({ notified: true });
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
     expect(await manager.requestHumanAttention(request)).toEqual({ notified: false });
     expect(notify).toHaveBeenCalledTimes(1);
   } finally {
@@ -724,8 +736,7 @@ async function createPermissionHandoffFixture(audience: "human" | "agent") {
   const { manager, storage } = fixture;
   const requester = await fixture.createAgent("Plan requester");
   const worker = await fixture.createAgent("Plan worker");
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(manager);
   await startAttentionRegressionTurn({
     manager,
     agentId: requester.id,
@@ -1006,12 +1017,7 @@ test("stale permission handoff cannot replace a newly accepted request", async (
   if (!newRun) throw new Error("Expected the unrelated request to have been admitted");
   await newRun.running;
   await manager.flush();
-  expect(notify).toHaveBeenCalledExactlyOnceWith({
-    agentId: worker.id,
-    provider: "codex",
-    reason: "finished",
-    message: undefined,
-  });
+  expectNotifiedOnce(notify, { agentId: worker.id, message: undefined });
   expect((await storage.get(worker.id))?.attentionObjectives?.requests?.records).toEqual([
     expect.objectContaining({
       link: handoff.link,
@@ -1044,8 +1050,7 @@ async function createEscalationFaultFixture({
   const fixture = createAttentionRegressionFixture(name);
   const requester = await fixture.createAgent("Escalation requester");
   const worker = await fixture.createAgent("Escalation worker");
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  fixture.manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(fixture.manager);
   const requesterIdentity = requesterPeer ?? fixture.manager.attentionRequester(requester.id);
   const { running } = await startAttentionRegressionTurn({
     manager: fixture.manager,
@@ -1199,12 +1204,7 @@ test("escalation public competition retries the failed reason once", async () =>
     await expect(first).rejects.toBe(write.failure);
     expect(await second).toEqual({ notified: true });
     expect(await manager.requestHumanAttention(request)).toEqual({ notified: false });
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: request.agentId,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: request.agentId, message: request.reason });
   } finally {
     write.release.resolve();
     await Promise.allSettled([first]);
@@ -1222,12 +1222,7 @@ test("escalation postcommit acknowledgement error keeps one durable announcement
     await write.entered.promise;
     // Notification fires once the storage queue has committed the record; the outer
     // applySnapshot acknowledgement is not part of the guarantee.
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: request.agentId,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: request.agentId, message: request.reason });
     expect(await storage.get(request.agentId)).toEqual(
       expect.objectContaining({
         requiresAttention: true,
@@ -1297,12 +1292,7 @@ test("escalation held failure preserves newer manual review state", async () => 
         .getTimeline(worker.id)
         .filter((item) => item.type === "tool_call" && item.name === "request_human_attention"),
     ).toEqual([]);
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: undefined,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: undefined });
     expect((await storage.get(worker.id))?.attentionMessage).not.toBe(request.reason);
   } finally {
     write.release.resolve();
@@ -1352,12 +1342,7 @@ test("escalation held success rejects a retired objective with a reused ID", asy
     expect(await manager.requestHumanAttention(request)).toEqual({ notified: false });
     worker.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: nextTurnId });
     await next.running;
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
   } finally {
     write.release.resolve();
     await Promise.allSettled([first]);
@@ -1492,12 +1477,7 @@ test("escalation close reload keeps the unannounced same objective retryable", a
     ).toEqual([]);
     expect(await manager.requestHumanAttention(request)).toEqual({ notified: true });
     expect(await manager.requestHumanAttention(request)).toEqual({ notified: false });
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
     expect((await storage.get(worker.id))?.attentionObjectives?.objectives).toContainEqual(
       expect.objectContaining({ id: request.objectiveId, announcedReasons: [request.reason] }),
     );
@@ -1526,12 +1506,7 @@ test("escalation committed acknowledgement delay preserves newer manual attentio
   void first.catch(() => undefined);
   try {
     await write.entered.promise;
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
     await manager.clearAgentAttention(worker.id);
     worker.session.pushEvent({
       type: "turn_completed",
@@ -1604,12 +1579,7 @@ test("escalation intervening permission snapshot retains the successful announce
     );
     expect((await storage.get(requesterIdentity.agentId))?.archivedAt).toBeUndefined();
     expect((await storage.get(worker.id))?.attentionMessage).toBe(request.reason);
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
 
     worker.session.pushEvent({
       type: "permission_requested",
@@ -1627,23 +1597,13 @@ test("escalation intervening permission snapshot retains the successful announce
     expect((await storage.get(worker.id))?.attentionObjectives?.requests?.checkpoints).toEqual([
       { turnId: worker.session.turnId, permissionId: permission.id },
     ]);
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
 
     write.release.resolve();
     expect(await first).toEqual({ notified: true });
     await manager.flush();
     await storage.flush();
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
     const live = manager.getAgent(worker.id);
     if (!live?.attention.requiresAttention) throw new Error("Expected successful human attention");
     expect(await storage.get(worker.id)).toEqual(
@@ -1710,12 +1670,7 @@ test("escalation durable commit precedes the next queued permission snapshot", a
     expect(await first).toEqual({ notified: true });
     await manager.flush();
     await storage.flush();
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
     expect(await storage.get(worker.id)).toEqual(
       expect.objectContaining({
         id: worker.id,
@@ -1808,12 +1763,7 @@ test("escalation retired write repairs current attention after acknowledgement f
         attentionObjectives: expect.objectContaining({ activeObjectiveIds: [], objectives: [] }),
       }),
     );
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: undefined,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: undefined });
     expect(
       manager
         .getTimeline(worker.id)
@@ -1860,12 +1810,7 @@ test.each(["timeline", "state", "notification"] as const)(
     try {
       expect(await manager.requestHumanAttention(request)).toEqual({ notified: true });
       expect(attempted).toEqual(["timeline", "state", "notification"]);
-      expect(notify).toHaveBeenCalledExactlyOnceWith({
-        agentId: worker.id,
-        provider: "codex",
-        reason: "finished",
-        message: request.reason,
-      });
+      expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
       expect(
         manager
           .getTimeline(worker.id)
@@ -2385,12 +2330,7 @@ test("permission retired response cannot mute a newer human final", async () => 
     expect(await manager.getLastAssistantMessage(worker.id)).toBe(
       "Exact newer human final before old refresh",
     );
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: undefined,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: undefined });
     expect((await storage.get(worker.id))?.attentionObjectives?.requests?.records).toEqual([
       expect.objectContaining({
         link: handoff.link,
@@ -2503,8 +2443,7 @@ async function createSameTurnQuestionFixture() {
     requester: requesterPeer,
     attention,
   });
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(manager);
   const { running } = await startAttentionRegressionTurn({
     manager,
     agentId: worker.id,
@@ -2868,8 +2807,7 @@ function createRequesterLossFixture(name: string) {
     timelineStore: timeline,
     logger,
   });
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(manager);
   onTestFinished(async () => {
     for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
     await manager.flush();
@@ -3474,8 +3412,7 @@ test("permission host binding retains a held accepted response completion", asyn
   const { manager, storage } = fixture;
   const requester = await fixture.createAgent("Requester");
   const worker = await fixture.createAgent("Worker");
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(manager);
   await startAttentionRegressionTurn({
     manager,
     agentId: requester.id,
@@ -3693,8 +3630,7 @@ test.each([
     const requester = await fixture.createAgent("Requester");
     const worker = await fixture.createAgent("Worker");
     if (delegated) await manager.setLabels(worker.id, { "paseo.parent-agent-id": requester.id });
-    const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-    manager.setAgentAttentionCallback(notify);
+    const notify = observeAttentionNotifications(manager);
     await startAttentionRegressionTurn({
       manager,
       agentId: requester.id,
@@ -3783,8 +3719,7 @@ test.each([true, false])(
     const worker = await fixture.createAgent("Child worker");
     await manager.setLabels(worker.id, { "paseo.parent-agent-id": requester.id });
     manager.setAttentionPresentationEnabled(enabled);
-    const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-    manager.setAgentAttentionCallback(notify);
+    const notify = observeAttentionNotifications(manager);
     await startAttentionRegressionTurn({
       manager,
       agentId: worker.id,
@@ -3809,12 +3744,7 @@ test.each([true, false])(
     const current = manager.getAgent(worker.id);
     if (!current) throw new Error("Expected the escalating child");
     expect(toAgentPayload(current).humanAttentionRequired).toBe(true);
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: request.reason,
-    });
+    expectNotifiedOnce(notify, { agentId: worker.id, message: request.reason });
     const saved = await storage.get(worker.id);
     manager.setAttentionPresentationEnabled(!enabled);
     manager.setAttentionPresentationEnabled(enabled);
@@ -3831,8 +3761,7 @@ test.each([true, false])(
     const requester = await fixture.createAgent("Requester");
     const worker = await fixture.createAgent("Independent worker");
     manager.setAttentionPresentationEnabled(enabled);
-    const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-    manager.setAgentAttentionCallback(notify);
+    const notify = observeAttentionNotifications(manager);
     await startAttentionRegressionTurn({
       manager,
       agentId: worker.id,
@@ -3880,8 +3809,7 @@ test("attention mode changes do not manufacture historical unread or erase manua
   const { manager, storage } = fixture;
   const requester = await fixture.createAgent("Requester");
   const worker = await fixture.createAgent("Quiet worker");
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
+  const notify = observeAttentionNotifications(manager);
   const { running } = await startAttentionRegressionTurn({
     manager,
     agentId: worker.id,
