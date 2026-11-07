@@ -280,11 +280,13 @@ describe("native natural measurement revisions", () => {
       ...component.body.body.slice(0, index + 1),
       types.returnStatement(types.identifier("measurements")),
     ];
-    const natural = sourceFunctions("../components/user-message-flow.tsx", [
-      "emptyMeasurements",
-      "sameFrame",
-      "useNaturalMessageMeasurements",
-    ]);
+    const natural = [
+      ...sourceFunctions("../components/user-message-flow.tsx", [
+        "emptyMeasurements",
+        "useNaturalMessageMeasurements",
+      ]),
+      ...sourceFunctions("../components/user-message-flow-model.ts", ["sameFrame"]),
+    ];
     const require = createRequire(import.meta.url);
     const filename = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
