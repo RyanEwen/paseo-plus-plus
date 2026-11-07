@@ -9,7 +9,9 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { isWeb, isNative } from "@/constants/platform";
+import { changedFileDiffTarget } from "@/git/diff-scope";
 import { DiffDocument } from "@/git/diff-document";
+import { fileNameForPath } from "@/git/file-header-presentation";
 import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
@@ -83,6 +85,7 @@ function ChangesPanel() {
     usePaneContext();
   const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
   const { preferences } = useChangesPreferences();
+  const { settings } = useAppSettings();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isActive = useRetainedPanelActive();
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
@@ -101,15 +104,17 @@ function ChangesPanel() {
   const handleSelectDiffFile = useCallback(
     (path: string) =>
       openPreferredTarget(
-        { kind: "working_diff", focusPath: path, focusRequestId: Date.now() },
+        changedFileDiffTarget({ path, scope: settings.explorerDiffScope, revision: Date.now() }),
         "diffs",
       ),
-    [openPreferredTarget],
+    [openPreferredTarget, settings.explorerDiffScope],
   );
   const handleOpenDiffToSide = useCallback(
     (path: string) =>
-      openTargetToSide?.({ kind: "working_diff", focusPath: path, focusRequestId: Date.now() }),
-    [openTargetToSide],
+      openTargetToSide?.(
+        changedFileDiffTarget({ path, scope: settings.explorerDiffScope, revision: Date.now() }),
+      ),
+    [openTargetToSide, settings.explorerDiffScope],
   );
 
   if (!cwd) {
@@ -134,6 +139,7 @@ function ChangesPanel() {
           cwd={cwd}
           enabled={isActive}
           presentation={presentation}
+          filePath={target.kind === "working_diff" ? target.filePath : undefined}
           focusPath={target.kind === "working_diff" ? target.focusPath : undefined}
           focusRequestId={target.kind === "working_diff" ? target.focusRequestId : undefined}
           onSelectDiffFile={isTree ? handleSelectDiffFile : undefined}
@@ -216,6 +222,22 @@ const workingDiffPresentation = {
   icon: ThemedFileDiff,
 } satisfies PanelPresentation;
 
+/** Single-file diffs use their filename so neighboring tabs remain distinguishable. */
+function useWorkingDiffPanelDescriptor(
+  target: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): PanelDescriptor {
+  const { t } = useTranslation();
+  const path = target.filePath;
+  return {
+    label: path ? fileNameForPath(path) : workingDiffPresentation.label(t),
+    subtitle: path ?? workingDiffPresentation.subtitle(t),
+    tooltip: path ?? workingDiffPresentation.tooltip(t),
+    titleState: "ready",
+    icon: ThemedFileDiff,
+    statusBucket: null,
+  };
+}
+
 const changesTreePresentation = {
   label: (t) => t("panels.diff.changesLabel"),
   subtitle: (t) => t("panels.diff.changesSubtitle"),
@@ -240,6 +262,7 @@ function useCommitDiffPanelDescriptor(
 export const workingDiffPanelRegistration = definePanel("working_diff", {
   component: ChangesPanel,
   presentation: workingDiffPresentation,
+  useDescriptor: useWorkingDiffPanelDescriptor,
 });
 
 export const changesTreePanelRegistration = definePanel("changes_tree", {

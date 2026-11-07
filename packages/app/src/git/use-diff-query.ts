@@ -1,3 +1,5 @@
+import { useHostFeature } from "@/runtime/host-features";
+import { useTranslation } from "react-i18next";
 import { shareCheckoutDiff } from "./diff-sharing";
 import { useSessionStore } from "@/stores/session-store";
 import { useMemo } from "react";
@@ -16,6 +18,7 @@ interface UseCheckoutDiffQueryOptions {
   ignoreWhitespace?: boolean;
   enabled?: boolean;
   queryScope?: string;
+  filePath?: string;
 }
 
 type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
@@ -30,15 +33,15 @@ function normalizeCheckoutDiffCompare(compare: {
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
-}): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean } {
-  const ignoreWhitespace = compare.ignoreWhitespace === true;
-  if (compare.mode === "uncommitted") {
-    return { mode: "uncommitted", ignoreWhitespace };
-  }
-  const trimmedBaseRef = compare.baseRef?.trim();
-  return trimmedBaseRef
-    ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace }
-    : { mode: compare.mode, ignoreWhitespace };
+  filePath?: string;
+}) {
+  const baseRef = compare.mode !== "uncommitted" ? compare.baseRef?.trim() : undefined;
+  return {
+    mode: compare.mode,
+    ...(baseRef ? { baseRef } : {}),
+    ignoreWhitespace: compare.ignoreWhitespace === true,
+    ...(compare.filePath !== undefined ? { filePath: compare.filePath } : {}),
+  };
 }
 
 export function useCheckoutDiffQuery({
@@ -49,7 +52,12 @@ export function useCheckoutDiffQuery({
   ignoreWhitespace,
   enabled = true,
   queryScope,
+  filePath,
 }: UseCheckoutDiffQueryOptions) {
+  const { t } = useTranslation();
+  // COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
+  const supportsFileDiff = useHostFeature(serverId, "checkoutFileDiff");
+  const unsupportedScope = filePath !== undefined && !supportsFileDiff;
   // COMPAT(checkoutDiffAll): added in v0.12.0, remove after 2027-04-21 once host floor includes All changes.
   const allSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutDiffAll === true,
@@ -59,8 +67,8 @@ export function useCheckoutDiffQuery({
   const queryEnabled = enabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId);
   const normalizedCompare = useMemo(
-    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
-    [mode, baseRef, ignoreWhitespace],
+    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace, filePath }),
+    [mode, baseRef, ignoreWhitespace, filePath],
   );
   const compareMode = normalizedCompare.mode;
   const compareBaseRef = normalizedCompare.baseRef;
@@ -72,12 +80,15 @@ export function useCheckoutDiffQuery({
       compareMode,
       compareBaseRef,
       compareIgnoreWhitespace,
+      filePath,
     );
     const normalizedScope = queryScope?.trim();
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
-  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
+  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope, filePath]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
-  const routeEnabled = Boolean(queryEnabled && isConnected && cwd && !requiresUpdate);
+  const routeEnabled = Boolean(
+    queryEnabled && isConnected && cwd && !unsupportedScope && !requiresUpdate,
+  );
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -93,20 +104,28 @@ export function useCheckoutDiffQuery({
         mode: compareMode,
         ...(compareBaseRef ? { baseRef: compareBaseRef } : {}),
         ignoreWhitespace: compareIgnoreWhitespace,
+        ...(filePath !== undefined ? { filePath } : {}),
       },
     }),
   });
 
-  return deriveCheckoutDiffResult(
-    requiresUpdate && isConnected
-      ? {
-          requestId: "unsupported",
-          cwd,
-          files: [],
-          error: { code: "UNKNOWN", message: "Update the host to view All changes" },
-        }
-      : (query.data ?? null),
-  );
+  const result = deriveCheckoutDiffResult(query.data ?? null);
+  if (unsupportedScope || (requiresUpdate && isConnected)) {
+    return {
+      ...result,
+      files: [],
+      payloadError: {
+        code: "UNKNOWN" as const,
+        message: unsupportedScope
+          ? t("workspace.git.diff.updateHostFileDiff")
+          : "Update the host to view All changes",
+      },
+      diffTooLarge: false,
+      isLoading: false,
+      isError: true,
+    };
+  }
+  return result;
 }
 
 export interface CheckoutDiffResult {

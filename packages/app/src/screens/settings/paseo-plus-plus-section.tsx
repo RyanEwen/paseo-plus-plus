@@ -6,6 +6,7 @@ import {
 } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
 import { SettingsSyncSection } from "./settings-sync-section";
+import { ExplorerSection } from "@/screens/settings/paseo-plus-plus/explorer-section";
 import { useQueryClient } from "@tanstack/react-query";
 import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
 import { Alert } from "@/components/ui/alert";
@@ -112,6 +113,7 @@ export function PaseoPlusPlusSection() {
         </SettingsCard>
       </SettingsSection>
       <AccentSection />
+      <ExplorerSection />
       <SettingsSection title={t("paseoPlusPlus.preferences")}>
         <SettingsCard>
           <SettingsRow

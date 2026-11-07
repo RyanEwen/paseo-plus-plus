@@ -89,7 +89,9 @@ The composer Changes pill is a two-stage desktop action: it first reveals Explor
 routes later presses to the working diff through the shared diff preference.
 
 The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
-that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
+that pane from the workspace split tree and docks it separately. Resolve its id with
+`selectExplorerSidebarPaneId`: fresh layouts contain Explorer before its registration is saved.
+Reading only the registration map renders the same pane in both shells. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
 Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
@@ -158,6 +160,25 @@ Explicit **Open to Side** uses `pane`. Implicit opens use `prefer`, so a prefere
 new target and never yanks an existing tab out of a user-selected pane.
 
 ## Routing preferences
+
+**Settings → Paseo++ → Explorer** controls whether Explorer starts open in new desktop workspaces.
+It defaults to closed. Saved workspace visibility stays as you left it when this setting changes.
+
+The same section controls whether clicking a file in Changes shows all changed files or only the
+selected file. All changed files is the default. Single-file diffs keep their scope when restored;
+opening workspace Changes directly still shows the full diff. Compact **Jump to file** selections
+honor the same scope preference and keep every changed file available in the picker. Inline Changes
+keeps the full file tree available when its document shows only the selected file.
+
+Single-file acquisition requires the workspace host's `checkoutFileDiff` capability. It applies
+the file's existing size limit before unrelated changes can consume the checkout budget. Older
+hosts show an update instruction. The full overview remains a separate comparison on the same base.
+
+Changes defaults to Uncommitted and remembers the comparison you select per workspace, including
+across reloads and dirty-state changes. **Default comparison** applies where no selection is saved.
+Enable **Automatically switch comparison** to follow checkout dirtiness: Uncommitted when dirty,
+Committed when clean. In that mode a dirty-state change clears the manual selection; the default
+comparison control is inactive.
 
 Desktop **Settings → Layout → Open location** has independent Main panel or On the side choices for
 Explorer Files, diffs, chat files, files opened from diffs, and subagents. They default to Main

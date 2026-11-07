@@ -4612,26 +4612,30 @@ export class DaemonClient {
     mode: "uncommitted" | "base" | "all";
     baseRef?: string;
     ignoreWhitespace?: boolean;
-  }): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean } {
-    if (compare.mode === "uncommitted") {
-      return compare.ignoreWhitespace === true
-        ? { mode: "uncommitted", ignoreWhitespace: true }
-        : { mode: "uncommitted" };
-    }
-    const trimmedBaseRef = compare.baseRef?.trim();
-    if (!trimmedBaseRef) {
-      return compare.ignoreWhitespace === true
-        ? { mode: compare.mode, ignoreWhitespace: true }
-        : { mode: compare.mode };
-    }
-    return compare.ignoreWhitespace === true
-      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace: true }
-      : { mode: compare.mode, baseRef: trimmedBaseRef };
+    filePath?: string;
+  }): {
+    mode: "uncommitted" | "base" | "all";
+    baseRef?: string;
+    ignoreWhitespace?: boolean;
+    filePath?: string;
+  } {
+    const baseRef = compare.mode !== "uncommitted" ? compare.baseRef?.trim() : undefined;
+    return {
+      mode: compare.mode,
+      ...(baseRef ? { baseRef } : {}),
+      ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
+      ...(compare.filePath !== undefined ? { filePath: compare.filePath } : {}),
+    };
   }
 
   async getCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: {
+      mode: "uncommitted" | "base" | "all";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+      filePath?: string;
+    },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4647,7 +4651,12 @@ export class DaemonClient {
 
   observeCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: {
+      mode: "uncommitted" | "base" | "all";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+      filePath?: string;
+    },
     options?: { requestId?: string; signal?: AbortSignal },
   ): OwnedSubscription<SubscribeCheckoutDiffPayload> {
     return this.observe(

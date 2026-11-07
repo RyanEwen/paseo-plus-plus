@@ -4,6 +4,11 @@ import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./mes
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
+import { registerForkCapability } from "./fork-capabilities.js";
+
+// Literal single-file scopes (compare.filePath) are read through this manager.
+// COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
+registerForkCapability("checkoutFileDiff");
 
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
@@ -152,14 +157,13 @@ export class CheckoutDiffManager {
   }
 
   private normalizeCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
-    const ignoreWhitespace = compare.ignoreWhitespace === true;
-    if (compare.mode === "uncommitted") {
-      return { mode: "uncommitted", ignoreWhitespace };
-    }
-    const trimmedBaseRef = compare.baseRef?.trim();
-    return trimmedBaseRef
-      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace }
-      : { mode: compare.mode, ignoreWhitespace };
+    const baseRef = compare.mode !== "uncommitted" ? compare.baseRef?.trim() : undefined;
+    return {
+      mode: compare.mode,
+      ...(baseRef ? { baseRef } : {}),
+      ignoreWhitespace: compare.ignoreWhitespace === true,
+      ...(compare.filePath !== undefined ? { filePath: compare.filePath } : {}),
+    };
   }
 
   private buildTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
@@ -168,6 +172,7 @@ export class CheckoutDiffManager {
       compare.mode,
       compare.mode !== "uncommitted" ? (compare.baseRef ?? "") : "",
       compare.ignoreWhitespace === true,
+      compare.filePath ?? null,
     ]);
   }
 
@@ -264,6 +269,7 @@ export class CheckoutDiffManager {
           baseRef: compare.baseRef,
           ignoreWhitespace: compare.ignoreWhitespace,
           includeStructured: true,
+          filePath: compare.filePath,
         },
         options?.force
           ? { force: true, reason: options.reason ?? "checkout-diff-refresh" }

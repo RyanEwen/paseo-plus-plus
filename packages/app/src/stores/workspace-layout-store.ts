@@ -1,3 +1,5 @@
+import { queryClient } from "@/data/query-client";
+import { readAppSettingsSnapshot } from "@/hooks/use-settings/snapshot";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
@@ -479,11 +481,16 @@ function removeAgentIdFromWorkspaceSet(
   };
 }
 
+/** Uses current Explorer defaults only when this workspace has no saved layout. */
 function getWorkspaceLayout(
   state: Record<string, WorkspaceLayout>,
   workspaceKey: string,
 ): WorkspaceLayout {
-  return normalizeLayout(state[workspaceKey] ?? createWorkspaceLayoutWithExplorerSidebar());
+  if (state[workspaceKey]) {
+    return normalizeLayout(state[workspaceKey]);
+  }
+  const settings = readAppSettingsSnapshot(queryClient);
+  return createWorkspaceLayoutWithExplorerSidebar({ autoOpen: settings.autoOpenExplorerSidebar });
 }
 
 function keepWorkspaceFocusOutOfExplorerSidebar(

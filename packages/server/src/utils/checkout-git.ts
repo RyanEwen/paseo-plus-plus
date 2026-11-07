@@ -675,11 +675,17 @@ async function getTrackedNumstatByPath(
   cwd: string,
   refs: CheckoutDiffRefs,
   ignoreWhitespace = false,
+  paths?: string[],
 ): Promise<Map<string, FileStat>> {
   const result = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
-      extra: ["-z", "--numstat", ...getCheckoutDiffRefArgs(refs)],
+      extra: [
+        "-z",
+        "--numstat",
+        ...getCheckoutDiffRefArgs(refs),
+        ...(paths ? ["--", ...paths.map((path) => `:(literal)${path}`)] : []),
+      ],
     }),
     {
       cwd,
@@ -921,6 +927,8 @@ export type CheckoutDiffResult =
   | { diff: ""; structured: []; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
+  /** Exact repository-relative destination path, including for renames. */
+  filePath?: string;
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
@@ -3167,6 +3175,7 @@ export function warmCheckoutShortstatInBackground(
 }
 
 interface AppendStructuredTrackedDiffsInput {
+  filePath?: string;
   signal?: AbortSignal;
   cwd: string;
   trackedChanges: CheckoutFileChange[];
@@ -3246,6 +3255,30 @@ function readTrackedDiffContents(
   return readGitFileContents(cwd, specs);
 }
 
+function parseTrackedDiffByPath(
+  input: Pick<
+    AppendStructuredTrackedDiffsInput,
+    "filePath" | "trackedChanges" | "trackedDiffText" | "trackedNumstatByPath"
+  >,
+): Map<string, ParsedDiffFile> {
+  const { filePath, trackedChanges, trackedDiffText, trackedNumstatByPath } = input;
+  const parsed = trackedDiffText.length > 0 ? parseDiff(trackedDiffText) : [];
+  if (filePath === undefined || trackedDiffText.length === 0) {
+    return new Map(parsed.map((file) => [file.path, file]));
+  }
+  // The exact inventory match and literal pathspec own identity in scoped mode.
+  // Git C-quotes patch headers for tabs/quotes even with core.quotepath=false.
+  if (trackedChanges.length !== 1 || trackedChanges[0].path !== filePath || parsed.length !== 1) {
+    throw new Error("Scoped diff did not contain exactly the selected file");
+  }
+  const file = parsed[0];
+  const stat = trackedNumstatByPath.get(filePath);
+  if (stat && (stat.additions > 0 || stat.deletions > 0) && file.hunks.length === 0) {
+    throw new Error("Scoped diff content could not be parsed");
+  }
+  return new Map([[filePath, { ...file, path: filePath }]]);
+}
+
 async function appendStructuredTrackedDiffs(
   input: AppendStructuredTrackedDiffsInput,
 ): Promise<boolean> {
@@ -3254,15 +3287,13 @@ async function appendStructuredTrackedDiffs(
     trackedChanges,
     trackedNumstatByPath,
     trackedPlaceholderByPath,
-    trackedDiffText,
     refsForDiff,
     ignoreWhitespace,
     structured,
     appendTrackedPlaceholderComment,
   } = input;
 
-  const parsedTrackedFiles = trackedDiffText.length > 0 ? parseDiff(trackedDiffText) : [];
-  const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
+  const parsedTrackedByPath = parseTrackedDiffByPath(input);
 
   for (let start = 0; start < trackedChanges.length; start += TRACKED_DIFF_BATCH_SIZE) {
     const changes = trackedChanges.slice(start, start + TRACKED_DIFF_BATCH_SIZE);
@@ -3408,6 +3439,7 @@ async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promi
 }
 
 interface ProcessTrackedChangesInput {
+  filePath?: string;
   cwd: string;
   refsForDiff: CheckoutDiffRefs;
   trackedChanges: CheckoutFileChange[];
@@ -3421,13 +3453,24 @@ interface ProcessTrackedChangesResult {
   trackedDiffText: string;
 }
 
+/** Distinct destination and rename-source paths of the given changes, in first-seen order. */
+function changePathsWithRenameSources(changes: readonly CheckoutFileChange[]): string[] {
+  const paths = changes.flatMap((change) =>
+    change.oldPath ? [change.oldPath, change.path] : [change.path],
+  );
+  return [...new Set(paths)];
+}
+
 async function processTrackedChanges(
   input: ProcessTrackedChangesInput,
 ): Promise<ProcessTrackedChangesResult> {
   const { cwd, refsForDiff, trackedChanges, ignoreWhitespace, appendDiff } = input;
+  // A single-file scope limits numstat to that file, including a rename's source path.
+  const scopedNumstatPaths =
+    input.filePath === undefined ? undefined : changePathsWithRenameSources(trackedChanges);
   const trackedNumstatByPath =
     trackedChanges.length > 0
-      ? await getTrackedNumstatByPath(cwd, refsForDiff, ignoreWhitespace)
+      ? await getTrackedNumstatByPath(cwd, refsForDiff, ignoreWhitespace, scopedNumstatPaths)
       : new Map<string, FileStat>();
   const trackedDiffPaths: string[] = [];
   const trackedPlaceholderByPath = new Map<
@@ -3625,6 +3668,11 @@ async function readCheckoutDiff(
     effectiveRefsForDiff = { ...refsForDiff, baseRef: EMPTY_TREE_OBJECT_ID };
     changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
   }
+  if (compare.filePath !== undefined) {
+    // Match inventory paths literally before allocating any patch/content budget.
+    // Do not trim: leading/trailing spaces and Git pathspec punctuation are filenames.
+    changes = changes.filter((change) => change.path === compare.filePath);
+  }
   changes.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;
@@ -3652,6 +3700,7 @@ async function readCheckoutDiff(
   const trackedChanges = changes.filter((change) => !change.isUntracked);
   const untrackedChanges = changes.filter((change) => change.isUntracked === true);
   const trackedDiff = await processTrackedChanges({
+    filePath: compare.filePath,
     cwd,
     refsForDiff: effectiveRefsForDiff,
     trackedChanges,
@@ -3672,6 +3721,7 @@ async function readCheckoutDiff(
 
   if (compare.includeStructured) {
     const didAppendTrackedDiffs = await appendStructuredTrackedDiffs({
+      filePath: compare.filePath,
       signal,
       cwd,
       trackedChanges,

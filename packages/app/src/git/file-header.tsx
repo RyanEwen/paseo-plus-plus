@@ -29,6 +29,7 @@ import {
   formatDiffCount,
 } from "@/git/file-header-presentation";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
+import { useTextOverflow } from "@/hooks/use-text-overflow";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FileHeaderProps {
@@ -182,12 +183,44 @@ function FileHeaderMenu({
   );
 }
 
+/** Desktop hover tooltip with the file's full path; `enabled` decides whether it opens. */
+function FileHeaderTooltip({
+  path,
+  interactive,
+  enabled,
+  children,
+}: {
+  path: string;
+  interactive: boolean;
+  enabled: boolean;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop={enabled} enabledOnMobile={false}>
+      <TooltipTrigger asChild triggerRefProp={interactive ? "triggerRef" : "ref"}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+        <Text style={styles.tooltip}>{path}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
- * Names the prop a tooltip trigger uses to receive the header's anchor ref. Interactive headers
- * render a ContextMenuTrigger, which owns its Pressable ref and exposes it as `triggerRef`.
+ * Whether the path tooltip opens on desktop. A plain Changes tree row shows only the file name
+ * and its place in the tree already gives the directory, so its tooltip opens only when the name
+ * is truncated. Document headers, rows labelled with their directory and canvas headers keep the
+ * always-available tooltip.
  */
-function tooltipTriggerRefProp(interactive: boolean): "triggerRef" | "ref" {
-  return interactive ? "triggerRef" : "ref";
+function isPathTooltipEnabled(input: {
+  showsBodyState: boolean;
+  showDir: boolean;
+  canvasRendered: boolean;
+  nameOverflowing: boolean;
+}): boolean {
+  const isTreeRow = !input.showsBodyState && !input.showDir && !input.canvasRendered;
+  return !isTreeRow || input.nameOverflowing;
 }
 
 export const FileHeader = memo(function FileHeader({
@@ -256,6 +289,7 @@ export const FileHeader = memo(function FileHeader({
     [bodyVisible, isSelected, showsBodyState],
   );
   const fileName = fileNameForPath(file.path);
+  const nameOverflow = useTextOverflow(fileName);
   const nameStyle = fileHeaderNameStyle(showsBodyState, hover.isHovered);
   const changeIcon = <FileChangeIcon change={fileChange(file)} />;
   const content = (
@@ -269,7 +303,14 @@ export const FileHeader = memo(function FileHeader({
             <MaterialFileIcon fileName={fileName} size={WORKSPACE_TREE_ICON_SIZE} />
           </View>
         )}
-        <Text style={nameStyle} numberOfLines={1} testID={testID ? `${testID}-name` : undefined}>
+        <Text
+          ref={nameOverflow.ref}
+          onLayout={nameOverflow.onLayout}
+          onTextLayout={nameOverflow.onTextLayout}
+          style={nameStyle}
+          numberOfLines={1}
+          testID={testID ? `${testID}-name` : undefined}
+        >
           {fileName}
         </Text>
         {showDir ? (
@@ -353,14 +394,18 @@ export const FileHeader = memo(function FileHeader({
       accessibilityLabel={accessibilityLabel}
     >
       <ContextMenu>
-        <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild triggerRefProp={tooltipTriggerRefProp(interactive)}>
-            {trigger}
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-            <Text style={styles.tooltip}>{file.path}</Text>
-          </TooltipContent>
-        </Tooltip>
+        <FileHeaderTooltip
+          path={file.path}
+          interactive={interactive}
+          enabled={isPathTooltipEnabled({
+            showsBodyState,
+            showDir,
+            canvasRendered,
+            nameOverflowing: nameOverflow.overflowing,
+          })}
+        >
+          {trigger}
+        </FileHeaderTooltip>
         {interactive ? (
           <FileHeaderMenu file={file} testID={testID} {...actions} bodyVisible={bodyVisible} />
         ) : null}
