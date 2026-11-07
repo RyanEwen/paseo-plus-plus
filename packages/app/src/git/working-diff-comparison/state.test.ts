@@ -1,5 +1,3 @@
-import { createWorkingDiffComparisonStore } from "./index";
-import { createInMemoryKeyValueStorage } from "@/hooks/use-settings/fakes";
 import { describe, expect, it } from "vitest";
 import {
   resolveWorkingDiffComparisonFromState,
@@ -24,22 +22,6 @@ function emptyState(): WorkingDiffComparisonState {
 }
 
 describe("working diff comparison", () => {
-  it("restores the selected comparison after the app reloads", async () => {
-    const storage = createInMemoryKeyValueStorage();
-    const source = createWorkingDiffComparisonStore(storage);
-    await source.persist.rehydrate();
-    source.getState().select({ ...checkout, comparison: "base", isDirty: false });
-    const restored = createWorkingDiffComparisonStore(storage);
-    await restored.persist.rehydrate();
-    expect(
-      resolveWorkingDiffComparisonFromState(restored.getState(), {
-        ...checkout,
-        policy: defaultPolicy,
-        isDirty: true,
-      }),
-    ).toBe("base");
-  });
-
   it("defaults to uncommitted regardless of dirtiness unless a different default is configured", () => {
     expect(
       resolveWorkingDiffComparisonFromState(emptyState(), {

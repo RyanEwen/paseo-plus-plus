@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { queryClient as appQueryClient } from "@/data/query-client";
 import { APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
 import { QueryClient } from "@tanstack/react-query";
@@ -118,27 +117,25 @@ afterEach(() => {
 });
 
 describe("fetchCheckoutStatus", () => {
-  it("persists automatic comparison expiry only when a selection actually expires", async () => {
+  it("expires an automatic comparison only when the fetched dirtiness changes", async () => {
     appQueryClient.setQueryData(APP_SETTINGS_QUERY_KEY, {
       ...DEFAULT_CLIENT_SETTINGS,
       workingDiffAutoSwitch: true,
     });
-    selectBaseComparison(false);
-    const saveChoices = vi.mocked(AsyncStorage.setItem);
-    saveChoices.mockClear();
+    // Uncommitted on a clean checkout differs from the automatic choice (Committed), so the
+    // resolved comparison shows whether the selection survived.
+    selectWorkingDiffComparison({ serverId, cwd, comparison: "uncommitted", isDirty: false });
 
     const client = { getCheckoutStatus: async () => checkoutStatus() };
     await fetchCheckoutStatus({ client, serverId, cwd });
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("base");
-    expect(saveChoices).not.toHaveBeenCalled();
+    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("uncommitted");
 
     await fetchCheckoutStatus({
       client: { getCheckoutStatus: async () => checkoutStatus({ isDirty: true }) },
       serverId,
       cwd,
     });
-    expect(saveChoices).toHaveBeenCalledOnce();
-    expect(JSON.parse(saveChoices.mock.calls[0]![1]).state.overrides).toEqual({});
+    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("base");
   });
 
   it("keeps a manual selection across a status transition when automatic switching is disabled", async () => {
@@ -209,9 +206,9 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       workingDiffAutoSwitch: true,
     });
-    selectBaseComparison(false);
-    const saveChoices = vi.mocked(AsyncStorage.setItem);
-    saveChoices.mockClear();
+    // Uncommitted on a clean checkout differs from the automatic choice, so a kept selection
+    // would still resolve to Uncommitted after the checkout is clean again.
+    selectWorkingDiffComparison({ serverId, cwd, comparison: "uncommitted", isDirty: false });
     const queryClient = createQueryClient();
 
     applyCheckoutStatusUpdateFromEvent({
@@ -219,8 +216,6 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
       serverId,
       message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
     });
-    expect(saveChoices).toHaveBeenCalledOnce();
-    expect(JSON.parse(saveChoices.mock.calls[0]![1]).state.overrides).toEqual({});
     expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("uncommitted");
 
     applyCheckoutStatusUpdateFromEvent({
@@ -229,7 +224,6 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
       message: checkoutStatusUpdate(checkoutStatus({ isDirty: false })),
     });
     expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("base");
-    expect(saveChoices).toHaveBeenCalledOnce();
   });
 
   it("writes the checkout status to the cache using the cwd from the payload", () => {

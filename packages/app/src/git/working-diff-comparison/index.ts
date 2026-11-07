@@ -49,6 +49,8 @@ export function createWorkingDiffComparisonStore(storage: StateStorage = AsyncSt
   );
 }
 
+type WorkingDiffComparisonStoreApi = ReturnType<typeof createWorkingDiffComparisonStore>;
+
 const useWorkingDiffComparisonStore = createWorkingDiffComparisonStore();
 
 /** The comparison policy for checkout-status boundary updates outside React. */
@@ -109,20 +111,37 @@ export function resolveWorkingDiffComparison(
   });
 }
 
-export function expireWorkingDiffComparisons(input: {
+interface ExpireWorkingDiffComparisonsInput {
   serverId: string;
   cwd: string;
   isDirty: boolean;
-}): void {
-  if (!currentComparisonPolicy().autoSwitch) {
+}
+
+/** Expire automatic choices for a checkout whose dirtiness changed, using the app settings. */
+export function expireWorkingDiffComparisons(input: ExpireWorkingDiffComparisonsInput): void {
+  expireWorkingDiffComparisonsInStore(useWorkingDiffComparisonStore, {
+    ...input,
+    policy: currentComparisonPolicy(),
+  });
+}
+
+/**
+ * Expire `store`'s choices for the checkout when `policy` follows dirtiness. Writes to storage
+ * only when a selection actually expires.
+ */
+export function expireWorkingDiffComparisonsInStore(
+  store: WorkingDiffComparisonStoreApi,
+  input: ExpireWorkingDiffComparisonsInput & { policy: WorkingDiffComparisonPolicy },
+): void {
+  if (!input.policy.autoSwitch) {
     return;
   }
-  const current = useWorkingDiffComparisonStore.getState();
+  const current = store.getState();
   const next = expireWorkingDiffComparisonsInState(current, input);
   // Persist middleware writes even when a setter returns the existing state. Checkout
   // updates are frequent, so leave storage alone unless a manual selection expired.
   if (next !== current) {
-    useWorkingDiffComparisonStore.setState(next);
+    store.setState(next);
   }
 }
 
