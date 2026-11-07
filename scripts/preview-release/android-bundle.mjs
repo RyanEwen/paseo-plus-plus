@@ -118,9 +118,15 @@ function compileAndroidBundle(plan) {
   const { bundle, bytecode, compilerMap, packagerMap, finalMap, hermes } =
     getAndroidBundlePaths(plan);
   const [node, ...nodeArgs] = plan.node;
-  console.log(
-    `Hermes input: ${JSON.stringify({ source: process.env.GITHUB_SHA, bytes: readFileSync(bundle).length, sha256: createHash("sha256").update(readFileSync(bundle)).digest("hex"), plan })}`,
-  );
+  const input = readFileSync(bundle);
+  const inputDigest = createHash("sha256").update(input).digest("hex");
+  const inputRecord = {
+    source: process.env.GITHUB_SHA,
+    bytes: input.length,
+    sha256: inputDigest,
+    plan,
+  };
+  console.log(`Hermes input: ${JSON.stringify(inputRecord)}`);
   runPhase(
     "Hermes",
     hermes,
@@ -134,6 +140,7 @@ function compileAndroidBundle(plan) {
       ...plan.hermesFlags,
     ],
     plan.root,
+    { bounded: true },
   );
   renameSync(bytecode, bundle);
   renameSync(`${bytecode}.map`, compilerMap);
@@ -183,10 +190,14 @@ function getAndroidBundlePaths(plan) {
   };
 }
 
-/** Record peak resident memory for every compiler phase so runner failures have useful evidence. */
-function runPhase(name, command, args, cwd) {
+/**
+ * Record peak resident memory for every compiler phase so runner failures have useful evidence.
+ * `bounded` runs the phase under the hosted runner's memory-bounded Hermes driver in GitHub Actions;
+ * only the optimized Hermes compile sets it.
+ */
+function runPhase(name, command, args, cwd, { bounded = false } = {}) {
   console.log(`Android preview bundle: ${name}`);
-  if (name === "Hermes" && process.env.GITHUB_ACTIONS === "true") {
+  if (bounded && process.env.GITHUB_ACTIONS === "true") {
     execFileSync(
       "bash",
       [fileURLToPath(new URL("./android-hermes.sh", import.meta.url)), command, ...args],
