@@ -116,7 +116,7 @@ export const en = {
         hint: "Pin a compact prompt with expansion and previous/next navigation. Ordinary messages stay expanded, and loading never covers an available prompt.",
       },
       previousAgents: {
-        label: "Previous agents",
+        label: "Reopen closed agent",
         hint: "Reopen closed or archived conversations from the workspace + menu",
       },
       sidebarActivityChips: {
@@ -509,7 +509,7 @@ export const en = {
   sessions: {
     previousTitle: "Reopen closed agent",
     previousEmpty: "No closed agents in this workspace",
-    workspaceHistoryUpdateRequired: "Update this host to view previous workspace agents.",
+    workspaceHistoryUpdateRequired: "Update this host to reopen closed agents.",
 
     title: "History",
     empty: "No sessions yet",

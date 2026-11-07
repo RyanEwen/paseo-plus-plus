@@ -10,7 +10,10 @@ export function getLocalBinDir(): string {
 }
 
 export function getCliTargetPath(): string {
-  const filename = resolveCliTargetFilename(process.platform, desktopDistribution.isPreview);
+  const filename = resolveCliTargetFilename({
+    platform: process.platform,
+    isPreview: desktopDistribution.isPreview,
+  });
   return path.join(getLocalBinDir(), filename);
 }
 
