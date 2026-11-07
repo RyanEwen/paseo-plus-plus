@@ -19,17 +19,25 @@ import assert from "node:assert/strict";
 import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
 import { loadNativePtyModules } from "../native-pty.mjs";
 
+/**
+ * Run the checkout's daemon trace and return the traced paths, one per output line.
+ * `root` is the checkout whose scripts/trace-daemon.mjs is run, with `root` as the working directory.
+ */
+export function readTracedDaemonFiles(root) {
+  return execFileSync(process.execPath, [path.join(root, "scripts/trace-daemon.mjs")], {
+    cwd: root,
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n");
+}
+
 /** Stage the existing traced runtime as a dependency-free npm tarball for this native host. */
 export function buildDaemonPackage({ root, output, release }) {
   const staging = path.join(output, "package");
   mkdirSync(staging, { recursive: true });
   try {
-    const files = execFileSync(process.execPath, [path.join(root, "scripts/trace-daemon.mjs")], {
-      cwd: root,
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n");
+    const files = readTracedDaemonFiles(root);
     stageDaemonRuntime({ root, output: path.join(staging, "runtime"), files });
     const rootManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
     cpSync(path.join(root, "LICENSE"), path.join(staging, "LICENSE"));
