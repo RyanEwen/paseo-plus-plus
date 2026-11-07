@@ -11,3 +11,8 @@ export const seenAgentNotifications = createSeenAgentNotifications({
   onError: (error) =>
     console.warn("[notifications] Failed to dismiss viewed chat notification", error),
 });
+
+/** Web and desktop renderers see their own notifications at creation, so nothing to start. */
+export function startSeenAgentNotifications(): () => void {
+  return () => {};
+}

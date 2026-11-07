@@ -16,6 +16,7 @@ import {
 import type { AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { AgentDirectoryReplica } from "./agent-replica";
 import {
+  advancesLiveCursor,
   WorkspaceDirectoryReplica,
   type WorkspaceDirectoryDelta,
   type WorkspaceDirectorySnapshot,
@@ -419,7 +420,7 @@ export class DirectorySync {
     this.workspaceRevision += 1;
     if (this.workspaceTransactions.record(source, delta)) return;
     this.applyWorkspaceDelta(delta);
-    if (delta.kind !== "script_status" && delta.kind !== "accepted_workspace")
+    if (advancesLiveCursor(delta))
       this.noteLiveCursor(
         "projectId" in delta || "project" in delta ? "projects" : "workspaces",
         delta,
@@ -1139,8 +1140,8 @@ export class DirectorySync {
     for (const [entity, cursor] of Object.entries(snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
-    for (const delta of deltas) {
-      if (delta.kind === "script_status" || delta.kind === "accepted_workspace") continue;
+    for (const delta of completion.deltas) {
+      if (!advancesLiveCursor(delta)) continue;
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
       this.noteLiveCursor(entity, delta);
     }

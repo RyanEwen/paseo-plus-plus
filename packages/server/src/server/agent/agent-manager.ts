@@ -154,14 +154,6 @@ export class AgentManagerShuttingDownError extends Error {
   }
 }
 
-/** Pre-dispatch ownership loss; an idle recipient can still accept the unsent prompt. */
-class SteerTurnChangedError extends Error {
-  constructor(readonly currentTurnId: string | null) {
-    super("Active turn changed before steering could be delivered");
-    this.name = "SteerTurnChangedError";
-  }
-}
-
 export class AgentRunCancellationError extends Error {
   constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
     super(
@@ -3747,34 +3739,31 @@ export class AgentManager {
       return { status: "inactive" };
     }
 
-    try {
-      await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
-      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-      return {
-        status: "replaced",
-        iterator: await this.replaceAdmittedForegroundTurn(
-          agent,
-          expectedTurnId,
-          prompt,
-          stripSteerOptions(options),
-        ),
-      };
-    } catch (error) {
-      const recipientIdle = agent.activeTurnId === null && !this.runs.hasRun(agentId);
-      const originalTurnFinished =
-        error instanceof SteerTurnChangedError && error.currentTurnId === null;
-      if (!originalTurnFinished || !recipientIdle) throw error;
-      // Reserve the new run synchronously. Never reselect or replace a later owner's turn.
+    await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
+    const recipientIdle = agent.activeTurnId === null && !this.runs.hasRun(agentId);
+    if (recipientIdle) {
+      // The original turn finished while admission waited, so the idle recipient takes the unsent
+      // prompt as a new run. Reserve it synchronously; never reselect or replace a later owner's turn.
       return {
         status: "started",
         iterator: this.streamAgent(agentId, prompt, stripSteerOptions(options)),
       };
     }
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+    return {
+      status: "replaced",
+      iterator: await this.replaceAdmittedForegroundTurn(
+        agent,
+        expectedTurnId,
+        prompt,
+        stripSteerOptions(options),
+      ),
+    };
   }
 
   private assertSteerAdmissionOwnsTurn(agent: ActiveManagedAgent, expectedTurnId: string): void {
     if (agent.activeTurnId !== expectedTurnId) {
-      throw new SteerTurnChangedError(agent.activeTurnId);
+      throw new Error("Active turn changed before steering could be delivered");
     }
   }
 

@@ -38,8 +38,6 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   deferOpenTab: (input: OpenWorkspaceTabInput) => null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
-  /** Reveal the compact workspace pane when navigation names a particular tab. */
-  revealWorkspaceContent: () => void;
   revealTab: (workspaceKey: string, tabId: string | null) => void;
   revealWorkspace: () => void;
 }
@@ -105,6 +103,10 @@ export function navigateToWorkspace(
   };
   if (input.target) {
     prepareWorkspaceTab({ ...input, target: input.target }, { openTab });
+    // A hydrated open reveals its own destination through revealTab. A deferred
+    // open reveals when the destination consumes it, so show the workspace pane
+    // now rather than leave the chat behind the workspace list or explorer.
+    if (shouldDeferOpen) deps.revealWorkspace();
   } else {
     const workspaceAgents = resolvedWorkspaceId
       ? Array.from(deps.getSessionAgents(input.serverId)).filter(
@@ -125,11 +127,6 @@ export function navigateToWorkspace(
 
   const route = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
   deps.rememberLastWorkspace({ serverId: input.serverId, workspaceId: input.workspaceId });
-  if (input.target) {
-    // A route and selected tab do not close the compact workspace list or explorer.
-    // Reveal even while hydration defers the agent open intent to the destination.
-    deps.revealWorkspaceContent();
-  }
   deps.navigateToRoute(route);
   return route;
 }

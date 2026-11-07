@@ -7,8 +7,10 @@ describe("cli-install-path", () => {
   it("installs previews under a separate command on each desktop platform", () => {
     for (const platform of ["win32", "linux", "darwin"] as const) {
       const extension = platform === "win32" ? ".cmd" : "";
-      expect(resolveCliTargetFilename(platform, false)).toBe(`paseo${extension}`);
-      expect(resolveCliTargetFilename(platform, true)).toBe(`paseo-plus-plus-desktop${extension}`);
+      expect(resolveCliTargetFilename({ platform, isPreview: false })).toBe(`paseo${extension}`);
+      expect(resolveCliTargetFilename({ platform, isPreview: true })).toBe(
+        `paseo-plus-plus-desktop${extension}`,
+      );
     }
   });
   it("uses the bundled shim for packaged macOS installs", () => {
