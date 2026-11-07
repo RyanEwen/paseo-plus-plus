@@ -220,7 +220,10 @@ import {
   createWorkspaceRecoveryService,
   type WorkspaceRecoveryService,
 } from "./session/workspace-recovery/workspace-recovery-service.js";
-import { listArchivedProjectWorkspaces } from "./session/workspace-recovery/list-archived-workspaces.js";
+import {
+  listArchivedProjectWorkspaces,
+  ProjectUnavailableError,
+} from "./session/workspace-recovery/list-archived-workspaces.js";
 import {
   createAgentUpdatesService,
   matchesAgentUpdatesFilter,
@@ -4061,7 +4064,10 @@ export class Session {
           requestId: request.requestId,
           projectId: request.projectId,
           entries: [],
-          error: getErrorMessageOr(error, "Failed to list archived workspaces"),
+          error:
+            error instanceof ProjectUnavailableError
+              ? "The project no longer exists on this host."
+              : getErrorMessageOr(error, "Failed to list archived workspaces"),
         },
       });
     }

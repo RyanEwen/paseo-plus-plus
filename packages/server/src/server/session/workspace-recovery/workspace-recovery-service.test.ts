@@ -30,7 +30,7 @@ import {
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
-import { listArchivedProjectWorkspaces } from "./list-archived-workspaces.js";
+import { listArchivedProjectWorkspaces, ProjectUnavailableError } from "./list-archived-workspaces.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
 const tempDirectories: string[] = [];
@@ -134,13 +134,13 @@ describe("workspace recovery", () => {
         ...input,
         projects: { get: async () => null },
       }),
-    ).rejects.toThrow("project no longer exists");
+    ).rejects.toBeInstanceOf(ProjectUnavailableError);
     await expect(
       listArchivedProjectWorkspaces({
         ...input,
         projects: { get: async () => createProject({ archivedAt: NOW }) },
       }),
-    ).rejects.toThrow("project no longer exists");
+    ).rejects.toBeInstanceOf(ProjectUnavailableError);
   });
   test("describes a missing archived worktree from persisted placement", async () => {
     const { service, unarchived } = createHarness();

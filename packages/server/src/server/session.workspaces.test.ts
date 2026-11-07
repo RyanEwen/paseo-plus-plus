@@ -5428,7 +5428,11 @@ test("project-scoped archived workspace listing returns zero-agent records witho
   });
   expect(
     findByType(emitted.slice(1), "workspace.recovery.list_archived.response")?.payload,
-  ).toMatchObject({ requestId: "removed-project", entries: [], error: expect.any(String) });
+  ).toMatchObject({
+    requestId: "removed-project",
+    entries: [],
+    error: "The project no longer exists on this host.",
+  });
 });
 
 test("open_project_request does not repurpose an orphaned archived workspace", async () => {
