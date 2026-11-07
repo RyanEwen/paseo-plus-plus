@@ -1,0 +1,3 @@
+# Screenshot originals and capture guards
+
+Paseo-owned browser screenshots save admitted originals on the execution host and return a reference alongside the inline image. Client APIs list references and retrieve original bytes; direct and relay transfers require acknowledged delivery, while plugin IPC supports metadata only. Capture-size checks are best-effort Electron/CDP guards, not native allocation ceilings. Encoded-input, queue, storage and transfer limits remain enforced. They do not cap provider context or UI image memory. See [protected boundaries](../../docs/architecture.md#screenshot-capture-guards) and [storage limits and crash availability](../../docs/data-model.md#attachment-originals).

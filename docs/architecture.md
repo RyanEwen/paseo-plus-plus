@@ -238,6 +238,33 @@ Agent browser_keypress -> guest sendInputEvent(skipIfUnhandled)
   `-- guest does not handle ----> stop; never redispatch to the host window
 ```
 
+#### Screenshot capture guards
+
+Reject requests whose sampled geometry exceeds the capture limits before dispatch; the limits live in `packages/desktop/src/features/browser-automation/capture-admission.ts`. Admission is shared across windows and workspaces, with one active capture, a short waiting queue and one request deadline. Canceling a waiter removes it. An already-dispatched CDP capture keeps its slot until acknowledgment, even after its caller times out, because releasing it early would allow overlapping allocations; a stuck CDP operation can therefore leave capture busy until it settles.
+
+The physical size estimate uses CDP layout metrics, the largest connected display scale and page zoom, never the page's own `devicePixelRatio`. Rejected requests fail without clipping or scaling. Viewport results have their returned dimensions checked before PNG encoding, and the encoded output is size-checked against the durable original limit.
+
+These are best-effort Electron/CDP capture guards. Sampled geometry is not bound atomically to the
+captured frame: native retries or guest presentation can observe a later viewport, and an explicit
+full-page CDP clip does not freeze layout or device scale. The APIs expose no enforced native
+allocation budget. Returned-image checks run after capture allocation, and output-size checks run
+after encoding. They do not bound intermediate native buffers, every NativeImage scale
+representation, encoder scratch space or process RSS. A strict allocation boundary needs a
+separately qualified backend contract; see [capture backend constraints](browser-capture-harness.md).
+
+| Boundary                                                               | Coverage                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Desktop `browser_screenshot`, viewport and full page                   | Shared capture admission and finite queue; best-effort geometry/result checks and explicit errors on rejection. The execution daemon reserves [original storage](data-model.md#attachment-originals) before broker capture.                                                                                                                |
+| Shared provider-image materializer                                     | Original string length before normalization, decoded byte length before base64 conversion, strict standard base64 and PNG/JPEG/GIF/WebP/BMP/TIFF signatures before file writes. Padded and unpadded base64 and base64 image data URLs remain supported. Unknown MIME types and mismatched signatures reject. Accepted bytes are unchanged. |
+| External MCP and provider history                                      | Providers may capture, buffer, parse, log or retain images before the materializer. No bound at those earlier boundaries.                                                                                                                                                                                                                  |
+| App transport, history and image caches                                | No new residency or decoder limits in this slice. Existing timeline ownership remains in place.                                                                                                                                                                                                                                            |
+| Element screenshots, clipboard images and provider-native image inputs | Separate paths; no capture-admission claim for them.                                                                                                                                                                                                                                                                                       |
+
+Container signatures do not establish valid image contents, safe dimensions, animation/frame counts
+or decompression safety. No image decoder is introduced. Provider-native materialized files remain temporary. Owned browser screenshot originals use the
+[durable attachment store](data-model.md#attachment-originals); neither path establishes a
+provider-context quota, compaction savings or an OOM incident fix. The enforced input, queue, storage and transfer limits do not depend on a Paseo++ preference.
+
 ### `packages/website` — Marketing site
 
 TanStack Router + Cloudflare Workers. Serves paseo.sh.

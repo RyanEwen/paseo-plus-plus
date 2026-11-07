@@ -12,6 +12,16 @@ import {
   AppSettingsPatchResponseSchema,
   AppSettingsChangedSchema,
 } from "./app-settings.js";
+import {
+  AttachmentReadCancelRequestSchema,
+  AttachmentReadCancelResponseSchema,
+  AttachmentListRequestSchema,
+  AttachmentGetRequestSchema,
+  AttachmentReadRequestSchema,
+  AttachmentListResponseSchema,
+  AttachmentGetResponseSchema,
+  AttachmentReadResponseSchema,
+} from "./attachments.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -3315,6 +3325,10 @@ export const SubscriptionReleaseResponseSchema = z.object({
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AppSettingsGetRequestSchema,
   AppSettingsPatchRequestSchema,
+  AttachmentListRequestSchema,
+  AttachmentGetRequestSchema,
+  AttachmentReadRequestSchema,
+  AttachmentReadCancelRequestSchema,
   HostsListRequestSchema,
   HostsAddRequestSchema,
   HostsUpdateRequestSchema,
@@ -3705,6 +3719,13 @@ export const ServerInfoStatusPayloadSchema = z
     desktopManaged: z.boolean().optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema.optional(),
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
+    attachmentStorage: z
+      .object({
+        writable: z.boolean(),
+        originalReads: z.boolean(),
+        writeError: z.string().max(512).nullable(),
+      })
+      .optional(),
     features: z
       .object({
         // COMPAT(durableAttachments): added in v0.11.2, remove gate after 2027-10-16.
@@ -7114,6 +7135,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AppSettingsGetResponseSchema,
   AppSettingsPatchResponseSchema,
   AppSettingsChangedSchema,
+  AttachmentListResponseSchema,
+  AttachmentGetResponseSchema,
+  AttachmentReadResponseSchema,
+  AttachmentReadCancelResponseSchema,
   HostsListResponseSchema,
   HostsChangedSchema,
   HostsAddResponseSchema,

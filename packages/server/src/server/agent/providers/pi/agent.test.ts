@@ -1,3 +1,4 @@
+import { signedPngBase64 } from "../../../../test-utils/provider-image-fixtures.js";
 import {
   closeSync,
   existsSync,
@@ -3613,7 +3614,7 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
     .startTurn([
       {
         type: "image",
-        data: Buffer.alloc(16 * 1024 * 1024, 51).toString("base64"),
+        data: signedPngBase64(16 * 1024 * 1024, 51),
         mimeType: "image/png",
       },
     ])
@@ -3641,7 +3642,7 @@ test("closing Pi during image conversion rejects its pending start", async () =>
   const first = session.startTurn([
     {
       type: "image",
-      data: Buffer.alloc(16 * 1024 * 1024, 52).toString("base64"),
+      data: signedPngBase64(16 * 1024 * 1024, 52),
       mimeType: "image/png",
     },
   ]);
@@ -3673,11 +3674,11 @@ describe("Pi tool-result images", () => {
         result: {
           content: [
             { type: "text", text: "captured" },
-            { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png" },
+            { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
           ],
           structuredContent: {
             type: "image",
-            data: Buffer.from("hello").toString("base64"),
+            data: ONE_BY_ONE_PNG_BASE64,
             mimeType: "image/png",
             note: "captured",
           },
@@ -3700,9 +3701,7 @@ describe("Pi tool-result images", () => {
       );
       expect(toolIndex).toBeGreaterThanOrEqual(0);
       // Base64 must never reach the tool output stringifier.
-      expect(JSON.stringify(items[toolIndex])).not.toContain(
-        Buffer.from("hello").toString("base64"),
-      );
+      expect(JSON.stringify(items[toolIndex])).not.toContain(ONE_BY_ONE_PNG_BASE64);
       expect(items.slice(toolIndex + 1)).toEqual([
         expect.objectContaining({
           type: "assistant_message",
@@ -3730,7 +3729,7 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
       content: [
         {
           type: "image",
-          data: Buffer.alloc(8 * 1024 * 1024, 73).toString("base64"),
+          data: signedPngBase64(8 * 1024 * 1024, 73),
           mimeType: "image/png",
         },
       ],

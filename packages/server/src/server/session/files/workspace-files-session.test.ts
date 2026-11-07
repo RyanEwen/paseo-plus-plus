@@ -349,6 +349,37 @@ describe("WorkspaceFilesSession", () => {
     expect(message.payload.file).not.toBeNull();
   });
 
+  test("stops a binary read and reports an error when delivery refuses a frame", async () => {
+    // The WebSocket server rejects a frame without a delivery proof (screenshot originals
+    // need to observe that); the explorer then stops streaming and answers with the error.
+    const cwd = makeDir("workspace-files-binary-denied-");
+    writeFileSync(join(cwd, "notes.txt"), "hello world");
+    const { subsystem, emitted, binary } = makeSubsystem({
+      hasBinaryChannel: true,
+      emitBinary: async () => {
+        throw new Error("Binary transfer delivery is unauthorized");
+      },
+    });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "notes.txt",
+      mode: "file",
+      requestId: "req-binary-denied",
+      acceptBinary: true,
+    });
+
+    expect(binary).toHaveLength(1);
+    expect(emitted).toHaveLength(1);
+    const message = emitted[0];
+    if (message.type !== "file_explorer_response") {
+      throw new Error(`expected file_explorer_response, got ${message.type}`);
+    }
+    expect(message.payload.error).toBe("Binary transfer delivery is unauthorized");
+    expect(message.payload.file).toBeNull();
+  });
+
   test("streams binary frames when the client accepts binary and has a channel", async () => {
     const cwd = makeDir("workspace-files-binary-");
     writeFileSync(join(cwd, "notes.txt"), "hello world");
