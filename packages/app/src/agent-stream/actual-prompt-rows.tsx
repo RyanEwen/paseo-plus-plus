@@ -62,12 +62,16 @@ export function ActualPromptRowsProvider({
     [scope],
   );
   const measuredHeight = pane.scope === scope ? pane.height : availableHeight;
+  // Use the smaller height once both the chat and this pane are measured; until
+  // then, use whichever one is known.
   const viewportHeight =
     availableHeight > 0 && measuredHeight > 0
       ? Math.min(availableHeight, measuredHeight)
       : Math.max(availableHeight, measuredHeight);
   const { height: windowHeight } = useWindowDimensions();
-  // Keep expanded prompts below both bounds, including a landing-edge clearance.
+  // Keep expanded prompts below both bounds, including a landing-edge clearance:
+  // at most 60% of the window and 80% of the pane, so the response it heads stays
+  // in view while the prompt is open.
   // The same capped column holds the body and controls; only the body scrolls.
   const bodyViewportHeight = Math.max(
     0,

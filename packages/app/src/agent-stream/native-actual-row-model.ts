@@ -1,3 +1,4 @@
+import type { StreamItem } from "@/types/stream";
 import type { StreamRenderSegments } from "./model";
 import { uniqueStreamSegments } from "./actual-row-collection";
 import type {
@@ -422,7 +423,7 @@ export function createNativeMeasuredHeaderIndex({
   items,
   geometry,
 }: {
-  items: readonly import("@/types/stream").StreamItem[];
+  items: readonly StreamItem[];
   geometry: ReadonlyMap<string, ActualNativeRowGeometry>;
 }): NativeMeasuredHeaderIndex {
   const headers: NativeMeasuredHeader[] = [];
@@ -484,7 +485,7 @@ export function isCurrentNativeReading({
 }
 
 interface ActualNativeReadingInput {
-  items: readonly import("@/types/stream").StreamItem[];
+  items: readonly StreamItem[];
   geometry: ReadonlyMap<string, ActualNativeRowGeometry>;
   mounted: ReadonlySet<string>;
   headers: NativeMeasuredHeaderIndex;

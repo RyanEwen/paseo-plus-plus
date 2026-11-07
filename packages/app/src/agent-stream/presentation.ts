@@ -13,6 +13,31 @@ import type { StreamItem, UserMessageItem } from "@/types/stream";
 import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
 import type { ReadingRowReplacements } from "./reading-anchor";
 
+type ProjectionKey = Exclude<keyof PresentationInput, "retained">;
+
+/**
+ * Every input the ordinary projection reads. The mapped type makes a new PresentationInput
+ * field fail typecheck until it is listed here, so the memo cannot silently go stale.
+ */
+const PROJECTION_KEYS: { readonly [K in ProjectionKey]: true } = {
+  tail: true,
+  head: true,
+  transform: true,
+  display: true,
+  autoExpandReasoning: true,
+  expandedTurnHostIds: true,
+  isTurnActive: true,
+  activeTurnId: true,
+};
+
+/** Whether two inputs project the same ordinary presentation (retained rows aside). */
+function sameProjectionInput(left: PresentationInput, right: PresentationInput): boolean {
+  for (const key of Object.keys(PROJECTION_KEYS) as ProjectionKey[]) {
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
+
 interface PresentationInput {
   tail: StreamItem[];
   /** Canonical display context is projected without entering ordinary grouping or layout. */
@@ -221,18 +246,7 @@ export function createStreamPresentation() {
     };
   }
   return (input: PresentationInput): StreamPresentation => {
-    if (
-      !previous ||
-      !previousInput ||
-      previousInput.tail !== input.tail ||
-      previousInput.head !== input.head ||
-      previousInput.transform !== input.transform ||
-      previousInput.display !== input.display ||
-      previousInput.autoExpandReasoning !== input.autoExpandReasoning ||
-      previousInput.expandedTurnHostIds !== input.expandedTurnHostIds ||
-      previousInput.isTurnActive !== input.isTurnActive ||
-      previousInput.activeTurnId !== input.activeTurnId
-    ) {
+    if (!previous || !previousInput || !sameProjectionInput(previousInput, input)) {
       previous = project(input);
       previousInput = { ...input };
     }

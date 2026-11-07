@@ -29,7 +29,7 @@ import type { ReactNode } from "react";
 import * as React from "react";
 import { memo, useCallback, useContext, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType, type TextLayoutEvent } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
 import { NativeMessagePresentationContext } from "./user-message-native-presentation";
@@ -216,7 +216,7 @@ function UserMessageText({
 > & { hasText: boolean }) {
   const naturalFlow = useContext(NaturalMessageFlowContext);
   const reportTextLayout = useCallback(
-    (event: import("react-native").TextLayoutEvent) => {
+    (event: TextLayoutEvent) => {
       naturalFlow?.reportText(event.nativeEvent.lines);
       if (naturalFlow) {
         onPreviewOverflowChange?.(event.nativeEvent.lines.length > (previewLines ?? 1));

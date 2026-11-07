@@ -1803,6 +1803,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     [virtualTotalSize],
   );
   const renderVirtualRowStyle = useCallback(
+    // Place virtual rows with top, not a translateY transform: CSS position: sticky
+    // sticks to its nearest transformed ancestor, so a pinned prompt inside a
+    // transformed virtual row would scroll away with it.
     (start: number): CSSProperties => ({
       position: "absolute",
       top: start - VIRTUALIZER_SCROLL_MARGIN_PX,

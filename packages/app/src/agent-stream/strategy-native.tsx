@@ -45,8 +45,10 @@ import {
 import {
   FlatList,
   View,
+  type CellRendererProps,
   type FlatListProps,
   type LayoutChangeEvent,
+  type NativeMethods,
   type ListRenderItemInfo,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -218,7 +220,7 @@ function createActualCellRenderer({ record, mount, recordPainted }: ActualCellCa
     children,
     style,
     onFocusCapture,
-  }: import("react-native").CellRendererProps<StreamItem>) {
+  }: CellRendererProps<StreamItem>) {
     const sticky = useContext(NativeStickyLayoutContext);
     const actualRowsEnabled = useContext(ActualPromptRowsContext) !== null;
     const paintedBinding = useContext(NativePaintedTailBindingContext);
@@ -427,9 +429,11 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
   const getMeasurementOwner = useStableEvent(() => {
     const viewport = getCurrentViewport()?.getNativeScrollRef();
     if (!viewport || !("measureInWindow" in viewport)) return null;
-    return resolveNativeMeasurementOwner<
-      Pick<import("react-native").NativeMethods, "measureInWindow">
-    >(measurementContext.mode, viewport, measurementContext.stationaryViewportRef?.current ?? null);
+    return resolveNativeMeasurementOwner<Pick<NativeMethods, "measureInWindow">>(
+      measurementContext.mode,
+      viewport,
+      measurementContext.stationaryViewportRef?.current ?? null,
+    );
   });
   const actualRows = useContext(ActualPromptRowsContext);
   const [pinnedId, setPinnedId] = useState<string | null>(null);
@@ -1251,6 +1255,7 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
       }),
     [recordRow, markRowMounted, recordPaintedRow],
   );
+  // ListHeaderComponent occupies cell 0, so history item i renders in cell i + 1.
   const stickyHeaderIndices = useMemo(
     () => historyItems.flatMap((item, index) => (item.kind === "user_message" ? [index + 1] : [])),
     [historyItems],

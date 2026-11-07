@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, type ReactNode, type RefObject } from "react";
+import type { View } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
+import type { DockReservationSnapshot } from "@/keyboard/shift/internal/policy";
 export interface NativeStickyViewport {
   y: SharedValue<number>;
 }
@@ -21,7 +23,7 @@ export function useNativeStickyViewport() {
 
 /** Endpoint publication, not keyboard frames, invalidates/re-measures this reader. */
 export function useNativeReadingRefresh(
-  snapshot: import("@/keyboard/shift/internal/policy").DockReservationSnapshot,
+  snapshot: DockReservationSnapshot,
   refresh: () => void,
   invalidate: () => void,
   measurementOwner?: NativeMeasurementContextValue,
@@ -34,7 +36,7 @@ export function useNativeReadingRefresh(
 
 export interface NativeMeasurementContextValue {
   mode: "docked" | "standalone";
-  stationaryViewportRef: RefObject<import("react-native").View | null> | null;
+  stationaryViewportRef: RefObject<View | null> | null;
 }
 export const NativeMeasurementContext = createContext<NativeMeasurementContextValue | null>(null);
 export function useNativeMeasurementContext() {
