@@ -117,7 +117,7 @@ import {
 import { AttentionPermissionCompletion } from "./attention/permission-completion.js";
 import type {
   AgentAttentionPeer,
-  AgentAttentionObjectives as AgentAttentionDescription,
+  AgentAttentionContext,
   AgentMessageAttention,
 } from "@getpaseo/protocol/agent-attention";
 
@@ -935,7 +935,7 @@ export class AgentManager {
   }
 
   /** Return only the caller's own objective membership, without continuation capability tokens. */
-  getAttentionObjectives(agentId: string): AgentAttentionDescription {
+  getAttentionObjectives(agentId: string): AgentAttentionContext {
     return (
       this.requirePublicAgent(agentId).attentionObjectives?.describe() ?? {
         activeObjectiveIds: [],
@@ -1210,7 +1210,7 @@ export class AgentManager {
     agentId: string;
     objectiveId: string;
     disposition: "waiting" | "final";
-  }): Promise<AgentAttentionDescription> {
+  }): Promise<AgentAttentionContext> {
     const agent = this.requirePublicAgent(input.agentId);
     const expectedTurnId = agent.activeTurnId;
     return this.runForegroundMutation(agent.id, async () => {

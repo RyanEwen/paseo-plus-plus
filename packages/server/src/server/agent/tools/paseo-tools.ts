@@ -20,7 +20,7 @@ import type { Logger } from "pino";
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
-import { AgentAttentionObjectivesSchema } from "@getpaseo/protocol/agent-attention";
+import { AgentAttentionContextSchema } from "@getpaseo/protocol/agent-attention";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -1961,7 +1961,7 @@ function createToolCatalog(
         description:
           "Read your accepted objectives and their output recipients. Before waiting for delegated human work, report its objective as waiting; report final only when its result for the human is ready. Use objectiveId to keep unrelated requests separate.",
         inputSchema: {},
-        outputSchema: AgentAttentionObjectivesSchema.shape,
+        outputSchema: AgentAttentionContextSchema.shape,
       },
       async () => ({
         content: [],
@@ -1980,7 +1980,7 @@ function createToolCatalog(
           objectiveId: z.string().min(1),
           disposition: z.enum(["waiting", "final"]),
         },
-        outputSchema: AgentAttentionObjectivesSchema.shape,
+        outputSchema: AgentAttentionContextSchema.shape,
       },
       async ({ objectiveId, disposition }) => ({
         content: [],

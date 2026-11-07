@@ -20,10 +20,17 @@ export const AgentAttentionLinkSchema = z.object({
 });
 export type AgentAttentionLink = z.infer<typeof AgentAttentionLinkSchema>;
 
+/** Names the exact outcome a callback message delivers to its requester. */
+export const AgentAttentionDeliveryRefSchema = z.object({
+  outcomeId: z.string(),
+  deliveryId: z.string(),
+});
+export type AgentAttentionDeliveryRef = z.infer<typeof AgentAttentionDeliveryRefSchema>;
+
 export const AgentMessageAttentionSchema = z.object({
   requesterObjective: AgentAttentionLinkSchema.optional(),
   continuation: AgentAttentionLinkSchema.optional(),
-  delivery: z.object({ outcomeId: z.string(), deliveryId: z.string() }).optional(),
+  delivery: AgentAttentionDeliveryRefSchema.optional(),
 });
 export type AgentMessageAttention = z.infer<typeof AgentMessageAttentionSchema>;
 
@@ -39,17 +46,20 @@ export const AgentObjectiveAudienceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent"), requester: AgentAttentionPeerSchema }),
 ]);
 
-export const AgentAttentionObjectivesSchema = z.object({
-  activeObjectiveIds: z.array(z.string()),
-  objectives: z.array(
-    z.object({
-      id: z.string(),
-      audience: AgentObjectiveAudienceSchema,
-      disposition: z.enum(["normal", "waiting", "final"]),
-    }),
-  ),
+/** One objective an agent is working toward, and who receives its result. */
+export const AgentAttentionObjectiveSchema = z.object({
+  id: z.string(),
+  audience: AgentObjectiveAudienceSchema,
+  disposition: z.enum(["normal", "waiting", "final"]),
 });
-export type AgentAttentionObjectives = z.infer<typeof AgentAttentionObjectivesSchema>;
+export type AgentAttentionObjective = z.infer<typeof AgentAttentionObjectiveSchema>;
+
+/** The objective context an agent reads through get_attention_context. */
+export const AgentAttentionContextSchema = z.object({
+  activeObjectiveIds: z.array(z.string()),
+  objectives: z.array(AgentAttentionObjectiveSchema),
+});
+export type AgentAttentionContext = z.infer<typeof AgentAttentionContextSchema>;
 
 export interface HumanAttentionInput {
   humanAttentionRequired?: boolean;

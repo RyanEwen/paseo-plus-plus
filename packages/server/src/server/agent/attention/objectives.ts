@@ -13,7 +13,7 @@ import {
   AgentAttentionPeerSchema,
   AgentObjectiveAudienceSchema,
   type AgentAttentionLink,
-  type AgentAttentionObjectives as AgentAttentionDescription,
+  type AgentAttentionContext,
   type AgentAttentionPeer,
   type AgentMessageAttention,
 } from "@getpaseo/protocol/agent-attention";
@@ -26,6 +26,23 @@ const objectiveSchema = z.object({
   announcedReasons: z.array(z.string()),
 });
 
+/** One exact outcome a delegation reserved or consumed as a callback to its objective. */
+const callbackDeliverySchema = z.object({
+  outcomeId: z.string(),
+  deliveryId: z.string(),
+  status: z.enum(["reserved", "consumed"]),
+});
+
+/** An outgoing request from one of this agent's objectives to a recipient agent. */
+const delegationSchema = z.object({
+  objectiveId: z.string(),
+  token: z.string(),
+  requestId: z.string(),
+  acceptedMessageIds: z.array(z.string()).optional(),
+  deliveries: z.array(callbackDeliverySchema).optional(),
+  recipient: AgentAttentionPeerSchema,
+});
+
 export const StoredAttentionObjectivesSchema = z.object({
   admissionId: z.string().optional(),
   audienceKnown: z.boolean().optional(),
@@ -33,30 +50,11 @@ export const StoredAttentionObjectivesSchema = z.object({
   blockers: StoredAttentionBlockersSchema.optional(),
   objectives: z.array(objectiveSchema),
   activeObjectiveIds: z.array(z.string()),
-  delegations: z.array(
-    z.object({
-      objectiveId: z.string(),
-      token: z.string(),
-      requestId: z.string(),
-      acceptedMessageIds: z.array(z.string()).optional(),
-      deliveries: z
-        .array(
-          z.object({
-            outcomeId: z.string(),
-            deliveryId: z.string(),
-            status: z.enum(["reserved", "consumed"]),
-          }),
-        )
-        .optional(),
-      recipient: AgentAttentionPeerSchema,
-    }),
-  ),
+  delegations: z.array(delegationSchema),
 });
 export type StoredAttentionObjectives = z.infer<typeof StoredAttentionObjectivesSchema>;
 type AttentionObjective = z.infer<typeof objectiveSchema>;
-type CallbackDelivery = NonNullable<
-  StoredAttentionObjectives["delegations"][number]["deliveries"]
->[number];
+type CallbackDelivery = z.infer<typeof callbackDeliverySchema>;
 
 interface HumanAttentionReservation {
   objective: AttentionObjective;
@@ -143,7 +141,7 @@ export class AgentAttentionObjectives {
   }
 
   /** Public context contains objective membership, never reply capability tokens. */
-  describe(): AgentAttentionDescription {
+  describe(): AgentAttentionContext {
     return {
       activeObjectiveIds: [...this.state.activeObjectiveIds],
       objectives: this.state.objectives.map(({ id, audience, disposition }) => ({
