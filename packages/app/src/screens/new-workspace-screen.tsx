@@ -872,11 +872,6 @@ function useNewWorkspaceInitialContext({
   };
 }
 
-/** Repository queries need an open picker, a connected host and a selected source directory. */
-function isPickerQueryEnabled(open: boolean, ready: boolean, hasSourceDirectory: boolean): boolean {
-  return open && ready && hasSourceDirectory;
-}
-
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
@@ -1062,16 +1057,10 @@ export function NewWorkspaceScreen({
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
-  const pickerQueryEnabled = isPickerQueryEnabled(
-    pickerOpen,
-    clientReady,
-    hasSelectedSourceDirectory,
-  );
-  const branchQueryEnabled = isPickerQueryEnabled(
-    pickerOpen || branchPickerOpen,
-    clientReady,
-    hasSelectedSourceDirectory,
-  );
+  const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
+  // Branch suggestions also feed the branch choice field, so either picker loads them.
+  const branchPickersOpen = pickerOpen || branchPickerOpen;
+  const branchQueryEnabled = branchPickersOpen && clientReady && hasSelectedSourceDirectory;
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
