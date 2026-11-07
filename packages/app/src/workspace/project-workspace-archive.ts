@@ -50,6 +50,11 @@ export function buildProjectArchiveConfirmation(input: {
   };
 }
 
+/** The user's answer to the main Archive all confirmation. */
+export type ProjectArchiveConfirmation =
+  | { kind: "cancelled" }
+  | { kind: "confirmed"; includeBackground: boolean };
+
 export type ProjectArchiveOutcome =
   | { kind: "cancelled" | "changed" }
   | { kind: "archived"; archivedCount: number }
@@ -113,17 +118,18 @@ function archiveSelectionSignature(workspaces: readonly ProjectArchiveWorkspace[
  */
 export async function archiveProjectWorkspaces(input: {
   workspaces: ProjectArchiveWorkspace[];
-  /** Return the explicit background choice, or null when the user cancels. */
-  confirm: (workspaces: ProjectArchiveWorkspace[]) => Promise<boolean | null>;
+  /** Ask the user to confirm, including the explicit background choice. */
+  confirm: (workspaces: ProjectArchiveWorkspace[]) => Promise<ProjectArchiveConfirmation>;
   refresh: () => Promise<ProjectArchiveWorkspace[]>;
   archive: (workspace: ProjectArchiveWorkspace) => Promise<void>;
   onProgress: (completed: number, total: number) => void;
   confirmWorktreeArchive?: ConfirmWorktreeArchive;
 }): Promise<ProjectArchiveOutcome> {
-  const includeBackground = await input.confirm(input.workspaces);
-  if (includeBackground === null) {
+  const confirmation = await input.confirm(input.workspaces);
+  if (confirmation.kind === "cancelled") {
     return { kind: "cancelled" };
   }
+  const { includeBackground } = confirmation;
   const selection = selectProjectArchiveScope(input.workspaces, includeBackground);
 
   const confirmed = await selectProjectWorkspacesToArchive(

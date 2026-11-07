@@ -12,7 +12,10 @@ import React from "react";
 import type { ReactElement } from "react";
 import { createProjectViewKey } from "@/projects/workspace-structure";
 import { ProjectArchiveBackgroundDialog } from "@/workspace/project-archive-background-dialog";
-import type { ProjectArchiveWorkspace } from "@/workspace/project-workspace-archive";
+import type {
+  ProjectArchiveConfirmation,
+  ProjectArchiveWorkspace,
+} from "@/workspace/project-workspace-archive";
 import type { AdaptiveModalSheetProps } from "@/components/adaptive-modal-sheet";
 
 // Keep the owning domain's confirmation and controls real; native sheet placement is a separate check.
@@ -490,7 +493,7 @@ describe("sidebar workspace render isolation", () => {
 describe("project Archive all background confirmation", () => {
   let root: Root;
   let container: HTMLDivElement;
-  const choose = vi.fn<(includeBackground: boolean | null) => void>();
+  const choose = vi.fn<(confirmation: ProjectArchiveConfirmation) => void>();
   const ordinary: ProjectArchiveWorkspace = {
     serverId: "host-a",
     workspaceId: "ordinary",
@@ -555,12 +558,12 @@ describe("project Archive all background confirmation", () => {
     expect(container.textContent).toContain("Workspaces: 2");
     expect(container.textContent).toContain("Agents: 3 (running: 2)");
     click("project-archive-confirm");
-    expect(choose.mock.calls).toEqual([[true]]);
+    expect(choose.mock.calls).toEqual([[{ kind: "confirmed", includeBackground: true }]]);
   });
 
   it("confirms only ordinary workspaces when the switch remains off", () => {
     click("project-archive-confirm");
-    expect(choose.mock.calls).toEqual([[false]]);
+    expect(choose.mock.calls).toEqual([[{ kind: "confirmed", includeBackground: false }]]);
   });
 
   it.each(["project-archive-cancel", "project-archive-dismiss"])(
@@ -568,7 +571,7 @@ describe("project Archive all background confirmation", () => {
     (testID) => {
       click("project-archive-include-background");
       click(testID);
-      expect(choose.mock.calls).toEqual([[null]]);
+      expect(choose.mock.calls).toEqual([[{ kind: "cancelled" }]]);
     },
   );
 });

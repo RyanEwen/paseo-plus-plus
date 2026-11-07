@@ -19,6 +19,7 @@ import {
   archiveProjectWorkspaces,
   buildProjectArchiveConfirmation,
   selectProjectArchiveScope,
+  type ProjectArchiveConfirmation,
   type ProjectArchiveWorkspace,
 } from "./project-workspace-archive";
 import { ProjectArchiveBackgroundDialog } from "./project-archive-background-dialog";
@@ -41,22 +42,24 @@ export function useProjectArchive(input: {
   const [confirmation, setConfirmation] = useState<BackgroundConfirmation | null>(null);
   const busy = useRef(false);
   const mounted = useRef(true);
-  const confirmationResolver = useRef<((includeBackground: boolean | null) => void) | null>(null);
+  const confirmationResolver = useRef<((confirmation: ProjectArchiveConfirmation) => void) | null>(
+    null,
+  );
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      confirmationResolver.current?.(null);
+      confirmationResolver.current?.({ kind: "cancelled" });
       confirmationResolver.current = null;
     };
   }, []);
 
-  const chooseBackground = useCallback((includeBackground: boolean | null) => {
+  const chooseBackground = useCallback((choice: ProjectArchiveConfirmation) => {
     const resolve = confirmationResolver.current;
     confirmationResolver.current = null;
     setConfirmation(null);
-    resolve?.(includeBackground);
+    resolve?.(choice);
   }, []);
 
   const archive = useCallback(() => {
@@ -96,10 +99,10 @@ export function useProjectArchive(input: {
         const outcome = await archiveProjectWorkspaces({
           workspaces,
           confirm: async (entries) => {
-            if (!mounted.current) return null;
+            if (!mounted.current) return { kind: "cancelled" };
             setPendingLabel(t("sidebar.project.archive.title"));
             if (entries.some((workspace) => workspace.background)) {
-              return new Promise<boolean | null>((resolve) => {
+              return new Promise<ProjectArchiveConfirmation>((resolve) => {
                 confirmationResolver.current = resolve;
                 setConfirmation({ workspaces: entries, hostCount: hosts.length });
               });
@@ -111,7 +114,9 @@ export function useProjectArchive(input: {
                 selection: selectProjectArchiveScope(entries, false),
               }),
             );
-            return confirmed ? false : null;
+            return confirmed
+              ? { kind: "confirmed", includeBackground: false }
+              : { kind: "cancelled" };
           },
           refresh: async () => {
             const current = useSessionStore.getState();

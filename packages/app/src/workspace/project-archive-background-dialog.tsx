@@ -8,8 +8,11 @@ import { Button } from "@/components/ui/button";
 import {
   buildProjectArchiveConfirmation,
   selectProjectArchiveScope,
+  type ProjectArchiveConfirmation,
   type ProjectArchiveWorkspace,
 } from "./project-workspace-archive";
+
+const CANCELLED: ProjectArchiveConfirmation = { kind: "cancelled" };
 
 /** A fresh, unchecked opt-in for hidden work. Dismissal and Cancel never authorize mutation. */
 export function ProjectArchiveBackgroundDialog({
@@ -21,7 +24,7 @@ export function ProjectArchiveBackgroundDialog({
   projectName: string;
   hostCount: number;
   workspaces: ProjectArchiveWorkspace[];
-  onChoose: (includeBackground: boolean | null) => void;
+  onChoose: (confirmation: ProjectArchiveConfirmation) => void;
 }) {
   const { t } = useTranslation();
   const [includeBackground, setIncludeBackground] = useState(false);
@@ -32,8 +35,11 @@ export function ProjectArchiveBackgroundDialog({
   const backgroundLabel = t("sidebar.project.archive.includeBackground", {
     count: backgroundCount,
   });
-  const cancel = useCallback(() => onChoose(null), [onChoose]);
-  const confirm = useCallback(() => onChoose(includeBackground), [onChoose, includeBackground]);
+  const cancel = useCallback(() => onChoose(CANCELLED), [onChoose]);
+  const confirm = useCallback(
+    () => onChoose({ kind: "confirmed", includeBackground }),
+    [onChoose, includeBackground],
+  );
 
   const footer = useMemo(
     () => (

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   archiveProjectWorkspaces,
+  type ProjectArchiveConfirmation,
   buildProjectArchiveConfirmation,
   selectProjectArchiveScope,
   selectProjectWorkspacesToArchive,
@@ -127,7 +128,12 @@ function archiveWorkspace(input: Partial<ProjectArchiveWorkspace> = {}): Project
 function archiveFlow(workspaces: ProjectArchiveWorkspace[]) {
   return {
     workspaces,
-    confirm: vi.fn(async (): Promise<boolean | null> => false),
+    confirm: vi.fn(
+      async (): Promise<ProjectArchiveConfirmation> => ({
+        kind: "confirmed",
+        includeBackground: false,
+      }),
+    ),
     confirmWorktreeArchive: vi.fn(async () => true),
     refresh: vi.fn(async () => workspaces),
     archive: vi.fn(async (_workspace: ProjectArchiveWorkspace) => {}),
@@ -161,7 +167,7 @@ describe("project archive confirmation and execution", () => {
 
   it("makes no mutation or risk prompt when the main confirmation is cancelled", async () => {
     const flow = archiveFlow([archiveWorkspace()]);
-    flow.confirm.mockResolvedValue(null);
+    flow.confirm.mockResolvedValue({ kind: "cancelled" });
     expect(await archiveProjectWorkspaces(flow)).toEqual({ kind: "cancelled" });
     expect(flow.archive).not.toHaveBeenCalled();
     expect(flow.refresh).not.toHaveBeenCalled();
@@ -188,7 +194,7 @@ describe("project archive confirmation and execution", () => {
     expect(selectProjectArchiveScope(workspaces, false).agentCount).toBe(1);
 
     const inclusive = archiveFlow(workspaces);
-    inclusive.confirm.mockResolvedValue(true);
+    inclusive.confirm.mockResolvedValue({ kind: "confirmed", includeBackground: true });
     expect(selectProjectArchiveScope(workspaces, true).agentCount).toBe(3);
     expect(await archiveProjectWorkspaces(inclusive)).toEqual({
       kind: "archived",
