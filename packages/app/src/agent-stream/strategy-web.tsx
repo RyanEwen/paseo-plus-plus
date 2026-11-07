@@ -1,11 +1,18 @@
 import { PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
 import { uniqueStreamSegments, precedingPromptIndex } from "./actual-row-collection";
+import { ActualPromptRowsContext } from "./actual-prompt-rows";
 import {
-  ActualPinnedRowContext,
-  ActualPromptRowsContext,
-  ActualPromptFlowGeometryContext,
-} from "./actual-prompt-rows";
-import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+  ActualRowContent,
+  hasNaturalRowChanges,
+  type MeasuredStreamRowGeometry,
+  type RowGeometryChange,
+} from "./actual-prompt/row-content.web";
+import {
+  RETAINED_PROMPT_ROW_STYLE,
+  isPromptPaintMutation,
+  positionRetainedPrompt,
+} from "./actual-prompt/retained-paint.web";
+import { useFindRowOwnership } from "./actual-prompt/use-find-row-ownership";
 import {
   getNaturalPromptRowHeight,
   syncActualPromptPin,
@@ -57,10 +64,6 @@ import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
 } from "./history-start-settle-scheduler";
-import {
-  useChatFindOriginalMessage,
-  useChatFindSelectedMessageId,
-} from "@/agent-stream/chat-find/selection";
 import { useScrollToMessage } from "./use-scroll-to-message.web";
 
 interface CreateWebStreamStrategyInput {
@@ -346,266 +349,6 @@ const StreamRowContent = React.memo(function StreamRowContent({
   return render(item, index, items);
 });
 
-interface MeasuredStreamRowGeometry {
-  width: number;
-  height: number;
-  /** Last natural publication committed by the existing ordinary measurement owner. */
-  promptFlowHeight?: string;
-}
-
-interface RowGeometryChange {
-  synchronous: boolean;
-  natural: boolean;
-}
-
-/** The painted child's resize is not evidence that its ordinary allocation changed. */
-function hasNaturalRowChanges(
-  entries: readonly ResizeObserverEntry[],
-  content: HTMLElement,
-  measurements: ReadonlyMap<string, MeasuredStreamRowGeometry>,
-): boolean {
-  const width = content.getBoundingClientRect().width;
-  for (const entry of entries) {
-    const row = entry.target.closest<HTMLElement>("[data-history-row-id]");
-    // Departed cells and retained-only paint never enter the ordinary adapter.
-    if (!row || !content.contains(row)) continue;
-    const previous = measurements.get(row.dataset.historyRowId!);
-    if (!previous || previous.width !== width) return true;
-    if (row.matches("[data-actual-prompt-row]")) {
-      const flow = row.querySelector<HTMLElement>("[data-actual-prompt-content]")?.dataset
-        .promptFlowHeight;
-      if (flow !== previous.promptFlowHeight) return true;
-      // Before preparation the one body is ordinary layout. Once prepared, only
-      // its natural publication owns height; the visual ResizeObserver may run
-      // before that publication's matching paint size has been delivered.
-      if (flow !== undefined) continue;
-    }
-    if (previous.height !== getNaturalPromptRowHeight(row)) return true;
-  }
-  return false;
-}
-
-interface ActualPromptFlowOwner {
-  scope: string | undefined;
-  node: HTMLDivElement | null;
-  geometry: NaturalMessageGeometry | null;
-}
-
-/** Keep the natural reservation on the untransformed row, while CSS sticky sees
- * only this child's current paint extent. Ref departure retires the exact owner.
- */
-function ActualRowContent({
-  pinned,
-  isPrompt,
-  bodyRef,
-  onFlowGeometryChange,
-  onPaintGeometryChange,
-  children,
-}: {
-  pinned: boolean;
-  isPrompt: boolean;
-  bodyRef?: React.RefCallback<HTMLDivElement>;
-  onFlowGeometryChange(): void;
-  onPaintGeometryChange(): void;
-  children: React.ReactNode;
-}) {
-  const scope = useContext(ActualPromptRowsContext)?.scope;
-  const owner = useMemo<ActualPromptFlowOwner>(
-    () => ({ scope, node: null, geometry: null }),
-    [scope],
-  );
-  const applyGeometry = useCallback(() => {
-    const node = owner.node;
-    if (!node) return;
-    const flow = owner.geometry ? String(owner.geometry.flowHeight) : undefined;
-    const visual = owner.geometry ? String(owner.geometry.visualHeight) : undefined;
-    const compact =
-      owner.geometry?.compactHeight === undefined
-        ? undefined
-        : String(owner.geometry.compactHeight);
-    const bounded =
-      owner.geometry?.bounded === undefined ? undefined : String(owner.geometry.bounded);
-    const naturalChanged = node.dataset.promptFlowHeight !== flow;
-    if (
-      !naturalChanged &&
-      node.dataset.promptVisualHeight === visual &&
-      node.dataset.promptCompactHeight === compact &&
-      node.dataset.promptBounded === bounded
-    )
-      return;
-    if (flow === undefined || visual === undefined) {
-      delete node.dataset.promptFlowHeight;
-      delete node.dataset.promptVisualHeight;
-    } else {
-      node.dataset.promptFlowHeight = flow;
-      node.dataset.promptVisualHeight = visual;
-    }
-    if (compact === undefined) delete node.dataset.promptCompactHeight;
-    else node.dataset.promptCompactHeight = compact;
-    if (bounded === undefined) delete node.dataset.promptBounded;
-    else node.dataset.promptBounded = bounded;
-    if (naturalChanged) onFlowGeometryChange();
-    else onPaintGeometryChange();
-  }, [owner, onFlowGeometryChange, onPaintGeometryChange]);
-  const reportGeometry = useCallback(
-    (geometry: NaturalMessageGeometry | null) => {
-      owner.geometry = geometry;
-      applyGeometry();
-    },
-    [owner, applyGeometry],
-  );
-  const registerBody = useCallback(
-    (node: HTMLDivElement | null) => {
-      owner.node = node;
-      if (!node) return;
-      applyGeometry();
-      const release = bodyRef?.(node);
-      return () => {
-        if (owner.node === node) owner.node = null;
-        if (typeof release === "function") release();
-        else bodyRef?.(null);
-      };
-    },
-    [owner, bodyRef, applyGeometry],
-  );
-  return (
-    <div ref={registerBody} data-actual-prompt-content style={streamRowStyle}>
-      <ActualPromptFlowGeometryContext.Provider value={isPrompt ? reportGeometry : null}>
-        <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
-      </ActualPromptFlowGeometryContext.Provider>
-    </div>
-  );
-}
-
-/** Derive Find's temporary original-row owner and the real rows it must retain. */
-function useFindRowOwnership(
-  owner: { scope: string } | null,
-  agentId: string,
-  active: boolean,
-  historyVirtualized: readonly StreamItem[],
-) {
-  const { messageId: originalFindMessageId, select: selectFindOriginalMessage } =
-    useChatFindOriginalMessage(owner?.scope ?? agentId, active);
-  const selectedFindMessageId = useChatFindSelectedMessageId();
-  const chatFindMessageId = originalFindMessageId ?? selectedFindMessageId;
-  // Chat find counts and highlights occurrences from the DOM, so every block row of
-  // the message it selected has to be mounted even when the scroll window is nowhere
-  // near it. Without this a hit in a far paragraph is invisible to the count and Next
-  // walks off to the following message.
-  const chatFindRowIndexes = useMemo(() => {
-    if (!chatFindMessageId) return null;
-    const indexes = historyVirtualized.flatMap((item, index) =>
-      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
-    );
-    return indexes.length > 0 ? indexes : null;
-  }, [chatFindMessageId, historyVirtualized]);
-  return { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes };
-}
-
-const retainedPromptStyle: CSSProperties = {
-  ...streamRowStyle,
-  position: "absolute",
-  left: 0,
-  top: 0,
-  height: 0,
-  overflow: "hidden",
-  visibility: "hidden",
-  pointerEvents: "none",
-  zIndex: 2,
-};
-
-interface RetainedPromptPaintInput {
-  content: HTMLElement;
-  viewport: HTMLElement;
-  prompt: StreamItem | undefined;
-  ordinary: StreamItem[];
-  virtualPrompts: readonly { id: string; top: number }[];
-  enabled: boolean;
-}
-
-/** Place the one retained body at the paint edge, without claiming an original row top. */
-function positionRetainedPrompt({
-  content,
-  viewport,
-  prompt,
-  ordinary,
-  virtualPrompts,
-  enabled,
-}: RetainedPromptPaintInput): string | null {
-  const row = content.querySelector<HTMLElement>("[data-retained-prompt-row]");
-  const host = content.querySelector<HTMLElement>("[data-stream-rows-host]");
-  if (!row || !host) return null;
-  row.style.visibility = "hidden";
-  row.setAttribute("aria-hidden", "true");
-  row.dataset.promptPinned = "false";
-  if (!enabled || !prompt || row.dataset.retainedPromptRow !== prompt.id) return null;
-  const viewportBounds = viewport.getBoundingClientRect();
-  const nextIds = new Set(
-    ordinary.flatMap((item) =>
-      item.kind === "user_message" &&
-      item.timelineCursor?.epoch === prompt.timelineCursor?.epoch &&
-      item.timelineCursor !== undefined &&
-      prompt.timelineCursor !== undefined &&
-      item.timelineCursor.seq > prompt.timelineCursor.seq
-        ? [item.id]
-        : [],
-    ),
-  );
-  let nextTop = Infinity;
-  for (const candidate of virtualPrompts) {
-    if (nextIds.has(candidate.id)) nextTop = Math.min(nextTop, candidate.top - viewport.scrollTop);
-  }
-  for (const candidate of content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]")) {
-    if (nextIds.has(candidate.dataset.historyRowId!))
-      nextTop = Math.min(nextTop, candidate.getBoundingClientRect().top - viewportBounds.top);
-  }
-  if (nextTop <= 0) return null;
-  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
-  if (!body) return null;
-  const collision = Math.min(0, nextTop - body.getBoundingClientRect().height);
-  row.style.top = `${viewportBounds.top - host.getBoundingClientRect().top + collision}px`;
-  // Clip all descendant overflow at the actual viewport end, including preparation.
-  // This is a paint bound, never a synthetic inline allocation or virtual estimate.
-  row.style.height = `${viewport.clientHeight}px`;
-  row.style.visibility = "visible";
-  row.setAttribute("aria-hidden", "false");
-  row.dataset.promptPinned = "true";
-  return prompt.id;
-}
-
-/** Retained-only paint changes are not transcript mutations for upstream bottom following. */
-function isRetainedPromptMutation(record: MutationRecord): boolean {
-  const target = record.target instanceof Element ? record.target : record.target.parentElement;
-  if (target?.closest("[data-retained-prompt-row]")) return true;
-  const changed = [...record.addedNodes, ...record.removedNodes];
-  return (
-    changed.length > 0 &&
-    changed.every((node) => node instanceof Element && node.matches("[data-retained-prompt-row]"))
-  );
-}
-
-const promptPaintMutationSelector = [
-  '[data-testid="user-message-disclosure"]',
-  '[data-testid="user-message-content-target"]',
-  '[data-testid="user-message-action-backdrop"]',
-  '[data-testid="user-message-suffix-mask"]',
-  "[data-user-message-compact-occlusion]",
-  "[data-user-message-paint-backdrop]",
-].join(",");
-
-/** Only declared sticky paint is excluded; original body mutations still follow. */
-function isPromptPaintMutation(record: MutationRecord): boolean {
-  if (isRetainedPromptMutation(record)) return true;
-  const target = record.target instanceof Element ? record.target : record.target.parentElement;
-  if (!target?.closest('[data-testid="user-message"]')) return false;
-  if (target.closest(promptPaintMutationSelector)) return true;
-  const changed = [...record.addedNodes, ...record.removedNodes];
-  return (
-    changed.length > 0 &&
-    changed.every((node) => node instanceof Element && node.matches(promptPaintMutationSelector))
-  );
-}
-
 interface RetainedPromptRowInput {
   item: StreamItem | undefined;
   pinnedRowId: string | null;
@@ -626,7 +369,7 @@ function renderRetainedPromptRow({
       key={item.id}
       data-retained-prompt-row={item.id}
       aria-hidden="true"
-      style={retainedPromptStyle}
+      style={RETAINED_PROMPT_ROW_STYLE}
     >
       <ActualRowContent
         onFlowGeometryChange={onGeometryChange}
