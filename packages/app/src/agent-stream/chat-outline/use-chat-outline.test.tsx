@@ -2460,16 +2460,12 @@ describe("index-free cache-only context", () => {
   it("continues a bounded canonical predecessor read only on explicit retry", async () => {
     let end = 246;
     let calls = 0;
-    const reader = vi.fn(
-      async (
-        request: Parameters<import("../fetch-reading-prompt-context").ContextPageReader>[0],
-      ) => {
-        calls += 1;
-        if (request.limit === 1) return page([entry(246, 256)]);
-        if (calls === 9) return page([entry(64, 64, "user_message")], false);
-        return page([entry(--end, end)]);
-      },
-    );
+    const reader = vi.fn(async (request: Parameters<ContextPageReader>[0]) => {
+      calls += 1;
+      if (request.limit === 1) return page([entry(246, 256)]);
+      if (calls === 9) return page([entry(64, 64, "user_message")], false);
+      return page([entry(--end, end)]);
+    });
     const owner = createCanonicalPromptContexts();
     const channel = {};
     await expect(
