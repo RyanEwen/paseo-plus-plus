@@ -45,6 +45,7 @@ describe("native release version", () => {
             APP_VARIANT: variant,
             PASEO_PREVIEW_BUILD: preview ? "1" : "0",
             PASEO_FDROID_BUILD: fdroid ? "1" : "0",
+            PASEO_PREVIEW_BUILD_NUMBER: "14",
             PASEO_PREVIEW_EXPO_PROJECT_ID: "00000000-0000-0000-0000-000000000000",
             PASEO_PREVIEW_EXPO_OWNER: "validation",
             PASEO_PREVIEW_EXPO_SLUG: "validation",
