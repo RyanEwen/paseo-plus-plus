@@ -243,9 +243,6 @@ export function nativeBottomDistance(
 ) {
   return Math.max(0, height + bottomInset - viewport - offset);
 }
-export function nativeJumpOffset(offset: number, top: number, inset: number, maximum: number) {
-  return Math.max(0, Math.min(maximum, offset + top - inset));
-}
 /** Match RN 0.86.3's forward sticky interpolation, including an unknown next cell. */
 export function nativeStickyTranslation(
   y: number,
