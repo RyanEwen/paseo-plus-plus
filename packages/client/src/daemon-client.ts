@@ -1,4 +1,7 @@
-import type { AttachmentReference } from "@getpaseo/protocol/attachments";
+import {
+  ATTACHMENT_ORIGINAL_MAX_BYTES,
+  type AttachmentReference,
+} from "@getpaseo/protocol/attachments";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -5273,7 +5276,7 @@ export class DaemonClient {
       attachment: true,
       cwd: "",
       path: referenceId,
-      maxBytes: 16 * 1024 * 1024,
+      maxBytes: ATTACHMENT_ORIGINAL_MAX_BYTES,
     });
     try {
       const result = await this.sendNamespacedCorrelatedSessionRequest<"attachments.read.response">(
@@ -7178,7 +7181,7 @@ export class DaemonClient {
     const invalid =
       frame.metadata.size < 1 ||
       frame.metadata.encoding !== "binary" ||
-      frame.metadata.size > 16 * 1024 * 1024 ||
+      frame.metadata.size > ATTACHMENT_ORIGINAL_MAX_BYTES ||
       this.activeBinaryFileTransfers.has(frame.requestId) ||
       this.completedBinaryFileReads.has(frame.requestId);
     if (!invalid) return true;

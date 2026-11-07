@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, readFile, lstat, unlink, symlink, readdir } fro
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { PROVIDER_IMAGE_MAX_BYTES } from "../agent/providers/provider-image-output.js";
+import { ATTACHMENT_ORIGINAL_MAX_BYTES } from "@getpaseo/protocol/attachments";
 
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
@@ -100,7 +100,7 @@ describe("durable owned screenshot originals", () => {
     const second = Buffer.concat([signature, Buffer.from([1, 2, 3])]);
     const firstBytes = Buffer.from(PNG, "base64").length;
     const entry = ATTACHMENT_LIMITS.entryCharge;
-    const reservation = PROVIDER_IMAGE_MAX_BYTES + 2 * entry;
+    const reservation = ATTACHMENT_ORIGINAL_MAX_BYTES + 2 * entry;
     // Writer entry, one blob with its entry charge, and two reference entries.
     const chargedAfterShared = entry + (firstBytes + entry) + 2 * entry;
     const fixture = await durableFixture({
@@ -122,7 +122,7 @@ describe("durable owned screenshot originals", () => {
   test("byte accounting admits exactly up to the global limit after a commit", async () => {
     const firstBytes = Buffer.from(PNG, "base64").length;
     const entry = ATTACHMENT_LIMITS.entryCharge;
-    const reservation = PROVIDER_IMAGE_MAX_BYTES + 2 * entry;
+    const reservation = ATTACHMENT_ORIGINAL_MAX_BYTES + 2 * entry;
     const charged = entry + (firstBytes + entry) + entry;
     const exact = await durableFixture({ globalBytes: reservation + charged });
     await saveOriginal(exact.store, "agent-a");
@@ -139,7 +139,7 @@ describe("durable owned screenshot originals", () => {
     await writer.commit({ data: PNG, mimeType: "image/png" });
     await writer.release();
     await expect(fixture.store.reserve({ agentId: "agent-a" })).rejects.toThrow("quota");
-    const limited = await durableFixture({ globalBytes: PROVIDER_IMAGE_MAX_BYTES });
+    const limited = await durableFixture({ globalBytes: ATTACHMENT_ORIGINAL_MAX_BYTES });
     await expect(limited.store.reserve({ agentId: "agent-a" })).rejects.toThrow("quota");
     const fullDisk = await durableFixture({ freeBytes: Number.MAX_SAFE_INTEGER });
     await expect(fullDisk.store.reserve({ agentId: "agent-a" })).rejects.toThrow("disk");
@@ -267,7 +267,7 @@ describe("durable owned screenshot originals", () => {
     await fixture.store.close();
     const constrained = await AttachmentStore.create(fixture.home, {
       ...fixture.limits,
-      globalBytes: PROVIDER_IMAGE_MAX_BYTES + 8192,
+      globalBytes: ATTACHMENT_ORIGINAL_MAX_BYTES + 8192,
     });
     fixture.stores.push(constrained);
     await expect(constrained.reserve({ agentId: "agent-a" })).rejects.toThrow("quota");

@@ -1,8 +1,14 @@
+import {
+  ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH,
+  ATTACHMENT_ORIGINAL_MAX_BYTES,
+} from "@getpaseo/protocol/attachments";
 // Best-effort capture geometry checks and enforced queue limits, independent of optional policies.
 // Electron/CDP do not expose an atomic geometry snapshot or native allocation budget.
 export const CAPTURE_MAX_AXIS = 8192;
 export const CAPTURE_MAX_PIXELS = 8_000_000;
-export const CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
+/** Encoded screenshot ceiling, matching the durable original limit it is saved under. */
+export const CAPTURE_MAX_BYTES = ATTACHMENT_ORIGINAL_MAX_BYTES;
+export const CAPTURE_MAX_BASE64_LENGTH = ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH;
 export const CAPTURE_MAX_PENDING = 4;
 export const CAPTURE_TIMEOUT_MS = 5_000;
 

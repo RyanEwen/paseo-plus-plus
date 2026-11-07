@@ -2,14 +2,13 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  ATTACHMENT_LIST_PAGE_MAX,
+  ATTACHMENT_ORIGINAL_MAX_BYTES,
   AttachmentReferenceSchema,
   AttachmentOwnerSchema,
+  AttachmentWorkspaceIdSchema,
   type AttachmentReference,
 } from "@getpaseo/protocol/attachments";
-import {
-  admitProviderImage,
-  PROVIDER_IMAGE_MAX_BYTES,
-} from "../agent/providers/provider-image-output.js";
 import { AttachmentAccounting, type PublicationEffects } from "./accounting.js";
 import {
   AttachmentStoreError,
@@ -19,6 +18,7 @@ import {
   withAttachmentResource,
   type AttachmentFileSystem,
 } from "./io.js";
+import { admitImage } from "./admission.js";
 import { ATTACHMENT_LIMITS, type AttachmentLimits } from "./limits.js";
 import { ReadLease, type AttachmentReadLease } from "./read-lease.js";
 import { AttachmentReferenceIds } from "./reference-id.js";
@@ -176,7 +176,7 @@ export class AttachmentStore {
     AttachmentOwnerSchema.parse(owner.agentId);
     if (
       owner.workspaceId !== undefined &&
-      (owner.workspaceId.length < 1 || owner.workspaceId.length > 256)
+      !AttachmentWorkspaceIdSchema.safeParse(owner.workspaceId).success
     )
       throw new AttachmentStoreError("Attachment workspace provenance is invalid.");
     signal?.throwIfAborted();
@@ -184,7 +184,7 @@ export class AttachmentStore {
       throw new AttachmentStoreError(this.writeError ?? "Attachment writes are unavailable.");
     if (this.activeWrite)
       throw new AttachmentStoreError("Attachment storage is busy. No screenshot was captured.");
-    if (this.accounting.exceedsQuota(owner.agentId, PROVIDER_IMAGE_MAX_BYTES))
+    if (this.accounting.exceedsQuota(owner.agentId, ATTACHMENT_ORIGINAL_MAX_BYTES))
       throw new AttachmentStoreError(
         "Attachment storage quota cannot reserve this screenshot. No screenshot was captured.",
       );
@@ -208,7 +208,7 @@ export class AttachmentStore {
     };
 
     try {
-      const reservation = PROVIDER_IMAGE_MAX_BYTES + 2 * this.limits.entryCharge;
+      const reservation = ATTACHMENT_ORIGINAL_MAX_BYTES + 2 * this.limits.entryCharge;
       const free = await this.io.statfs(this.directory);
       if (free.bavail * free.bsize < this.limits.freeBytes + reservation)
         throw new AttachmentStoreError("Attachment storage has insufficient free disk space.");
@@ -309,7 +309,7 @@ export class AttachmentStore {
     signal?: AbortSignal,
   ): Promise<AttachmentReference> {
     this.assertWriteActive(signal);
-    const admitted = admitProviderImage(image);
+    const admitted = admitImage(image);
     const previous = this.accounting.findOwnedCopy(
       owner.agentId,
       admitted.sha256,
@@ -398,7 +398,7 @@ export class AttachmentStore {
   async list(
     agentId: string,
     after?: string,
-    limit = 50,
+    limit = ATTACHMENT_LIST_PAGE_MAX,
   ): Promise<{ references: AttachmentReference[]; next: string | null }> {
     AttachmentOwnerSchema.parse(agentId);
     if (!this.writable) {

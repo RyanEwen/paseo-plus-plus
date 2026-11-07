@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { AttachmentReference } from "@getpaseo/protocol/attachments";
+import { ATTACHMENT_LIST_PAGE_MAX, type AttachmentReference } from "@getpaseo/protocol/attachments";
 import { AttachmentStoreError, hasErrnoCode, type AttachmentFileSystem } from "./io.js";
 import type { AttachmentLimits } from "./limits.js";
 
@@ -159,7 +159,8 @@ export class AttachmentAccounting {
     const references = [...this.references.values()]
       .filter((reference) => reference.agentId === agentId && (!after || reference.id > after))
       .sort(compareReferenceIds);
-    const page = references.slice(0, Math.min(50, Math.max(1, limit)));
+    // Callers pass a protocol-validated limit; clamp only to keep a direct call bounded.
+    const page = references.slice(0, Math.min(ATTACHMENT_LIST_PAGE_MAX, Math.max(1, limit)));
     const next = references.length > page.length ? page[page.length - 1].id : null;
     return { references: page, next };
   }

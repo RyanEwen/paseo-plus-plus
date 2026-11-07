@@ -26,6 +26,7 @@ import {
   assertCaptureGeometry,
   CaptureAdmission,
   CaptureAdmissionError,
+  CAPTURE_MAX_BASE64_LENGTH,
   CAPTURE_MAX_BYTES,
   CAPTURE_TIMEOUT_MS,
 } from "./capture-admission.js";
@@ -1522,7 +1523,7 @@ async function executeFullPageScreenshot(
           "browser_screenshot fullPage returned no data",
         );
       }
-      if (screenshot.data.length > Math.ceil(CAPTURE_MAX_BYTES / 3) * 4) {
+      if (screenshot.data.length > CAPTURE_MAX_BASE64_LENGTH) {
         throw new CaptureAdmissionError("Screenshot exceeds the 16 MiB encoded image limit.");
       }
       return {

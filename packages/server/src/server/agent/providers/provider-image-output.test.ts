@@ -4,7 +4,16 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import { projectTimelineRows } from "../timeline-projection.js";
 import { describe, expect, test } from "vitest";
-import { MAX_PROVIDER_IMAGE_BYTES, isProviderImageMarkdown, materializeProviderImage, renderProviderImageOutputAsAssistantMarkdown, PROVIDER_IMAGE_MAX_BYTES, PROVIDER_IMAGE_MAX_BASE64_LENGTH } from "./provider-image-output.js";
+import {
+  MAX_PROVIDER_IMAGE_BYTES,
+  isProviderImageMarkdown,
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "./provider-image-output.js";
+import {
+  ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH,
+  ATTACHMENT_ORIGINAL_MAX_BYTES,
+} from "@getpaseo/protocol/attachments";
 
 const HASH = "a".repeat(64);
 const PNG =
@@ -125,18 +134,18 @@ describe("materializeProviderImage", async () => {
     const directory = path.dirname(accepted.path);
     const before = readdirSync(directory);
     // Trimming first would hide this overflow and report malformed base64 instead.
-    const oversized = " ".repeat(PROVIDER_IMAGE_MAX_BASE64_LENGTH + 257);
+    const oversized = " ".repeat(ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH + 257);
     for (const data of [oversized, `data:image/png;base64,${oversized}`]) {
       await expect(materializeProviderImage({ data, mimeType: "image/png" })).rejects.toThrow(
         "16 MiB",
       );
     }
     // Within the encoded-character ceiling, but greater than the decoded-byte ceiling.
-    const decodedOverflow = "A".repeat(PROVIDER_IMAGE_MAX_BASE64_LENGTH);
+    const decodedOverflow = "A".repeat(ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH);
     await expect(
       materializeProviderImage({ data: decodedOverflow, mimeType: "image/png" }),
     ).rejects.toThrow("16 MiB");
-    expect(PROVIDER_IMAGE_MAX_BYTES % 3).toBe(1);
+    expect(ATTACHMENT_ORIGINAL_MAX_BYTES % 3).toBe(1);
     expect(readdirSync(directory)).toEqual(before);
   });
 
@@ -166,7 +175,7 @@ describe("materializeProviderImage", async () => {
   test("renders explicit rejection without forwarding oversized data to a materializer", async () => {
     let calls = 0;
     const item = await renderProviderImageOutputAsAssistantMarkdown(
-      { data: "A".repeat(PROVIDER_IMAGE_MAX_BASE64_LENGTH + 257) },
+      { data: "A".repeat(ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH + 257) },
       {
         materialize() {
           calls++;
