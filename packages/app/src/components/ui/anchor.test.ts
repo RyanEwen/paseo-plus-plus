@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   computePosition,
   getCursorAnchorRect,
-  getPointerAnchorRect,
   getTransformOrigin,
   type Rect,
 } from "./anchor";
@@ -101,51 +100,6 @@ describe("getTransformOrigin", () => {
   ] as const)("emits a native-ready origin for %s/%s", (placement, alignment, expected) => {
     // Theme updates may reach Fabric without React Native's JS string preprocessing.
     expect(getTransformOrigin(placement, alignment)).toEqual(expected);
-  });
-});
-
-describe("pointer-anchored divider cards", () => {
-  it("opens beside the pointer halfway down a tall divider instead of its top", () => {
-    expect(
-      position({
-        triggerRect: getPointerAnchorRect(
-          { x: 400, y: 40, width: 10, height: 700 },
-          { x: 405, y: 520 },
-          "right",
-        ),
-        placement: "right",
-        flipHorizontal: true,
-      }),
-    ).toEqual({ x: 414, y: 520, actualPlacement: "right" });
-  });
-  it("centers a horizontal-divider card near the pointer and flips above the bottom edge", () => {
-    expect(
-      position({
-        triggerRect: getPointerAnchorRect(
-          { x: 0, y: 750, width: 1000, height: 10 },
-          { x: 650, y: 755 },
-          "bottom",
-        ),
-        placement: "bottom",
-        alignment: "center",
-      }),
-    ).toEqual({ x: 550, y: 646, actualPlacement: "top" });
-  });
-  it("retains viewport clamping and flips to the left at the right edge", () => {
-    expect(
-      position({
-        triggerRect: getPointerAnchorRect(
-          { x: 950, y: 0, width: 10, height: 800 },
-          { x: 955, y: 790 },
-          "right",
-        ),
-        placement: "right",
-        flipHorizontal: true,
-      }),
-    ).toEqual({ x: 746, y: 692, actualPlacement: "left" });
-  });
-  it("keeps trigger-based positioning when opened without a pointer", () => {
-    expect(getPointerAnchorRect(TRIGGER, null, "right")).toBe(TRIGGER);
   });
 });
 

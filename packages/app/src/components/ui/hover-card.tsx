@@ -26,10 +26,10 @@ import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import {
   computePosition,
   getCursorAnchorRect,
-  getPointerAnchorRect,
   measureElement,
   type Alignment,
   type Placement,
+  type Point,
   type Rect,
   type Size,
 } from "./anchor";
@@ -38,7 +38,7 @@ const CLOSE_GRACE_MS = 100;
 
 interface HoverCardContextValue {
   open: boolean;
-  pointerRef: RefObject<{ x: number; y: number } | null>;
+  pointerRef: RefObject<Point | null>;
   layer: number;
   setTriggerRef: (node: View | null) => void;
   triggerRef: RefObject<View | null>;
@@ -93,7 +93,7 @@ function WebHoverCard({
   const layer = useOverlayLayer("floating");
   const triggerRef = useRef<View>(null);
   const contentRef = useRef<View>(null);
-  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerRef = useRef<Point | null>(null);
   const [open, setOpen] = useState(false);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -366,8 +366,8 @@ export function HoverCardTrigger({
 
 interface HoverCardContentProps {
   placement: Placement;
-  /** Anchor to the trigger, an adjacent pointer edge, or the cursor point. */
-  anchor?: "trigger" | "pointer" | "cursor";
+  /** Anchor to the trigger, or to the cursor point clamped to the trigger. */
+  anchor?: "trigger" | "cursor";
   alignment?: Alignment;
   offset?: number;
   /** Layered over the default popover surface. */
@@ -411,7 +411,7 @@ function HoverCardSurface({
   layer: number;
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
-  pointerRef: RefObject<{ x: number; y: number } | null>;
+  pointerRef: RefObject<Point | null>;
 }): ReactElement {
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<Size | null>(null);
@@ -423,18 +423,14 @@ function HoverCardSurface({
     const point = anchor === "trigger" ? null : pointerRef.current;
     void measureElement(triggerRef.current).then((rect) => {
       if (!cancelled) {
-        const anchorRect =
-          anchor === "cursor"
-            ? getCursorAnchorRect(rect, point)
-            : getPointerAnchorRect(rect, point, placement);
-        setTriggerRect(anchorRect);
+        setTriggerRect(getCursorAnchorRect(rect, point));
       }
       return undefined;
     });
     return () => {
       cancelled = true;
     };
-  }, [anchor, placement, pointerRef, triggerRef]);
+  }, [anchor, pointerRef, triggerRef]);
 
   useEffect(() => {
     if (!triggerRect || !contentSize) return;

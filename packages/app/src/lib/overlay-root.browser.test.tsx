@@ -194,7 +194,7 @@ describe("HoverCard above the resident browser plane", () => {
                     <span>Divider</span>
                   </HoverCardTrigger>
                 </div>
-                <HoverCardContent placement="right" anchor="pointer" testID="dock-hover-presets">
+                <HoverCardContent placement="right" testID="dock-hover-presets">
                   <button type="button" onClick={select} style={DOCK_PRESET_BUTTON_STYLE}>
                     60/40
                   </button>

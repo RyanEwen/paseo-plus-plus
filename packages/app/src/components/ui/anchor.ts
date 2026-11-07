@@ -20,28 +20,26 @@ export interface Size {
   height: number;
 }
 
-/** Keep a long trigger's adjacent edge while placing its popup near the opening pointer. */
-export function getPointerAnchorRect(
-  rect: Rect,
-  point: { x: number; y: number } | null,
-  placement: Placement,
-): Rect {
-  if (!point) return rect;
-  if (placement === "left" || placement === "right") {
-    return { ...rect, y: Math.max(rect.y, Math.min(rect.y + rect.height, point.y)), height: 0 };
-  }
-  return { ...rect, x: Math.max(rect.x, Math.min(rect.x + rect.width, point.x)), width: 0 };
+/** A viewport position in CSS pixels, such as the last pointer location over a trigger. */
+export interface Point {
+  x: number;
+  y: number;
 }
 
-/** Anchor a surface to the pointer point, clamped to the measured trigger bounds. */
-export function getCursorAnchorRect(rect: Rect, point: { x: number; y: number } | null): Rect {
-  if (!point) return rect;
+/** The nearest point inside `rect`, so a stale or overshooting pointer stays on its trigger. */
+function clampPointToRect(point: Point, rect: Rect): Point {
   return {
     x: Math.max(rect.x, Math.min(rect.x + rect.width, point.x)),
     y: Math.max(rect.y, Math.min(rect.y + rect.height, point.y)),
-    width: 0,
-    height: 0,
   };
+}
+
+/** Anchor a surface to the pointer point, clamped to the measured trigger bounds. */
+export function getCursorAnchorRect(rect: Rect, point: Point | null): Rect {
+  if (!point) {
+    return rect;
+  }
+  return { ...clampPointToRect(point, rect), width: 0, height: 0 };
 }
 
 /** Gap kept between the surface and the edge of the display area. */
