@@ -70,7 +70,7 @@ function selectIconPath(icon: string | Record<string, string> | undefined): stri
   }
   const sizes = Object.keys(icon)
     .map(Number)
-    .filter((size) => Number.isFinite(size) && size > 0)
+    .filter((declared) => Number.isFinite(declared) && declared > 0)
     .sort((a, b) => a - b);
   const size = sizes.find((value) => value >= 32) ?? sizes.at(-1);
   if (size === undefined) {

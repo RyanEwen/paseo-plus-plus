@@ -204,8 +204,8 @@ export function registerBrowserExtensionCompatibility(
   /** Deliver only to extension contexts in the browser profile, never app or remote-page preloads. */
   function emit(id: string, name: string, ...args: unknown[]): void {
     // Frames already receive native storage events; only workers need them delivered here.
-    const frames = name === "storage.onChanged" ? [] : webContents.getAllWebContents();
-    for (const contents of frames) {
+    const frameContents = name === "storage.onChanged" ? [] : webContents.getAllWebContents();
+    for (const contents of frameContents) {
       if (
         contents.session === profile &&
         contents.getURL().startsWith(`chrome-extension://${id}/`)
@@ -436,12 +436,12 @@ export function registerBrowserExtensionCompatibility(
     return undefined;
   }
 
-  function requestWebNavigation(request: ApiRequest): unknown {
-    const { method, args } = request;
+  function requestWebNavigation(apiCall: ApiRequest): unknown {
+    const { method, args } = apiCall;
     if (method !== "webNavigation.getFrame" && method !== "webNavigation.getAllFrames") {
       throw unsupportedExtensionApi(method);
     }
-    requirePermission(request, "webNavigation");
+    requirePermission(apiCall, "webNavigation");
     const frameInput = z
       .object({ tabId: z.number(), frameId: z.number().optional() })
       .parse(args[0]);
@@ -468,14 +468,14 @@ export function registerBrowserExtensionCompatibility(
     webNavigation: requestWebNavigation,
     windows: ({ method, args, caller, extension }) =>
       windows.request({ method, args, owner: ownerWindow(caller), extension }),
-    notifications: (request) => {
-      requirePermission(request, "notifications");
-      return notifications.request(request.method, request.args, request.extension.id);
+    notifications: (apiCall) => {
+      requirePermission(apiCall, "notifications");
+      return notifications.request(apiCall.method, apiCall.args, apiCall.extension.id);
     },
     contextMenus: ({ method, args, extension }) => contextMenus.request(extension.id, method, args),
-    alarms: (request) => {
-      requirePermission(request, "alarms");
-      return alarms.request(request.extension.id, request.method, request.args);
+    alarms: (apiCall) => {
+      requirePermission(apiCall, "alarms");
+      return alarms.request(apiCall.extension.id, apiCall.method, apiCall.args);
     },
   };
 

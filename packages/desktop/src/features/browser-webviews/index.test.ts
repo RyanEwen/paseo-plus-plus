@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
 import {
   getPaseoBrowserIdForWebContents,
-  getPaseoBrowserWebviewRegistry,
   getPaseoBrowserWorkspaceId,
   isPaseoBrowserWebviewAttach,
   preparePaseoBrowserWebContents,
