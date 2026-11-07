@@ -122,6 +122,8 @@ function renamedRelease() {
   return preview;
 }
 
+// COMPAT(fork-repo-rename): added in v0.11.2-preview, remove after the final prerelease updater
+// bridge is retired (no calendar date; see docs/release.md, final prerelease bridge).
 describe("daemon repository rename bridge", () => {
   test("accepts canonical assets from the renamed repository", () => {
     const preview = renamedRelease();

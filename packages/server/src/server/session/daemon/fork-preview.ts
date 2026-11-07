@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 
-// Discover through the current repository; retain canonical legacy asset URL compatibility.
+// Discover releases through the current repository.
 const REPOSITORY = "RyanEwen/paseo-plus-plus";
+// COMPAT(fork-repo-rename): added in v0.11.2-preview, remove after the final prerelease updater
+// bridge is retired (no calendar date; see docs/release.md, final prerelease bridge).
+// Releases published before the rename keep canonical asset URLs under the legacy name.
 const RELEASE_REPOSITORIES = [REPOSITORY, "RyanEwen/paseo"];
 const ReleaseAssetSchema = z.object({ name: z.string(), browser_download_url: z.string().url() });
 const ReleaseSchema = z.object({
