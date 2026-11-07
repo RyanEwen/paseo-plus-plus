@@ -9,14 +9,21 @@ export function selectAccentColorSupport(
   return selectedHost === null || selectHostFeature(state, selectedHost, "appSettingsAccentColor");
 }
 
+/** App settings being published, and whether the selected host can store the accent. */
+interface AccentExportInput {
+  app: Record<string, unknown>;
+  supported: boolean;
+}
+
 /**
- * Explicit initialization exports only preferences the selected host can store.
- * Never apply this to pending edits: those keep their original host and failure behavior.
+ * Explicit initialization exports only preferences the selected host can store: without support,
+ * omit accentColor and keep every other key. Never apply this to pending edits: those keep their
+ * original host and failure behavior.
  */
-export function exportSupportedAccentSettings(
-  app: Record<string, unknown>,
-  supported: boolean,
-): Record<string, unknown> {
+export function exportSupportedAccentSettings({
+  app,
+  supported,
+}: AccentExportInput): Record<string, unknown> {
   if (supported) return app;
   const { accentColor: _accentColor, ...rest } = app;
   return rest;

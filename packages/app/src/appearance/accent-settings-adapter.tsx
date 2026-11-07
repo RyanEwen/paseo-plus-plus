@@ -14,7 +14,7 @@ const ACCENT_SETTINGS_ADAPTER: SettingsDomainAdapter = {
   id: "accent",
   filterAppExport(app, context) {
     const supported = selectAccentColorSupport(useSessionStore.getState(), context.selectedHost);
-    return exportSupportedAccentSettings(app, supported);
+    return exportSupportedAccentSettings({ app, supported });
   },
 };
 
