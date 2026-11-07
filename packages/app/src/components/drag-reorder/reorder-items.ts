@@ -35,13 +35,15 @@ export function describeDragReorderMove<T>({
   const anchorIndex = from < to ? to - 1 : to + 1;
   const activeKey = keyExtractor(items[to]!, to);
   const overKey = keyExtractor(items[anchorIndex]!, anchorIndex);
-  if (
-    originalItems &&
+  // A stale snapshot means the drop result no longer describes the rows the user dragged.
+  const snapshotChanged =
+    originalItems !== undefined &&
     (originalItems.length !== items.length ||
       keyExtractor(originalItems[from]!, from) !== activeKey ||
-      keyExtractor(originalItems[to]!, to) !== overKey)
-  )
+      keyExtractor(originalItems[to]!, to) !== overKey);
+  if (snapshotChanged) {
     return null;
+  }
   return {
     activeKey,
     overKey,

@@ -29,6 +29,7 @@ import {
   type HostRuntimeStorage,
 } from "./host-runtime";
 import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
+import { matchesRowExpectation } from "./replica-cache/row-store-expectation";
 
 import { subscriptionFixture } from "./subscription-fixture";
 import { readDesktopManagedLocalCredential } from "@/desktop/daemon/local-credential";
@@ -640,12 +641,7 @@ function createMemoryReplicaRowStore(): ReplicaRowStore {
     },
     applyIfUnchanged: async (changes, expected) => {
       if (
-        expected.some((condition) => {
-          const current = rows.get(keyOf(condition));
-          return condition.payload === null
-            ? current !== undefined
-            : current === undefined || current.payload !== condition.payload;
-        })
+        !expected.every((condition) => matchesRowExpectation(rows.get(keyOf(condition)), condition))
       )
         return false;
       for (const key of changes.deletes) rows.delete(keyOf(key));

@@ -112,8 +112,6 @@ flowchart LR
 6. Assemble `integration` from feature tips and run combined qualification. Merge only reviewed, accepted feature tips into `main`; keep unfinished or unqualified work pending.
 7. Report the before and after release tags and exact SHAs for every layer; accepted and deferred changes; dropped upstream fixes; preserved unpublished work and refs; check results and limitations; and whether changes are local or published. Do not claim completion for blocked branches or qualification that has not run.
 
-The first sync through the layers has not run yet. Update this section with what it teaches.
-
 Release only the exact validated fork integration SHA through [fork preview distribution](release.md#fork-preview-distribution). Temporary release coordination is covered by [release branch discipline](release.md#release-branch-discipline). Published-owner archival follows [released feature workspaces](release.md#released-feature-workspaces); it is separate from source integration and review assembly.
 
 ## Work moves through explicit states
@@ -244,11 +242,3 @@ inputs while a browser or native case is running. Record the source identity alo
 After assembly, run the required combined static checks and the integration cases justified by
 changed interactions or resolved conflicts. Reuse unchanged owner results; do not call their
 results proof of new integration behavior. Keep unqualified native changes visible in the status.
-
-## Improve setup before increasing concurrency
-
-Repeated missing-dependency repairs consume the validation queue and obscure source failures.
-The next tooling improvement should be a repeatable worktree preflight, backed by the existing
-setup and build targets, that records dependency provenance, local cache paths, generated outputs,
-and available runtime prerequisites. It should fail with a specific missing prerequisite before
-feature work starts. This guide documents that target; it does not claim the preflight exists.
