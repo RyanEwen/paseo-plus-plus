@@ -70,7 +70,6 @@ import {
   type GestureResponderEvent,
   type LayoutChangeEvent,
   type TextStyle,
-  type TextLayoutEvent,
 } from "react-native";
 import Animated, {
   Easing,
@@ -106,10 +105,6 @@ interface UserMessageProps {
   isLastInGroup?: boolean;
   isPending?: boolean;
   disableOuterSpacing?: boolean;
-  /** Prompt navigation measures the original bubble and its text lines. */
-  bubbleRef?: React.Ref<React.ComponentRef<typeof View>>;
-  onBubbleLayout?: () => void;
-  onBubbleTextLayout?: (event: TextLayoutEvent) => void;
   /** Prompt navigation controls shown beside the timestamp, rewind and copy actions. */
   navigationActions?: ReactNode;
   /** Explicit arrow navigation holds actions independently of actual pointer hover. */
@@ -418,9 +413,6 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   isPending = false,
   disableOuterSpacing,
-  bubbleRef,
-  onBubbleLayout,
-  onBubbleTextLayout,
   navigationActions,
   keepActionsVisible,
 }: UserMessageProps) {
@@ -501,7 +493,7 @@ export const UserMessage = memo(function UserMessage({
         onPointerLeave={handlePointerLeave}
       >
         {sender ? <MessageSender sender={sender} serverId={serverId} /> : null}
-        <View style={userMessageStylesheet.bubble} ref={bubbleRef} onLayout={onBubbleLayout}>
+        <View style={userMessageStylesheet.bubble}>
           <MessagePreview>
             {hasImages ? (
               <View style={imagePreviewContainerStyle}>
@@ -534,12 +526,7 @@ export const UserMessage = memo(function UserMessage({
               </View>
             ) : null}
             {hasText ? (
-              <Text
-                selectable
-                style={userMessageStylesheet.text}
-                dataSet={MESSAGE_TEXT_DATASET}
-                onTextLayout={onBubbleTextLayout}
-              >
+              <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
                 {message}
               </Text>
             ) : null}
