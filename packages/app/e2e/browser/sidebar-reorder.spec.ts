@@ -1,5 +1,4 @@
 import type { Locator, Page } from "@playwright/test";
-import { defaultSidebarModeProfiles } from "../../src/stores/sidebar-mode-preferences";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
@@ -11,6 +10,7 @@ import {
   selectSidebarProjectGrouping,
   sidebarWorkspaceSortMenuItem,
   closeSidebarDisplayPreferences,
+  seedSidebarModeProfiles,
 } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
@@ -502,18 +502,13 @@ function compactProjectRows(page: Page, seed: CompactProject["seed"]) {
 
 /** Configure the fixed-seven fixture without changing default sidebar profiles. */
 async function seedSevenWorkspaceScene(page: Page, includeStatus: boolean) {
-  const modeProfiles = defaultSidebarModeProfiles();
-  modeProfiles.project.initialWorkspaceCount = 7;
-  if (includeStatus) modeProfiles.status.initialWorkspaceCount = 7;
-  await page.addInitScript((profiles) => {
-    localStorage.setItem(
-      "sidebar-view",
-      JSON.stringify({
-        version: 12,
-        state: { groupMode: "project", workspaceSort: "created", modeProfiles: profiles },
-      }),
-    );
-  }, modeProfiles);
+  await seedSidebarModeProfiles(page, {
+    workspaceSort: "created",
+    configure: (profiles) => {
+      profiles.project.initialWorkspaceCount = 7;
+      if (includeStatus) profiles.status.initialWorkspaceCount = 7;
+    },
+  });
 }
 
 async function expectActiveOverflowTransitions(page: Page, { seed, ids, agent }: CompactProject) {
@@ -744,17 +739,12 @@ test("a Manual drag in a collapsed group keeps the open workspace's saved place"
   page,
 }) => {
   test.setTimeout(120_000);
-  const profiles = defaultSidebarModeProfiles();
-  profiles.project.initialWorkspaceCount = 7;
-  await page.addInitScript((modeProfiles) => {
-    localStorage.setItem(
-      "sidebar-view",
-      JSON.stringify({
-        version: 12,
-        state: { groupMode: "project", workspaceSort: "manual", modeProfiles },
-      }),
-    );
-  }, profiles);
+  await seedSidebarModeProfiles(page, {
+    workspaceSort: "manual",
+    configure: (profiles) => {
+      profiles.project.initialWorkspaceCount = 7;
+    },
+  });
   const { seed, ids } = await seedCompactProject();
   try {
     await gotoAppShell(page);
