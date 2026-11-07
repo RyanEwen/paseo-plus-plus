@@ -1,16 +1,15 @@
+import type { SshDestination } from "./ssh/ssh-destination";
+
 export interface LocalTransportTarget {
   [key: string]: unknown;
   transportType: "socket" | "pipe";
   transportPath: string;
 }
-export interface SshTransportTarget {
+export type SshBridgeTransportTarget = SshDestination & {
   [key: string]: unknown;
   transportType: "ssh";
-  host: string;
-  sshPort?: number;
-  daemonPort?: number;
-}
-export type BridgeDaemonTransportTarget = LocalTransportTarget | SshTransportTarget;
+};
+export type BridgeDaemonTransportTarget = LocalTransportTarget | SshBridgeTransportTarget;
 export interface OpenBridgeTransportSessionInput {
   [key: string]: unknown;
   sessionId: string;

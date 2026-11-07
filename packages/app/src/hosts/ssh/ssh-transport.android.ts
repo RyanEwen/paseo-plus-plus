@@ -1,6 +1,6 @@
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { createBridgeDaemonTransportFactory } from "@/hosts/bridge-daemon-transport";
-import { createRemoteSshHostConnection } from "@/types/host-connection";
+import { sshCredentialId } from "./ssh-destination";
 import type { SshKeyImportBridge } from "./ssh-key-import-model";
 import { createSshNativeBridge, type SshNativeModule } from "./ssh-native-bridge";
 
@@ -18,8 +18,7 @@ export function createSshTransportFactory() {
     openSession: async ({ sessionId, target }) => {
       if (target.transportType !== "ssh")
         throw new Error("Android only supports SSH through this bridge.");
-      const connection = createRemoteSshHostConnection(target);
-      await bridge.open(sessionId, connection.id, target);
+      await bridge.open(sessionId, sshCredentialId(target), target);
     },
     listenToEvents: async (handler) => {
       const subscription = bridge.addListener("transportEvent", handler);

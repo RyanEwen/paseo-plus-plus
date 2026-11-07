@@ -59,7 +59,7 @@ export interface DesktopUpdaterDiagnostics {
 
 export type {
   LocalTransportTarget,
-  SshTransportTarget as RemoteSshTransportTarget,
+  SshBridgeTransportTarget as RemoteSshTransportTarget,
   BridgeDaemonTransportTarget as DesktopDaemonTransportTarget,
   OpenBridgeTransportSessionInput as OpenLocalTransportSessionInput,
 } from "@/hosts/daemon-transport-bridge";

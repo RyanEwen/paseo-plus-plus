@@ -1,20 +1,15 @@
-import { createRemoteSshHostConnection } from "@/types/host-connection";
+import { sshCredentialId, type SshDestination } from "./ssh-destination";
 
 export interface ImportedPrivateKey {
   name: string;
   text: string;
 }
 
-export interface SshImportTarget {
-  host: string;
-  sshPort?: number;
-  daemonPort?: number;
-}
 export interface SshKeyImportBridge {
-  inspect(target: SshImportTarget, privateKey: string, passphrase: string): Promise<string>;
+  inspect(target: SshDestination, privateKey: string, passphrase: string): Promise<string>;
   stage(
     id: string,
-    target: SshImportTarget,
+    target: SshDestination,
     privateKey: string,
     passphrase: string,
     fingerprint: string,
@@ -24,7 +19,7 @@ export interface SshKeyImportBridge {
 }
 
 export interface ApprovedSshKey {
-  target: SshImportTarget;
+  target: SshDestination;
   privateKey: string;
   passphrase: string;
   fingerprint: string;
@@ -47,7 +42,7 @@ export async function saveImportedSshHost<T>({
   approved,
   saveHost,
 }: SshImportOperation<T>): Promise<T> {
-  const id = createRemoteSshHostConnection(approved.target).id;
+  const id = sshCredentialId(approved.target);
   const previous = importTails.get(id);
   let release = () => {};
   const completed = new Promise<void>((resolve) => {

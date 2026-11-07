@@ -1,11 +1,12 @@
 import type { EventSubscription } from "expo-modules-core";
 import type { BridgeDaemonTransportEvent } from "@/hosts/daemon-transport-bridge";
-import type { SshImportTarget, SshKeyImportBridge } from "./ssh-key-import-model";
+import type { SshDestination } from "./ssh-destination";
+import type { SshKeyImportBridge } from "./ssh-key-import-model";
 
 /** The `PaseoSsh` Expo module as JavaScript sees it. Every rejection uses Expo's envelope. */
 export interface SshNativeModule extends SshKeyImportBridge {
   remove(id: string): Promise<void>;
-  open(sessionId: string, credentialId: string, target: SshImportTarget): Promise<void>;
+  open(sessionId: string, credentialId: string, target: SshDestination): Promise<void>;
   send(sessionId: string, text: string | null, binary: string | null): Promise<void>;
   close(sessionId: string): Promise<void>;
   addListener(
