@@ -1,12 +1,9 @@
 import type { WorkspaceSort } from "@/projects/workspace-structure";
-import {
-  getSettingsEditingBlocked,
-  subscribeSettingsEditingBlocked,
-} from "@/settings-sync/save-handler";
+import { useSettingsEditingBlocked } from "@/hooks/use-settings/editing-blocker";
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import { useSettingsSyncState } from "@/settings-sync/bootstrap";
 import { useHostFeature } from "@/runtime/host-features";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo } from "react";
 import { type SidebarWorkspaceTrailing, type WorkspaceTitleSource } from "@/hooks/use-settings";
 import {
   useSidebarViewStore,
@@ -180,11 +177,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const sync = useSettingsSyncState();
   const hostSupported = useHostFeature(sync.selectedHost, "appSettingsSidebarModeProfiles");
   const unsupported = sync.selectedHost !== null && !hostSupported;
-  const blocked = useSyncExternalStore(
-    subscribeSettingsEditingBlocked,
-    getSettingsEditingBlocked,
-    getSettingsEditingBlocked,
-  );
+  const blocked = useSettingsEditingBlocked();
   const preferencesDisabled =
     blocked ||
     !ready ||

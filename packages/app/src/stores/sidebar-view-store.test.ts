@@ -4,7 +4,7 @@ import {
   defaultSidebarLocalModeFilters,
 } from "./sidebar-mode-preferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
-import { setSettingsHostSelected, setSettingsEditingBlocked } from "@/settings-sync/save-handler";
+import { registerSettingsEditingBlocker } from "@/hooks/use-settings/editing-blocker";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
@@ -14,6 +14,7 @@ import {
   sidebarPersistedState,
   initializeSidebarModePreferences,
   installSidebarPreferenceCommitter,
+  installSidebarSettingsHostSource,
   reduceSidebarPreferences,
   type SidebarPreferencePatch,
   type SidebarGroupMode,
@@ -24,6 +25,22 @@ import {
   SIDEBAR_UNLABELLED_LABEL_KEY,
   useSidebarViewStore,
 } from "./sidebar-view-store";
+
+// Stand-ins for the settings sync adapter: whether a host is selected and whether edits wait.
+const syncFake = { hostSelected: false, editingBlocked: false };
+registerSettingsEditingBlocker({
+  isBlocked: () => syncFake.editingBlocked,
+  subscribe: () => () => {},
+});
+installSidebarSettingsHostSource(() => syncFake.hostSelected);
+
+function setSettingsHostSelected(selected: boolean): void {
+  syncFake.hostSelected = selected;
+}
+
+function setSettingsEditingBlocked(blocked: boolean): void {
+  syncFake.editingBlocked = blocked;
+}
 
 interface MemoryStorage extends StateStorage<Promise<void>> {
   reads: string[];
