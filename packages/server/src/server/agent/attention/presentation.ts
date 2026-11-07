@@ -1,5 +1,11 @@
 import type { ManagedAgent } from "../agent-manager.js";
 import type { AgentAttentionObjectives } from "./objectives.js";
+import { registerForkCapability } from "../../fork-capabilities.js";
+
+// The agent manager always loads this policy, so a daemon built with this layer advertises
+// audience-aware attention and its host-owned Notifications preference.
+registerForkCapability("agentAudienceAttention");
+registerForkCapability("agentAudienceAttentionSettings");
 
 interface AttentionProjectionInput {
   enabled: boolean;
