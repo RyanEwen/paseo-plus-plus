@@ -12,7 +12,8 @@ import {
 import { useToast } from "@/contexts/toast-api-context";
 import { isWeb } from "@/constants/platform";
 import { isHttpUrl } from "@/utils/http-url";
-import { useWorkspaceLinkOpening } from "./context";
+import { WorkspaceLinkPolicyProvider, useWorkspaceLinkOpening } from "./context";
+import { LinkMenuContext, type LinkMenuWrapper } from "@/components/ui/link-menu-context";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 /** Offer browser destinations while preserving the wrapped link's primary action. */
@@ -123,6 +124,30 @@ function useBrowserLinkOpening(url: string | null | undefined) {
       toast.error(error instanceof Error ? error.message : String(error)),
   });
   return { open, openInPaseo };
+}
+
+/** Generic link components get workspace destinations; an always-external link keeps that default. */
+const wrapInWorkspaceLinkMenu: LinkMenuWrapper = ({ url, primaryOpensExternally, children }) => (
+  <WorkspaceHttpLinkMenu
+    url={url}
+    defaultDestination={primaryOpensExternally ? "external" : undefined}
+  >
+    {children}
+  </WorkspaceHttpLinkMenu>
+);
+
+/**
+ * Mounted once at the app root: the Workspace links policy, plus workspace destination menus
+ * around links rendered by generic components (external links, Markdown links).
+ */
+export function WorkspaceLinksProvider({ children }: { children?: ReactNode }) {
+  return (
+    <WorkspaceLinkPolicyProvider>
+      <LinkMenuContext.Provider value={wrapInWorkspaceLinkMenu}>
+        {children}
+      </LinkMenuContext.Provider>
+    </WorkspaceLinkPolicyProvider>
+  );
 }
 
 const styles = StyleSheet.create({ inline: { display: "contents" } });

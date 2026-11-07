@@ -1,10 +1,5 @@
-import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
-import { memo, useMemo, useState, type ComponentType } from "react";
-import {
-  EnrichedMarkdownText,
-  type LinkPressEvent,
-  type LinkRendererProps,
-} from "react-native-enriched-markdown";
+import { memo, useMemo, useState } from "react";
+import { EnrichedMarkdownText, type LinkPressEvent } from "react-native-enriched-markdown";
 import { withUnistyles } from "react-native-unistyles";
 import {
   useAssistantFileLinkActions,
@@ -24,21 +19,6 @@ import { splitStreamingMarkdown } from "./streaming";
 import { useMarkdownSource, type MarkdownImageContext } from "./images";
 
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
-
-/** Preserve workspace browser destinations around the engine's own link and tooltip. */
-function withWorkspaceLinkMenu(Link: ComponentType<LinkRendererProps>) {
-  return function WorkspaceMarkdownLink(props: LinkRendererProps) {
-    return (
-      <WorkspaceHttpLinkMenu url={props.link.url}>
-        <Link {...props} />
-      </WorkspaceHttpLinkMenu>
-    );
-  };
-}
-
-const workspaceWebRenderers = WEB_RENDERERS?.link
-  ? { ...WEB_RENDERERS, link: withWorkspaceLinkMenu(WEB_RENDERERS.link) }
-  : WEB_RENDERERS;
 
 const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
 const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
@@ -166,7 +146,7 @@ const MarkdownPart = memo(function MarkdownPart({
               streamingAnimation={false}
               onLinkPress={pressLink}
               onImagePress={pressImage}
-              renderers={isWeb ? workspaceWebRenderers : undefined}
+              renderers={isWeb ? WEB_RENDERERS : undefined}
             />
           ),
         )}

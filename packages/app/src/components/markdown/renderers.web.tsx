@@ -8,6 +8,7 @@ import type {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { useLinkMenu } from "@/components/ui/link-menu-context";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
@@ -32,6 +33,7 @@ const LINK_HOVER_STYLE = { textDecoration: "underline" } as const;
 
 function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const { tooltipPath, onHoverIn } = useFileLink(markdownLinkSource(link.url, link.sourceType));
+  const linkMenu = useLinkMenu();
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
   const handleMouseLeave = useCallback(() => setHovered(false), []);
@@ -53,7 +55,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       {children}
     </a>
   );
-  return (
+  const tooltip = (
     <Tooltip delayDuration={400}>
       <TooltipTrigger asChild onHoverIn={onHoverIn}>
         <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
@@ -67,6 +69,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       ) : null}
     </Tooltip>
   );
+  return linkMenu({ url: link.url, primaryOpensExternally: false, children: tooltip });
 }
 // TooltipTrigger also supplies native Pressable handlers; forward only DOM events.
 // A View renders a div, which is invalid inside the library's prose paragraphs.

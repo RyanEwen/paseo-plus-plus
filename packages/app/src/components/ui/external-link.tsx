@@ -1,9 +1,9 @@
-import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import { useCallback, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { ArrowUpRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useLinkMenu } from "@/components/ui/link-menu-context";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 
@@ -31,6 +31,7 @@ export function ExternalLink({
   testID,
   accessibilityLabel,
 }: ExternalLinkProps) {
+  const linkMenu = useLinkMenu();
   const handlePress = useCallback(() => {
     void openExternalUrl(href).catch(onError ?? console.error);
   }, [href, onError]);
@@ -50,23 +51,21 @@ export function ExternalLink({
   );
 
   if (!tooltip) {
-    return (
-      <WorkspaceHttpLinkMenu url={href} defaultDestination="external">
-        {trigger}
-      </WorkspaceHttpLinkMenu>
-    );
+    return linkMenu({ url: href, primaryOpensExternally: true, children: trigger });
   }
 
-  return (
-    <WorkspaceHttpLinkMenu url={href} defaultDestination="external">
+  return linkMenu({
+    url: href,
+    primaryOpensExternally: true,
+    children: (
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent side="top" align="end" offset={6}>
           <Text style={styles.tooltipText}>{tooltip}</Text>
         </TooltipContent>
       </Tooltip>
-    </WorkspaceHttpLinkMenu>
-  );
+    ),
+  });
 }
 
 /**
