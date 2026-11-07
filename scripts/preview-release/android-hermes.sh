@@ -8,6 +8,8 @@ if [[ ${GITHUB_ACTIONS:-} != true || ${RUNNER_OS:-} != Linux ]]; then
 fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=android-hermes-swap.sh
+source "$script_dir/android-hermes-swap.sh"
 swap_file="$RUNNER_TEMP/paseo-hermes.swap"
 unit="paseo-hermes-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service"
 receipt="$RUNNER_TEMP/paseo-hermes-exit-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
@@ -30,19 +32,17 @@ cleanup() {
   sudo journalctl -u systemd-oomd --since '-40 minutes' --no-pager | tail -40
   if ! $swap_created; then exit "$result"; fi
   # Cancellation may arrive immediately after swapon, before the launch flag changes.
-  local swap_rows
+  local swap_rows used="" available
   # Bare --show restores the default columns even alongside --output on util-linux.
   if swap_rows="$(sudo swapon --show=NAME,USED --bytes --noheadings)"; then
     swap_active=false
-    if awk -v file="$swap_file" '$1 == file {found=1} END {exit !found}' <<< "$swap_rows"; then swap_active=true; fi
+    if used="$(swap_used_bytes "$swap_file" <<< "$swap_rows")"; then swap_active=true; fi
   else
     echo "Cannot verify temporary swap activation; refusing cleanup deletion" >&2
     swap_active=true
     result=1
   fi
   if $swap_active; then
-    local used available
-    used="$(awk -v file="$swap_file" '$1 == file {print $2}' <<< "$swap_rows")"
     available="$(awk '/MemAvailable:/ {printf "%.0f", $2 * 1024}' /proc/meminfo)"
     if [[ $used =~ ^[0-9]+$ && $available =~ ^[0-9]+$ ]] && (( available >= used + 3 * 1024 ** 3 )); then
       if sudo swapoff "$swap_file"; then swap_active=false; else result=1; fi

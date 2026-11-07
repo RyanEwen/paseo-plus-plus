@@ -6,28 +6,39 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 
+/** Run swap_used_bytes from the driver's sourced helper against a fixture swap table. */
+function swapUsedBytes(swapFile, rows) {
+  const helper = fileURLToPath(new URL("./android-hermes-swap.sh", import.meta.url));
+  return spawnSync("bash", ["-c", 'source "$1"; swap_used_bytes "$2"', "bash", helper, swapFile], {
+    encoding: "utf8",
+    input: rows,
+  });
+}
+
 test(
-  "Hermes cleanup reads explicit swap name and used-byte columns",
-  { skip: process.platform !== "linux" },
+  "Hermes cleanup reads the temporary swap file's used bytes from the swap table",
+  { skip: process.platform === "win32" },
   () => {
-    const driver = readFileSync(new URL("./android-hermes.sh", import.meta.url), "utf8");
-    const selection = driver.match(/sudo swapon ([^)]*)/);
-    assert.ok(selection, "Cleanup must query actual swap activation");
-    // Read the real util-linux table without changing any swap or memory settings.
-    // Keep its header so an empty swap table still proves the selected column shape.
-    const args = selection[1]
-      .trim()
-      .split(/\s+/)
-      .filter((arg) => arg !== "--noheadings");
-    const result = spawnSync("/usr/sbin/swapon", args, { encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
-    const [header, ...rows] = result.stdout.trim().split(/\n/);
-    assert.deepEqual(header.trim().split(/\s+/), ["NAME", "USED"]);
-    for (const row of rows) {
-      const columns = row.trim().split(/\s+/);
-      assert.equal(columns.length, 2);
-      assert.match(columns[1], /^\d+$/);
-    }
+    const swapFile = "/home/runner/work/_temp/paseo-hermes.swap";
+    const rows = [
+      "/swapfile                                   4294967296",
+      `${swapFile}  17179869184`,
+      "/dev/zram0                                  0",
+      "",
+    ].join("\n");
+
+    const found = swapUsedBytes(swapFile, rows);
+    assert.equal(found.status, 0, found.stderr);
+    assert.equal(found.stdout, "17179869184\n");
+
+    // Inactive swap is reported by the exit status, not as zero bytes in use.
+    const missing = swapUsedBytes(swapFile, "/swapfile  4294967296\n");
+    assert.notEqual(missing.status, 0);
+    assert.equal(missing.stdout, "");
+
+    // A name that only shares a prefix is a different swap file.
+    const prefixed = swapUsedBytes(swapFile, `${swapFile}.old  1024\n`);
+    assert.notEqual(prefixed.status, 0);
   },
 );
 
