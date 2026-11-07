@@ -4,7 +4,7 @@ import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import { useLayoutEffect } from "react";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useMobilePanelVisibilityCheck } from "@/mobile-panels/provider";
+import { useMobilePanelRestCheck } from "@/mobile-panels/use-mobile-panel-rest-check";
 import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { seenAgentNotifications } from "@/notifications/seen-agent-client";
@@ -19,7 +19,7 @@ export function useSeenAgentNotifications(input: {
   const foreground = useAppActivelyVisible();
   const panelVisible = useRetainedPanelActive();
   const compact = useIsCompactFormFactor();
-  const { isAtRest, subscribe } = useMobilePanelVisibilityCheck("agent");
+  const { isAtRest, subscribe } = useMobilePanelRestCheck("agent");
   const centerVisible = useIsMobilePanelActive("agent");
   const centerRequested = usePanelStore((state) => state.mobilePanel.target === "agent");
   const visible = isAgentNotificationViewVisible({
