@@ -143,7 +143,10 @@ export function NewTabLauncherProvider({
       useWorkspaceLayoutStore,
     );
     if (!destination) return;
-    openReopenedAgentTab({ workspaceKey, agentId, destination }, useWorkspaceLayoutStore.getState());
+    openReopenedAgentTab(
+      { workspaceKey, agentId, destination },
+      useWorkspaceLayoutStore.getState(),
+    );
   });
   const context = useMemo(
     () => ({ ...value, previousAgentsEnabled, reopenClosedAgent }),
