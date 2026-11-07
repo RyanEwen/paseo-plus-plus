@@ -961,7 +961,7 @@ function ProjectHeaderRow({
 
         <View style={styles.projectTitleGroup}>
           <Text
-            style={[styles.projectTitle, !sidebarProjectEmphasis && styles.projectTitleNormal]}
+            style={[styles.projectTitle, sidebarProjectEmphasis && styles.projectTitleEmphasized]}
             numberOfLines={1}
           >
             {displayName}
@@ -2699,12 +2699,12 @@ const styles = StyleSheet.create((theme) => ({
   projectTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.bold,
+    fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
   },
-  projectTitleNormal: {
-    fontWeight: theme.fontWeight.normal,
+  projectTitleEmphasized: {
+    fontWeight: theme.fontWeight.bold,
   },
   projectActionButton: {
     flexDirection: "row",
