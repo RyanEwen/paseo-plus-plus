@@ -580,8 +580,6 @@ function MobileSidebar({
           firstRowTrailing={closeButton}
         />
 
-        {workspacesSectionHeaderElement}
-
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
@@ -604,6 +602,7 @@ function MobileSidebar({
             onImportSession={handleImportSession}
             parentGestureRef={closeGestureRef}
             dragGestureHostActive={active}
+            listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
@@ -763,8 +762,6 @@ function DesktopSidebar({
           <SidebarNavRows style={sidebarHeaderGroupStyle} />
         </View>
 
-        {workspacesSectionHeaderElement}
-
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
@@ -784,6 +781,7 @@ function DesktopSidebar({
             onRefresh={handleRefresh}
             onAddProject={handleOpenProject}
             onImportSession={handleImportSession}
+            listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
@@ -833,7 +831,7 @@ function WorkspacesSectionHeader() {
 // The project chooser replaces the Workspaces label; a module element keeps the title prop stable.
 const projectSelectorElement = <SidebarProjectSelector />;
 
-// Stable element above the scrollable list keeps header controls anchored across
+// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
 // renders (WorkspacesSectionHeader takes no props).
 const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 
