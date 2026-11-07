@@ -8,7 +8,7 @@ import {
   type NotificationDismissal,
 } from "@getpaseo/protocol/notification-receipts";
 import { parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
-import type { DeliveredAgentToast } from "./viewed-agent-notifications.js";
+import type { DeliveredAgentToast } from "./windows-toast-history.js";
 
 const RoutingSchema = z.object({
   serverId: z.string().min(1).max(256),
