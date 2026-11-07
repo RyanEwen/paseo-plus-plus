@@ -87,6 +87,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
 }
 
 interface BuildWorkspaceDesktopTabActionsInput {
+  /** Compact chips retain the existing visible actions-menu identity. */
+  menuTestIDBase?: string;
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
@@ -338,7 +340,7 @@ export function buildWorkspaceDesktopTabActions(
       tab: input.tab,
       index: input.index,
       tabCount: input.tabCount,
-      menuTestIDBase: contextMenuTestId,
+      menuTestIDBase: input.menuTestIDBase ?? contextMenuTestId,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onCopyTerminalId: input.onCopyTerminalId,

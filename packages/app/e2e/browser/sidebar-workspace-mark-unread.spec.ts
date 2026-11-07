@@ -6,9 +6,10 @@ import {
   seedMockAgentWorkspace,
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
-import { expectOpenTabCount } from "../support/helpers/sheet";
+import { expectChooserTabCount } from "../support/helpers/sheet";
 import { getServerId } from "../support/helpers/server-id";
 import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
+import { seedLegacyCompactTabSwitcher } from "../support/helpers/workspace-tabs";
 
 interface FinishedWorkspaces {
   subject: MockAgentWorkspace;
@@ -245,7 +246,7 @@ async function reopenMarkedWorkspaceAfterBackgroundTurn(page: Page, workspace: M
 }
 
 async function expectRestoredCompactChat(page: Page) {
-  await expectOpenTabCount(page, 1);
+  await expectChooserTabCount(page, 1);
   await expect(
     page.getByText("A turn completed while the app was closed.", { exact: true }),
   ).toBeVisible();
@@ -257,9 +258,10 @@ test("reopening a marked unread workspace restores only its agent tab and curren
 }) => {
   test.setTimeout(120_000);
   await test.step("open a finished chat with one main tab", async () => {
+    await seedLegacyCompactTabSwitcher(page);
     await openCompactWorkspace(page, workspaces.subject);
     await closeMobileAgentSidebar(page);
-    await expectOpenTabCount(page, 1);
+    await expectChooserTabCount(page, 1);
     await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   });
   await test.step("mark the current workspace unread, then close and reopen the app", async () => {

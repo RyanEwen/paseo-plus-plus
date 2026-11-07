@@ -38,12 +38,10 @@ export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
   tabLabelWidths: number[];
   metrics: WorkspaceTabLayoutMetrics;
-  /**
-   * Compact layouts are touch-first. Tabs keep their natural width and the row scrolls as soon as
-   * they overflow, so a label is never squeezed to make room; chips carry no inline close because a
-   * narrow X beside the label is easy to hit by accident and the tab's long-press menu closes it.
-   */
+  /** Compact chips close through their menu and retain natural widths unless filling the track. */
   compact: boolean;
+  /** Compact main tabs divide the measured track equally, retaining the touch minimum. */
+  fillAvailableWidth?: boolean;
   /** Raise only the title-width ceiling; short tabs stay content-driven. */
   widerTabs?: boolean;
   /** Present for icon-only tabs: every tab is a square cell of this width with no label. */
@@ -98,8 +96,10 @@ export function computeWorkspaceTabLayout(
     0,
     input.viewportWidth - input.metrics.rowHorizontalInset * 2 - input.metrics.actionsReservedWidth,
   );
-  const rowOverhead =
-    input.metrics.rowPaddingHorizontal * 2 + Math.max(tabCount - 1, 0) * input.metrics.tabGap;
+  const fillAvailableWidth = input.compact && input.fillAvailableWidth;
+  // Compact slots have half a gap on each side, including both ends of the track.
+  const gapCount = fillAvailableWidth ? tabCount : Math.max(tabCount - 1, 0);
+  const rowOverhead = input.metrics.rowPaddingHorizontal * 2 + gapCount * input.metrics.tabGap;
   const availableTabsWidth = Math.max(0, availableWidth - rowOverhead);
   if (input.iconOnlyTabWidth !== undefined) {
     const width = input.iconOnlyTabWidth;
@@ -116,6 +116,15 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
   const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
+  if (fillAvailableWidth) {
+    const width = Math.max(input.metrics.minTabWidth, availableTabsWidth / tabCount);
+    return {
+      // Keep fractional widths so rounding cannot leave a gap or create an extra scroll range.
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: width > tabChromeWidth })),
+      closeButtonPolicy,
+      requiresHorizontalScrollFallback: availableTabsWidth < input.metrics.minTabWidth * tabCount,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
@@ -154,4 +163,27 @@ export function computeWorkspaceTabLayout(
     closeButtonPolicy,
     requiresHorizontalScrollFallback,
   };
+}
+
+/** Reveal the selected tab with the smallest movement, clamped to the measured scroll range. */
+export function resolveWorkspaceTabScrollOffset(input: {
+  offset: number;
+  viewportWidth: number;
+  contentWidth: number;
+  tabStart: number;
+  tabWidth: number;
+}): number {
+  const { offset, viewportWidth, contentWidth, tabStart, tabWidth } = input;
+  if (viewportWidth <= 0 || contentWidth <= 0) {
+    return offset;
+  }
+
+  let nextOffset = offset;
+  if (tabStart < offset || tabWidth > viewportWidth) {
+    nextOffset = tabStart;
+  } else if (tabStart + tabWidth > offset + viewportWidth) {
+    nextOffset = tabStart + tabWidth - viewportWidth;
+  }
+
+  return clamp(nextOffset, 0, Math.max(0, contentWidth - viewportWidth));
 }

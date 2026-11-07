@@ -38,7 +38,14 @@ export async function expectSheetAtSnap(page: Page, label: string): Promise<void
     .toEqual({ dockedToBottom: true, topAtSnap: true });
 }
 
+/** Count the tabs in the compact tab strip. */
 export async function expectOpenTabCount(page: Page, count: number): Promise<void> {
+  const tabs = page.getByTestId("workspace-tabs-scroll").filter({ visible: true });
+  await expect(tabs.getByRole("tab")).toHaveCount(count);
+}
+
+/** Count open tabs through the legacy chooser's trigger, when Mobile workspace tabs is off. */
+export async function expectChooserTabCount(page: Page, count: number): Promise<void> {
   await expect(
     page.getByRole("button", { name: `Switch tabs (${count} open)` }).filter({ visible: true }),
   ).toBeVisible();
@@ -69,16 +76,10 @@ export async function replaceSheetFileText(
   await replaceCodeMirrorContent({ editor, content });
 }
 
+/** Select a tab by its label in the compact tab strip. */
 export async function selectTabFromSwitcher(page: Page, label: string): Promise<void> {
-  await page
-    .getByRole("button", { name: /Switch tabs/ })
-    .filter({ visible: true })
-    .click();
-  await expect(page.getByText("Workspace tabs", { exact: true })).toBeVisible();
-  const option = page.getByText(label, { exact: true }).filter({ visible: true }).last();
-  await expect(option).toBeVisible();
-  await option.click();
-  await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+  const tabs = page.getByTestId("workspace-tabs-scroll").filter({ visible: true });
+  await tabs.getByRole("tab", { name: label, exact: true }).click();
 }
 
 /** Each open sheet renders its own backdrop, so counting them counts the sheets. */

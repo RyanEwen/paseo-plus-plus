@@ -24,15 +24,16 @@ flipping every menu in the app to sheets at once is not a change anyone can revi
 when you have actually looked at it on a phone.
 
 `ContextMenu` is the exception: it defaults to `compactMode="sheet"` and enables native long press.
-Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead.
+Disable mobile triggering explicitly on draggable rows, where long press belongs to drag instead. Workspace tabs keep their context menu on the tab itself; compact tabs do not need a separate menu button.
 
 ## When the items differ per form factor
 
 A menu whose contents depend on what else is on screen gets one component per surface, not one
 component with `isMobile` branches inside it. The workspace header menu is the example
-(`packages/app/src/screens/workspace/workspace-header-menu.tsx`): compact has no tab strip, so it
-carries new-tab actions, while wide leaves those to the strip's `+` menu and lists workspace
-actions only. Items both surfaces share live in one component that each menu renders, from the same
+(`packages/app/src/screens/workspace/workspace-header-menu.tsx`): compact keeps New agent and the
+other new-tab actions because the Mobile workspace tabs setting can replace the strip and its `+`
+with the tab chooser, while wide leaves those to the strip's `+` menu and lists workspace actions
+only. Items both surfaces share live in one component that each menu renders, from the same
 callbacks, so the two can't drift.
 
 ## HTTP link destinations

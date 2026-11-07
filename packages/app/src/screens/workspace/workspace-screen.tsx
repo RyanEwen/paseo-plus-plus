@@ -889,6 +889,19 @@ function shouldShowWorkspaceScreenHeader(input: {
   return !input.isFocusModeEnabled || input.isMobile;
 }
 
+/** Choose between the standalone tab strip and the compact tab chooser. */
+function resolveWorkspaceTabNavigationPresentation(input: {
+  isMobile: boolean;
+  mobileWorkspaceTabsEnabled: boolean;
+  shouldRenderDesktopPaneFallback: boolean;
+}) {
+  return {
+    showStandaloneTabs:
+      (input.isMobile && input.mobileWorkspaceTabsEnabled) || input.shouldRenderDesktopPaneFallback,
+    showLegacyMobileSwitcher: input.isMobile && !input.mobileWorkspaceTabsEnabled,
+  };
+}
+
 /**
  * A pane the user acted inside owns the tab: it opens there, and an existing tab
  * moves there. No pane means the open has no opinion beyond the focused pane.
@@ -1329,6 +1342,9 @@ function WorkspaceScreenContent({
     (workspaceKey: string, target: WorkspaceTabTarget, placement?: WorkspaceTabPlacement) =>
       openTab({ workspaceKey, target, intent: "background", placement }),
     [openTab],
+  );
+  const mobileWorkspaceTabsEnabled = useSettings(
+    (settings) => settings.paseoPlusPlus.mobileWorkspaceTabs,
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
@@ -2901,6 +2917,12 @@ function WorkspaceScreenContent({
     () => !isMobile && !canRenderDesktopPaneSplits,
     [isMobile, canRenderDesktopPaneSplits],
   );
+  const { showStandaloneTabs, showLegacyMobileSwitcher } =
+    resolveWorkspaceTabNavigationPresentation({
+      isMobile,
+      mobileWorkspaceTabsEnabled,
+      shouldRenderDesktopPaneFallback,
+    });
   useEffect(() => {
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
@@ -3382,26 +3404,6 @@ function WorkspaceScreenContent({
           explorerToggleLabel={explorerSidebarToggleLabel}
           explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
         >
-          <MobileWorkspaceTabSwitcher
-            tabs={tabs}
-            activeTabKey={activeTabKey}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            onSelectSwitcherTab={handleSelectSwitcherTab}
-            createTerminalDisabled={createTerminalDisabled}
-            onCreateDraftTab={handleCreateDraftTab}
-            onCreateTerminal={handleCreateTerminal}
-            onCopyResumeCommand={handleCopyResumeCommand}
-            onCopyAgentId={handleCopyAgentId}
-            onCopyTerminalId={handleCopyTerminalId}
-            onCopyFilePath={handleCopyFilePath}
-            onReloadAgent={handleReloadAgent}
-            onRenameTab={handleRenameTab}
-            onCloseTab={handleCloseTabById}
-            onCloseTabsAbove={handleCloseTabsToLeft}
-            onCloseTabsBelow={handleCloseTabsToRight}
-            onCloseOtherTabs={handleCloseOtherTabs}
-          />
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3412,6 +3414,7 @@ function WorkspaceScreenContent({
             createTerminalDisabled={createTerminalDisabled}
             importAgentDisabled={!canOpenImportSheet}
             copyPathDisabled={!workspaceDirectory}
+            onCreateDraftTab={handleCreateDraftTab}
             onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
             onCreateBrowser={handleCreateBrowserTab}
             onOpenImportSheet={openImportSheet}
@@ -3422,31 +3425,18 @@ function WorkspaceScreenContent({
         </CompactWorkspaceHeader>
       ) : null,
     [
-      activeTabKey,
       canOpenImportSheet,
       compactHeaderScripts,
       createTerminalDisabled,
       currentBranchName,
       explorerSidebarToggleAccessibilityState,
       explorerSidebarToggleLabel,
-      handleCloseOtherTabs,
-      handleCloseTabById,
-      handleCloseTabsToLeft,
-      handleCloseTabsToRight,
-      handleCopyAgentId,
       handleCopyBranchName,
-      handleCopyFilePath,
-      handleCopyResumeCommand,
-      handleCopyTerminalId,
       handleCopyWorkspacePath,
       handleCreateBrowserTab,
       handleCreateDraftTab,
-      handleCreateTerminal,
       handleCreateTerminalWithProfile,
       handleOpenSetupTab,
-      handleReloadAgent,
-      handleRenameTab,
-      handleSelectSwitcherTab,
       handleToggleExplorerSidebar,
       isMobile,
       isWorkspaceHeaderLoading,
@@ -3456,7 +3446,6 @@ function WorkspaceScreenContent({
       openImportSheet,
       showCreateBrowserTab,
       showWorkspaceSetup,
-      tabs,
       workspaceDirectory,
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
@@ -3544,32 +3533,10 @@ function WorkspaceScreenContent({
     [uiTabs, sheets],
   );
   const workspacePanelKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
-  const compactHeaderLayout = resolveCompactHeaderLayout({
-    header: compactWorkspaceHeader,
-    activeTab: activeTabDescriptor,
-    composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
-  });
 
-  // Compact sheets escape to the app overlay host, above both sidebars.
-  const workspaceCenterColumn = isMobile ? (
-    <View style={styles.centerColumn}>
-      <FloatingHeaderLayout
-        header={compactHeaderLayout.header}
-        floating={compactHeaderLayout.floating}
-      >
-        {(topOverlayInset) => (
-          <StreamTopOverlayProvider value={topOverlayInset}>
-            <View style={styles.content}>{content}</View>
-          </StreamTopOverlayProvider>
-        )}
-      </FloatingHeaderLayout>
-      <SheetTabs onCloseTab={handleCloseTabById} />
-    </View>
-  ) : (
-    <View style={styles.centerColumn}>
-      {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
-
-      {shouldRenderDesktopPaneFallback ? (
+  const workspaceTabsRow = useMemo(
+    () =>
+      showStandaloneTabs ? (
         <NewTabLauncherProvider value={newTabLauncher}>
           <WorkspaceDesktopTabsRow
             paneId={focusedPaneIdOrUndefined}
@@ -3595,7 +3562,119 @@ function WorkspaceScreenContent({
             onExitFocusMode={toggleFocusMode}
           />
         </NewTabLauncherProvider>
-      ) : null}
+      ) : null,
+    [
+      showStandaloneTabs,
+      newTabLauncher,
+      focusedPaneIdOrUndefined,
+      isRouteFocused,
+      desktopTabRowItems,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      setHoveredCloseTabKey,
+      navigateToTabId,
+      handleCloseTabById,
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabsToLeft,
+      handleCloseTabsToRight,
+      handleCloseOtherTabs,
+      handleCreateNewTab,
+      handleReorderTabsInFocusedPane,
+      desktopFocusModeEnabled,
+      toggleFocusMode,
+    ],
+  );
+
+  const workspaceTabNavigation = useMemo(
+    () => (
+      <>
+        {showLegacyMobileSwitcher ? (
+          <MobileWorkspaceTabSwitcher
+            tabs={tabs}
+            activeTabKey={activeTabKey}
+            normalizedServerId={normalizedServerId}
+            normalizedWorkspaceId={normalizedWorkspaceId}
+            onSelectSwitcherTab={handleSelectSwitcherTab}
+            createTerminalDisabled={createTerminalDisabled}
+            onCreateDraftTab={handleCreateDraftTab}
+            onCreateTerminal={handleCreateTerminal}
+            onCopyResumeCommand={handleCopyResumeCommand}
+            onCopyAgentId={handleCopyAgentId}
+            onCopyTerminalId={handleCopyTerminalId}
+            onCopyFilePath={handleCopyFilePath}
+            onReloadAgent={handleReloadAgent}
+            onRenameTab={handleRenameTab}
+            onCloseTab={handleCloseTabById}
+            onCloseTabsAbove={handleCloseTabsToLeft}
+            onCloseTabsBelow={handleCloseTabsToRight}
+            onCloseOtherTabs={handleCloseOtherTabs}
+          />
+        ) : null}
+        {workspaceTabsRow}
+      </>
+    ),
+    [
+      showLegacyMobileSwitcher,
+      createTerminalDisabled,
+      handleCreateDraftTab,
+      handleCreateTerminal,
+      tabs,
+      activeTabKey,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      handleSelectSwitcherTab,
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabById,
+      handleCloseTabsToLeft,
+      handleCloseTabsToRight,
+      handleCloseOtherTabs,
+      workspaceTabsRow,
+    ],
+  );
+
+  // Measure title and navigation together so floating chat clearance includes both rows.
+  // The shared surface keeps both rows opaque while the header floats above the chat.
+  const compactHeaderLayout = resolveCompactHeaderLayout({
+    header: (
+      <View style={styles.containerWorkspaceBackground}>
+        {compactWorkspaceHeader}
+        {workspaceTabNavigation}
+      </View>
+    ),
+    activeTab: activeTabDescriptor,
+    composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
+  });
+
+  // Compact sheets escape to the app overlay host, above both sidebars.
+  const workspaceCenterColumn = isMobile ? (
+    <View style={styles.centerColumn}>
+      <FloatingHeaderLayout
+        header={compactHeaderLayout.header}
+        floating={compactHeaderLayout.floating}
+      >
+        {(topOverlayInset) => (
+          <StreamTopOverlayProvider value={topOverlayInset}>
+            <View style={styles.content}>{content}</View>
+          </StreamTopOverlayProvider>
+        )}
+      </FloatingHeaderLayout>
+      <SheetTabs onCloseTab={handleCloseTabById} />
+    </View>
+  ) : (
+    <View style={styles.centerColumn}>
+      {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
+
+      {workspaceTabsRow}
 
       <View style={styles.centerContent}>
         <View style={styles.content}>{desktopContent}</View>
