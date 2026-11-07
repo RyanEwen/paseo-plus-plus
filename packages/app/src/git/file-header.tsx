@@ -183,27 +183,22 @@ function FileHeaderMenu({
   );
 }
 
+/** Desktop hover tooltip with the file's full path; `enabled` decides whether it opens. */
 function FileHeaderTooltip({
   path,
   interactive,
-  showsBodyState,
-  showDir,
-  canvasRendered,
-  overflowing,
+  enabled,
   children,
 }: {
   path: string;
   interactive: boolean;
-  showsBodyState: boolean;
-  showDir: boolean;
-  canvasRendered: boolean;
-  overflowing: boolean;
+  enabled: boolean;
   children: ReactElement;
 }) {
   return (
     <Tooltip
       delayDuration={300}
-      enabledOnDesktop={showsBodyState || showDir || canvasRendered || overflowing}
+      enabledOnDesktop={enabled}
       enabledOnMobile={false}
     >
       <TooltipTrigger asChild triggerRefProp={interactive ? "triggerRef" : "ref"}>
@@ -283,6 +278,10 @@ export const FileHeader = memo(function FileHeader({
   );
   const fileName = fileNameForPath(file.path);
   const nameOverflow = useTextOverflow(fileName);
+  // A plain Changes tree row shows only the file name and its place in the tree already gives the
+  // directory, so its path tooltip opens only when the name is truncated. Document headers,
+  // rows labelled with their directory and canvas headers keep the always-available tooltip.
+  const isTreeRow = !showsBodyState && !showDir && !canvasRendered;
   const nameStyle = fileHeaderNameStyle(showsBodyState, hover.isHovered);
   const changeIcon = <FileChangeIcon change={fileChange(file)} />;
   const content = (
@@ -390,10 +389,7 @@ export const FileHeader = memo(function FileHeader({
         <FileHeaderTooltip
           path={file.path}
           interactive={interactive}
-          showsBodyState={showsBodyState}
-          showDir={showDir}
-          canvasRendered={canvasRendered}
-          overflowing={nameOverflow.overflowing}
+          enabled={!isTreeRow || nameOverflow.overflowing}
         >
           {trigger}
         </FileHeaderTooltip>
