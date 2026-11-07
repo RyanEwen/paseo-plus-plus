@@ -76,7 +76,9 @@ async function scenario(
   directory?: string,
   removalFailures = 0,
   retryDelayMs = 1,
-  exact: Pick<FinishObservation, "deliverExact" | "acknowledgeExact"> = {},
+  exact: Pick<FinishObservation, "deliverExact" | "acknowledgeExact"> & {
+    retryDelay?: (attempt: number, signal: AbortSignal) => Promise<void>;
+  } = {},
 ) {
   const home = directory ?? (await mkdtemp(join(tmpdir(), "finish-recovery-")));
   if (!directory) homes.push(home);
@@ -578,7 +580,14 @@ test("an exact watch whose child can never answer tells the caller and ends", as
 test("restart retries only target acknowledgment after exact source consumption", async () => {
   let delivered = 0;
   let ackAttempts = 0;
-  const first = await scenario(undefined, 0, 10000, {
+  // Hold every retry until the service closes, so the one acknowledgement attempt is not a
+  // race against wall-clock retry timing.
+  const first = await scenario(undefined, 0, 1, {
+    retryDelay: (_attempt, signal) =>
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
     deliverExact: async () => {
       delivered += 1;
       return { outcomeId: "immutable-outcome", terminal: true };

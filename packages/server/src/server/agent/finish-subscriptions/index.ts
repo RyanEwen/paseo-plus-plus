@@ -57,6 +57,11 @@ interface Dependencies extends FinishObservation {
   serverId: string;
   logger: Logger;
   retryDelayMs?: number;
+  /**
+   * Wait before retry `attempt`; resolves early, without throwing, when `signal` aborts.
+   * Defaults to the capped exponential pause derived from `retryDelayMs`.
+   */
+  retryDelay?(attempt: number, signal: AbortSignal): Promise<void>;
 }
 export interface FinishRegistration {
   /** The prompt was accepted. Replaces preceding registrations for this pair. */
@@ -144,6 +149,10 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     for (const record of watch.records) await deps.store.remove(record.id);
   }
   async function delay(signal: AbortSignal, attempt: number): Promise<void> {
+    if (deps.retryDelay) {
+      await deps.retryDelay(attempt, signal);
+      return;
+    }
     try {
       await pause(
         Math.min((deps.retryDelayMs ?? 1000) * 2 ** Math.min(attempt, 3), 5000),
