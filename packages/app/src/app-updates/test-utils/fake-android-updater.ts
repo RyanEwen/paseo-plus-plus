@@ -117,13 +117,31 @@ export class FakeAndroidUpdateReleases implements AndroidUpdateReleasesPort {
   }
 }
 
+/** A clock tests advance by hand. */
+export class ManualClock {
+  time = Date.UTC(2026, 10, 7, 12);
+
+  now = (): number => this.time;
+
+  advance(ms: number): void {
+    this.time += ms;
+  }
+}
+
 /** An updater built from fresh fakes, with the fakes exposed for driving and assertions. */
 export function createFakeAndroidUpdater(): {
   updater: AndroidUpdater;
   native: FakeAndroidUpdaterNative;
   releases: FakeAndroidUpdateReleases;
+  clock: ManualClock;
 } {
   const native = new FakeAndroidUpdaterNative();
   const releases = new FakeAndroidUpdateReleases();
-  return { updater: createAndroidUpdater({ native, releases }), native, releases };
+  const clock = new ManualClock();
+  return {
+    updater: createAndroidUpdater({ native, releases, now: clock.now }),
+    native,
+    releases,
+    clock,
+  };
 }

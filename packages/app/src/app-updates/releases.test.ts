@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { findAndroidUpdate, readApkChecksum, selectAndroidUpdate } from "./releases";
+import {
+  GitHubRateLimitError,
+  findAndroidUpdate,
+  readApkChecksum,
+  selectAndroidUpdate,
+} from "./releases";
 
 function release(build: number, version = "0.11.1") {
   const tag = `v${version}-preview.${build}`;
@@ -176,6 +181,40 @@ describe("Android repository rename bridge", () => {
     preview.assets[1].browser_download_url += "?download=1";
     expect(() => selectAndroidUpdate([preview], 1_000_000_013)).toThrow(
       "Unexpected fork release asset URL",
+    );
+  });
+});
+
+describe("GitHub request budget", () => {
+  const stableRelease = { tag_name: "v0.11.2", draft: false, prerelease: false, assets: [] };
+
+  it("stops after the ten pages GitHub can list", async () => {
+    const fetchResource = vi.fn(async () => Response.json(Array(100).fill(stableRelease)));
+    await expect(findAndroidUpdate(1_000_000_013, { fetch: fetchResource })).resolves.toBeNull();
+    expect(fetchResource).toHaveBeenCalledTimes(10);
+    expect(fetchResource).toHaveBeenLastCalledWith(
+      "https://api.github.com/repos/RyanEwen/paseo-plus-plus/releases?per_page=100&page=10",
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("names an exhausted GitHub rate limit instead of a bare HTTP status", async () => {
+    const limited = vi.fn(
+      async () => new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } }),
+    );
+    const failure = findAndroidUpdate(1_000_000_013, { fetch: limited });
+    await expect(failure).rejects.toBeInstanceOf(GitHubRateLimitError);
+    await expect(failure).rejects.toThrow("GitHub rate limit reached. Try again later.");
+    const throttled = vi.fn(async () => new Response("{}", { status: 429 }));
+    await expect(findAndroidUpdate(1_000_000_013, { fetch: throttled })).rejects.toThrow(
+      "GitHub rate limit reached. Try again later.",
+    );
+  });
+
+  it("keeps other refusals as HTTP failures", async () => {
+    const forbidden = vi.fn(async () => new Response("{}", { status: 403 }));
+    await expect(findAndroidUpdate(1_000_000_013, { fetch: forbidden })).rejects.toThrow(
+      "Update request failed (HTTP 403)",
     );
   });
 });

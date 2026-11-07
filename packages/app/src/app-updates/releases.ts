@@ -13,6 +13,9 @@ const safeAssetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const previewVersionCodeOffset = 1_000_000_000;
 /** Keeps preview version codes within Google Play's 2_100_000_000 maximum. */
 const maxPreviewBuild = 1_100_000_000;
+const releasesPerPage = 100;
+/** GitHub lists at most 1000 releases, so later pages are never needed. */
+const maxReleasePages = 10;
 
 const assetSchema = z.object({ name: z.string(), browser_download_url: z.url() });
 const releaseSchema = z.object({
@@ -120,6 +123,20 @@ export function readApkChecksum(text: string, filename: string): string {
   return entries[0].slice(0, 64);
 }
 
+/** GitHub refused the request because this network used up its unauthenticated API allowance. */
+export class GitHubRateLimitError extends Error {
+  constructor() {
+    super("GitHub rate limit reached. Try again later.");
+    this.name = "GitHubRateLimitError";
+  }
+}
+
+/** GitHub signals an exhausted allowance with 429, or 403 and no remaining requests. */
+function isRateLimited(response: Response): boolean {
+  if (response.status === 429) return true;
+  return response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0";
+}
+
 /** Bound each metadata request; public releases need no GitHub credentials. */
 export async function requestUpdateResource(
   url: string,
@@ -129,6 +146,7 @@ export async function requestUpdateResource(
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const response = await request(url, { signal: controller.signal });
+    if (isRateLimited(response)) throw new GitHubRateLimitError();
     if (!response.ok) throw new Error(`Update request failed (HTTP ${response.status})`);
     // Consume metadata inside the timeout, not only the response headers.
     return await response.text();
@@ -137,21 +155,24 @@ export async function requestUpdateResource(
   }
 }
 
-/** Read every release page so unrelated tags cannot hide the newest fork preview. */
+/**
+ * Read every release page so unrelated tags cannot hide the newest fork preview, up to the
+ * 1000 releases GitHub will list.
+ */
 export async function findAndroidUpdate(
   installedCode: number,
   options: { fetch?: UpdateFetch } = {},
 ): Promise<AndroidUpdate | null> {
   const releases: ForkRelease[] = [];
-  for (let page = 1; ; page += 1) {
+  for (let page = 1; page <= maxReleasePages; page += 1) {
     const response = await requestUpdateResource(
-      `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`,
+      `https://api.github.com/repos/${repository}/releases?per_page=${releasesPerPage}&page=${page}`,
       options,
     );
     // Validate at the API boundary; selection below trusts the parsed type.
     const batch = releasesSchema.parse(JSON.parse(response));
     releases.push(...batch);
-    if (batch.length < 100) break;
+    if (batch.length < releasesPerPage) break;
   }
   return selectAndroidUpdate(releases, installedCode);
 }

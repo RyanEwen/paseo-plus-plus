@@ -13,6 +13,12 @@ export type AndroidUpdateStatus =
   | "installer"
   | "error";
 
+/**
+ * Minimum gap between automatic checks. GitHub allows 60 unauthenticated API requests per hour
+ * per network, shared by every device behind it, so resume bursts must not each send a request.
+ */
+export const AUTOMATIC_CHECK_MIN_GAP_MS = 15 * 60 * 1000;
+
 /** Automatic checks come from startup, resume and the interval; manual ones from a button. */
 export type AndroidUpdateCheckIntent = "automatic" | "manual";
 
@@ -38,6 +44,8 @@ export interface AndroidUpdaterDeps {
   /** Null outside Android fork previews; the updater then never does anything. */
   native: AndroidUpdaterNative | null;
   releases: AndroidUpdateReleasesPort;
+  /** Current time in milliseconds, for throttling automatic checks. */
+  now(): number;
 }
 
 export interface AndroidUpdateState {
@@ -49,6 +57,8 @@ export interface AndroidUpdateState {
   preparedVersionCode: number | null;
   error: string | null;
   progress: AndroidUpdateDownloadProgress | null;
+  /** When the most recent check request started, successful or not. */
+  lastCheckedAt: number | null;
   check: (options: { intent: AndroidUpdateCheckIntent }) => Promise<void>;
   install: () => Promise<void>;
 }
@@ -60,11 +70,20 @@ function preservesUserAction(status: AndroidUpdateStatus): boolean {
   return status === "permission" || status === "installer" || status === "error";
 }
 
+/** A check started within the automatic minimum gap. Manual checks ignore this. */
+function checkedRecently(lastCheckedAt: number | null, currentTime: number): boolean {
+  return lastCheckedAt !== null && currentTime - lastCheckedAt < AUTOMATIC_CHECK_MIN_GAP_MS;
+}
+
 /**
  * Create the shared update operation for Settings and the sidebar. Checks and downloads never
  * overlap; automatic check failures are silent so a background request cannot replace visible state.
  */
-export function createAndroidUpdater({ native, releases }: AndroidUpdaterDeps): AndroidUpdater {
+export function createAndroidUpdater({
+  native,
+  releases,
+  now,
+}: AndroidUpdaterDeps): AndroidUpdater {
   return createStore<AndroidUpdateState>((set, get) => {
     /** Download and verify the APK natively, publishing progress for this version only. */
     async function prepare(updaterNative: AndroidUpdaterNative, update: AndroidUpdate) {
@@ -91,12 +110,16 @@ export function createAndroidUpdater({ native, releases }: AndroidUpdaterDeps): 
       preparedVersionCode: null,
       error: null,
       progress: null,
+      lastCheckedAt: null,
 
       async check({ intent }) {
         const previous = get();
         if (!native || isAndroidUpdateBusy(previous.status)) return;
-        if (intent === "automatic" && preservesUserAction(previous.status)) return;
-        set({ status: "checking", error: null, progress: null });
+        if (intent === "automatic") {
+          if (preservesUserAction(previous.status)) return;
+          if (checkedRecently(previous.lastCheckedAt, now())) return;
+        }
+        set({ status: "checking", error: null, progress: null, lastCheckedAt: now() });
         try {
           const update = await releases.find(native.getVersionCode());
           set({ update, status: update ? "available" : "current" });

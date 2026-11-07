@@ -14,6 +14,7 @@ export const androidUpdater = createAndroidUpdater({
       return readApkChecksum(inventory, update.filename);
     },
   },
+  now: () => Date.now(),
 });
 
 const AndroidUpdaterContext = createContext<AndroidUpdater>(androidUpdater);

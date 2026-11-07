@@ -4,7 +4,12 @@ import {
   buildAndroidUpdate,
   createFakeAndroidUpdater,
 } from "./test-utils/fake-android-updater";
-import { createAndroidUpdater, isAndroidUpdateBusy, isAndroidUpdateTransferring } from "./store";
+import {
+  AUTOMATIC_CHECK_MIN_GAP_MS,
+  createAndroidUpdater,
+  isAndroidUpdateBusy,
+  isAndroidUpdateTransferring,
+} from "./store";
 
 const update = buildAndroidUpdate(14);
 const manual = { intent: "manual" } as const;
@@ -105,10 +110,12 @@ describe("Android update operation", () => {
   });
 
   it("reports manual check errors and keeps background checks quiet", async () => {
-    const { updater, releases } = createFakeAndroidUpdater();
+    const { updater, releases, clock } = createFakeAndroidUpdater();
     await updater.getState().check(manual);
     releases.next = new Error("Offline");
+    clock.advance(AUTOMATIC_CHECK_MIN_GAP_MS);
     await updater.getState().check(automatic);
+    expect(releases.finds).toBe(2);
     expect(updater.getState()).toMatchObject({ status: "available", error: null, update });
     await updater.getState().check(manual);
     expect(updater.getState()).toMatchObject({ status: "error", error: "Offline", update });
@@ -145,13 +152,43 @@ describe("Android update operation", () => {
 
   it("does nothing in builds without the native updater", async () => {
     const { releases } = createFakeAndroidUpdater();
-    const updater = createAndroidUpdater({ native: null, releases });
+    const updater = createAndroidUpdater({ native: null, releases, now: () => 0 });
     expect(updater.getState().available).toBe(false);
     await updater.getState().check(manual);
     updater.setState({ update });
     await updater.getState().install();
     expect(updater.getState().status).toBe("idle");
     expect(releases.finds).toBe(0);
+  });
+});
+
+describe("Android automatic check budget", () => {
+  it("skips automatic checks within the minimum gap, counting failed ones", async () => {
+    const { updater, releases, clock } = createFakeAndroidUpdater();
+    releases.next = null;
+    await updater.getState().check(automatic);
+    expect(updater.getState().lastCheckedAt).toBe(clock.time);
+    clock.advance(AUTOMATIC_CHECK_MIN_GAP_MS - 1);
+    await updater.getState().check(automatic);
+    expect(releases.finds).toBe(1);
+    clock.advance(1);
+    releases.next = new Error("Offline");
+    await updater.getState().check(automatic);
+    expect(releases.finds).toBe(2);
+    clock.advance(AUTOMATIC_CHECK_MIN_GAP_MS - 1);
+    await updater.getState().check(automatic);
+    expect(releases.finds).toBe(2);
+  });
+
+  it("always runs manual checks and starts the gap from them", async () => {
+    const { updater, releases, clock } = createFakeAndroidUpdater();
+    releases.next = null;
+    await updater.getState().check(manual);
+    await updater.getState().check(manual);
+    expect(releases.finds).toBe(2);
+    clock.advance(AUTOMATIC_CHECK_MIN_GAP_MS - 1);
+    await updater.getState().check(automatic);
+    expect(releases.finds).toBe(2);
   });
 });
 
