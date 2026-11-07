@@ -1,6 +1,11 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 import { projectEquivalenceViewKey } from "./project-view-key";
+import {
+  SIDEBAR_VIEW_STORE_VERSION,
+  defaultSidebarModeProfiles,
+  type SidebarModeProfiles,
+} from "../../../src/stores/sidebar-mode-preferences";
 
 interface ContextMenuAnchor {
   x: number;
@@ -368,4 +373,31 @@ export async function revealSidebarProjectWorkspaces(
     .toBe(true);
   if (!(await target.isVisible())) await showMore.click();
   await expect(target).toBeVisible();
+}
+
+/**
+ * Seed the persisted sidebar view before the app loads: default mode profiles adjusted by
+ * `configure`, Project grouping and the given upstream workspace sort.
+ */
+export async function seedSidebarModeProfiles(
+  page: Page,
+  {
+    workspaceSort,
+    configure,
+  }: {
+    workspaceSort: "manual" | "created" | "lastPrompt";
+    configure: (profiles: SidebarModeProfiles) => void;
+  },
+): Promise<void> {
+  const modeProfiles = defaultSidebarModeProfiles();
+  configure(modeProfiles);
+  await page.addInitScript(
+    ({ version, state }) => {
+      localStorage.setItem("sidebar-view", JSON.stringify({ version, state }));
+    },
+    {
+      version: SIDEBAR_VIEW_STORE_VERSION,
+      state: { groupMode: "project", workspaceSort, modeProfiles },
+    },
+  );
 }

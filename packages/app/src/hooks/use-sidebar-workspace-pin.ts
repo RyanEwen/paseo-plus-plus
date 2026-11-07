@@ -6,6 +6,7 @@ import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list"
 import { useSessionStore } from "@/stores/session-store";
 import { hostSupportsFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import type { WorkspacePinScope } from "@getpaseo/protocol/messages";
 
 // Everything the pin toggle actually needs. Kept narrower than SidebarWorkspaceEntry so the
 // global keyboard handler can build one from the active route selection without a sidebar row.
@@ -16,7 +17,7 @@ export type PinnableWorkspace = Pick<
 
 export type ToggleSidebarWorkspacePin = (
   workspace: PinnableWorkspace,
-  scope?: "global" | "project",
+  scope?: WorkspacePinScope,
 ) => void;
 
 // Module scope, not a per-hook ref: the sidebar row menus and the global keyboard shortcut each
@@ -36,7 +37,7 @@ export function useSidebarWorkspacePinController(): ToggleSidebarWorkspacePin {
     }: {
       workspace: PinnableWorkspace;
       pinned: boolean;
-      scope: "global" | "project";
+      scope: WorkspacePinScope;
     }) => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
       if (!client) {
@@ -65,7 +66,7 @@ export function useSidebarWorkspacePinController(): ToggleSidebarWorkspacePin {
   const mutate = mutation.mutate;
 
   return useCallback(
-    (workspace: PinnableWorkspace, scope: "global" | "project" = "global") => {
+    (workspace: PinnableWorkspace, scope: WorkspacePinScope = "global") => {
       if (pendingWorkspaceKeys.has(workspace.workspaceKey)) {
         return;
       }

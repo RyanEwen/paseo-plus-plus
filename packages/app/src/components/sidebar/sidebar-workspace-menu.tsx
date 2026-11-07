@@ -17,7 +17,7 @@ import {
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { useAppSettings } from "@/hooks/use-settings";
+import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -150,7 +150,7 @@ function SidebarWorkspaceMenuItems({
   onToggleProjectPin,
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
-  const { settings } = useAppSettings();
+  const projectPinning = useProjectPinningEnabled();
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
@@ -213,7 +213,7 @@ function SidebarWorkspaceMenuItems({
           Mark as unread
         </WorkspaceMenuItem>
       ) : null}
-      {settings.paseoPlusPlus.projectPinning && onToggleProjectPin ? (
+      {projectPinning && onToggleProjectPin ? (
         <WorkspaceMenuItem
           surface={surface}
           testID={`sidebar-workspace-menu-project-pin-${workspaceKey}`}

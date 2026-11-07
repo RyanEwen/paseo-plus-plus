@@ -1,10 +1,12 @@
 import type { Page } from "@playwright/test";
-import { defaultSidebarModeProfiles } from "../../src/stores/sidebar-mode-preferences";
 import { test, expect } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import { revealSidebarProjectWorkspaces } from "../support/helpers/sidebar";
+import {
+  revealSidebarProjectWorkspaces,
+  seedSidebarModeProfiles,
+} from "../support/helpers/sidebar";
 import {
   expectSidebarWorkspaceSelected,
   switchWorkspaceViaSidebar,
@@ -34,17 +36,12 @@ test("previous and next traverse every visible workspace while digit shortcuts s
   page,
 }) => {
   test.setTimeout(120_000);
-  const profiles = defaultSidebarModeProfiles();
-  profiles.project.initialWorkspaceCount = 7;
-  await page.addInitScript((modeProfiles) => {
-    localStorage.setItem(
-      "sidebar-view",
-      JSON.stringify({
-        version: 12,
-        state: { groupMode: "project", workspaceSort: "manual", modeProfiles },
-      }),
-    );
-  }, profiles);
+  await seedSidebarModeProfiles(page, {
+    workspaceSort: "manual",
+    configure: (profiles) => {
+      profiles.project.initialWorkspaceCount = 7;
+    },
+  });
   const project = await seedWorkspace({
     repoPrefix: "relative-navigation-",
     title: "Workspace 01",

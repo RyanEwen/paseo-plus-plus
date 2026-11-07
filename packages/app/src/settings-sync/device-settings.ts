@@ -1,5 +1,8 @@
 import { DEFAULT_CLIENT_SETTINGS, type AppSettings } from "@/hooks/use-settings/storage";
-import { DEVICE_LOCAL_APP_SETTING_KEYS, DEVICE_LOCAL_FORK_SETTING_KEYS } from "./scope";
+import {
+  DEVICE_LOCAL_APP_SETTING_KEYS,
+  DEVICE_LOCAL_FORK_SETTING_KEYS,
+} from "@/paseo-plus-plus/device-local-settings";
 
 type StoredDeviceKey = Extract<(typeof DEVICE_LOCAL_APP_SETTING_KEYS)[number], keyof AppSettings>;
 
