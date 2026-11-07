@@ -1,3 +1,4 @@
+import { naturalBubbleFrameStyle } from "./user-message-measured-styles";
 import {
   createContext,
   useCallback,
@@ -113,8 +114,7 @@ export function NaturalMessageBubble({
       onLayout={reportLayout}
       style={[
         style,
-        flow?.bubbleWidth === undefined ? undefined : { width: flow.bubbleWidth },
-        flow?.bubbleHeight === undefined ? undefined : { height: flow.bubbleHeight },
+        naturalBubbleFrameStyle({ width: flow?.bubbleWidth, height: flow?.bubbleHeight }),
         flow?.webContentPadding ? { paddingTop: 0, paddingBottom: 0 } : undefined,
       ]}
       collapsable={false}

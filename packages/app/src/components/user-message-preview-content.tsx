@@ -1,4 +1,9 @@
 import {
+  measuredHeightStyle,
+  measuredWidthStyle,
+  previewTextClipStyle,
+} from "./user-message-measured-styles";
+import {
   useCallback,
   useContext,
   useMemo,
@@ -134,30 +139,22 @@ function NaturalMessageContent({
     },
     [flow],
   );
-  const textWidthStyle = useMemo(
-    () => (flow.textWidth === undefined ? undefined : { width: flow.textWidth }),
-    [flow.textWidth],
-  );
+  const textWidthStyle = useMemo(() => measuredWidthStyle(flow.textWidth), [flow.textWidth]);
   const clipStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
       styles.fullContent,
-      {
+      previewTextClipStyle({
         width: flow.textClipWidth,
-        overflow: flow.compact ? "hidden" : "visible",
-        transform:
-          flow.web && flow.textTranslateX === 0 && flow.textTranslateY === 0
-            ? undefined
-            : [{ translateX: flow.textTranslateX }, { translateY: flow.textTranslateY }],
-      },
+        compact: flow.compact,
+        web: flow.web === true,
+        translateX: flow.textTranslateX,
+        translateY: flow.textTranslateY,
+      }),
     ],
     [flow.textClipWidth, flow.compact, flow.textTranslateX, flow.textTranslateY, flow.web],
   );
   const textFrameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [
-      styles.fullContent,
-      textWidthStyle,
-      flow.textHeight === undefined ? undefined : { height: flow.textHeight },
-    ],
+    () => [styles.fullContent, textWidthStyle, measuredHeightStyle(flow.textHeight)],
     [textWidthStyle, flow.textHeight],
   );
   const naturalText = <View style={textWidthStyle}>{hasText && children}</View>;
@@ -165,7 +162,7 @@ function NaturalMessageContent({
     () => [
       styles.fullContent,
       flow.webContentPadding ? styles.expandedText : undefined,
-      flow.contentWidth === undefined ? undefined : { width: flow.contentWidth },
+      measuredWidthStyle(flow.contentWidth),
     ],
     [flow.contentWidth, flow.webContentPadding],
   );

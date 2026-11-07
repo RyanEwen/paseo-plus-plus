@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
+import { trailingRailStyles } from "./user-message-measured-styles";
 import { MessageSender } from "./user-message/index";
 import { useTextLink, type TextLinkEvent } from "@/hooks/use-text-link";
 import { TextPreview } from "@/components/ui/text-preview";
@@ -736,29 +737,15 @@ function UserMessageTrailingRow({
   const flow = useContext(NaturalMessageFlowContext);
   const web = flow?.web === true;
   const railWidth = flow?.webRailWidth;
-  const preparedWidth = railWidth !== undefined && railWidth > 0;
   const padding = backed ? SPACING[2] : 0;
+  const rails = useMemo(() => trailingRailStyles({ railWidth, padding }), [railWidth, padding]);
   const paintStyle = useMemo<React.ComponentProps<typeof View>["style"]>(() => {
     if (!web) return [userMessageStylesheet.trailingContent, style];
-    return [
-      style,
-      {
-        maxWidth: preparedWidth ? railWidth + padding * 2 : "100%",
-        marginLeft: preparedWidth ? -padding : 0,
-        marginRight: preparedWidth ? -padding : 0,
-      },
-    ];
-  }, [web, style, preparedWidth, railWidth, padding]);
+    return [style, rails.paint];
+  }, [web, style, rails]);
   const contentStyle = useMemo<React.ComponentProps<typeof View>["style"]>(
-    () => [
-      userMessageStylesheet.trailingContent,
-      {
-        maxWidth: preparedWidth ? railWidth : "100%",
-        minWidth: 0,
-        flexShrink: 1,
-      },
-    ],
-    [preparedWidth, railWidth],
+    () => [userMessageStylesheet.trailingContent, rails.content],
+    [rails],
   );
   if (!web)
     return (
