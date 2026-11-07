@@ -6,7 +6,7 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AttachmentFrame, AttachmentLabel, AttachmentThumbnail } from "../attachment-pill";
-import { NaturalMessageFlowContext } from "./flow";
+import { NaturalMessageFlowContext, webMessageFlow, nativeStickyDriver } from "./flow";
 import { NativeMessageVisibility } from "./native-flow";
 
 /** Compact paint omits attachments; disclosure reveals the original attachment pills. */
@@ -26,7 +26,7 @@ export function UserMessageAttachments({
   const { t } = useTranslation();
   const flow = useContext(NaturalMessageFlowContext);
   const registerAttachments = useCallback(
-    (node: ComponentRef<typeof View> | null) => flow?.registerAttachments?.(node),
+    (node: ComponentRef<typeof View> | null) => webMessageFlow(flow)?.registerAttachments(node),
     [flow],
   );
   if (compact && !flow) return null;
@@ -65,9 +65,10 @@ export function UserMessageAttachments({
     </>
   );
   if (!flow) return attachmentPills;
-  if (flow.nativePresentation) {
+  const driver = nativeStickyDriver(flow);
+  if (driver) {
     return (
-      <NativeMessageVisibility driver={flow.nativePresentation} visible="body">
+      <NativeMessageVisibility driver={driver} visible="body">
         {attachmentPills}
       </NativeMessageVisibility>
     );

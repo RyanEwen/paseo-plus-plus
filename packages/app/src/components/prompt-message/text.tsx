@@ -7,7 +7,7 @@ import { useTextLink } from "@/hooks/use-text-link";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MESSAGE_TEXT_DATASET } from "../message-layout";
 import type { UserMessageProps } from "./index";
-import { NaturalMessageFlowContext } from "./flow";
+import { NaturalMessageFlowContext, webMessageFlow, nativeStickyDriver } from "./flow";
 import { NativeMessageSuffixMask } from "./native-flow";
 
 function ignorePreviewOverflow(_overflowing: boolean): void {
@@ -53,9 +53,10 @@ export function UserMessageText({
     [compactPrefixHeight],
   );
   const keyboardLink = useTextLink(onContentPress);
+  const nativeDriver = nativeStickyDriver(naturalFlow);
   const textAccessibility = useMemo(
     () =>
-      onContentPress && !naturalFlow?.nativePresentation
+      onContentPress && !nativeDriver
         ? {
             accessible: true,
             "aria-hidden": false,
@@ -66,13 +67,7 @@ export function UserMessageText({
             ...keyboardLink,
           }
         : { accessible: !hideTextAccessibility, "aria-hidden": hideTextAccessibility },
-    [
-      onContentPress,
-      hideTextAccessibility,
-      contentAccessibilityLabel,
-      keyboardLink,
-      naturalFlow?.nativePresentation,
-    ],
+    [onContentPress, hideTextAccessibility, contentAccessibilityLabel, keyboardLink, nativeDriver],
   );
   return (
     <View style={userMessageTextStyles.textRegion}>
@@ -82,7 +77,7 @@ export function UserMessageText({
           selectable
           numberOfLines={previewLines ?? 1}
           expanded={
-            !naturalFlow?.clipText &&
+            !webMessageFlow(naturalFlow)?.clipText &&
             (naturalFlow !== null || previewExpanded || previewLines === undefined)
           }
           onOverflowChange={onPreviewOverflowChange ?? ignorePreviewOverflow}
@@ -96,9 +91,9 @@ export function UserMessageText({
       )}
       {/* Keep the one natural Text fully laid out; mask only suffix ink beyond
           the current measured first line, without changing its flow height. */}
-      {naturalFlow?.nativePresentation ? (
+      {nativeDriver ? (
         <NativeMessageSuffixMask
-          driver={naturalFlow.nativePresentation}
+          driver={nativeDriver}
           backgroundStyle={userMessageTextStyles.textMask}
         />
       ) : (

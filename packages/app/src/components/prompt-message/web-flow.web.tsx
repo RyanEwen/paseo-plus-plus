@@ -226,9 +226,9 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
   );
   const context = useMemo<MessageFlowContext>(
     () => ({
-      web: true,
-      webRailWidth: measured.width,
-      webContentPadding: bounded,
+      adapter: "web",
+      railWidth: measured.width,
+      contentPadding: bounded,
       compact,
       bubbleWidth: clipWidth,
       bubbleHeight: bodyHeight,

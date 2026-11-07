@@ -439,7 +439,8 @@ export function NativeUserMessageFlow(props: UserMessageFlowProps) {
   }, [key, onGeometry]);
   const context = useMemo<MessageFlowContext>(
     () => ({
-      nativePresentation: driver,
+      adapter: "nativeSticky",
+      driver,
       compact: false,
       bubbleWidth: undefined,
       textWidth: flow?.textWidth,

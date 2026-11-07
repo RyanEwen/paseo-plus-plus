@@ -11,7 +11,12 @@ import { ScrollView } from "@/components/ui/scroll-view";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { controlHeightForLayout } from "@/components/ui/control-geometry";
-import { NaturalMessageFlowContext, type UserMessageBodyPresentation } from "./flow";
+import {
+  NaturalMessageFlowContext,
+  type UserMessageBodyPresentation,
+  webMessageFlow,
+  nativeStickyDriver,
+} from "./flow";
 import { MessagePreview } from "../user-message/index";
 import { NativeMessageTextPaint } from "./native-flow";
 
@@ -111,6 +116,8 @@ function NaturalMessageContent({
   bodyPresentation,
   forceExpanded,
 }: NaturalMessageContentProps) {
+  const web = webMessageFlow(flow);
+  const driver = nativeStickyDriver(flow);
   const registerContent = useCallback(
     (node: ComponentRef<typeof View> | null) => {
       flow.register("content", node);
@@ -142,25 +149,25 @@ function NaturalMessageContent({
       previewTextClipStyle({
         width: flow.textClipWidth,
         compact: flow.compact,
-        web: flow.web === true,
+        web: web !== null,
         translateX: flow.textTranslateX,
         translateY: flow.textTranslateY,
       }),
     ],
-    [flow.textClipWidth, flow.compact, flow.textTranslateX, flow.textTranslateY, flow.web],
+    [flow.textClipWidth, flow.compact, flow.textTranslateX, flow.textTranslateY, web],
   );
   const textFrameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.fullContent, textWidthStyle, measuredHeightStyle(flow.textHeight)],
-    [textWidthStyle, flow.textHeight],
+    () => [styles.fullContent, textWidthStyle, measuredHeightStyle(web?.textHeight)],
+    [textWidthStyle, web?.textHeight],
   );
   const naturalText = <View style={textWidthStyle}>{hasText && children}</View>;
   const webContentStyle = useMemo(
     () => [
       styles.fullContent,
-      flow.webContentPadding ? styles.expandedText : undefined,
-      measuredWidthStyle(flow.contentWidth),
+      web?.contentPadding ? styles.expandedText : undefined,
+      measuredWidthStyle(web?.contentWidth),
     ],
-    [flow.contentWidth, flow.webContentPadding],
+    [web?.contentWidth, web?.contentPadding],
   );
   const naturalBody = (
     <View
@@ -175,10 +182,8 @@ function NaturalMessageContent({
       >
         {attachments}
         <View style={textFrameStyle} ref={registerText} onLayout={measureText} collapsable={false}>
-          {flow.nativePresentation ? (
-            <NativeMessageTextPaint driver={flow.nativePresentation}>
-              {naturalText}
-            </NativeMessageTextPaint>
+          {driver ? (
+            <NativeMessageTextPaint driver={driver}>{naturalText}</NativeMessageTextPaint>
           ) : (
             <View style={clipStyle}>{naturalText}</View>
           )}
@@ -188,7 +193,7 @@ function NaturalMessageContent({
   );
   // Keep web's existing inner padding cell. Only its full natural contents, not
   // the compact bubble's outer rectangle, determine the transcript reservation.
-  return flow.web ? <View style={webContentStyle}>{naturalBody}</View> : naturalBody;
+  return web ? <View style={webContentStyle}>{naturalBody}</View> : naturalBody;
 }
 
 const styles = StyleSheet.create((theme) => ({

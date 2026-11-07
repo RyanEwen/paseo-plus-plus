@@ -40,25 +40,11 @@ export type { NaturalMessageGeometry } from "./flow-model";
 type FrameName = "bubble" | "content" | "text" | "controls";
 type Measurable = ComponentRef<typeof View>;
 
-export interface MessageFlowContext {
-  /** Only the explicitly opted-in Android owner supplies a native presentation. */
-  nativePresentation?: NativeMessagePresentationDriver;
+/** What every natural-flow adapter publishes to the message tree it wraps. */
+interface MessageFlowBase {
   compact: boolean;
-  /** The web adapter preserves its existing inner padding cell and visual bubble. */
-  web?: boolean;
-  /** Current measured reading rail, independent of compact paint or preparation. */
-  webRailWidth?: number;
-  /** Prepared web paint moves vertical chrome inside the visual bubble. */
-  webContentPadding?: boolean;
-  bubbleHeight?: number;
-  contentWidth?: number;
-  registerAttachments?(node: Measurable | null): void;
   bubbleWidth: number | undefined;
   textWidth: number | undefined;
-  /** Web keeps the real Text's current full layout outside its clipped prefix. */
-  textHeight?: number;
-  /** Only the web adapter clips TextPreview itself; native keeps its current paint owner. */
-  clipText?: boolean;
   textClipWidth: number | undefined;
   /** Actual first-line paint boundary; absent outside qualified compact mode. */
   textPrefixHeight: number | undefined;
@@ -67,6 +53,47 @@ export interface MessageFlowContext {
   register(name: FrameName, node: Measurable | null): void;
   reportFrame(name: FrameName, event: LayoutChangeEvent): void;
   reportText(lines: readonly NaturalTextLine[]): void;
+}
+
+/** The shared native and fallback flow. */
+export interface OrdinaryMessageFlow extends MessageFlowBase {
+  adapter: "ordinary";
+}
+
+/** The web flow, which preserves its inner padding cell and visual bubble. */
+export interface WebMessageFlow extends MessageFlowBase {
+  adapter: "web";
+  /** Current measured reading rail, independent of compact paint or preparation. */
+  railWidth: number;
+  /** Prepared web paint moves vertical chrome inside the visual bubble. */
+  contentPadding: boolean;
+  bubbleHeight: number | undefined;
+  contentWidth: number | undefined;
+  /** The real Text's current full layout outside its clipped prefix. */
+  textHeight: number | undefined;
+  /** The web adapter clips TextPreview itself. */
+  clipText: boolean;
+  registerAttachments(node: Measurable | null): void;
+}
+
+/** The opted-in Android sticky owner, whose driver selects paint and visibility. */
+export interface NativeStickyMessageFlow extends MessageFlowBase {
+  adapter: "nativeSticky";
+  driver: NativeMessagePresentationDriver;
+}
+
+export type MessageFlowContext = OrdinaryMessageFlow | WebMessageFlow | NativeStickyMessageFlow;
+
+/** The web flow, or null for any other adapter or outside a natural flow. */
+export function webMessageFlow(flow: MessageFlowContext | null): WebMessageFlow | null {
+  return flow?.adapter === "web" ? flow : null;
+}
+
+/** The Android sticky presentation driver, when this flow has one. */
+export function nativeStickyDriver(
+  flow: MessageFlowContext | null,
+): NativeMessagePresentationDriver | undefined {
+  return flow?.adapter === "nativeSticky" ? flow.driver : undefined;
 }
 
 export const NaturalMessageFlowContext = createContext<MessageFlowContext | null>(null);
@@ -83,6 +110,7 @@ export function NaturalMessageBubble({
   ...props
 }: NaturalMessageBubbleProps) {
   const flow = useContext(NaturalMessageFlowContext);
+  const web = webMessageFlow(flow);
   const register = useCallback(
     (node: Measurable | null) => {
       flow?.register("bubble", node);
@@ -115,8 +143,8 @@ export function NaturalMessageBubble({
       onLayout={reportLayout}
       style={[
         style,
-        naturalBubbleFrameStyle({ width: flow?.bubbleWidth, height: flow?.bubbleHeight }),
-        flow?.webContentPadding ? { paddingTop: 0, paddingBottom: 0 } : undefined,
+        naturalBubbleFrameStyle({ width: flow?.bubbleWidth, height: web?.bubbleHeight }),
+        web?.contentPadding ? { paddingTop: 0, paddingBottom: 0 } : undefined,
       ]}
       collapsable={false}
     />
@@ -380,6 +408,7 @@ export function UserMessageFlow(props: UserMessageFlowProps) {
 
   const context = useMemo<MessageFlowContext>(
     () => ({
+      adapter: "ordinary",
       compact,
       bubbleWidth: bounded ? flow?.bubbleWidth : undefined,
       textWidth: compact ? flow.textWidth : undefined,

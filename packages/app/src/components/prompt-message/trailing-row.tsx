@@ -8,7 +8,7 @@ import { RewindMenu } from "@/components/rewind/rewind-menu";
 import { SPACING } from "@/styles/theme";
 import { STREAM_METADATA_FONT_SIZE } from "../message-layout";
 import { TurnCopyButton } from "../turn-copy-button";
-import { NaturalMessageFlowContext } from "./flow";
+import { NaturalMessageFlowContext, webMessageFlow } from "./flow";
 import { trailingRailStyles } from "./measured-styles";
 
 /** The action row under a prompt; on web it follows the measured natural rail. */
@@ -20,8 +20,8 @@ export function UserMessageTrailingRow({
   ...props
 }: React.ComponentProps<typeof View> & { backed: boolean; backdrop: ReactNode }) {
   const flow = useContext(NaturalMessageFlowContext);
-  const web = flow?.web === true;
-  const railWidth = flow?.webRailWidth;
+  const web = flow?.adapter === "web";
+  const railWidth = webMessageFlow(flow)?.railWidth;
   const padding = backed ? SPACING[2] : 0;
   const rails = useMemo(() => trailingRailStyles({ railWidth, padding }), [railWidth, padding]);
   const paintStyle = useMemo<React.ComponentProps<typeof View>["style"]>(() => {
