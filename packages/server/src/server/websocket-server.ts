@@ -1,4 +1,3 @@
-import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
 import { forkCapabilities } from "./fork-capabilities.js";
 import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
