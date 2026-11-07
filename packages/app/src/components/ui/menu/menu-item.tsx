@@ -23,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { Theme } from "@/styles/theme";
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
 import { MENU_ITEM_HEIGHT } from "./menu-geometry";
+import { useMenuRowProps } from "./menu-row-props";
 
 const ThemedCheck = withUnistyles(Check);
 const ThemedCheckCircle = withUnistyles(CheckCircle);
@@ -354,20 +355,15 @@ export function MenuItem({
     ],
     [destructive, isSuccess, muted, isDisabled],
   );
-  const itemDataSet = useMemo(
-    () => ({ menuItem: "true", menuDisabled: isDisabled ? "true" : "false" }),
-    [isDisabled],
-  );
+  const rowProps = useMenuRowProps({ disabled: Boolean(isDisabled) });
 
   const primaryContent = (
     <Pressable
       testID={testID}
-      accessibilityRole="menuitem"
+      {...rowProps}
       accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
       aria-checked={selected}
-      tabIndex={-1}
-      dataSet={itemDataSet}
       disabled={isDisabled}
       onPress={handleItemPress}
       style={itemPressableStyle}
