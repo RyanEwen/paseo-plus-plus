@@ -577,11 +577,13 @@ export class AgentAttentionCoordinator {
       try {
         await this.repairRetiredHumanAttention(claim.agent.id);
       } catch (repairError) {
-        throw new AggregateError(
+        // AggregateError keeps the repair failure as its cause; both failures stay in `errors`.
+        const combinedFailure = new AggregateError(
           [error, repairError],
           "Human attention acknowledgement and retired candidate repair failed",
           { cause: repairError },
         );
+        throw combinedFailure;
       }
     }
     throw error;

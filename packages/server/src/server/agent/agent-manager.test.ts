@@ -10,7 +10,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, promises as fs } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import { tmpdir } from "node:os";
