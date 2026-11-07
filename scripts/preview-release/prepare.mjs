@@ -3,8 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { dump, load } from "js-yaml";
 import { isMainModule } from "../is-main-module.mjs";
-import { resolvePreviewRelease } from "./metadata.mjs";
-import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
+import { resolvePreviewRelease, stampCheckoutVersion, writePreviewRelease } from "./metadata.mjs";
 import { runNpm } from "./npm.mjs";
 
 import { requireFromElectronBuilder } from "./packager.mjs";
@@ -72,16 +71,12 @@ export async function preparePreviewBuild({
     };
   }
 
-  // The desktop compares the running daemon version with its own version. Keep every
-  // bundled workspace aligned so an owned daemon is not restarted as perpetually outdated.
-  rootPackage.version = release.version;
-  writeFileSync(path.join(root, "package.json"), `${JSON.stringify(rootPackage, null, 2)}\n`);
-  syncWorkspaceVersions(root);
+  stampCheckoutVersion({ root, version: release.version });
   writeFileSync(
     path.join(root, "packages/desktop/electron-builder.preview.local.yml"),
     dump(builderConfig),
   );
-  writeFileSync(path.join(root, "preview-release.json"), `${JSON.stringify(release, null, 2)}\n`);
+  writePreviewRelease(path.join(root, "preview-release.json"), release);
   return release;
 }
 
@@ -105,11 +100,4 @@ if (isMainModule(import.meta.url)) {
     ],
     { stdio: "inherit" },
   );
-  for (const [name, value] of Object.entries({
-    version: release.version,
-    tag: release.tag,
-    commit: release.commit,
-  })) {
-    process.stdout.write(`${name}=${value}\n`);
-  }
 }

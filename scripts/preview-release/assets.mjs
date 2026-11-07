@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { dump, load } from "js-yaml";
 import { isMainModule } from "../is-main-module.mjs";
+import { writePreviewRelease } from "./metadata.mjs";
 
 import { requireFromElectronBuilder } from "./packager.mjs";
 
@@ -164,7 +165,7 @@ export async function assemblePreviewAssets({
   writeFileSync(path.join(output, "preview.yml"), dump(windowsManifest));
   writeFileSync(path.join(output, "preview-linux.yml"), dump(manifests[2]));
   writeFileSync(path.join(output, "preview-linux-arm64.yml"), dump(manifests[3]));
-  writeFileSync(path.join(output, "preview-release.json"), `${JSON.stringify(release, null, 2)}\n`);
+  writePreviewRelease(path.join(output, "preview-release.json"), release);
 
   const checksumLines = [];
   for (const name of readdirSync(output).sort()) {

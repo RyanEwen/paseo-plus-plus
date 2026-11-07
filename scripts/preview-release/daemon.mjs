@@ -16,7 +16,7 @@ import { isMainModule } from "../is-main-module.mjs";
 import { smokeRunningDaemon } from "./daemon-smoke.mjs";
 import { stageDaemonRuntime } from "./runtime.mjs";
 import assert from "node:assert/strict";
-import { syncWorkspaceVersions } from "../sync-workspace-versions.mjs";
+import { stampCheckoutVersion, writePreviewRelease } from "./metadata.mjs";
 import { loadNativePtyModules } from "../native-pty.mjs";
 import { runNpm } from "./npm.mjs";
 
@@ -74,7 +74,7 @@ export function buildDaemonPackage({ root, output, release }) {
     execFileSync("tar", ["-czf", path.join(output, filename), "-C", output, "package"], {
       stdio: "inherit",
     });
-    writeFileSync(path.join(output, "preview-release.json"), JSON.stringify(release, null, 2));
+    writePreviewRelease(path.join(output, "preview-release.json"), release);
     return path.join(output, filename);
   } finally {
     rmSync(staging, { recursive: true, force: true });
@@ -167,10 +167,7 @@ if (isMainModule(import.meta.url) && process.argv[2] === "--smoke") {
 } else if (isMainModule(import.meta.url)) {
   const root = process.cwd();
   const release = JSON.parse(readFileSync("preview-release.json", "utf8"));
-  const manifest = JSON.parse(readFileSync("package.json", "utf8"));
-  manifest.version = release.version;
-  writeFileSync("package.json", JSON.stringify(manifest, null, 2));
-  syncWorkspaceVersions(root);
+  stampCheckoutVersion({ root, version: release.version });
   runNpm(["run", "build:server"], { stdio: "inherit" });
   runNpm(["run", "build:daemon-web-ui"], {
     stdio: "inherit",
