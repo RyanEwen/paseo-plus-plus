@@ -33,9 +33,16 @@ afterEach(() => {
 });
 
 describe("single workspace archive failure safeguards", () => {
-  test.each(["discovery", "agent", "terminal", "registry"] as const)(
-    "keeps the workspace retryable after a %s failure and completes on retry",
-    async (failure) => {
+  // First-attempt calls: a discovery failure stops before teardown; agent and terminal teardown
+  // run together; the registry archive runs only after complete teardown.
+  test.each([
+    { failure: "discovery", teardownCalls: 0, archiveRecordCalls: 0 },
+    { failure: "agent", teardownCalls: 1, archiveRecordCalls: 0 },
+    { failure: "terminal", teardownCalls: 1, archiveRecordCalls: 0 },
+    { failure: "registry", teardownCalls: 1, archiveRecordCalls: 1 },
+  ] as const)(
+    "keeps the workspace retryable after a $failure failure and completes on retry",
+    async ({ failure, teardownCalls, archiveRecordCalls }) => {
       const tempDir = mkdtempSync(path.join(tmpdir(), "workspace-archive-failure-"));
       cleanupPaths.push(tempDir);
       const workspaceId = "retryable-workspace";
@@ -82,11 +89,9 @@ describe("single workspace archive failure safeguards", () => {
       ]);
       expect(existsSync(tempDir)).toBe(true);
       expect(deps.clearWorkspaceArchiving).toHaveBeenCalledWith([workspaceId]);
-      if (failure !== "registry") expect(deps.archiveWorkspaceRecord).not.toHaveBeenCalled();
-      if (failure === "discovery") {
-        expect(deps.agentManager.archiveSnapshot).not.toHaveBeenCalled();
-        expect(deps.killTerminalsForWorkspace).not.toHaveBeenCalled();
-      }
+      expect(deps.archiveWorkspaceRecord).toHaveBeenCalledTimes(archiveRecordCalls);
+      expect(deps.agentManager.archiveSnapshot).toHaveBeenCalledTimes(teardownCalls);
+      expect(deps.killTerminalsForWorkspace).toHaveBeenCalledTimes(teardownCalls);
 
       fail = false;
       const result = await archiveByScope(deps, {
@@ -95,7 +100,7 @@ describe("single workspace archive failure safeguards", () => {
       });
       expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
       expect(deps.activeWorkspaces).toEqual([]);
-      expect(stored.archivedAt).toBeTruthy();
+      expect(stored.archivedAt).toBe("2026-10-21T00:01:00Z");
       expect(result.removedDirectory).toBe(false);
       expect(existsSync(tempDir)).toBe(true);
     },

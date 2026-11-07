@@ -222,21 +222,18 @@ describe("project archive confirmation and execution", () => {
     expect(flow.refresh).not.toHaveBeenCalled();
   });
 
-  it.each(["membership", "agents", "running", "risk"])(
-    "requires fresh confirmation if %s changes",
-    async (change) => {
-      const original = archiveWorkspace();
-      const flow = archiveFlow([original]);
-      const changed = { ...original };
-      if (change === "membership") changed.workspaceId = "new-workspace";
-      if (change === "agents") changed.agentIds = ["new-agent"];
-      if (change === "running") changed.runningAgentCount = 0;
-      if (change === "risk") changed.archiveHasUncommittedChanges = true;
-      flow.refresh.mockResolvedValue([changed]);
-      expect(await archiveProjectWorkspaces(flow)).toEqual({ kind: "changed" });
-      expect(flow.archive).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    { change: "membership", refreshed: { workspaceId: "new-workspace" } },
+    { change: "agents", refreshed: { agentIds: ["new-agent"] } },
+    { change: "running", refreshed: { runningAgentCount: 0 } },
+    { change: "risk", refreshed: { archiveHasUncommittedChanges: true } },
+  ])("requires fresh confirmation if $change changes", async ({ refreshed }) => {
+    const original = archiveWorkspace();
+    const flow = archiveFlow([original]);
+    flow.refresh.mockResolvedValue([archiveWorkspace({ ...original, ...refreshed })]);
+    expect(await archiveProjectWorkspaces(flow)).toEqual({ kind: "changed" });
+    expect(flow.archive).not.toHaveBeenCalled();
+  });
 
   it.each([
     { field: "diff stat", refreshed: { diffStat: { additions: 12, deletions: 4 } } },
