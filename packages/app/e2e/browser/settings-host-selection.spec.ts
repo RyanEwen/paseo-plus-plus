@@ -1,8 +1,6 @@
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import { claudeAndCodexReports, usageItem } from "../support/helpers/usage-sidebar-item";
 import { setFooterItemVisible } from "../support/helpers/sidebar-nav-settings";
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { buildSettingsSectionRoute } from "@/utils/host-routes";
@@ -77,17 +75,16 @@ test("explicit settings host sync shares preferences across independent clients 
   test.setTimeout(180_000);
   const admin = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "settings-sync-proof" });
   const remote = await startIsolatedHostDaemon("settings-sync-other-host");
-  console.log(
-    `[sync-qa] secondary daemon port=${remote.port} home=${remote.paseoHome} pid=${remote.getPid()}`,
-  );
   const remoteClient = await connectDaemonClient<DaemonClient>({
     clientIdPrefix: "settings-sync-other",
     port: remote.port,
   });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const second = await context.newPage();
-  const evidence = resolve("../../docs/qa-evidence/app-settings-sync");
-  mkdirSync(evidence, { recursive: true });
+  const sync = page.getByTestId("settings-sync");
+  const secondSync = second.getByTestId("settings-sync");
+  let registry: string | null = null;
+  let hostLabel = "";
   try {
     await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
     await installUsageReportsFixture(second, { lists: [() => claudeAndCodexReports()] });
@@ -97,100 +94,100 @@ test("explicit settings host sync shares preferences across independent clients 
       ],
       initialize: true,
     });
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-    const sync = page.getByTestId("settings-sync");
-    await expect(sync).toContainText("Preferences are saved on this device");
-    const registry = await page.evaluate(() => localStorage.getItem("@paseo:daemon-registry"));
-    const profiles = JSON.parse(registry!) as { label: string; serverId: string }[];
-    const hostLabel = profiles[0]!.label;
-    await sync
-      .getByRole("button", { name: "Settings host: This device only", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: hostLabel, exact: true }).click();
-    await expect(sync).toContainText("No settings published on this host");
-    expect((await admin.getAppSettings()).snapshot.initialized).toBe(false);
-    await page.screenshot({ path: resolve(evidence, "empty-host-1440.png") });
-    await sync.getByRole("button", { name: "Use this device settings", exact: true }).click();
-    await expect(sync).toContainText("Connected. Pending changes: 0");
-    await page.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch").click();
-    await expect
-      .poll(async () => (await admin.getAppSettings()).snapshot.values.app)
-      .toMatchObject({ paseoPlusPlus: { previousAgents: false } });
-
-    await second.addInitScript(
-      ({ savedRegistry }) => {
-        localStorage.setItem("@paseo:e2e", "1");
-        localStorage.setItem("@paseo:daemon-registry", savedRegistry!);
-        localStorage.setItem(
-          "@paseo:app-settings",
-          JSON.stringify({ paseoPlusPlus: { previousAgents: true } }),
-        );
-      },
-      { savedRegistry: registry },
-    );
-    await second.goto(new URL(buildSettingsSectionRoute("paseo-plus-plus"), page.url()).href);
-    const secondSync = second.getByTestId("settings-sync");
-    await secondSync
-      .getByRole("button", { name: "Settings host: This device only", exact: true })
-      .click();
-    await second.getByRole("menuitem", { name: hostLabel, exact: true }).click();
-    await expect(secondSync).toContainText("Connected. Pending changes: 0");
-    await expect(
-      second.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch"),
-    ).not.toBeChecked();
-    await second.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch").click();
-    await expect(
-      page.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch"),
-    ).not.toBeChecked();
-    // Keep B on the ordinary sidebar before toggling A, so visibility proves a live update.
-    await second.goto(new URL("/", page.url()).href);
-    await expect(second.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);
-    // Usage visibility is the footer preference, independent of the selected usage-report host.
-    await page.goto(buildSettingsSectionRoute("sidebar"));
-    await setFooterItemVisible(page, "usage", true);
-    await expect(usageItem(second)).toBeVisible();
-    await second.reload();
-    await expect(usageItem(second)).toBeVisible();
-    await page.screenshot({ path: resolve(evidence, "usage-enabled-on-client-a.png") });
-    await second.screenshot({
-      path: resolve(evidence, "usage-enabled-on-client-b-after-reload.png"),
+    await test.step("an empty settings host waits for an explicit publish", async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+      await expect(sync).toContainText("Preferences are saved on this device");
+      registry = await page.evaluate(() => localStorage.getItem("@paseo:daemon-registry"));
+      const profiles = JSON.parse(registry!) as { label: string; serverId: string }[];
+      hostLabel = profiles[0]!.label;
+      await sync
+        .getByRole("button", { name: "Settings host: This device only", exact: true })
+        .click();
+      await page.getByRole("menuitem", { name: hostLabel, exact: true }).click();
+      await expect(sync).toContainText("No settings published on this host");
+      expect((await admin.getAppSettings()).snapshot.initialized).toBe(false);
+      await sync.getByRole("button", { name: "Use this device settings", exact: true }).click();
+      await expect(sync).toContainText("Connected. Pending changes: 0");
+      await page.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch").click();
+      await expect
+        .poll(async () => (await admin.getAppSettings()).snapshot.values.app)
+        .toMatchObject({ paseoPlusPlus: { previousAgents: false } });
     });
-    await setFooterItemVisible(page, "usage", false);
-    await expect(second.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);
-    await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-    await page.screenshot({ path: resolve(evidence, "shared-preferences-1440.png") });
-    await second.goto(new URL(buildSettingsSectionRoute("paseo-plus-plus"), page.url()).href);
-    await second.setViewportSize({ width: 390, height: 900 });
-    // The responsive screen remounts at the breakpoint; assertions resolve its current node.
-    await expect(secondSync).toBeVisible();
-    await expect(secondSync).toBeInViewport();
-    await expect
-      .poll(() => second.evaluate(() => ({ width: innerWidth, height: innerHeight })))
-      .toEqual({ width: 390, height: 900 });
-    await second.screenshot({ path: resolve(evidence, "shared-preferences-390.png") });
 
-    await addDirectHostFromSettings(page, { host: "127.0.0.1", port: remote.port });
-    const remoteLabel = await page.evaluate((serverId) => {
-      const hosts = JSON.parse(localStorage.getItem("@paseo:daemon-registry")!);
-      const profile = hosts.find(
-        (host: { serverId: string; label: string }) => host.serverId === serverId,
+    await test.step("a second client adopts the host and sees edits live", async () => {
+      await second.addInitScript(
+        ({ savedRegistry }) => {
+          localStorage.setItem("@paseo:e2e", "1");
+          localStorage.setItem("@paseo:daemon-registry", savedRegistry!);
+          localStorage.setItem(
+            "@paseo:app-settings",
+            JSON.stringify({ paseoPlusPlus: { previousAgents: true } }),
+          );
+        },
+        { savedRegistry: registry },
       );
-      localStorage.setItem(
-        "@paseo:e2e-disable-default-seed-once",
-        localStorage.getItem("@paseo:e2e-seed-nonce")!,
-      );
-      return profile.label as string;
-    }, remote.serverId);
-    await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
-    const beforeSwitch = (await remoteClient.getAppSettings()).snapshot;
-    await sync.getByRole("button", { name: `Settings host: ${hostLabel}`, exact: true }).click();
-    await page.getByRole("menuitem", { name: remoteLabel, exact: true }).last().click();
-    await expect(sync).toContainText("Connected. Pending changes: 0");
-    await expect(
-      page.getByTestId("paseo-plus-plus-stickyUserPrompts").getByRole("switch"),
-    ).not.toBeChecked();
-    expect((await remoteClient.getAppSettings()).snapshot).toEqual(beforeSwitch);
+      await second.goto(new URL(buildSettingsSectionRoute("paseo-plus-plus"), page.url()).href);
+      await secondSync
+        .getByRole("button", { name: "Settings host: This device only", exact: true })
+        .click();
+      await second.getByRole("menuitem", { name: hostLabel, exact: true }).click();
+      await expect(secondSync).toContainText("Connected. Pending changes: 0");
+      await expect(
+        second.getByTestId("paseo-plus-plus-previousAgents").getByRole("switch"),
+      ).not.toBeChecked();
+      await second.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch").click();
+      await expect(
+        page.getByTestId("paseo-plus-plus-sidebarActivityChips").getByRole("switch"),
+      ).not.toBeChecked();
+      // Keep B on the ordinary sidebar before toggling A, so visibility proves a live update.
+      await second.goto(new URL("/", page.url()).href);
+      await expect(second.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);
+      // Usage visibility is the footer preference, independent of the selected usage-report host.
+      await page.goto(buildSettingsSectionRoute("sidebar"));
+      await setFooterItemVisible(page, "usage", true);
+      await expect(usageItem(second)).toBeVisible();
+      await second.reload();
+      await expect(usageItem(second)).toBeVisible();
+      await setFooterItemVisible(page, "usage", false);
+      await expect(second.locator('[data-testid="sidebar-usage"]:visible')).toHaveCount(0);
+    });
+
+    await test.step("the settings sync section fits a phone width", async () => {
+      await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+      await second.goto(new URL(buildSettingsSectionRoute("paseo-plus-plus"), page.url()).href);
+      await second.setViewportSize({ width: 390, height: 900 });
+      // The responsive screen remounts at the breakpoint; assertions resolve its current node.
+      await expect(secondSync).toBeVisible();
+      await expect(secondSync).toBeInViewport();
+      await expect
+        .poll(() => second.evaluate(() => ({ width: innerWidth, height: innerHeight })))
+        .toEqual({ width: 390, height: 900 });
+    });
+
+    await test.step("switching to an initialized host adopts it without writing", async () => {
+      await addDirectHostFromSettings(page, { host: "127.0.0.1", port: remote.port });
+      const remoteLabel = await page.evaluate((serverId) => {
+        const hosts = JSON.parse(localStorage.getItem("@paseo:daemon-registry")!);
+        const profile = hosts.find(
+          (host: { serverId: string; label: string }) => host.serverId === serverId,
+        );
+        localStorage.setItem(
+          "@paseo:e2e-disable-default-seed-once",
+          localStorage.getItem("@paseo:e2e-seed-nonce")!,
+        );
+        return profile.label as string;
+      }, remote.serverId);
+      await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
+      const beforeSwitch = (await remoteClient.getAppSettings()).snapshot;
+      await sync.getByRole("button", { name: `Settings host: ${hostLabel}`, exact: true }).click();
+      await page.getByRole("menuitem", { name: remoteLabel, exact: true }).last().click();
+      await expect(sync).toContainText("Connected. Pending changes: 0");
+      await expect(
+        page.getByTestId("paseo-plus-plus-stickyUserPrompts").getByRole("switch"),
+      ).not.toBeChecked();
+      expect((await remoteClient.getAppSettings()).snapshot).toEqual(beforeSwitch);
+    });
   } finally {
     await context.close();
     await admin.close();
