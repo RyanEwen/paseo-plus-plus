@@ -8456,12 +8456,9 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
       pinnedAt: response?.payload.pinnedAt,
     },
   });
-  for (const [scope, pinned] of [
-    ["project", true],
-    ["global", true],
-    ["project", true],
-    ["project", false],
-  ] as const) {
+  const ISO_TIMESTAMP = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  /** Send one scoped pin request and return the stored record and the descriptor it emitted. */
+  const setPin = async (scope: "global" | "project", pinned: boolean) => {
     emitted.length = 0;
     await session.handleMessage({
       type: "workspace.pin.set.request",
@@ -8471,15 +8468,39 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
       requestId: `req-${scope}-${pinned}`,
     });
     const record = workspaces.get("ws-1")!;
-    expect(record.pinnedAt).toEqual(pinned && scope === "global" ? expect.any(String) : null);
-    expect(record.projectPinnedAt).toEqual(
-      pinned && scope === "project" ? expect.any(String) : null,
-    );
-    expect(findByType(emitted, "workspace_update")?.payload).toMatchObject({
-      kind: "upsert",
-      workspace: { id: "ws-1", pinnedAt: record.pinnedAt, projectPinnedAt: record.projectPinnedAt },
-    });
-  }
+    return {
+      record: { pinnedAt: record.pinnedAt, projectPinnedAt: record.projectPinnedAt },
+      update: findByType(emitted, "workspace_update")?.payload,
+    };
+  };
+
+  // A project pin replaces the existing global pin.
+  const projectPin = await setPin("project", true);
+  expect(projectPin.record).toEqual({ pinnedAt: null, projectPinnedAt: ISO_TIMESTAMP });
+  expect(projectPin.update).toMatchObject({
+    kind: "upsert",
+    workspace: { id: "ws-1", pinnedAt: null, projectPinnedAt: projectPin.record.projectPinnedAt },
+  });
+
+  // A global pin replaces the project pin.
+  const globalPin = await setPin("global", true);
+  expect(globalPin.record).toEqual({ pinnedAt: ISO_TIMESTAMP, projectPinnedAt: null });
+  expect(globalPin.update).toMatchObject({
+    kind: "upsert",
+    workspace: { id: "ws-1", pinnedAt: globalPin.record.pinnedAt, projectPinnedAt: null },
+  });
+
+  // Pinning in the project again clears the global pin.
+  const repin = await setPin("project", true);
+  expect(repin.record).toEqual({ pinnedAt: null, projectPinnedAt: ISO_TIMESTAMP });
+
+  // Unpinning in the project leaves the workspace unpinned in both scopes.
+  const unpin = await setPin("project", false);
+  expect(unpin.record).toEqual({ pinnedAt: null, projectPinnedAt: null });
+  expect(unpin.update).toMatchObject({
+    kind: "upsert",
+    workspace: { id: "ws-1", pinnedAt: null, projectPinnedAt: null },
+  });
 });
 
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {
