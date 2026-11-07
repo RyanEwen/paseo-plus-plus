@@ -3,6 +3,7 @@ import { View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { MenuItem, MenuSubTrigger } from "@/components/ui/menu";
 import { HostStatusDot } from "@/components/host-status-dot";
+import { hostDisplayLabel } from "@/hosts/display-label";
 import type { useHosts } from "@/runtime/host-runtime";
 
 export function HostFilterPage({
@@ -35,14 +36,14 @@ export function HostFilterPage({
             key={host.serverId}
             serverId={host.serverId}
             pageId={projectPageIds.get(host.serverId)!}
-            label={host.label?.trim() || host.serverId}
+            label={hostDisplayLabel(host)}
             selected={preferences.hostFilters.includes(host.serverId)}
           />
         ) : (
           <HostFilterItem
             key={host.serverId}
             serverId={host.serverId}
-            label={host.label?.trim() || host.serverId}
+            label={hostDisplayLabel(host)}
             selected={preferences.hostFilters.includes(host.serverId)}
             onToggle={preferences.toggleHostFilter}
           />

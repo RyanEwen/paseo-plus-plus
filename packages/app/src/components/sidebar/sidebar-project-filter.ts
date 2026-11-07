@@ -3,6 +3,7 @@ import type {
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
+import { hostDisplayLabel } from "@/hosts/display-label";
 
 /** Keep an explicit project selection while revealing a successful Add Project result. */
 export function includeCreatedProjectFilter(input: {
@@ -66,7 +67,7 @@ export function resolveSidebarProjectLabels(
   hosts: readonly { serverId: string; label: string }[],
 ): ReadonlyMap<string, string> {
   const hostLabels = new Map(
-    hosts.map((host) => [host.serverId, host.label.trim() || host.serverId]),
+    hosts.map((host) => [host.serverId, hostDisplayLabel(host)]),
   );
   const counts = new Map<string, number>();
   for (const project of projects) {
