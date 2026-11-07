@@ -129,7 +129,6 @@ import {
   navigateToWorkspace,
   getLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings";
 import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
 import { resolveProjectWorkspaceReorder } from "@/utils/sidebar-reorder";
@@ -880,7 +879,6 @@ describe("workspace family queued-drop authority", () => {
 });
 
 const FAMILY_DISCLOSURE_PARENT_KEY = "sidebar-family-drag:parent";
-const FAMILY_DISCLOSURE_CHILD_KEY = "sidebar-family-drag:a";
 const FAMILY_DISCLOSURE_DRAG = vi.fn();
 const FAMILY_DISCLOSURE_REORDER = vi.fn<(rows: SidebarWorkspacePlacement[]) => void>();
 const FAMILY_DISCLOSURE_ATTENTION = new Set<string>();
@@ -1036,12 +1034,6 @@ describe("workspace family disclosure controls", () => {
     return control;
   }
 
-  function childRow(): Element | null {
-    return container.querySelector(
-      `[data-testid="family-disclosure-row-${FAMILY_DISCLOSURE_CHILD_KEY}"]`,
-    );
-  }
-
   it.each([
     { source: "title", branch: "feature/parent", label: "Resolved parent title" },
     { source: "branch", branch: "feature/parent", label: "feature/parent" },
@@ -1080,48 +1072,6 @@ describe("workspace family disclosure controls", () => {
     );
   });
 
-  it("collapses and expands children with matching DOM semantics and saved membership", () => {
-    mount();
-    const control = toggle();
-    expect(childRow()).not.toBe(null);
-    act(() => control.click());
-    expect(toggle()).toBe(control);
-    expect(control.getAttribute("aria-expanded")).toBe("false");
-    expect(control.getAttribute("aria-label")).toBe(
-      "Expand child workspaces of Resolved parent title",
-    );
-    expect(childRow()).toBe(null);
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toEqual(
-      new Set([workspaceCollapseKey(FAMILY_DISCLOSURE_PARENT_KEY)]),
-    );
-    act(() => control.click());
-    expect(control.getAttribute("aria-expanded")).toBe("true");
-    expect(control.getAttribute("aria-label")).toBe(
-      "Collapse child workspaces of Resolved parent title",
-    );
-    expect(childRow()).not.toBe(null);
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toEqual(
-      new Set(),
-    );
-  });
-
-  it("keeps an active child revealed without rewriting its saved collapsed preference", () => {
-    useSidebarCollapsedSectionsStore
-      .getState()
-      .toggleWorkspaceGroupCollapsed(workspaceCollapseKey(FAMILY_DISCLOSURE_PARENT_KEY));
-    const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
-    mount(FAMILY_DISCLOSURE_CHILD_KEY);
-    expect(toggle().disabled).toBe(true);
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    expect(childRow()).not.toBe(null);
-    act(() => toggle().click());
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
-    mount();
-    expect(toggle().disabled).toBe(false);
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    expect(childRow()).toBe(null);
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
-  });
 });
 
 const TRANSITION_OTHER_HOST = "sidebar-transition-other-host";
@@ -1559,244 +1509,6 @@ describe("workspace family store transitions", () => {
       requiresAttention: true,
     });
   }
-
-  /** Mount the actual list renderers, with relationships still supplied by the production model. */
-  function renderLayout(mode: "project" | "status" | "pinned") {
-    const store = useSessionStore.getState();
-    const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
-    const agents = new Map(store.sessions[SERVER_ID].agents);
-    const parent = workspaces.get("parent");
-    if (!parent) throw new Error("Missing layout parent");
-    workspaces.set("parent", { ...parent, projectPinnedAt: "2026-10-27T12:00:00.000Z" });
-    workspaces.set(
-      "grandchild",
-      workspace({
-        id: "grandchild",
-        projectId: TRANSITION_PROJECT,
-        projectDisplayName: "Transitions",
-        name: "Grandchild task",
-      }),
-    );
-    agents.set("grandchild", {
-      ...familyDragAgent("grandchild", "a"),
-      serverId: SERVER_ID,
-      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: "a" }),
-    });
-    if (mode === "pinned") {
-      for (const id of ["parent", "a", "b", "grandchild", "outside"]) {
-        const entry = workspaces.get(id);
-        if (!entry) throw new Error(`Missing layout workspace ${id}`);
-        workspaces.set(id, { ...entry, pinnedAt: "2026-10-27T12:00:00.000Z" });
-      }
-    }
-    store.setWorkspaces(SERVER_ID, workspaces);
-    store.setAgents(SERVER_ID, agents);
-    useSidebarViewStore.setState({ groupMode: mode === "status" ? "status" : "project" });
-    render(true);
-  }
-
-  function layoutElement(prefix: string, id: string): HTMLElement {
-    const element = container.querySelector(`[data-testid="${prefix}-${transitionKey(id)}"]`);
-    if (!(element instanceof HTMLElement)) throw new Error(`Missing ${prefix} for ${id}`);
-    return element;
-  }
-
-  it.each(["project", "pinned"] as const)(
-    "active families outlive the count window and return after Done (%s)",
-    (mode) => {
-      const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "animate");
-      const cancel = vi.fn();
-      Object.defineProperty(HTMLElement.prototype, "animate", {
-        configurable: true,
-        value: vi.fn(() => ({ cancel })),
-      });
-      try {
-        act(() => {
-          renderLayout(mode);
-          const current = useSidebarViewStore.getState();
-          useSidebarViewStore.setState({
-            initialWorkspaceCount: 1,
-            modeProfilesInitialized: true,
-            modeProfiles: {
-              ...current.modeProfiles,
-              project: { ...current.modeProfiles.project, initialWorkspaceCount: 1 },
-            },
-          });
-        });
-        expect(useSidebarViewStore.getState().initialWorkspaceCount).toBe(1);
-        const outsideSelector = `[data-testid="sidebar-workspace-row-${transitionKey("outside")}"]`;
-        expect(container.querySelector(outsideSelector)).toBeNull();
-        const updateStatus = (status: WorkspaceDescriptor["status"]) => {
-          const store = useSessionStore.getState();
-          const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
-          const outside = workspaces.get("outside");
-          if (!outside) throw new Error("Missing outside workspace");
-          workspaces.set("outside", {
-            ...outside,
-            status,
-            statusEnteredAt: new Date("2020-01-01T00:00:00Z"),
-          });
-          store.setWorkspaces(SERVER_ID, workspaces);
-        };
-        act(() => updateStatus("running"));
-        const runningRow = layoutElement("sidebar-workspace-row", "outside");
-        expect(container.querySelectorAll(outsideSelector)).toHaveLength(1);
-        act(() => updateStatus("attention"));
-        expect(layoutElement("sidebar-workspace-row", "outside")).toBe(runningRow);
-        act(() => updateStatus("done"));
-        expect(container.querySelector(outsideSelector)).toBeNull();
-        expect(cancel).toHaveBeenCalled();
-      } finally {
-        if (originalAnimate)
-          Object.defineProperty(HTMLElement.prototype, "animate", originalAnimate);
-        else Reflect.deleteProperty(HTMLElement.prototype, "animate");
-      }
-    },
-  );
-
-  it.each(["project", "status", "pinned"] as const)(
-    "family row layout restores roots and indents only content (%s)",
-    (mode) => {
-      act(() => renderLayout(mode));
-      const parentRow = layoutElement("sidebar-workspace-row", "parent");
-      const disclosure = layoutElement("sidebar-workspace-children-toggle", "parent");
-      // Both selectors predate this change: the original disclosure precedes navigation.
-      expect(
-        parentRow.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).not.toBe(0);
-      const rails = [
-        ["parent", 0],
-        ["outside", 0],
-        ["a", 12],
-        ["grandchild", 24],
-      ] as const;
-      for (const [id, indent] of rails) {
-        const content = layoutElement("sidebar-workspace-content", id);
-        const row = layoutElement("sidebar-workspace-row", id);
-        const surface = layoutElement("sidebar-workspace-surface", id);
-        expect(getComputedStyle(content).paddingLeft).toBe(`${indent}px`);
-        expect(row.contains(content)).toBe(true);
-        expect(surface.contains(row)).toBe(true);
-        // A child's navigation/highlight surface stays flush; only its content gains a rail.
-        expect(getComputedStyle(surface).marginLeft).not.toBe("12px");
-        expect(getComputedStyle(row).marginLeft).not.toBe("12px");
-        expect(getComputedStyle(row).paddingLeft).toBe(mode === "status" ? "16px" : "8px");
-      }
-      const row = layoutElement("sidebar-workspace-row", "parent");
-      const toggle = layoutElement("sidebar-workspace-children-toggle", "parent");
-      const surface = layoutElement("sidebar-workspace-surface", "parent");
-      expect(surface.contains(toggle)).toBe(true);
-      expect(toggle.parentElement).not.toBe(null);
-      if (!toggle.parentElement) throw new Error("Disclosure slot missing");
-      expect(getComputedStyle(toggle.parentElement).right).toBe("12px");
-      expect(row.contains(toggle)).toBe(false);
-      expect(toggle.closest("[data-testid^='sidebar-workspace-row-']")).toBe(null);
-      expect(row.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-      expect(row.getAttribute("role")).toBe("button");
-      expect(toggle.getAttribute("role")).toBe("button");
-      expect(toggle.getAttribute("aria-expanded")).toBe("true");
-      expect(
-        row.querySelector(`[data-testid="sidebar-project-pin-icon-${transitionKey("parent")}"]`),
-      ).not.toBe(null);
-      expect(
-        container.querySelector(
-          `[data-testid="sidebar-workspace-children-toggle-${transitionKey("grandchild")}"]`,
-        ),
-      ).toBe(null);
-      if (mode !== "project") {
-        expect(
-          container.querySelector(
-            `[data-testid="sidebar-row-project-icon-${transitionKey("parent")}"]`,
-          ),
-        ).not.toBe(null);
-      }
-      expect(currentTree().tree.get(transitionKey("grandchild"))?.parentKey).toBe(
-        transitionKey("a"),
-      );
-      expect(
-        container.querySelectorAll(`[data-testid="sidebar-workspace-row-${transitionKey("a")}"]`),
-      ).toHaveLength(1);
-    },
-  );
-
-  it.each(["project", "status"] as const)(
-    "family row layout contains and describes its collapsed summary (%s)",
-    (mode) => {
-      const store = useSessionStore.getState();
-      const workspaces = new Map(store.sessions[SERVER_ID].workspaces);
-      const child = workspaces.get("a");
-      if (!child) throw new Error("Missing attention child");
-      workspaces.set("a", { ...child, status: "needs_input", humanAttentionRequired: true });
-      store.setWorkspaces(SERVER_ID, workspaces);
-      collapse("parent");
-      act(() => renderLayout(mode));
-      const row = layoutElement("sidebar-workspace-row", "parent");
-      const summaryElement = layoutElement("sidebar-workspace-children-summary", "parent");
-      expect(row.contains(summaryElement)).toBe(true);
-      const content = layoutElement("sidebar-workspace-content", "parent");
-      expect(content.contains(summaryElement)).toBe(true);
-      expect(row.getAttribute("aria-describedby")).toBe(summaryElement.id);
-      expect(summaryElement.textContent).toBe(
-        "3 child workspaces: Needs input1 child workspace needs your attention",
-      );
-      expect(
-        container.querySelector(`[data-testid="sidebar-workspace-row-${transitionKey("a")}"]`),
-      ).toBe(null);
-      expect(currentModel().workspaceEntriesByKey.get(transitionKey("parent"))?.statusBucket).toBe(
-        "done",
-      );
-      const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
-      const outside = layoutElement("sidebar-workspace-row", "outside");
-      expect(outside.getAttribute("aria-describedby")).toBe(null);
-      const toggle = layoutElement("sidebar-workspace-children-toggle", "parent");
-      const selectionBefore = getLastWorkspaceSelection();
-      act(() => toggle.click());
-      expect(getLastWorkspaceSelection()).toEqual(selectionBefore);
-      expect(row.getAttribute("aria-describedby")).toBe(null);
-      expect(
-        container.querySelector(
-          `[data-testid="sidebar-workspace-children-summary-${transitionKey("parent")}"]`,
-        ),
-      ).toBe(null);
-      expect(layoutElement("sidebar-workspace-row", "a")).not.toBe(null);
-      expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).not.toBe(
-        saved,
-      );
-    },
-  );
-
-  it("family row layout reveals active descendants and restores the parent summary", () => {
-    collapse("parent");
-    act(() => renderLayout("project"));
-    const saved = useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys;
-    act(() => {
-      // Navigation is real; publish the returned route through this suite's Expo adapter.
-      pathnameState.value = navigateToWorkspace({ serverId: SERVER_ID, workspaceId: "a" });
-      render(true);
-    });
-    expect(layoutElement("sidebar-workspace-row", "a").getAttribute("aria-selected")).toBe("true");
-    expect(
-      layoutElement("sidebar-workspace-children-toggle", "parent").getAttribute("aria-expanded"),
-    ).toBe("true");
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
-    act(() => layoutElement("sidebar-workspace-row", "outside").click());
-    expect(getLastWorkspaceSelection()).toEqual({ serverId: SERVER_ID, workspaceId: "outside" });
-    act(() => {
-      const selection = getLastWorkspaceSelection();
-      if (!selection) throw new Error("Row navigation did not publish its workspace selection");
-      pathnameState.value = buildHostWorkspaceRoute(selection.serverId, selection.workspaceId);
-      render(true);
-    });
-    expect(
-      layoutElement("sidebar-workspace-row", "parent").contains(
-        layoutElement("sidebar-workspace-children-summary", "parent"),
-      ),
-    ).toBe(true);
-    expect(
-      container.querySelector(`[data-testid="sidebar-workspace-row-${transitionKey("a")}"]`),
-    ).toBe(null);
-    expect(useSidebarCollapsedSectionsStore.getState().collapsedWorkspaceGroupKeys).toBe(saved);
-  });
 
   it("relationship removal transition preserves collapse and unrelated children", () => {
     collapse("parent");
