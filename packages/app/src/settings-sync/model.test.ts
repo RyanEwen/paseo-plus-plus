@@ -1,0 +1,389 @@
+import { describe, expect, it } from "vitest";
+import { SettingsSyncModel } from "./model";
+import type { AppSettingsSnapshot, AppSettingsPatchInput } from "@getpaseo/protocol/app-settings";
+import { snapshot, deferred, setup, host, editTheme } from "./test-support";
+
+describe("settings host policy", () => {
+  it("reads initialized hosts before adoption and never publishes local settings on selection", async () => {
+    const { model, device } = setup();
+    const a = host(snapshot("dark"));
+    const b = host(snapshot("light"));
+    await model.load();
+    await model.selectHost("A");
+    await model.connect("A", a.transport);
+    await model.selectHost("B");
+    await model.connect("B", b.transport);
+    expect(device()).toEqual({ app: { theme: "light" } });
+    expect(a.writes).toEqual([]);
+    expect(b.writes).toEqual([]);
+  });
+  it("keeps offline A edits attached to A through A-to-B-to-A switching", async () => {
+    const { model, device, saved } = setup();
+    const a = host(snapshot("dark"));
+    const b = host(snapshot("light"));
+    await model.load();
+    await model.selectHost("A");
+    await model.connect("A", a.transport);
+    await model.connect("A", null);
+    await editTheme(model, "dark", "auto");
+    await model.selectHost("B");
+    await model.connect("B", b.transport);
+    expect(b.writes).toEqual([]);
+    expect(b.read().values).toEqual({ app: { theme: "light" } });
+    expect(saved()).toMatchObject({
+      selectedHost: "B",
+      hosts: { A: { pending: [{ path: ["app", "theme"], value: "auto" }] } },
+    });
+    await model.selectHost("A");
+    await model.connect("A", a.transport);
+    expect(device()).toEqual({ app: { theme: "auto" } });
+    expect(a.writes).toHaveLength(1);
+    expect(b.writes).toEqual([]);
+  });
+  it("fences a stale A read while B is selected", async () => {
+    const { model, device } = setup();
+    const stale = deferred<AppSettingsSnapshot>();
+    const a = host(snapshot("dark"));
+    const b = host(snapshot("light"));
+    await model.load();
+    await model.selectHost("A");
+    const reading = model.connect("A", { ...a.transport, read: () => stale.promise });
+    await model.selectHost("B");
+    await model.connect("B", b.transport);
+    stale.resolve(snapshot("dark"));
+    await reading;
+    expect(device()).toEqual({ app: { theme: "light" } });
+    expect(model.getState().selectedHost).toBe("B");
+    expect(b.writes).toEqual([]);
+  });
+  it("fences an in-flight A save completion and preserves B without writing it", async () => {
+    const { model, device } = setup();
+    const completion = deferred<{ snapshot: AppSettingsSnapshot; conflicts: string[][] }>();
+    const a = host(snapshot("dark"));
+    const b = host(snapshot("light"));
+    await model.load();
+    await model.selectHost("A");
+    await model.connect("A", { ...a.transport, patch: () => completion.promise });
+    await editTheme(model, "dark", "auto");
+    const saving = model.flush();
+    await model.selectHost("B");
+    const connectingB = model.connect("B", b.transport);
+    completion.resolve({ snapshot: snapshot("auto", 2), conflicts: [] });
+    await saving;
+    await connectingB;
+    expect(device()).toEqual({ app: { theme: "light" } });
+    expect(b.writes).toEqual([]);
+  });
+  it("requires an explicit publish on an empty host and blocks ordinary editing", async () => {
+    const { model, device } = setup();
+    const empty = host(snapshot(null));
+    await model.load();
+    await model.selectHost("empty");
+    await model.connect("empty", empty.transport);
+    expect(model.getState().status).toBe("empty");
+    expect(empty.writes).toEqual([]);
+    await expect(editTheme(model, "device", "dark")).rejects.toThrow("Load");
+    expect(device()).toEqual({ app: { theme: "device" } });
+    await model.publishDeviceSettings();
+    expect(empty.writes).toEqual([
+      {
+        initialize: true,
+        patches: [{ path: ["app", "theme"], value: "device", expectedRevision: 0 }],
+      },
+    ]);
+  });
+  it("does not write after a failed read or against an unsupported host", async () => {
+    const { model } = setup();
+    const a = host(snapshot("dark"));
+    await model.load();
+    await model.selectHost("A");
+    await model.connect("A", {
+      ...a.transport,
+      read: async () => {
+        throw new Error("read failed");
+      },
+    });
+    expect(model.getState().status).toBe("error");
+    await expect(editTheme(model, "device", "light")).rejects.toThrow();
+    await model.connect("A", { ...a.transport, supported: false });
+    expect(model.getState().status).toBe("unsupported");
+    expect(a.writes).toEqual([]);
+  });
+  it("blocks offline edits on a destination which has not been read", async () => {
+    const { model } = setup();
+    await model.load();
+    await model.selectHost("A");
+    await model.connect("A", null);
+    await expect(editTheme(model, "device", "dark")).rejects.toThrow("Load");
+    expect(model.getState().status).toBe("reading");
+  });
+  it("surfaces concurrent same-field conflicts, retains the outbox and resolves only explicitly", async () => {
+    const { model, saved } = setup();
+    const a = host(snapshot("dark"));
+    const conflicting = {
+      ...a.transport,
+      read: async () => snapshot("light", 2),
+      patch: async () => ({ snapshot: snapshot("light", 2), conflicts: [["app", "theme"]] }),
+    };
+    await model.load();
+    await model.selectHost("A");
+    await model.connect("A", a.transport);
+    await model.connect("A", null);
+    await editTheme(model, "dark", "auto");
+    await model.connect("A", conflicting);
+    await model.flush();
+    expect(model.getState().status).toBe("conflict");
+    expect(saved()).toMatchObject({
+      hosts: { A: { pending: [{ value: "auto", expectedRevision: 1 }] } },
+    });
+    await model.useHostSettings();
+    expect(model.getState().pendingCount).toBe(0);
+  });
+  it("restarts from durable host selection and outbox without seeding the host", async () => {
+    const first = setup();
+    const a = host(snapshot("dark"));
+    await first.model.load();
+    await first.model.selectHost("A");
+    await first.model.connect("A", a.transport);
+    await first.model.connect("A", null);
+    await editTheme(first.model, "dark", "auto");
+    const second = new SettingsSyncModel({
+      readLocal: async () => first.saved(),
+      writeLocal: async () => {},
+      getDeviceValues: async () => ({ app: { theme: "device" } }),
+      applyValues: async () => {},
+    });
+    await second.load();
+    expect(second.getState().selectedHost).toBe("A");
+    await second.connect("A", a.transport);
+    expect(a.writes).toHaveLength(1);
+    expect(a.writes[0]!.initialize).toBe(false);
+  });
+});
+
+it("blocks writes through a read-only connection and preserves the host", async () => {
+  const { model, device } = setup();
+  const a = host(snapshot("dark"));
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", { ...a.transport, writable: false });
+  expect(model.getState().status).toBe("readonly");
+  expect(device()).toEqual({ app: { theme: "dark" } });
+  await expect(editTheme(model, "dark", "light")).rejects.toThrow();
+  expect(a.writes).toEqual([]);
+});
+
+it("restores the device backup without writing or deleting a host's pending edits", async () => {
+  const { model, device, saved } = setup();
+  const a = host(snapshot("dark"));
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", a.transport);
+  await model.connect("A", null);
+  await editTheme(model, "dark", "auto");
+  await model.restoreDeviceSettings();
+  expect(model.getState().status).toBe("local");
+  expect(device()).toEqual({ app: { theme: "device" } });
+  expect(a.writes).toEqual([]);
+  expect(saved()).toMatchObject({
+    selectedHost: null,
+    hosts: { A: { pending: [{ value: "auto" }] } },
+  });
+});
+
+it("reads before resolving conflicts and retains pending edits if that read fails", async () => {
+  const { model, saved } = setup();
+  const a = host(snapshot("dark"));
+  let failRead = false;
+  const transport = {
+    ...a.transport,
+    read: async () => {
+      if (failRead) throw new Error("offline");
+      return a.read();
+    },
+  };
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", transport);
+  await model.connect("A", null);
+  await editTheme(model, "dark", "auto");
+  failRead = true;
+  await model.connect("A", transport);
+  await expect(model.useHostSettings()).rejects.toThrow("offline");
+  expect(saved()).toMatchObject({ hosts: { A: { pending: [{ value: "auto" }] } } });
+  expect(a.writes).toEqual([]);
+});
+
+it("rebases a second same-field edit after its own earlier in-flight write", async () => {
+  const { model, device } = setup();
+  const firstSave = deferred<{ snapshot: AppSettingsSnapshot; conflicts: string[][] }>();
+  const a = host(snapshot("dark"));
+  let calls = 0;
+  const transport = {
+    ...a.transport,
+    patch: async ({ patches, initialize }: AppSettingsPatchInput) => {
+      calls += 1;
+      if (calls === 1) return firstSave.promise;
+      expect(patches[0]!.expectedRevision).toBe(2);
+      return a.transport.patch({ patches, initialize });
+    },
+  };
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", transport);
+  await editTheme(model, "dark", "light");
+  await editTheme(model, "light", "auto");
+  firstSave.resolve({ snapshot: snapshot("light", 2), conflicts: [] });
+  await model.flush();
+  expect(calls).toBe(2);
+  expect(device()).toEqual({ app: { theme: "auto" } });
+  expect(model.getState().pendingCount).toBe(0);
+});
+
+it("keeps A pending edits and ignores its late save after returning to A from B", async () => {
+  const { model, device } = setup();
+  const completion = deferred<{ snapshot: AppSettingsSnapshot; conflicts: string[][] }>();
+  const a = host(snapshot("dark"));
+  const b = host(snapshot("light"));
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", { ...a.transport, patch: () => completion.promise });
+  await editTheme(model, "dark", "auto");
+  await model.selectHost("B");
+  const readingB = model.connect("B", b.transport);
+  await model.selectHost("A");
+  const readingA = model.connect("A", a.transport);
+  completion.resolve({ snapshot: snapshot("auto", 2), conflicts: [] });
+  await readingB;
+  await readingA;
+  await model.flush();
+  expect(model.getState().selectedHost).toBe("A");
+  expect(model.getState().pendingCount).toBe(0);
+  expect(device()).toEqual({ app: { theme: "auto" } });
+  expect(b.writes).toEqual([]);
+});
+
+it("does not project defaults after sync configuration fails to load", async () => {
+  const applied: unknown[] = [];
+  const model = new SettingsSyncModel({
+    readLocal: async () => {
+      throw new Error("storage unavailable");
+    },
+    writeLocal: async () => {},
+    getDeviceValues: async () => ({ app: { theme: "dark" } }),
+    applyValues: async (value) => {
+      applied.push(value);
+    },
+  });
+  await model.load();
+  expect(model.getState().status).toBe("error");
+  expect(applied).toEqual([]);
+});
+
+it("retains an explicit initialization candidate if another client initializes the host first", async () => {
+  const { model, saved } = setup();
+  const a = host(snapshot(null));
+  const transport = {
+    ...a.transport,
+    patch: async () => ({ snapshot: snapshot("other-device"), conflicts: [["app", "theme"]] }),
+  };
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", transport);
+  await model.publishDeviceSettings();
+  expect(model.getState().status).toBe("conflict");
+  expect(saved()).toMatchObject({
+    hosts: {
+      A: {
+        pending: [{ path: ["app", "theme"], value: "device", expectedRevision: 0 }],
+        backup: { app: { theme: "device" } },
+      },
+    },
+  });
+});
+
+it("never publishes or sends an edit when the durable outbox write fails", async () => {
+  let failWrite = false;
+  let applied: Record<string, unknown> = { app: { theme: "device" } };
+  const model = new SettingsSyncModel({
+    readLocal: async () => null,
+    writeLocal: async () => {
+      if (failWrite) throw new Error("disk unavailable");
+    },
+    getDeviceValues: async () => applied,
+    applyValues: async (value) => {
+      applied = value;
+    },
+  });
+  const a = host(snapshot("dark"));
+  await model.load();
+  await model.selectHost("A");
+  await model.connect("A", a.transport);
+  await model.connect("A", null);
+  failWrite = true;
+  await expect(editTheme(model, "dark", "light")).rejects.toThrow("disk unavailable");
+  expect(applied).toEqual({ app: { theme: "dark" } });
+  expect(a.writes).toEqual([]);
+  expect(model.getState().status).toBe("error");
+  failWrite = false;
+  await model.connect("A", a.transport);
+  await editTheme(model, "dark", "light");
+  await model.flush();
+  expect(a.writes).toHaveLength(1);
+  expect(applied).toEqual({ app: { theme: "light" } });
+});
+
+describe("settings bootstrap load ownership", () => {
+  it.each(["resolve", "reject"] as const)(
+    "ignores an obsolete owner's late %s after the replacement load",
+    async (settlement) => {
+      const firstRead = deferred<unknown>();
+      const secondRead = deferred<unknown>();
+      let reads = 0;
+      const model = new SettingsSyncModel({
+        readLocal: () => (++reads === 1 ? firstRead.promise : secondRead.promise),
+        writeLocal: async () => {},
+        getDeviceValues: async () => ({}),
+        applyValues: async () => {},
+      });
+      const first = new AbortController();
+      const oldLoad = model.load(first.signal);
+      first.abort();
+      const newLoad = model.load();
+      secondRead.resolve({ selectedHost: "H", hosts: {} });
+      await newLoad;
+      const before = model.getState();
+      const emissions: unknown[] = [];
+      const stop = model.subscribe(() => emissions.push(model.getState()));
+      if (settlement === "resolve") firstRead.resolve({ selectedHost: null, hosts: {} });
+      else firstRead.reject(new Error("obsolete read failed"));
+      await oldLoad;
+      stop();
+      expect(model.getState()).toEqual(before);
+      expect(model.getState()).toMatchObject({
+        selectedHost: "H",
+        status: "reading",
+        canWrite: false,
+      });
+      expect(emissions).toEqual([]);
+    },
+  );
+  it("does not let a pending load replace a newer explicit host selection", async () => {
+    const pending = deferred<unknown>();
+    const model = new SettingsSyncModel({
+      readLocal: () => pending.promise,
+      writeLocal: async () => {},
+      getDeviceValues: async () => ({}),
+      applyValues: async () => {},
+    });
+    const loading = model.load();
+    await model.selectHost("chosen");
+    pending.resolve({ selectedHost: null, hosts: {} });
+    await loading;
+    expect(model.getState()).toMatchObject({
+      selectedHost: "chosen",
+      status: "reading",
+      canWrite: false,
+    });
+  });
+});

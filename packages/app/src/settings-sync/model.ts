@@ -1,0 +1,437 @@
+import { z } from "zod";
+import { syncedSettingsPatches } from "./scope";
+import { SYNC_STATUS_POLICY } from "./status-policy";
+import { dropAcknowledged, dropAlreadyDurable, mergePending, rebaseOnto } from "./outbox";
+import {
+  AppSettingsPatchSchema,
+  AppSettingsSnapshotSchema,
+  type AppSettingsPatch,
+  type AppSettingsPatchInput,
+  type AppSettingsPatchResult,
+  type AppSettingsSnapshot,
+} from "@getpaseo/protocol/app-settings";
+import {
+  EMPTY_APP_SETTINGS_SNAPSHOT,
+  applySettingsPatches,
+  cloneSettingsJson,
+  settingsDiff,
+} from "@getpaseo/protocol/app-settings-values";
+
+const HostStateSchema = z.object({
+  snapshot: AppSettingsSnapshotSchema,
+  pending: z.array(AppSettingsPatchSchema),
+  backup: z.record(z.string(), z.unknown()),
+});
+const LocalStateSchema = z.object({
+  selectedHost: z.string().nullable(),
+  hosts: z.record(z.string(), HostStateSchema),
+});
+type HostState = z.infer<typeof HostStateSchema>;
+type LocalState = z.infer<typeof LocalStateSchema>;
+
+export type SyncStatus =
+  | "loading"
+  | "local"
+  | "reading"
+  | "ready"
+  | "offline"
+  | "empty"
+  | "unsupported"
+  | "error"
+  | "conflict"
+  | "readonly";
+export interface SyncState {
+  selectedHost: string | null;
+  status: SyncStatus;
+  pendingCount: number;
+  error: string | null;
+  conflicts: string[][];
+  canWrite: boolean;
+}
+export interface SettingsSyncTransport {
+  supported: boolean;
+  writable: boolean;
+  read(): Promise<AppSettingsSnapshot>;
+  patch(input: AppSettingsPatchInput): Promise<AppSettingsPatchResult>;
+}
+export interface SettingsSyncDeps {
+  readLocal(): Promise<unknown>;
+  writeLocal(value: LocalState): Promise<void>;
+  getDeviceValues(purpose: "backup" | "publish"): Promise<Record<string, unknown>>;
+  applyValues(values: Record<string, unknown>): Promise<void>;
+}
+
+/** Client policy and durable host-keyed outbox. Selection changes fence every async completion. */
+export class SettingsSyncModel {
+  private local: LocalState = { selectedHost: null, hosts: {} };
+  private state: SyncState = {
+    selectedHost: null,
+    status: "loading",
+    pendingCount: 0,
+    error: null,
+    conflicts: [],
+    canWrite: false,
+  };
+  private generation = 0;
+  private loadRevision = 0;
+  private hydrated = false;
+  private adoptedHost: string | null = null;
+  private transport: SettingsSyncTransport | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private sending: Promise<void> | null = null;
+  private readonly listeners = new Set<() => void>();
+
+  constructor(private readonly deps: SettingsSyncDeps) {}
+  getState = (): SyncState => this.state;
+  getGeneration(): number {
+    return this.generation;
+  }
+
+  /**
+   * True when edits belong to this device alone: local sync state has loaded, no host is
+   * selected and no selection is in progress. That includes a failed selection, which left the
+   * persisted choice unchanged. A failed local read leaves the selection unknown, so it never
+   * counts.
+   */
+  editsStayOnDevice(): boolean {
+    const settled = this.state.status === "local" || this.state.status === "error";
+    return this.hydrated && this.state.selectedHost === null && settled;
+  }
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  /** Read failures stay visible and cannot silently reset the settings authority to local. */
+  async load(signal?: AbortSignal): Promise<void> {
+    if (this.hydrated || signal?.aborted) return;
+    const revision = ++this.loadRevision;
+    const generation = this.generation;
+    const current = () =>
+      !signal?.aborted && revision === this.loadRevision && generation === this.generation;
+    try {
+      const value = await this.deps.readLocal();
+      if (!current()) return;
+      await this.serialize(async () => {
+        if (!current()) return;
+        this.local =
+          value === null ? { selectedHost: null, hosts: {} } : LocalStateSchema.parse(value);
+        const hosts = Object.fromEntries(
+          Object.entries(this.local.hosts).map(([host, record]) => [
+            host,
+            { ...record, pending: syncedSettingsPatches(record.pending) },
+          ]),
+        );
+        const next = { ...this.local, hosts };
+        if (JSON.stringify(next) !== JSON.stringify(this.local)) await this.deps.writeLocal(next);
+        this.local = next;
+        if (!current()) return;
+        this.hydrated = true;
+        this.publish({
+          selectedHost: this.local.selectedHost,
+          error: null,
+          status: this.local.selectedHost ? "reading" : "local",
+          canWrite: this.local.selectedHost === null,
+        });
+      });
+    } catch (error) {
+      if (current()) this.fail(error);
+    }
+  }
+
+  /** Persist selection only. Never seed, flush or adopt a destination until its read succeeds. */
+  async selectHost(host: string | null): Promise<void> {
+    const generation = ++this.generation;
+    const previousTransport = this.transport;
+    const previousAdoptedHost = this.adoptedHost;
+    this.transport = null;
+    this.adoptedHost = null;
+    this.publish({ status: "reading", error: null, conflicts: [] });
+    try {
+      await this.serialize(async () => {
+        if (generation !== this.generation) return;
+        const next = { ...this.local, selectedHost: host };
+        await this.deps.writeLocal(next);
+        this.local = next;
+        this.hydrated = true;
+        this.publish({
+          selectedHost: host,
+          status: host ? "reading" : "local",
+          pendingCount: next.hosts[host ?? ""]?.pending.length ?? 0,
+          canWrite: host === null,
+        });
+      });
+    } catch (error) {
+      if (generation === this.generation) {
+        this.transport = previousTransport;
+        this.adoptedHost = previousAdoptedHost;
+        this.fail(error);
+      }
+      throw error;
+    }
+  }
+
+  /** Bind only the chosen host's authenticated client. Reconnect always reads before flushing. */
+  async connect(host: string, transport: SettingsSyncTransport | null): Promise<void> {
+    if (host !== this.state.selectedHost) return;
+    const generation = ++this.generation;
+    this.transport = transport;
+    if (!transport) {
+      this.publish({ status: this.adoptedHost === host ? "offline" : "reading" });
+      return;
+    }
+    if (!transport.supported) {
+      this.adoptedHost = null;
+      this.publish({ status: "unsupported" });
+      return;
+    }
+    this.publish({ status: "reading", error: null, canWrite: transport.writable });
+    try {
+      const snapshot = await transport.read();
+      if (!this.current(host, generation)) return;
+      await this.receive(host, snapshot, generation);
+      if (this.current(host, generation)) await this.flush();
+    } catch (error) {
+      if (this.current(host, generation)) this.fail(error);
+    }
+  }
+
+  /** Remote adoption is an explicit command, never an observed local edit. */
+  async receive(
+    host: string,
+    snapshot: AppSettingsSnapshot,
+    generation = this.generation,
+  ): Promise<void> {
+    try {
+      await this.serialize(async () => {
+        if (!this.current(host, generation)) return;
+        const old = this.local.hosts[host];
+        if (old && snapshot.revision < old.snapshot.revision) return;
+        const backup = old?.backup ?? (await this.deps.getDeviceValues("backup"));
+        if (!this.current(host, generation)) return;
+        // An unknown-outcome write that is already durable needs no second write.
+        const pending = dropAlreadyDurable(syncedSettingsPatches(old?.pending ?? []), snapshot);
+        const next = this.withHost(host, { snapshot, pending, backup });
+        await this.deps.writeLocal(next);
+        this.local = next;
+        if (!this.current(host, generation)) return;
+        if (snapshot.initialized) {
+          await this.deps.applyValues(applySettingsPatches(snapshot.values, pending));
+          if (!this.current(host, generation)) return;
+          this.adoptedHost = host;
+        }
+        let status: SyncStatus = "empty";
+        if (snapshot.initialized) status = this.state.canWrite ? "ready" : "readonly";
+        if (pending.length && this.state.conflicts.length) status = "conflict";
+        this.publish({ status, pendingCount: pending.length, error: null });
+      });
+    } catch (error) {
+      if (this.current(host, generation)) this.fail(error);
+      throw error;
+    }
+  }
+
+  /** Persist touched leaves under the original host before exposing their local projection. */
+  async edit(patches: AppSettingsPatch[]): Promise<void> {
+    patches = syncedSettingsPatches(patches);
+    if (!patches.length) return;
+    const host = this.state.selectedHost;
+    if (!host) throw new Error("No settings host selected");
+    const generation = this.generation;
+    if (
+      !this.state.canWrite ||
+      this.adoptedHost !== host ||
+      !SYNC_STATUS_POLICY[this.state.status].allowsEdits
+    )
+      throw new Error("Load the selected host's settings before editing");
+    try {
+      await this.serialize(async () => {
+        if (!this.current(host, generation)) throw new Error("Settings host changed before saving");
+        const record = this.local.hosts[host]!;
+        const pending = mergePending(syncedSettingsPatches(record.pending), patches);
+        const next = this.withHost(host, { ...record, pending });
+        await this.deps.writeLocal(next);
+        this.local = next;
+        if (!this.current(host, generation)) return;
+        await this.deps.applyValues(applySettingsPatches(record.snapshot.values, pending));
+        if (this.current(host, generation)) this.publish({ pendingCount: pending.length });
+      });
+    } catch (error) {
+      if (this.current(host, generation)) this.fail(error);
+      throw error;
+    }
+    // The durable outbox permits offline work; remote failures remain visible in status.
+    void this.flush();
+  }
+
+  getSnapshot(): AppSettingsSnapshot {
+    return this.local.hosts[this.state.selectedHost ?? ""]?.snapshot ?? EMPTY_APP_SETTINGS_SNAPSHOT;
+  }
+
+  /** An empty host is initialized only through this explicit user command, using revision zero. */
+  async publishDeviceSettings(): Promise<void> {
+    const host = this.state.selectedHost;
+    const transport = this.transport;
+    const generation = this.generation;
+    if (!host || !transport?.writable || this.state.status !== "empty")
+      throw new Error("Read an empty settings host before publishing");
+    const values = await this.deps.getDeviceValues("publish");
+    if (!this.current(host, generation)) return;
+    const patches = syncedSettingsPatches(settingsDiff({}, values, EMPTY_APP_SETTINGS_SNAPSHOT));
+    const result = await transport.patch({ patches, initialize: true });
+    if (!this.current(host, generation)) return;
+    if (result.conflicts.length) {
+      await this.serialize(async () => {
+        if (!this.current(host, generation)) return;
+        const record = this.local.hosts[host]!;
+        const next = this.withHost(host, { ...record, pending: patches });
+        await this.deps.writeLocal(next);
+        this.local = next;
+      });
+    }
+    await this.receive(host, result.snapshot, generation);
+    if (result.conflicts.length) this.publish({ status: "conflict", conflicts: result.conflicts });
+  }
+
+  /** Retry a read without discarding this host's pending changes. */
+  async retry(): Promise<void> {
+    const host = this.state.selectedHost;
+    if (host && this.transport) await this.connect(host, this.transport);
+    else if (!host) {
+      if (this.hydrated && this.state.status === "error") {
+        this.publish({ status: "local", error: null, canWrite: true });
+      } else await this.load();
+    }
+  }
+
+  /** Read before resolving, so a failed refresh retains every pending edit. */
+  async useHostSettings(): Promise<void> {
+    await this.resolveConflicts(false);
+  }
+
+  /** Explicitly keep touched local edits, rebasing only those paths onto the current host. */
+  async keepDeviceChanges(): Promise<void> {
+    await this.resolveConflicts(true);
+  }
+
+  private async resolveConflicts(keepDevice: boolean): Promise<void> {
+    const host = this.state.selectedHost;
+    const transport = this.transport;
+    const generation = this.generation;
+    if (!host || !transport) throw new Error("Connect to the settings host first");
+    if (keepDevice && !transport.writable)
+      throw new Error("This connection cannot change host settings");
+    const snapshot = await transport.read();
+    if (!this.current(host, generation)) return;
+    await this.serialize(async () => {
+      if (!this.current(host, generation)) return;
+      const record = this.local.hosts[host];
+      if (!record) return;
+      const pending = keepDevice ? rebaseOnto(syncedSettingsPatches(record.pending), snapshot) : [];
+      const next = this.withHost(host, { ...record, pending });
+      await this.deps.writeLocal(next);
+      this.local = next;
+    });
+    if (this.current(host, generation)) this.publish({ conflicts: [] });
+    await this.receive(host, snapshot, generation);
+    if (this.current(host, generation)) await this.flush();
+  }
+
+  /** Restore the saved pre-adoption values in device-only mode without touching any host. */
+  async restoreDeviceSettings(): Promise<void> {
+    const host = this.state.selectedHost;
+    const backup = this.local.hosts[host ?? ""]?.backup;
+    if (!backup) throw new Error("No device backup is available");
+    await this.selectHost(null);
+    await this.serialize(async () => {
+      if (this.state.selectedHost !== null) return;
+      await this.deps.applyValues(backup);
+    });
+  }
+
+  /** One in-flight outbox per model. A completion may acknowledge A, but never project A onto B. */
+  async flush(): Promise<void> {
+    if (this.sending) {
+      await this.sending;
+      await this.flush();
+      return;
+    }
+    const host = this.state.selectedHost;
+    const transport = this.transport;
+    const generation = this.generation;
+    if (!host || !transport || this.state.status !== "ready") return;
+    const record = this.local.hosts[host];
+    if (!record?.pending.length) {
+      if (record && this.state.pendingCount !== 0)
+        await this.receive(host, record.snapshot, generation);
+      return;
+    }
+    const sent = syncedSettingsPatches(cloneSettingsJson(record.pending));
+    if (!sent.length) return;
+    this.sending = (async () => {
+      try {
+        const result = await transport.patch({ patches: sent });
+        await this.serialize(() => this.settleWrite(host, generation, sent, result));
+      } catch (error) {
+        if (this.current(host, generation)) this.fail(error);
+      }
+    })();
+    await this.sending;
+    this.sending = null;
+    if (
+      this.state.status === "ready" &&
+      this.local.hosts[this.state.selectedHost ?? ""]?.pending.length
+    )
+      await this.flush();
+  }
+
+  /**
+   * Record a finished write for `host`: settle its outbox and keep the newer snapshot durably,
+   * then, if the host is still selected, project the result and publish its status.
+   */
+  private async settleWrite(
+    host: string,
+    generation: number,
+    sent: readonly AppSettingsPatch[],
+    result: AppSettingsPatchResult,
+  ): Promise<void> {
+    const current = this.local.hosts[host]!;
+    const pending = dropAcknowledged(current.pending, sent, result);
+    const newer = result.snapshot.revision >= current.snapshot.revision;
+    const snapshot = newer ? result.snapshot : current.snapshot;
+    const next = this.withHost(host, { ...current, snapshot, pending });
+    await this.deps.writeLocal(next);
+    this.local = next;
+    if (!this.current(host, generation)) return;
+    await this.deps.applyValues(applySettingsPatches(snapshot.values, pending));
+    if (!this.current(host, generation)) return;
+    this.publish({
+      status: result.conflicts.length ? "conflict" : "ready",
+      conflicts: result.conflicts,
+      pendingCount: pending.length,
+    });
+  }
+
+  /** The local state with one host's record replaced. */
+  private withHost(host: string, record: HostState): LocalState {
+    return { ...this.local, hosts: { ...this.local.hosts, [host]: record } };
+  }
+  private current(host: string, generation: number): boolean {
+    return this.state.selectedHost === host && this.generation === generation;
+  }
+  private publish(patch: Partial<SyncState>): void {
+    this.state = { ...this.state, ...patch };
+    for (const listener of this.listeners) listener();
+  }
+  private fail(error: unknown): void {
+    this.publish({
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(operation);
+    this.queue = result.catch(() => undefined);
+    return result;
+  }
+}

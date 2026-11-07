@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useSettingsEditingBlocked } from "@/hooks/use-settings/editing-blocker";
 import type { AppSettings } from "@/hooks/use-settings/storage";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { groupPluginSidebarItems } from "@/plugins/sidebar-groups";
@@ -19,6 +20,7 @@ const PREFERENCE_FIELDS = {
 export interface UseSidebarNavItemsReturn<Section extends SidebarSection> {
   /** Every item in the section in display order, hidden ones included. */
   items: SidebarNavItem<Section>[];
+  disabled: boolean;
   setVisible: (key: string, visible: boolean) => void;
   move: (key: string, direction: "up" | "down") => void;
 }
@@ -26,8 +28,9 @@ export interface UseSidebarNavItemsReturn<Section extends SidebarSection> {
 export function useSidebarNavItems<Section extends SidebarSection>(
   section: Section,
 ): UseSidebarNavItemsReturn<Section> {
+  const editingBlocked = useSettingsEditingBlocked();
   const plugins = useInstalledPlugins();
-  const { settings, updateSettings } = useAppSettings();
+  const { settings, updateSettings, isLoading, error } = useAppSettings();
   const field = PREFERENCE_FIELDS[section];
   const preferences = settings[field];
   const pluginGroups = useMemo(() => groupPluginSidebarItems(plugins, section), [plugins, section]);
@@ -71,5 +74,5 @@ export function useSidebarNavItems<Section extends SidebarSection>(
     [field, pluginGroups, section, updateSettings],
   );
 
-  return { items, setVisible, move };
+  return { items, setVisible, move, disabled: isLoading || editingBlocked || error !== null };
 }
