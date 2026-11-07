@@ -3453,26 +3453,24 @@ interface ProcessTrackedChangesResult {
   trackedDiffText: string;
 }
 
+/** Distinct destination and rename-source paths of the given changes, in first-seen order. */
+function changePathsWithRenameSources(changes: readonly CheckoutFileChange[]): string[] {
+  const paths = changes.flatMap((change) =>
+    change.oldPath ? [change.oldPath, change.path] : [change.path],
+  );
+  return [...new Set(paths)];
+}
+
 async function processTrackedChanges(
   input: ProcessTrackedChangesInput,
 ): Promise<ProcessTrackedChangesResult> {
   const { cwd, refsForDiff, trackedChanges, ignoreWhitespace, appendDiff } = input;
+  // A single-file scope limits numstat to that file, including a rename's source path.
+  const scopedNumstatPaths =
+    input.filePath === undefined ? undefined : changePathsWithRenameSources(trackedChanges);
   const trackedNumstatByPath =
     trackedChanges.length > 0
-      ? await getTrackedNumstatByPath(
-          cwd,
-          refsForDiff,
-          ignoreWhitespace,
-          input.filePath !== undefined
-            ? [
-                ...new Set(
-                  trackedChanges.flatMap((change) =>
-                    change.oldPath ? [change.oldPath, change.path] : [change.path],
-                  ),
-                ),
-              ]
-            : undefined,
-        )
+      ? await getTrackedNumstatByPath(cwd, refsForDiff, ignoreWhitespace, scopedNumstatPaths)
       : new Map<string, FileStat>();
   const trackedDiffPaths: string[] = [];
   const trackedPlaceholderByPath = new Map<

@@ -700,8 +700,13 @@ function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffR
     queryKey[3] === route.compare.mode &&
     queryKey[4] === (route.compare.baseRef ?? "") &&
     queryKey[5] === (route.compare.ignoreWhitespace === true) &&
-    (queryKey[6] === "file" ? queryKey[7] : undefined) === route.compare.filePath
+    scopedFilePathOf(queryKey) === route.compare.filePath
   );
+}
+
+/** The single-file scope a checkout diff query key carries, or undefined for a whole diff. */
+function scopedFilePathOf(queryKey: QueryKey): unknown {
+  return queryKey[6] === "file" ? queryKey[7] : undefined;
 }
 
 function areWorkspaceTerminalsRoutesEqual(
