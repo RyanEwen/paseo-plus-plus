@@ -11,10 +11,14 @@ import {
 import { daemonSelfUpdater } from "./daemon-self-updater.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { DaemonSelfUpdateSessionController } from "./daemon-self-update-session-controller.js";
+import { registerForkCapability } from "../../fork-capabilities.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 import type { DaemonConfigReloadResult } from "../../daemon-config-store.js";
+
+// Advertise the read-only update availability check handled by this session.
+registerForkCapability("daemonUpdateAvailability");
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
