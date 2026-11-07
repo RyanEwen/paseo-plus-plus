@@ -54,6 +54,8 @@ export function ReopenClosedAgentDialog({
     closedAgentCount: agents.length,
     history,
   });
+  // The daemon cannot know which agents have open tabs, so while every loaded row is already
+  // open, keep paging until a closed agent appears or the history runs out.
   useEffect(() => {
     if (scanningOpenPages && !isLoadingMore) loadMore();
   }, [scanningOpenPages, isLoadingMore, loadMore]);
@@ -102,7 +104,7 @@ export function ReopenClosedAgentDialog({
   } else if (showLoading) {
     content = (
       <View style={styles.state} testID="reopen-closed-agent-loading">
-        <ThemedLoadingSpinner color="" uniProps={mutedSpinnerColor} />
+        <ThemedLoadingSpinner uniProps={mutedSpinnerColor} />
       </View>
     );
   } else {
