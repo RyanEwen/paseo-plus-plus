@@ -46,6 +46,13 @@ import {
   WORKSPACE_LABEL_PAGE_ID,
   type WorkspaceLabelTarget,
 } from "@/workspace-labels/picker";
+import {
+  WORKSPACE_KEBAB_COMPACT_OPTICAL_PULL,
+  WORKSPACE_KEBAB_COMPACT_SIZE,
+  WORKSPACE_KEBAB_LEADING_GAP,
+  WORKSPACE_KEBAB_OPTICAL_PULL,
+  WORKSPACE_KEBAB_SIZE,
+} from "./workspace-kebab-geometry";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -463,17 +470,17 @@ function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovere
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     // Larger on compact so the kebab is an easy tap target.
-    width: { xs: 32, md: 18 },
-    height: { xs: 32, md: 18 },
+    width: { xs: WORKSPACE_KEBAB_COMPACT_SIZE, md: WORKSPACE_KEBAB_SIZE },
+    height: { xs: WORKSPACE_KEBAB_COMPACT_SIZE, md: WORKSPACE_KEBAB_SIZE },
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 4,
-    marginLeft: 2,
+    marginLeft: WORKSPACE_KEBAB_LEADING_GAP,
     // Center the compact box on the 20px title line it is anchored to.
     marginTop: { xs: -6, md: 0 },
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
     // pull the painted dots through that unused view-box space onto the trailing-content rail.
-    marginRight: { xs: -14, md: -7 },
+    marginRight: { xs: -WORKSPACE_KEBAB_COMPACT_OPTICAL_PULL, md: -WORKSPACE_KEBAB_OPTICAL_PULL },
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

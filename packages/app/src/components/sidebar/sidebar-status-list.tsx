@@ -24,7 +24,6 @@ import { isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { StyleSheet } from "react-native-unistyles";
 import { density } from "@/styles/density";
-import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { useToast } from "@/contexts/toast-context";
 import { SidebarWorkspaceRename, useSidebarWorkspaceRename } from "./workspace-rename";
 import { StatusGroupCell } from "./status-group-cell";
@@ -42,7 +41,7 @@ import {
   resolveTrailingActionVisibility,
   type SidebarWorkspaceTrailingPresentation,
   SidebarWorkspaceTrailingActionBase,
-  SidebarWorkspaceTrailingActionOverlay,
+  SidebarWorkspaceTrailingStatusActions,
   SidebarWorkspaceTrailingActionSlot,
   sidebarWorkspaceRowStyles,
 } from "@/components/sidebar/sidebar-workspace-row-content";
@@ -769,7 +768,6 @@ function StatusWorkspaceRowInnerContent({
         const {
           trailingPresentation,
           showKebab: showKebabInSlot,
-          showScrim,
           renderSlot,
           reserveSlotWidth,
         } = resolveTrailingActionVisibility({
@@ -846,11 +844,9 @@ function StatusWorkspaceRowInnerContent({
                 {renderSlot ? (
                   <StatusWorkspaceActionSlot
                     workspace={workspace}
-                    backdrop={backdrop}
                     trailing={trailing}
                     trailingPresentation={trailingPresentation}
                     showKebab={showKebabInSlot}
-                    showScrim={showScrim}
                     reserveSlotWidth={reserveSlotWidth}
                     isPinned={isPinned}
                     onTogglePin={onTogglePin}
@@ -879,11 +875,9 @@ function StatusWorkspaceRowInnerContent({
 
 function StatusWorkspaceActionSlot({
   workspace,
-  backdrop,
   trailing,
   trailingPresentation,
   showKebab,
-  showScrim,
   reserveSlotWidth,
   isPinned,
   onTogglePin,
@@ -901,11 +895,9 @@ function StatusWorkspaceActionSlot({
   archiveShortcutKeys,
 }: {
   workspace: SidebarWorkspaceEntry;
-  backdrop: SidebarSurfaceBackdrop;
   trailing: SidebarWorkspaceTrailing;
   trailingPresentation: SidebarWorkspaceTrailingPresentation;
   showKebab: boolean;
-  showScrim: boolean;
   reserveSlotWidth: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -928,10 +920,7 @@ function StatusWorkspaceActionSlot({
       <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
         <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
       </SidebarWorkspaceTrailingActionBase>
-      <SidebarWorkspaceTrailingActionOverlay
-        visible={kebab.showKebab}
-        scrimBackdrop={showScrim ? backdrop : undefined}
-      >
+      <SidebarWorkspaceTrailingStatusActions workspace={workspace} visible={kebab.showKebab}>
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu
             {...kebab.menuProps}
@@ -955,7 +944,7 @@ function StatusWorkspaceActionSlot({
             onToggleProjectPin={onToggleProjectPin}
           />
         ) : null}
-      </SidebarWorkspaceTrailingActionOverlay>
+      </SidebarWorkspaceTrailingStatusActions>
     </SidebarWorkspaceTrailingActionSlot>
   );
 }
