@@ -1,5 +1,6 @@
 import { useCallback } from "react";
-import { canBeginMobilePanelGesture, type MobilePanelView } from "./model";
+import type { MobilePanelView } from "@/stores/panel-store";
+import { canBeginMobilePanelGesture } from "./model";
 import { useMobilePanelsRuntime } from "./provider";
 import { subscribeMobilePanelRest } from "./rest";
 
