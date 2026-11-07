@@ -1,5 +1,8 @@
 import { seenAgentNotifications } from "@/notifications/seen-agent-client";
-import { retainWebNotification } from "@/notifications/web-notification-registry";
+import {
+  retainWebNotification,
+  type WebNotificationInstance,
+} from "@/notifications/web-notification-registry";
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
 import { parseNotificationOpenTarget, WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
@@ -13,11 +16,6 @@ interface OsNotificationPayload {
 
 export interface WebNotificationClickDetail {
   data?: Record<string, unknown>;
-}
-
-interface WebNotificationInstance {
-  close(): void;
-  addEventListener: (type: "click" | "close", listener: (event: Event) => void) => void;
 }
 
 let permissionRequest: Promise<boolean> | null = null;
