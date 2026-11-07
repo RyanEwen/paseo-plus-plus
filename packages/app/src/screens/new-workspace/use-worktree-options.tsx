@@ -104,6 +104,8 @@ export function useWorktreeOptions(input: {
   const prepareSource = useCallback(
     async (request: {
       createsWorktree: boolean;
+      /** The selected project's source directory; the screen resolves it before creating. */
+      cwd: string;
       projectId: string;
       refName?: string;
     }): Promise<CreateWorkspaceRequestOptions["source"] | undefined> => {
@@ -114,12 +116,15 @@ export function useWorktreeOptions(input: {
         }
         return undefined;
       }
+      // A pull request worktree keeps upstream's request, so it needs no occupancy read.
+      if (!existing && baseItem?.kind === "github-pr") return undefined;
       const result = await refetch();
       if (result.error) throw result.error;
       if (existing && !result.data?.some((entry) => entry.worktreePath === existing.worktreePath)) {
         throw new Error("The selected worktree no longer exists. Choose another worktree.");
       }
-      if (!existing && baseItem?.kind === "github-pr") return undefined;
+      // applyRef is idempotent. Applying it here makes validation read the submitted ref even
+      // when the render effect that normally applies it has not run yet.
       model.applyRef(baseItem);
       if (!existing) {
         const error = worktreeFormError(model.getState(), result.data ?? []);
@@ -128,13 +133,13 @@ export function useWorktreeOptions(input: {
       return worktreeFormSource(
         { ...model.getState(), existing },
         {
-          cwd: input.cwd!,
+          cwd: request.cwd,
           projectId: request.projectId,
           refName: request.refName,
         },
       );
     },
-    [supported, input.cwd, existing, baseItem, model, refetch],
+    [supported, existing, baseItem, model, refetch],
   );
   const showFields =
     supported && input.isolation === "worktree" && !existing && baseItem?.kind !== "github-pr";

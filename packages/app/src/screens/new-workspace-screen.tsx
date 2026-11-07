@@ -1317,6 +1317,10 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
+      const projectId = getHostProjectId(selectedProject, selectedServerId);
+      if (!projectId) {
+        throw new Error("Project is not available on the selected host");
+      }
       const createsWorktree =
         !existingWorktree && (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");
       const checkoutStatusForCreate = createsWorktree
@@ -1342,7 +1346,8 @@ export function NewWorkspaceScreen({
         checkoutRequest,
         source: await prepareSource({
           createsWorktree,
-          projectId: getHostProjectId(selectedProject, selectedServerId)!,
+          cwd: selectedSourceDirectory,
+          projectId,
           refName: checkoutRequest?.refName,
         }),
         withInitialAgent: input.withInitialAgent,

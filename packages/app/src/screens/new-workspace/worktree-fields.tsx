@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Field, FormTextInput } from "@/components/ui/form-field";
@@ -26,19 +26,16 @@ export function WorktreeFields({
       nameInput.current?.replaceText(state.worktreeName);
     }
   }, [state.worktreeName]);
-  const separateNamesSwitch = useMemo(
-    () => (
-      <Switch
-        value={state.separateNames}
-        onValueChange={model.setSeparateNames}
-        disabled={disabled}
-        accessibilityLabel="Use a different branch name"
-        testID="new-workspace-separate-names"
-      />
-    ),
-    [state.separateNames, model, disabled],
-  );
   if (!visible) return null;
+  const separateNamesSwitch = (
+    <Switch
+      value={state.separateNames}
+      onValueChange={model.setSeparateNames}
+      disabled={disabled}
+      accessibilityLabel="Use a different branch name"
+      testID="new-workspace-separate-names"
+    />
+  );
   const size = compact ? "md" : "sm";
   const newBranch = state.mode === "branch-off";
   const nameLabel =
