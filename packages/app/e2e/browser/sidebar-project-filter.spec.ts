@@ -10,6 +10,7 @@ import path from "node:path";
 import { expect, type Page, type Locator } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { seedAppSettings } from "../support/helpers/app-settings";
 import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client";
 import {
   addProjectFlowInput,
@@ -626,17 +627,7 @@ test.describe("Sidebar project selector activity", () => {
           ),
         });
         await closeSidebarDisplayPreferences(page);
-        await page.evaluate(() => {
-          const key = "@paseo:app-settings";
-          const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
-          localStorage.setItem(
-            key,
-            JSON.stringify({
-              ...settings,
-              paseoPlusPlus: { ...settings.paseoPlusPlus, sidebarActivityChips: false },
-            }),
-          );
-        });
+        await seedAppSettings(page, { paseoPlusPlus: { sidebarActivityChips: false } });
         await page.reload();
         if (compact) await openMobileAgentSidebar(page);
         await trigger.click();
