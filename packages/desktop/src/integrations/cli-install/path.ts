@@ -47,7 +47,13 @@ export function resolveCliShimPath(input: {
 }
 
 /** Keep preview CLI installation from replacing the official app's terminal command. */
-export function resolveCliTargetFilename(platform: NodeJS.Platform, isPreview: boolean): string {
+export function resolveCliTargetFilename({
+  platform,
+  isPreview,
+}: {
+  platform: NodeJS.Platform;
+  isPreview: boolean;
+}): string {
   const command = isPreview ? "paseo-plus-plus-desktop" : "paseo";
   return platform === "win32" ? `${command}.cmd` : command;
 }

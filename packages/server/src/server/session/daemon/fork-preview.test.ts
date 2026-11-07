@@ -68,13 +68,19 @@ describe("fork preview updates", () => {
   test("accepts matching bytes and rejects tampered or duplicate checksums", () => {
     const bytes = Buffer.from("daemon");
     const line = `${createHash("sha256").update(bytes).digest("hex")}  daemon.tgz`;
-    expect(() => verifyForkChecksum(line, "daemon.tgz", bytes)).not.toThrow();
-    expect(() => verifyForkChecksum(line, "daemon.tgz", Buffer.from("tampered"))).toThrow(
-      "checksum mismatch",
-    );
-    expect(() => verifyForkChecksum(`${line}\n${line}`, "daemon.tgz", bytes)).toThrow(
-      "checksum mismatch",
-    );
+    expect(() =>
+      verifyForkChecksum({ checksums: line, filename: "daemon.tgz", bytes }),
+    ).not.toThrow();
+    expect(() =>
+      verifyForkChecksum({
+        checksums: line,
+        filename: "daemon.tgz",
+        bytes: Buffer.from("tampered"),
+      }),
+    ).toThrow("checksum mismatch");
+    expect(() =>
+      verifyForkChecksum({ checksums: `${line}\n${line}`, filename: "daemon.tgz", bytes }),
+    ).toThrow("checksum mismatch");
   });
 });
 

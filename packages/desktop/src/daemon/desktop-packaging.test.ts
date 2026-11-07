@@ -116,19 +116,19 @@ describe("desktop packaging", () => {
       daemonHomeName: ".paseo-plus-plus-desktop",
       daemonListen: "127.0.0.1:6790",
     });
-    expect(resolveDesktopUpdateChannel(true, "stable")).toEqual({
+    expect(resolveDesktopUpdateChannel({ isPreview: true, releaseChannel: "stable" })).toEqual({
       allowPrerelease: true,
       channel: "preview",
     });
-    expect(resolveDesktopUpdateChannel(true, "beta")).toEqual({
+    expect(resolveDesktopUpdateChannel({ isPreview: true, releaseChannel: "beta" })).toEqual({
       allowPrerelease: true,
       channel: "preview",
     });
-    expect(resolveDesktopUpdateChannel(false, "stable")).toEqual({
+    expect(resolveDesktopUpdateChannel({ isPreview: false, releaseChannel: "stable" })).toEqual({
       allowPrerelease: false,
       channel: "latest",
     });
-    expect(resolveDesktopUpdateChannel(false, "beta")).toEqual({
+    expect(resolveDesktopUpdateChannel({ isPreview: false, releaseChannel: "beta" })).toEqual({
       allowPrerelease: true,
       channel: "beta",
     });

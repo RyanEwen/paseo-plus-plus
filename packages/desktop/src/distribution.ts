@@ -7,8 +7,41 @@ const distributionMetadataSchema = z.object({
   paseoPreview: z.boolean().default(false),
 });
 
+/** Names and OS registration shared by every desktop identity. */
+interface DesktopIdentity {
+  appName: string;
+  /** Linux .desktop entry name; its basename is also the window class. */
+  desktopName: string;
+}
+
+/**
+ * Installed desktop identity. Preview builds carry their own Windows AppUserModelID and bundled
+ * daemon defaults; upstream builds leave those to Electron and the daemon.
+ */
+export type DesktopDistribution =
+  | (DesktopIdentity & {
+      isPreview: true;
+      windowsAppUserModelId: string;
+      /** Bundled daemon home, relative to the user's home folder. */
+      daemonHomeName: string;
+      /** Bundled daemon listen address. */
+      daemonListen: string;
+    })
+  | (DesktopIdentity & {
+      isPreview: false;
+      windowsAppUserModelId: null;
+      daemonHomeName: null;
+      daemonListen: null;
+    });
+
+/** Release feed selection for electron-updater. */
+export interface DesktopUpdateChannel {
+  allowPrerelease: boolean;
+  channel: "preview" | "beta" | "latest";
+}
+
 /** Resolve packaged identity without changing the renderer's storage origin. */
-export function resolveDesktopDistribution(metadata: unknown) {
+export function resolveDesktopDistribution(metadata: unknown): DesktopDistribution {
   const { paseoPreview } = distributionMetadataSchema.parse(metadata);
   if (paseoPreview) {
     return {
@@ -20,7 +53,7 @@ export function resolveDesktopDistribution(metadata: unknown) {
       desktopName: "paseo-plus-plus.desktop",
       daemonHomeName: ".paseo-plus-plus-desktop",
       daemonListen: "127.0.0.1:6790",
-    } as const;
+    };
   }
 
   return {
@@ -30,7 +63,7 @@ export function resolveDesktopDistribution(metadata: unknown) {
     desktopName: "Paseo.desktop",
     daemonHomeName: null,
     daemonListen: null,
-  } as const;
+  };
 }
 
 // The same package-relative path works in source, dist, and the packaged asar.
@@ -38,7 +71,13 @@ const packageMetadata = require("../package.json");
 export const desktopDistribution = resolveDesktopDistribution(packageMetadata);
 
 /** Preview installs always follow the fork's custom channel, regardless of saved settings. */
-export function resolveDesktopUpdateChannel(isPreview: boolean, releaseChannel: "stable" | "beta") {
+export function resolveDesktopUpdateChannel({
+  isPreview,
+  releaseChannel,
+}: {
+  isPreview: boolean;
+  releaseChannel: "stable" | "beta";
+}): DesktopUpdateChannel {
   if (isPreview) {
     return { allowPrerelease: true, channel: "preview" };
   }

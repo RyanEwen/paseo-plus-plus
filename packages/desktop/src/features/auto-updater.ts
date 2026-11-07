@@ -151,10 +151,10 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     // Electron's built-in handler would install an older download without checking
     // whether a newer release has superseded it.
     autoUpdater.autoInstallOnAppQuit = false;
-    const updateChannel = resolveDesktopUpdateChannel(
-      desktopDistribution.isPreview,
-      input.releaseChannel,
-    );
+    const updateChannel = resolveDesktopUpdateChannel({
+      isPreview: desktopDistribution.isPreview,
+      releaseChannel: input.releaseChannel,
+    });
     autoUpdater.allowPrerelease = updateChannel.allowPrerelease;
     autoUpdater.channel = updateChannel.channel;
     autoUpdater.allowDowngrade = false;

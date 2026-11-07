@@ -7,15 +7,34 @@ import { z } from "zod";
 // Discover through the current repository; retain canonical legacy asset URL compatibility.
 const REPOSITORY = "RyanEwen/paseo-plus-plus";
 const RELEASE_REPOSITORIES = [REPOSITORY, "RyanEwen/paseo"];
+const ReleaseAssetSchema = z.object({ name: z.string(), browser_download_url: z.string().url() });
 const ReleaseSchema = z.object({
   tag_name: z.string(),
   draft: z.boolean(),
   prerelease: z.boolean(),
-  assets: z.array(z.object({ name: z.string(), browser_download_url: z.string().url() })),
+  assets: z.array(ReleaseAssetSchema),
 });
 
+type ReleaseAsset = z.infer<typeof ReleaseAssetSchema>;
+
+/** The newest installable fork preview for this host's platform and architecture. */
+export interface ForkPreviewSelection {
+  /** Release version without the tag's leading "v". */
+  version: string;
+  /** Daemon package filename, as listed in SHA256SUMS. */
+  filename: string;
+  packageAsset: ReleaseAsset;
+  checksumAsset: ReleaseAsset;
+}
+
+/** A verified daemon package on disk. Call cleanup once npm has installed it. */
+export interface DownloadedForkPreview {
+  file: string;
+  cleanup(): Promise<void>;
+}
+
 /** Select published fork builds by workflow sequence, regardless of GitHub's prerelease flag. */
-export function selectForkPreview(value: unknown) {
+export function selectForkPreview(value: unknown): ForkPreviewSelection {
   const releases = z.array(ReleaseSchema).parse(value);
   const previews = releases.flatMap((release) => {
     const match = /^v\d+\.\d+\.\d+-preview\.(\d+)$/.exec(release.tag_name);
@@ -46,7 +65,16 @@ export function selectForkPreview(value: unknown) {
 }
 
 /** Verify downloaded bytes before npm can replace the running installation. */
-export function verifyForkChecksum(checksums: string, filename: string, bytes: Uint8Array): void {
+export function verifyForkChecksum({
+  checksums,
+  filename,
+  bytes,
+}: {
+  /** SHA256SUMS contents. */
+  checksums: string;
+  filename: string;
+  bytes: Uint8Array;
+}): void {
   const entries = checksums.split("\n").filter((line) => line.endsWith(`  ${filename}`));
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (entries.length !== 1 || entries[0] !== `${digest}  ${filename}`) {
@@ -69,7 +97,9 @@ interface DownloadOptions {
 }
 
 /** Resolve the installable preview without downloading or changing the host installation. */
-export async function resolveForkPreview({ request = requestRelease }: DownloadOptions = {}) {
+export async function resolveForkPreview({
+  request = requestRelease,
+}: DownloadOptions = {}): Promise<ForkPreviewSelection> {
   // Pagination avoids losing the newest preview behind stable releases or other prereleases.
   const releases = [];
   for (let page = 1; ; page += 1) {
@@ -84,13 +114,15 @@ export async function resolveForkPreview({ request = requestRelease }: DownloadO
 }
 
 /** Download only public releases; draft and incomplete releases never fall back to upstream npm. */
-export async function downloadForkPreview({ request = requestRelease }: DownloadOptions = {}) {
+export async function downloadForkPreview({
+  request = requestRelease,
+}: DownloadOptions = {}): Promise<DownloadedForkPreview> {
   const preview = await resolveForkPreview({ request });
   const checksums = await (await request(preview.checksumAsset.browser_download_url)).text();
   const bytes = new Uint8Array(
     await (await request(preview.packageAsset.browser_download_url)).arrayBuffer(),
   );
-  verifyForkChecksum(checksums, preview.filename, bytes);
+  verifyForkChecksum({ checksums, filename: preview.filename, bytes });
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-fork-update-"));
   const file = path.join(directory, preview.filename);
   try {
