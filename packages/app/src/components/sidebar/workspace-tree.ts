@@ -36,6 +36,19 @@ export function placementServerIds(
   return [...new Set(workspaces.map((workspace) => workspace.serverId))];
 }
 
+/** The placement key of the open workspace, or null when it is not among the placements. */
+export function findActiveWorkspaceKey(
+  workspaces: readonly SidebarWorkspacePlacement[],
+  active: { serverId: string; workspaceId: string } | null,
+): string | null {
+  if (active === null) return null;
+  const match = workspaces.find(
+    (workspace) =>
+      workspace.serverId === active.serverId && workspace.workspaceId === active.workspaceId,
+  );
+  return match?.workspaceKey ?? null;
+}
+
 /** Index rows by their host-qualified workspace key. */
 export function indexByWorkspaceKey<T extends Pick<SidebarWorkspacePlacement, "workspaceKey">>(
   items: readonly T[],

@@ -49,20 +49,17 @@ interface WorkspaceTreeBranchProps<T extends SidebarWorkspacePlacement> {
  * A drag cell owns its whole family. Nested lists reorder siblings only, so dragging can never
  * change authoritative parentage or strand descendants in a different status/pin section.
  */
-export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>(
-  props: WorkspaceTreeBranchProps<T>,
-) {
-  const {
-    row,
-    depth = 0,
-    itemsByKey,
-    renderRow,
-    onSiblingReorder,
-    getDragGroupKey,
-    manualPins = false,
-    parentGestureRef,
-    dragGestureHostActive,
-  } = props;
+export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>({
+  row,
+  depth = 0,
+  itemsByKey,
+  renderRow,
+  onSiblingReorder,
+  getDragGroupKey,
+  manualPins = false,
+  parentGestureRef,
+  dragGestureHostActive,
+}: WorkspaceTreeBranchProps<T>) {
   const model = useSidebarWorkspaceTree();
   const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const { t } = useTranslation();
@@ -106,11 +103,31 @@ export function WorkspaceTreeBranch<T extends SidebarWorkspacePlacement>(
     },
     [children, childDragGroup, canCommit, manualPins, onSiblingReorder],
   );
+  // Each nested list's renderItem stays stable while the branch inputs are unchanged.
   const renderChild = useCallback(
     (childRow: DraggableRenderItemInfo<T>) => (
-      <WorkspaceTreeBranch {...props} row={childRow} depth={depth + 1} />
+      <WorkspaceTreeBranch
+        row={childRow}
+        depth={depth + 1}
+        itemsByKey={itemsByKey}
+        renderRow={renderRow}
+        onSiblingReorder={onSiblingReorder}
+        getDragGroupKey={getDragGroupKey}
+        manualPins={manualPins}
+        parentGestureRef={parentGestureRef}
+        dragGestureHostActive={dragGestureHostActive}
+      />
     ),
-    [props, depth],
+    [
+      depth,
+      itemsByKey,
+      renderRow,
+      onSiblingReorder,
+      getDragGroupKey,
+      manualPins,
+      parentGestureRef,
+      dragGestureHostActive,
+    ],
   );
   const toggle = useCallback(() => {
     useSidebarCollapsedSectionsStore

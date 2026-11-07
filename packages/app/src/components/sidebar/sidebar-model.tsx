@@ -3,7 +3,11 @@ import { useWorkspaceFamilyDragAuthority } from "./use-workspace-family-drag";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceParents } from "./use-workspace-parents";
 import { SidebarWorkspaceTreeProvider } from "./workspace-tree-context";
-import { placementServerIds, type WorkspaceTreeNode } from "./workspace-tree";
+import {
+  findActiveWorkspaceKey,
+  placementServerIds,
+  type WorkspaceTreeNode,
+} from "./workspace-tree";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import { filterSidebarByText } from "./sidebar-text-filter";
 import { ProjectPinGutterProvider } from "./project-pin-gutter";
@@ -239,14 +243,10 @@ export function SidebarModelProvider({
   const workspaceParents = useWorkspaceParents(list.workspacePlacements, familyServerIds);
   const dragAuthority = useWorkspaceFamilyDragAuthority(familyServerIds);
   const activeWorkspace = useActiveWorkspaceSelection();
-  const activeWorkspaceKey =
-    list.workspacePlacements.find((workspace) => {
-      if (activeWorkspace === null) return false;
-      return (
-        workspace.serverId === activeWorkspace.serverId &&
-        workspace.workspaceId === activeWorkspace.workspaceId
-      );
-    })?.workspaceKey ?? null;
+  const activeWorkspaceKey = useMemo(
+    () => findActiveWorkspaceKey(list.workspacePlacements, activeWorkspace),
+    [list.workspacePlacements, activeWorkspace],
+  );
   const attentionWorkspaces = useMemo(
     () => textFiltered.projects.flatMap((project) => project.workspaces),
     [textFiltered.projects],
