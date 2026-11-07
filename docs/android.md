@@ -15,15 +15,13 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 ## SSH connections
 
-`modules/paseo-ssh` owns Android's SSH transport and credential storage. A native rebuild
-is required; Expo Go cannot load it. Desktop credentials never cross into the phone.
-The native bridge and Electron bridge use the same event-based client transport lifecycle.
+`modules/paseo-ssh` owns Android's SSH transport and credential storage. It needs a native rebuild; Expo Go cannot load it. Its tunnel shares the desktop's client transport lifecycle through `hosts/transport-bridge`.
 
-Private keys and passphrases are encrypted with a non-exportable Android Keystore key in
-`noBackupFilesDir`. Host registry entries contain only the destination. Discovery rejects
-the SSH handshake before login; the user approves the observed SHA-256 fingerprint before
-credentials are staged for a daemon probe. Commit credentials before publishing a successful
-host, so reconnects can use them immediately. Reject changed fingerprints on reconnect.
+Credentials stay on the device that imported them. Desktop credentials never reach the phone, and the host registry stores only the destination. Private keys and passphrases are encrypted with a non-exportable Android Keystore key in `noBackupFilesDir`, so backups and device transfers never carry them.
+
+Discovery rejects the SSH handshake before login, so the key signs nothing until the user approves the server's SHA-256 fingerprint. Credentials are committed after a successful daemon probe and before the host is published: a saved host can always reconnect, and a failed probe never replaces credentials that already work. Reconnects reject a changed fingerprint.
+
+Native errors cross the bridge as codes, and `hosts/ssh/ssh-native-bridge.ts` owns their user-facing copy. Expo prefixes every native rejection message with the module and function name, so never display the native message.
 
 User setup and platform limits live in [Connectivity](../public-docs/connectivity.md#android).
 
