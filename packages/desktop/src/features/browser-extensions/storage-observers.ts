@@ -20,6 +20,15 @@ const ManifestSchema = z.object({
   background: z.object({ service_worker: z.string().optional() }).optional(),
 });
 const AreaSchema = z.enum(["local", "session", "sync", "managed"]);
+/** Messages from the passive observer page; anything else is ignored. */
+const ObserverPacketSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("ready") }),
+  z.object({
+    kind: z.literal("change"),
+    area: AreaSchema,
+    changes: z.record(z.string(), z.unknown()),
+  }),
+]);
 interface ObserverHooks {
   changed(id: string, changes: unknown, area: string): void;
   failed(id: string, error: Error): void;
@@ -51,14 +60,25 @@ interface WorkerBinding {
   observer: Observer;
 }
 
-/** Only native storage-capable MV3 workers need the Electron event delivery repair. */
-function needsObserver(extension: Extension): boolean {
+interface ObserverManifest {
+  workerScript: string;
+}
+
+/**
+ * Only native storage-capable MV3 workers need the Electron event delivery repair.
+ * @returns The worker script the observer must match, or null when no observer is needed.
+ */
+function readObserverManifest(extension: Extension): ObserverManifest | null {
   const manifest = ManifestSchema.safeParse(extension.manifest);
-  return (
-    manifest.success &&
-    Boolean(manifest.data.background?.service_worker) &&
-    manifest.data.permissions?.includes("storage") === true
-  );
+  if (!manifest.success) {
+    return null;
+  }
+  const workerScript = manifest.data.background?.service_worker;
+  const hasStoragePermission = manifest.data.permissions?.includes("storage") === true;
+  if (!workerScript || !hasStoragePermission) {
+    return null;
+  }
+  return { workerScript };
 }
 
 /**
@@ -157,7 +177,7 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
   }
 
   /** Establish identity before navigation; readiness comes from the isolated native-listener IPC. */
-  function create(extension: Extension): Observer {
+  function create(extension: Extension, manifest: ObserverManifest): Observer {
     let resolve!: () => void;
     let reject!: (error: Error) => void;
     const ready = new Promise<void>((yes, no) => {
@@ -178,10 +198,7 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
       extension,
       view,
       url: `chrome-extension://${extension.id}/manifest.json`,
-      scriptUrl: new URL(
-        ManifestSchema.parse(extension.manifest).background!.service_worker!,
-        `chrome-extension://${extension.id}/`,
-      ).href,
+      scriptUrl: new URL(manifest.workerScript, `chrome-extension://${extension.id}/`).href,
       ready,
       resolve,
       reject,
@@ -275,9 +292,10 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
     if (previous) retire(previous, new Error("The extension was replaced during startup."));
     observers.delete(extension.id);
     failures.delete(extension.id);
-    if (!needsObserver(extension) || disposed) return;
+    const manifest = readObserverManifest(extension);
+    if (!manifest || disposed) return;
     try {
-      create(extension);
+      create(extension, manifest);
     } catch {
       const error = new Error("Could not create the extension storage observer.");
       failures.set(extension.id, error);
@@ -314,8 +332,10 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
 
   function message(event: IpcMainEvent, packet: unknown): void {
     const observer = source(event);
-    if (!observer || !packet || typeof packet !== "object") return;
-    const input = packet as { kind?: unknown; area?: unknown; changes?: unknown };
+    if (!observer) return;
+    const parsed = ObserverPacketSchema.safeParse(packet);
+    if (!parsed.success) return;
+    const input = parsed.data;
     if (input.kind === "ready") {
       if (observer.listening) return;
       const frame = event.senderFrame;
@@ -326,16 +346,8 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
       clearTimeout(observer.timer);
       observer.resolve();
       hooks.ready?.(observer.extension.id);
-    } else if (input.kind === "change" && observer.listening) {
-      const area = AreaSchema.safeParse(input.area);
-      if (
-        !area.success ||
-        !input.changes ||
-        typeof input.changes !== "object" ||
-        Array.isArray(input.changes)
-      )
-        return;
-      hooks.changed(observer.extension.id, input.changes, area.data);
+    } else if (observer.listening) {
+      hooks.changed(observer.extension.id, input.changes, input.area);
     }
   }
 
@@ -408,7 +420,7 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
 
   /** Caller cancellation fails the runtime generation rather than exposing an unobserved worker. */
   async function waitUntilReady(extension: Extension, signal?: AbortSignal): Promise<void> {
-    if (!needsObserver(extension)) return;
+    if (!readObserverManifest(extension)) return;
     const observer = observers.get(extension.id);
     if (
       disposed ||
@@ -460,7 +472,7 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
       const extension = profile.extensions.getExtension(id);
       return Boolean(
         extension &&
-        (!needsObserver(extension) ||
+        (!readObserverManifest(extension) ||
           (observers.get(id)?.listening && !observers.get(id)?.retired)),
       );
     },
