@@ -1,4 +1,4 @@
-import { resolveSidebarCollapseTargets } from "./sidebar-projection";
+import { resolveSidebarCollapseTargets } from "./bulk-collapse-targets";
 import { useCallback } from "react";
 import { useSidebarModel } from "./sidebar-model";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
