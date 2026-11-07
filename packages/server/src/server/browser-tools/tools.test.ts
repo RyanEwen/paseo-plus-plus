@@ -1071,6 +1071,39 @@ test("failed screenshot publication never returns inline success or a reference"
   expect(harness.storage.releases).toBe(1);
   expect(result.structuredContent).not.toHaveProperty("attachment");
 });
+test("broker failures during an owned screenshot propagate instead of reporting storage", async () => {
+  const harness = new BrowserToolHarness();
+  harness.broker.pause = async () => {
+    throw new Error("browser host transport closed");
+  };
+  await expect(harness.execute("browser_screenshot", { browserId: BROWSER_ID })).rejects.toThrow(
+    "browser host transport closed",
+  );
+  expect(harness.storage.commits).toBe(0);
+  expect(harness.storage.releases).toBe(1);
+});
+
+test("a canceled owned screenshot reports cancellation, not a storage failure", async () => {
+  const harness = new BrowserToolHarness();
+  harness.broker.setResponse(screenshotPayload());
+  const cancel = new AbortController();
+  harness.broker.pause = async () => {
+    cancel.abort();
+  };
+  const result = await harness.execute(
+    "browser_screenshot",
+    { browserId: BROWSER_ID },
+    { signal: cancel.signal },
+  );
+  expect(result.isError).toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    ok: false,
+    error: { code: "browser_timeout", message: "Screenshot canceled.", retryable: true },
+  });
+  expect(harness.storage.commits).toBe(0);
+  expect(harness.storage.releases).toBe(1);
+});
+
 test("screenshot storage never guesses an absent or mismatched registered caller", async () => {
   for (const harness of [
     new BrowserToolHarness(null),

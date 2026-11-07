@@ -6,7 +6,7 @@ import {
 } from "../attachments/store.js";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
-import type { BrowserToolsResponsePayload } from "./errors.js";
+import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
 import type {
   PaseoToolConfig,
   PaseoToolExecutionContext,
@@ -413,9 +413,9 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       }
       let reservation: AttachmentWriter | null = null;
       try {
-        reservation = await options.attachmentStore.reserve(
-          { agentId: owner.id, workspaceId: owner.workspaceId },
-          execution.signal,
+        const store = options.attachmentStore;
+        reservation = await asStorageOperation(execution.signal, () =>
+          store.reserve({ agentId: owner.id, workspaceId: owner.workspaceId }, execution.signal),
         );
         execution.signal?.throwIfAborted();
         const payload = await options.broker.execute({
@@ -434,9 +434,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         execution.signal?.throwIfAborted();
         if (!payload.ok || payload.result.command !== "screenshot")
           return browserToolResult({ payload, context: { ...context, browserId } });
-        const reference = await reservation.commit(
-          { data: payload.result.dataBase64, mimeType: payload.result.mimeType },
-          execution.signal,
+        const admitted = reservation;
+        const image = { data: payload.result.dataBase64, mimeType: payload.result.mimeType };
+        const reference = await asStorageOperation(execution.signal, () =>
+          admitted.commit(image, execution.signal),
         );
         const result = browserToolResult({ payload, context: { ...context, browserId } });
         return {
@@ -456,11 +457,10 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
           },
         };
       } catch (error) {
-        const message =
-          error instanceof AttachmentStoreError
-            ? error.message
-            : "Screenshot could not be saved to durable storage. Existing originals remain retained.";
-        return screenshotStorageFailure(message);
+        // Cancellation wins over whatever the aborted step threw.
+        if (execution.signal?.aborted) return screenshotCanceled({ ...context, browserId });
+        if (error instanceof AttachmentStoreError) return screenshotStorageFailure(error.message);
+        throw error;
       } finally {
         await reservation?.release();
       }
@@ -754,6 +754,45 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       return browserToolResult({ payload, context: { ...context, browserId } });
     },
   );
+}
+
+/**
+ * Run one durable-storage step of a screenshot. Storage failures, including unexpected I/O
+ * errors from the store, surface as AttachmentStoreError so the tool reports that no original
+ * was saved. A cancellation passes through unchanged for the caller's cancellation result.
+ */
+async function asStorageOperation<T>(
+  signal: AbortSignal | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (signal?.aborted || error instanceof AttachmentStoreError) throw error;
+    throw new AttachmentStoreError(
+      "Screenshot could not be saved to durable storage. Existing originals remain retained.",
+      { cause: error },
+    );
+  }
+}
+
+/** Result for a screenshot whose caller canceled it, matching the desktop capture's own cancellation. */
+function screenshotCanceled(context: {
+  agentId?: string;
+  cwd?: string;
+  workspaceId?: string;
+  browserId?: string;
+}): PaseoToolResult {
+  const result = browserToolResult({
+    payload: browserToolsFailure({
+      requestId: "browser_screenshot",
+      code: "browser_timeout",
+      message: "Screenshot canceled.",
+      retryable: true,
+    }),
+    context,
+  });
+  return { ...result, isError: true };
 }
 
 function screenshotStorageFailure(message: string): PaseoToolResult {

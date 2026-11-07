@@ -56,8 +56,8 @@ export const ATTACHMENT_LIMITS = {
 };
 export type AttachmentLimits = typeof ATTACHMENT_LIMITS;
 export class AttachmentStoreError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "AttachmentStoreError";
   }
 }
