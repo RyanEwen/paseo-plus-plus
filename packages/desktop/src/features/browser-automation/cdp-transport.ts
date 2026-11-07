@@ -14,6 +14,16 @@ export interface GuestCdpContents {
   once(event: "destroyed", listener: () => void): void;
 }
 
+/** One queued guest CDP command. */
+export interface GuestCdpCommand {
+  command: string;
+  params?: Record<string, unknown>;
+  /** Cancels the command while it waits in the queue; a dispatched request still settles. */
+  signal?: AbortSignal;
+  /** Runs synchronously just before the request is handed to the native debugger. */
+  onDispatch?: () => void;
+}
+
 const transports = new WeakMap<GuestCdpContents, GuestCdpTransport>();
 
 /** Share one exact native guest's queue and lifetime across automation and navigation readers. */
@@ -61,12 +71,7 @@ export class GuestCdpTransport {
   }
 
   /** Serialize normal commands, retaining the existing automation dispatch callback boundary. */
-  public send(
-    command: string,
-    params?: Record<string, unknown>,
-    signal?: AbortSignal,
-    onDispatch?: () => void,
-  ): Promise<unknown> {
+  public send({ command, params, signal, onDispatch }: GuestCdpCommand): Promise<unknown> {
     return this.queue.run(
       () => this.sendImmediate(command, params, onDispatch),
       this.signal(signal),

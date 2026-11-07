@@ -148,7 +148,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
       if (signal?.aborted && isPointerRelease(command, params)) {
         return cdpTransport.sendImmediate(command, params);
       }
-      return cdpTransport.send(command, params, signal);
+      return cdpTransport.send({ command, params, signal });
     },
   };
 }
@@ -334,7 +334,7 @@ class DialogMonitor {
         this.detachGeneration += 1;
       });
     }
-    await this.sendDebugCommand({ command: "Page.enable", signal });
+    await this.cdpTransport.send({ command: "Page.enable", signal });
     this.enabled = true;
   }
 
@@ -349,7 +349,7 @@ class DialogMonitor {
   }
 
   private async installPromptShim({ collector, signal }: PromptShimOwner): Promise<void> {
-    await this.sendDebugCommand({
+    await this.cdpTransport.send({
       command: "Runtime.evaluate",
       signal,
       // A waiter behind a stalled command has not installed anything. It must
@@ -364,7 +364,7 @@ class DialogMonitor {
 
   private async drainPromptShim(signal?: AbortSignal): Promise<BrowserAutomationDialogEvent[]> {
     try {
-      const result = (await this.sendDebugCommand({
+      const result = (await this.cdpTransport.send({
         command: "Runtime.evaluate",
         signal,
         params: {
@@ -404,15 +404,6 @@ class DialogMonitor {
     }
   }
 
-  private async sendDebugCommand({
-    command,
-    params,
-    signal,
-    onDispatch,
-  }: DialogDebugCommand): Promise<unknown> {
-    return this.cdpTransport.send(command, params, signal, onDispatch);
-  }
-
   private async sendDialogCleanupCommand(
     command: string,
     params?: Record<string, unknown>,
@@ -421,13 +412,6 @@ class DialogMonitor {
     // and prompt restoration must bypass it to release page interception.
     return this.cdpTransport.sendImmediate(command, params);
   }
-}
-
-interface DialogDebugCommand {
-  command: string;
-  params?: Record<string, unknown>;
-  signal?: AbortSignal;
-  onDispatch?: () => void;
 }
 
 interface PromptShimOwner {
