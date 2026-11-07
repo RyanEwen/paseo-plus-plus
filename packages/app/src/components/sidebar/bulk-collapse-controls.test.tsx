@@ -28,9 +28,8 @@ const { flattenStyle } = vi.hoisted(() => {
 
 vi.mock("@/constants/platform", () => ({ isNative: true, isWeb: false }));
 vi.mock("@/constants/layout", () => ({ useIsCompactFormFactor: () => false }));
-vi.mock("@/hooks/use-settings", () => ({
-  useAppSettings: () => ({ settings: { paseoPlusPlus: { sidebarBulkActions: true } } }),
-}));
+// The compact menu items are not under test here; keep the menu engine out of the module graph.
+vi.mock("@/components/ui/menu", () => ({ MenuItem: () => null, MenuSeparator: () => null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("./use-sidebar-bulk-collapse", () => ({
   useSidebarBulkCollapse: () => ({ enabled: true, expandAll: vi.fn(), collapseAll: vi.fn() }),
