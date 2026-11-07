@@ -47,7 +47,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabScroll } from "@/screens/workspace/use-workspace-tab-scroll";
@@ -136,6 +136,7 @@ const TAB_CONTENT_GAP = 4;
 const TAB_DROP_INDICATOR_WIDTH = 4;
 const TAB_MODIFIED_DOT_SIZE = 8;
 const TAB_MAX_WIDTH = 160;
+const COMPACT_TAB_MAX_WIDTH = 240;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
 const AGENT_TOOLTIP_TITLE_MAX_LENGTH = 80;
@@ -249,7 +250,13 @@ interface WorkspaceNewTabButtonProps {
 }
 
 /** Match the tab track's control tier without overriding ordinary toolbar geometry. */
-function newTabButtonStyle(placement: "inline" | "toolbar", isCompact: boolean) {
+function newTabButtonStyle({
+  placement,
+  isCompact,
+}: {
+  placement: "inline" | "toolbar";
+  isCompact: boolean;
+}) {
   if (isCompact) return styles.compactNewTabButton;
   if (placement === "inline") return styles.inlineNewTabButton;
   return undefined;
@@ -274,7 +281,7 @@ function WorkspaceNewTabButton({
         label={tooltipText}
         shortcut={shortcutKeys}
         testID="workspace-new-tab-button"
-        style={newTabButtonStyle(placement, isCompact)}
+        style={newTabButtonStyle({ placement, isCompact })}
       >
         <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
       </ToolbarButton>
@@ -811,10 +818,7 @@ function TabChip({
     isActiveFocused,
     isFilled,
   });
-  const showCloseControl = useMemo(
-    () => showCloseButton && (isHovered || isNative || isCompact || isClosingTab),
-    [showCloseButton, isHovered, isCompact, isClosingTab],
-  );
+  const showCloseControl = showCloseButton && (isHovered || isNative || isCompact || isClosingTab);
   const closeButtonDragBlockers = isWeb
     ? ({
         onPointerDown: (event: { stopPropagation?: () => void }) => {
@@ -887,9 +891,8 @@ function TabChip({
     <View
       ref={middleClickRef}
       style={[styles.tabHoverFrame, isCompact && styles.compactTabFrame]}
-      {...(isWeb
-        ? { onPointerEnter: handleTabPointerEnter, onPointerLeave: handleTabPointerLeave }
-        : {})}
+      onPointerEnter={handleTabPointerEnter}
+      onPointerLeave={handleTabPointerLeave}
     >
       <ContextMenu key={tab.key}>
         <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
@@ -1129,7 +1132,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     let actionsReservedWidth = 0;
     if (!fillAvailableWidth) {
       const newTabWidth = isCompact
-        ? controlHeightForLayout("md", isCompact)
+        ? COMPACT_TAB_CONTROL_HEIGHT
         : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH;
       actionsReservedWidth = Math.max(
         0,
@@ -1146,7 +1149,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
       minTabWidth: workspaceTabMinimumWidth(host, isCompact),
-      maxTabWidth: isCompact ? 240 : TAB_MAX_WIDTH,
+      maxTabWidth: isCompact ? COMPACT_TAB_MAX_WIDTH : TAB_MAX_WIDTH,
       tabIconWidth: TAB_ICON_WIDTH,
       tabContentGap: TAB_CONTENT_GAP,
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
@@ -1455,10 +1458,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     },
     [boundaryOnContentSizeChange, selectedTabOnContentSizeChange],
   );
-  const scrolling = useMemo(
-    () => isCompact || layout.requiresHorizontalScrollFallback,
-    [isCompact, layout.requiresHorizontalScrollFallback],
-  );
+  const scrolling = isCompact || layout.requiresHorizontalScrollFallback;
 
   // Compact chips are wrapped so the selected one can be revealed; wide strips render as upstream.
   const renderCompactTab = useCallback(
@@ -1528,6 +1528,8 @@ function ResolvedWorkspaceDesktopTabsRow({
           <Animated.ScrollView
             ref={tabScroll.scrollRef}
             horizontal
+            // A tap on a tab while the composer keyboard is up selects it instead of only
+            // dismissing the keyboard.
             keyboardShouldPersistTaps="handled"
             scrollEnabled={scrolling}
             testID="workspace-tabs-scroll"
@@ -1739,7 +1741,7 @@ function ResolvedDesktopTabChip({
 
 const styles = StyleSheet.create((theme) => ({
   compactTabsContainer: {
-    height: COMPACT_TAB_CONTROL_HEIGHT + 8,
+    height: COMPACT_TAB_CONTROL_HEIGHT + theme.spacing[2],
     borderBottomWidth: 0,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
