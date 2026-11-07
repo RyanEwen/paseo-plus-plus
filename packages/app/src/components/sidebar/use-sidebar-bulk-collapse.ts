@@ -1,33 +1,37 @@
 import { resolveSidebarCollapseTargets } from "./bulk-collapse-targets";
-import { useCallback } from "react";
 import { useSidebarModel } from "./sidebar-model";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 
-/** Share filtered, persisted bulk transitions between desktop controls and the compact menu. */
+/**
+ * Expand all and Collapse all for the desktop header buttons and the compact Display menu.
+ * `enabled` is the Expand and collapse all preference, so both surfaces share one gate. Each
+ * action resolves the sections the current filters render and applies them in one persisted
+ * store transition.
+ */
 export function useSidebarBulkCollapse() {
-  const { projects, workspaceGroups, pinnedGroups } = useSidebarModel();
-  const grouping = useSidebarViewStore((state) => state.groupMode);
+  const { settings } = useAppSettings();
+  const { projects, workspaceGroups, pinnedGroups, groupMode } = useSidebarModel();
   const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
   const setSectionsCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.setSectionsCollapsed,
   );
-  const setAllCollapsed = useCallback(
-    (collapsed: boolean) => {
-      setSectionsCollapsed(
-        resolveSidebarCollapseTargets({
-          projects,
-          workspaceGroups,
-          pinnedGroups,
-          groupMode: grouping,
-          groupEmptyProjects,
-        }),
-        collapsed,
-      );
-    },
-    [projects, pinnedGroups, workspaceGroups, grouping, groupEmptyProjects, setSectionsCollapsed],
-  );
-  const expandAll = useCallback(() => setAllCollapsed(false), [setAllCollapsed]);
-  const collapseAll = useCallback(() => setAllCollapsed(true), [setAllCollapsed]);
-  return { expandAll, collapseAll };
+
+  function setAllCollapsed(collapsed: boolean) {
+    const targets = resolveSidebarCollapseTargets({
+      projects,
+      workspaceGroups,
+      pinnedGroups,
+      groupMode,
+      groupEmptyProjects,
+    });
+    setSectionsCollapsed(targets, collapsed);
+  }
+
+  return {
+    enabled: settings.paseoPlusPlus.sidebarBulkActions,
+    expandAll: () => setAllCollapsed(false),
+    collapseAll: () => setAllCollapsed(true),
+  };
 }
