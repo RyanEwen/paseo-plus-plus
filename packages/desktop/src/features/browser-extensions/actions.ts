@@ -19,10 +19,10 @@ interface ExtensionActionsOptions {
   profile: Session;
   catalog: BrowserExtensionCatalog;
   assertAppSender(event: Electron.IpcMainInvokeEvent): BrowserWindow;
-  waitUntilReady?(extension: Electron.Extension): Promise<void>;
-  isExtensionReady?(id: string): boolean;
-  getBadge?(id: string, tabId: number): ExtensionActionBadge;
-  onPopupCreated?(guest: WebContents, popup: WebContents): void;
+  waitUntilReady(extension: Electron.Extension): Promise<void>;
+  isExtensionReady(id: string): boolean;
+  getBadge(id: string, tabId: number): ExtensionActionBadge;
+  onPopupCreated(guest: WebContents, popup: WebContents): void;
 }
 
 /** Open real extension documents in the browser profile, isolated from Paseo's preload. */
@@ -68,7 +68,7 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
     return Promise.all(
       profile.extensions
         .getAllExtensions()
-        .filter((extension) => options.isExtensionReady?.(extension.id) ?? true)
+        .filter((extension) => options.isExtensionReady(extension.id))
         .map(async (extension) => {
           const metadata = getExtensionToolbarMetadata(extension.manifest, extension.name);
           const iconDataUrl = await toolbarIcon(extension);
@@ -82,7 +82,7 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
             name: extension.name,
             title: metadata.title,
             iconDataUrl,
-            badge: options.getBadge?.(extension.id, guest.id),
+            badge: options.getBadge(extension.id, guest.id),
             pinned: entries.find((entry) => entry.id === extension.id)?.pinned === true,
             hasPopup: getExtensionPopupUrl(extension.id, extension.manifest) !== null,
           };
@@ -101,7 +101,7 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
     if (!extension) {
       throw new Error("This extension is disabled or no longer installed.");
     }
-    await options.waitUntilReady?.(extension);
+    await options.waitUntilReady(extension);
     const key = `${owner.id}:${id}`;
     const opening = pending.get(key);
     if (opening) {
@@ -121,7 +121,7 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
       onCreated: (popup) => {
         windows.set(key, popup);
         popup.on("closed", () => windows.delete(key));
-        options.onPopupCreated?.(guest, popup.webContents);
+        options.onPopupCreated(guest, popup.webContents);
       },
     });
     pending.set(key, loading);
