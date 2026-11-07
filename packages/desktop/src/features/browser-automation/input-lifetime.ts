@@ -1,4 +1,5 @@
 import type { TabContents } from "./service.js";
+import { settleUnlessAborted } from "./abort-race.js";
 import { isPointerRelease } from "./trusted-input.js";
 
 // Keep the command within the daemon broker's existing 15-second input budget.
@@ -63,7 +64,7 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
 
   function wait<T>(task: () => Promise<T>): Promise<T> {
     assertActive();
-    return waitForInput(signal, () => {
+    return settleUnlessAborted(signal, () => {
       assertActive();
       return task();
     });
@@ -114,30 +115,4 @@ export function createInputLifetime(contents: TabContents): InputLifetime {
       controller.abort(new BrowserInputSettledError());
     },
   };
-}
-
-/** Stop waiting at cancellation, while consuming any late rejection from Electron. */
-export function waitForInput<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => {
-      signal.removeEventListener("abort", abort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    const pending = Promise.resolve().then(() => {
-      signal.throwIfAborted();
-      return task();
-    });
-    pending.then(
-      (value) => {
-        signal.removeEventListener("abort", abort);
-        return resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", abort);
-        return reject(error);
-      },
-    );
-  });
 }

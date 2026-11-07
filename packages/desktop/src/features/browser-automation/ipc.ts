@@ -6,7 +6,7 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage, DialogCaptureOperation } from "./service.js";
 import { isPointerRelease, type IsolatedKeyboardInputEvent } from "./trusted-input.js";
-import { waitForInput } from "./input-lifetime.js";
+import { settleUnlessAborted } from "./abort-race.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { getGuestCdpTransport, type GuestCdpTransport } from "./cdp-transport.js";
 import {
@@ -237,7 +237,7 @@ function waitForPhase<Value>(
   signal: AbortSignal | undefined,
   phase: () => Promise<Value>,
 ): Promise<Value> {
-  if (signal) return waitForInput(signal, phase);
+  if (signal) return settleUnlessAborted(signal, phase);
   return phase();
 }
 

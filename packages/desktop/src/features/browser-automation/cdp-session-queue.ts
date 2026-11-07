@@ -1,4 +1,4 @@
-import { waitForInput } from "./input-lifetime.js";
+import { settleUnlessAborted } from "./abort-race.js";
 export type CdpCommandSender = (
   command: string,
   params?: Record<string, unknown>,
@@ -25,7 +25,7 @@ export class CdpSessionQueue {
       if (signal) {
         // A cancelled waiter releases its own queue link, while the previous
         // command still owns the barrier until its actual acknowledgment.
-        await waitForInput(signal, () => previous.catch(() => {}));
+        await settleUnlessAborted(signal, () => previous.catch(() => {}));
         signal.throwIfAborted();
       } else {
         await previous.catch(() => {});
