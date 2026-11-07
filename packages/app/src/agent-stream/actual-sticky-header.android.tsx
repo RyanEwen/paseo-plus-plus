@@ -94,10 +94,18 @@ function useNativeExpansionRetirement({
   );
 }
 
-/** Keep Android's physical touch bounds on the same root as sticky motion.
- * ScrollView still receives natural row layout and next-header ref updates. */
 /** Android pins a prompt only after its whole ordinary row leaves the viewport. */
 export const NATIVE_STICKY_HANDOFF: "full-row" | undefined = "full-row";
+
+/** Keep Android's physical touch bounds on the same root as sticky motion.
+ * ScrollView still receives natural row layout and next-header ref updates.
+ *
+ * This header is the one UI-thread owner of the full-row exit boundary, motion, clipping,
+ * disclosure and hidden-control access; React's reading selection cannot compact the body.
+ * A reverse handoff resets the held inner More viewport before ordinary paint returns, and a
+ * queued disclosure request keeps its binding and handoff token. iOS keeps its own
+ * keyboard/sticky owner and top trigger: do not apply this contract to iOS, or substitute an
+ * independently timed keyboard value, without moving its physical owner too. */
 
 export function ActualStickyHeader({ ref, children, ...props }: NativeStickyProps) {
   const reportLayout = props.onLayout;
