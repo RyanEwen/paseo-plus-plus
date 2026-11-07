@@ -31,9 +31,9 @@ const ports = vi.hoisted(() => {
 vi.mock("@/hooks/use-app-visible", () => ({ useAppActivelyVisible: () => true }));
 vi.mock("@/components/retained-panel", () => ({ useRetainedPanelActive: () => true }));
 vi.mock("@/constants/layout", () => ({ useIsCompactFormFactor: () => ports.layout.compact }));
-vi.mock("@/mobile-panels/provider", () => ({
-  useIsMobilePanelActive: () => true,
-  useMobilePanelVisibilityCheck: () => ({ isAtRest: ports.isAtRest, subscribe: ports.subscribe }),
+vi.mock("@/mobile-panels/provider", () => ({ useIsMobilePanelActive: () => true }));
+vi.mock("@/mobile-panels/use-mobile-panel-rest-check", () => ({
+  useMobilePanelRestCheck: () => ({ isAtRest: ports.isAtRest, subscribe: ports.subscribe }),
 }));
 vi.mock("@/stores/panel-store", () => ({
   usePanelStore: (select: (state: { mobilePanel: { target: "agent" } }) => unknown) =>

@@ -3,7 +3,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useIsMobilePanelActive, useMobilePanelVisibilityCheck } from "@/mobile-panels/provider";
+import { useIsMobilePanelActive } from "@/mobile-panels/provider";
+import { useMobilePanelRestCheck } from "@/mobile-panels/use-mobile-panel-rest-check";
 import { usePanelStore } from "@/stores/panel-store";
 import { workspaceNotificationRuntime } from "./workspace-receipts-runtime";
 
@@ -20,7 +21,7 @@ export function useWorkspaceNotificationAcknowledgement(input: {
   const compact = useIsCompactFormFactor();
   const centerVisible = useIsMobilePanelActive("agent");
   const centerRequested = usePanelStore((state) => state.mobilePanel.target === "agent");
-  const { isAtRest, subscribe } = useMobilePanelVisibilityCheck("agent");
+  const { isAtRest, subscribe } = useMobilePanelRestCheck("agent");
   const [settled, setSettled] = useState(() => isAtRest());
   useLayoutEffect(() => subscribe(() => setSettled(isAtRest())), [isAtRest, subscribe]);
   const visible =
