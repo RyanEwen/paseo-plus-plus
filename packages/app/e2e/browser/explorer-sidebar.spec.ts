@@ -163,7 +163,7 @@ test("Explorer keeps Files and Changes close actions in the context menu", async
     const main = page.getByTestId("workspace-pane-main");
     const mainTabsBefore = await main.getByTestId("workspace-tabs-row").getByRole("button").count();
     const explorer = await ensureExplorerSidebar(page);
-    await expectTabTitleFits(page, "Files", { min: 64, max: 90 });
+    await expectTabTitleFits(page, "Files", { min: 64, max: 96 });
 
     await test.step("Explorer's + menu excludes Agent and terminal profiles", async () => {
       await explorer.getByRole("button", { name: "New tab", exact: true }).click();
@@ -218,6 +218,73 @@ test("Explorer keeps Files and Changes close actions in the context menu", async
       body: await page.screenshot(),
       contentType: "image/png",
     });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+/**
+ * Open the Files tab's context menu and flip Icon-only tabs, asserting its checked state before
+ * and after. The row stays open after selection, so the menu is dismissed afterwards.
+ */
+async function toggleIconOnlyTabsFromFilesMenu(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+  checkedBefore: boolean,
+) {
+  const files = explorerSidebar(page).getByTestId("workspace-tab-files");
+  await files.click({ button: "right", position: { x: 12, y: 13 } });
+  const toggle = page.getByTestId("explorer-icon-only-tabs-menu-item").filter({ visible: true });
+  await expect(toggle).toHaveAttribute("aria-checked", String(checkedBefore));
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", String(!checkedBefore));
+  await page.keyboard.press("Escape");
+  await expect(toggle).toHaveCount(0);
+}
+
+/** Assert the Files tab is a label-less square cell of `width` that keeps its accessible name. */
+async function expectIconOnlyFilesTab(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+  width: number,
+) {
+  const explorer = explorerSidebar(page);
+  const files = explorer.getByRole("button", { name: "Browse workspace files", exact: true });
+  await expect(files).toBeVisible();
+  await expect(files.getByText("Files", { exact: true })).toHaveCount(0);
+  await expect.poll(async () => (await files.boundingBox())?.width ?? 0).toBeCloseTo(width, 0);
+}
+
+test("switches Explorer tabs to icon-only from a tab's context menu and keeps the choice", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "explorer-icon-only-tabs-" });
+  try {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await waitForWorkspaceTabsVisible(page);
+    await ensureExplorerSidebar(page);
+
+    await toggleIconOnlyTabsFromFilesMenu(page, false);
+    await expectIconOnlyFilesTab(page, 28);
+
+    await page.reload();
+    await ensureExplorerSidebar(page);
+    await expectIconOnlyFilesTab(page, 28);
+
+    await toggleIconOnlyTabsFromFilesMenu(page, true);
+    await expectTabTitleFits(page, "Files", { min: 64, max: 96 });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("offers the Icon-only tabs toggle in the compact Explorer tab menu", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "explorer-icon-only-compact-" });
+  try {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openFilesPanel(page);
+
+    await toggleIconOnlyTabsFromFilesMenu(page, false);
+    await expectIconOnlyFilesTab(page, 44);
   } finally {
     await workspace.cleanup();
   }

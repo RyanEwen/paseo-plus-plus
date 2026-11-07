@@ -94,7 +94,9 @@ that pane from the workspace split tree and docks it separately. Resolve its id 
 Reading only the registration map renders the same pane in both shells. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
+Explorer uses the shared workspace tab row and ordinary tab context menus. Explorer tabs keep
+the upstream 64 px minimum and can hide their labels; see
+[Workspace tab widths](fork-features/workspace-tab-widths.md). Files and Changes
 hide their close buttons through the panel manifest; close them from the tab context menu.
 Other tabs reveal the close control on hover. Compact layouts show no inline close on any tab,
 since a narrow X beside the label is easy to hit by accident; the long-press menu closes it.

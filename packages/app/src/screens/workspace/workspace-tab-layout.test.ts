@@ -7,6 +7,8 @@ import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import { resolveWorkspaceTabChipBackdrop } from "@/screens/workspace/workspace-tab-chip-backdrop";
 import { darkPureBlackTheme, darkTheme, lightTheme } from "@/styles/theme";
 import {
+  MIN_WORKSPACE_TAB_WIDTH,
+  workspaceTabMinimumWidth,
   computeWorkspaceTabLayout,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
@@ -24,7 +26,163 @@ const metrics = {
   closeButtonWidth: 0,
 };
 
+describe("workspaceTabMinimumWidth", () => {
+  it.each([
+    ["main", false, 96],
+    ["sheet", false, 96],
+    ["main", true, 64],
+    ["sheet", true, 64],
+    ["explorer", false, 64],
+    ["explorer", true, 64],
+  ] as const)("gives %s tabs (compact: %s) a %i px minimum", (host, compact, minimum) => {
+    expect(workspaceTabMinimumWidth(host, compact)).toBe(minimum);
+  });
+});
+
 describe("computeWorkspaceTabLayout", () => {
+  it("lets short Explorer titles use the smaller Explorer minimum on wide layouts", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 220,
+      tabLabelWidths: [29, 52],
+      metrics: {
+        ...metrics,
+        actionsReservedWidth: 36,
+        minTabWidth: workspaceTabMinimumWidth("explorer", false),
+      },
+    });
+
+    expect(result.items.map((item) => item.width)).toEqual([64, 86]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+
+  const desktopIconOnlyInput = {
+    compact: false,
+    viewportWidth: 230,
+    tabLabelWidths: [29, 52, 400],
+    metrics: { ...metrics, actionsReservedWidth: 36, closeButtonWidth: 20 },
+    iconOnlyTabWidth: 28,
+  };
+
+  it("sizes every icon-only tab as the same square cell regardless of its title", () => {
+    const result = computeWorkspaceTabLayout(desktopIconOnlyInput);
+
+    expect(result.items).toEqual(
+      Array.from({ length: 3 }, () => ({ width: 28, showLabel: false })),
+    );
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+
+  it("gives icon-only tabs no inline close button", () => {
+    expect(computeWorkspaceTabLayout(desktopIconOnlyInput).closeButtonPolicy).toBe("none");
+  });
+
+  it("scrolls icon-only tabs once their squares no longer fit", () => {
+    const result = computeWorkspaceTabLayout({ ...desktopIconOnlyInput, viewportWidth: 120 });
+
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+  });
+
+  it("restores labelled tabs when no icon-only width is given", () => {
+    const result = computeWorkspaceTabLayout({
+      ...desktopIconOnlyInput,
+      iconOnlyTabWidth: undefined,
+    });
+
+    expect(result.items.some((item) => item.showLabel)).toBe(true);
+  });
+
+  it("keeps icon-only tabs touch-sized on compact layouts", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: true,
+      viewportWidth: 240,
+      tabLabelWidths: [400, 800],
+      metrics: { ...metrics, actionsReservedWidth: 44, closeButtonWidth: 44 },
+      iconOnlyTabWidth: 44,
+    });
+
+    expect(result.items).toEqual([
+      { width: 44, showLabel: false },
+      { width: 44, showLabel: false },
+    ]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+
+  it("keeps short desktop tab names at the fork minimum width", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 1200,
+      tabLabelWidths: [0, 29, 52, 400],
+      metrics: { ...metrics, minTabWidth: MIN_WORKSPACE_TAB_WIDTH },
+    });
+
+    expect(result.items.map((item) => item.width)).toEqual([96, 96, 96, 160]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+
+  it("scrolls instead of shrinking desktop tabs below the fork minimum", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 260,
+      tabLabelWidths: [29, 52, 180],
+      metrics: { ...metrics, minTabWidth: MIN_WORKSPACE_TAB_WIDTH },
+    });
+
+    expect(result.items.map((item) => item.width)).toEqual([96, 96, 160]);
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+    expect(result.items.every((item) => item.showLabel)).toBe(true);
+  });
+
+  it("raises the title ceiling by 50% without stretching short tabs", () => {
+    const normal = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 1200,
+      tabLabelWidths: [30, 400],
+      metrics,
+    });
+    const wider = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 1200,
+      tabLabelWidths: [30, 400],
+      metrics,
+      widerTabs: true,
+    });
+    expect(normal.items.map((item) => item.width)).toEqual([64, 160]);
+    expect(wider.items.map((item) => item.width)).toEqual([64, 240]);
+  });
+
+  it("uses the compact ceiling and preserves scrolling when wider tabs are enabled", () => {
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 390,
+      tabLabelWidths: [400, 400],
+      metrics: { ...metrics, minTabWidth: 120, maxTabWidth: 240 },
+      widerTabs: true,
+      compact: true,
+    });
+    expect(result.items.map((item) => item.width)).toEqual([360, 360]);
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+    expect(result.closeButtonPolicy).toBe("none");
+  });
+
+  it("still compresses wider desktop tabs to fit the available pane", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 400,
+      tabLabelWidths: [400, 400],
+      metrics,
+      widerTabs: true,
+    });
+    expect(result.items.map((item) => item.width)).toEqual([130, 130]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+  });
+
+  it("restores the earlier ceiling when the preference is disabled", () => {
+    const input = { compact: false, viewportWidth: 1200, tabLabelWidths: [400], metrics };
+    expect(computeWorkspaceTabLayout({ ...input, widerTabs: false })).toEqual(
+      computeWorkspaceTabLayout(input),
+    );
+  });
+
   it("keeps each tab at its natural content width when space is available", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 1200,
