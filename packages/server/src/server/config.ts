@@ -687,7 +687,9 @@ export function resolveReloadableConfig(
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
     notifications: {
-      agentAwareAttention: resolveAgentAwareAttention(persisted),
+      agentAwareAttention: isAgentAwareAttentionEnabled({
+        notifications: persisted.daemon?.notifications,
+      }),
     },
     idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
     ...resolveRestartRecoveryConfig(persisted.agents),
@@ -847,8 +849,4 @@ function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
     resumeOnStartup: agents?.resumeOnStartup ?? false,
     resumePrompt: agents?.resumePrompt ?? "Resume working.",
   };
-}
-
-function resolveAgentAwareAttention(persisted: PersistedConfig): boolean {
-  return isAgentAwareAttentionEnabled({ notifications: persisted.daemon?.notifications });
 }

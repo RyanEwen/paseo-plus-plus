@@ -733,11 +733,7 @@ function createToolCatalog(
         const destination = serverId ?? options.serverId;
         let remoteNotification: FinishRegistration | undefined;
         try {
-          const {
-            attention: _attention,
-            targetAgentId: _targetAgentId,
-            ...response
-          } = await hostResolver.use(
+          const { attention: _attention, ...response } = await hostResolver.use(
             serverId,
             (host) => host[operation](input, context),
             async ({ agentId, attention, requireParentOwnership }) => {

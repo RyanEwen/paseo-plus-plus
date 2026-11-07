@@ -27,7 +27,6 @@ import type {
 /** Internal dispatch provenance is stripped by the MCP catalog before returning the tool result. */
 export interface AgentHostOperationResult extends PaseoToolResult {
   attention?: AgentMessageAttention;
-  targetAgentId?: string;
 }
 
 export class HostOperationRejectedError extends Error {
@@ -230,7 +229,12 @@ export function createHostResolver(input: {
     requestId?: string;
   }) => Promise<AgentMessageAttention | undefined>;
 }) {
-  /** Stable caller-selected IDs preserve creation idempotency across tool retries and restarts. */
+  /**
+   * Stable caller-selected IDs preserve creation idempotency across tool retries and restarts.
+   *
+   * The sha256 is laid out as an RFC 9562 version 8 UUID (8-4-8xxx-8xxx-12: version nibble 8,
+   * variant bits 10) so it passes the z.uuid() check on create_agent_request.agentId.
+   */
   function delegatedAgentId(destination: string, key?: string): string {
     if (!key) return randomUUID();
     const hex = createHash("sha256")
