@@ -234,7 +234,7 @@ export interface WorkspaceGitService {
   ): Promise<WorkspaceGitStashEntry[]>;
   listWorktrees(
     cwdOrRepoRoot: string,
-    options?: WorkspaceGitReadOptions,
+    options?: WorkspaceGitWorktreeListOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]>;
   invalidateWorktrees(): void;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -290,6 +290,9 @@ export type WorkspaceGitReadOptions =
       force: true;
       reason: string;
     };
+
+/** Worktree list reads; `includeAll` also lists checkouts Paseo did not create. */
+export type WorkspaceGitWorktreeListOptions = WorkspaceGitReadOptions & { includeAll?: boolean };
 
 export interface WorkspaceGitBranchSuggestionsOptions {
   query?: string;
@@ -907,14 +910,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async listWorktrees(
     cwdOrRepoRoot: string,
-    options?: WorkspaceGitReadOptions,
+    options?: WorkspaceGitWorktreeListOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]> {
     this.assertNotDisposed();
     const repoRoot = await this.resolveRepoRoot(cwdOrRepoRoot, options);
-    const key = JSON.stringify(["worktrees", repoRoot]);
+    const key = JSON.stringify(["worktrees", repoRoot, options?.includeAll === true]);
     return this.readAuxiliaryCache(this.worktreeListCache, key, options, () =>
       this.deps.listPaseoWorktrees({
         cwd: repoRoot,
+        includeAll: options?.includeAll,
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
       }),

@@ -88,7 +88,10 @@ async function createPaseoWorktreeWithPriority(
         },
       });
     }
-    await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    // A branch name the user typed is kept as is, so the first agent must not rename it.
+    if (!input.exactNames) {
+      await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    }
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
       relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
       targetWorktreePath: createdWorktree.worktree.worktreePath,

@@ -101,7 +101,8 @@ export function IsolationOption({
       active={active}
       disabled={disabled}
       onPress={onPress}
-      leadingSlot={option.id === "worktree" ? worktreeLeading : localLeading}
+      // Every isolation choice except Local is a worktree, new or existing.
+      leadingSlot={option.id === "local" ? localLeading : worktreeLeading}
     />
   );
 }
