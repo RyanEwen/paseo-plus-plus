@@ -1267,7 +1267,7 @@ function WorkspaceScreenContent({
     [isExplorerSidebarShowing],
   );
 
-  useCompactPanelBack(isRouteFocused && isMobile);
+  useCompactPanelBack({ routeFocused: isRouteFocused, compact: isMobile });
 
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
