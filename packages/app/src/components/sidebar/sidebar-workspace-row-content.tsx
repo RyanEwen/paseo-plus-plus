@@ -157,7 +157,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           leadingSlot={resolveWorkspaceLeadingSlot({
             hasProjectIcon: Boolean(leadingProjectName),
             loading: isLoading,
-            bucket: workspace.statusBucket,
+            // Activity lives on the trailing rail, so the leading slot only holds loaders.
+            bucket: "done",
             reserveIdleSpace: reserveIdleStatusIndicatorSpace,
           })}
         />
