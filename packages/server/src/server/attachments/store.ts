@@ -14,6 +14,7 @@ import {
   PROVIDER_IMAGE_MAX_BYTES,
 } from "../agent/providers/provider-image-output.js";
 import { withAttachmentResource } from "./io.js";
+import { AttachmentReferenceIds } from "./reference-id.js";
 
 export interface AttachmentFileSystem {
   open: typeof open;
@@ -64,6 +65,14 @@ export class AttachmentStoreError extends Error {
 function errno(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
+/**
+ * Order references by ID. IDs are time-ordered, and code-unit order matches the `after`
+ * cursor's `>` comparison, which locale-aware comparison does not guarantee.
+ */
+function compareReferenceIds(a: AttachmentReference, b: AttachmentReference): number {
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+}
 interface OwnerIdentity {
   token: string;
   dev: number;
@@ -108,6 +117,7 @@ export class AttachmentStore {
   private readonly readsBySession = new Map<object, number>();
   private readonly readClosers = new Set<() => Promise<void>>();
   private refreshPromise: Promise<void> | null = null;
+  private readonly referenceIds = new AttachmentReferenceIds();
 
   private constructor(
     home: string,
@@ -505,7 +515,7 @@ export class AttachmentStore {
     if (previous) return previous;
     this.assertWriteActive(signal);
     const reference = AttachmentReferenceSchema.parse({
-      id: `att_${randomUUID()}`,
+      id: this.referenceIds.next(),
       ...owner,
       sha256: admitted.sha256,
       byteLength: admitted.bytes.length,
@@ -560,7 +570,7 @@ export class AttachmentStore {
     }
     const refs = [...this.references.values()]
       .filter((ref) => ref.agentId === agentId && (!after || ref.id > after))
-      .sort((a, b) => a.id.localeCompare(b.id));
+      .sort(compareReferenceIds);
     const page = refs.slice(0, Math.min(50, Math.max(1, limit)));
     return { references: page, next: refs.length > page.length ? page[page.length - 1].id : null };
   }

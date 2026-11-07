@@ -76,6 +76,23 @@ describe("durable owned screenshot originals", () => {
     }
     expect(await saveOriginal(next)).toEqual(original);
   });
+  test("listing pages through an owner's originals in capture order", async () => {
+    const fixture = await durableFixture();
+    const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const saved = [];
+    for (let index = 0; index < 8; index++) {
+      const data = Buffer.concat([signature, Buffer.from([index])]).toString("base64");
+      saved.push((await saveOriginal(fixture.store, "agent-a", data)).id);
+    }
+    const paged: string[] = [];
+    let after: string | undefined;
+    do {
+      const page = await fixture.store.list("agent-a", after, 3);
+      paged.push(...page.references.map((reference) => reference.id));
+      after = page.next ?? undefined;
+    } while (after);
+    expect(paged).toEqual(saved);
+  });
   test("busy and conservative byte/count reservations reject before obtaining new image data", async () => {
     const fixture = await durableFixture({ ownerReferences: 1 });
     const writer = await fixture.store.reserve({ agentId: "agent-a" });
