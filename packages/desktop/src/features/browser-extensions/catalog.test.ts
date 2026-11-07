@@ -12,7 +12,7 @@ import {
   STORAGE_STARTUP_CHANNEL,
 } from "./storage-observers.js";
 import { BrowserExtensionCatalog, type LoadedBrowserExtension } from "./catalog.js";
-import * as atomicJson from "./atomic-json.js";
+import { writeAtomicJson } from "./atomic-json.js";
 import { ExtensionHostCrashError } from "./runtime-failure.js";
 
 const temporaryDirectories: string[] = [];
@@ -59,8 +59,31 @@ async function fixture() {
     },
   };
   const filePath = path.join(directory, "catalog.json");
+  // Saves go through the real atomic writer; a test can hold exactly one save mid-flight.
+  let heldSave: { entered: () => void; resume: Promise<void> } | null = null;
+  const persist = async (file: string, entries: unknown) => {
+    const held = heldSave;
+    heldSave = null;
+    if (held) {
+      held.entered();
+      await held.resume;
+    }
+    await writeAtomicJson(file, entries);
+  };
+  const holdNextSave = () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    heldSave = { entered, resume };
+    return { started, release };
+  };
   const create = (onChanged?: () => void) =>
-    new BrowserExtensionCatalog(filePath, storePath, runtime, onChanged);
+    new BrowserExtensionCatalog(filePath, storePath, runtime, onChanged, persist);
   return {
     directory,
     filePath,
@@ -69,6 +92,7 @@ async function fixture() {
     unloaded,
     uninstalled,
     create,
+    holdNextSave,
     runtime,
     unloadExternally: () => loadedIds.delete(extension.id),
     loadExternally: () => loadedIds.add(extension.id),
@@ -267,22 +291,7 @@ describe("storage observer runtime failures", () => {
       await catalog.remember(f.extension);
       if (operation === "enable") await catalog.setEnabled(f.extension.id, false);
       catalog.recordRuntimeFailure(f.extension.id, new Error("Storage observer failed"));
-      let entered!: () => void;
-      let release!: () => void;
-      const saving = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      const resume = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const write = atomicJson.writeAtomicJson;
-      const save = vi
-        .spyOn(atomicJson, "writeAtomicJson")
-        .mockImplementationOnce(async (...args) => {
-          entered();
-          await resume;
-          await write(...args);
-        });
+      const { started: saving, release } = f.holdNextSave();
       try {
         const pending =
           operation === "remember"
@@ -304,7 +313,6 @@ describe("storage observer runtime failures", () => {
         expect((await catalog.list())[0].error).toBeUndefined();
       } finally {
         release();
-        save.mockRestore();
       }
     },
   );
@@ -558,15 +566,7 @@ describe("extension crash recovery", () => {
     const f = await fixture();
     const catalog = f.create();
     await catalog.remember(f.extension);
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const original = atomicJson.writeAtomicJson;
-    const save = vi.spyOn(atomicJson, "writeAtomicJson").mockImplementationOnce(async (...args) => {
-      await gate;
-      await original(...args);
-    });
+    const { release } = f.holdNextSave();
     const pin = catalog.setPinned(f.extension.id, true);
     await Promise.resolve();
     f.unloadExternally();
@@ -576,7 +576,6 @@ describe("extension crash recovery", () => {
     release();
     await pin;
     await disable;
-    save.mockRestore();
     expect(f.loaded).toEqual([]);
     expect((await catalog.list())[0]).toMatchObject({ enabled: false, pinned: true });
     catalog.dispose();

@@ -36,6 +36,12 @@ export function toLoadedExtension(extension: LoadedBrowserExtension): LoadedBrow
   };
 }
 
+/** Durably replaces the catalog file; the default writes atomically through a temporary file. */
+export type PersistBrowserExtensionCatalog = (
+  filePath: string,
+  entries: BrowserExtensionEntry[],
+) => Promise<void>;
+
 export interface BrowserExtensionRuntime {
   isLoaded(id: string): boolean;
   load(extensionPath: string): Promise<LoadedBrowserExtension>;
@@ -90,6 +96,7 @@ export class BrowserExtensionCatalog {
     private readonly storePath: string,
     private readonly runtime: BrowserExtensionRuntime,
     private readonly onChanged: () => void = () => {},
+    private readonly persist: PersistBrowserExtensionCatalog = writeAtomicJson,
   ) {}
 
   /** Restore each enabled extension independently so one broken folder cannot block the browser. */
@@ -432,7 +439,7 @@ export class BrowserExtensionCatalog {
   }
 
   private async save(entries: BrowserExtensionEntry[]): Promise<void> {
-    await writeAtomicJson(this.filePath, entries);
+    await this.persist(this.filePath, entries);
     this.entries = entries;
     this.onChanged();
   }
