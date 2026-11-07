@@ -119,7 +119,7 @@ export const ja: TranslationResources = {
         hint: "現在のメッセージをコンパクトに固定し、展開と前後への移動ができます。通常のメッセージは全文表示され、読み込み表示が既存のメッセージを覆うことはありません。",
       },
       previousAgents: {
-        label: "以前のエージェント",
+        label: "閉じたエージェントを再度開く",
         hint: "ワークスペースの + メニューから閉じた会話やアーカイブした会話を開きます",
       },
       sidebarActivityChips: {
@@ -519,7 +519,7 @@ export const ja: TranslationResources = {
     previousTitle: "閉じたエージェントを再度開く",
     previousEmpty: "このワークスペースに以前のエージェントはありません",
     workspaceHistoryUpdateRequired:
-      "以前のワークスペースエージェントを表示するには、このホストを更新してください。",
+      "閉じたエージェントを再度開くには、このホストを更新してください。",
 
     title: "履歴",
     empty: "セッションがまだありません",
