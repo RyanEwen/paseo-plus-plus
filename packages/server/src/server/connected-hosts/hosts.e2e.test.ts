@@ -1,12 +1,11 @@
 import { createJsonFinishSubscriptionStore } from "../agent/finish-subscriptions/index.js";
 import { randomUUID } from "node:crypto";
-import { createTestLogger } from "../../test-utils/test-logger.js";
 import { z } from "zod";
 import pino from "pino";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { createHostClient, createHostChannelTransport } from "@getpaseo/client/node";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -1561,21 +1560,13 @@ test(
     cleanup.push(async () => {
       finishChild.resolve();
     });
-    const batchLogger = createTestLogger();
-    const batchErrors = vi.spyOn(batchLogger, "error");
     const a = await daemon({
-      logger: batchLogger,
       agentClients: createTestAgentClients({
         onStartTurn: (prompt, config) => {
           if (config.title === "Batch parent")
             parentPrompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
         },
       }),
-    });
-    const startWaits = vi.spyOn(a.daemon.agentManager, "waitForAgentRunStart");
-    cleanup.push(async () => {
-      startWaits.mockRestore();
-      batchErrors.mockRestore();
     });
     const b = await daemon({
       agentClients: createTestAgentClients({
@@ -1700,60 +1691,6 @@ test(
         message: "Parent accepted the batch; waiting for durable receipt commits",
       })
       .toEqual(["completed", "completed"]);
-    interface StartWaitObservation {
-      status: "pending" | "fulfilled" | "rejected";
-      failure?: string;
-    }
-    function failureKind(error: unknown): string {
-      if (!(error instanceof Error)) return "non-error";
-      if (error.message.endsWith("has no pending run")) return "no-pending-run";
-      if (error.message.endsWith("run finished before starting"))
-        return "finished-before-start-observation";
-      if (error.message === "Active turn changed before steering could be delivered")
-        return "active-turn-changed";
-      if ("code" in error && ["EPERM", "EACCES", "ENOENT"].includes(String(error.code)))
-        return String(error.code);
-      return "unclassified";
-    }
-    const observedStarts: StartWaitObservation[] = [];
-    for (const [index, result] of startWaits.mock.results.entries()) {
-      if (startWaits.mock.calls[index]?.[0] !== parent.id || result.type !== "return") continue;
-      const observation: StartWaitObservation = { status: "pending" };
-      observedStarts.push(observation);
-      void result.value.then(
-        () => {
-          observation.status = "fulfilled";
-          return undefined;
-        },
-        (error: unknown) => {
-          observation.status = "rejected";
-          observation.failure = failureKind(error);
-          return undefined;
-        },
-      );
-    }
-    try {
-      await expect.poll(receiptStates, { timeout: 10000 }).toEqual(["completed", "completed"]);
-    } catch (error) {
-      const parentState = a.daemon.agentManager.getAgent(parent.id);
-      const failures = batchErrors.mock.calls.map(([details]) =>
-        failureKind(
-          typeof details === "object" && details !== null && "err" in details
-            ? details.err
-            : undefined,
-        ),
-      );
-      throw new Error(
-        `Recipient batch evidence: ${JSON.stringify({
-          starts: observedStarts,
-          failures,
-          lifecycle: parentState?.lifecycle,
-          active: !!parentState?.activeForegroundTurnId,
-          pendingReplacement: parentState?.pendingReplacement,
-        })}`,
-        { cause: error },
-      );
-    }
     const timeline = await origin.client.fetchAgentTimeline(parent.id);
     const messages = timeline.entries.flatMap((row) =>
       row.item.type === "tool_call" && row.item.agentMessage ? [row.item.agentMessage] : [],
@@ -1957,7 +1894,7 @@ test(
       requestId: link.requestId,
       requester,
     });
-    expect(result.attentionOutcome?.acceptedTurnId).toBeTruthy();
+    expect(result.attentionOutcome?.acceptedTurnId).toEqual(expect.any(String));
     expect(result.lastMessage).toContain("EXACT_ACCEPTED_A");
     expect(result.lastMessage).not.toContain("UNRELATED_B");
     const acknowledged = await routed.waitForAttentionOutcome({

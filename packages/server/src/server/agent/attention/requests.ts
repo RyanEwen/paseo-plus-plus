@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { samePeer } from "./peers.js";
 import { z } from "zod";
 import {
   AgentAttentionOutcomeSchema,
@@ -9,6 +10,7 @@ import {
   AgentAttentionPeerSchema,
   type AgentAttentionPeer,
   type AgentAttentionRequestQuery,
+  type AgentMessageAttention,
 } from "@getpaseo/protocol/agent-attention";
 import type { AttentionAdmission } from "./objectives.js";
 
@@ -64,7 +66,9 @@ export class AgentAttentionRequests {
     );
     if (!input.steering) {
       for (const record of this.records) {
-        if (!record.active) continue;
+        if (!record.active) {
+          continue;
+        }
         if (continuedIds.has(record.objectiveId)) {
           record.turnId = input.turnId;
         } else {
@@ -73,11 +77,17 @@ export class AgentAttentionRequests {
       }
     }
     for (const admission of input.admissions) {
-      if (admission.kind !== "agent" || !admission.attention?.requesterObjective) continue;
+      if (admission.kind !== "agent" || !admission.attention?.requesterObjective) {
+        continue;
+      }
       const link = admission.attention.requesterObjective;
-      if (this.records.some((record) => record.link.requestId === link.requestId)) continue;
+      if (this.records.some((record) => record.link.requestId === link.requestId)) {
+        continue;
+      }
       const objectiveId = input.objectives.get(admission.requestId);
-      if (!objectiveId) throw new Error("Accepted request has no objective membership");
+      if (!objectiveId) {
+        throw new Error("Accepted request has no objective membership");
+      }
       this.records.push({
         link: structuredClone(link),
         requester: structuredClone(admission.requester),
@@ -93,9 +103,13 @@ export class AgentAttentionRequests {
   /** Submission rejection reports its own error without certifying SDK acceptance or copying old output. */
   reject(admissions: readonly AttentionAdmission[], error: string): void {
     for (const admission of admissions) {
-      if (admission.kind !== "agent" || !admission.attention?.requesterObjective) continue;
+      if (admission.kind !== "agent" || !admission.attention?.requesterObjective) {
+        continue;
+      }
       const link = admission.attention.requesterObjective;
-      if (this.records.some((record) => record.link.requestId === link.requestId)) continue;
+      if (this.records.some((record) => record.link.requestId === link.requestId)) {
+        continue;
+      }
       const record: Request = {
         link: structuredClone(link),
         requester: structuredClone(admission.requester),
@@ -112,8 +126,11 @@ export class AgentAttentionRequests {
 
   /** Keep current-turn content so forced replacement cannot substitute a later turn's response. */
   updateContent(turnId: string, text: string): void {
-    for (const record of this.records)
-      if (record.active && record.turnId === turnId) record.lastMessage = text;
+    for (const record of this.records) {
+      if (record.active && record.turnId === turnId) {
+        record.lastMessage = text;
+      }
+    }
   }
 
   /** Freeze terminal membership/content now; a delayed permission decision cannot borrow new output. */
@@ -123,10 +140,14 @@ export class AgentAttentionRequests {
       .map((record) => ({ record, lastMessage: record.lastMessage }));
     let completed = false;
     return () => {
-      if (completed) return;
+      if (completed) {
+        return;
+      }
       completed = true;
       for (const { record, lastMessage } of members) {
-        if (!this.records.includes(record) || !record.active || record.turnId !== turnId) continue;
+        if (!this.records.includes(record) || !record.active || record.turnId !== turnId) {
+          continue;
+        }
         this.append(record, "finished", null, undefined, lastMessage);
       }
     };
@@ -145,13 +166,18 @@ export class AgentAttentionRequests {
         this.checkpoints.some(
           (entry) => entry.turnId === input.turnId && entry.permissionId === input.permission?.id,
         )
-      )
+      ) {
         return;
+      }
       this.checkpoints.push({ turnId: input.turnId, permissionId: input.permission.id });
     }
     for (const record of this.records) {
-      if (!record.active || record.turnId !== input.turnId) continue;
-      if (input.lastMessage !== undefined) record.lastMessage = input.lastMessage;
+      if (!record.active || record.turnId !== input.turnId) {
+        continue;
+      }
+      if (input.lastMessage !== undefined) {
+        record.lastMessage = input.lastMessage;
+      }
       this.append(record, input.kind, input.error ?? null, input.permission);
     }
   }
@@ -163,11 +189,13 @@ export class AgentAttentionRequests {
     known: boolean;
   } {
     const record = this.records.find((entry) => entry.link.requestId === query.link.requestId);
-    if (!record) return { outcome: null, pending: false, known: false };
+    if (!record) {
+      return { outcome: null, pending: false, known: false };
+    }
     if (
       record.link.token !== query.link.token ||
       record.link.objectiveId !== query.link.objectiveId ||
-      !this.samePeer(record.requester, query.requester)
+      !samePeer({ left: record.requester, right: query.requester, localServerId: this.serverId })
     ) {
       throw new Error("Attention outcome does not belong to this requester");
     }
@@ -175,8 +203,9 @@ export class AgentAttentionRequests {
       record.outcomes = record.outcomes.filter(
         (outcome) => outcome.id !== query.acknowledgeOutcomeId,
       );
-      if (!record.active && record.outcomes.length === 0)
+      if (!record.active && record.outcomes.length === 0) {
         this.records = this.records.filter((entry) => entry !== record);
+      }
     }
     return {
       outcome: structuredClone(record.outcomes[0] ?? null),
@@ -202,13 +231,21 @@ export class AgentAttentionRequests {
       error,
       ...(permission ? { permission: structuredClone(permission) } : {}),
     });
-    if (kind !== "permission") record.active = false;
+    if (kind !== "permission") {
+      record.active = false;
+    }
   }
+}
 
-  private samePeer(left: AgentAttentionPeer, right: AgentAttentionPeer): boolean {
-    return (
-      left.agentId === right.agentId &&
-      (left.serverId ?? this.serverId) === (right.serverId ?? this.serverId)
-    );
-  }
+/**
+ * The exact-callback correlation a finish watch stores for a delegated request, or undefined
+ * when the message carries no requester objective and the watch stays a legacy one.
+ */
+export function finishAttentionQuery(
+  attention: AgentMessageAttention | undefined,
+  requester: () => AgentAttentionPeer,
+): AgentAttentionRequestQuery | undefined {
+  const link = attention?.requesterObjective;
+  // The requester is resolved only for a correlated request, as before this helper existed.
+  return link ? { link, requester: requester() } : undefined;
 }

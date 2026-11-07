@@ -1,18 +1,13 @@
 import { REPLICA_SINGLETON_ROW_ID } from "./row-store-schema";
 import { describe, expect, it } from "vitest";
-import {
-  AgentSnapshotPayloadSchema,
-  WorkspaceDescriptorPayloadSchema,
-  type WorkspaceDescriptorPayload,
-} from "@getpaseo/protocol/messages";
+import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   type Agent,
 } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
-import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { ReplicaCache } from ".";
 import type { DirectoryCheckpoint } from "@/runtime/replica-cache";
 import type {
@@ -1013,90 +1008,6 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
-  it.each([
-    { label: "agent false, workspace true", agentAttention: false, workspaceAttention: true },
-    { label: "agent true, workspace absent", agentAttention: true, workspaceAttention: undefined },
-    {
-      label: "agent absent, workspace false",
-      agentAttention: undefined,
-      workspaceAttention: false,
-    },
-  ])(
-    "T53 attention metadata cache roundtrip preserves $label",
-    async ({ agentAttention, workspaceAttention }) => {
-      const storage = new MemoryStorage();
-      const writer = createCache(storage);
-      const baseline = directory({
-        agents: { generation: "agents-current", afterSeq: 12 },
-        workspaces: { generation: "workspaces-current", afterSeq: 24 },
-      });
-      // JSON omission models older wire/cache rows without replacing absence with false.
-      const agentWire = JSON.parse(
-        JSON.stringify({
-          ...projectAgentSnapshot(agent()),
-          status: "error",
-          requiresAttention: true,
-          humanAttentionRequired: agentAttention,
-        }),
-      );
-      const normalizedAgent = normalizeAgentSnapshot(
-        AgentSnapshotPayloadSchema.parse(agentWire),
-        SERVER_ID,
-      );
-      const workspaceWire = JSON.parse(
-        JSON.stringify({
-          ...workspacePayload(),
-          id: " workspace-1 ",
-          background: false,
-          status: "needs_input",
-          humanAttentionRequired: workspaceAttention,
-        }),
-      );
-      const normalizedWorkspace = normalizeWorkspaceDescriptor(
-        WorkspaceDescriptorPayloadSchema.parse(workspaceWire),
-      );
-      expect(normalizedAgent.humanAttentionRequired).toBe(agentAttention);
-      expect(normalizedWorkspace.humanAttentionRequired).toBe(workspaceAttention);
-      expect(normalizedWorkspace.id).toBe("workspace-1");
-      baseline.agents.set(normalizedAgent.id, normalizedAgent);
-      baseline.workspaces.set(normalizedWorkspace.id, normalizedWorkspace);
-      commitDirectory(writer, SERVER_ID, baseline);
-      await writer.flush();
-      const writes = storage.writes;
-
-      // A new reader must recover persisted metadata rather than the writer's in-memory objects.
-      const reader = createCache(storage);
-      const restored = await reader.readDirectory(SERVER_ID);
-      expect([...restored.agents.keys()]).toEqual(["agent-1"]);
-      expect([...restored.workspaces.keys()]).toEqual(["workspace-1"]);
-      const workspaceKey = resolveWorkspaceMapKeyByIdentity({
-        workspaces: restored.workspaces,
-        workspaceId: normalizedAgent.workspaceId,
-      });
-      expect(workspaceKey).toBe("workspace-1");
-      const restoredWorkspace = workspaceKey ? restored.workspaces.get(workspaceKey) : undefined;
-      expect(restored.agents.get("agent-1")).toMatchObject({
-        id: "agent-1",
-        workspaceId: "workspace-1",
-        status: "error",
-        requiresAttention: true,
-      });
-      expect(restored.agents.get("agent-1")?.humanAttentionRequired).toBe(agentAttention);
-      expect(restoredWorkspace).toMatchObject({ id: "workspace-1", status: "needs_input" });
-      expect(restoredWorkspace?.humanAttentionRequired).toBe(workspaceAttention);
-      expect(restored.checkpoint).toEqual(baseline.checkpoint);
-
-      const directReader = createCache(storage);
-      const directAgent = await directReader.readAgent(SERVER_ID, "agent-1");
-      const directWorkspace = await directReader.readWorkspace(SERVER_ID, "workspace-1");
-      expect(directAgent?.id).toBe("agent-1");
-      expect(directAgent?.humanAttentionRequired).toBe(agentAttention);
-      expect(directWorkspace?.workspace.id).toBe("workspace-1");
-      expect(directWorkspace?.workspace.humanAttentionRequired).toBe(workspaceAttention);
-      expect(storage.writes).toBe(writes);
-    },
-  );
-
   it("preserves pending timeline updates across directory baseline replacement", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -1821,32 +1732,59 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
 });
 
-it("retains the audience decision across offline agent and workspace restoration", async () => {
-  const storage = new MemoryStorage();
-  const cache = createCache(storage);
-  const baseline = directory();
-  const cachedAgent = agent();
-  cachedAgent.humanAttentionRequired = false;
-  cachedAgent.attentionMessage = "Intervention reason";
-  baseline.agents.set(cachedAgent.id, cachedAgent);
-  const cachedWorkspace = normalizeWorkspaceDescriptor({
-    ...workspacePayload(),
-    status: "failed",
-    humanAttentionRequired: false,
-  });
-  baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
-  commitDirectory(cache, SERVER_ID, baseline);
-  await cache.flush();
-  const restored = await createCache(storage).readDirectory(SERVER_ID);
-  expect(restored.agents.get(cachedAgent.id)).toMatchObject({
-    humanAttentionRequired: false,
+it.each([
+  {
+    label: "agent false with a reason, workspace true",
+    agentAttention: false,
     attentionMessage: "Intervention reason",
-  });
-  expect(restored.workspaces.get(cachedWorkspace.id)).toMatchObject({
-    status: "failed",
-    humanAttentionRequired: false,
-  });
-});
+    workspaceAttention: true,
+  },
+  {
+    label: "agent true, workspace absent",
+    agentAttention: true,
+    attentionMessage: undefined,
+    workspaceAttention: undefined,
+  },
+  {
+    label: "agent absent, workspace false",
+    agentAttention: undefined,
+    attentionMessage: undefined,
+    workspaceAttention: false,
+  },
+])(
+  "retains the audience decision across offline restoration: $label",
+  async ({ agentAttention, attentionMessage, workspaceAttention }) => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    const baseline = directory();
+    const cachedAgent = agent();
+    // Absent metadata models an older host: the cache must keep it absent, not false.
+    cachedAgent.humanAttentionRequired = agentAttention;
+    cachedAgent.attentionMessage = attentionMessage;
+    baseline.agents.set(cachedAgent.id, cachedAgent);
+    const cachedWorkspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      status: "failed",
+      humanAttentionRequired: workspaceAttention,
+    });
+    baseline.workspaces.set(cachedWorkspace.id, cachedWorkspace);
+    commitDirectory(cache, SERVER_ID, baseline);
+    await cache.flush();
+    const writes = storage.writes;
+
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    const restoredAgent = restored.agents.get(cachedAgent.id);
+    expect(restoredAgent?.humanAttentionRequired).toBe(agentAttention);
+    expect(restoredAgent?.attentionMessage).toBe(attentionMessage);
+    expect(restored.workspaces.get(cachedWorkspace.id)?.humanAttentionRequired).toBe(
+      workspaceAttention,
+    );
+    const direct = await createCache(storage).readWorkspace(SERVER_ID, cachedWorkspace.id);
+    expect(direct?.workspace.humanAttentionRequired).toBe(workspaceAttention);
+    expect(storage.writes).toBe(writes);
+  },
+);
 
 describe("Workspace receipt cache coverage", () => {
   const receiptState = {

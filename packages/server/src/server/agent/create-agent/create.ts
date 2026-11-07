@@ -1,4 +1,5 @@
-import type { FinishSubscriptions } from "../finish-subscriptions/index.js";
+import type { FinishRegistration, FinishSubscriptions } from "../finish-subscriptions/index.js";
+import { finishAttentionQuery } from "../attention/requests.js";
 import type { AgentPromptSource } from "../agent-messages/index.js";
 import type { Logger } from "pino";
 
@@ -160,10 +161,12 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
+  // Read the caller's turn before resolution, which can wait on worktree creation: the
+  // delegation must belong to the turn that asked for this agent, not a later one.
   const callerTurnId =
     input.kind === "mcp" && input.callerAgentId
       ? (dependencies.agentManager.getAgent(input.callerAgentId)?.activeTurnId ?? null)
-      : undefined;
+      : null;
   const resolved =
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
@@ -175,13 +178,13 @@ export async function createAgentCommand(
     resolved.createOptions,
   );
 
-  const initialAttention = await prepareCreatedAttention(
+  const { attention: initialAttention, resolved: promptResolved } = await withCreatedAttention({
     dependencies,
     input,
     resolved,
     snapshot,
     callerTurnId,
-  );
+  });
 
   if (input.kind === "session") await input.onAgentReady?.(snapshot);
 
@@ -191,16 +194,16 @@ export async function createAgentCommand(
   if (input.kind === "mcp") {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
-  const notification = await registerCreatedFinish(
+  const notification = await registerCreatedFinish({
     dependencies,
     input,
     resolved,
     snapshot,
     initialAttention,
-  );
+  });
 
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch(
+    const sendResult = await sendInitialPrompt(dependencies, promptResolved, snapshot).catch(
       async (error) => {
         await notification?.reject();
         throw error;
@@ -580,56 +583,67 @@ function requireFinishSubscriptions(
   return dependencies.finishSubscriptions;
 }
 
-async function prepareCreatedAttention(
-  dependencies: CreateAgentCommandDependencies,
-  input: CreateAgentCommandInput,
-  resolved: ResolvedCreateAgent,
-  snapshot: ManagedAgent,
-  callerTurnId: string | null | undefined,
-): Promise<AgentMessageAttention | undefined> {
-  let initialAttention: AgentMessageAttention | undefined;
-  if (input.kind === "mcp" && input.callerAgentId && resolved.prompt !== undefined) {
-    initialAttention = await dependencies.agentManager.prepareAttentionMessage({
-      agentId: input.callerAgentId,
-      objectiveId: input.callerObjectiveId,
-      expectedTurnId: callerTurnId,
-      recipient: { agentId: snapshot.id },
-    });
-    if (resolved.source) resolved.source = { ...resolved.source, attention: initialAttention };
-    if (initialAttention?.requesterObjective)
-      resolved.runOptions = {
-        ...resolved.runOptions,
-        clientMessageId: initialAttention.requesterObjective.requestId,
-      };
+/**
+ * Delegate the created agent's initial prompt from the MCP caller's objective, when there is one.
+ *
+ * Returns the delegation and a copy of `resolved` whose prompt source and client message id carry
+ * it, so the initial prompt is admitted as this exact request. Other inputs return `resolved` as is.
+ */
+async function withCreatedAttention(input: {
+  dependencies: CreateAgentCommandDependencies;
+  input: CreateAgentCommandInput;
+  resolved: ResolvedCreateAgent;
+  snapshot: ManagedAgent;
+  callerTurnId: string | null;
+}): Promise<{ attention: AgentMessageAttention | undefined; resolved: ResolvedCreateAgent }> {
+  const command = input.input;
+  const resolved = input.resolved;
+  if (command.kind !== "mcp" || !command.callerAgentId || resolved.prompt === undefined) {
+    return { attention: undefined, resolved };
   }
-
-  return initialAttention;
+  const attention = await input.dependencies.agentManager.prepareAttentionMessage({
+    agentId: command.callerAgentId,
+    objectiveId: command.callerObjectiveId,
+    expectedTurnId: input.callerTurnId,
+    recipient: { agentId: input.snapshot.id },
+  });
+  const requestId = attention?.requesterObjective?.requestId;
+  return {
+    attention,
+    resolved: {
+      ...resolved,
+      ...(resolved.source ? { source: { ...resolved.source, attention } } : {}),
+      ...(requestId ? { runOptions: { ...resolved.runOptions, clientMessageId: requestId } } : {}),
+    },
+  };
 }
 
-async function registerCreatedFinish(
-  dependencies: CreateAgentCommandDependencies,
-  input: CreateAgentCommandInput,
-  resolved: ResolvedCreateAgent,
-  snapshot: ManagedAgent,
-  initialAttention: AgentMessageAttention | undefined,
-) {
-  return input.kind === "mcp" &&
-    input.notifyOnFinish &&
-    input.callerAgentId &&
-    resolved.prompt !== undefined
-    ? await requireFinishSubscriptions(dependencies).register(
-        {
-          childAgentId: snapshot.id,
-          callerAgentId: input.callerAgentId,
-          requireParentOwnership: !(input.detached ?? false),
-          attention: initialAttention?.requesterObjective
-            ? {
-                link: initialAttention.requesterObjective,
-                requester: dependencies.agentManager.attentionRequester(input.callerAgentId),
-              }
-            : undefined,
-        },
-        true,
-      )
-    : undefined;
+/** Register the MCP caller's finish watch for a created agent with an initial prompt. */
+async function registerCreatedFinish(input: {
+  dependencies: CreateAgentCommandDependencies;
+  input: CreateAgentCommandInput;
+  resolved: ResolvedCreateAgent;
+  snapshot: ManagedAgent;
+  initialAttention: AgentMessageAttention | undefined;
+}): Promise<FinishRegistration | undefined> {
+  const command = input.input;
+  if (
+    command.kind !== "mcp" ||
+    !command.notifyOnFinish ||
+    !command.callerAgentId ||
+    input.resolved.prompt === undefined
+  ) {
+    return undefined;
+  }
+  const callerAgentId = command.callerAgentId;
+  const requester = () => input.dependencies.agentManager.attentionRequester(callerAgentId);
+  return requireFinishSubscriptions(input.dependencies).register(
+    {
+      childAgentId: input.snapshot.id,
+      callerAgentId: command.callerAgentId,
+      requireParentOwnership: !(command.detached ?? false),
+      attention: finishAttentionQuery(input.initialAttention, requester),
+    },
+    true,
+  );
 }

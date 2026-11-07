@@ -1492,8 +1492,15 @@ export class Session {
     const records = await this.agentStorage.list();
     for (const record of records) {
       const live = this.agentManager.getAgent(record.id);
-      if (live) await this.agentUpdates.forwardLiveAgent(live);
-      else await this.agentUpdates.emitStoredRecord(record);
+      // The preference only changes projections that carry an audience decision; agents
+      // without one project the same either way, so re-emitting them sends identical rows.
+      if (live) {
+        if (live.attentionObjectives) {
+          await this.agentUpdates.forwardLiveAgent(live);
+        }
+      } else if (record.humanAttentionRequired !== undefined) {
+        await this.agentUpdates.emitStoredRecord(record);
+      }
     }
     const workspaces = await this.workspaceRegistry.list();
     await this.emitWorkspaceUpdatesForWorkspaceIds(

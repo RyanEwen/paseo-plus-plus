@@ -3,6 +3,7 @@ import type { FinishSubscriptions, FinishRegistration } from "../finish-subscrip
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
+  DelegatedIdentityMismatchError,
   HostOperationRejectedError,
   type HostOperation,
   type AgentHostOperationResult,
@@ -10,6 +11,7 @@ import {
   type ToolHosts,
 } from "../host-operations/index.js";
 import { AgentDirectory } from "../directory.js";
+import { finishAttentionQuery } from "../attention/requests.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
@@ -18,7 +20,7 @@ import type { Logger } from "pino";
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
-import { AgentAttentionObjectivesSchema } from "@getpaseo/protocol/agent-attention";
+import { AgentAttentionContextSchema } from "@getpaseo/protocol/agent-attention";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -732,11 +734,7 @@ function createToolCatalog(
         const destination = serverId ?? options.serverId;
         let remoteNotification: FinishRegistration | undefined;
         try {
-          const {
-            attention: _attention,
-            targetAgentId: _targetAgentId,
-            ...response
-          } = await hostResolver.use(
+          const { attention: _attention, ...response } = await hostResolver.use(
             serverId,
             (host) => host[operation](input, context),
             async ({ agentId, attention, requireParentOwnership }) => {
@@ -747,12 +745,9 @@ function createToolCatalog(
                   callerAgentId,
                   serverId: destination,
                   requireParentOwnership,
-                  attention: attention?.requesterObjective
-                    ? {
-                        link: attention.requesterObjective,
-                        requester: agentManager.attentionRequester(callerAgentId),
-                      }
-                    : undefined,
+                  attention: finishAttentionQuery(attention, () =>
+                    agentManager.attentionRequester(callerAgentId),
+                  ),
                 },
                 true,
               );
@@ -770,9 +765,16 @@ function createToolCatalog(
         } catch (error) {
           // A lost response does not establish whether the remote daemon admitted the prompt.
           // Reconcile the child rather than silently dropping notification intent.
-          if (error instanceof PaseoToolInputError || error instanceof HostOperationRejectedError)
+          // A mismatched identity proves the watched agent is not the one the host created.
+          if (
+            error instanceof PaseoToolInputError ||
+            error instanceof HostOperationRejectedError ||
+            error instanceof DelegatedIdentityMismatchError
+          ) {
             await remoteNotification?.reject();
-          else remoteNotification?.accept();
+          } else {
+            remoteNotification?.accept();
+          }
           if (!options.serverId) throw error;
           const failure = {
             serverId: destination,
@@ -1959,7 +1961,7 @@ function createToolCatalog(
         description:
           "Read your accepted objectives and their output recipients. Before waiting for delegated human work, report its objective as waiting; report final only when its result for the human is ready. Use objectiveId to keep unrelated requests separate.",
         inputSchema: {},
-        outputSchema: AgentAttentionObjectivesSchema.shape,
+        outputSchema: AgentAttentionContextSchema.shape,
       },
       async () => ({
         content: [],
@@ -1978,7 +1980,7 @@ function createToolCatalog(
           objectiveId: z.string().min(1),
           disposition: z.enum(["waiting", "final"]),
         },
-        outputSchema: AgentAttentionObjectivesSchema.shape,
+        outputSchema: AgentAttentionContextSchema.shape,
       },
       async ({ objectiveId, disposition }) => ({
         content: [],
@@ -2057,6 +2059,10 @@ function createToolCatalog(
       notifyOnFinish = Boolean(callerAgentId),
       activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
     }) => {
+      if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
+        throw new PaseoToolInputError(`Agent ${agentId} not found`);
+      }
+      // Validate the recipient first: preparing persists a delegation in the caller's ledger.
       const attention = callerAgentId
         ? await agentManager.prepareAttentionMessage({
             agentId: callerAgentId,
@@ -2064,9 +2070,6 @@ function createToolCatalog(
             objectiveId,
           })
         : undefined;
-      if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
-        throw new PaseoToolInputError(`Agent ${agentId} not found`);
-      }
       const notifying = Boolean(callerAgentId && notifyOnFinish);
       const notification =
         notifying && callerAgentId
@@ -2077,12 +2080,9 @@ function createToolCatalog(
                 {
                   childAgentId: agentId,
                   callerAgentId,
-                  attention: attention?.requesterObjective
-                    ? {
-                        link: attention.requesterObjective,
-                        requester: agentManager.attentionRequester(callerAgentId),
-                      }
-                    : undefined,
+                  attention: finishAttentionQuery(attention, () =>
+                    agentManager.attentionRequester(callerAgentId),
+                  ),
                 },
                 true,
               );

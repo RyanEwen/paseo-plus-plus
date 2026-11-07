@@ -1,6 +1,11 @@
 import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
 import { forkCapabilities } from "./fork-capabilities.js";
+import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
+import {
+  attachAttentionPresentationConfig,
+  resolveRemoteAttentionRequester,
+} from "./agent/attention/host-wiring.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -723,33 +728,31 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
-      dispatch: async (batch) => {
-        try {
-          const { disposition } = await sendPreparedPromptToAgent({
-            agentManager,
-            agentStorage,
-            agentId: batch.recipientId,
-            prompt: batch.prompt,
-            activeTurnBehavior: batch.activeTurnBehavior,
-            sessionMode: batch.sessionMode,
-            clearPendingPermissions: batch.clearPendingPermissions,
-            unarchive: batch.unarchive,
-            runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
-            onDispatch: batch.onDispatch,
-            logger: this.logger,
-          });
-          if (disposition === "turn_started")
-            await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
-          return disposition;
-        } catch (error) {
-          await agentManager.recordAttentionRejection({
-            agentId: batch.recipientId,
-            admissions: batch.attention,
-            error: error instanceof Error ? error.message : "Agent request dispatch failed",
-          });
-          throw error;
-        }
-      },
+      dispatch: (batch) =>
+        dispatchWithAttentionRejection({
+          agentManager,
+          logger: this.logger,
+          recipientId: batch.recipientId,
+          admissions: batch.attention,
+          dispatch: async () => {
+            const { disposition } = await sendPreparedPromptToAgent({
+              agentManager,
+              agentStorage,
+              agentId: batch.recipientId,
+              prompt: batch.prompt,
+              activeTurnBehavior: batch.activeTurnBehavior,
+              sessionMode: batch.sessionMode,
+              clearPendingPermissions: batch.clearPendingPermissions,
+              unarchive: batch.unarchive,
+              runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
+              onDispatch: batch.onDispatch,
+              logger: this.logger,
+            });
+            if (disposition === "turn_started")
+              await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
+            return disposition;
+          },
+        }),
       onError: (err, batch) =>
         this.logger.error(
           { err, agentId: batch.recipientId, messageIds: batch.messageIds },
@@ -798,18 +801,8 @@ export class VoiceAssistantWebSocketServer {
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
     this.agentManager.setAttentionHost({
       serverId,
-      resolveRemoteRequester: async (peer) => {
-        if (!peer.serverId) return "unknown";
-        try {
-          return await this.toolHosts().use(peer.serverId, async (client) => {
-            const result = await client.fetchAgent(peer.agentId);
-            return !result || result.agent.archivedAt ? "missing" : "available";
-          });
-        } catch {
-          // A transport or authority failure cannot prove that a requester is gone.
-          return "unknown";
-        }
-      },
+      resolveRemoteRequester: (peer) =>
+        resolveRemoteAttentionRequester(peer, () => this.toolHosts()),
     });
     this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
@@ -844,26 +837,14 @@ export class VoiceAssistantWebSocketServer {
       providerSnapshotManager: this.providerSnapshotManager,
       updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
     });
-    this.agentManager.setAttentionPresentationEnabled(
-      isAgentAwareAttentionEnabled(this.daemonConfigStore.get()),
-    );
-    const unsubscribeAttention = this.daemonConfigStore.onApply((config, previous) => {
-      this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(config));
-      return () =>
-        this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(previous));
-    });
-    let publishedAttentionMode = this.agentManager.agentAwareAttentionEnabled;
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
-      const nextMode = this.agentManager.agentAwareAttentionEnabled;
-      if (nextMode === publishedAttentionMode) return;
-      publishedAttentionMode = nextMode;
-      // Config ownership is committed. Reprojection never replays provider events or notifications.
-      const sessions = new Set([...this.sessions.values()].map((connection) => connection.session));
-      for (const session of sessions)
-        void session.refreshAttentionPresentation().catch((error) => {
-          this.logger.warn({ err: error }, "Failed to refresh attention presentation");
-        });
+    });
+    const unsubscribeAttention = attachAttentionPresentationConfig({
+      store: this.daemonConfigStore,
+      agentManager: this.agentManager,
+      sessions: () => [...this.sessions.values()].map((connection) => connection.session),
+      logger: this.logger,
     });
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();

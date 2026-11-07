@@ -195,9 +195,14 @@ export function findLatestPermissionRequest(
   return latest;
 }
 
-function resolveAgentAttentionTitle(reason: AgentAttentionReason): string {
-  if (reason === "permission") return "Agent needs permission";
-  if (reason === "error") return "Agent needs attention";
+/** An explicit intervention reason always reads as needing attention, whatever the lifecycle reason. */
+function resolveAgentAttentionTitle(input: {
+  reason: AgentAttentionReason;
+  attentionMessage?: string | null;
+}): string {
+  if (input.attentionMessage) return "Agent needs attention";
+  if (input.reason === "permission") return "Agent needs permission";
+  if (input.reason === "error") return "Agent needs attention";
   return "Agent finished";
 }
 
@@ -222,9 +227,7 @@ function resolveAgentAttentionFallbackBody(reason: AgentAttentionReason): string
 export function buildAgentAttentionNotificationPayload(
   input: BuildAgentAttentionNotificationPayloadInput,
 ): AgentAttentionNotificationPayload {
-  const title = input.attentionMessage
-    ? "Agent needs attention"
-    : resolveAgentAttentionTitle(input.reason);
+  const title = resolveAgentAttentionTitle(input);
   const preview =
     buildNotificationPreview(input.attentionMessage) ?? resolveAgentAttentionPreview(input);
   const body = preview ?? resolveAgentAttentionFallbackBody(input.reason);
