@@ -1,7 +1,4 @@
-import {
-  WorkspaceBrowserMenuItem,
-  WorkspaceExternalBrowserMenuItem,
-} from "@/workspace/browser/link-menu";
+import { WorkspaceBrowserDestinationItems } from "@/workspace/browser/link-menu";
 import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useCallback, useMemo, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
@@ -438,8 +435,7 @@ function ScriptRow({
       </View>
       {selectedLink ? (
         <View style={styles.hostList}>
-          <WorkspaceBrowserMenuItem url={selectedLink.url} />
-          <WorkspaceExternalBrowserMenuItem url={selectedLink.url} />
+          <WorkspaceBrowserDestinationItems url={selectedLink.url} />
           <ServiceLinkRow
             selectedTarget={selectedLink}
             targets={linkTargets}

@@ -506,6 +506,23 @@ describe("WorkspaceScriptsButton", () => {
     expect(requireRow("dev").textContent).toContain("dev--proj--repo.services.example.com");
   });
 
+  it("adds no browser destination rows to a service without a workspace browser", () => {
+    current = renderScripts([
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        terminalId: "terminal-script-1",
+      }),
+    ]);
+
+    // The service row itself opens the link; without a built-in browser there is nothing else.
+    expect(requireRow("dev").textContent).toContain("localhost:57483");
+    expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openExternally"));
+    expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openInPaseo"));
+  });
+
   it("stops a running script through its terminal", async () => {
     current = renderScripts([
       script({

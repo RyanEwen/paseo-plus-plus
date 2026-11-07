@@ -1,8 +1,7 @@
 import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import {
   WorkspaceHttpLinkMenu,
-  WorkspaceBrowserMenuItem,
-  WorkspaceExternalBrowserMenuItem,
+  WorkspaceBrowserDestinationItems,
 } from "@/workspace/browser/link-menu";
 import { useCallback, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, Text, View, type ViewStyle } from "react-native";
@@ -726,8 +725,7 @@ function ActivityKebab({
               Copy
             </DropdownMenuItem>
           ) : null}
-          <WorkspaceBrowserMenuItem url={activity.url} />
-          <WorkspaceExternalBrowserMenuItem url={activity.url} />
+          <WorkspaceBrowserDestinationItems url={activity.url} />
           <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpen}>
             {t("workspace.git.pr.actions.openOn", { brand: brandLabel })}
           </DropdownMenuItem>
@@ -1107,8 +1105,7 @@ function ThreadBlock({
                 {renderKebabTriggerIcon}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={200}>
-                <WorkspaceBrowserMenuItem url={root.url} />
-                <WorkspaceExternalBrowserMenuItem url={root.url} />
+                <WorkspaceBrowserDestinationItems url={root.url} />
                 <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpenThread}>
                   {t("workspace.git.pr.actions.openOn", { brand: brandLabel })}
                 </DropdownMenuItem>

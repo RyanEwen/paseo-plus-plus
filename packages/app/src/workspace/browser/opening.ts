@@ -54,6 +54,18 @@ export function workspaceBrowserLinkDestinations(
   return [];
 }
 
+/**
+ * Destinations for a menu that already shows the link's primary action (an "Open on GitHub"
+ * row, a service row): everything the destination policy offers except where that action goes.
+ */
+export function workspaceBrowserAlternateDestinations(
+  input: BrowserLinkDestinationsInput,
+): BrowserLinkDestination[] {
+  return workspaceBrowserLinkDestinations(input).filter(
+    (destination) => destination !== input.defaultDestination,
+  );
+}
+
 export interface WorkspaceLinkOpeningPolicy {
   isEnabled(): boolean;
   openInPaseo?: (url: string) => void | Promise<void>;

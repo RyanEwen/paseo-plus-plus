@@ -1,8 +1,5 @@
 import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
-import {
-  WorkspaceBrowserMenuItem,
-  WorkspaceExternalBrowserMenuItem,
-} from "@/workspace/browser/link-menu";
+import { WorkspaceBrowserDestinationItems } from "@/workspace/browser/link-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -295,8 +292,7 @@ export function WorkspaceOpenInEditorButton({
               {canOpenInBrowser ? (
                 <>
                   <DropdownMenuSeparator />
-                  <WorkspaceBrowserMenuItem url={browserUrl} />
-                  <WorkspaceExternalBrowserMenuItem url={browserUrl} />
+                  <WorkspaceBrowserDestinationItems url={browserUrl} />
                 </>
               ) : null}
             </DropdownMenuContent>

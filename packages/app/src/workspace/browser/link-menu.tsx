@@ -1,4 +1,8 @@
-import { workspaceBrowserLinkDestinations, type BrowserLinkDestination } from "./opening";
+import {
+  workspaceBrowserAlternateDestinations,
+  workspaceBrowserLinkDestinations,
+  type BrowserLinkDestination,
+} from "./opening";
 import { useCallback, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -11,7 +15,6 @@ import {
 } from "@/components/ui/context-menu";
 import { useToast } from "@/contexts/toast-api-context";
 import { isWeb } from "@/constants/platform";
-import { isHttpUrl } from "@/utils/http-url";
 import { WorkspaceLinkPolicyProvider, useWorkspaceLinkOpening } from "./context";
 import { LinkMenuContext, type LinkMenuWrapper } from "@/components/ui/link-menu-context";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -67,19 +70,24 @@ function BrowserLinkMenu({
   );
 }
 
-/** Add the same internal destination to an existing dropdown, without a nested menu. */
-export function WorkspaceBrowserMenuItem({ url }: { url: string | null | undefined }) {
-  const { openInPaseo } = useWorkspaceLinkOpening();
-  if (!isWeb || !url || !isHttpUrl(url) || !openInPaseo) {
+/**
+ * Browser destination rows for an existing dropdown whose own row already performs the primary
+ * action. Renders nothing without a workspace browser (native, plain web, no workspace), and
+ * otherwise only the destination the primary action does not use.
+ */
+export function WorkspaceBrowserDestinationItems({ url }: { url: string | null | undefined }) {
+  const { openInPaseo, defaultDestination } = useWorkspaceLinkOpening();
+  if (!isWeb || !url) {
     return null;
   }
-  return <BrowserDestinationMenuItem url={url} destination="paseo" />;
-}
-
-/** Explicit external action for an existing workspace menu. */
-export function WorkspaceExternalBrowserMenuItem({ url }: { url: string | null | undefined }) {
-  if (!url || !isHttpUrl(url)) return null;
-  return <BrowserDestinationMenuItem url={url} destination="external" />;
+  const destinations = workspaceBrowserAlternateDestinations({
+    url,
+    hasWorkspaceBrowser: Boolean(openInPaseo),
+    defaultDestination,
+  });
+  return destinations.map((destination) => (
+    <BrowserDestinationMenuItem key={destination} url={url} destination={destination} />
+  ));
 }
 
 function BrowserDestinationMenuItem({

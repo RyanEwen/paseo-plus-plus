@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   openWorkspaceBrowser,
   openWorkspaceLink,
+  workspaceBrowserAlternateDestinations,
   workspaceBrowserLinkDestinations,
 } from "@/workspace/browser/opening";
 import { createPluginHostNavigation } from "./host-navigation-model";
@@ -187,6 +188,38 @@ describe("workspace browser link menu policy", () => {
         defaultDestination: "external",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("workspace browser destination rows beside a primary action", () => {
+  it("offers no rows without a workspace browser", () => {
+    expect(
+      workspaceBrowserAlternateDestinations({
+        url: "https://github.com/acme/repo/pull/1",
+        hasWorkspaceBrowser: false,
+        defaultDestination: "external",
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers only the external browser when the primary action opens in Paseo", () => {
+    expect(
+      workspaceBrowserAlternateDestinations({
+        url: "https://github.com/acme/repo/pull/1",
+        hasWorkspaceBrowser: true,
+        defaultDestination: "paseo",
+      }),
+    ).toEqual(["external"]);
+  });
+
+  it("offers only the Paseo browser when the primary action opens externally", () => {
+    expect(
+      workspaceBrowserAlternateDestinations({
+        url: "https://github.com/acme/repo/pull/1",
+        hasWorkspaceBrowser: true,
+        defaultDestination: "external",
+      }),
+    ).toEqual(["paseo"]);
   });
 });
 
