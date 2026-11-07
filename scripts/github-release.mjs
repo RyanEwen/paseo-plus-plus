@@ -38,25 +38,6 @@ export function getGitHubRelease(repo, tag, execFileSync = nodeExecFileSync) {
   }
 }
 
-/** Wait for GitHub to expose a newly created draft without treating authentication errors as absence. */
-export async function waitForGitHubRelease(
-  repo,
-  tag,
-  {
-    attempts = 5,
-    delayMs = 1_000,
-    lookup = getGitHubRelease,
-    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  } = {},
-) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const release = lookup(repo, tag);
-    if (release) return release;
-    if (attempt < attempts - 1) await sleep(delayMs);
-  }
-  return null;
-}
-
 export function getReleaseLookupTag(release) {
   if (release.draft === true && release.html_url) {
     return new URL(release.html_url).pathname.split("/").at(-1);

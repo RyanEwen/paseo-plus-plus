@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { getGitHubRelease, getReleaseLookupTag, waitForGitHubRelease } from "../github-release.mjs";
+import { getGitHubRelease, getReleaseLookupTag } from "../github-release.mjs";
+import { waitForGitHubRelease } from "./github.mjs";
 import { uploadWithRetry } from "../upload-release-assets.mjs";
 import { isMainModule } from "../is-main-module.mjs";
 import { validatePreviewAssets } from "./assets.mjs";
