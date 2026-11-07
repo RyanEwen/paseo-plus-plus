@@ -772,18 +772,11 @@ export class VoiceAssistantWebSocketServer {
     this.notificationReceipts = new WorkspaceNotificationReceipts(
       this.workspaceRegistry,
       async (workspaceId) => {
-        await Promise.all(
-          this.listSessions().map(async (session) => {
-            try {
-              await session.emitWorkspaceUpdatesForExternalWorkspaceIds([workspaceId]);
-            } catch (error) {
-              // The receipt is already durable. A failed subscriber catches up from its next snapshot.
-              this.logger.warn(
-                { error, workspaceId },
-                "Could not publish notification receipts to a session",
-              );
-            }
-          }),
+        // The receipt is already durable. A failed subscriber catches up from its next snapshot.
+        await this.publishToSessions(
+          "Could not publish notification receipts to a session",
+          { workspaceId },
+          (session) => session.emitWorkspaceUpdatesForExternalWorkspaceIds([workspaceId]),
         );
       },
     );
@@ -1703,17 +1696,10 @@ export class VoiceAssistantWebSocketServer {
       },
       publishScriptStatusUpdate: (message) => this.publishScriptStatusUpdate(message),
       publishStoredAgentAttentionCleared: async (record, workspaceId) => {
-        await Promise.all(
-          this.listSessions().map(async (session) => {
-            try {
-              await session.forwardStoredAgentAttentionCleared(record, workspaceId);
-            } catch (error) {
-              this.logger.warn(
-                { error, workspaceId },
-                "Could not publish stored attention clear to a session",
-              );
-            }
-          }),
+        await this.publishToSessions(
+          "Could not publish stored attention clear to a session",
+          { workspaceId },
+          (session) => session.forwardStoredAgentAttentionCleared(record, workspaceId),
         );
       },
       downloadTokenStore: this.downloadTokenStore,
@@ -3040,6 +3026,28 @@ export class VoiceAssistantWebSocketServer {
   }
 
   /** Read identity from the registry relation, never from an agent's working directory. */
+  /**
+   * Publish one committed change to every connected session. A session that fails is logged and
+   * skipped; it catches up from its next snapshot instead of failing the others.
+   *
+   * @param failureMessage logged with `context` when one session's publish fails.
+   */
+  private async publishToSessions(
+    failureMessage: string,
+    context: Record<string, unknown>,
+    publish: (session: Session) => Promise<void>,
+  ): Promise<void> {
+    await Promise.all(
+      this.listSessions().map(async (session) => {
+        try {
+          await publish(session);
+        } catch (error) {
+          this.logger.warn({ error, ...context }, failureMessage);
+        }
+      }),
+    );
+  }
+
   private async resolveNotificationWorkspaceContext(
     workspaceId: string | undefined,
   ): Promise<NotificationWorkspaceContext> {
