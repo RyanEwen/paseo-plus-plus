@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { findAndroidUpdate, readApkChecksum, selectAndroidUpdate } from "./releases";
 
 function release(build: number, version = "0.11.1") {
@@ -108,8 +108,6 @@ function renamedRelease() {
   return preview;
 }
 
-afterEach(() => vi.unstubAllGlobals());
-
 describe("Android repository rename bridge", () => {
   it("accepts canonical assets from the future repository without changing version identity", () => {
     const preview = renamedRelease();
@@ -130,8 +128,7 @@ describe("Android repository rename bridge", () => {
       redirected: { value: true },
     });
     const fetchResource = vi.fn().mockResolvedValue(response);
-    vi.stubGlobal("fetch", fetchResource);
-    const update = await findAndroidUpdate(1_000_000_013);
+    const update = await findAndroidUpdate(1_000_000_013, { fetch: fetchResource });
     expect(update?.url).toBe(renamedRelease().assets[0].browser_download_url);
     expect(fetchResource).toHaveBeenCalledExactlyOnceWith(
       "https://api.github.com/repos/RyanEwen/paseo-plus-plus/releases?per_page=100&page=1",
