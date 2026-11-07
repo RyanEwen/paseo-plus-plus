@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import path from "node:path";
-const { configureAndroidReleaseSigning } = require("./plugins/with-android-release-signing");
 
 const {
   FDROID_ABI_VERSION_CODE_SUFFIXES,
@@ -60,17 +58,6 @@ describe("native release version", () => {
     },
   );
 
-  it("replaces development signing only in the installed Expo template's release build", () => {
-    const template = path.join(path.dirname(require.resolve("expo/package.json")), "template.tgz");
-    const gradle = execFileSync("tar", ["-xOf", template, "package/android/app/build.gradle"], {
-      encoding: "utf8",
-    });
-    const configured = configureAndroidReleaseSigning(gradle);
-    expect(configured).toMatch(/debug\s*\{\s*signingConfig signingConfigs.debug/);
-    expect(configured).toMatch(/release\s*\{[^{}]*signingConfig signingConfigs.preview/);
-    expect(configured).toContain('storePassword System.getenv("PASEO_ANDROID_KEYSTORE_PASSWORD")');
-    expect(() => configureAndroidReleaseSigning("android {}")).toThrow("signing layout changed");
-  });
   it("gives consecutive previews distinct Android codes while preserving upstream version math", () => {
     expect(getPreviewReleaseVersion("0.11.0-beta.5", 12)).toEqual({
       appVersion: "0.11.0",

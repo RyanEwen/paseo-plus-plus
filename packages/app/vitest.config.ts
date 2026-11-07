@@ -110,6 +110,7 @@ export default defineConfig({
             "src/**/*.{test,spec}.{ts,tsx}",
             "modules/**/*.{test,spec}.{ts,tsx}",
             "native-release-version.test.ts",
+            "plugins/with-android-release-signing.test.ts",
             "app.config.test.ts",
             "vitest-environment.test.ts",
           ],

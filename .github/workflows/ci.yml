@@ -57,7 +57,7 @@ jobs:
           filters: .github/ci-paths.yml
 
       - name: Validate CI contracts
-        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs scripts/release-version-utils.test.mjs scripts/preview-release/github.test.mjs scripts/preview-release/daemon.test.mjs scripts/preview-release/npm.test.mjs scripts/preview-release/metadata.test.mjs
+        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs scripts/release-version-utils.test.mjs scripts/preview-release/github.test.mjs scripts/preview-release/daemon.test.mjs scripts/preview-release/npm.test.mjs scripts/preview-release/metadata.test.mjs scripts/preview-release/source.test.mjs scripts/preview-release/publication-policy.test.mjs scripts/preview-release/windows-powershell-probe.test.mjs scripts/preview-release/workflow.test.mjs scripts/trace-paths.test.mjs
 
   quality:
     name: quality
@@ -337,7 +337,7 @@ jobs:
         run: npm run test --workspace=@getpaseo/desktop
 
       - name: Validate desktop release manifests
-        run: npx vitest run scripts/validate-desktop-manifests.test.mjs --bail=1
+        run: npx vitest run scripts/validate-desktop-manifests.test.mjs scripts/native-pty.test.mjs scripts/preview-release/android-bundle.test.mjs scripts/preview-release/android-compiler-budget.test.mjs scripts/preview-release/android-hermes.test.mjs scripts/preview-release/android-signer.test.mjs scripts/preview-release/assets.test.mjs scripts/preview-release/prepare.test.mjs scripts/preview-release/runtime.test.mjs --bail=1
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
