@@ -664,6 +664,8 @@ export function mergeRetainedPrompts(
   retained: readonly CanonicalPromptContext[],
   head: readonly StreamItem[] = [],
 ): StreamItem[] {
+  // The common case has nothing retained; skip the whole-tail identity sets per streamed delta.
+  if (retained.length === 0) return items;
   const ordinary = [...items, ...head];
   const ids = new Set(ordinary.map((item) => item.id));
   const positions = new Set(
