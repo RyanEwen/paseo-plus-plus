@@ -16,6 +16,7 @@ import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adoptedCheckoutAgent } from "./new-workspace/worktree-form-model";
 import {
+  isBranchSuggestionQueryEnabled,
   useWorktreeOptions,
   worktreePickerOptions,
   useWorktreeBranchChoice,
@@ -229,14 +230,15 @@ function useWorkspaceIsolation(input: {
   };
 }
 
-/** Labels Local with its live branch without changing the selected checkout. */
+/** Labels Local with the checkout's live branch, when known, without changing the selection. */
 function isolationLabel(
   t: TFunction,
   isolation: "local" | "worktree",
-  currentBranch?: string | null,
+  checkoutStatus: { currentBranch?: string | null } | null | undefined,
 ): string {
   if (isolation === "worktree") return t("newWorkspace.isolation.worktree");
   const localLabel = t("newWorkspace.isolation.local");
+  const currentBranch = checkoutStatus?.currentBranch;
   return currentBranch ? `${localLabel} · ${currentBranch}` : localLabel;
 }
 
@@ -1058,15 +1060,17 @@ export function NewWorkspaceScreen({
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
-  // Branch suggestions also feed the branch choice field, so either picker loads them.
-  const branchPickersOpen = pickerOpen || branchPickerOpen;
-  const branchQueryEnabled = branchPickersOpen && clientReady && hasSelectedSourceDirectory;
+  const branchQueryEnabled = isBranchSuggestionQueryEnabled({
+    basePickerOpen: pickerOpen,
+    branchPickerOpen,
+    clientReady,
+    hasSourceDirectory: hasSelectedSourceDirectory,
+  });
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
   });
-  const currentBranch = checkoutStatus?.currentBranch;
 
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
@@ -1131,7 +1135,7 @@ export function NewWorkspaceScreen({
     pickerOpen: isolationPickerOpen,
     canCreateWorktree,
     showRefPicker,
-    isolationLabel: isolationLabel(t, effectiveIsolation, currentBranch),
+    isolationLabel: isolationLabel(t, effectiveIsolation, checkoutStatus),
     serverId: selectedServerId,
     cwd: selectedSourceDirectory,
     withClient: withConnectedClient,
@@ -1312,8 +1316,8 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
-      const projectId = getHostProjectId(selectedProject, selectedServerId);
-      if (!projectId) {
+      const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
+      if (!hostProjectId) {
         throw new Error("Project is not available on the selected host");
       }
       const createsWorktree =
@@ -1342,7 +1346,7 @@ export function NewWorkspaceScreen({
         source: await prepareSource({
           createsWorktree,
           cwd: selectedSourceDirectory,
-          projectId,
+          projectId: hostProjectId,
           refName: checkoutRequest?.refName,
         }),
         withInitialAgent: input.withInitialAgent,
@@ -1580,7 +1584,7 @@ export function NewWorkspaceScreen({
       anchorRef: isolationPickerAnchorRef,
       open: openIsolationPicker,
       ...worktreeOptions.isolationProps,
-      localLabel: isolationLabel(t, "local", currentBranch),
+      localLabel: isolationLabel(t, "local", checkoutStatus),
       worktreeOptions: worktreeOptions.options,
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,

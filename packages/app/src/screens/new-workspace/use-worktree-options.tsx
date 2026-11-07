@@ -177,6 +177,20 @@ export function useWorktreeOptions(input: {
   };
 }
 
+/**
+ * Branch suggestions feed both the base-ref picker and the branch choice field, so either open
+ * picker loads them once the host is connected and a source directory is selected.
+ */
+export function isBranchSuggestionQueryEnabled(input: {
+  basePickerOpen: boolean;
+  branchPickerOpen: boolean;
+  clientReady: boolean;
+  hasSourceDirectory: boolean;
+}): boolean {
+  const pickerOpen = input.basePickerOpen || input.branchPickerOpen;
+  return pickerOpen && input.clientReady && input.hasSourceDirectory;
+}
+
 /** Local uses no worktree data until its picker opens; cached failures stay scoped to that choice. */
 function worktreeListAvailability(
   input: {
