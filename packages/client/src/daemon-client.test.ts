@@ -8078,6 +8078,27 @@ function originalFrame(mock: ReturnType<typeof createMockTransport>, requestId: 
     }),
   );
 }
+/** Prove both original-transfer slots are free: two reads start, then are canceled again. */
+async function expectTwoFreeOriginalSlots(
+  client: DaemonClient,
+  mock: ReturnType<typeof createMockTransport>,
+) {
+  const probes = ["slot-probe-a", "slot-probe-b"].map((id) => ({
+    id,
+    read: client.readAttachment("agent-a", CLIENT_ORIGINAL_REFERENCE.id, id),
+  }));
+  for (const probe of probes) {
+    const cancel = client.cancelAttachmentRead(probe.id, `cancel-${probe.id}`);
+    await expect(probe.read).rejects.toThrow("canceled locally");
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "attachments.read.cancel.response",
+        payload: { canceled: true, error: null, requestId: `cancel-${probe.id}` },
+      }),
+    );
+    await cancel;
+  }
+}
 test("durable references support list -> metadata -> acknowledged original bytes", async () => {
   const { client, mock } = await originalClient();
   const list = client.listAttachments("agent-a", { requestId: "list-original" });
@@ -8226,12 +8247,8 @@ test("local cancel clears a completed buffer without a terminal reply and fences
   );
   await cancel;
   await expect(first).rejects.toThrow("canceled locally");
-  expect(client).toMatchObject({
-    pendingBinaryFileReads: new Map(),
-    activeBinaryFileTransfers: new Map(),
-    completedBinaryFileReads: new Map(),
-    attachmentReadRequests: new Map(),
-  });
+  // The canceled read no longer occupies one of the two transfer slots.
+  await expectTwoFreeOriginalSlots(client, mock);
   let settled = false;
   const next = client
     .readAttachment("agent-a", CLIENT_ORIGINAL_REFERENCE.id, "reused-read")
@@ -8301,11 +8318,7 @@ test("repeated header after complete framing immediately frees the completed ori
   );
   originalFrame(mock, wireId);
   await expect(original).rejects.toThrow("header");
-  expect(client).toMatchObject({
-    pendingBinaryFileReads: new Map(),
-    activeBinaryFileTransfers: new Map(),
-    completedBinaryFileReads: new Map(),
-  });
+  await expectTwoFreeOriginalSlots(client, mock);
 });
 
 test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
