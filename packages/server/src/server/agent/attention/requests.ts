@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { samePeer } from "./peers.js";
 import { z } from "zod";
 import {
   AgentAttentionOutcomeSchema,
@@ -9,6 +10,7 @@ import {
   AgentAttentionPeerSchema,
   type AgentAttentionPeer,
   type AgentAttentionRequestQuery,
+  type AgentMessageAttention,
 } from "@getpaseo/protocol/agent-attention";
 import type { AttentionAdmission } from "./objectives.js";
 
@@ -167,7 +169,7 @@ export class AgentAttentionRequests {
     if (
       record.link.token !== query.link.token ||
       record.link.objectiveId !== query.link.objectiveId ||
-      !this.samePeer(record.requester, query.requester)
+      !samePeer({ left: record.requester, right: query.requester, localServerId: this.serverId })
     ) {
       throw new Error("Attention outcome does not belong to this requester");
     }
@@ -204,11 +206,16 @@ export class AgentAttentionRequests {
     });
     if (kind !== "permission") record.active = false;
   }
+}
 
-  private samePeer(left: AgentAttentionPeer, right: AgentAttentionPeer): boolean {
-    return (
-      left.agentId === right.agentId &&
-      (left.serverId ?? this.serverId) === (right.serverId ?? this.serverId)
-    );
-  }
+/**
+ * The exact-callback correlation a finish watch stores for a delegated request, or undefined
+ * when the message carries no requester objective and the watch stays a legacy one.
+ */
+export function finishAttentionQuery(
+  attention: AgentMessageAttention | undefined,
+  requester: AgentAttentionPeer,
+): AgentAttentionRequestQuery | undefined {
+  const link = attention?.requesterObjective;
+  return link ? { link, requester } : undefined;
 }

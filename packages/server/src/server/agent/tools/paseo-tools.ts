@@ -11,6 +11,7 @@ import {
   type ToolHosts,
 } from "../host-operations/index.js";
 import { AgentDirectory } from "../directory.js";
+import { finishAttentionQuery } from "../attention/requests.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
@@ -744,12 +745,10 @@ function createToolCatalog(
                   callerAgentId,
                   serverId: destination,
                   requireParentOwnership,
-                  attention: attention?.requesterObjective
-                    ? {
-                        link: attention.requesterObjective,
-                        requester: agentManager.attentionRequester(callerAgentId),
-                      }
-                    : undefined,
+                  attention: finishAttentionQuery(
+                    attention,
+                    agentManager.attentionRequester(callerAgentId),
+                  ),
                 },
                 true,
               );
@@ -2082,12 +2081,10 @@ function createToolCatalog(
                 {
                   childAgentId: agentId,
                   callerAgentId,
-                  attention: attention?.requesterObjective
-                    ? {
-                        link: attention.requesterObjective,
-                        requester: agentManager.attentionRequester(callerAgentId),
-                      }
-                    : undefined,
+                  attention: finishAttentionQuery(
+                    attention,
+                    agentManager.attentionRequester(callerAgentId),
+                  ),
                 },
                 true,
               );

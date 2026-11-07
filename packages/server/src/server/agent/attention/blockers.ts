@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isRemotePeer } from "./peers.js";
 import { z } from "zod";
 import type { AgentAttentionPeer } from "@getpaseo/protocol/agent-attention";
 
@@ -205,7 +206,8 @@ export class AttentionBlockers {
     lostLocalRequesters?: ReadonlySet<string>,
   ): boolean {
     if (!lostLocalRequesters) return true;
-    const remote = requester.serverId && requester.serverId !== this.localServerId;
-    return !remote && lostLocalRequesters.has(requester.agentId);
+    return (
+      !isRemotePeer(requester, this.localServerId) && lostLocalRequesters.has(requester.agentId)
+    );
   }
 }

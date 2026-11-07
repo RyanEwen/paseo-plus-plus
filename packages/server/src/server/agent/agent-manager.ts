@@ -1,5 +1,6 @@
 import type { AgentAttentionOutcome } from "@getpaseo/protocol/messages";
 import { AttentionPresentation } from "./attention/presentation.js";
+import { isRemotePeer } from "./attention/peers.js";
 import type {
   AgentAttentionLink,
   AgentAttentionRequestQuery,
@@ -6130,8 +6131,7 @@ export class AgentManager {
   private async resolveAttentionRequester(
     requester: AgentAttentionPeer,
   ): Promise<"available" | "missing" | "unknown"> {
-    const remote = requester.serverId && requester.serverId !== this.attentionServerId;
-    if (remote) {
+    if (isRemotePeer(requester, this.attentionServerId)) {
       return this.resolveRemoteAttentionRequester
         ? this.resolveRemoteAttentionRequester(requester)
         : "unknown";

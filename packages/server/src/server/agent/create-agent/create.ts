@@ -1,4 +1,5 @@
 import type { FinishRegistration, FinishSubscriptions } from "../finish-subscriptions/index.js";
+import { finishAttentionQuery } from "../attention/requests.js";
 import type { AgentPromptSource } from "../agent-messages/index.js";
 import type { Logger } from "pino";
 
@@ -634,18 +635,13 @@ async function registerCreatedFinish(input: {
   ) {
     return undefined;
   }
-  const link = input.initialAttention?.requesterObjective;
+  const requester = input.dependencies.agentManager.attentionRequester(command.callerAgentId);
   return requireFinishSubscriptions(input.dependencies).register(
     {
       childAgentId: input.snapshot.id,
       callerAgentId: command.callerAgentId,
       requireParentOwnership: !(command.detached ?? false),
-      attention: link
-        ? {
-            link,
-            requester: input.dependencies.agentManager.attentionRequester(command.callerAgentId),
-          }
-        : undefined,
+      attention: finishAttentionQuery(input.initialAttention, requester),
     },
     true,
   );

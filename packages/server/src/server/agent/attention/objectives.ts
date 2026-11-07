@@ -1,4 +1,5 @@
 import { AgentAttentionRequests, StoredAttentionRequestsSchema } from "./requests.js";
+import { samePeer } from "./peers.js";
 import {
   AttentionBlockers,
   StoredAttentionBlockersSchema,
@@ -237,7 +238,11 @@ export class AgentAttentionObjectives {
           (existing.audience.kind !== input.kind ||
             (existing.audience.kind === "agent" &&
               input.kind === "agent" &&
-              !this.samePeer(existing.audience.requester, input.requester)))
+              !samePeer({
+                left: existing.audience.requester,
+                right: input.requester,
+                localServerId: this.localServerId,
+              })))
         )
           throw new AttentionObjectiveError("request identity belongs to another audience");
       }
@@ -362,7 +367,7 @@ export class AgentAttentionObjectives {
       (entry) =>
         entry.requestId === requestId &&
         entry.objectiveId === objective.id &&
-        this.samePeer(entry.recipient, recipient),
+        samePeer({ left: entry.recipient, right: recipient, localServerId: this.localServerId }),
     );
     if (!delegation) {
       delegation = {
@@ -375,7 +380,12 @@ export class AgentAttentionObjectives {
     }
     const requesterObjective = { objectiveId: objective.id, token: delegation.token, requestId };
     const isReply =
-      objective.audience.kind === "agent" && this.samePeer(objective.audience.requester, recipient);
+      objective.audience.kind === "agent" &&
+      samePeer({
+        left: objective.audience.requester,
+        right: recipient,
+        localServerId: this.localServerId,
+      });
     if (isReply && objective.replyTo) {
       return { requesterObjective, continuation: objective.replyTo };
     }
@@ -401,7 +411,11 @@ export class AgentAttentionObjectives {
       throw new AttentionObjectiveError("invalid request outcome evidence");
     if (
       input.outcome.requestId !== input.link.requestId ||
-      !this.samePeer(input.requester, input.outcome.requester)
+      !samePeer({
+        left: input.requester,
+        right: input.outcome.requester,
+        localServerId: this.localServerId,
+      })
     )
       throw new AttentionObjectiveError("outcome identity mismatch");
     const deliveries = (delegation.deliveries ??= []);
@@ -469,7 +483,7 @@ export class AgentAttentionObjectives {
         entry.objectiveId === link.objectiveId &&
         entry.token === link.token &&
         entry.requestId === link.requestId &&
-        this.samePeer(entry.recipient, peer),
+        samePeer({ left: entry.recipient, right: peer, localServerId: this.localServerId }),
     );
     if (!delegation || !this.state.objectives.some((entry) => entry.id === link.objectiveId))
       throw new AttentionObjectiveError(link.objectiveId);
@@ -561,12 +575,5 @@ export class AgentAttentionObjectives {
     const objective = this.state.objectives.find(({ id }) => id === link.objectiveId);
     if (!objective) throw new AttentionObjectiveError(link.objectiveId);
     return objective;
-  }
-
-  private samePeer(left: AgentAttentionPeer, right: AgentAttentionPeer): boolean {
-    return (
-      left.agentId === right.agentId &&
-      (left.serverId ?? this.localServerId) === (right.serverId ?? this.localServerId)
-    );
   }
 }
