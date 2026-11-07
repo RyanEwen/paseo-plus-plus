@@ -17,8 +17,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableRenderItemInfo } from "./draggable-list.types";
 import { useDragReorderState } from "./drag-reorder";
-import { View, type ViewProps } from "react-native";
-import { useSortableItemLayout, type SortableItemLayoutHandler } from "./use-sortable-item-layout";
 
 const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
   ...transform,
@@ -42,8 +40,6 @@ function SortableItem<T>({
   disabled,
   itemData,
   externalDndContext,
-  orderRevision,
-  onItemLayout,
 }: {
   id: string;
   item: T;
@@ -54,8 +50,6 @@ function SortableItem<T>({
   disabled: boolean;
   itemData?: Record<string, unknown>;
   externalDndContext: boolean;
-  orderRevision: readonly string[];
-  onItemLayout?: SortableItemLayoutHandler<T>;
 }): ReactElement {
   const {
     attributes,
@@ -66,17 +60,6 @@ function SortableItem<T>({
     transition,
     isDragging,
   } = useSortable({ id, disabled, data: itemData });
-  const layout = useSortableItemLayout({ item, index, orderRevision, onItemLayout });
-  const setMeasuredNodeRef = useCallback(
-    (node: View | null) => {
-      if (node !== null && !(node instanceof HTMLElement)) {
-        throw new TypeError("SortableInlineList's web View must publish an HTMLElement");
-      }
-      layout.ref.current = node;
-      setNodeRef(node);
-    },
-    [layout.ref, setNodeRef],
-  );
 
   const drag = useCallback(() => {
     // dnd-kit handles drag initiation via listeners
@@ -121,25 +104,6 @@ function SortableItem<T>({
     ? { ref: setNodeRef }
     : { ref: setNodeRef, ...attributes, ...listeners };
 
-  // This useSortable call supplies no custom attributes, so its defaults are button and tabIndex 0.
-  // Spell those defaults in RN's unions while preserving every other attribute and sensor listener.
-  const measuredWrapperProps: ViewProps = useDragHandle
-    ? {}
-    : { ...attributes, ...listeners, role: "button", tabIndex: 0 };
-
-  if (onItemLayout) {
-    return (
-      <View
-        {...measuredWrapperProps}
-        ref={setMeasuredNodeRef}
-        style={style}
-        onLayout={layout.onLayout}
-      >
-        {renderItem(info)}
-      </View>
-    );
-  }
-
   return (
     <div {...wrapperProps} style={style}>
       {renderItem(info)}
@@ -159,7 +123,6 @@ export function SortableInlineList<T>({
   externalDndContext = false,
   activeId: externalActiveId = null,
   getItemData,
-  onItemLayout,
 }: {
   data: T[];
   keyExtractor: (item: T, index: number) => string;
@@ -172,8 +135,6 @@ export function SortableInlineList<T>({
   externalDndContext?: boolean;
   activeId?: string | null;
   getItemData?: (item: T, index: number) => Record<string, unknown>;
-  /** Report actual outer-item frames in the immediate parent's coordinate space. */
-  onItemLayout?: SortableItemLayoutHandler<T>;
 }): ReactElement {
   const {
     activeId: internalActiveId,
@@ -221,8 +182,6 @@ export function SortableInlineList<T>({
             disabled={disabled}
             itemData={getItemData?.(item, index)}
             externalDndContext={externalDndContext}
-            orderRevision={ids}
-            onItemLayout={onItemLayout}
           />
         );
       })}

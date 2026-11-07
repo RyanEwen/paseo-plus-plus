@@ -1,60 +1,82 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
-import { ScrollView, type LayoutChangeEvent, type LayoutRectangle } from "react-native";
+import type { LayoutChangeEvent, ScrollView, View } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 import { resolveWorkspaceTabScrollOffset } from "./workspace-tab-layout";
 
-interface CommittedTabScrollInput {
+export interface WorkspaceTabScrollInput {
+  /** Key of the selected tab, or undefined when nothing is selected. */
   activeTabKey: string | undefined;
+  /** Identity of the rendered tab order; a change re-measures tabs that only moved. */
+  listKey: string;
   enabled: boolean;
+  /** Live horizontal scroll offset, updated by the strip's scroll handler. */
   offset: SharedValue<number>;
+  /** Content padding before the measured track, so track positions map to scroll positions. */
+  leadingInset: number;
+}
+
+/** The committed inputs a measurement callback is allowed to act on. */
+interface CommittedTabScroll {
+  offset: SharedValue<number>;
+  leadingInset: number;
 }
 
 /**
- * Reveal the selected tab after native measurements, selection, or viewport changes.
- * The shared scroll offset follows user scrolling without a React update for every frame.
+ * Keep the selected tab of a horizontal strip in view. This follows upstream's
+ * `useRevealActiveItem` (components/ui/scroll-reveal.ts), which only scrolls vertically.
+ *
+ * The selected chip is measured against the track on demand rather than cached, so a tab that
+ * moves without resizing (a tab closing to its left) is revealed at its current position. Every
+ * trigger (selection or order change, viewport or content size, the chip's own layout) runs the
+ * same reveal. Measurement is asynchronous, so only the latest request may scroll, and only while
+ * a selection is committed when its callback arrives.
  */
 export function useWorkspaceTabScroll({
   activeTabKey,
+  listKey,
   enabled,
   offset,
-}: {
-  activeTabKey: string | undefined;
-  enabled: boolean;
-  offset: SharedValue<number>;
-}) {
+  leadingInset,
+}: WorkspaceTabScrollInput) {
   const scrollRef = useRef<ScrollView>(null);
+  const trackRef = useRef<View>(null);
+  const activeTabRef = useRef<View>(null);
   const geometry = useRef({ viewportWidth: 0, contentWidth: 0 });
-  const tabFrames = useRef(new Map<string, { x: number; width: number }>());
-  const committed = useRef<CommittedTabScrollInput | null>(null);
+  const committed = useRef<CommittedTabScroll | null>(null);
+  const measurementRef = useRef(0);
 
   const revealActiveTab = useCallback(() => {
-    const selection = committed.current;
-    if (!selection?.enabled || !selection.activeTabKey) {
-      return;
-    }
-    const frame = tabFrames.current.get(selection.activeTabKey);
-    if (!frame) {
-      return;
-    }
+    const request = ++measurementRef.current;
+    const tab = activeTabRef.current;
+    const track = trackRef.current;
+    if (!committed.current || !tab || !track) return;
 
-    const nextOffset = resolveWorkspaceTabScrollOffset({
-      ...geometry.current,
-      offset: selection.offset.value,
-      tabStart: frame.x,
-      tabWidth: frame.width,
+    tab.measureLayout(track, (left, _top, width) => {
+      const selection = committed.current;
+      if (request !== measurementRef.current || !selection || activeTabRef.current !== tab) {
+        return;
+      }
+      if (width <= 0) return;
+      const nextOffset = resolveWorkspaceTabScrollOffset({
+        ...geometry.current,
+        offset: selection.offset.value,
+        tabStart: selection.leadingInset + left,
+        tabWidth: width,
+      });
+      scrollRef.current?.scrollTo({ x: nextOffset, animated: false });
     });
-    scrollRef.current?.scrollTo({ x: nextOffset, animated: false });
   }, []);
 
   useLayoutEffect(() => {
-    // Native measurement delivery may retain an older callback across a selection commit.
-    // Publish only committed inputs, so even that callback reveals the current selection.
-    committed.current = { activeTabKey, enabled, offset };
+    // Publish only committed inputs, so a callback held across a commit cannot act on old ones.
+    committed.current = enabled && activeTabKey ? { offset, leadingInset } : null;
     revealActiveTab();
     return () => {
       committed.current = null;
+      // A measurement started for the previous selection or order must not scroll.
+      measurementRef.current += 1;
     };
-  }, [activeTabKey, enabled, offset, revealActiveTab]);
+  }, [activeTabKey, listKey, enabled, offset, leadingInset, revealActiveTab]);
 
   const onLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -72,19 +94,12 @@ export function useWorkspaceTabScroll({
     [revealActiveTab],
   );
 
-  // Sortable roots publish plain measured frames; ordinary slots use the same owning boundary.
-  const onTabFrame = useCallback(
-    (tabKey: string, frame: LayoutRectangle) => {
-      if (frame.width <= 0 || frame.height <= 0) return;
-      tabFrames.current.set(tabKey, frame);
-      revealActiveTab();
-    },
-    [revealActiveTab],
-  );
-  const onTabLayout = useCallback(
-    (tabKey: string, event: LayoutChangeEvent) => onTabFrame(tabKey, event.nativeEvent.layout),
-    [onTabFrame],
-  );
-
-  return { scrollRef, onLayout, onContentSizeChange, onTabLayout, onTabFrame };
+  return {
+    scrollRef,
+    trackRef,
+    activeTabRef,
+    onLayout,
+    onContentSizeChange,
+    onActiveTabLayout: revealActiveTab,
+  };
 }
