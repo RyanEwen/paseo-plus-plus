@@ -981,7 +981,6 @@ const styles = StyleSheet.create((theme) => ({
   statusGroupBlockExpanded: {
     paddingBottom: theme.spacing[3],
   },
-  statusWorkspaceListContainer: {},
   workspaceRow: {
     minHeight: density.rowHeight,
     marginBottom: theme.spacing[0.5],
