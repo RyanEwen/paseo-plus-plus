@@ -12,6 +12,7 @@ import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sidebar/project-pins";
 import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
+import { projectBlockActivityEqual } from "./sidebar/project-block-activity";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
 import { useAppSettings } from "@/hooks/use-settings";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
@@ -1988,6 +1989,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
   return (
     previous.project === next.project &&
     projectWorkspaceEntriesEqual(previous, next) &&
+    projectBlockActivityEqual(previous, next) &&
     previous.collapsed === next.collapsed &&
     previous.displayName === next.displayName &&
     previous.iconDataUri === next.iconDataUri &&
