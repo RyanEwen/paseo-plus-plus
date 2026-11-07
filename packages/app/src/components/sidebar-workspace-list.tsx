@@ -9,10 +9,7 @@ import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store"
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
-import {
-  isProjectPinnedEntry,
-  collectProjectPinnedKeys,
-} from "@/components/sidebar/project-pins";
+import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sidebar/project-pins";
 import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
