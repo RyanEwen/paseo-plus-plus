@@ -230,8 +230,12 @@ class EncodedVideoCanvas {
     if (frame.timestamp <= this.lastTimestamp) {
       throw new Error("Obsolete video presentation");
     }
-    this.canvas.width = frame.displayWidth;
-    this.canvas.height = frame.displayHeight;
+    // Assigning a canvas dimension reallocates and clears its backing store, even when
+    // unchanged; a stream keeps one size, so only resize when the frame size changes.
+    if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
+      this.canvas.width = frame.displayWidth;
+      this.canvas.height = frame.displayHeight;
+    }
     this.context.drawImage(frame, 0, 0);
     this.lastTimestamp = frame.timestamp;
   }
