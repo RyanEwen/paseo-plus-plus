@@ -674,3 +674,20 @@ test("attention preference config remains optional and rejects nonboolean writes
       .success,
   ).toBe(false);
 });
+
+test("sidebar mode profile support is optional and independent of settings sync", () => {
+  expect(
+    parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "old",
+      features: { appSettingsSync: true },
+    })?.features?.appSettingsSidebarModeProfiles,
+  ).toBeUndefined();
+  expect(
+    parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "new",
+      features: { appSettingsSync: true, appSettingsSidebarModeProfiles: true },
+    })?.features?.appSettingsSidebarModeProfiles,
+  ).toBe(true);
+});

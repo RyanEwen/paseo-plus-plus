@@ -42,6 +42,12 @@ Existing functionality keeps working across versions. Never gate an established 
 
 The `appSettingsAccentColor` capability belongs to the explicitly selected settings host, independent of the active workspace host. Without it, disable the accent picker and explain that the settings host needs updating. Device-only preferences remain available. Explicit initialization omits only the unsupported accent field; normal edits and pending outboxes retain their existing host ownership and failure behavior.
 
+The `appSettingsSidebarModeProfiles` capability also belongs to the selected settings host.
+Without it, keep the existing view readable and local host/project filters usable, but disable
+mode and synchronized display edits with an update instruction. Explicit initialization omits
+mode profiles on an unsupported host. Legacy flat fields remain accepted for older clients;
+new clients write canonical profiles without mirroring every edit into the old representation.
+
 The `appSettingsChatPreferences` capability covers chat display and send shortcut writes on the
 selected settings host. Older hosts retain their stored tool-detail preferences; disable these
 new synchronized edits with an update instruction. Device-only choices remain available, and

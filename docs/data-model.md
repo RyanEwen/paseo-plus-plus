@@ -41,6 +41,12 @@ independently of its active workspace. Selection reads the destination before en
 An empty host requires the explicit **Use this device settings** action; selecting it never
 publishes the preferences already on the device.
 
+Sidebar Project and Status modes own separate synchronized display profiles. Switching modes
+projects one profile and its device-local host/project filters together. Legacy preferences seed
+only the previously active mode, after both local stores have loaded; the other mode starts with
+explicit defaults. Existing profiles take precedence over legacy flat fields. Selecting a settings
+host adopts only that host's document and keeps both local filter sets.
+
 Device fonts, text sizes, content width, terminal behavior, keyboard mode, link/pane placement and
 platform-specific tab/layout toggles stay local; see [settings scope](fork-features/sync-app-settings.md).
 Remote adoption preserves current device choices even when historical hosts contain those fields.

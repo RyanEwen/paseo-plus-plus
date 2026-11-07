@@ -26,17 +26,25 @@ export function togglePinnedCollapsed(state: CollapsedProjectsState): CollapsedP
   return { ...state, collapsedPinned: !state.collapsedPinned };
 }
 
+export interface ProjectCollapseOptions {
+  /**
+   * Project keys to collapse when this project expands. The caller owns the policy (for example
+   * one project at a time) and passes an empty list when nothing else should close.
+   */
+  collapseOthers: readonly string[];
+}
+
 export function toggleProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
+  options?: ProjectCollapseOptions,
 ): CollapsedProjectsState {
-  const next = new Set(state.collapsedProjectKeys);
-  if (next.has(projectKey)) {
-    next.delete(projectKey);
-  } else {
-    next.add(projectKey);
-  }
-  return { ...state, collapsedProjectKeys: next };
+  return setProjectCollapsed(
+    state,
+    projectKey,
+    !state.collapsedProjectKeys.has(projectKey),
+    options,
+  );
 }
 
 export function toggleWorkspaceGroupCollapsed(
@@ -56,8 +64,12 @@ export function setProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
   collapsed: boolean,
+  options?: ProjectCollapseOptions,
 ): CollapsedProjectsState {
   const next = new Set(state.collapsedProjectKeys);
+  if (!collapsed && options) {
+    for (const key of options.collapseOthers) next.add(key);
+  }
   if (collapsed) {
     next.add(projectKey);
   } else {

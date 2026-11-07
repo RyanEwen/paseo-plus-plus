@@ -1,5 +1,6 @@
 import { SettingsSyncBootstrap } from "@/settings-sync/bootstrap";
 import { AndroidUpdateCalloutSource } from "@/app-updates/callout-source";
+import { SidebarSettingsSyncRegistration } from "@/stores/sidebar-settings-sync";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -894,6 +895,7 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
     <HostRuntimeBootstrapProvider>
       <AccentSettingsAdapter />
       <NotificationOpenBridge />
+      <SidebarSettingsSyncRegistration />
       {/* Feature settings domain adapters (useSettingsDomainAdapter) mount above this line, so
           React runs their registration effects before the settings sync bootstrap loads. */}
       <SettingsSyncBootstrap />

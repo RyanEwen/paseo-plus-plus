@@ -72,3 +72,36 @@ describe("sidebar collapsed projects transitions", () => {
     );
   });
 });
+
+describe("one project at a time", () => {
+  const projectKeys = ["host-a:project-a", "host-b:project-a", "offline:project-b"];
+  const options = { collapseOthers: projectKeys };
+
+  it("expanding B collapses A across hosts while preserving unrelated collapse owners", () => {
+    const initial = {
+      ...emptyState(),
+      collapsedProjectKeys: new Set([projectKeys[1], "unavailable:key"]),
+      collapsedWorkspaceGroupKeys: new Set(["running"]),
+      collapsedPinned: false,
+    };
+    const next = toggleProjectCollapsed(initial, projectKeys[1], options);
+    expect([...next.collapsedProjectKeys].sort()).toEqual(
+      [projectKeys[0], projectKeys[2], "unavailable:key"].sort(),
+    );
+    expect(next.collapsedWorkspaceGroupKeys).toBe(initial.collapsedWorkspaceGroupKeys);
+    expect(next.collapsedPinned).toBe(false);
+    expect(initial.collapsedProjectKeys.has(projectKeys[0])).toBe(false);
+  });
+
+  it("re-collapsing a project opens no other project", () => {
+    const expanded = setProjectCollapsed(emptyState(), projectKeys[1], false, options);
+    const collapsed = toggleProjectCollapsed(expanded, projectKeys[1], options);
+    expect([...collapsed.collapsedProjectKeys].sort()).toEqual([...projectKeys].sort());
+  });
+
+  it("keeps other projects open when the caller passes no projects to collapse", () => {
+    const initial = { ...emptyState(), collapsedProjectKeys: new Set([projectKeys[1]]) };
+    const next = toggleProjectCollapsed(initial, projectKeys[1], { collapseOthers: [] });
+    expect(next.collapsedProjectKeys.size).toBe(0);
+  });
+});

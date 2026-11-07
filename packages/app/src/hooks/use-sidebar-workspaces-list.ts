@@ -168,8 +168,12 @@ export function useSidebarWorkspacesList(options?: {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
       projects,
-      persistedProjectOrder,
-      getWorkspaceOrder: sort === "manual" ? orderStore.getWorkspaceOrder : undefined,
+      // A drop may commit between render and this reconciliation effect.
+      persistedProjectOrder: orderStore.getProjectOrder(),
+      getWorkspaceOrder:
+        sort === "manual"
+          ? (projectViewKey) => orderStore.workspaceOrderByProject[projectViewKey] ?? EMPTY_ORDER
+          : undefined,
     });
 
     if (updates.projectOrder) {

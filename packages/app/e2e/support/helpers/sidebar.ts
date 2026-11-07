@@ -1,6 +1,11 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 import { projectEquivalenceViewKey } from "./project-view-key";
+import {
+  SIDEBAR_VIEW_STORE_VERSION,
+  defaultSidebarModeProfiles,
+  type SidebarModeProfiles,
+} from "../../../src/stores/sidebar-mode-preferences";
 
 interface ContextMenuAnchor {
   x: number;
@@ -230,7 +235,12 @@ export async function openSidebarDisplayPage(page: Page, branchTestID: string): 
   await page.getByTestId(branchTestID).click();
 }
 
-// Project filters live a page below the display-preferences root, like the host filters.
+/** Locate host-backed Sort, excluding the fork's separate project and workspace sort controls. */
+export function sidebarWorkspaceSortMenuItem(page: Page): Locator {
+  return page.getByRole("menuitem").filter({ has: page.getByText("Sort", { exact: true }) });
+}
+
+// The heading chooser owns local host/project filters even when the rich heading is off.
 export async function openSidebarProjectFilter(page: Page): Promise<void> {
   await openSidebarDisplayPage(page, "sidebar-display-project-filter");
 }
@@ -246,14 +256,32 @@ export async function selectAllProjectsFilter(page: Page): Promise<void> {
   await page.getByTestId("sidebar-project-filter-all").click();
 }
 
+/** Dismiss the compact sheet through its backdrop, or the desktop popover with Escape. */
 export async function closeSidebarDisplayPreferences(page: Page): Promise<void> {
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("sidebar-display-preferences-content")).toHaveCount(0);
+  const surfaces = page.locator(
+    '[data-testid="sidebar-display-preferences-content"], [data-testid="sidebar-display-preferences-content-content"], [data-testid="sidebar-project-selector-content"], [data-testid="sidebar-project-selector-content-content"]',
+  );
+  if ((await surfaces.count()) === 0) return;
+  const backdrop = page.getByRole("button", { name: "Bottom sheet backdrop" }).first();
+  if (await backdrop.isVisible()) {
+    await backdrop.click({ position: { x: 12, y: 12 } });
+    await expect(backdrop).not.toBeVisible();
+  } else {
+    await page.keyboard.press("Escape");
+  }
+  await expect(surfaces).toHaveCount(0);
 }
 
 export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
-  await openSidebarDisplayPage(page, "sidebar-display-grouping");
-  await page.getByTestId("sidebar-grouping-status").click();
+  const toggle = page.getByTestId("sidebar-view-mode-toggle");
+  if ((await toggle.getAttribute("aria-checked")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+}
+
+export async function selectSidebarProjectGrouping(page: Page): Promise<void> {
+  const toggle = page.getByTestId("sidebar-view-mode-toggle");
+  if ((await toggle.getAttribute("aria-checked")) !== "false") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
 }
 
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
@@ -327,8 +355,44 @@ export async function expectMobileExplorerHidden(page: Page): Promise<void> {
 export async function revealSidebarProjectWorkspaces(
   page: Page,
   projectKey: string,
+  workspaceId: string,
 ): Promise<void> {
-  await page
-    .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(projectKey)}`)
-    .click();
+  const projectViewKey = projectEquivalenceViewKey(projectKey);
+  const target = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+  const showMore = page
+    .getByTestId(`sidebar-project-show-more-${projectViewKey}`)
+    .and(page.getByLabel("Show more", { exact: true }));
+  await expect(page.getByTestId(`sidebar-project-row-${projectViewKey}`)).toBeVisible();
+  await expect
+    .poll(async () => (await target.isVisible()) || (await showMore.isVisible()))
+    .toBe(true);
+  if (!(await target.isVisible())) await showMore.click();
+  await expect(target).toBeVisible();
+}
+
+/**
+ * Seed the persisted sidebar view before the app loads: default mode profiles adjusted by
+ * `configure`, Project grouping and the given upstream workspace sort.
+ */
+export async function seedSidebarModeProfiles(
+  page: Page,
+  {
+    workspaceSort,
+    configure,
+  }: {
+    workspaceSort: "manual" | "created" | "lastPrompt";
+    configure: (profiles: SidebarModeProfiles) => void;
+  },
+): Promise<void> {
+  const modeProfiles = defaultSidebarModeProfiles();
+  configure(modeProfiles);
+  await page.addInitScript(
+    ({ version, state }) => {
+      localStorage.setItem("sidebar-view", JSON.stringify({ version, state }));
+    },
+    {
+      version: SIDEBAR_VIEW_STORE_VERSION,
+      state: { groupMode: "project", workspaceSort, modeProfiles },
+    },
+  );
 }
