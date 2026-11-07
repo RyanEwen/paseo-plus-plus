@@ -14,6 +14,7 @@ import {
   mainWorkspaceTabRow,
   chooserTabLabel,
   readWorkspaceTabSnapshot,
+  seedLegacyCompactTabSwitcher,
 } from "../support/helpers/workspace-tabs";
 import { composerLocator } from "../support/helpers/composer";
 import { clickSessionRow, expectSessionRowVisible } from "../support/helpers/archive-tab";
@@ -36,10 +37,11 @@ function readTabIdentities(nodes: Element[]): Array<string | null> {
   return nodes.map((node) => node.getAttribute("data-testid"));
 }
 
-/** Change one central feature through its real settings control and restore the workspace route. */
-async function toggleWorkspaceFeature(
+/** Set one central feature through its real settings control and restore the workspace route. */
+async function setWorkspaceFeature(
   page: Page,
   feature: "mobileWorkspaceTabs" | "previousAgents",
+  { enabled }: { enabled: boolean },
 ) {
   const workspacePath = new URL(page.url()).pathname;
   // Compact layouts intentionally disable desktop shortcuts. Use the real
@@ -48,13 +50,9 @@ async function toggleWorkspaceFeature(
   await openSettingsSection(page, "paseo-plus-plus");
   const control = page.getByTestId(`paseo-plus-plus-${feature}`).getByRole("switch");
   await expect(control).toBeVisible();
-  const wasEnabled = await control.isChecked();
+  await expect(control).toBeChecked({ checked: !enabled });
   await control.click();
-  if (wasEnabled) {
-    await expect(control).not.toBeChecked();
-  } else {
-    await expect(control).toBeChecked();
-  }
+  await expect(control).toBeChecked({ checked: enabled });
   await expect(control).toBeEnabled();
   await goBackInSettings(page);
   await closeCompactSettings(page);
@@ -69,6 +67,25 @@ async function readWorkspaceTabIds(page: Page, workspaceId: string) {
 /** Read selection independently of the chooser's count-only trigger. */
 async function readFocusedWorkspaceTabId(page: Page, workspaceId: string) {
   return (await readWorkspaceTabSnapshot(page, workspaceId)).focusedTabId;
+}
+
+/** Find the persisted tab of the seeded agent, whose ID the chooser's row actions are keyed by. */
+async function readAgentTabId(page: Page, session: { workspaceId: string; agentId: string }) {
+  const snapshot = await readWorkspaceTabSnapshot(page, session.workspaceId);
+  const tab = snapshot.tabs.find(
+    (entry) => entry.target.kind === "agent" && entry.target.agentId === session.agentId,
+  );
+  if (!tab) throw new Error("Expected the seeded agent tab");
+  return tab.tabId;
+}
+
+/** Open a seeded agent with the legacy tab chooser instead of the compact strip. */
+async function openWithLegacyChooser(page: Page, session: Parameters<typeof openAgentRoute>[1]) {
+  await seedLegacyCompactTabSwitcher(page);
+  await openAgentRoute(page, session);
+  const switcher = page.getByTestId("workspace-tab-switcher-trigger");
+  await expect(switcher).toBeVisible();
+  return switcher;
 }
 
 /** Wait for all compact overlays to dismiss before a product example capture. */
@@ -187,10 +204,10 @@ test.describe("Workspace session rename (compact tabs)", () => {
     }
   });
 
-  test("legacy opt-out preserves tab IDs and draft content, rename, close, and independent history", async ({
+  test("legacy opt-out preserves the selected tab, tab IDs and draft content", async ({
     page,
   }, testInfo) => {
-    test.setTimeout(150_000);
+    test.setTimeout(120_000);
     await page.setViewportSize(MOBILE_VIEWPORT);
     const session = await seedMockAgentWorkspace({
       title: "Release checklist",
@@ -211,7 +228,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await expectCompactOverlaysClosed(page);
       await page.screenshot({ path: testInfo.outputPath("mobileWorkspaceTabs-on.png") });
 
-      await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
+      await setWorkspaceFeature(page, "mobileWorkspaceTabs", { enabled: false });
       const switcher = page.getByTestId("workspace-tab-switcher-trigger");
       await expect(switcher).toBeVisible();
       await expect(mainWorkspaceTabRow({ page }).getByTestId("workspace-tabs-scroll")).toHaveCount(
@@ -247,19 +264,26 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await switcher.click();
       await chooserTabLabel(page, draftTab.tabId, "New Agent").click();
       await expect(composerLocator(page)).toHaveValue(draftText);
-      await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
+      await setWorkspaceFeature(page, "mobileWorkspaceTabs", { enabled: true });
       await expect(row.getByTestId("workspace-tabs-scroll")).toBeVisible();
       await expect(switcher).toHaveCount(0);
       expect(await readWorkspaceTabSnapshot(page, session.workspaceId)).toEqual(before);
       await expect(composerLocator(page)).toHaveValue(draftText);
+    } finally {
+      await session.cleanup();
+    }
+  });
 
-      await toggleWorkspaceFeature(page, "mobileWorkspaceTabs");
+  test("renames a tab through the legacy chooser", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      title: "Release checklist",
+      repoPrefix: "mobile-tabs-chooser-rename-",
+    });
+    try {
+      const switcher = await openWithLegacyChooser(page, session);
+      const tabId = await readAgentTabId(page, session);
+      const menuBase = `workspace-tab-menu-${tabId}`;
       await switcher.click();
-      const original = before.tabs.find(
-        (tab) => tab.target.kind === "agent" && tab.target.agentId === session.agentId,
-      );
-      if (!original) throw new Error("Expected the original agent tab");
-      const menuBase = `workspace-tab-menu-${original.tabId}`;
       await page.getByTestId(`${menuBase}-trigger`).click();
       await page.getByTestId(`${menuBase}-rename`).click();
       const prefix = `workspace-tab-rename-modal-agent-${session.agentId}`;
@@ -267,27 +291,56 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await renameModalSubmit(page, prefix).click();
       await expect(page.getByText("Rename agent", { exact: true })).not.toBeVisible();
       // The nested rename sheet closes back to the existing chooser.
-      await expect(
-        chooserTabLabel(page, original.tabId, "Renamed through legacy chooser"),
-      ).toBeVisible();
+      await expect(chooserTabLabel(page, tabId, "Renamed through legacy chooser")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("closes a tab through the legacy chooser and reopens it from history", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      title: "Release checklist",
+      repoPrefix: "mobile-tabs-chooser-close-",
+    });
+    try {
+      const switcher = await openWithLegacyChooser(page, session);
+      const tabId = await readAgentTabId(page, session);
+      await page.getByTestId("workspace-header-menu-trigger").click();
+      await page.getByTestId("workspace-header-new-agent").click();
+      await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
+      const draftTabId = await readFocusedWorkspaceTabId(page, session.workspaceId);
+      if (!draftTabId || draftTabId === tabId) throw new Error("Expected the new draft selected");
+
+      const menuBase = `workspace-tab-menu-${tabId}`;
+      await switcher.click();
       await page.getByTestId(`${menuBase}-trigger`).click();
       await page.getByTestId(`${menuBase}-close`).click();
-      await expect
-        .poll(() => readWorkspaceTabIds(page, session.workspaceId))
-        .not.toContain(original.tabId);
+      await expect.poll(() => readWorkspaceTabIds(page, session.workspaceId)).not.toContain(tabId);
       // The full-height chooser has no exposed backdrop. Select the remaining draft instead.
-      await chooserTabLabel(page, draftTab.tabId, "New Agent").click();
+      await chooserTabLabel(page, draftTabId, "New Agent").click();
       await expectCompactOverlaysClosed(page);
+
       await page.getByTestId("workspace-header-menu-trigger").click();
       await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
-      await expectSessionRowVisible(page, "Renamed through legacy chooser");
-      await clickSessionRow(page, "Renamed through legacy chooser");
+      await expectSessionRowVisible(page, "Release checklist");
+      await clickSessionRow(page, "Release checklist");
       await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
-      await expect
-        .poll(() => readFocusedWorkspaceTabId(page, session.workspaceId))
-        .toBe(original.tabId);
+      await expect.poll(() => readFocusedWorkspaceTabId(page, session.workspaceId)).toBe(tabId);
+    } finally {
+      await session.cleanup();
+    }
+  });
 
-      await toggleWorkspaceFeature(page, "previousAgents");
+  test("keeps New agent in the compact header menu when Previous agents is off", async ({
+    page,
+  }) => {
+    const session = await seedMockAgentWorkspace({
+      title: "Release checklist",
+      repoPrefix: "mobile-tabs-chooser-history-off-",
+    });
+    try {
+      const switcher = await openWithLegacyChooser(page, session);
+      await setWorkspaceFeature(page, "previousAgents", { enabled: false });
       await expect(switcher).toBeVisible();
       await page.getByTestId("workspace-header-menu-trigger").click();
       await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);

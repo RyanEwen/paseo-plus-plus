@@ -332,16 +332,3 @@ export async function revealSidebarProjectWorkspaces(
     .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(projectKey)}`)
     .click();
 }
-
-export async function seedLegacyCompactTabSwitcher(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const settings = JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}");
-    localStorage.setItem(
-      "@paseo:app-settings",
-      JSON.stringify({
-        ...settings,
-        paseoPlusPlus: { ...settings.paseoPlusPlus, mobileWorkspaceTabs: false },
-      }),
-    );
-  });
-}

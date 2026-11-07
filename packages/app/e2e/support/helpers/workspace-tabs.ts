@@ -47,6 +47,20 @@ export async function readWorkspaceTabSnapshot(page: Page, workspaceId: string) 
   };
 }
 
+/** Start the app with Mobile workspace tabs off, for flows that exercise the legacy tab chooser. */
+export async function seedLegacyCompactTabSwitcher(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const settings = JSON.parse(localStorage.getItem("@paseo:app-settings") ?? "{}");
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({
+        ...settings,
+        paseoPlusPlus: { ...settings.paseoPlusPlus, mobileWorkspaceTabs: false },
+      }),
+    );
+  });
+}
+
 export async function getWorkspaceTabTestIds(page: Page): Promise<string[]> {
   const tabs = page.locator('[data-testid^="workspace-tab-"]');
   const count = await tabs.count();
