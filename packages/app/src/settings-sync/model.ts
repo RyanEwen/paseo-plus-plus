@@ -92,6 +92,17 @@ export class SettingsSyncModel {
   getGeneration(): number {
     return this.generation;
   }
+
+  /**
+   * True when edits belong to this device alone: local sync state has loaded, no host is
+   * selected and no selection is in progress. That includes a failed selection, which left the
+   * persisted choice unchanged. A failed local read leaves the selection unknown, so it never
+   * counts.
+   */
+  editsStayOnDevice(): boolean {
+    const settled = this.state.status === "local" || this.state.status === "error";
+    return this.hydrated && this.state.selectedHost === null && settled;
+  }
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

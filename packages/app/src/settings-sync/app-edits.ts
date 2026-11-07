@@ -19,8 +19,10 @@ export function createSyncedAppSettingsSave(
 ) {
   let queue: Promise<unknown> = Promise.resolve();
   return async (queryClient: QueryClient, updates: AppSettingsUpdate): Promise<boolean> => {
-    const starting = model.getState();
-    if (starting.status === "local") return false;
+    // A save can arrive before the bootstrap loads sync state; load it first so a device with no
+    // selected host keeps using ordinary local storage instead of failing.
+    if (model.getState().status === "loading") await model.load();
+    if (model.editsStayOnDevice()) return false;
     const generation = model.getGeneration();
     const result = queue.then(() => saveEdit(queryClient, updates, generation));
     queue = result.catch(() => undefined);
