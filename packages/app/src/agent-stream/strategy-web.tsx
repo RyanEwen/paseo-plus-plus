@@ -1,4 +1,3 @@
-import { resolvePromptHandoffProgress, type PromptHandoff } from "./prompt-handoff";
 import React, {
   type CSSProperties,
   useCallback,
@@ -761,7 +760,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!scrollContainer || !contentNode) {
       onReadingPositionChange({
         rowId: null,
-        visibleUserIds: [],
         navigating: false,
         following: followOutputRef.current,
         manual: manualReadingRef.current,
@@ -770,36 +768,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
     const viewport = scrollContainer.getBoundingClientRect();
     if (viewport.width <= 0 || viewport.height <= 0) return;
-    const visibleUsers: string[] = [];
-    const userHandoffs: PromptHandoff[] = [];
-    for (const bubble of props.trackPromptHandoff === false
-      ? []
-      : contentNode.querySelectorAll<HTMLElement>('[data-testid="user-message"]')) {
-      const body = bubble.querySelector<HTMLElement>('[data-testid="user-message-bubble"]');
-      const bounds = (body ?? bubble).getBoundingClientRect();
-      const id = bubble.closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
-      if (id && bounds.width > 0 && bounds.height > 0) {
-        if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) visibleUsers.push(id);
-        const progress = resolvePromptHandoffProgress(bounds.top - viewport.top);
-        const { prefixHeightOne, prefixHeightTwo } = measurePromptTextPrefix(bubble);
-        userHandoffs.push({
-          id,
-          progress,
-          top: bounds.top - viewport.top,
-          left: bounds.left - viewport.left,
-          width: bounds.width,
-          height: bounds.height,
-          viewportWidth: viewport.width,
-          prefixHeightOne,
-          prefixHeightTwo,
-        });
-      }
-    }
     onReadingPositionChange({
-      viewportWidth: viewport.width,
       rowId: readingAnchor.getReadingRowId(scrollContainer.scrollTop),
-      visibleUserIds: visibleUsers,
-      userHandoffs,
       navigating: isJumpSettling(),
       following: followOutputRef.current,
       manual: manualReadingRef.current,
@@ -1574,16 +1544,4 @@ export function createWebStreamStrategy(input: CreateWebStreamStrategyInput): St
     },
     getBottomOffset: (metrics) => Math.max(0, metrics.contentHeight - metrics.viewportHeight),
   });
-}
-
-/** Read actual source line boxes without estimating wrapping from message length. */
-function measurePromptTextPrefix(bubble: HTMLElement) {
-  const text = bubble.querySelector<HTMLElement>('[data-testid="user-message-text"]');
-  // The renderer supplies an explicit line-height. This is the actual CSS line box,
-  // not a character-count or wrapping estimate; the source text remains unbounded.
-  const lineHeight = text ? Number.parseFloat(window.getComputedStyle(text).lineHeight) : 0;
-  const textHeight = text?.clientHeight ?? 0;
-  const prefixHeightOne = Number.isFinite(lineHeight) ? Math.min(textHeight, lineHeight) : 0;
-  const prefixHeightTwo = Number.isFinite(lineHeight) ? Math.min(textHeight, lineHeight * 2) : 0;
-  return { prefixHeightOne, prefixHeightTwo };
 }

@@ -10,9 +10,6 @@ describe("createPromptReadingPublisher", () => {
     expect(reading.getSnapshot()).toEqual({
       rowId: "row-1",
       seq: null,
-      viewportWidth: null,
-      visibleUserIds: [],
-      userHandoffs: [],
       navigating: false,
       following: false,
       manual: true,
@@ -24,9 +21,9 @@ describe("createPromptReadingPublisher", () => {
     const listener = vi.fn();
     reading.subscribe(listener);
 
-    reading.publish({ rowId: "row-1", visibleUserIds: ["user-1"], seq: 4 });
-    reading.publish({ rowId: "row-1", visibleUserIds: ["user-1"], seq: 4 });
-    reading.publish({ rowId: "row-1", visibleUserIds: ["user-2"], seq: 4 });
+    reading.publish({ rowId: "row-1", seq: 4 });
+    reading.publish({ rowId: "row-1", seq: 4 });
+    reading.publish({ rowId: "row-2", seq: 4 });
 
     expect(listener).toHaveBeenCalledTimes(2);
   });

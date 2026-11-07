@@ -19,11 +19,6 @@ import {
   mergeCachedPromptTarget,
   resolveReadingPromptTarget,
   getMissingReadingPromptSeq,
-  isStickyPromptVisible,
-  resolveStickyReadingTarget,
-  resolveStickyPromptProgress,
-  resolvePromptOcclusionTop,
-  resolvePromptGeometry,
   shouldReadContext,
   resolveContextMessage,
   shouldDiscoverCachedPrompt,
@@ -447,8 +442,6 @@ export function useStickyPrompt(input: StickyPromptInput) {
     // The reading-content owner independently cancels old epoch completions without
     // suppressing the new epoch's same-sequence request.
   }, [epoch, enabled, cancelStickyJump, cancelDiscovery, restartDiscovery]);
-  const { geometry, sourceMounted } = usePromptGeometry(message?.id, reading, epoch);
-  const stickyProgress = resolveStickyPromptProgress(message, reading);
   const busy = isPromptNavigationBusy({
     pending: pending !== null || readingContent.loading,
     jumping: outline.isJumping,
@@ -477,21 +470,9 @@ export function useStickyPrompt(input: StickyPromptInput) {
   return {
     actionVisibleMessageId: resolveActionVisibleMessageId(targets, actionVisibilityKey),
     message,
-    stickyProgress,
-    geometry,
-    sourceMounted,
-    occlusionTop: resolvePromptOcclusionTop(targets, position, reading),
     targets,
     previousKnownBoundary: indexed ? outline.indexReady : !hasOlder,
     activate,
-    stickyVisible:
-      enabled &&
-      isStickyPromptVisible(
-        message,
-        resolveStickyReadingTarget(readingTarget, targets, position),
-        reading.rowId,
-        stickyProgress,
-      ),
     discoveryStatus: discovery.status,
     cancelled,
     busy,
@@ -553,33 +534,6 @@ function isFailedPromptMaterialization(input: PromptMaterializationStatus): bool
     (!input.indexed && !input.hasOlder && !input.loadingOlder) ||
     ["error", "limited", "exhausted"].includes(input.status)
   );
-}
-
-/** Retain measured bubble geometry through virtualization, but discard it after a pane resize. */
-function usePromptGeometry(
-  messageId: string | undefined,
-  reading: PromptReadingPosition,
-  epoch: string | null,
-) {
-  const currentGeometry = resolvePromptGeometry(
-    reading.userHandoffs?.find((frame) => frame.id === messageId),
-    reading.viewportWidth,
-  );
-  const lastGeometry = useRef<{
-    epoch: string | null;
-    geometry: ReturnType<typeof resolvePromptGeometry>;
-  } | null>(null);
-  useLayoutEffect(() => {
-    if (currentGeometry) lastGeometry.current = { epoch, geometry: currentGeometry };
-  }, [currentGeometry, epoch]);
-  const cachedGeometry =
-    lastGeometry.current?.epoch === epoch ? lastGeometry.current.geometry : undefined;
-  const geometry =
-    currentGeometry ??
-    (cachedGeometry?.id === messageId && cachedGeometry?.viewportWidth === reading.viewportWidth
-      ? cachedGeometry
-      : undefined);
-  return { geometry, sourceMounted: currentGeometry !== undefined };
 }
 
 /** Hide previous-epoch bookkeeping before the layout effect clears its stored values. */

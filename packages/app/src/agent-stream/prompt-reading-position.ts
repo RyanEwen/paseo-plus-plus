@@ -1,14 +1,9 @@
-import type { PromptHandoff } from "./prompt-handoff";
-
 export interface PromptReadingPosition {
   rowId: string | null;
-  viewportWidth?: number | null;
   seq?: number | null;
   navigating: boolean;
   following: boolean;
   manual: boolean;
-  visibleUserIds: readonly string[];
-  userHandoffs?: readonly PromptHandoff[];
 }
 
 /** A reading sample; omitted fields take the defaults of a manual, unmeasured sample. */
@@ -25,8 +20,6 @@ export function createPromptReadingPublisher() {
   let snapshot: PromptReadingPosition = {
     rowId: null,
     seq: null,
-    userHandoffs: [],
-    visibleUserIds: [],
     navigating: false,
     following: false,
     manual: false,
@@ -41,34 +34,18 @@ export function createPromptReadingPublisher() {
       };
     },
     publish(update: PromptReadingUpdate) {
-      const {
-        rowId,
-        visibleUserIds = [],
-        navigating = false,
-        following = false,
-        manual = true,
-        seq = null,
-        userHandoffs = [],
-        viewportWidth = null,
-      } = update;
+      const { rowId, navigating = false, following = false, manual = true, seq = null } = update;
       if (
-        sameHandoffs(snapshot.userHandoffs ?? [], userHandoffs) &&
-        snapshot.viewportWidth === viewportWidth &&
         snapshot.seq === seq &&
         snapshot.manual === manual &&
         snapshot.following === following &&
         snapshot.navigating === navigating &&
-        snapshot.rowId === rowId &&
-        snapshot.visibleUserIds.length === visibleUserIds.length &&
-        snapshot.visibleUserIds.every((id, index) => id === visibleUserIds[index])
+        snapshot.rowId === rowId
       )
         return;
       snapshot = {
         rowId,
         seq,
-        viewportWidth,
-        visibleUserIds,
-        userHandoffs,
         navigating,
         following,
         manual,
@@ -79,22 +56,3 @@ export function createPromptReadingPublisher() {
 }
 
 export const EMPTY_PROMPT_READING_SOURCE: PromptReadingSource = createPromptReadingPublisher();
-
-/** Geometry changes only wake the compact surface; unchanged scroll samples are ignored. */
-function sameHandoffs(left: readonly PromptHandoff[], right: readonly PromptHandoff[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every(
-      (value, index) =>
-        value.id === right[index]?.id &&
-        value.progress === right[index]?.progress &&
-        value.top === right[index]?.top &&
-        value.left === right[index]?.left &&
-        value.width === right[index]?.width &&
-        value.height === right[index]?.height &&
-        value.viewportWidth === right[index]?.viewportWidth &&
-        value.prefixHeightOne === right[index]?.prefixHeightOne &&
-        value.prefixHeightTwo === right[index]?.prefixHeightTwo,
-    )
-  );
-}

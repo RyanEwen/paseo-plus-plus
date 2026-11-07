@@ -46,9 +46,6 @@ const VIRTUAL_ROW_STYLE = { height: 24 };
 
 // A measurable viewport following output reports ownership as well as the row identity.
 const FOLLOWING_READING_POSITION = {
-  viewportWidth: 500,
-  visibleUserIds: [],
-  userHandoffs: [],
   navigating: false,
   following: true,
   manual: false,

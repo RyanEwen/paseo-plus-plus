@@ -1154,8 +1154,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [streamLayout.liveHead]);
 
     const handleReadingPositionChange = useStableEvent((position: PromptReadingPosition) => {
-      const { rowId, visibleUserIds, navigating, following, manual, userHandoffs, viewportWidth } =
-        position;
+      const { rowId, navigating, following, manual } = position;
       const row =
         rowId === null
           ? undefined
@@ -1166,13 +1165,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       // authoritative position before publishing to surfaces that hold canonical prompts.
       promptReading.publish({
         rowId,
-        visibleUserIds,
         navigating,
         following,
         manual,
         seq,
-        userHandoffs,
-        viewportWidth,
       });
       if (manual && !wasManual) stickyPromptRef.current?.reviewReading();
       chatOutline.reportReadingPosition(seq);
@@ -1317,7 +1313,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     isAuthoritativeHistoryReady,
                     onNearBottomChange: setIsNearBottom,
                     onMessageNavigationError: chatOutline.reportJumpError,
-                    trackPromptHandoff: stickyEnabled,
                     onReadingPositionChange: handleReadingPositionChange,
                     onNearHistoryStart: loadOlder,
                     isLoadingOlderHistory: isLoadingOlder,

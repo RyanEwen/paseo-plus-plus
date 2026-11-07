@@ -1,6 +1,5 @@
 import { coversCanonicalInterval } from "@/timeline/canonical-reading-source";
 import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
-import type { PromptHandoff } from "./prompt-handoff";
 import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
@@ -179,16 +178,6 @@ export function getMissingReadingPromptSeq(input: {
   return input.target?.seq;
 }
 
-/** Paint the pinned prefix only after its original bubble reaches the viewport edge. */
-export function isStickyPromptVisible(
-  message: UserPrompt | undefined,
-  target: PromptTarget | undefined,
-  rowId: string | null,
-  progress: number,
-): boolean {
-  return rowId !== null && !!message && !!target && progress > 0;
-}
-
 /** Discovery may also begin before the first loaded user message exists. */
 export function shouldDiscoverPrompt(input: {
   previous: boolean;
@@ -246,58 +235,6 @@ export function resolveStickyPromptMessage(input: {
   if (readingMissing) return undefined;
   if (missingSeq !== undefined && canFetch) return fetched;
   return selected;
-}
-
-/** The compact copy owns the leading pixels once the original bubble reaches the top. */
-export function resolveStickyPromptProgress(
-  message: UserPrompt | undefined,
-  reading: PromptReadingPosition,
-): number {
-  if (!message || reading.rowId === null) return 0;
-  const handoff = reading.userHandoffs?.find((value) => value.id === message.id);
-  if (handoff) return handoff.progress;
-  return reading.visibleUserIds.includes(message.id) ? 0 : 1;
-}
-
-/** Clip the older overlay where the next original prompt enters. This gives the newer
- * bubble precedence on every platform without changing virtualized row stacking contexts.
- */
-export function resolvePromptOcclusionTop(
-  targets: readonly PromptTarget[],
-  position: number,
-  reading: PromptReadingPosition,
-): number | undefined {
-  const laterIds = new Set(
-    targets.slice(position + 1).flatMap((target) => (target.item ? [target.item.id] : [])),
-  );
-  const tops = (reading.userHandoffs ?? [])
-    .filter((value) => laterIds.has(value.id) && value.top !== undefined && value.top >= 0)
-    .map((value) => value.top!);
-  return tops.length ? Math.min(...tops) : undefined;
-}
-
-/** Accept only real source-bubble measurements; unknown/index-only prompts retain the rail. */
-export function resolvePromptGeometry(
-  frame: PromptHandoff | undefined,
-  viewportWidth?: number | null,
-) {
-  if (
-    frame?.left === undefined ||
-    frame.width === undefined ||
-    frame.viewportWidth === undefined ||
-    frame.width <= 0 ||
-    frame.viewportWidth <= 0
-  )
-    return undefined;
-  if (viewportWidth && frame.viewportWidth !== viewportWidth) return undefined;
-  return {
-    id: frame.id,
-    left: frame.left,
-    width: frame.width,
-    viewportWidth: frame.viewportWidth,
-    prefixHeightOne: frame.prefixHeightOne,
-    prefixHeightTwo: frame.prefixHeightTwo,
-  };
 }
 
 /** Published reading geometry owns physical context even while following output.
@@ -439,13 +376,4 @@ export function hasDiscoveredCachedPrompt(input: {
 /** Missing canonical identity is an actionable error, never a guessed source cursor. */
 export function isContextSourceMissing(requested: boolean, source: StreamItem | undefined) {
   return requested && !source;
-}
-
-/** A cache-resolved reading prompt can be pinned while its original is outside the loaded window. */
-export function resolveStickyReadingTarget(
-  target: PromptTarget | undefined,
-  targets: readonly PromptTarget[],
-  position: number,
-) {
-  return target ?? targets[position];
 }
