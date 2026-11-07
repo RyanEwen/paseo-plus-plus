@@ -3,7 +3,7 @@ import type { PaseoPlusPlusFeature } from "./preferences";
 
 /** Original app captures with contextual display frames. Android checks have text help only. */
 export const FEATURE_EXAMPLE_IMAGES: Partial<
-  Record<PaseoPlusPlusFeature | "descriptiveToolCalls", readonly SettingsExampleImage[]>
+  Record<PaseoPlusPlusFeature, readonly SettingsExampleImage[]>
 > = {
   descriptiveToolCalls: [
     {
@@ -64,6 +64,11 @@ export const FEATURE_EXAMPLE_IMAGES: Partial<
       outlines: [{ left: 74, top: 319, width: 245, height: 27 }],
     },
   ],
+};
+
+/** Extra help text appended after a feature's hint in its example tip. */
+export const FEATURE_EXAMPLE_CAPTION_KEYS: Partial<Record<PaseoPlusPlusFeature, string>> = {
+  sidebarWorkspaceTransitions: "paseoPlusPlus.examples.positions",
 };
 
 /** Shared preference help slots stay empty until genuine captures are qualified. */

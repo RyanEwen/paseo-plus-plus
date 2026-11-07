@@ -5,6 +5,7 @@ import type {
   ReplicaRowExpectation,
   ReplicaRowStore,
 } from "./row-store";
+import { matchesRowExpectation } from "./row-store-expectation";
 import { REPLICA_ROW_STORE_SCHEMA_VERSION } from "./row-store-schema";
 
 export type {
@@ -190,12 +191,7 @@ export function createIndexedDbReplicaRowStore(
         const current = await requestResult<ReplicaRow | undefined>(
           rows.get([condition.serverId, condition.kind, condition.id]),
         );
-        if (
-          condition.payload === null
-            ? current !== undefined
-            : current === undefined || current.payload !== condition.payload
-        )
-          return;
+        if (!matchesRowExpectation(current, condition)) return;
       }
       for (const key of changes.deletes) {
         await requestResult(rows.delete([key.serverId, key.kind, key.id]));

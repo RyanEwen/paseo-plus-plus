@@ -1,13 +1,12 @@
-import { isSyncedSettingsPath as isProtocolSyncedSettingsPath } from "@getpaseo/protocol/app-settings-values";
+import {
+  isSettingsObject,
+  isSyncedSettingsPath as isProtocolSyncedSettingsPath,
+} from "@getpaseo/protocol/app-settings-values";
 import type { AppSettingsPatch } from "@getpaseo/protocol/app-settings";
-import { isSettingsObject } from "@getpaseo/protocol/app-settings-values";
 import {
   DEVICE_LOCAL_APP_SETTING_KEYS,
   DEVICE_LOCAL_FORK_SETTING_KEYS,
 } from "@/paseo-plus-plus/device-local-settings";
-
-// The device-local key lists live in the fork-base registry; each feature owns its own entry.
-export { DEVICE_LOCAL_APP_SETTING_KEYS, DEVICE_LOCAL_FORK_SETTING_KEYS };
 
 /** Keep old host documents readable; clients stop sending and applying device-specific leaves. */
 export function isSyncedSettingsPath(path: readonly string[]): boolean {

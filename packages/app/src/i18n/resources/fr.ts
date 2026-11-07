@@ -121,7 +121,7 @@ export const fr: TranslationResources = {
         hint: "Épingle un message compact avec développement et navigation précédent/suivant. Les messages ordinaires restent déployés et le chargement ne masque jamais un message disponible.",
       },
       previousAgents: {
-        label: "Agents précédents",
+        label: "Rouvrir un agent fermé",
         hint: "Rouvre les conversations fermées ou archivées depuis le menu + de l’espace de travail",
       },
       sidebarActivityChips: {
@@ -520,8 +520,7 @@ export const fr: TranslationResources = {
   sessions: {
     previousTitle: "Rouvrir un agent fermé",
     previousEmpty: "Aucun agent précédent dans cet espace de travail",
-    workspaceHistoryUpdateRequired:
-      "Mettez cet hôte à jour pour voir les agents précédents de cet espace de travail.",
+    workspaceHistoryUpdateRequired: "Mettez cet hôte à jour pour rouvrir les agents fermés.",
 
     title: "Historique",
     empty: "Aucune session pour l’instant",

@@ -323,6 +323,8 @@ test("project pin menu persists, syncs, and switches exclusively with global pin
     expect((await readPin())?.pinnedAt).toBeNull();
     await expect(pinnedSection(page)).toHaveCount(0);
     await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
+    const projectPinMarker = page.getByTestId(`sidebar-project-pin-icon-${key}`);
+    await expect(projectPinMarker).toBeVisible();
     const ids = await page
       .locator('[data-testid^="sidebar-workspace-row-"]')
       .evaluateAll((rows) => rows.map((row) => row.getAttribute("data-testid")));
@@ -340,6 +342,8 @@ test("project pin menu persists, syncs, and switches exclusively with global pin
     await page.getByTestId(`sidebar-workspace-menu-pin-${key}`).click();
     await expect(pinnedSection(page)).toBeVisible();
     await expect.poll(async () => (await readPin())?.projectPinnedAt).toBeNull();
+    // A global pin alone shows no project pin marker.
+    await expect(projectPinMarker).toHaveCount(0);
     await openWorkspaceContextMenu(page, workspace.workspaceId);
     await page.getByTestId(`sidebar-workspace-menu-project-pin-${key}`).click();
     await expect(pinnedSection(page)).toHaveCount(0);

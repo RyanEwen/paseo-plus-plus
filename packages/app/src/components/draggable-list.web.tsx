@@ -18,7 +18,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { PositionTransition } from "./drag-reorder/position-transition.web";
-import { usePositionTransitionDuration } from "./drag-reorder/use-position-transition";
+import { usePositionTransitionDuration } from "./drag-reorder/use-position-transition-duration";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
@@ -273,13 +273,11 @@ export function DraggableList<T>({
     () => items.map((item, index) => keyExtractor(item, index)),
     [items, keyExtractor],
   );
-  const motionKeys = items.flatMap((item, index) => {
-    if (getDragGroupKey && getDragGroupKey(item) === null) return [];
-    return [keyExtractor(item, index)];
-  });
   const motionDuration = usePositionTransitionDuration({
-    duration: positionTransitionDuration ?? 0,
-    keys: motionKeys,
+    data: items,
+    keyExtractor,
+    getDragGroupKey,
+    duration: positionTransitionDuration,
     dragging: activeId !== null,
   });
   const positionRevision = useMemo(

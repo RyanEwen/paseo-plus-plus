@@ -16,6 +16,7 @@ import type {
   ReplicaRowExpectation,
   ReplicaRowStore,
 } from "./row-store";
+import { matchesRowExpectation } from "./row-store-expectation";
 
 const SERVER_ID = "cached-host";
 
@@ -105,13 +106,7 @@ class MemoryStorage implements ReplicaRowStore {
     this.beforeConditionalApply = null;
     await before?.();
     for (const condition of expected) {
-      const current = this.rows.get(this.key(condition));
-      if (
-        condition.payload === null
-          ? current !== undefined
-          : current === undefined || current.payload !== condition.payload
-      )
-        return false;
+      if (!matchesRowExpectation(this.rows.get(this.key(condition)), condition)) return false;
     }
     await this.apply(changes);
     return true;
