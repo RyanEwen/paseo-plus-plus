@@ -200,6 +200,17 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
   timestamp: "sidebar.display.show.timestamp",
 };
 
+/** Prefix a page with the reason edits are disabled, when there is one. */
+function withDisabledHint(reason: string | null, content: ReactNode): ReactNode {
+  if (!reason) return content;
+  return (
+    <>
+      <MenuHint>{reason}</MenuHint>
+      {content}
+    </>
+  );
+}
+
 /**
  * What the sidebar shows and how it is arranged.
  *
@@ -359,22 +370,17 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         ),
       });
     }
-    for (const page of definitions) {
-      page.content = (
-        <>
-          {preferences.preferencesDisabledReason ? (
-            <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
-          ) : null}
-          {page.content}
-        </>
-      );
-    }
-    return definitions;
+    return definitions.map((page) => ({
+      ...page,
+      content: withDisabledHint(preferences.preferencesDisabledReason, page.content),
+    }));
   }, [t, preferences, workspaceSortSupported, showLabelFilter, labels, openManager]);
 
   return (
     <>
       <PreferencesDisabledContext.Provider value={preferences.preferencesDisabled}>
+        {/* Remount on a mode switch or when edits become blocked: open pages and drafts belong
+            to one mode's profile and must not carry over to the other or into a blocked state. */}
         <MenuRoot
           key={`${preferences.grouping}:${preferences.preferencesDisabled}`}
           compactMode="sheet"
