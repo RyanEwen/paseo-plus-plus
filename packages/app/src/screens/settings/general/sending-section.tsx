@@ -13,7 +13,7 @@ const SEND_BEHAVIORS: readonly SendBehavior[] = ["interrupt", "steer", "queue"];
 
 export function SendingSection() {
   const { t } = useTranslation();
-  const { settings, save, pending, failed, isLoading, error } = useSettingsSave<
+  const { settings, save, pending, failed, isLoading, isEditingBlocked, error } = useSettingsSave<
     "sendBehavior" | "sendShortcut"
   >();
   const { selectedHost } = useSettingsSyncState();
@@ -51,7 +51,9 @@ export function SendingSection() {
           <SettingsSelect
             label={t("settings.general.sendShortcut.label")}
             hint={supported ? undefined : t("settings.general.chatDisplay.updateHost")}
-            disabled={!supported || isLoading || pending !== null || error !== null}
+            disabled={
+              !supported || isLoading || isEditingBlocked || pending !== null || error !== null
+            }
             error={failed === "sendShortcut" ? t("paseoPlusPlus.saveFailed") : undefined}
             value={settings.sendShortcut}
             options={shortcutOptions}
@@ -60,7 +62,7 @@ export function SendingSection() {
         ) : null}
         <SettingsSelect
           label={t("settings.general.defaultSend.label")}
-          disabled={isLoading || pending !== null || error !== null}
+          disabled={isLoading || isEditingBlocked || pending !== null || error !== null}
           error={failed === "sendBehavior" ? t("paseoPlusPlus.saveFailed") : undefined}
           hint={t(
             shortcutsAvailable && settings.sendShortcut === "mod-enter"

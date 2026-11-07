@@ -20,7 +20,7 @@ export function ChatSection() {
   const { t } = useTranslation();
   const { selectedHost } = useSettingsSyncState();
   const supported = useSessionStore((state) => selectChatPreferencesSupport(state, selectedHost));
-  const { settings, save, pending, failed, isLoading, error } = useSettingsSave<
+  const { settings, save, pending, failed, isLoading, isEditingBlocked, error } = useSettingsSave<
     "chatDisplay" | "autoExpandReasoning" | "chatOutlineEnabled"
   >();
 
@@ -63,7 +63,9 @@ export function ChatSection() {
                 ? "settings.general.chatDisplay.description"
                 : "settings.general.chatDisplay.updateHost",
             )}
-            disabled={!supported || isLoading || pending !== null || error !== null}
+            disabled={
+              !supported || isLoading || isEditingBlocked || pending !== null || error !== null
+            }
             error={failed === "chatDisplay" ? t("paseoPlusPlus.saveFailed") : undefined}
             value={settings.chatDisplay}
             options={chatDisplayOptions}
