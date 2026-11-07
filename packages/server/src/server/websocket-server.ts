@@ -137,7 +137,6 @@ import {
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
 export interface ExternalSocketMetadata {
-  acknowledgedBinary?: boolean;
   transport: "relay" | "hub";
   externalSessionKey?: string;
   relayConnectionId?: string;
@@ -1488,7 +1487,9 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
-    if (request || metadata?.acknowledgedBinary === true) this.acknowledgedBinarySockets.add(ws);
+    // Direct and relay sockets await each binary send, so they can carry original reads.
+    // Hub and plugin sockets keep metadata-only attachment access.
+    if (request || metadata?.transport === "relay") this.acknowledgedBinarySockets.add(ws);
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
