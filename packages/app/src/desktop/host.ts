@@ -111,6 +111,8 @@ export interface DesktopWindowChromeUpdate {
 }
 
 export interface DesktopWindowBridge {
+  /** Native host zoom, independent of monitor scale and guest page zoom. */
+  getZoomFactor?: () => number;
   label?: string;
   minimize?: () => Promise<void>;
   close?: () => Promise<void>;
@@ -157,6 +159,7 @@ export interface DesktopAttachedBrowserRegistration {
 }
 
 export interface DesktopBrowserBridge {
+  extensions?: DesktopBrowserExtensionsBridge;
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;
@@ -178,6 +181,44 @@ export interface DesktopBrowserBridge {
   ) => Promise<string | null>;
   /** Copy element text and/or an image to the system clipboard from main. */
   copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;
+}
+
+/** Desktop-owned browser extension catalog and toolbar actions, exposed by the preload. */
+export interface DesktopBrowserExtensionsBridge {
+  list(): Promise<DesktopBrowserExtension[]>;
+  actions(browserId: string): Promise<DesktopBrowserExtensionAction[]>;
+  setPinned(id: string, pinned: boolean): Promise<void>;
+  onChanged(handler: () => void): () => void;
+  openPopup(id: string, browserId: string): Promise<void>;
+  setEnabled(id: string, enabled: boolean): Promise<void>;
+  remove(id: string): Promise<void>;
+  loadUnpacked(): Promise<void>;
+  openStore(): Promise<void>;
+}
+
+/** Mirrors `BrowserExtensionListing` in packages/desktop/src/features/browser-extensions/contracts.ts. */
+export interface DesktopBrowserExtension {
+  id: string;
+  name: string;
+  version: string;
+  source: "store" | "unpacked";
+  enabled: boolean;
+  error?: string;
+}
+
+/** Mirrors `BrowserExtensionAction` in packages/desktop/src/features/browser-extensions/contracts.ts. */
+export interface DesktopBrowserExtensionAction {
+  badge?: {
+    text: string;
+    backgroundColor: [number, number, number, number] | null;
+    textColor: [number, number, number, number] | null;
+  };
+  pinned: boolean;
+  title: string;
+  iconDataUrl: string | null;
+  id: string;
+  name: string;
+  hasPopup: boolean;
 }
 
 export interface DesktopInvokeBridge {

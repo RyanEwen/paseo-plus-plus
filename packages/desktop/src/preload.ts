@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
 
@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     openNew: (options?: { pendingOpenProjectPath?: string | null }) =>
       ipcRenderer.invoke("paseo:window:openNew", options),
     getCurrentWindow: () => ({
+      getZoomFactor: () => webFrame.getZoomFactor(),
       minimize: () => ipcRenderer.invoke("paseo:window:minimize"),
       close: () => ipcRenderer.invoke("paseo:window:close"),
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
@@ -115,6 +116,25 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
   },
   browser: {
+    extensions: {
+      list: () => ipcRenderer.invoke("paseo:browser:extensions:list"),
+      actions: (browserId: string) =>
+        ipcRenderer.invoke("paseo:browser:extensions:actions", { browserId }),
+      setPinned: (id: string, pinned: boolean) =>
+        ipcRenderer.invoke("paseo:browser:extensions:set-pinned", { id, pinned }),
+      onChanged: (handler: () => void): (() => void) => {
+        const listener = () => handler();
+        ipcRenderer.on("paseo:browser:extensions:changed", listener);
+        return () => ipcRenderer.removeListener("paseo:browser:extensions:changed", listener);
+      },
+      openPopup: (id: string, browserId: string) =>
+        ipcRenderer.invoke("paseo:browser:extensions:open-popup", { id, browserId }),
+      setEnabled: (id: string, enabled: boolean) =>
+        ipcRenderer.invoke("paseo:browser:extensions:set-enabled", { id, enabled }),
+      remove: (id: string) => ipcRenderer.invoke("paseo:browser:extensions:remove", id),
+      loadUnpacked: () => ipcRenderer.invoke("paseo:browser:extensions:load-unpacked"),
+      openStore: () => ipcRenderer.invoke("paseo:browser:extensions:open-store"),
+    },
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,

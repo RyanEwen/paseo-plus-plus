@@ -77,6 +77,7 @@ import {
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
+  configurePaseoBrowserIdentity,
   getLegacyPaseoBrowserProfileSession,
   PASEO_BROWSER_PROFILE_PARTITION,
   getPaseoBrowserProfileSession,
@@ -101,8 +102,10 @@ import {
   registerExternalQuitSignals,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
-import { runDesktopStartup } from "./desktop-startup.js";
+import { configureDesktopRendererClient, runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
+import { registerBrowserExtensions } from "./features/browser-extensions/index.js";
+import { buildBrowserExtensionContextMenuItems } from "./features/browser-extensions/context-menus.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
@@ -155,6 +158,13 @@ app.setName(APP_NAME);
 if (process.platform === "win32" && app.isPackaged && desktopDistribution.windowsAppUserModelId) {
   app.setAppUserModelId(desktopDistribution.windowsAppUserModelId);
 }
+
+const mainWindowUserAgent = configurePaseoBrowserIdentity({
+  app,
+  appName: app.getName(),
+  appVersion: app.getVersion(),
+  electronVersion: process.versions.electron,
+});
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
@@ -215,8 +225,17 @@ function showBrowserWebviewContextMenu(
   contents: Electron.WebContents,
   params: Electron.ContextMenuParams,
 ): void {
+  const items = buildStandardContextMenuItems(contents, params);
+  const extensionItems = buildBrowserExtensionContextMenuItems(contents, params);
+  if (extensionItems.length > 0) {
+    if (items.length > 0) {
+      items.push({ type: "separator" });
+    }
+    items.push(...extensionItems);
+  }
+
   const menu = Menu.buildFromTemplate([
-    ...buildStandardContextMenuItems(contents, params),
+    ...items,
     ...(app.isPackaged
       ? []
       : [
@@ -365,6 +384,12 @@ if (electronFlags) {
   log.info("[electron-flags]", electronFlags);
 }
 
+configureDesktopRendererClient({
+  platform: process.platform,
+  realUserId: process.getuid?.(),
+  commandLine: app.commandLine,
+});
+
 if (process.platform === "linux") {
   // Keep the desktop/dock identity independent of the wrapped Electron filename.
   app.setDesktopName(desktopDistribution.desktopName);
@@ -484,6 +509,10 @@ ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     return false;
   }
+  const host = BrowserWindow.fromWebContents(event.sender);
+  if (!host || host.webContents !== event.sender || !host.isFocused() || host.isMinimized()) {
+    return false;
+  }
   const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
   if (!contents) {
     return false;
@@ -553,7 +582,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: getPaseoBrowserWebContentsForHostWindow,
+  findGuest: (browserId, hostId) => getPaseoBrowserWebContentsForHostWindow(browserId, hostId),
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
@@ -731,6 +760,7 @@ async function createWindow(
       webviewTag: true,
     },
   });
+  mainWindow.webContents.setUserAgent(mainWindowUserAgent);
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
   const webContentsId = mainWindow.webContents.id;
@@ -995,6 +1025,7 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
+  await registerBrowserExtensions();
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).

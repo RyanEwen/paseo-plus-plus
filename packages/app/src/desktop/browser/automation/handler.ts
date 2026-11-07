@@ -2,7 +2,7 @@ import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-aut
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
 import {
-  ensureResidentBrowserWebview as ensureResidentBrowserWebviewDefault,
+  ensureResidentBrowserWebview as ensureDesktopBrowserWebview,
   removeResidentBrowserWebview,
   resizeResidentBrowserWebview,
 } from "@/desktop/browser/resident-webviews";
@@ -14,6 +14,29 @@ import {
 } from "@/desktop/browser/store";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+
+interface ResidentBrowserTarget {
+  browserId: string;
+  workspaceId: string;
+  url: string;
+}
+
+interface BrowserSize {
+  width: number;
+  height: number;
+}
+
+interface ResidentBrowserResize extends BrowserSize {
+  browserId: string;
+}
+
+/** Resize a resident browser; resolves to the applied size, or null when it is absent. */
+type ResizeBrowser = (
+  input: ResidentBrowserResize,
+) => BrowserSize | null | Promise<BrowserSize | null>;
+
+/** Create or reuse a resident browser. Its result is ignored; a returned promise is awaited. */
+type EnsureBrowser = (input: ResidentBrowserTarget) => unknown;
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -39,7 +62,8 @@ export interface BrowserAutomationHandlerOptions {
   client: BrowserAutomationClient;
   serverId?: string;
   getHost?: () => DesktopHostBridge | null;
-  ensureResidentBrowserWebview?: typeof ensureResidentBrowserWebviewDefault;
+  ensureResidentBrowserWebview?: EnsureBrowser;
+  resizeResidentBrowser?: ResizeBrowser;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }
@@ -53,9 +77,10 @@ export function mountBrowserAutomationHandler(
       client: options.client,
       getHost,
       request,
+      resizeResidentBrowser: options.resizeResidentBrowser ?? resizeResidentBrowserWebview,
       serverId: options.serverId,
       ensureResidentBrowserWebview:
-        options.ensureResidentBrowserWebview ?? ensureResidentBrowserWebviewDefault,
+        options.ensureResidentBrowserWebview ?? ensureDesktopBrowserWebview,
       ...(options.registrationWaitTimeoutMs !== undefined
         ? { registrationWaitTimeoutMs: options.registrationWaitTimeoutMs }
         : {}),
@@ -104,7 +129,8 @@ async function handleBrowserAutomationRequest(params: {
   getHost: () => DesktopHostBridge | null;
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
-  ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
+  ensureResidentBrowserWebview: EnsureBrowser;
+  resizeResidentBrowser: ResizeBrowser;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<void> {
@@ -116,6 +142,7 @@ async function handleBrowserAutomationRequest(params: {
     ensureResidentBrowserWebview,
     registrationWaitTimeoutMs,
     registrationPollIntervalMs,
+    resizeResidentBrowser,
   } = params;
   const browserHost = getHost()?.browser;
   const executeAutomationCommand = browserHost?.executeAutomationCommand;
@@ -143,10 +170,17 @@ async function handleBrowserAutomationRequest(params: {
   }
 
   if (request.command.command === "resize") {
-    client.sendBrowserAutomationExecuteResponse({
-      type: "browser.automation.execute.response",
-      payload: resizeBrowserTabForRequest({ request, serverId }),
-    });
+    try {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: await resizeBrowserTabForRequest({ request, serverId, resizeResidentBrowser }),
+      });
+    } catch (error) {
+      client.sendBrowserAutomationExecuteResponse({
+        type: "browser.automation.execute.response",
+        payload: normalizeThrownBridgeError(request.requestId, error),
+      });
+    }
     return;
   }
 
@@ -195,10 +229,11 @@ async function handleBrowserAutomationRequest(params: {
   }
 }
 
-function resizeBrowserTabForRequest(params: {
+async function resizeBrowserTabForRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
-}): BrowserAutomationResponsePayload {
+  resizeResidentBrowser: ResizeBrowser;
+}): Promise<BrowserAutomationResponsePayload> {
   const { request, serverId } = params;
   const command = request.command as Extract<
     BrowserAutomationExecuteRequest["command"],
@@ -222,7 +257,7 @@ function resizeBrowserTabForRequest(params: {
     });
   }
 
-  const dimensions = resizeResidentBrowserWebview({
+  const dimensions = await params.resizeResidentBrowser({
     browserId,
     width: command.args.width,
     height: command.args.height,
@@ -322,7 +357,7 @@ async function openBrowserTabForRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
   browserHost: DesktopHostBridge["browser"] | undefined;
-  ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
+  ensureResidentBrowserWebview: EnsureBrowser;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<BrowserAutomationResponsePayload> {
@@ -364,7 +399,7 @@ async function openBrowserTabForRequest(params: {
   });
 
   if (browserHost?.executeAutomationCommand) {
-    ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
+    await ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
     const registered = await waitForBrowserRegistration({
       request,
       browserId,

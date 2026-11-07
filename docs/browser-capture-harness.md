@@ -61,9 +61,18 @@ the mouse idle during this group. It reads the app's production CSS and writes
 screenshots and window bounds to the output directory.
 
 The browser profile group runs two Electron processes in sequence. It verifies that each
-renderer-side `did-attach` identity maps to the correct main-process guest, that two live
+renderer-side `dom-ready` identity maps to the correct main-process guest, that two live
 tabs share cookies and local storage through one persistent session, and that the data is
-still present after the first Electron process exits and the second starts.
+still present after the first Electron process exits and the second starts. The same group
+runs the extension fixtures in this directory (`extension/`, `compatibility-extension/` and the
+`*-fixture.js` files); their assertions are in `main.js`. Keep these constraints:
+
+- Extensions can make `did-attach` fire before `getWebContentsId()` is usable; register the
+  guest identity at `dom-ready`.
+- Observe worker fixtures from the main process. Attaching a worker debugger changes worker
+  lifetime.
+- Keep Electron's Web Store shim. Chromium's native Store status API requires Chrome services
+  and can crash Electron if it replaces the shim.
 
 The automation group uses a real guest webview to verify the page-side ref contract:
 ARIA-like snapshot text includes headings, static text, and controls; refs survive
