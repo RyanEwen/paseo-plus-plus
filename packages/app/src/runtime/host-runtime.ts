@@ -1,3 +1,4 @@
+import { createSshTransportFactory, removeSshCredentials } from "@/hosts/ssh/ssh-transport";
 import { createHostPluginClientBundleStore } from "@/plugins/client-bundles";
 import { watchdog } from "@/watchdog";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
@@ -614,12 +615,13 @@ function createDefaultDeps(
         });
       }
       if (connection.type === "remoteSsh") {
-        if (!desktopTransportFactory) {
-          throw new Error("Remote SSH is only available in the desktop app.");
+        const sshTransportFactory = createSshTransportFactory();
+        if (!sshTransportFactory) {
+          throw new Error("Remote SSH is unavailable in this app build.");
         }
         return new DaemonClient({
           ...base,
-          transportFactory: desktopTransportFactory,
+          transportFactory: sshTransportFactory,
           url: buildDesktopDaemonTransportUrl({
             transportType: "ssh",
             host: connection.host,
@@ -1993,6 +1995,7 @@ export class HostRuntimeStore {
     password?: string;
     label?: string;
     timeoutMs?: number;
+    beforeSave?: () => Promise<void>;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     if (input.connection.type === "relay") {
       throw new Error("Cannot probe a relay connection without a server id.");
@@ -2013,6 +2016,13 @@ export class HostRuntimeStore {
       connection: input.connection,
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     });
+    // Commit device-local credentials after the probe, before the saved host can reconnect.
+    try {
+      await input.beforeSave?.();
+    } catch (error) {
+      await client.close();
+      throw error;
+    }
     const profile = await this.upsertHostConnection({
       serverId,
       label: input.label ?? hostname ?? undefined,
@@ -2049,6 +2059,7 @@ export class HostRuntimeStore {
     daemonPort?: number;
     password?: string;
     label?: string;
+    beforeSave?: () => Promise<void>;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     return this.probeAndUpsertConnection({
       label: input.label,
@@ -2056,6 +2067,7 @@ export class HostRuntimeStore {
       // set-password` keeps what it reads), so whitespace is significant here.
       password: input.password ? input.password : undefined,
       connection: createRemoteSshHostConnection(input),
+      beforeSave: input.beforeSave,
     });
   }
 
@@ -2253,9 +2265,13 @@ export class HostRuntimeStore {
 
   async removeHost(serverId: string): Promise<void> {
     await this.revokePushNotifications({ client: this.getClient(serverId), serverId });
+    const removed = this.hosts.find((host) => host.serverId === serverId);
     const remaining = this.hosts.filter((daemon) => daemon.serverId !== serverId);
     this.setHostsAndSync(remaining);
     await this.persistHosts();
+    for (const connection of removed?.connections ?? []) {
+      if (connection.type === "remoteSsh") await removeSshCredentials(connection.id);
+    }
   }
 
   async removeConnection(serverId: string, connectionId: string): Promise<void> {
@@ -2286,6 +2302,13 @@ export class HostRuntimeStore {
       .filter((entry): entry is HostProfile => entry !== null);
     this.setHostsAndSync(next);
     await this.persistHosts();
+    if (
+      host?.connections.some(
+        (connection) => connection.id === connectionId && connection.type === "remoteSsh",
+      )
+    ) {
+      await removeSshCredentials(connectionId);
+    }
   }
 
   private async upsertHostConnection(input: {
@@ -3030,6 +3053,7 @@ export interface HostMutations {
     daemonPort?: number;
     password?: string;
     label?: string;
+    beforeSave?: () => Promise<void>;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;

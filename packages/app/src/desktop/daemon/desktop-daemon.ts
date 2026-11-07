@@ -3,6 +3,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
+import type { OpenBridgeTransportSessionInput as OpenLocalTransportSessionInput } from "@/hosts/transport-bridge/types";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 export type DesktopDaemonStopReason =
@@ -57,27 +58,14 @@ export interface DesktopUpdaterDiagnostics {
   stderr: DesktopUpdaterDiagnosticFile | null;
 }
 
-export interface LocalTransportTarget {
-  [key: string]: unknown;
-  transportType: "socket" | "pipe";
-  transportPath: string;
-}
-
-export interface RemoteSshTransportTarget {
-  [key: string]: unknown;
-  transportType: "ssh";
-  host: string;
-  sshPort?: number;
-  daemonPort?: number;
-}
-
-export type DesktopDaemonTransportTarget = LocalTransportTarget | RemoteSshTransportTarget;
-
-export interface OpenLocalTransportSessionInput {
-  [key: string]: unknown;
-  sessionId: string;
-  target: DesktopDaemonTransportTarget;
-}
+// The transport target types now live with the shared bridge (also used by Android SSH).
+// Re-export them under upstream's names so desktop call sites stay unchanged.
+export type {
+  LocalTransportTarget,
+  SshBridgeTransportTarget as RemoteSshTransportTarget,
+  BridgeDaemonTransportTarget as DesktopDaemonTransportTarget,
+  OpenBridgeTransportSessionInput as OpenLocalTransportSessionInput,
+} from "@/hosts/transport-bridge/types";
 
 interface LocalTransportEventPayload {
   sessionId: string;
