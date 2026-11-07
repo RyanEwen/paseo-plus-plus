@@ -987,9 +987,9 @@ describe("Paseo tool timeline presentation", () => {
         "request_human_attention",
       ]) {
         const tool = tools.find((entry) => entry.name === name);
-        expect(tool).toBeDefined();
-        expect(tool?.inputSchema.properties).not.toHaveProperty("agentId");
-        expect(tool?.inputSchema.properties).not.toHaveProperty("serverId");
+        if (!tool) throw new Error(`Expected ${name} to be advertised`);
+        expect(tool.inputSchema.properties).not.toHaveProperty("agentId");
+        expect(tool.inputSchema.properties).not.toHaveProperty("serverId");
       }
     } finally {
       await client.close();

@@ -26,7 +26,8 @@ interface Admitted extends Message {
   resolve(disposition: PromptDispatchDisposition): void;
   reject(error: unknown): void;
 }
-interface DispatchRequest {
+/** One batch handed to the daemon's dispatch port. */
+export interface DispatchRequest {
   attention: readonly AttentionAdmission[];
   recipientId: string;
   messageIds: readonly string[];

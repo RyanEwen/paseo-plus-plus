@@ -12737,7 +12737,11 @@ test("waiting human objectives survive serialization, unrelated work, and authen
     objectiveId: undefined,
     requestId: "first-request",
   });
-  expect(reply?.requesterObjective).toBeDefined();
+  expect(reply?.requesterObjective).toEqual({
+    objectiveId: "human-job",
+    requestId: "first-request",
+    token: expect.any(String),
+  });
   expect(
     objectives.outgoing({
       recipient: { agentId: "worker", serverId: "remote" },
@@ -14049,7 +14053,8 @@ test("escalation postcommit acknowledgement error keeps one durable announcement
   void first.catch(() => undefined);
   try {
     await write.entered.promise;
-    // Ryan's accepted boundary is the queue-owned durable commit, before this outer ACK.
+    // Notification fires once the storage queue has committed the record; the outer
+    // applySnapshot acknowledgement is not part of the guarantee.
     expect(notify).toHaveBeenCalledExactlyOnceWith({
       agentId: request.agentId,
       provider: "codex",
