@@ -91,7 +91,8 @@ interface ConfiguredClaudeHistoryInput {
   env: NodeJS.ProcessEnv;
   previous?: ProviderHistoryStorage;
   existingSession?: boolean;
-  extraArgs?: Record<string, string | null>;
+  /** Configured extraArgs as given; any present selector key refuses the configured route. */
+  extraArgs?: unknown;
 }
 
 function configuredClaudeHome(runtimeSettings: ProviderRuntimeSettings | undefined): string {
@@ -104,7 +105,8 @@ function checkClaudeCommand(input: ConfiguredClaudeHistoryInput): void {
   const command = input.runtimeSettings?.command;
   if (command?.mode === "replace" || (command?.mode === "append" && command.args?.length))
     conflict("unresolved-command-contract");
-  if (input.extraArgs && Object.keys(input.extraArgs).length)
+  // Object() keeps the check total for unvalidated catalog options without a cast.
+  if (input.extraArgs && Object.keys(Object(input.extraArgs)).length)
     conflict("unresolved-command-selectors");
 }
 

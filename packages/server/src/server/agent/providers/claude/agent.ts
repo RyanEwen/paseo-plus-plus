@@ -1659,28 +1659,40 @@ export class ClaudeAgentClient implements AgentClient {
   async resolveHistoryStorage(
     input: ResolveHistoryStorageInput,
   ): Promise<ProviderHistoryStorage | undefined> {
-    return this.selectedHistory(
-      input.env,
-      input.previous?.storage,
-      input.operation === "resume" || input.operation === "reload",
-      this.assertConfig(input.config).providerOptions,
-    );
+    return this.selectedHistory({
+      env: input.env,
+      previous: input.previous?.storage,
+      existingSession: input.operation === "resume" || input.operation === "reload",
+      extraArgs: this.assertConfig(input.config).providerOptions?.extraArgs,
+    });
   }
 
+  /**
+   * Resolve this client's configured history route, or undefined for a shared profile.
+   * Throws HistoryStorageConflictError when the configured route cannot be admitted.
+   */
   private selectedHistory(
-    env?: Record<string, string>,
-    previous?: ProviderHistoryStorage,
-    existingSession = false,
-    options?: ClaudeProviderOptions,
+    input: {
+      env?: Record<string, string>;
+      previous?: ProviderHistoryStorage;
+      /** Resume and reload reopen an existing session, which must keep its recorded route. */
+      existingSession?: boolean;
+      extraArgs?: unknown;
+    } = {},
   ): ConfiguredClaudeHistoryStorage | undefined {
     return resolveConfiguredClaudeHistory({
       policy: this.historyPolicy,
       runtimeSettings: this.runtimeSettings,
-      env: this.buildProviderEnv(env),
-      previous,
-      existingSession,
-      extraArgs: options?.extraArgs,
+      env: this.buildProviderEnv(input.env),
+      previous: input.previous,
+      existingSession: input.existingSession ?? false,
+      extraArgs: input.extraArgs,
     });
+  }
+
+  /** Refuse a client whose configured profile route cannot be admitted. */
+  private assertConfiguredProfileRoute(): void {
+    this.selectedHistory();
   }
 
   async createSession(
@@ -1689,12 +1701,11 @@ export class ClaudeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
-    const historyStorage = this.selectedHistory(
-      launchContext?.env,
-      launchContext?.historyStorage,
-      false,
-      claudeConfig.providerOptions,
-    );
+    const historyStorage = this.selectedHistory({
+      env: launchContext?.env,
+      previous: launchContext?.historyStorage,
+      extraArgs: claudeConfig.providerOptions?.extraArgs,
+    });
     return new ClaudeAgentSession(claudeConfig, {
       historyStorage,
       claudeFreshRewind: launchContext?.claudeFreshRewind,
@@ -1727,12 +1738,12 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: merged.cwd,
     };
     const claudeConfig = this.assertConfig(mergedConfig);
-    const historyStorage = this.selectedHistory(
-      launchContext?.env,
-      launchContext?.historyStorage,
-      true,
-      claudeConfig.providerOptions,
-    );
+    const historyStorage = this.selectedHistory({
+      env: launchContext?.env,
+      previous: launchContext?.historyStorage,
+      existingSession: true,
+      extraArgs: claudeConfig.providerOptions?.extraArgs,
+    });
     const session = new ClaudeAgentSession(claudeConfig, {
       historyStorage,
       claudeFreshRewind: launchContext?.claudeFreshRewind,
@@ -1760,12 +1771,9 @@ export class ClaudeAgentClient implements AgentClient {
     _options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    const historyStorage = this.selectedHistory(
-      undefined,
-      undefined,
-      false,
-      _options.providerOptions as ClaudeProviderOptions | undefined,
-    );
+    const historyStorage = this.selectedHistory({
+      extraArgs: _options.providerOptions?.extraArgs,
+    });
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
     let claudeCodeVersion: string | undefined;
     try {
@@ -1912,12 +1920,12 @@ export class ClaudeAgentClient implements AgentClient {
     // survives the import. Only an explicit rename counts: agents are named
     // after their first prompt line since #1563, so adopting the generated
     // `ai-title` here would put that LLM summary back.
-    const storage = this.selectedHistory(
-      context.launchContext?.env,
-      context.launchContext?.historyStorage,
-      false,
-      this.assertConfig({ provider: "claude", cwd: input.cwd }).providerOptions,
-    );
+    const storage = this.selectedHistory({
+      env: context.launchContext?.env,
+      previous: context.launchContext?.historyStorage,
+      extraArgs: this.assertConfig({ provider: "claude", cwd: input.cwd }).providerOptions
+        ?.extraArgs,
+    });
     const renamedTitle = await readClaudeRenamedSessionTitle({
       cwd: input.cwd,
       sessionId: input.providerHandleId,
@@ -1935,7 +1943,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    this.selectedHistory();
+    this.assertConfiguredProfileRoute();
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "claude",
@@ -1945,7 +1953,7 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
-    this.selectedHistory();
+    this.assertConfiguredProfileRoute();
     try {
       const launch = await resolveProviderLaunch({
         commandConfig: this.runtimeSettings?.command,
@@ -4621,7 +4629,7 @@ class ClaudeAgentSession implements AgentSession {
           if (
             message.type !== "system" ||
             message.subtype !== "init" ||
-            (message as { parent_tool_use_id?: unknown }).parent_tool_use_id
+            readClaudeParentToolUseId(message)
           ) {
             this.pendingIdentityMessages.push(message);
             if (this.pendingIdentityMessages.length > 100)
