@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MenuHint, MenuItem, MenuLabel, MenuSubTrigger, MenuTextField } from "@/components/ui/menu";
 import { parseSidebarWorkspaceCount } from "@/components/sidebar/workspace-limit";
+import { DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT } from "@/hooks/use-settings/storage";
 
 /** These ports are supplied by the parent-owned active-mode preferences hook. */
 export interface WorkspaceListPreferences {
@@ -73,15 +74,26 @@ export function WorkspaceListPage({ preferences }: { preferences: WorkspaceListP
     </>
   );
 }
+/**
+ * The count page. "All" keeps each mode's last numeric count as the editor's draft, so switching
+ * back to a number starts from the value the user had.
+ */
 export function WorkspaceCountPage({ preferences }: { preferences: WorkspaceListPreferences }) {
-  const lastNumeric = useRef<Record<"project" | "status", number>>({ project: 20, status: 20 });
-  if (preferences.initialWorkspaceCount !== null)
-    lastNumeric.current[preferences.grouping] = preferences.initialWorkspaceCount;
+  const { grouping, initialWorkspaceCount } = preferences;
+  const [lastNumeric, setLastNumeric] = useState<Record<"project" | "status", number>>({
+    project: DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT,
+    status: DEFAULT_SIDEBAR_INITIAL_WORKSPACE_COUNT,
+  });
+  // Derived state: remember a newly saved number during render, as React allows for props.
+  if (initialWorkspaceCount !== null && lastNumeric[grouping] !== initialWorkspaceCount) {
+    setLastNumeric({ ...lastNumeric, [grouping]: initialWorkspaceCount });
+  }
   return (
     <WorkspaceListEditor
-      key={`${preferences.grouping}:${preferences.initialWorkspaceCount ?? "all"}`}
+      // A saved count, from an option or the editor, resets the draft to that value.
+      key={`${grouping}:${initialWorkspaceCount ?? "all"}`}
       preferences={preferences}
-      numericDraft={lastNumeric.current[preferences.grouping]}
+      numericDraft={initialWorkspaceCount ?? lastNumeric[grouping]}
     />
   );
 }
