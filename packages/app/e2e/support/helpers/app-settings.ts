@@ -8,7 +8,10 @@ const APP_SETTINGS_KEY = "@paseo:app-settings";
  * dropping others. Values seeded earlier, including the fixture's chat display, survive unless
  * `settings` replaces them.
  */
-export async function seedAppSettings(page: Page, settings: Record<string, unknown>): Promise<void> {
+export async function seedAppSettings(
+  page: Page,
+  settings: Record<string, unknown>,
+): Promise<void> {
   await page.addInitScript(
     ({ key, partial }) => {
       const stored = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;

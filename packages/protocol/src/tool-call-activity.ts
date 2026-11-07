@@ -53,13 +53,12 @@ export interface ToolActivity {
 }
 
 /** What each provider-reported file change proves; only an addition counts as a creation. */
-const FILE_CHANGE_ACTIVITY_KIND: Record<z.output<typeof fileChangeKindSchema>, ToolActivityKind> =
-  {
-    add: "create",
-    update: "edit",
-    delete: "delete",
-    unknown: "change",
-  };
+const FILE_CHANGE_ACTIVITY_KIND: Record<z.output<typeof fileChangeKindSchema>, ToolActivityKind> = {
+  add: "create",
+  update: "edit",
+  delete: "delete",
+  unknown: "change",
+};
 
 /**
  * Validate one untrusted metadata batch as a whole. Returns undefined when any entry is
@@ -106,7 +105,10 @@ export function describeToolActivity(input: {
   const { detail, metadata } = input;
   const changes = parseFileChanges(metadata?.fileChanges);
   if (changes && (detail.type === "edit" || detail.type === "write" || detail.type === "unknown")) {
-    return changes.map((file) => ({ kind: FILE_CHANGE_ACTIVITY_KIND[file.kind], target: file.path }));
+    return changes.map((file) => ({
+      kind: FILE_CHANGE_ACTIVITY_KIND[file.kind],
+      target: file.path,
+    }));
   }
   switch (detail.type) {
     case "read":

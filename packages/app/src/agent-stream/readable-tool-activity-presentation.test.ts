@@ -87,7 +87,11 @@ describe("readable tool activity in stream presentation", () => {
 
   it("builds readable group counts in the projection and rebuilds them when the preference changes", () => {
     const present = createStreamPresentation();
-    const input = { ...baseInput, tail: answeredTurn.slice(1, 3), display: "collapseToolCalls" } as const;
+    const input = {
+      ...baseInput,
+      tail: answeredTurn.slice(1, 3),
+      display: "collapseToolCalls",
+    } as const;
     const groupSummary = (result: ReturnType<typeof present>) =>
       [...result.groupsByHostId.values()][0]?.summary;
 

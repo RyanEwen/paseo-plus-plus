@@ -171,7 +171,10 @@ describe("tool-call presentation", () => {
       resolveIcon: recordIcon,
     };
     const shellDetail = { type: "shell", command: "rg needle; ls" } satisfies ToolCallDetail;
-    const actions = (commandActions: unknown[]) => ({ detail: shellDetail, metadata: { commandActions } });
+    const actions = (commandActions: unknown[]) => ({
+      detail: shellDetail,
+      metadata: { commandActions },
+    });
     buildToolCallPresentation({
       ...base,
       ...actions([{ type: "search", command: "rg needle", query: "needle" }]),

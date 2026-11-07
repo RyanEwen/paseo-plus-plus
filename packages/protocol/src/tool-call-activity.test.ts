@@ -97,9 +97,9 @@ describe("provider-neutral activity classification", () => {
   });
 
   it("returns no activity for details it cannot classify", () => {
-    expect(describeToolActivity({ detail: { type: "unknown", input: null, output: null } })).toEqual(
-      [],
-    );
+    expect(
+      describeToolActivity({ detail: { type: "unknown", input: null, output: null } }),
+    ).toEqual([]);
   });
 });
 

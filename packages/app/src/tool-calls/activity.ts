@@ -83,7 +83,10 @@ function displayNameFor(
 }
 
 /** Distinct targets in order, with paths shown relative to the working directory. */
-function summaryFor(activities: readonly ToolActivity[], cwd: string | undefined): string | undefined {
+function summaryFor(
+  activities: readonly ToolActivity[],
+  cwd: string | undefined,
+): string | undefined {
   const targets = activities.flatMap((activity) => {
     if (!activity.target) return [];
     if (PATH_TARGET_KINDS.has(activity.kind)) return [stripCwdPrefix(activity.target, cwd)];

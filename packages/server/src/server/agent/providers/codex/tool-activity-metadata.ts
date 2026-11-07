@@ -39,7 +39,8 @@ export function fileChangeActivityMetadata(
     files.map((file) => ({
       path: file.path,
       diff: file.diff,
-      kind: file.kind !== undefined && PROVEN_FILE_CHANGE_KINDS.has(file.kind) ? file.kind : "unknown",
+      kind:
+        file.kind !== undefined && PROVEN_FILE_CHANGE_KINDS.has(file.kind) ? file.kind : "unknown",
     })),
   );
   return fileChanges ? { metadata: { fileChanges } } : NO_METADATA;
