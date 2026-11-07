@@ -377,3 +377,98 @@ export function hasDiscoveredCachedPrompt(input: {
 export function isContextSourceMissing(requested: boolean, source: StreamItem | undefined) {
   return requested && !source;
 }
+
+/** The sticky prompt's own selection and navigation outcome. */
+export interface StickyPromptState {
+  /** An explicitly held prompt; null shows the reading or latest prompt. */
+  selected: UserPrompt | null;
+  /** A target whose original row is loading, or a search for the previous prompt. */
+  pending: PromptTarget | "previous" | null;
+  error: boolean;
+  cancelled: boolean;
+}
+
+export const INITIAL_STICKY_PROMPT_STATE: StickyPromptState = {
+  selected: null,
+  pending: null,
+  error: false,
+  cancelled: false,
+};
+
+/** Everything that changes the sticky prompt state, named for what happened. */
+export type StickyPromptEvent =
+  /** Manual reading or following output chose the prompt to hold (null for the latest). */
+  | { type: "readingSelected"; selected: UserPrompt | null }
+  /** A navigation or reveal starts; a previous failure no longer applies. */
+  | { type: "selectionStarted" }
+  /** A loaded target is shown at once (null when it is the latest prompt). */
+  | { type: "targetShown"; selected: UserPrompt | null }
+  /** A target's original row must load first. */
+  | { type: "targetRequested"; target: PromptTarget }
+  /** A cached target cannot be paged to without an index. */
+  | { type: "targetUnreachable" }
+  /** The pending target's original row arrived. */
+  | { type: "pendingLoaded"; selected: UserPrompt | null }
+  /** The pending target failed to materialize. */
+  | { type: "pendingFailed" }
+  /** Discovery for the previous prompt settled without finding one. */
+  | { type: "previousNotFound" }
+  /** Arrow or activated navigation holds the current prompt while it moves. */
+  | { type: "navigationStarted"; selected: UserPrompt }
+  /** No previous prompt is loaded yet; search older history for one. */
+  | { type: "previousRequested" }
+  /** Hold a prompt while its original row is revealed. */
+  | { type: "revealStarted"; selected: UserPrompt | null }
+  | { type: "cancelled" }
+  /** Manual reading takes over from navigation without cancelling discovery. */
+  | { type: "readingReviewed" }
+  | { type: "latestFollowed" }
+  | { type: "retried" }
+  | { type: "enabled" }
+  | { type: "disabled" }
+  /** A new authoritative epoch resets prompt ownership; disabled panes stay cancelled. */
+  | { type: "epochReplaced"; enabled: boolean };
+
+/** Pure transition for the sticky prompt state. */
+export function reduceStickyPromptState(
+  state: StickyPromptState,
+  event: StickyPromptEvent,
+): StickyPromptState {
+  switch (event.type) {
+    case "readingSelected":
+      return { ...state, selected: event.selected };
+    case "selectionStarted":
+      return { ...state, error: false };
+    case "targetShown":
+      return { ...state, selected: event.selected, pending: null };
+    case "targetRequested":
+      return { ...state, pending: event.target };
+    case "targetUnreachable":
+    case "pendingFailed":
+      return { ...state, error: true, pending: null };
+    case "pendingLoaded":
+      return { ...state, selected: event.selected, pending: null };
+    case "previousNotFound":
+      return { ...state, pending: null };
+    case "navigationStarted":
+      return { ...state, selected: event.selected, cancelled: false };
+    case "previousRequested":
+      return { ...state, pending: "previous" };
+    case "revealStarted":
+      return { ...state, selected: event.selected };
+    case "cancelled":
+      return { ...state, pending: null, error: false, cancelled: true };
+    case "readingReviewed":
+      return { ...state, pending: null, error: false, cancelled: false };
+    case "latestFollowed":
+      return { ...state, selected: null };
+    case "retried":
+      return { ...state, error: false, cancelled: false };
+    case "enabled":
+      return { ...state, cancelled: false };
+    case "disabled":
+      return { selected: null, pending: null, error: false, cancelled: true };
+    case "epochReplaced":
+      return { selected: null, pending: null, error: false, cancelled: !event.enabled };
+  }
+}

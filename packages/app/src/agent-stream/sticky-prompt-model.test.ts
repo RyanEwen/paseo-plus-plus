@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  INITIAL_STICKY_PROMPT_STATE,
+  reduceStickyPromptState,
+  type StickyPromptState,
   hasDiscoveredCachedPrompt,
   hasDiscoveredPrompt,
   isNextPromptDisabled,
@@ -207,5 +210,105 @@ describe("prompt message resolution", () => {
     expect(isNextPromptDisabled(message, 0, 2)).toBe(false);
     expect(isNextPromptDisabled(message, 1, 2)).toBe(true);
     expect(isNextPromptDisabled(undefined, 0, 2)).toBe(true);
+  });
+});
+
+describe("reduceStickyPromptState", () => {
+  const held = prompt("held", 2);
+  const target: PromptTarget = { key: "e:1", seq: 1 };
+  const failed: StickyPromptState = {
+    selected: held,
+    pending: target,
+    error: true,
+    cancelled: false,
+  };
+
+  it("holds a navigated prompt and clears an earlier cancellation", () => {
+    expect(
+      reduceStickyPromptState(
+        { ...INITIAL_STICKY_PROMPT_STATE, cancelled: true },
+        { type: "navigationStarted", selected: held },
+      ),
+    ).toEqual({ ...INITIAL_STICKY_PROMPT_STATE, selected: held });
+  });
+
+  it("clears a failure when a selection starts and settles a shown target", () => {
+    const started = reduceStickyPromptState(failed, { type: "selectionStarted" });
+    expect(started.error).toBe(false);
+    expect(reduceStickyPromptState(started, { type: "targetShown", selected: null })).toEqual({
+      selected: null,
+      pending: null,
+      error: false,
+      cancelled: false,
+    });
+  });
+
+  it("waits for a requested target and fails it without keeping it pending", () => {
+    const requested = reduceStickyPromptState(INITIAL_STICKY_PROMPT_STATE, {
+      type: "targetRequested",
+      target,
+    });
+    expect(requested.pending).toBe(target);
+    expect(reduceStickyPromptState(requested, { type: "pendingFailed" })).toMatchObject({
+      pending: null,
+      error: true,
+    });
+    expect(reduceStickyPromptState(requested, { type: "targetUnreachable" })).toMatchObject({
+      pending: null,
+      error: true,
+    });
+  });
+
+  it("shows the loaded original of a pending target", () => {
+    expect(
+      reduceStickyPromptState(
+        { ...INITIAL_STICKY_PROMPT_STATE, pending: target },
+        { type: "pendingLoaded", selected: held },
+      ),
+    ).toEqual({ ...INITIAL_STICKY_PROMPT_STATE, selected: held });
+  });
+
+  it("searches for and abandons a previous prompt", () => {
+    const searching = reduceStickyPromptState(INITIAL_STICKY_PROMPT_STATE, {
+      type: "previousRequested",
+    });
+    expect(searching.pending).toBe("previous");
+    expect(reduceStickyPromptState(searching, { type: "previousNotFound" }).pending).toBeNull();
+  });
+
+  it("cancels and resumes reading without dropping the held prompt", () => {
+    const cancelled = reduceStickyPromptState(failed, { type: "cancelled" });
+    expect(cancelled).toEqual({ selected: held, pending: null, error: false, cancelled: true });
+    expect(reduceStickyPromptState(cancelled, { type: "readingReviewed" })).toEqual({
+      selected: held,
+      pending: null,
+      error: false,
+      cancelled: false,
+    });
+    expect(reduceStickyPromptState(cancelled, { type: "retried" }).cancelled).toBe(false);
+    expect(reduceStickyPromptState(cancelled, { type: "enabled" }).cancelled).toBe(false);
+  });
+
+  it("follows the latest prompt by releasing the held one", () => {
+    expect(reduceStickyPromptState(failed, { type: "latestFollowed" }).selected).toBeNull();
+    expect(
+      reduceStickyPromptState(failed, { type: "readingSelected", selected: held }).selected,
+    ).toBe(held);
+    expect(
+      reduceStickyPromptState(failed, { type: "revealStarted", selected: null }).selected,
+    ).toBe(null);
+  });
+
+  it("resets prompt ownership on opt-out and epoch replacement", () => {
+    expect(reduceStickyPromptState(failed, { type: "disabled" })).toEqual({
+      ...INITIAL_STICKY_PROMPT_STATE,
+      cancelled: true,
+    });
+    expect(reduceStickyPromptState(failed, { type: "epochReplaced", enabled: true })).toEqual(
+      INITIAL_STICKY_PROMPT_STATE,
+    );
+    expect(
+      reduceStickyPromptState(failed, { type: "epochReplaced", enabled: false }).cancelled,
+    ).toBe(true);
   });
 });
