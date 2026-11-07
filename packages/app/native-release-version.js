@@ -56,8 +56,36 @@ function getFdroidVersionCodes(version) {
   }));
 }
 
+/** Fork preview Android codes start here, above every upstream store version code. */
+const PREVIEW_ANDROID_VERSION_CODE_BASE = 1_000_000_000;
+/** Highest preview build number; keeps the Android code within Android's 2100000000 limit. */
+const PREVIEW_BUILD_NUMBER_MAX = 1_100_000_000;
+
+/** Give each fork preview a monotonic Android code, independent of upstream version bumps. */
+function getPreviewReleaseVersion(version, buildNumber) {
+  const nativeVersion = getNativeReleaseVersion(version.replace(/-preview\.\d+$/, ""));
+  if (
+    !Number.isSafeInteger(buildNumber) ||
+    buildNumber < 1 ||
+    buildNumber > PREVIEW_BUILD_NUMBER_MAX
+  ) {
+    throw new Error(
+      `Preview build number must be an integer between 1 and ${PREVIEW_BUILD_NUMBER_MAX}`,
+    );
+  }
+
+  return {
+    ...nativeVersion,
+    version: `${nativeVersion.appVersion}-preview.${buildNumber}`,
+    androidVersionCode: PREVIEW_ANDROID_VERSION_CODE_BASE + buildNumber,
+  };
+}
+
 module.exports = {
   FDROID_ABI_VERSION_CODE_SUFFIXES,
   getFdroidVersionCodes,
   getNativeReleaseVersion,
+  getPreviewReleaseVersion,
+  PREVIEW_ANDROID_VERSION_CODE_BASE,
+  PREVIEW_BUILD_NUMBER_MAX,
 };

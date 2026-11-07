@@ -24,6 +24,21 @@ function notFoundError() {
   return Object.assign(new Error("release not found"), { stderr: "gh: Not Found (HTTP 404)" });
 }
 
+test("finds a renamed fork draft by its tag rather than its display title", () => {
+  const release = {
+    id: 42,
+    draft: true,
+    name: "Paseo++ v0.11.2-preview.27",
+    tag_name: "v0.11.2-preview.27",
+  };
+  const found = getGitHubRelease("RyanEwen/paseo", release.tag_name, (_command, args) => {
+    if (args[1].includes("/tags/")) throw notFoundError();
+    assert.ok(args.at(-1).includes('.tag_name == "v0.11.2-preview.27"'));
+    return JSON.stringify([release]);
+  });
+  assert.deepEqual(found, release);
+});
+
 test("uses the untagged URL slug for draft release CLI operations", () => {
   assert.equal(
     getReleaseLookupTag({
