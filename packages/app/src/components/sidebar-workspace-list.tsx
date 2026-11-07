@@ -13,7 +13,7 @@ import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sid
 import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
 import { getProjectActivity, projectBlockActivityEqual } from "./sidebar/project-block-activity";
-import { resolveProjectLeadingStatus } from "./sidebar/project-leading-status";
+import { useProjectHeaderActivity } from "./sidebar/use-project-header-activity";
 import {
   PROJECT_ACTION_GAP,
   PROJECT_ACTION_OPTICAL_OFFSET,
@@ -23,7 +23,6 @@ import {
   projectTrailingActionsWidth,
 } from "./sidebar/project-trailing-actions";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
-import { useAppSettings } from "@/hooks/use-settings";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
@@ -931,8 +930,10 @@ function ProjectHeaderRow({
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
-  const { settings } = useAppSettings();
-  const { sidebarActivityChips } = settings.paseoPlusPlus;
+  const headerActivity = useProjectHeaderActivity({
+    bucket: statusBucket,
+    collapsed: chevron === "expand",
+  });
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -1010,30 +1011,24 @@ function ProjectHeaderRow({
         <ProjectLeadingVisual
           displayName={displayName}
           iconDataUri={iconDataUri}
-          statusBucket={resolveProjectLeadingStatus({
-            bucket: statusBucket,
-            chipsEnabled: sidebarActivityChips,
-            collapsed: chevron === "expand",
-          })}
+          statusBucket={headerActivity.leadingStatus}
           projectViewKey={project.viewKey}
           backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
-          hiddenFromAccessibility={sidebarActivityChips}
+          hiddenFromAccessibility={headerActivity.leadingHiddenFromAccessibility}
         />
 
         <View style={styles.projectTitleGroup}>
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
-          {sidebarActivityChips ? (
-            <ProjectActivityChip
-              bucket={statusBucket}
-              workingWorkspaceCount={workingWorkspaceCount}
-              projectViewKey={project.viewKey}
-            />
-          ) : null}
+          <ProjectActivityChip
+            bucket={headerActivity.chipBucket}
+            workingWorkspaceCount={workingWorkspaceCount}
+            projectViewKey={project.viewKey}
+          />
         </View>
       </View>
       <ProjectRowTrailingActions
