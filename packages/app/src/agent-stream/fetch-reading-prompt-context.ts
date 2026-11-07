@@ -3,18 +3,6 @@ import type {
   ContextPageReader,
   ContextPromptIndexReader,
 } from "@/timeline/read-canonical-prompt-context";
-export {
-  fetchReadingPromptContext,
-  fetchCanonicalPromptContext,
-  contextSourceKey,
-  validateContextRange,
-  matchesContextSource,
-} from "@/timeline/read-canonical-prompt-context";
-export type {
-  ContextPage,
-  ContextPageReader,
-  ContextEntry,
-} from "@/timeline/read-canonical-prompt-context";
 
 /** Use the actual normal-agent journal without a runtime/store window application. */
 export function normalContextPageReader(client: DaemonClient, agentId: string): ContextPageReader {

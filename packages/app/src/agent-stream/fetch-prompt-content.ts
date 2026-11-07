@@ -1,6 +1,5 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { hydratePromptEntry } from "@/timeline/hydrate-prompt-entry";
-export { hydratePromptEntry } from "@/timeline/hydrate-prompt-entry";
 import type { UserPrompt } from "./sticky-prompt-model";
 
 /** Fetch one indexed prompt without applying a viewport window; decode it with the

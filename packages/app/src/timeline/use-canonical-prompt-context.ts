@@ -12,14 +12,16 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { StreamItem } from "@/types/stream";
 import {
-  canonicalPromptSourceKey,
   retainCanonicalPromptContext,
-  CanonicalPromptContextBudgetError,
   type CanonicalPromptContexts,
   type CanonicalPromptLookup,
+} from "./canonical-prompt-context";
+import {
+  canonicalPromptSourceKey,
+  CanonicalPromptContextBudgetError,
   type CanonicalPromptContext,
   type CanonicalTimelineCoverage,
-} from "./canonical-prompt-context";
+} from "./canonical-prompt-model";
 const EMPTY: readonly CanonicalPromptContext[] = Object.freeze([]);
 const noopSubscribe = () => () => {};
 interface CanonicalPromptContextState {

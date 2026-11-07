@@ -27,17 +27,6 @@ import {
   type CanonicalTimelineCoverage,
 } from "./canonical-prompt-model";
 import type { StreamItem } from "@/types/stream";
-export {
-  canonicalPromptOccurrenceKey,
-  canonicalPromptSourceKey,
-  CanonicalPromptContextBudgetError,
-} from "./canonical-prompt-model";
-export type {
-  CanonicalPromptContext,
-  CanonicalPromptContextProgress,
-  CanonicalTimelineCoverage,
-} from "./canonical-prompt-model";
-export { hasInterveningUser as isPromptContextContradicted } from "./canonical-reading-source";
 
 type Prompt = Extract<StreamItem, { kind: "user_message" }>;
 export interface RetainedPromptSnapshot {

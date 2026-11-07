@@ -6,17 +6,17 @@ import {
   mergeRetainedPrompts,
   retainedCanonicalPositions,
   type CanonicalPromptContexts,
-  type CanonicalTimelineCoverage,
 } from "@/timeline/canonical-prompt-context";
+import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
 import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
 import type { CanonicalSourceMetadata } from "@/timeline/canonical-source-metadata";
 import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import type { StreamItem } from "@/types/stream";
+import type { ContextPageReader } from "@/timeline/read-canonical-prompt-context";
 import {
   normalContextPageReader,
   normalContextPromptIndexReader,
-  type ContextPageReader,
 } from "./fetch-reading-prompt-context";
 import type { createPromptReadingPublisher } from "./prompt-reading-position";
 import { resolveRetainedContextSource } from "./sticky-prompt-model";

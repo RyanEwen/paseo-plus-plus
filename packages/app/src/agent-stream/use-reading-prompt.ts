@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { StreamItem } from "@/types/stream";
 import { retainBounded } from "@/timeline/canonical-prompt-model";
-import { contextSourceKey } from "./fetch-reading-prompt-context";
+import { contextSourceKey } from "@/timeline/read-canonical-prompt-context";
 import type { UserPrompt } from "./sticky-prompt-model";
 
 /** Prompts and reading contexts kept per epoch for revisiting nearby responses. */
