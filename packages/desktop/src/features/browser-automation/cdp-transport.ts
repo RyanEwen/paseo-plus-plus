@@ -1,14 +1,17 @@
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 
+/** The Electron debugger members a guest CDP transport uses; every Electron Debugger has them. */
+export interface GuestCdpDebugger {
+  isAttached(): boolean;
+  attach(protocolVersion?: string): void;
+  sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
+  on(event: "detach", listener: () => void): void;
+  removeListener(event: "detach", listener: () => void): void;
+}
+
 /** Minimal native guest surface; creating a transport never observes console or enables domains. */
 export interface GuestCdpContents {
-  readonly debugger: {
-    isAttached(): boolean;
-    attach(protocolVersion?: string): void;
-    sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
-    on?(event: "detach", listener: () => void): void;
-    removeListener?(event: "detach", listener: () => void): void;
-  };
+  readonly debugger: GuestCdpDebugger;
   isDestroyed(): boolean;
   isDevToolsOpened?(): boolean;
   once(event: "destroyed", listener: () => void): void;
@@ -45,14 +48,14 @@ export class GuestCdpTransport {
   private readonly lifetime = new AbortController();
 
   private detachGeneration = 0;
-  private readonly nativeDebugger: GuestCdpContents["debugger"];
+  private readonly nativeDebugger: GuestCdpDebugger;
   private readonly detached = () => {
     this.detachGeneration += 1;
   };
 
   public constructor(private readonly contents: GuestCdpContents) {
     this.nativeDebugger = contents.debugger;
-    this.nativeDebugger.on?.("detach", this.detached);
+    this.nativeDebugger.on("detach", this.detached);
   }
 
   /** One metadata observation cannot silently attach again after its native session detaches. */
@@ -108,7 +111,7 @@ export class GuestCdpTransport {
   /** Cancel undispatched queue work; an already dispatched native request still owns its barrier. */
   public dispose(): void {
     this.lifetime.abort(new Error("The browser guest has been destroyed."));
-    this.nativeDebugger.removeListener?.("detach", this.detached);
+    this.nativeDebugger.removeListener("detach", this.detached);
   }
 
   private signal(signal?: AbortSignal): AbortSignal {

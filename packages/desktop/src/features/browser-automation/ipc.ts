@@ -8,7 +8,11 @@ import type { TabContents, BrowserRegistry, TabImage, DialogCaptureOperation } f
 import { isPointerRelease, type IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { settleUnlessAborted } from "./abort-race.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
-import { getGuestCdpTransport, type GuestCdpTransport } from "./cdp-transport.js";
+import {
+  getGuestCdpTransport,
+  type GuestCdpDebugger,
+  type GuestCdpTransport,
+} from "./cdp-transport.js";
 import {
   dialogAcceptValue,
   handledDialogEvent,
@@ -67,15 +71,12 @@ export class HostSnapshotEngineRegistry {
 
 const hostSnapshotEngines = new HostSnapshotEngineRegistry();
 
-interface WebContentsDebugger {
-  isAttached(): boolean;
-  attach(protocolVersion?: string): void;
-  sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
-  on?(
+interface WebContentsDebugger extends GuestCdpDebugger {
+  on(
     event: "message",
     listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
   ): void;
-  on?(event: "detach", listener: () => void): void;
+  on(event: "detach", listener: () => void): void;
 }
 
 interface ConsoleMessageEmitter {
@@ -313,9 +314,6 @@ class DialogMonitor {
 
   private async enable(signal?: AbortSignal): Promise<void> {
     if (this.enabled) {
-      return;
-    }
-    if (!this.contents.debugger.on) {
       return;
     }
     if (!this.listenerRegistered) {
