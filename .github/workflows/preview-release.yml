@@ -81,16 +81,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.PREVIEW_ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.PREVIEW_ANDROID_KEY_PASSWORD }}
           GOOGLE_SERVICES: ${{ secrets.PREVIEW_GOOGLE_SERVICES_PLUS_PLUS_JSON }}
-        run: |
-          node --input-type=module <<'NODE'
-          const names = ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
-            'PASEO_AZURE_PUBLISHER_NAME', 'PASEO_AZURE_SIGNING_ENDPOINT',
-            'PASEO_AZURE_CERTIFICATE_PROFILE', 'PASEO_AZURE_SIGNING_ACCOUNT',
-            'KEYSTORE', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD', 'GOOGLE_SERVICES',
-            'PASEO_PREVIEW_EXPO_PROJECT_ID', 'PASEO_PREVIEW_EXPO_OWNER', 'PASEO_PREVIEW_EXPO_SLUG'];
-          const missing = names.filter(name => !process.env[name]?.trim());
-          if (missing.length) throw new Error(`Missing preview credentials: ${missing.join(', ')}`);
-          NODE
+        run: node scripts/preview-release/credentials.mjs
       - name: Resolve fixed release source
         id: release
         run: node scripts/preview-release/metadata.mjs >> "$GITHUB_OUTPUT"
@@ -239,15 +230,7 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.PREVIEW_GOOGLE_SERVICES_PLUS_PLUS_JSON }}
         run: |
           node scripts/preview-release/prepare.mjs
-          node --input-type=module <<'NODE'
-          import { writeFileSync } from 'node:fs';
-          const google = JSON.parse(process.env.GOOGLE_SERVICES_JSON);
-          if (!google.client?.some(client => client.client_info?.android_client_info?.package_name === 'sh.paseo.plusplus')) {
-            throw new Error('Firebase configuration must include sh.paseo.plusplus');
-          }
-          writeFileSync(process.env.PASEO_ANDROID_KEYSTORE, Buffer.from(process.env.KEYSTORE_BASE64, 'base64'), { mode: 0o600 });
-          writeFileSync(process.env.GOOGLE_SERVICES_FILE_PREVIEW, JSON.stringify(google), { mode: 0o600 });
-          NODE
+          node scripts/preview-release/android-signing-files.mjs
       - name: Build standalone signed APK
         run: |
           npm run build:app-deps
@@ -273,11 +256,8 @@ jobs:
           cat "$RUNNER_TEMP/apk-signature.txt"
           node scripts/preview-release/android-signer.mjs "$RUNNER_TEMP/apk-signature.txt" "$expected_signer"
           "$build_tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
-          grep -q "package: name='sh.paseo.plusplus'" "$RUNNER_TEMP/apk-badging.txt"
-          actual_abis="$(unzip -Z1 "$apk" | awk -F/ '$1 == "lib" {print $2}' | sort -u)"
-          [[ "$actual_abis" == $'arm64-v8a\narmeabi-v7a\nx86\nx86_64' ]] || { echo "Unexpected APK ABIs: $actual_abis"; exit 1; }
-          expected_code="$(node -p 'JSON.parse(require("fs").readFileSync("preview-release.json", "utf8")).androidVersionCode')"
-          grep -q "versionCode='$expected_code'" "$RUNNER_TEMP/apk-badging.txt"
+          unzip -Z1 "$apk" > "$RUNNER_TEMP/apk-entries.txt"
+          node scripts/preview-release/android-signer.mjs --identity "$RUNNER_TEMP/apk-badging.txt" "$RUNNER_TEMP/apk-entries.txt" preview-release.json
           mkdir preview-android
           cp "$apk" "preview-android/Paseo-Plus-Plus-${{ needs.source.outputs.version }}-android.apk"
           cp preview-release.json preview-android/
@@ -303,6 +283,7 @@ jobs:
           path: |
             ${{ runner.temp }}/apk-signature.txt
             ${{ runner.temp }}/apk-badging.txt
+            ${{ runner.temp }}/apk-entries.txt
           if-no-files-found: ignore
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

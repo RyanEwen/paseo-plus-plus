@@ -57,7 +57,7 @@ jobs:
           filters: .github/ci-paths.yml
 
       - name: Validate CI contracts
-        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs scripts/release-version-utils.test.mjs scripts/preview-release/github.test.mjs scripts/preview-release/daemon.test.mjs scripts/preview-release/npm.test.mjs scripts/preview-release/metadata.test.mjs scripts/preview-release/source.test.mjs scripts/preview-release/publication-policy.test.mjs scripts/preview-release/windows-powershell-probe/index.test.mjs scripts/preview-release/workflow.test.mjs scripts/trace-paths.test.mjs
+        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs scripts/release-version-utils.test.mjs scripts/preview-release/github.test.mjs scripts/preview-release/daemon.test.mjs scripts/preview-release/npm.test.mjs scripts/preview-release/metadata.test.mjs scripts/preview-release/credentials.test.mjs scripts/preview-release/android-signing-files.test.mjs scripts/preview-release/source.test.mjs scripts/preview-release/publication-policy.test.mjs scripts/preview-release/windows-powershell-probe/index.test.mjs scripts/preview-release/workflow.test.mjs scripts/trace-paths.test.mjs
 
   quality:
     name: quality
