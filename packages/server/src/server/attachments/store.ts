@@ -95,6 +95,12 @@ interface OwnerUsage {
   references: number;
   hashes: Set<string>;
 }
+/** Files one publication linked, so a clean commit can update accounting without a rescan. */
+interface PublicationEffects {
+  blobBytes?: number;
+  reference?: AttachmentReference;
+  completed: boolean;
+}
 
 /** Append-only originals. No archive cleanup, stale-lock recovery or committed-file deletion. */
 export class AttachmentStore {
@@ -451,9 +457,10 @@ export class AttachmentStore {
     signal?: AbortSignal,
   ): Promise<AttachmentReference> {
     const staging = new Set<string>();
+    const effects: PublicationEffects = { completed: false };
     return withAttachmentResource(
-      () => this.publish(owner, image, staging, signal),
-      () => this.cleanupPublication(staging),
+      () => this.publish(owner, image, staging, effects, signal),
+      () => this.cleanupPublication(staging, effects),
       "Attachment publication failed and cleanup also failed.",
     );
   }
@@ -461,6 +468,7 @@ export class AttachmentStore {
     owner: { agentId: string; workspaceId?: string },
     image: { data: string; mimeType: string },
     staging: Set<string>,
+    effects: PublicationEffects,
     signal?: AbortSignal,
   ): Promise<AttachmentReference> {
     this.assertWriteActive(signal);
@@ -480,9 +488,13 @@ export class AttachmentStore {
       staging.add(temporary);
       this.assertWriteActive(signal);
       await this.io.link(temporary, blob);
+      effects.blobBytes = admitted.bytes.length;
       await this.syncDirectory(path.dirname(blob));
     }
-    if (previous) return previous;
+    if (previous) {
+      effects.completed = true;
+      return previous;
+    }
     this.assertWriteActive(signal);
     const reference = AttachmentReferenceSchema.parse({
       id: this.referenceIds.next(),
@@ -499,11 +511,21 @@ export class AttachmentStore {
     staging.add(temporary);
     this.assertWriteActive(signal);
     await this.io.link(temporary, path.join(this.directory, "references", `${reference.id}.json`));
+    effects.reference = reference;
     await this.syncDirectory(path.join(this.directory, "references"));
     // Reference publication is the commit point. Cancellation never deletes it.
+    effects.completed = true;
     return reference;
   }
-  private async cleanupPublication(staging: Set<string>): Promise<void> {
+  /**
+   * Remove a publication's staging files, then bring accounting up to date. A clean, completed
+   * publication adds exactly what it linked. Any failure rescans the store, because a retained
+   * staging file or a partial publication leaves charged artifacts it cannot describe.
+   */
+  private async cleanupPublication(
+    staging: Set<string>,
+    effects: PublicationEffects,
+  ): Promise<void> {
     const failures: unknown[] = [];
     for (const file of staging) {
       try {
@@ -511,6 +533,10 @@ export class AttachmentStore {
       } catch (error) {
         failures.push(error);
       }
+    }
+    if (effects.completed && !failures.length) {
+      this.recordPublication(effects);
+      return;
     }
     try {
       await this.recover(true);
@@ -524,6 +550,33 @@ export class AttachmentStore {
         failures,
         "Attachment cleanup or accounting failed; original artifacts have been retained.",
       );
+  }
+
+  /** Charge a completed publication exactly as a rescan of its new files would. */
+  private recordPublication(effects: PublicationEffects): void {
+    const entry = this.limits.entryCharge;
+    if (effects.blobBytes !== undefined) {
+      this.blobFiles++;
+      this.metadataBytes += entry;
+      this.chargedBytes += effects.blobBytes + entry;
+    }
+    const reference = effects.reference;
+    if (!reference) return;
+    this.referenceFiles++;
+    this.metadataBytes += entry;
+    this.chargedBytes += entry;
+    this.references.set(reference.id, reference);
+    const usage = this.owners.get(reference.agentId) ?? {
+      bytes: 0,
+      references: 0,
+      hashes: new Set<string>(),
+    };
+    usage.references++;
+    if (!usage.hashes.has(reference.sha256)) {
+      usage.bytes += reference.byteLength;
+      usage.hashes.add(reference.sha256);
+    }
+    this.owners.set(reference.agentId, usage);
   }
 
   async list(
