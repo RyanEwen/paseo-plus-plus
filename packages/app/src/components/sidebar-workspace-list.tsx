@@ -1,9 +1,8 @@
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
+import { selectKnownSidebarProjectKeys } from "@/components/sidebar/sidebar-model";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
-import { useSessionStore } from "@/stores/session-store";
-import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -2380,13 +2379,7 @@ function ProjectModeList({
       )
         return;
       if (!visibleKeys.includes(move.activeKey) || !visibleKeys.includes(move.overKey)) return;
-      const session = useSessionStore.getState();
-      const serverIds = getHostRuntimeStore()
-        .getHosts()
-        .map((host) => host.serverId);
-      const knownProjectKeys = selectWorkspaceStructureProjects(session, serverIds).map(
-        (project) => project.viewKey,
-      );
+      const knownProjectKeys = selectKnownSidebarProjectKeys();
       if (!knownProjectKeys.includes(move.activeKey) || !knownProjectKeys.includes(move.overKey))
         return;
       const next = moveProjectInFullOrder({
@@ -2413,8 +2406,6 @@ function ProjectModeList({
         move,
       });
       if (result.workspaceOrder === null) return;
-
-      if (useSidebarViewStore.getState().workspaceSortMode !== "custom") return;
       setWorkspaceOrder(projectViewKey, result.workspaceOrder);
     },
     [getWorkspaceOrder, setWorkspaceOrder, unpinnedProjects],
