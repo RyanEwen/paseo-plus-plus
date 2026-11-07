@@ -10,6 +10,7 @@ import {
   runWorktreeTeardownCommands,
   slugify,
   resolveDefaultWorktreePath,
+  runInWorktreeCreationLane,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
@@ -26,7 +27,6 @@ import {
   writeFileSync,
 } from "fs";
 import { join, sep } from "path";
-import { WorktreeCreationQueue } from "./worktree-creation-queue";
 import { createServer, type AddressInfo, type Socket } from "net";
 import { tmpdir } from "os";
 import { createRealpathAwarePathMatcher } from "./path";
@@ -101,13 +101,12 @@ describe("paseo worktree manager", () => {
   });
 
   it("serializes canonical project aliases and releases creation after failure", async () => {
-    const queue = new WorktreeCreationQueue();
     const events: string[] = [];
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const first = queue.run(repoDir, async () => {
+    const first = runInWorktreeCreationLane(repoDir, async () => {
       events.push("first");
       await gate;
       throw new Error("fixture creation failure");
@@ -115,7 +114,7 @@ describe("paseo worktree manager", () => {
     const firstOutcome = first.catch((error: unknown) =>
       error instanceof Error ? error.message : "unexpected failure",
     );
-    const second = queue.run(`${repoDir}${sep}.`, async () => {
+    const second = runInWorktreeCreationLane(`${repoDir}${sep}.`, async () => {
       events.push("second");
       return "created";
     });
@@ -126,7 +125,7 @@ describe("paseo worktree manager", () => {
       expect(await firstOutcome).toBe("fixture creation failure");
       expect(await second).toBe("created");
       expect(events).toEqual(["first", "second"]);
-      expect(await queue.run(repoDir, async () => "next creation")).toBe("next creation");
+      expect(await runInWorktreeCreationLane(repoDir, async () => "next creation")).toBe("next creation");
     } finally {
       release();
       await Promise.allSettled([first, second]);
@@ -134,17 +133,16 @@ describe("paseo worktree manager", () => {
   });
 
   it("does not block an independent project creation", async () => {
-    const queue = new WorktreeCreationQueue();
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const first = queue.run(repoDir, async () => {
+    const first = runInWorktreeCreationLane(repoDir, async () => {
       await gate;
       return "first";
     });
     try {
-      expect(await queue.run(tempDir, async () => "independent")).toBe("independent");
+      expect(await runInWorktreeCreationLane(tempDir, async () => "independent")).toBe("independent");
       release();
       expect(await first).toBe("first");
     } finally {

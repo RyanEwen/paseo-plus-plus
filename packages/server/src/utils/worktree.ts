@@ -45,14 +45,15 @@ import {
   getRealpathAwareRelativePath,
   getRelativePathInsideRoot,
   isPathInsideRoot,
+  normalizePathForIdentity,
 } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
-import { WorktreeCreationQueue } from "./worktree-creation-queue.js";
+import { createKeyedSerializer } from "./keyed-serial.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
 const execFileAsync = promisify(execFile);
-const worktreeCreationQueue = new WorktreeCreationQueue();
+const worktreeCreationLanes = createKeyedSerializer();
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -1366,6 +1367,22 @@ async function readLocalBranchTip(cwd: string, branchName: string): Promise<stri
   }
 }
 
+/**
+ * Run worktree placement and creation for one project directory in its creation lane.
+ *
+ * Exact-name conflict checks and default suffix allocation look at the filesystem and then
+ * create. Serializing them per project directory keeps concurrent callers from claiming the
+ * same branch or folder name. The lane is keyed by the project directory, never by the
+ * destination path, because an absent destination has no stable identity. Setup runs after
+ * the lane is released.
+ */
+export function runInWorktreeCreationLane<T>(
+  projectDirectory: string,
+  create: () => Promise<T>,
+): Promise<T> {
+  return worktreeCreationLanes(normalizePathForIdentity(projectDirectory), create);
+}
+
 /** Resolve the default placement once, before presenting it to creation hooks. */
 export async function resolveDefaultWorktreePath(
   options: Pick<
@@ -1397,7 +1414,7 @@ export const createWorktree = async ({
   worktreePath: explicitWorktreePath,
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
   const projectDirectory = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
-  return worktreeCreationQueue.run(projectDirectory, async () => {
+  return runInWorktreeCreationLane(projectDirectory, async () => {
     const plannedPath =
       explicitWorktreePath ??
       (exactNames ? join(projectDirectory, worktreeSlug) : undefined) ??
