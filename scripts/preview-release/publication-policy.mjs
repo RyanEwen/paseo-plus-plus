@@ -235,28 +235,27 @@ export function requirePublicationPolicy({ kind, repo, release }) {
   const qualifiedBridge = JSON.parse(
     readFileSync(new URL("./qualified-bridge.json", import.meta.url), "utf8"),
   );
-  // Validate the local choice before API access; no input or environment variable can supply a receipt.
-  if (!["bridge", "preview", "latest"].includes(kind))
+  // Validate the local choice before any API access; no input or environment variable can
+  // supply a receipt. A missing or malformed receipt is rejected before its commit or evidence
+  // path is used in a URL or filesystem lookup.
+  if (!["bridge", "preview", "latest"].includes(kind)) {
     throw new Error("Release kind must be bridge, preview or latest");
-  if (kind === "latest" && !qualifiedBridge) {
-    throw new Error("Normal Latest releases require a reviewed qualified-bridge receipt");
   }
-  // Reject malformed receipt paths and commits before using them in a URL or filesystem lookup.
   if (kind === "latest") {
     requireQualifiedBridge(qualifiedBridge);
   }
+
   const retainedBridge = kind === "preview" ? readBridgeRetention() : null;
   const releases = readGitHubJson([
     `repos/${repo}/releases?per_page=100`,
     "--paginate",
     "--slurp",
   ]).flat();
+  const expectedBridge = kind === "preview" ? retainedBridge : qualifiedBridge;
   const comparison =
-    kind !== "bridge"
-      ? readGitHubJson([
-          `repos/${repo}/compare/${(kind === "preview" ? retainedBridge : qualifiedBridge).commit}...${release.commit}`,
-        ])
-      : null;
+    kind === "bridge"
+      ? null
+      : readGitHubJson([`repos/${repo}/compare/${expectedBridge.commit}...${release.commit}`]);
   const policy = resolvePublicationPolicy({
     kind,
     release,
