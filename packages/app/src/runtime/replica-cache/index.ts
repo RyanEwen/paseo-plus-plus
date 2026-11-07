@@ -1181,15 +1181,15 @@ function planRepairChanges(plan: RepairPlan): ReplicaRowChanges {
     deletes: invalidRows,
     upserts:
       checkpoint !== undefined && !checkpointWasInvalid
-      ? [
-          {
-            serverId,
-            kind: "checkpoint",
-            id: REPLICA_SINGLETON_ROW_ID,
-            payload: JSON.stringify(serializeDirectoryCheckpoint(checkpoint)),
-          },
-        ]
-      : [],
+        ? [
+            {
+              serverId,
+              kind: "checkpoint",
+              id: REPLICA_SINGLETON_ROW_ID,
+              payload: JSON.stringify(serializeDirectoryCheckpoint(checkpoint)),
+            },
+          ]
+        : [],
   };
 }
 
@@ -1362,7 +1362,8 @@ export class ReplicaCache {
   async readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined> {
     return this.withReadScope<CachedTimeline>(
       { serverId, kinds: ["timeline"], ids: [agentId] },
-      (scope) => this.readScopedRow(scope, "timeline", agentId, (row) => parseTimelineRow(agentId, row)),
+      (scope) =>
+        this.readScopedRow(scope, "timeline", agentId, (row) => parseTimelineRow(agentId, row)),
     );
   }
 
@@ -1876,7 +1877,9 @@ export class ReplicaCache {
   ): boolean {
     if (!matchesReplicaRead(read, row)) return false;
     if (!read.workspaceAuthority || row.kind !== "checkpoint" || !("value" in row)) return true;
-    return read.workspaceAuthority.observed !== this.pendingCheckpointAuthority(row.serverId, row.value);
+    return (
+      read.workspaceAuthority.observed !== this.pendingCheckpointAuthority(row.serverId, row.value)
+    );
   }
 
   private hasPendingReadChanges(read: ReplicaRead): boolean {
