@@ -137,20 +137,13 @@ export function isServiceScript(config: ScriptConfig): config is ServiceScriptCo
   return "type" in config && config.type === "service";
 }
 
-/** Setup failure with command results and, for retained creations, the checkout to retry. */
 export class WorktreeSetupError extends Error {
   readonly results: WorktreeSetupCommandResult[];
-  readonly retainedWorktree?: { worktreePath: string; branchName: string };
 
-  constructor(
-    message: string,
-    results: WorktreeSetupCommandResult[],
-    retainedWorktree?: { worktreePath: string; branchName: string },
-  ) {
+  constructor(message: string, results: WorktreeSetupCommandResult[]) {
     super(message);
     this.name = "WorktreeSetupError";
     this.results = results;
-    this.retainedWorktree = retainedWorktree;
   }
 }
 
