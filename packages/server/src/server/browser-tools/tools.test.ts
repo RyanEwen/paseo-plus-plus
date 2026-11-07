@@ -1071,6 +1071,24 @@ test("failed screenshot publication never returns inline success or a reference"
   expect(harness.storage.releases).toBe(1);
   expect(result.structuredContent).not.toHaveProperty("attachment");
 });
+test("an owned screenshot keeps the dialogs captured during the screenshot", async () => {
+  const harness = new BrowserToolHarness();
+  const dialogs = [
+    { type: "alert" as const, message: "Saved", action: "accepted" as const, timestamp: 7 },
+  ];
+  harness.broker.setResponse({ ...screenshotPayload(), dialogs });
+  const result = await harness.execute("browser_screenshot", { browserId: BROWSER_ID });
+  expect(result.structuredContent).toMatchObject({
+    ok: true,
+    dialogs,
+    attachment: ORIGINAL_REFERENCE,
+  });
+  expect(result.content.at(-1)).toEqual({
+    type: "text",
+    text: `Original screenshot reference: ${ORIGINAL_REFERENCE.id} (agent ${ORIGINAL_REFERENCE.agentId}).`,
+  });
+});
+
 test("broker failures during an owned screenshot propagate instead of reporting storage", async () => {
   const harness = new BrowserToolHarness();
   harness.broker.pause = async () => {

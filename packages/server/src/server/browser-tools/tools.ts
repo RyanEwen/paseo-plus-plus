@@ -7,6 +7,7 @@ import {
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
 import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
+import type { AttachmentReference } from "@getpaseo/protocol/attachments";
 import type {
   PaseoToolConfig,
   PaseoToolExecutionContext,
@@ -439,23 +440,11 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         const reference = await asStorageOperation(execution.signal, () =>
           admitted.commit(image, execution.signal),
         );
-        const result = browserToolResult({ payload, context: { ...context, browserId } });
-        return {
-          ...result,
-          content: [
-            ...result.content,
-            {
-              type: "text",
-              text: `Original screenshot reference: ${reference.id} (agent ${reference.agentId}).`,
-            },
-          ],
-          structuredContent: {
-            ok: true,
-            result: browserToolStructuredResult(payload.result),
-            context: { ...context, browserId },
-            attachment: reference,
-          },
-        };
+        return browserToolResult({
+          payload,
+          context: { ...context, browserId },
+          attachment: reference,
+        });
       } catch (error) {
         // Cancellation wins over whatever the aborted step threw.
         if (execution.signal?.aborted) return screenshotCanceled({ ...context, browserId });
@@ -866,19 +855,26 @@ function requireWorkspaceContext(context: {
   });
 }
 
+/**
+ * Build the MCP result for a broker payload. A saved screenshot original adds its reference to
+ * both the text content and the structured result, beside any dialogs the command captured.
+ */
 function browserToolResult(params: {
   payload: BrowserToolsResponsePayload;
   context: { agentId?: string; cwd?: string; workspaceId?: string; browserId?: string };
+  attachment?: AttachmentReference;
 }): PaseoToolResult {
-  const { payload, context } = params;
+  const { payload, context, attachment } = params;
   if (payload.ok) {
+    const content = browserToolSuccessContent(payload);
     return {
-      content: browserToolSuccessContent(payload),
+      content: attachment ? [...content, attachmentReferenceContent(attachment)] : content,
       structuredContent: {
         ok: true,
         result: browserToolStructuredResult(payload.result),
         ...(payload.dialogs ? { dialogs: payload.dialogs } : {}),
         context,
+        ...(attachment ? { attachment } : {}),
       },
     };
   }
@@ -896,6 +892,13 @@ function browserToolResult(params: {
       ...(payload.dialogs ? { dialogs: payload.dialogs } : {}),
       context,
     },
+  };
+}
+
+function attachmentReferenceContent(reference: AttachmentReference): PaseoToolResult["content"][number] {
+  return {
+    type: "text",
+    text: `Original screenshot reference: ${reference.id} (agent ${reference.agentId}).`,
   };
 }
 
