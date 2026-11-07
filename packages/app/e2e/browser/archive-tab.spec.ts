@@ -92,85 +92,104 @@ test.describe("Archive tab reconciliation", () => {
     await tempRepo?.cleanup();
   });
 
-  for (const width of [1440, 390]) {
-    test(`Reopen closed agent opens archived history with explicit Unarchive at ${width}px`, async ({
-      page,
-    }, testInfo) => {
-      const archived = await createMockIdleAgent(client, {
-        cwd: tempRepo.path,
-        workspaceId,
-        title: `previous-archived-${randomUUID().slice(0, 8)}`,
-      });
-      const surviving = await createMockIdleAgent(client, {
-        cwd: tempRepo.path,
-        workspaceId,
-        title: `previous-open-${randomUUID().slice(0, 8)}`,
-      });
-      await resetSeededPageState(page);
-      await openWorkspaceWithAgents(page, [archived, surviving]);
-      await archiveAgentFromDaemon(client, archived.id);
-      await expectWorkspaceTabHidden(page, archived.id);
-      await page.setViewportSize({ width, height: 900 });
-      const trigger = width < 600 ? "workspace-header-menu-trigger" : "workspace-new-tab-button";
-      const triggerButton = page.getByTestId(trigger).filter({ visible: true }).first();
-      const previousItem = page.getByTestId("workspace-new-tab-menu-reopen-closed-agent");
-      if (width < 600) {
-        await triggerButton.click();
-        await previousItem.click();
-      } else {
-        await triggerButton.focus();
-        await triggerButton.press("Enter");
-        await previousItem.press("Enter");
-      }
-      const menuId = width < 600 ? "workspace-header-menu" : "workspace-new-tab-menu";
-      await expect(page.getByTestId(menuId).filter({ visible: true })).toHaveCount(0);
-      if (width < 600) {
-        await expect(
-          page.getByText("Workspace actions", { exact: true }).filter({ visible: true }),
-        ).toHaveCount(0);
-      }
-      await expect(
-        page.getByText("Reopen closed agent", { exact: true }).filter({ visible: true }).first(),
-      ).toBeVisible();
-      await expect(
-        page.getByTestId("reopen-closed-agent-dialog").filter({ visible: true }).first(),
-      ).toBeVisible();
-      await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
-      if (width === 1440) {
-        await page.keyboard.press("Escape");
-        await expect(page.getByTestId("reopen-closed-agent-dialog-content")).toHaveCount(0);
-        await triggerButton.press("Enter");
-        await previousItem.press("Enter");
-      }
-      await expect(page.getByTestId("reopen-closed-agent-dialog-content")).toBeVisible();
-      await expectSessionRowArchived(page, archived.title);
-      const dialogTitle = page
-        .getByTestId("reopen-closed-agent-dialog-content")
-        .getByTestId(`agent-row-title-${getServerId()}-${archived.id}`);
-      const titleFits = await dialogTitle.evaluate(
-        (element) => element.scrollWidth <= element.clientWidth,
-      );
-      expect(titleFits).toBe(true);
-      await page.screenshot({ path: testInfo.outputPath("previous-agents.png") });
-      await expect(
-        page
-          .getByTestId("reopen-closed-agent-dialog-content")
-          .getByRole("button")
-          .filter({ hasText: surviving.title }),
-      ).toHaveCount(0);
-      await clickSessionRow(page, archived.title);
-      await expect(page.getByTestId("reopen-closed-agent-dialog-content")).toHaveCount(0);
-      await expect(
-        page.getByText("This agent is archived").filter({ visible: true }).first(),
-      ).toBeVisible();
-      expect(await fetchAgentArchivedAt(client, archived.id)).not.toBeNull();
-      await page.getByRole("button", { name: "Unarchive", exact: true }).click();
-      await expect.poll(() => fetchAgentArchivedAt(client, archived.id)).toBeNull();
-      await expect(page.getByText("This agent is archived").filter({ visible: true })).toHaveCount(
-        0,
-      );
+  /** Seed one archived agent and one open agent in the shared workspace at the given width. */
+  async function seedArchivedAgent(page: Page, width: number) {
+    const archived = await createMockIdleAgent(client, {
+      cwd: tempRepo.path,
+      workspaceId,
+      title: `previous-archived-${randomUUID().slice(0, 8)}`,
     });
+    const surviving = await createMockIdleAgent(client, {
+      cwd: tempRepo.path,
+      workspaceId,
+      title: `previous-open-${randomUUID().slice(0, 8)}`,
+    });
+    await resetSeededPageState(page);
+    await openWorkspaceWithAgents(page, [archived, surviving]);
+    await archiveAgentFromDaemon(client, archived.id);
+    await expectWorkspaceTabHidden(page, archived.id);
+    await page.setViewportSize({ width, height: 900 });
+    return { archived, surviving };
   }
+
+  /** The dialog is open over the workspace and the menu that opened it has closed. */
+  async function expectDialogReplacedMenu(page: Page, menuTestId: string): Promise<void> {
+    await expect(page.getByTestId(menuTestId).filter({ visible: true })).toHaveCount(0);
+    await expect(
+      page.getByText("Reopen closed agent", { exact: true }).filter({ visible: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("reopen-closed-agent-dialog").filter({ visible: true }).first(),
+    ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
+  }
+
+  /**
+   * The dialog lists only the archived agent, opens it without unarchiving, and leaves
+   * Unarchive as the explicit step that resumes it.
+   */
+  async function expectArchivedAgentReopens(
+    page: Page,
+    agents: { archived: { id: string; title: string }; surviving: { title: string } },
+    screenshotPath: string,
+  ): Promise<void> {
+    const { archived, surviving } = agents;
+    const content = page.getByTestId("reopen-closed-agent-dialog-content");
+    await expect(content).toBeVisible();
+    await expectSessionRowArchived(page, archived.title);
+    const dialogTitle = content.getByTestId(`agent-row-title-${getServerId()}-${archived.id}`);
+    const titleFits = await dialogTitle.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    );
+    expect(titleFits).toBe(true);
+    await page.screenshot({ path: screenshotPath });
+    await expect(content.getByRole("button").filter({ hasText: surviving.title })).toHaveCount(0);
+    await clickSessionRow(page, archived.title);
+    await expect(content).toHaveCount(0);
+    await expect(
+      page.getByText("This agent is archived").filter({ visible: true }).first(),
+    ).toBeVisible();
+    expect(await fetchAgentArchivedAt(client, archived.id)).not.toBeNull();
+    await page.getByRole("button", { name: "Unarchive", exact: true }).click();
+    await expect.poll(() => fetchAgentArchivedAt(client, archived.id)).toBeNull();
+    await expect(page.getByText("This agent is archived").filter({ visible: true })).toHaveCount(
+      0,
+    );
+  }
+
+  test("Reopen closed agent opens archived history from the compact workspace menu", async ({
+    page,
+  }, testInfo) => {
+    const agents = await seedArchivedAgent(page, 390);
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).first().click();
+    await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
+
+    await expectDialogReplacedMenu(page, "workspace-header-menu");
+    await expect(
+      page.getByText("Workspace actions", { exact: true }).filter({ visible: true }),
+    ).toHaveCount(0);
+    await expectArchivedAgentReopens(page, agents, testInfo.outputPath("previous-agents.png"));
+  });
+
+  test("Reopen closed agent opens archived history from the desktop + menu", async ({
+    page,
+  }, testInfo) => {
+    const agents = await seedArchivedAgent(page, 1440);
+    const trigger = page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first();
+    const menuItem = page.getByTestId("workspace-new-tab-menu-reopen-closed-agent");
+    await trigger.focus();
+    await trigger.press("Enter");
+    await menuItem.press("Enter");
+    await expectDialogReplacedMenu(page, "workspace-new-tab-menu");
+
+    // Escape dismisses the dialog, and the keyboard reopens it from the same menu.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("reopen-closed-agent-dialog-content")).toHaveCount(0);
+    await trigger.press("Enter");
+    await menuItem.press("Enter");
+
+    await expectArchivedAgentReopens(page, agents, testInfo.outputPath("previous-agents.png"));
+  });
 
   test("Reopen closed agent leaves the + menu while its setting is off", async ({ page }) => {
     // resetSeededPageState clears device settings, so the next test starts with the default (on).
