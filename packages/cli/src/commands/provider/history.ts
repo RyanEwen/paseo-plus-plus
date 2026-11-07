@@ -2,7 +2,10 @@ import { Command } from "commander";
 import type { ProviderHistoryPreview } from "@getpaseo/server/provider-history";
 import { addJsonOption, addLocalDaemonOptions } from "../../utils/command-options.js";
 import { withOutput, type CommandOptions, type SingleResult } from "../../output/index.js";
-import { createHistoryMigrationPrompt } from "@getpaseo/client/provider-history-prompt";
+import {
+  createHistoryMigrationPrompt,
+  validateMigrationPromptInput,
+} from "@getpaseo/client/provider-history-prompt";
 interface PreviewOptions extends CommandOptions {
   providerHome?: string;
   family?: string;
@@ -63,7 +66,7 @@ export async function runHistoryMigrationPrompt(
     destination: { home: options.destinationHome, sqliteHome: options.destinationSqliteHome },
   } as const;
   // Validate explicit text before inspection. This does not admit a destination or start a provider.
-  createHistoryMigrationPrompt(input);
+  validateMigrationPromptInput(input);
   const preview = await runHistoryPreview(provider, options, command);
   const data = createHistoryMigrationPrompt({ ...input, inventory: preview.data });
   return {
@@ -97,6 +100,7 @@ export async function runHistoryPreview(
     throw new Error(
       "Configured destination comparison requires a Codex source and an exact provider ID",
     );
+  // Loaded on demand so other CLI commands never load the server's preview module.
   const { previewProviderHistory } = await import("@getpaseo/server/provider-history");
   const data = await previewProviderHistory({
     paseoHome: options.daemonTarget.home,
