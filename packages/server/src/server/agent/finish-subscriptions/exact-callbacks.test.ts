@@ -404,49 +404,51 @@ test("independent routed recipient without correlation retains parent rejection 
   }
 });
 
-it.each([
-  {
-    mode: "failed-write",
-    name: "thrown callback reservation snapshot prevents enqueue and acknowledgement and permits retry",
-  },
-  {
-    mode: "restored",
-    name: "fresh manager recovers an exact unconsumed callback reservation and delivers once",
-  },
-  {
-    mode: "competing",
-    name: "competing live callback watchers cannot both dispatch the same outcome",
-  },
-  {
-    mode: "await-retirement",
-    name: "callback watcher retired during the supersession await cannot enqueue or acknowledge and exact retry succeeds",
-  },
-])("$name", async ({ mode }) => {
+/** Agent storage whose next snapshot carrying a reserved delivery writes and then throws. */
+class ReservationStorage extends AgentStorage {
+  failNextReservationWrite = false;
+
+  override async applySnapshot(
+    agent: ManagedAgent,
+    options?: Parameters<AgentStorage["applySnapshot"]>[1],
+  ): Promise<void> {
+    const hasReservation = agent.attentionObjectives
+      ?.snapshot()
+      .delegations.some((entry) =>
+        entry.deliveries?.some((delivery) => delivery.status === "reserved"),
+      );
+    if (this.failNextReservationWrite && hasReservation) {
+      this.failNextReservationWrite = false;
+      // A failed persistence call may already have written the reservation to disk.
+      await super.applySnapshot(agent, options);
+      throw new Error("Reservation snapshot failed");
+    }
+    await super.applySnapshot(agent, options);
+  }
+}
+
+type RecoveryHooks = Pick<FinishWaitFixture, "beforeCallbackEnqueue" | "retryDelay">;
+
+/** Run `hold` for the first reserved outcome only; later reservations pass straight through. */
+function holdFirstReservation(hold: () => Promise<void>) {
+  let first = true;
+  return async () => {
+    if (!first) {
+      return;
+    }
+    first = false;
+    await hold();
+  };
+}
+
+/**
+ * A caller with one waiting human objective delegated to a parented child whose exact finished
+ * outcome is ready. Tests watch it through the gate harness and assert one exact delivery.
+ */
+async function createCallbackRecoveryScenario() {
   const workdir = mkdtempSync(join(tmpdir(), "attention-callback-recovery-"));
   const logger = createTestLogger();
   const retries: FinishRetry[] = [];
-  class ReservationStorage extends AgentStorage {
-    failNextReservationWrite = false;
-
-    override async applySnapshot(
-      agent: ManagedAgent,
-      options?: Parameters<AgentStorage["applySnapshot"]>[1],
-    ): Promise<void> {
-      const hasReservation = agent.attentionObjectives
-        ?.snapshot()
-        .delegations.some((entry) =>
-          entry.deliveries?.some((delivery) => delivery.status === "reserved"),
-        );
-      if (this.failNextReservationWrite && hasReservation) {
-        this.failNextReservationWrite = false;
-        // A failed persistence call may already have written the reservation to disk.
-        await super.applySnapshot(agent, options);
-        throw new Error("Reservation snapshot failed");
-      }
-      await super.applySnapshot(agent, options);
-    }
-  }
-  let storage = new ReservationStorage(join(workdir, "agents"), logger);
   const prompts: string[] = [];
   const clients = createTestAgentClients({
     onStartTurn: (prompt) => {
@@ -454,9 +456,17 @@ it.each([
       prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
     },
   });
-  let manager = new AgentManager({ registry: storage, logger, clients });
-  manager.setAttentionHost({ serverId: "origin", resolveRemoteRequester: async () => "unknown" });
-  const managers = [manager];
+  const managers: AgentManager[] = [];
+  /** Start a manager over `storage`, as a daemon start or restart would. */
+  function startManagerOver(storage: ReservationStorage): AgentManager {
+    const started = new AgentManager({ registry: storage, logger, clients });
+    started.setAttentionHost({ serverId: "origin", resolveRemoteRequester: async () => "unknown" });
+    managers.push(started);
+    return started;
+  }
+  const initialStorage = new ReservationStorage(join(workdir, "agents"), logger);
+  const state = { storage: initialStorage, manager: startManagerOver(initialStorage) };
+  const manager = state.manager;
   const callerId = randomUUID();
   const childId = randomUUID();
   const peer = { agentId: childId, serverId: "target" };
@@ -464,7 +474,9 @@ it.each([
   source.admit({ inputs: [{ kind: "human", requestId: "human-job" }] });
   source.declare("human-job", "waiting");
   const link = source.outgoing({ recipient: peer })?.requesterObjective;
-  if (!link) throw new Error("Expected exact request link");
+  if (!link) {
+    throw new Error("Expected exact request link");
+  }
   await manager.createAgent({ provider: "claude", cwd: workdir, title: "Caller" }, callerId, {
     workspaceId: undefined,
     attentionObjectives: source.snapshot(),
@@ -497,33 +509,30 @@ it.each([
   };
   const ackIds: string[] = [];
   const acknowledged = Promise.withResolvers<void>();
-  const reservationEntered = Promise.withResolvers<void>();
-  const returnReservation = Promise.withResolvers<void>();
-  const retryReservation = Promise.withResolvers<void>();
-  const retiredDuringAwait = Promise.withResolvers<void>();
   const stops: Array<() => void> = [];
   const deliveries: Array<ReturnType<typeof createTestAgentMessages>> = [];
 
   /** Restore the actual persisted source with its full identity and reservation assertions. */
   async function restoreReservedCaller(): Promise<void> {
     // Persist before enqueueing, then discard the manager and all of its live ownership.
-    expect((await manager.reserveAttentionCallback(claim)).status).toBe("reserved");
-    expect((await storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries).toEqual([
-      { outcomeId: outcome.id, deliveryId: outcome.id, status: "reserved" },
-    ]);
-    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
-    await manager.flush();
-    storage = new ReservationStorage(join(workdir, "agents"), logger);
-    manager = new AgentManager({ registry: storage, logger, clients });
-    managers.push(manager);
-    manager.setAttentionHost({
-      serverId: "origin",
-      resolveRemoteRequester: async () => "unknown",
+    const previous = state.manager;
+    expect((await previous.reserveAttentionCallback(claim)).status).toBe("reserved");
+    expect(
+      (await state.storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries,
+    ).toEqual([{ outcomeId: outcome.id, deliveryId: outcome.id, status: "reserved" }]);
+    await Promise.all(previous.listAgents().map((agent) => previous.closeAgent(agent.id)));
+    await previous.flush();
+    state.storage = new ReservationStorage(join(workdir, "agents"), logger);
+    const restored = startManagerOver(state.storage);
+    state.manager = restored;
+    await ensureAgentLoaded(callerId, {
+      agentManager: restored,
+      agentStorage: state.storage,
+      logger,
     });
-    await ensureAgentLoaded(callerId, { agentManager: manager, agentStorage: storage, logger });
-    expect(manager.listAgents().map((agent) => agent.id)).toEqual([callerId]);
+    expect(restored.listAgents().map((agent) => agent.id)).toEqual([callerId]);
     expect(() =>
-      manager.getAgent(callerId)?.attentionObjectives?.assertAdmissions([
+      restored.getAgent(callerId)?.attentionObjectives?.assertAdmissions([
         {
           kind: "agent",
           requestId: outcome.id,
@@ -536,149 +545,217 @@ it.each([
       ]),
     ).toThrow("Objective");
     await expect(
-      manager.reserveAttentionCallback({ ...claim, deliveryId: "other-message" }),
+      restored.reserveAttentionCallback({ ...claim, deliveryId: "other-message" }),
     ).rejects.toThrow("Objective");
   }
 
-  const retireWatcherDuringAwait = () => {
-    stops[0]();
-    retiredDuringAwait.resolve();
-  };
-  let beforeCallbackEnqueue: FinishWaitFixture["beforeCallbackEnqueue"];
-  let retryDelay: FinishWaitFixture["retryDelay"];
-  /** Run `hold` for the first reserved outcome only; later reservations pass straight through. */
-  function holdFirstReservation(hold: () => Promise<void>) {
-    let first = true;
-    return async () => {
-      if (!first) {
-        return;
-      }
-      first = false;
-      await hold();
-    };
-  }
-  try {
-    if (mode === "restored") await restoreReservedCaller();
+  /** Message delivery for the current manager, with enqueue and release observed. */
+  function startDelivery() {
     const delivery = createTestAgentMessages({
-      agentManager: manager,
-      agentStorage: storage,
+      agentManager: state.manager,
+      agentStorage: state.storage,
       logger,
     });
     deliveries.push(delivery);
-    const enqueue = vi.spyOn(delivery, "enqueue");
-    const release = vi.spyOn(manager, "releaseAttentionCallback");
-    if (mode === "failed-write") {
-      storage.failNextReservationWrite = true;
-      // Hold the retry after the failed reservation write until the refusal is asserted.
-      retryDelay = async () => {
-        await retryReservation.promise;
-      };
-    }
-    if (mode === "competing") {
-      // The first watcher owns the reservation, held before enqueue, while a second arrives.
-      beforeCallbackEnqueue = holdFirstReservation(async () => {
-        reservationEntered.resolve();
-        await returnReservation.promise;
-      });
-    }
-    if (mode === "await-retirement") {
-      // Retire the first watcher after it reserved and before it could enqueue.
-      beforeCallbackEnqueue = holdFirstReservation(async () => {
-        retireWatcherDuringAwait();
-      });
-    }
-    const watch = () => {
-      stops.push(
-        setupFinishWait({
-          agentManager: manager,
-          agentStorage: storage,
-          agentMessages: delivery,
-          originServerId: "origin",
-          childServerId: "target",
-          childAgentId: childId,
-          callerAgentId: callerId,
-          attention: { continuation: link },
-          logger,
-          wait: async (_signal, query) => {
-            if (query?.acknowledgeOutcomeId) {
-              ackIds.push(query.acknowledgeOutcomeId);
-              acknowledged.resolve();
-              return { ...result, attentionOutcome: null };
-            }
-            return result;
-          },
-          onRetry: (retry) => retries.push(retry),
-          beforeCallbackEnqueue,
-          retryDelay,
-          afterPermission: async () => {},
-        }),
-      );
+    return {
+      delivery,
+      enqueue: vi.spyOn(delivery, "enqueue"),
+      release: vi.spyOn(state.manager, "releaseAttentionCallback"),
     };
-    watch();
-    if (mode === "competing") {
-      await reservationEntered.promise;
-      // A replacement watcher reaches the same durable reservation while the first still owns it.
-      watch();
+  }
+
+  /** Watch the child's exact outcome; an acknowledgement query records its outcome id. */
+  async function waitForChild(_signal: AbortSignal, query?: AgentAttentionRequestQuery) {
+    if (query?.acknowledgeOutcomeId) {
+      ackIds.push(query.acknowledgeOutcomeId);
+      acknowledged.resolve();
+      return { ...result, attentionOutcome: null };
     }
-    if (mode === "await-retirement") {
-      await retiredDuringAwait.promise;
-      await expect.poll(() => release.mock.calls.length).toBe(1);
-      await release.mock.results[0].value;
-      expect(enqueue).not.toHaveBeenCalled();
-      expect(ackIds).toEqual([]);
-      expect(prompts).toEqual([]);
-      watch();
-    } else if (mode !== "restored") {
-      await expect.poll(() => retries.length > 0).toBe(true);
-      expect(enqueue).not.toHaveBeenCalled();
-      expect(ackIds).toEqual([]);
-      if (mode === "failed-write") {
-        // Rollback belongs to reserveAttentionCallback, rather than the caller's enqueue catch.
-        expect(release).not.toHaveBeenCalled();
-        expect(
-          manager.getAgent(callerId)?.attentionObjectives?.snapshot().delegations[0].deliveries,
-        ).toEqual([]);
-        expect(
-          (await storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries,
-        ).toEqual([{ outcomeId: outcome.id, deliveryId: outcome.id, status: "reserved" }]);
-      } else {
-        returnReservation.resolve();
-        await expect.poll(() => release.mock.calls.length).toBe(1);
-        // Await release completion before retrying the abandoned live owner's outcome.
-        await release.mock.results[0].value;
-      }
-      watch();
-      retryReservation.resolve();
-    }
-    await acknowledged.promise;
-    expect(enqueue).toHaveBeenCalledTimes(1);
-    expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipientId: callerId,
-        messageId: outcome.id,
+    return result;
+  }
+
+  function watch(delivery: AgentMessageDelivery, hooks: RecoveryHooks = {}) {
+    stops.push(
+      setupFinishWait({
+        agentManager: state.manager,
+        agentStorage: state.storage,
+        agentMessages: delivery,
+        originServerId: "origin",
+        childServerId: "target",
+        childAgentId: childId,
+        callerAgentId: callerId,
+        attention: { continuation: link },
+        logger,
+        wait: waitForChild,
+        onRetry: (retry) => retries.push(retry),
+        ...hooks,
+        afterPermission: async () => {},
       }),
+    );
+  }
+
+  /** The exact outcome reached the caller once, was consumed, and reobservation only acknowledges. */
+  async function expectDeliveredOnce(input: {
+    delivery: AgentMessageDelivery;
+    enqueue: ReturnType<typeof startDelivery>["enqueue"];
+    hooks?: RecoveryHooks;
+  }) {
+    await acknowledged.promise;
+    expect(input.enqueue).toHaveBeenCalledTimes(1);
+    expect(input.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientId: callerId, messageId: outcome.id }),
     );
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain("EXACT_RECOVERED_RESULT");
     expect(prompts[0]).not.toContain("Unrelated current content");
     expect(ackIds).toEqual([outcome.id]);
-    expect((await storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries).toEqual([
-      { outcomeId: outcome.id, deliveryId: outcome.id, status: "consumed" },
-    ]);
+    expect(
+      (await state.storage.get(callerId))?.attentionObjectives?.delegations[0].deliveries,
+    ).toEqual([{ outcomeId: outcome.id, deliveryId: outcome.id, status: "consumed" }]);
     // Reobservation acknowledges retained evidence without acquiring another dispatch owner.
-    watch();
+    watch(input.delivery, input.hooks);
     await expect.poll(() => ackIds.length).toBe(2);
-    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(input.enqueue).toHaveBeenCalledTimes(1);
     expect(prompts).toHaveLength(1);
-  } finally {
-    returnReservation.resolve();
-    retryReservation.resolve();
-    for (const stop of stops) stop();
-    for (const delivery of deliveries) await delivery.close();
+  }
+
+  async function cleanup() {
+    for (const stop of stops) {
+      stop();
+    }
+    for (const delivery of deliveries) {
+      await delivery.close();
+    }
     for (const current of managers.toReversed()) {
       await Promise.all(current.listAgents().map((agent) => current.closeAgent(agent.id)));
       await current.flush();
     }
     rmSync(workdir, { recursive: true, force: true });
+  }
+
+  return {
+    state,
+    callerId,
+    outcome,
+    ackIds,
+    prompts,
+    retries,
+    stops,
+    restoreReservedCaller,
+    startDelivery,
+    watch,
+    expectDeliveredOnce,
+    cleanup,
+  };
+}
+
+test("thrown callback reservation snapshot prevents enqueue and acknowledgement and permits retry", async () => {
+  const scenario = await createCallbackRecoveryScenario();
+  const retryReservation = Promise.withResolvers<void>();
+  try {
+    const { delivery, enqueue, release } = scenario.startDelivery();
+    scenario.state.storage.failNextReservationWrite = true;
+    // Hold the retry after the failed reservation write until the refusal is asserted.
+    const hooks: RecoveryHooks = {
+      retryDelay: async () => {
+        await retryReservation.promise;
+      },
+    };
+    scenario.watch(delivery, hooks);
+    await expect.poll(() => scenario.retries.length > 0).toBe(true);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(scenario.ackIds).toEqual([]);
+    // Rollback belongs to reserveAttentionCallback, rather than the caller's enqueue catch.
+    expect(release).not.toHaveBeenCalled();
+    expect(
+      scenario.state.manager.getAgent(scenario.callerId)?.attentionObjectives?.snapshot()
+        .delegations[0].deliveries,
+    ).toEqual([]);
+    expect(
+      (await scenario.state.storage.get(scenario.callerId))?.attentionObjectives?.delegations[0]
+        .deliveries,
+    ).toEqual([
+      { outcomeId: scenario.outcome.id, deliveryId: scenario.outcome.id, status: "reserved" },
+    ]);
+    scenario.watch(delivery, hooks);
+    retryReservation.resolve();
+
+    await scenario.expectDeliveredOnce({ delivery, enqueue, hooks });
+  } finally {
+    retryReservation.resolve();
+    await scenario.cleanup();
+  }
+});
+
+test("fresh manager recovers an exact unconsumed callback reservation and delivers once", async () => {
+  const scenario = await createCallbackRecoveryScenario();
+  try {
+    await scenario.restoreReservedCaller();
+    const { delivery, enqueue } = scenario.startDelivery();
+    scenario.watch(delivery);
+
+    await scenario.expectDeliveredOnce({ delivery, enqueue });
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("competing live callback watchers cannot both dispatch the same outcome", async () => {
+  const scenario = await createCallbackRecoveryScenario();
+  const reservationEntered = Promise.withResolvers<void>();
+  const returnReservation = Promise.withResolvers<void>();
+  try {
+    const { delivery, enqueue, release } = scenario.startDelivery();
+    // The first watcher owns the reservation, held before enqueue, while a second arrives.
+    const hooks: RecoveryHooks = {
+      beforeCallbackEnqueue: holdFirstReservation(async () => {
+        reservationEntered.resolve();
+        await returnReservation.promise;
+      }),
+    };
+    scenario.watch(delivery, hooks);
+    await reservationEntered.promise;
+    // A replacement watcher reaches the same durable reservation while the first still owns it.
+    scenario.watch(delivery, hooks);
+    await expect.poll(() => scenario.retries.length > 0).toBe(true);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(scenario.ackIds).toEqual([]);
+    returnReservation.resolve();
+    await expect.poll(() => release.mock.calls.length).toBe(1);
+    // Await release completion before retrying the abandoned live owner's outcome.
+    await release.mock.results[0].value;
+    scenario.watch(delivery, hooks);
+
+    await scenario.expectDeliveredOnce({ delivery, enqueue, hooks });
+  } finally {
+    returnReservation.resolve();
+    await scenario.cleanup();
+  }
+});
+
+test("callback watcher retired during the supersession await cannot enqueue or acknowledge and exact retry succeeds", async () => {
+  const scenario = await createCallbackRecoveryScenario();
+  const retired = Promise.withResolvers<void>();
+  try {
+    const { delivery, enqueue, release } = scenario.startDelivery();
+    // Retire the first watcher after it reserved and before it could enqueue.
+    const hooks: RecoveryHooks = {
+      beforeCallbackEnqueue: holdFirstReservation(async () => {
+        scenario.stops[0]?.();
+        retired.resolve();
+      }),
+    };
+    scenario.watch(delivery, hooks);
+    await retired.promise;
+    await expect.poll(() => release.mock.calls.length).toBe(1);
+    await release.mock.results[0].value;
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(scenario.ackIds).toEqual([]);
+    expect(scenario.prompts).toEqual([]);
+    scenario.watch(delivery, hooks);
+
+    await scenario.expectDeliveredOnce({ delivery, enqueue, hooks });
+  } finally {
+    await scenario.cleanup();
   }
 });
