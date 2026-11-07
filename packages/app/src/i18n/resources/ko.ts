@@ -119,7 +119,7 @@ export const ko: TranslationResources = {
         hint: "현재 메시지를 간단히 고정하고 펼치거나 이전/다음으로 이동할 수 있습니다. 일반 메시지는 항상 펼쳐져 있으며 로딩 표시가 기존 메시지를 가리지 않습니다.",
       },
       previousAgents: {
-        label: "이전 에이전트",
+        label: "닫힌 에이전트 다시 열기",
         hint: "워크스페이스 + 메뉴에서 닫히거나 보관된 대화를 다시 엽니다",
       },
       sidebarActivityChips: {
@@ -513,7 +513,7 @@ export const ko: TranslationResources = {
   sessions: {
     previousTitle: "닫힌 에이전트 다시 열기",
     previousEmpty: "이 작업 공간에는 이전 에이전트가 없습니다",
-    workspaceHistoryUpdateRequired: "이전 작업 공간 에이전트를 보려면 이 호스트를 업데이트하세요.",
+    workspaceHistoryUpdateRequired: "닫힌 에이전트를 다시 열려면 이 호스트를 업데이트하세요.",
 
     title: "기록",
     empty: "아직 세션이 없습니다",

@@ -122,7 +122,7 @@ export const ptBR: TranslationResources = {
         hint: "Fixa uma mensagem compacta com expansão e navegação anterior/próxima. As mensagens normais ficam expandidas, e o carregamento nunca cobre uma mensagem disponível.",
       },
       previousAgents: {
-        label: "Agentes anteriores",
+        label: "Reabrir agente fechado",
         hint: "Reabre conversas fechadas ou arquivadas pelo menu + do espaço de trabalho",
       },
       sidebarActivityChips: {
@@ -520,8 +520,7 @@ export const ptBR: TranslationResources = {
   sessions: {
     previousTitle: "Reabrir agente fechado",
     previousEmpty: "Não há agentes anteriores neste espaço de trabalho",
-    workspaceHistoryUpdateRequired:
-      "Atualize este host para ver os agentes anteriores do espaço de trabalho.",
+    workspaceHistoryUpdateRequired: "Atualize este host para reabrir agentes fechados.",
 
     title: "Histórico de agentes",
     empty: "Nenhuma sessão ainda",

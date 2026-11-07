@@ -114,7 +114,7 @@ export const zhCN: TranslationResources = {
         hint: "固定当前消息的简洁预览，支持展开和前后导航。普通消息始终完整展开，加载提示不会遮挡已有消息。",
       },
       previousAgents: {
-        label: "历史智能体",
+        label: "重新打开已关闭的代理",
         hint: "从工作区 + 菜单重新打开已关闭或归档的对话",
       },
       sidebarActivityChips: {
@@ -506,7 +506,7 @@ export const zhCN: TranslationResources = {
   sessions: {
     previousTitle: "重新打开已关闭的代理",
     previousEmpty: "此工作区中没有以前的代理",
-    workspaceHistoryUpdateRequired: "请更新此主机以查看以前的工作区代理。",
+    workspaceHistoryUpdateRequired: "请更新此主机以重新打开已关闭的代理。",
 
     title: "历史",
     empty: "还没有会话",
