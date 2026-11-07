@@ -4,15 +4,13 @@ import {
   isBoundEmptyClaudeCreation,
   type ClaudeIdentityStore,
 } from "./provider-history/claude-identity.js";
+import { ClaudeIdentityCoordinator } from "./provider-history/claude-identity-contexts.js";
 import {
   registerProviderHistory,
-  sameHistoryStorage,
   assertConfiguredHistoryIdentity,
-  HistoryIdentityCommittedError,
   HistoryStorageConflictError,
   type ProviderHistoryBinding,
   type ProviderHistoryStorage,
-  type ConfiguredClaudeHistoryStorage,
 } from "./provider-history/binding.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -46,9 +44,6 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
-  type ClaudeRewindTransition,
-  type ClaudeFreshRewindContext,
-  type ClaudeInitialHistoryContext,
   type CommitClaudeRewind,
   type AgentCreateSessionOptions,
   type AgentResumePurpose,
@@ -608,14 +603,6 @@ interface AgentMetadataPatch {
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
-/** Two persistence handles name the same session when their serialized forms are identical. */
-function samePersistenceHandle(
-  left: AgentPersistenceHandle | null | undefined,
-  right: AgentPersistenceHandle | null | undefined,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 function normalizePersistenceForConfig(
   handle: AgentPersistenceHandle | null,
   config: AgentSessionConfig,
@@ -817,6 +804,14 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly claudeIdentityStore?: ClaudeIdentityStore;
+  private readonly claudeIdentity = new ClaudeIdentityCoordinator<ActiveManagedAgent>({
+    store: () => this.requireClaudeIdentityStore(),
+    requireSessionAgent: (agentId) => this.requireSessionAgent(agentId),
+    isCurrent: (agent) => this.agents.get(agent.id) === agent,
+    persistSnapshot: (agent) => this.persistSnapshot(agent),
+    normalizePersistence: (handle, config) => normalizePersistenceForConfig(handle, config),
+    retireCommittedRuntime: (agent) => this.retireCommittedRuntime(agent),
+  });
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -1652,7 +1647,7 @@ export class AgentManager {
     if (storage && previous?.registration === "intent")
       await this.registry?.bindHistoryIntent(input.agentId, storage);
     this.attachHistoryStorage(input.context, storage ?? previous?.storage);
-    this.attachClaudeHistoryContexts(input.agentId, input.context, record, storage);
+    this.claudeIdentity.attachContexts(input.agentId, input.context, record, storage);
   }
 
   private attachHistoryStorage(
@@ -1662,252 +1657,18 @@ export class AgentManager {
     if (storage && storage.kind !== "unknown") context.historyStorage = storage;
   }
 
-  private attachClaudeHistoryContexts(
-    agentId: string,
-    context: AgentLaunchContext,
-    record: StoredAgentRecord | null | undefined,
-    storage: ProviderHistoryStorage | undefined,
-  ): void {
-    const previous = record?.providerHistory;
-    if (
-      record &&
-      previous?.origin === "created" &&
-      previous.sessionId === null &&
-      storage?.kind === "configured-home" &&
-      storage.provider === "claude" &&
-      !record.claudeFreshRewind
-    ) {
-      context.claudeInitialHistory = this.claudeInitialHistoryContext(agentId, storage);
-    }
-    if (record?.claudeFreshRewind) {
-      if (
-        previous?.storage.kind !== "configured-home" ||
-        previous.storage.provider !== "claude" ||
-        !record.persistence
-      )
-        throw new HistoryStorageConflictError("fresh-rewind-record-conflict");
-      context.claudeFreshRewind = this.claudeFreshRewindContext(
-        agentId,
-        record.claudeFreshRewind.operationId,
+  /** Close a runtime whose committed Claude identity was not adopted, without another snapshot. */
+  private async retireCommittedRuntime(agent: ActiveManagedAgent): Promise<void> {
+    await agent.session
+      .close()
+      .catch((closeError) =>
+        this.logger.warn({ err: closeError }, "Failed to retire committed rewind runtime"),
       );
-    }
-  }
-
-  private claudeInitialHistoryContext(
-    agentId: string,
-    storage: ConfiguredClaudeHistoryStorage,
-  ): ClaudeInitialHistoryContext {
-    let admitted: StoredAgentRecord | undefined;
-    let conflicted = false;
-    const context: ClaudeInitialHistoryContext = {
-      owner: {},
-      get admission() {
-        return admitted;
-      },
-      release: () => {
-        if (!conflicted) admitted = undefined;
-      },
-      admit: async () => {
-        if (conflicted)
-          throw new HistoryStorageConflictError("initial-admission-conflict-reload-required");
-        const agent = this.requireSessionAgent(agentId);
-        if (agent.session.claudeInitialHistory?.owner !== context.owner)
-          throw new HistoryStorageConflictError("initial-query-admission-conflict");
-        await this.persistSnapshot(agent);
-        const captured = await this.requireClaudeIdentityStore().captureAdmission(agentId);
-        const stillOwned = agent.session.claudeInitialHistory?.owner === context.owner;
-        const sameRoute =
-          captured.provider === agent.provider &&
-          sameHistoryStorage(captured.providerHistory?.storage ?? { kind: "unknown" }, storage);
-        const stillEmptyCreation =
-          captured.providerHistory?.origin === "created" &&
-          captured.providerHistory.sessionId === null &&
-          !captured.persistence &&
-          !captured.claudeFreshRewind;
-        if (!stillOwned || !sameRoute || !stillEmptyCreation)
-          throw new HistoryStorageConflictError("initial-query-admission-conflict");
-        admitted = captured;
-      },
-      commit: async (transition) => {
-        const agent = this.requireSessionAgent(agentId);
-        const expected = admitted;
-        if (
-          !expected ||
-          agent.session.claudeInitialHistory?.owner !== context.owner ||
-          !sameHistoryStorage(
-            expected.providerHistory?.storage ?? { kind: "unknown" },
-            transition.storage,
-          )
-        )
-          throw new HistoryStorageConflictError("stale-initial-history-callback");
-        try {
-          await this.requireClaudeIdentityStore().commitInitialHandle({
-            expected,
-            next: normalizePersistenceForConfig(transition.next, agent.config)!,
-            assertCurrent: () => {
-              transition.assertCurrent?.();
-              if (
-                this.agents.get(agentId) !== agent ||
-                agent.session.claudeInitialHistory?.owner !== context.owner
-              )
-                throw new HistoryStorageConflictError("stale-initial-history-callback");
-            },
-            onCommitted: (committed) => {
-              agent.providerHistory = committed.providerHistory;
-              agent.persistence = committed.persistence ?? null;
-              agent.runtimeInfo = committed.runtimeInfo;
-              // The null-handle proof expires at the durable commit, even if runtime adoption fails.
-              admitted = undefined;
-              transition.adopt();
-            },
-          });
-        } catch (error) {
-          conflicted = true;
-          throw error;
-        }
-      },
-    };
-    return context;
-  }
-
-  private claudeFreshRewindContext(agentId: string, operationId: string): ClaudeFreshRewindContext {
-    let admitted: StoredAgentRecord | undefined;
-    let conflicted = false;
-    const context: ClaudeFreshRewindContext = {
-      owner: {},
-      operationId,
-      get admission() {
-        return admitted;
-      },
-      release: () => {
-        if (!conflicted) admitted = undefined;
-      },
-      admit: async () => {
-        if (conflicted)
-          throw new HistoryStorageConflictError("fresh-admission-conflict-reload-required");
-        const agent = this.requireSessionAgent(agentId);
-        if (agent.session.claudeFreshRewind?.owner !== context.owner)
-          throw new HistoryStorageConflictError("fresh-query-admission-conflict");
-        await this.persistSnapshot(agent);
-        const captured = await this.requireClaudeIdentityStore().captureAdmission(agentId);
-        const stillOwned =
-          agent.session.claudeFreshRewind?.owner === context.owner &&
-          captured.claudeFreshRewind?.operationId === operationId;
-        const sameRoute =
-          captured.provider === agent.provider &&
-          sameHistoryStorage(
-            captured.providerHistory?.storage ?? { kind: "unknown" },
-            agent.session.historyStorage ?? { kind: "unknown" },
-          );
-        const sameRecoveryHandle = captured.persistence?.sessionId === agent.persistence?.sessionId;
-        if (!stillOwned || !sameRoute || !sameRecoveryHandle)
-          throw new HistoryStorageConflictError("fresh-query-admission-conflict");
-        admitted = captured;
-      },
-      commit: async (transition) => {
-        const agent = this.requireSessionAgent(agentId);
-        if (
-          agent.session.claudeFreshRewind?.owner !== context.owner ||
-          !transition.next ||
-          !admitted
-        )
-          throw new HistoryStorageConflictError("stale-fresh-rewind-callback");
-        try {
-          await this.commitClaudeRewindTransition(agent, admitted, transition, context);
-        } catch (error) {
-          conflicted = true;
-          throw error;
-        }
-      },
-    };
-    return context;
-  }
-
-  private assertClaudeRewindTransition(
-    agent: ActiveManagedAgent,
-    expected: StoredAgentRecord,
-    transition: ClaudeRewindTransition,
-    fresh: ClaudeFreshRewindContext | undefined,
-  ): void {
-    const binding = expected.providerHistory;
-    const stillRegistered = this.agents.get(agent.id) === agent;
-    const registeredClaudeRoute =
-      binding?.storage.kind === "configured-home" &&
-      binding.storage.provider === "claude" &&
-      binding.registration === "registered" &&
-      sameHistoryStorage(binding.storage, transition.storage);
-    const previousIsCanonicalHandle =
-      !!expected.persistence &&
-      expected.persistence.sessionId === binding?.sessionId &&
-      samePersistenceHandle(
-        expected.persistence,
-        normalizePersistenceForConfig(transition.previous, agent.config),
-      ) &&
-      transition.previous.provider === agent.provider;
-    const freshStillOwned = !fresh || agent.session.claudeFreshRewind?.owner === fresh.owner;
-    if (
-      !stillRegistered ||
-      !registeredClaudeRoute ||
-      !previousIsCanonicalHandle ||
-      !freshStillOwned
-    )
-      throw new HistoryStorageConflictError("rewind-canonical-handle-conflict");
-  }
-
-  private async commitClaudeRewindTransition(
-    agent: ActiveManagedAgent,
-    expected: StoredAgentRecord,
-    transition: ClaudeRewindTransition,
-    fresh?: ClaudeFreshRewindContext,
-  ): Promise<void> {
-    this.assertClaudeRewindTransition(agent, expected, transition, fresh);
-    const next = transition.next
-      ? (normalizePersistenceForConfig(transition.next, agent.config) ?? undefined)
-      : undefined;
-    const pending = !next ? this.claudeFreshRewindContext(agent.id, randomUUID()) : undefined;
-    try {
-      await this.requireClaudeIdentityStore().commitRewind({
-        expected,
-        next,
-        freshOperationId: fresh?.operationId ?? pending?.operationId,
-        assertCurrent: () => {
-          transition.assertCurrent?.();
-          if (
-            this.agents.get(agent.id) !== agent ||
-            (fresh && agent.session.claudeFreshRewind?.owner !== fresh.owner)
-          )
-            throw new HistoryStorageConflictError("stale-rewind-callback");
-        },
-        onCommitted: (record) => {
-          agent.providerHistory = record.providerHistory;
-          agent.persistence = record.persistence ?? null;
-          agent.runtimeInfo = record.runtimeInfo;
-          transition.adopt(pending);
-        },
-      });
-    } catch (error) {
-      if (error instanceof HistoryIdentityCommittedError) {
-        if (fresh) {
-          // This callback runs inside the query pump. Awaiting its own close would deadlock.
-          // The canonical new handle is retained; the caller reports reload-required.
-          agent.lastError =
-            "Claude rewind identity committed; reload required after runtime adoption failed";
-          throw error;
-        }
-        // Disk already owns the new identity. Retire this inconsistent runtime without another snapshot.
-        await agent.session
-          .close()
-          .catch((closeError) =>
-            this.logger.warn({ err: closeError }, "Failed to retire committed rewind runtime"),
-          );
-        const closed = this.prepareAgentForClosure(
-          agent,
-          "rewind committed; reopen from canonical storage",
-        );
-        this.emitClosedAgent(closed, { persist: false });
-      }
-      throw error;
-    }
+    const closed = this.prepareAgentForClosure(
+      agent,
+      "rewind committed; reopen from canonical storage",
+    );
+    this.emitClosedAgent(closed, { persist: false });
   }
 
   private buildCreateSessionOptions(options?: {
@@ -4097,7 +3858,7 @@ export class AgentManager {
           if (!callbackLive || callbackUsed || this.agents.get(agentId) !== agent)
             throw new HistoryStorageConflictError("stale-rewind-callback");
           callbackUsed = true;
-          await this.commitClaudeRewindTransition(agent, expected, transition);
+          await this.claudeIdentity.commitRewindTransition(agent, expected, transition);
         };
       }
       await invokeRewindCapability(agent.session, {
