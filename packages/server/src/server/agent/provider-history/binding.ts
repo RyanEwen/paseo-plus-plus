@@ -160,6 +160,11 @@ export class HistoryStorageConflictError extends Error {
   }
 }
 
+/** Throw the typed refusal for a configured history check. */
+export function throwHistoryConflict(reason: HistoryConflictReason): never {
+  throw new HistoryStorageConflictError(reason);
+}
+
 /**
  * The provider identity transition is already durable, but adopting it into the live session
  * failed. Recovery must reopen the chat from canonical storage at `committedSessionId`.

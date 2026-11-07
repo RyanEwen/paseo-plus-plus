@@ -11,7 +11,12 @@ import {
   resolveConfiguredCodexHistoryProfile,
 } from "../provider-launch-config.js";
 import { historyRootsOverlap, resolveConfiguredCodexHistory } from "../providers/codex/history.js";
-import { HistoryStorageConflictError, type ConfiguredHistoryStorage } from "./binding.js";
+import { claudeHistoryHome } from "../providers/claude/history.js";
+import {
+  HistoryStorageConflictError,
+  type ConfiguredHistoryStorage,
+  type ProviderHistoryStorage,
+} from "./binding.js";
 
 const MAX_FILES = 10_000;
 const MAX_HEADER_BYTES = 64 * 1024;
@@ -431,6 +436,11 @@ interface SessionClassificationInput {
   sqliteHome: string;
 }
 
+/** The directory a recorded binding stores history in, as the provider resolves it. */
+function storageHome(storage: Exclude<ProviderHistoryStorage, { kind: "unknown" }>): string {
+  return storage.provider === "claude" ? claudeHistoryHome(storage) : path.resolve(storage.home);
+}
+
 function classifySession(input: SessionClassificationInput): SessionCandidate {
   const { file, owners, copies, provider } = input;
   let provenance: SessionCandidate["provenance"] = owners.length ? "legacy" : "native-only";
@@ -453,11 +463,7 @@ function classifySession(input: SessionClassificationInput): SessionCandidate {
       storage !== undefined &&
       storage.kind !== "unknown" &&
       (storage.provider !== input.family ||
-        !file.source.startsWith(
-          path.resolve(
-            storage.provider === "claude" ? storage.home.normalize("NFC") : storage.home,
-          ) + path.sep,
-        ) ||
+        !file.source.startsWith(storageHome(storage) + path.sep) ||
         (storage.kind === "configured-home" &&
           storage.provider === "codex" &&
           storage.sqliteHome !== input.sqliteHome))

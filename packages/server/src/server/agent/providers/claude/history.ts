@@ -6,28 +6,15 @@ import type {
   ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import {
-  HistoryStorageConflictError,
-  type HistoryConflictReason,
+  throwHistoryConflict,
   type ConfiguredClaudeHistoryStorage,
   type ProviderHistoryStorage,
 } from "../../provider-history/binding.js";
+import { pathsOverlap, strictlyContainsPath } from "../../provider-history/paths.js";
 
-function conflict(reason: HistoryConflictReason): never {
-  throw new HistoryStorageConflictError(reason);
-}
-
-export function claudeHistoryHome(storage: ConfiguredClaudeHistoryStorage): string {
+/** Claude's own filesystem path for a configured or observed home: resolved and NFC-normalized. */
+export function claudeHistoryHome(storage: Pick<ConfiguredClaudeHistoryStorage, "home">): string {
   return path.resolve(storage.home.normalize("NFC"));
-}
-
-function overlaps(a: string, b: string): boolean {
-  const contains = (left: string, right: string) => {
-    const rel = path.relative(left, right);
-    return (
-      rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
-    );
-  };
-  return contains(a, b) || contains(b, a);
 }
 
 function ordinary(file: string) {
@@ -36,9 +23,9 @@ function ordinary(file: string) {
     current = path.join(current, part);
     try {
       const stat = lstatSync(current);
-      if (stat.isSymbolicLink()) conflict("history-symlink");
-      if (stat.isFile() && stat.nlink !== 1) conflict("history-hardlink");
-      if (!stat.isDirectory() && !stat.isFile()) conflict("history-special-file");
+      if (stat.isSymbolicLink()) throwHistoryConflict("history-symlink");
+      if (stat.isFile() && stat.nlink !== 1) throwHistoryConflict("history-hardlink");
+      if (!stat.isDirectory() && !stat.isFile()) throwHistoryConflict("history-special-file");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
@@ -51,8 +38,8 @@ export function checkClaudeHistoryRoute(
   storage: ConfiguredClaudeHistoryStorage,
   env: NodeJS.ProcessEnv,
 ): void {
-  if (env.CLAUDE_CONFIG_DIR !== storage.home) conflict("launch-home-conflict");
-  if (env.CLAUDE_CODE_PROJECT_DIR_NAME) conflict("unsupported-project-namespace");
+  if (env.CLAUDE_CONFIG_DIR !== storage.home) throwHistoryConflict("launch-home-conflict");
+  if (env.CLAUDE_CODE_PROJECT_DIR_NAME) throwHistoryConflict("unsupported-project-namespace");
   const home = claudeHistoryHome(storage);
   const native = [path.join(homedir(), ".claude")];
   if (env.HOME && path.isAbsolute(env.HOME)) native.push(path.join(env.HOME, ".claude"));
@@ -63,13 +50,13 @@ export function checkClaudeHistoryRoute(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    if (overlaps(canonical, home) || overlaps(path.resolve(root), home))
-      conflict("known-native-history-root");
+    if (pathsOverlap(canonical, home) || pathsOverlap(path.resolve(root), home))
+      throwHistoryConflict("known-native-history-root");
   }
-  if (!ordinary(home)?.isDirectory()) conflict("configured-root-must-already-exist");
+  if (!ordinary(home)?.isDirectory()) throwHistoryConflict("configured-root-must-already-exist");
   let visited = 0;
   const walk = (file: string, depth = 0): void => {
-    if (++visited > 10_000 || depth > 8) conflict("history-path-check-limit");
+    if (++visited > 10_000 || depth > 8) throwHistoryConflict("history-path-check-limit");
     if (!ordinary(file)?.isDirectory()) return;
     for (const name of readdirSync(file)) walk(path.join(file, name), depth + 1);
   };
@@ -99,16 +86,16 @@ interface ConfiguredClaudeHistoryInput {
 function configuredClaudeHome(runtimeSettings: ProviderRuntimeSettings | undefined): string {
   const home = runtimeSettings?.env?.CLAUDE_CONFIG_DIR;
   if (!home || !path.isAbsolute(home) || home.startsWith("\\\\") || home.startsWith("//"))
-    conflict("explicit-profile-home-required");
+    throwHistoryConflict("explicit-profile-home-required");
   return home;
 }
 function checkClaudeCommand(input: ConfiguredClaudeHistoryInput): void {
   const command = input.runtimeSettings?.command;
   if (command?.mode === "replace" || (command?.mode === "append" && command.args?.length))
-    conflict("unresolved-command-contract");
+    throwHistoryConflict("unresolved-command-contract");
   // Object() keeps the check total for unvalidated catalog options without a cast.
   if (input.extraArgs && Object.keys(Object(input.extraArgs)).length)
-    conflict("unresolved-command-selectors");
+    throwHistoryConflict("unresolved-command-selectors");
 }
 
 export function resolveConfiguredClaudeHistory(
@@ -116,10 +103,10 @@ export function resolveConfiguredClaudeHistory(
 ): ConfiguredClaudeHistoryStorage | undefined {
   const prior = input.previous?.kind === "configured-home" ? input.previous : undefined;
   if (!prior && input.policy?.mode !== "configured") return undefined;
-  if (prior && prior.provider !== "claude") conflict("bound-provider-conflict");
-  if (!prior && input.existingSession) conflict("existing-route-unverified");
+  if (prior && prior.provider !== "claude") throwHistoryConflict("bound-provider-conflict");
+  if (!prior && input.existingSession) throwHistoryConflict("existing-route-unverified");
   const home = configuredClaudeHome(input.runtimeSettings);
-  if (prior && prior.home !== home) conflict("bound-storage-changed");
+  if (prior && prior.home !== home) throwHistoryConflict("bound-storage-changed");
   checkClaudeCommand(input);
   const selected: ConfiguredClaudeHistoryStorage = {
     kind: "configured-home",
@@ -136,13 +123,7 @@ export function checkClaudeRewindHandle(
   file: string,
 ): void {
   checkClaudeHistoryRoute(storage, env);
-  const relative = path.relative(path.join(claudeHistoryHome(storage), "projects"), file);
-  if (
-    !relative ||
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-    conflict("rewind-transcript-outside-home");
-  if (!ordinary(file)?.isFile()) conflict("rewind-transcript-missing");
+  if (!strictlyContainsPath(path.join(claudeHistoryHome(storage), "projects"), file))
+    throwHistoryConflict("rewind-transcript-outside-home");
+  if (!ordinary(file)?.isFile()) throwHistoryConflict("rewind-transcript-missing");
 }
