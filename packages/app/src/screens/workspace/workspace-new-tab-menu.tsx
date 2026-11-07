@@ -175,9 +175,7 @@ export function WorkspaceNewTabMenuContent({
               key={item.id}
               item={item}
               paneId={paneId}
-              splitPageId={
-                canSplit && canLaunchInSplit(item) ? launchSplitPageId(item) : undefined
-              }
+              splitPageId={canSplit && canLaunchInSplit(item) ? launchSplitPageId(item) : undefined}
             />
           ))}
           {group.accessory ? (
