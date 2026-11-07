@@ -1,5 +1,9 @@
 import { requestPromptFixture } from "@/timeline/canonical-prompt-context.test-fixture";
 import { canonicalPromptSourceKey } from "./canonical-prompt-model";
+import {
+  CanonicalPromptContextStaleError,
+  CanonicalPromptContextUnavailableError,
+} from "./canonical-prompt-context";
 import { DatabaseSync } from "node:sqlite";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import {
@@ -885,7 +889,7 @@ describe("viewed owner canonical prompt retention", () => {
       signal: new AbortController().signal,
       fetchContext,
     });
-    const rejected = expect(first).rejects.toThrow("no longer current");
+    const rejected = expect(first).rejects.toThrow(CanonicalPromptContextStaleError);
     owner.promptContexts.cancel(channel);
     release();
     await rejected;
@@ -896,7 +900,7 @@ describe("viewed owner canonical prompt retention", () => {
       signal: new AbortController().signal,
       fetchContext,
     });
-    const changed = expect(late).rejects.toThrow("no longer current");
+    const changed = expect(late).rejects.toThrow(CanonicalPromptContextStaleError);
     epoch = "epoch-2";
     owner.promptContexts.setEpoch(AGENT_ID, epoch);
     await changed;
@@ -910,7 +914,7 @@ describe("viewed owner canonical prompt retention", () => {
         signal: new AbortController().signal,
         fetchContext,
       }),
-    ).rejects.toThrow("unavailable");
+    ).rejects.toThrow(CanonicalPromptContextUnavailableError);
   });
 });
 

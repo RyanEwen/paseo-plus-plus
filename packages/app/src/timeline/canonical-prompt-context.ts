@@ -100,6 +100,26 @@ export class CanonicalPromptContextChangedError extends Error {
     super("Reading context changed; retry to resolve the current prompt");
   }
 }
+const PROMPT_CONTEXT_UNAVAILABLE = {
+  "owner-unavailable": "Prompt context owner unavailable",
+  "reader-scope-changed": "Prompt reader scope changed",
+  "provenance-changed": "Prompt context provenance changed",
+  "lookup-unavailable": "Canonical prompt context has a different owner or is unavailable",
+} as const;
+
+/** The owner, its epoch, the reader's scope or the lookup cannot serve this request. */
+export class CanonicalPromptContextUnavailableError extends Error {
+  constructor(readonly reason: keyof typeof PROMPT_CONTEXT_UNAVAILABLE) {
+    super(PROMPT_CONTEXT_UNAVAILABLE[reason]);
+  }
+}
+
+/** A newer request on the same reader channel superseded this one. */
+export class CanonicalPromptContextStaleError extends Error {
+  constructor(options?: ErrorOptions) {
+    super("Prompt context request is no longer current", options);
+  }
+}
 const MAX_CONTEXTS_PER_READER = 4;
 const EMPTY: readonly CanonicalPromptContext[] = Object.freeze([]);
 const EMPTY_REVISION = Object.freeze({});
@@ -346,7 +366,7 @@ export function createCanonicalPromptContexts(
       };
     const context = resolution.context;
     if (bindings.has(context) && bindings.get(context)?.certificate !== certificate)
-      throw new Error("Prompt context provenance changed");
+      throw new CanonicalPromptContextUnavailableError("provenance-changed");
     certificate.sourceStart = Math.max(certificate.sourceStart, context.sourceStart);
     bindings.set(context, {
       certificate,
@@ -371,18 +391,18 @@ export function createCanonicalPromptContexts(
   }
   function beginRequest(input: CanonicalPromptRequest) {
     const epoch = input.source.timelineCursor?.epoch;
-    if (!epoch) throw new Error("Prompt context owner unavailable");
+    if (!epoch) throw new CanonicalPromptContextUnavailableError("owner-unavailable");
     const available =
       !disposed &&
       acceptsAgent(input.agentId) &&
       !input.signal.aborted &&
       acceptsEpoch(input.agentId, epoch);
-    if (!available) throw new Error("Prompt context owner unavailable");
+    if (!available) throw new CanonicalPromptContextUnavailableError("owner-unavailable");
     const scope = ensureScope(input.agentId, epoch);
     observe({ agentId: input.agentId, epoch, items: ordinaryFor(input.agentId).items });
     let reader = readers.get(input.channel);
     if (reader && (reader.agentId !== input.agentId || reader.epoch !== epoch))
-      throw new Error("Prompt reader scope changed");
+      throw new CanonicalPromptContextUnavailableError("reader-scope-changed");
     if (!reader) {
       reader = {
         agentId: input.agentId,
@@ -457,7 +477,7 @@ export function createCanonicalPromptContexts(
     sourceStart: number,
   ): Prompt | null | undefined {
     const { input, reader, scope, key, userGeneration } = operation;
-    if (!isCurrent(operation)) throw new Error("Prompt context request is no longer current");
+    if (!isCurrent(operation)) throw new CanonicalPromptContextStaleError();
     refreshObservation(operation);
     if (scope.userGeneration !== userGeneration || sourceStartConflict(input, sourceStart))
       return settleChanged(operation);
@@ -471,7 +491,7 @@ export function createCanonicalPromptContexts(
   }
   /** Reject obsolete indexed reads before they can acquire content or publish a proof. */
   function assertLookupCurrent(operation: Operation, sourceStart: number | undefined): void {
-    if (!isCurrent(operation)) throw new Error("Prompt context request is no longer current");
+    if (!isCurrent(operation)) throw new CanonicalPromptContextStaleError();
     refreshObservation(operation);
     if (
       operation.scope.userGeneration !== operation.userGeneration ||
@@ -517,8 +537,7 @@ export function createCanonicalPromptContexts(
           : undefined,
       });
     } catch (error) {
-      if (!isCurrent(operation))
-        throw new Error("Prompt context request is no longer current", { cause: error });
+      if (!isCurrent(operation)) throw new CanonicalPromptContextStaleError({ cause: error });
       refreshObservation(operation);
       const sourceChanged =
         validatedStart !== undefined && sourceStartConflict(input, validatedStart);
@@ -551,7 +570,7 @@ export function createCanonicalPromptContexts(
       return blockChanged(reader, key, input.retryToken);
     const progress = continuationFor(operation);
     if (!input.lookup || input.lookup.agentId !== input.agentId)
-      throw new Error("Canonical prompt context has a different owner or is unavailable");
+      throw new CanonicalPromptContextUnavailableError("lookup-unavailable");
     return readLookup(operation, input.lookup, progress);
   }
   return {
