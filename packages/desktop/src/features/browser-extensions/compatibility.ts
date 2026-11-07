@@ -12,6 +12,13 @@ import { registerExtensionStorageObservers } from "./storage-observers.js";
 import { createExtensionEventDelivery } from "./events.js";
 import { createExtensionWorkerTracker } from "./worker-tracking.js";
 import {
+  dispatchExtensionApiRequest,
+  unsupportedExtensionApi,
+  type ExtensionApiHandler,
+  type ExtensionApiRequest,
+  type ExtensionCaller,
+} from "./request-dispatch.js";
+import {
   BrowserWindow,
   app,
   dialog,
@@ -80,9 +87,6 @@ const QuerySchema = z.strictObject({
   windowType: z.enum(["normal", "popup", "panel", "app", "devtools"]).optional(),
   url: z.union([z.string(), z.array(z.string())]).optional(),
 });
-
-/** Who called an extension API: a frame (page, popup or extension document) or the extension's service worker. */
-type ExtensionCaller = { kind: "frame"; webContentsId: number } | { kind: "worker" };
 
 /** Add browser-owned extension APIs and normal MV3 worker wake-up behavior. Native supported APIs remain Chromium-owned. */
 export function registerBrowserExtensionCompatibility(
@@ -368,7 +372,7 @@ export function registerBrowserExtensionCompatibility(
     if (method === "tabs.query") {
       return queryTabs(args, caller, extension);
     }
-    throw new Error(`Extension API ${method} is not supported in Paseo.`);
+    throw unsupportedExtensionApi(method);
   }
 
   /** Record only worker registrations; renderer listeners never require a worker wake-up. */
@@ -386,72 +390,100 @@ export function registerBrowserExtensionCompatibility(
     workerListeners.set(id, listeners);
   }
 
-  async function request(url: string, caller: ExtensionCaller, input: unknown): Promise<unknown> {
-    const extension = extensionForUrl(url);
+  type ApiRequest = ExtensionApiRequest<Electron.Extension>;
+
+  /** Chrome refuses permission-gated namespaces unless the manifest requests the permission. */
+  function requirePermission({ extension }: ApiRequest, permission: string): void {
     const manifest = ManifestSchema.parse(extension.manifest);
-    const { method, args } = RequestSchema.parse(input);
-    if (/^(action|browserAction)\./.test(method)) {
-      if (args.length !== 1) throw new Error("Invalid extension action arguments.");
-      return actionBadges.request(extension.id, method, args[0]);
+    if (!manifest.permissions.includes(permission)) {
+      throw new Error(`The ${permission} permission is required.`);
     }
+  }
+
+  function requestAction({ method, args, extension }: ApiRequest): unknown {
+    if (args.length !== 1) {
+      throw new Error("Invalid extension action arguments.");
+    }
+    return actionBadges.request(extension.id, method, args[0]);
+  }
+
+  function requestPermissions({ method, args, extension }: ApiRequest): unknown {
     if (method === "permissions.contains") {
+      const manifest = ManifestSchema.parse(extension.manifest);
       const requested = PermissionSchema.parse(args[0]);
-      return (
-        requested.permissions.every((permission) => manifest.permissions.includes(permission)) &&
-        requested.origins.every((origin) =>
-          manifest.host_permissions.some((grant) => coversExtensionOrigin(grant, origin)),
-        )
+      const hasPermissions = requested.permissions.every((permission) =>
+        manifest.permissions.includes(permission),
       );
-    }
-    if (method === "events.set-subscription") {
-      setWorkerSubscription(extension.id, caller, args[0]);
-      return undefined;
+      const hasOrigins = requested.origins.every((origin) =>
+        manifest.host_permissions.some((grant) => coversExtensionOrigin(grant, origin)),
+      );
+      return hasPermissions && hasOrigins;
     }
     if (method === "permissions.request") {
       // Optional permissions cannot be granted until Paseo owns a consent and persistence flow.
       throw new Error("Optional extension permissions are not supported in Paseo.");
     }
-    if (method.startsWith("tabs.")) {
-      return requestTab(method, args, caller, extension);
+    throw unsupportedExtensionApi(method);
+  }
+
+  function requestEvents({ method, args, caller, extension }: ApiRequest): unknown {
+    if (method !== "events.set-subscription") {
+      throw unsupportedExtensionApi(method);
     }
-    if (method === "webNavigation.getFrame" || method === "webNavigation.getAllFrames") {
-      if (!manifest.permissions.includes("webNavigation")) {
-        throw new Error("The webNavigation permission is required.");
-      }
-      const frameInput = z
-        .object({ tabId: z.number(), frameId: z.number().optional() })
-        .parse(args[0]);
-      const contents = tabs().find((item) => item.id === frameInput.tabId);
-      if (!contents) {
-        throw new Error("Unknown browser tab.");
-      }
-      const details = contents.mainFrame.framesInSubtree.map((frame) =>
-        describeExtensionFrame(frame, contents.mainFrame),
-      );
-      if (method === "webNavigation.getAllFrames") {
-        return details;
-      }
-      return details.find((frame) => frame.frameId === frameInput.frameId) ?? null;
+    setWorkerSubscription(extension.id, caller, args[0]);
+    return undefined;
+  }
+
+  function requestWebNavigation(request: ApiRequest): unknown {
+    const { method, args } = request;
+    if (method !== "webNavigation.getFrame" && method !== "webNavigation.getAllFrames") {
+      throw unsupportedExtensionApi(method);
     }
-    if (method.startsWith("windows.")) {
-      return windows.request({ method, args, owner: ownerWindow(caller), extension });
+    requirePermission(request, "webNavigation");
+    const frameInput = z
+      .object({ tabId: z.number(), frameId: z.number().optional() })
+      .parse(args[0]);
+    const contents = tabs().find((item) => item.id === frameInput.tabId);
+    if (!contents) {
+      throw new Error("Unknown browser tab.");
     }
-    if (method.startsWith("notifications.")) {
-      if (!manifest.permissions.includes("notifications")) {
-        throw new Error("The notifications permission is required.");
-      }
-      return notifications.request(method, args, extension.id);
+    const details = contents.mainFrame.framesInSubtree.map((frame) =>
+      describeExtensionFrame(frame, contents.mainFrame),
+    );
+    if (method === "webNavigation.getAllFrames") {
+      return details;
     }
-    if (method.startsWith("contextMenus.")) {
-      return contextMenus.request(extension.id, method, args);
-    }
-    if (method.startsWith("alarms.")) {
-      if (!manifest.permissions.includes("alarms")) {
-        throw new Error("The alarms permission is required.");
-      }
-      return alarms.request(extension.id, method, args);
-    }
-    throw new Error(`Extension API ${method} is not supported in Paseo.`);
+    return details.find((frame) => frame.frameId === frameInput.frameId) ?? null;
+  }
+
+  /** One handler per API namespace; each rejects methods it does not implement. */
+  const apiHandlers: Readonly<Record<string, ExtensionApiHandler<Electron.Extension>>> = {
+    action: requestAction,
+    browserAction: requestAction,
+    permissions: requestPermissions,
+    events: requestEvents,
+    tabs: ({ method, args, caller, extension }) => requestTab(method, args, caller, extension),
+    webNavigation: requestWebNavigation,
+    windows: ({ method, args, caller, extension }) =>
+      windows.request({ method, args, owner: ownerWindow(caller), extension }),
+    notifications: (request) => {
+      requirePermission(request, "notifications");
+      return notifications.request(request.method, request.args, request.extension.id);
+    },
+    contextMenus: ({ method, args, extension }) =>
+      contextMenus.request(extension.id, method, args),
+    alarms: (request) => {
+      requirePermission(request, "alarms");
+      return alarms.request(request.extension.id, request.method, request.args);
+    },
+  };
+
+  async function request(url: string, caller: ExtensionCaller, input: unknown): Promise<unknown> {
+    const extension = extensionForUrl(url);
+    // Validate the manifest grants for every call, as before any namespace-specific check.
+    ManifestSchema.parse(extension.manifest);
+    const { method, args } = RequestSchema.parse(input);
+    return dispatchExtensionApiRequest(apiHandlers, { method, args, caller, extension });
   }
 
   ipcMain.handle(CHANNEL, (event, input: unknown) => {
