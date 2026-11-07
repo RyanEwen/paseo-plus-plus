@@ -762,24 +762,30 @@ test.each([
   {
     relationship: "same-workspace child",
     workerWorkspaceId: "workspace-1",
+    place: (status: WorkspaceStatus, worker: AgentState) => status.hasDelegatedAgent(worker),
     parentStatus: "attention",
     parentHumanAttention: true,
   },
   {
     relationship: "cross-workspace child",
     workerWorkspaceId: "workspace-worktree",
+    place: (status: WorkspaceStatus, worker: AgentState) => {
+      status.hasWorktreeWorkspace();
+      status.hasDelegatedAgentInWorktree(worker);
+    },
     parentStatus: "done",
     parentHumanAttention: false,
   },
   {
     relationship: "independent",
     workerWorkspaceId: "workspace-1",
+    place: (status: WorkspaceStatus, worker: AgentState) => status.hasRootAgent(worker),
     parentStatus: "attention",
     parentHumanAttention: true,
   },
 ])(
   "$relationship separates routine status from explicit human escalation",
-  async ({ relationship, workerWorkspaceId, parentStatus, parentHumanAttention }) => {
+  async ({ place, workerWorkspaceId, parentStatus, parentHumanAttention }) => {
     const quiet = new WorkspaceStatus();
     quiet.hasRootAgent({ id: "parent-agent", status: "idle", humanAttentionRequired: false });
     const escalated = new WorkspaceStatus();
@@ -796,18 +802,8 @@ test.each([
       attentionReason: "finished",
       humanAttentionRequired: true,
     };
-    if (relationship === "same-workspace child") {
-      quiet.hasDelegatedAgent(routine);
-      escalated.hasDelegatedAgent(attention);
-    } else if (relationship === "cross-workspace child") {
-      quiet.hasWorktreeWorkspace();
-      escalated.hasWorktreeWorkspace();
-      quiet.hasDelegatedAgentInWorktree(routine);
-      escalated.hasDelegatedAgentInWorktree(attention);
-    } else {
-      quiet.hasRootAgent(routine);
-      escalated.hasRootAgent(attention);
-    }
+    place(quiet, routine);
+    place(escalated, attention);
     expect(await quiet.workspaceDescriptor(workerWorkspaceId)).toMatchObject({
       id: workerWorkspaceId,
       status: "done",
