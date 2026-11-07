@@ -64,7 +64,7 @@ export function PaseoPlusPlusSection() {
     pending,
     failed,
     isLoading,
-    isLocalLoading,
+    isEditingBlocked,
     error: settingsError,
   } = useSettingsSave<PaseoPlusPlusFeature>();
 
@@ -91,10 +91,9 @@ export function PaseoPlusPlusSection() {
         <SettingsCard testID="paseo-plus-plus-features">
           {VISIBLE_FEATURES.map((feature) => {
             // Device-local choices only wait for this device's settings, not a settings host.
-            const waitingForSettings = DEVICE_LOCAL_FEATURES.has(feature)
-              ? isLocalLoading
-              : isLoading;
-            const canEdit = !waitingForSettings && settingsError === null && pending === null;
+            const blockedByHost = isEditingBlocked && !DEVICE_LOCAL_FEATURES.has(feature);
+            const canEdit =
+              !isLoading && !blockedByHost && settingsError === null && pending === null;
             return (
               <FeatureSwitch
                 key={feature}
