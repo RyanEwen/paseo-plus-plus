@@ -1,11 +1,11 @@
 import { resolveClosedAgentDialogState, selectPreviousAgents } from "./previous-agents";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type {
   DaemonClient,
   FetchAgentHistoryEntry,
   FetchAgentHistoryOptions,
 } from "@getpaseo/client/internal/daemon-client";
-import type { AgentHistoryClient, AgentHistoryHost } from "./agent-history-fetch";
+import type { AgentHistoryClient, AgentHistoryHost } from "./use-agent-history";
 import { allAgentHistoryQueryKey } from "./agent-history-query-key";
 
 (
@@ -14,18 +14,8 @@ import { allAgentHistoryQueryKey } from "./agent-history-query-key";
   }
 ).__DEV__ = false;
 
-type UseAgentHistoryModule = typeof import("./agent-history-fetch");
-
-let fetchAgentHistoryBatch: UseAgentHistoryModule["fetchAgentHistoryBatch"];
-let fetchAgentHistoryPage: UseAgentHistoryModule["fetchAgentHistoryPage"];
-let collectAgentHistoryHostErrors: UseAgentHistoryModule["collectAgentHistoryHostErrors"];
-
-beforeAll(async () => {
-  const module = await import("./agent-history-fetch");
-  fetchAgentHistoryBatch = module.fetchAgentHistoryBatch;
-  fetchAgentHistoryPage = module.fetchAgentHistoryPage;
-  collectAgentHistoryHostErrors = module.collectAgentHistoryHostErrors;
-});
+const { fetchAgentHistoryBatch, fetchAgentHistoryPage, collectAgentHistoryHostErrors } =
+  await import("./use-agent-history");
 
 type FetchAgentHistory = DaemonClient["fetchAgentHistory"];
 type FetchAgentHistoryResult = Awaited<ReturnType<FetchAgentHistory>>;

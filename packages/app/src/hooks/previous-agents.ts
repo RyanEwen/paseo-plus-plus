@@ -1,5 +1,5 @@
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import type { AgentHistoryResult } from "./agent-history-fetch";
+import type { AgentHistoryResult } from "./use-agent-history";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 
 /** Keep unopened conversations once each; runtime status does not indicate tab visibility. */
