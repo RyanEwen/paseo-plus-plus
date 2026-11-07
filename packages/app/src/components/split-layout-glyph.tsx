@@ -3,7 +3,7 @@ import { withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 
 /** Divider presets describe both existing panes without selecting either one. */
-function SplitLayoutGlyph({
+function SplitLayoutGlyphShape({
   direction,
   fraction,
   color = "",
@@ -44,10 +44,10 @@ function SplitLayoutGlyph({
 const mapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-const ThemedGlyph = withUnistyles(SplitLayoutGlyph);
+const ThemedGlyph = withUnistyles(SplitLayoutGlyphShape);
 
 /** Show the whole adjacent pair when choosing a divider ratio. */
-export function SplitPresetGlyph({
+export function SplitLayoutGlyph({
   direction,
   fraction,
 }: {

@@ -6,9 +6,10 @@ import {
   type MenuItemSecondary,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
-import { SplitLayoutPicker } from "@/components/split-layout-picker";
-import type { SplitSide } from "@/components/split-layout-presets";
-import { useSettings } from "@/hooks/use-settings";
+import { SPLIT_LAYOUT_PICKER_WIDTH, SplitLayoutPicker } from "@/components/split-layout-picker";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSplitLayoutControlsEnabled } from "@/paseo-plus-plus/split-layout-controls";
+import type { SplitSide } from "@/stores/workspace-layout-splits";
 import { useCallback, useMemo, type ComponentType, type ReactElement } from "react";
 import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -138,32 +139,29 @@ export function WorkspaceNewTabMenuContent({
     panePanelKinds,
   });
 
-  const featureEnabled = useSettings((settings) => settings.paseoPlusPlus.splitLayoutPresets);
+  const featureEnabled = useSplitLayoutControlsEnabled();
   const scopeEnabled = useWorkspaceTabSplitLaunchEnabled();
   const canSplit = featureEnabled && scopeEnabled && host === "main";
   const { t } = useTranslation();
-  const pages = useMemo<MenuPageDefinition[]>(
-    () =>
-      canSplit
-        ? groups.flatMap((group) =>
-            group.items
-              .filter((item) => item.id !== "reopen-closed-agent")
-              .map((item) => ({
-                id: `workspace-new-tab-split-${item.id}`,
-                title: t("workspace.splits.openToSide", { item: item.label }),
-                hoverIntent: false,
-                content: <LaunchSplitPicker item={item} paneId={paneId} />,
-              })),
-          )
-        : [],
-    [canSplit, groups, paneId, t],
-  );
+  const pages = useMemo<MenuPageDefinition[]>(() => {
+    if (!canSplit) {
+      return [];
+    }
+    return groups.flatMap((group) =>
+      group.items.filter(canLaunchInSplit).map((item) => ({
+        id: launchSplitPageId(item),
+        title: t("workspace.splits.openToSide", { item: item.label }),
+        hoverIntent: false,
+        content: <LaunchSplitPicker item={item} paneId={paneId} />,
+      })),
+    );
+  }, [canSplit, groups, paneId, t]);
   return (
     <DropdownMenuContent
       side="bottom"
       align="start"
       offset={4}
-      minWidth={canSplit ? 280 : 200}
+      minWidth={canSplit ? SPLIT_LAYOUT_PICKER_WIDTH : 200}
       scrollable={canSplit}
       pages={pages}
       testID="workspace-new-tab-menu"
@@ -178,9 +176,7 @@ export function WorkspaceNewTabMenuContent({
               item={item}
               paneId={paneId}
               splitPageId={
-                canSplit && item.id !== "reopen-closed-agent"
-                  ? `workspace-new-tab-split-${item.id}`
-                  : undefined
+                canSplit && canLaunchInSplit(item) ? launchSplitPageId(item) : undefined
               }
             />
           ))}
@@ -201,9 +197,20 @@ export function WorkspaceNewTabMenuContent({
   );
 }
 
+/** Previous agents opens a dialog rather than a view, so it has no split placement. */
+function canLaunchInSplit(item: WorkspaceTabLaunchItem): boolean {
+  return item.id !== "reopen-closed-agent";
+}
+
+/** Menu page id shared by a catalog row's split control and the page it opens. */
+function launchSplitPageId(item: WorkspaceTabLaunchItem): string {
+  return `workspace-new-tab-split-${item.id}`;
+}
+
 /** Keep normal row activation separate from creating the selected view in a new split. */
 function LaunchSplitPicker({ item, paneId }: { item: WorkspaceTabLaunchItem; paneId?: string }) {
   const menu = useMenuContext("LaunchSplitPicker");
+  const compact = useIsCompactFormFactor();
   const intent = useMemo(() => ({ kind: "open" as const, item: item.label }), [item.label]);
   const select = useCallback(
     (position: SplitSide, firstPaneFraction: number) => {
@@ -219,6 +226,7 @@ function LaunchSplitPicker({ item, paneId }: { item: WorkspaceTabLaunchItem; pan
       intent={intent}
       onSelect={select}
       disabled={item.disabled}
+      compact={compact}
       testIDPrefix={`workspace-new-tab-layout-${item.id}`}
     />
   );

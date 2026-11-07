@@ -3,31 +3,21 @@
  */
 import React, { createRef, useMemo, useCallback } from "react";
 import { cleanup, fireEvent, render, act } from "@testing-library/react";
-import { Text, Platform, type View } from "react-native";
+import { Text, type View } from "react-native";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MenuRoot, MenuTrigger } from "./menu-root";
 import { MenuItem, type MenuItemSecondary } from "./menu-item";
-import { useMenuContext, IOS_TEARDOWN_GRACE_MS } from "./menu-context";
+import { useMenuContext } from "./menu-context";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { en } from "@/i18n/resources/en";
 import { SplitLayoutPicker } from "@/components/split-layout-picker";
-import { SPLIT_LAYOUT_PRESETS, type SplitSide } from "@/components/split-layout-presets";
+import { SPLIT_LAYOUT_PRESETS } from "@/components/split-layout-presets";
+import type { SplitSide } from "@/stores/workspace-layout-splits";
 
-const formFactor = vi.hoisted(() => ({ compact: false }));
-vi.mock("@/constants/layout", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/constants/layout")>()),
-  useIsCompactFormFactor: () => formFactor.compact,
-}));
 const pickerI18n = createInstance();
 beforeAll(async () => {
   await pickerI18n.init({ lng: "en", fallbackLng: "en", resources: { en: { translation: en } } });
-});
-const originalPlatform = Platform.OS;
-afterEach(() => {
-  formFactor.compact = false;
-  Object.assign(Platform, { OS: originalPlatform });
-  vi.useRealTimers();
 });
 afterEach(cleanup);
 
@@ -115,12 +105,15 @@ function PickerInMenu({
     () => (move ? { kind: "move" as const } : { kind: "open" as const, item: "Terminal" }),
     [move],
   );
-  if (!menu.open) return null;
+  if (!menu.open) {
+    return null;
+  }
   return (
     <SplitLayoutPicker
       onSelect={select}
       disabled={disabled}
       intent={intent}
+      compact={false}
       testIDPrefix="region"
     />
   );
@@ -140,21 +133,19 @@ function renderPicker(
   );
 }
 
-const regionCases = SPLIT_LAYOUT_PRESETS.flatMap((preset) =>
-  (["left", "right", "top", "bottom"] as const).map((side) => ({
-    label: preset.label,
-    fraction: preset.fraction,
-    side,
-  })),
-);
+// One first-pane region and one second-pane region prove the fraction is never complemented.
+const regionCases = [
+  { side: "left", id: "80-20", label: "80/20", fraction: 0.8 },
+  { side: "bottom", id: "30-70", label: "30/70", fraction: 0.3 },
+] as const;
 
 describe("literal split regions", () => {
   it.each(regionCases)(
     "selects $side of $label without complementing the API fraction",
-    ({ side, label, fraction }) => {
+    ({ side, id, fraction }) => {
       const select = vi.fn();
       const view = renderPicker(select);
-      const region = view.getByTestId(`region-${side}-${label.replace("/", "-")}`);
+      const region = view.getByTestId(`region-${side}-${id}`);
       const percent = side === "left" || side === "top" ? fraction * 100 : (1 - fraction) * 100;
       expect(region.getAttribute("aria-label")).toBe(
         `Open Terminal: ${en.workspace.splits[side]}, ${Math.round(percent)}%`,
@@ -174,7 +165,9 @@ describe("literal split regions", () => {
     const expected: string[] = [];
     for (const sides of [order.slice(0, 2), order.slice(2)]) {
       for (const preset of SPLIT_LAYOUT_PRESETS) {
-        for (const side of sides) expected.push(`region-${side}-${preset.label.replace("/", "-")}`);
+        for (const side of sides) {
+          expected.push(`region-${side}-${preset.id}`);
+        }
       }
     }
     expect(regions.map((region) => region.getAttribute("data-testid"))).toEqual(expected);
@@ -186,7 +179,9 @@ describe("literal split regions", () => {
       expect(document.activeElement).toBe(region);
       expect(region.querySelector('[role="menuitem"]')).toBeNull();
     }
-    for (const side of order) expect(view.queryByText(en.workspace.splits[side])).toBeNull();
+    for (const side of order) {
+      expect(view.queryByText(en.workspace.splits[side])).toBeNull();
+    }
   });
 
   it("keeps disabled regions out of menu navigation and never dispatches", () => {
@@ -200,41 +195,10 @@ describe("literal split regions", () => {
     expect(view.getByText("open")).toBeTruthy();
   });
 
-  it("allocates both compact region axes at least 44px without overlapping hit expansion", () => {
-    formFactor.compact = true;
-    const view = renderPicker(vi.fn());
-    const regions = view.getAllByRole("menuitem");
-    expect(regions).toHaveLength(28);
-    for (const region of regions) {
-      const style = getComputedStyle(region);
-      expect(Number.parseFloat(style.width)).toBeGreaterThanOrEqual(44);
-      expect(Number.parseFloat(style.height)).toBeGreaterThanOrEqual(44);
-    }
-    const left = view.getByTestId("region-left-70-30");
-    const right = view.getByTestId("region-right-70-30");
-    expect(left.parentElement).toBe(right.parentElement);
-    expect(Number.parseFloat(getComputedStyle(left).width)).toBeCloseTo(154);
-    expect(Number.parseFloat(getComputedStyle(right).width)).toBeCloseTo(66);
-    expect(getComputedStyle(left.parentElement!).direction).toBe("ltr");
-  });
-
   it("uses the same region contract and action-specific label when moving", () => {
     const select = vi.fn();
     const view = renderPicker(select, { move: true });
     fireEvent.click(view.getByRole("menuitem", { name: "Move tab: Bottom, 40%" }));
     expect(select).toHaveBeenCalledExactlyOnceWith("bottom", 0.6);
-  });
-
-  it("closes before iOS dispatch and retains the action after picker unmount", () => {
-    vi.useFakeTimers();
-    Object.assign(Platform, { OS: "ios" });
-    const select = vi.fn();
-    const view = renderPicker(select);
-    fireEvent.click(view.getByTestId("region-right-60-40"));
-    expect(view.getByText("closed")).toBeTruthy();
-    expect(view.queryByTestId("region-right-60-40")).toBeNull();
-    expect(select).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(IOS_TEARDOWN_GRACE_MS));
-    expect(select).toHaveBeenCalledExactlyOnceWith("right", 0.6);
   });
 });

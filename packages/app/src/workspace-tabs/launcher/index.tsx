@@ -1,4 +1,4 @@
-import type { SplitSide } from "@/components/split-layout-presets";
+import type { SplitSide } from "@/stores/workspace-layout-splits";
 import {
   createContext,
   useCallback,

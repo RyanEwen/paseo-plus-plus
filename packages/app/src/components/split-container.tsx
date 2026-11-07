@@ -197,6 +197,11 @@ export function SplitContainer({
     () => projectMainSplitTree(layout.root, explorerSidebarPaneId, storedSplitSizes),
     [layout.root, explorerSidebarPaneId, storedSplitSizes],
   );
+  // Tab move menus need the main tree's structure only; divider commits must not rebuild them.
+  const moveMenuRoot = useMemo(
+    () => projectMainSplitTree(layout.root, explorerSidebarPaneId, undefined),
+    [layout.root, explorerSidebarPaneId],
+  );
   const workspaceHasMultiplePanes = Boolean(mainRoot && hasMultipleVisiblePanes(mainRoot));
   useEffect(() => {
     if (
@@ -239,7 +244,7 @@ export function SplitContainer({
   const renderRoot = useMemo(() => wrapRootPaneForStableMount(splitRoot.root), [splitRoot.root]);
   return (
     <WorkspaceSplitMenuScope
-      root={mainRoot}
+      root={moveMenuRoot}
       enabled={!focusModeEnabled}
       onSplit={onSplitPane}
       onMove={onMoveTabToPane}

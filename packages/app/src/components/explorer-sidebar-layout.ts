@@ -34,14 +34,14 @@ export function canApplyExplorerSidebarDockSizes(input: {
   containerWidth: number;
 }): boolean {
   const [main, dock] = input.sizes;
-  return (
-    Number.isFinite(input.containerWidth) &&
-    input.containerWidth > 0 &&
-    main !== undefined &&
-    dock !== undefined &&
-    Number.isFinite(main) &&
-    Number.isFinite(dock) &&
-    main * input.containerWidth >= MIN_WORKSPACE_BODY_WIDTH &&
-    dock * input.containerWidth >= MIN_EXPLORER_SIDEBAR_WIDTH
-  );
+  const measured = Number.isFinite(input.containerWidth) && input.containerWidth > 0;
+  if (!measured || main === undefined || dock === undefined) {
+    return false;
+  }
+  if (!Number.isFinite(main) || !Number.isFinite(dock)) {
+    return false;
+  }
+  const mainFits = main * input.containerWidth >= MIN_WORKSPACE_BODY_WIDTH;
+  const dockFits = dock * input.containerWidth >= MIN_EXPLORER_SIDEBAR_WIDTH;
+  return mainFits && dockFits;
 }

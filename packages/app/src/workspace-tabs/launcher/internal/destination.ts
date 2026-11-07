@@ -13,17 +13,23 @@ export function resolveWorkspaceTabLaunchDestination(
   destination: WorkspaceTabLaunchDestination,
   owner: LayoutOwner,
 ): Exclude<WorkspaceTabLaunchDestination, { kind: "split" }> | null {
-  if (destination.kind !== "split") return destination;
+  if (destination.kind !== "split") {
+    return destination;
+  }
   const state = owner.getState();
   const currentLayout = state.layoutByWorkspace[workspaceKey] ?? createDefaultLayout();
   const targetPaneId = destination.paneId ?? currentLayout.focusedPaneId;
-  if (!targetPaneId) return null;
+  if (!targetPaneId) {
+    return null;
+  }
   const paneId = state.splitPaneEmpty(workspaceKey, {
     targetPaneId,
     position: destination.position,
     firstPaneFraction: destination.firstPaneFraction,
   });
-  if (!paneId) return null;
+  if (!paneId) {
+    return null;
+  }
   const layout = owner.getState().layoutByWorkspace[workspaceKey];
   const tabId = findPaneById(layout.root, paneId)?.focusedTabId;
   return tabId ? { kind: "replace", tabId } : null;

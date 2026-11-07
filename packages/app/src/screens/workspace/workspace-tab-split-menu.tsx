@@ -7,13 +7,14 @@ import {
   useMenuContext,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSplitLayoutControlsEnabled } from "@/paseo-plus-plus/split-layout-controls";
 import {
   collectAllPanes,
   findPaneContainingTab,
   type SplitNode,
 } from "@/stores/workspace-layout-actions";
-import { useSettings } from "@/hooks/use-settings";
-import { type SplitSide } from "@/components/split-layout-presets";
+import type { SplitSide } from "@/stores/workspace-layout-splits";
 
 interface SplitMenuOwner {
   root: SplitNode | null;
@@ -29,7 +30,18 @@ interface SplitMenuOwner {
 const SplitMenuContext = createContext<SplitMenuOwner | null>(null);
 const MOVE_INTENT = { kind: "move" } as const;
 
-/** Keep tab movement bound to the pane tree that owns the menu, including portalled menus. */
+export interface WorkspaceTabSplitMenu {
+  trigger: ReactNode;
+  pages: MenuPageDefinition[];
+}
+const EMPTY_SPLIT_MENU: WorkspaceTabSplitMenu = { trigger: null, pages: [] };
+
+/**
+ * Keep tab movement bound to the pane tree that owns the menu, including portalled menus.
+ *
+ * @param props.root Main split tree. Moving needs its structure only, so callers pass a tree
+ *   that does not change on divider commits.
+ */
 export function WorkspaceSplitMenuScope({
   children,
   root,
@@ -37,68 +49,99 @@ export function WorkspaceSplitMenuScope({
   onMove,
   onSplit,
 }: SplitMenuOwner & { children: ReactNode }) {
-  const { settings } = useSettings();
+  const controlsEnabled = useSplitLayoutControlsEnabled();
   const value = useMemo(
     () => ({
       root,
       onMove,
       onSplit,
-      enabled: enabled && settings.paseoPlusPlus.splitLayoutPresets,
+      enabled: enabled && controlsEnabled,
     }),
-    [root, onMove, onSplit, enabled, settings.paseoPlusPlus.splitLayoutPresets],
+    [root, onMove, onSplit, enabled, controlsEnabled],
   );
   return <SplitMenuContext.Provider value={value}>{children}</SplitMenuContext.Provider>;
 }
 
-export interface WorkspaceTabSplitMenu {
-  trigger: ReactNode;
-  pages: MenuPageDefinition[];
+/** The visible pane holding this tab when the owning scope allows moving it, otherwise null. */
+function resolveMovableSourcePaneId(owner: SplitMenuOwner | null, tabId: string): string | null {
+  if (!owner?.enabled || !owner.root) {
+    return null;
+  }
+  const source = findPaneContainingTab(owner.root, tabId);
+  if (!source || source.hidden) {
+    return null;
+  }
+  return source.id;
 }
 
-/** Move the same tab to an existing pane or a new side split; content and close lifecycles stay untouched. */
+/**
+ * Move the same tab to an existing pane or a new side split; content and close lifecycles stay
+ * untouched. Rows only resolve the source pane; the page builds its pane list when it opens.
+ */
 export function useWorkspaceTabSplitMenu(tabId: string): WorkspaceTabSplitMenu {
   const owner = useContext(SplitMenuContext);
   const { t } = useTranslation();
+  const sourcePaneId = resolveMovableSourcePaneId(owner, tabId);
   return useMemo(() => {
-    const empty = { trigger: null, pages: [] };
-    if (!owner?.enabled || !owner.root) return empty;
-    const source = findPaneContainingTab(owner.root, tabId);
-    if (!source || source.hidden) return empty;
-    const panes = collectAllPanes(owner.root).filter((pane) => !pane.hidden);
+    if (!sourcePaneId) {
+      return EMPTY_SPLIT_MENU;
+    }
     const id = `workspace-tab-move-${tabId}`;
-    const pages: MenuPageDefinition[] = [
-      {
-        id,
-        title: t("workspace.splits.moveTab"),
-        hoverIntent: false,
-        content: (
-          <>
-            {panes.map((pane, index) =>
-              pane.id !== source.id ? (
-                <MovePaneMenuItem
-                  key={pane.id}
-                  owner={owner}
-                  tabId={tabId}
-                  paneId={pane.id}
-                  label={t("workspace.splits.pane", { index: index + 1 })}
-                  menuId={id}
-                />
-              ) : null,
-            )}
-            <MoveSplitPicker owner={owner} tabId={tabId} targetPaneId={source.id} menuId={id} />
-          </>
-        ),
-      },
-    ];
     return {
       trigger: (
         <MenuSubTrigger id={id} testID={id}>
           {t("workspace.splits.moveTab")}
         </MenuSubTrigger>
       ),
-      pages,
+      pages: [
+        {
+          id,
+          title: t("workspace.splits.moveTab"),
+          hoverIntent: false,
+          content: <MoveTabPage tabId={tabId} sourcePaneId={sourcePaneId} menuId={id} />,
+        },
+      ],
     };
-  }, [owner, tabId, t]);
+  }, [sourcePaneId, tabId, t]);
+}
+
+/** Existing destination panes plus the region picker, built only while the page is open. */
+function MoveTabPage({
+  tabId,
+  sourcePaneId,
+  menuId,
+}: {
+  tabId: string;
+  sourcePaneId: string;
+  menuId: string;
+}) {
+  const owner = useContext(SplitMenuContext);
+  const { t } = useTranslation();
+  const root = owner?.root ?? null;
+  const panes = useMemo(
+    () => (root ? collectAllPanes(root).filter((pane) => !pane.hidden) : []),
+    [root],
+  );
+  if (!owner) {
+    return null;
+  }
+  return (
+    <>
+      {panes.map((pane, index) =>
+        pane.id !== sourcePaneId ? (
+          <MovePaneMenuItem
+            key={pane.id}
+            owner={owner}
+            tabId={tabId}
+            paneId={pane.id}
+            label={t("workspace.splits.pane", { index: index + 1 })}
+            menuId={menuId}
+          />
+        ) : null,
+      )}
+      <MoveSplitPicker owner={owner} tabId={tabId} targetPaneId={sourcePaneId} menuId={menuId} />
+    </>
+  );
 }
 
 function MoveSplitPicker({
@@ -113,6 +156,7 @@ function MoveSplitPicker({
   menuId: string;
 }) {
   const menu = useMenuContext("MoveSplitPicker");
+  const compact = useIsCompactFormFactor();
   const select = useCallback(
     (position: SplitSide, firstPaneFraction: number) =>
       menu.selectItem(
@@ -121,7 +165,14 @@ function MoveSplitPicker({
       ),
     [owner, tabId, targetPaneId, menu],
   );
-  return <SplitLayoutPicker intent={MOVE_INTENT} onSelect={select} testIDPrefix={menuId} />;
+  return (
+    <SplitLayoutPicker
+      intent={MOVE_INTENT}
+      onSelect={select}
+      compact={compact}
+      testIDPrefix={menuId}
+    />
+  );
 }
 
 function MovePaneMenuItem({

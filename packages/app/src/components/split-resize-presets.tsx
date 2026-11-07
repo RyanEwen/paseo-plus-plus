@@ -1,16 +1,19 @@
-import { SplitPresetGlyph } from "./split-layout-glyph";
+import { SplitLayoutGlyph } from "./split-layout-glyph";
 import { useMemo, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
-import { useSettings } from "@/hooks/use-settings";
+import { useSplitLayoutControlsEnabled } from "@/paseo-plus-plus/split-layout-controls";
 import {
   applySplitLayoutPreset,
   canApplySplitLayoutPreset,
   SPLIT_LAYOUT_PRESETS,
 } from "./split-layout-presets";
+
+/** Share difference within which a preset is shown as the divider's current ratio. */
+const CURRENT_PRESET_TOLERANCE = 0.001;
 
 /** Add a keyboard-accessible hover picker without changing the divider's drag gesture or identity. */
 export function SplitResizePresets({
@@ -35,29 +38,32 @@ export function SplitResizePresets({
   canApplyPreset?: (sizes: number[]) => boolean;
 }) {
   const { t } = useTranslation();
-  const { settings } = useSettings();
-  const available = enabled && settings.paseoPlusPlus.splitLayoutPresets;
-  const choices = useMemo(
-    () =>
-      SPLIT_LAYOUT_PRESETS.map((preset) => {
-        const nextSizes = applySplitLayoutPreset(sizes, index, preset.fraction);
-        const allowed =
-          canApplySplitLayoutPreset(sizes, index, preset.fraction) &&
-          (canApplyPreset?.(nextSizes) ?? true);
-        return {
-          label: preset.label,
-          fraction: preset.fraction,
-          icon: <SplitPresetGlyph direction={direction} fraction={preset.fraction} />,
-          available: allowed,
-          select: () => {
-            // Custom dock limits must guard execution as well as the disabled control.
-            if (allowed) onSelect(nextSizes);
-          },
-        };
-      }),
-    [sizes, index, onSelect, direction, canApplyPreset],
-  );
-  const pair = (sizes[index] ?? 0) + (sizes[index + 1] ?? 0);
+  const controlsEnabled = useSplitLayoutControlsEnabled();
+  const available = enabled && controlsEnabled;
+  const choices = useMemo(() => {
+    const first = sizes[index] ?? 0;
+    const pair = first + (sizes[index + 1] ?? 0);
+    return SPLIT_LAYOUT_PRESETS.map((preset) => {
+      const nextSizes = applySplitLayoutPreset(sizes, index, preset.fraction);
+      const fitsDivider = canApplySplitLayoutPreset(sizes, index, preset.fraction);
+      const fitsCaller = canApplyPreset?.(nextSizes) ?? true;
+      const allowed = fitsDivider && fitsCaller;
+      return {
+        id: preset.id,
+        label: preset.label,
+        fraction: preset.fraction,
+        icon: <SplitLayoutGlyph direction={direction} fraction={preset.fraction} />,
+        available: allowed,
+        isCurrent: Math.abs(first - pair * preset.fraction) < CURRENT_PRESET_TOLERANCE,
+        select: () => {
+          // Custom dock limits must guard execution as well as the disabled control.
+          if (allowed) {
+            onSelect(nextSizes);
+          }
+        },
+      };
+    });
+  }, [sizes, index, onSelect, direction, canApplyPreset]);
   return (
     <HoverCard disabled={!available || dragging}>
       <HoverCardTrigger
@@ -76,19 +82,15 @@ export function SplitResizePresets({
         <View style={styles.presets}>
           {choices.map((preset) => (
             <Button
-              key={preset.label}
-              variant={
-                Math.abs((sizes[index] ?? 0) - pair * preset.fraction) < 0.001
-                  ? "secondary"
-                  : "ghost"
-              }
+              key={preset.id}
+              variant={preset.isCurrent ? "secondary" : "ghost"}
               size="md"
               style={styles.choice}
               textStyle={styles.ratio}
               leftIcon={preset.icon}
               disabled={!preset.available}
               accessibilityLabel={t("workspace.splits.ratio", { ratio: preset.label })}
-              testID={`workspace-split-preset-${preset.label.replace("/", "-")}`}
+              testID={`workspace-split-preset-${preset.id}`}
               onPress={preset.select}
             >
               {preset.label}

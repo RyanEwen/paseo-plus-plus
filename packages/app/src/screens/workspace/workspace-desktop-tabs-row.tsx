@@ -1,4 +1,5 @@
-import { useWorkspaceTabSplitMenu } from "./workspace-tab-split-menu";
+import { useWorkspaceTabSplitMenu, type WorkspaceTabSplitMenu } from "./workspace-tab-split-menu";
+import { SPLIT_LAYOUT_PICKER_WIDTH } from "@/components/split-layout-picker";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
@@ -721,7 +722,7 @@ function TabChipContextMenuContent({
   menuEntries,
 }: {
   contextMenuTestId: string;
-  splitMenu: ReturnType<typeof useWorkspaceTabSplitMenu>;
+  splitMenu: WorkspaceTabSplitMenu;
   openWith: ReturnType<typeof useFilePanelOpenWithMenu>;
   menuEntries: WorkspaceTabMenuEntry[];
 }) {
@@ -731,7 +732,7 @@ function TabChipContextMenuContent({
       width={DROPDOWN_WIDTH}
       testID={contextMenuTestId}
       pages={[...splitMenu.pages, ...openWith.pages]}
-      minWidth={splitMenu.pages.length > 0 ? 280 : undefined}
+      minWidth={splitMenu.pages.length > 0 ? SPLIT_LAYOUT_PICKER_WIDTH : undefined}
       scrollable={Boolean(splitMenu.pages.length || openWith.pages.length)}
     >
       {splitMenu.trigger}
