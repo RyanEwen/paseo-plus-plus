@@ -1,5 +1,5 @@
 import { useCallback, useContext, useMemo } from "react";
-import { Text, View, type TextLayoutEvent } from "react-native";
+import { View, type TextLayoutEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { TextPreview } from "@/components/ui/text-preview";
 import { isWeb } from "@/constants/platform";
