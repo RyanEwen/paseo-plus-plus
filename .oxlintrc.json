@@ -101,6 +101,8 @@
                 "readdirSync",
                 "realpathSync"
               ],
+              // Module initialization only: resolveDaemonDistribution is cached before the daemon starts.
+              "server/daemon-distribution.ts": ["existsSync", "readFileSync"],
               // TODO: literal executableExists is a synchronous public capability; move its callers and Windows existence predicates to async together.
               "executable-resolution/executable-resolution.ts": ["existsSync"],
               // TODO: winget enumeration shares synchronous existence predicates with literal lookup; convert the executable-resolution boundary together.

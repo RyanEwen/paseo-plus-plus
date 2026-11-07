@@ -9,7 +9,6 @@ const { extractFile } = require("@electron/asar");
 const { WebSocket } = require("ws");
 const assert = require("node:assert/strict");
 
-const EXECUTABLE_NAME = "Paseo";
 const SMOKE_TIMEOUT_MS = 60_000;
 const EXIT_TIMEOUT_MS = 10_000;
 const TERMINAL_CAPTURE_ATTEMPTS = 20;
@@ -65,16 +64,38 @@ function assertExecutable(filePath, label) {
   }
 }
 
+/** Locate resources for both app bundles and ordinary desktop package directories. */
+function getPackagedResourcesDir(appPath) {
+  return process.platform === "darwin"
+    ? path.join(appPath, "Contents", "Resources")
+    : path.join(appPath, "resources");
+}
+
+/** Read the packaged release metadata used by Electron and its bundled daemon. */
+function getPackagedAppMetadata(appPath) {
+  return JSON.parse(
+    extractFile(path.join(getPackagedResourcesDir(appPath), "app.asar"), "package.json").toString(),
+  );
+}
+
+/** Read the build's executable identity so the smoke also covers fork packages. */
+function getPackagedExecutableName(appPath) {
+  return fs
+    .readFileSync(path.join(getPackagedResourcesDir(appPath), "paseo-executable-name"), "utf8")
+    .trim();
+}
+
 function getExecutablePath(appPath) {
+  const executableName = getPackagedExecutableName(appPath);
   if (process.platform === "darwin") {
-    return path.join(appPath, "Contents", "MacOS", EXECUTABLE_NAME);
+    return path.join(appPath, "Contents", "MacOS", executableName);
   }
 
   if (process.platform === "win32") {
-    return path.join(appPath, `${EXECUTABLE_NAME}.exe`);
+    return path.join(appPath, `${executableName}.exe`);
   }
 
-  return path.join(appPath, EXECUTABLE_NAME);
+  return path.join(appPath, executableName);
 }
 
 function getCliShimPath(appPath) {
@@ -90,7 +111,7 @@ function getCliShimPath(appPath) {
 }
 
 function getMacMainExecutablePath(appPath) {
-  return path.join(appPath, "Contents", "MacOS", EXECUTABLE_NAME);
+  return path.join(appPath, "Contents", "MacOS", getPackagedExecutableName(appPath));
 }
 
 function getLaunchCommand(executablePath, args) {
@@ -858,12 +879,11 @@ function assertLinuxDesktopIdentity(appPath) {
       fs.readFileSync(path.join(__dirname, "..", "assets", "icon.png")),
       "Packaged Linux windows must have the Paseo icon at their runtime lookup path",
     );
-    const metadata = JSON.parse(
-      extractFile(path.join(appPath, "resources", "app.asar"), "package.json").toString(),
-    );
-    if (metadata.desktopName !== `${EXECUTABLE_NAME}.desktop`) {
+    const executableName = getPackagedExecutableName(appPath);
+    const metadata = getPackagedAppMetadata(appPath);
+    if (metadata.desktopName !== `${executableName}.desktop`) {
       throw new Error(
-        `Packaged Linux desktop identity ${JSON.stringify(metadata.desktopName)} does not match ${EXECUTABLE_NAME}.desktop`,
+        `Packaged Linux desktop identity ${JSON.stringify(metadata.desktopName)} does not match ${executableName}.desktop`,
       );
     }
   }

@@ -1,4 +1,5 @@
 import { DaemonNotificationPreferencesSchema } from "@getpaseo/protocol/agent-attention";
+import { daemonDistribution } from "./daemon-distribution.js";
 import { readFile } from "node:fs/promises";
 import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
@@ -384,7 +385,7 @@ const CONFIG_FILENAME = "config.json";
 const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
   version: 1,
   daemon: {
-    listen: "127.0.0.1:6767",
+    listen: `127.0.0.1:${daemonDistribution.defaultPort}`,
     cors: {
       allowedOrigins: ["https://app.paseo.sh"],
     },

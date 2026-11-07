@@ -477,6 +477,9 @@ interface AboutSectionProps {
 }
 
 function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSectionProps) {
+  // Fork preview desktop builds carry a "-preview.N" version and update only from the
+  // preview channel.
+  const isPreviewBuild = appVersion?.includes("-preview.") === true;
   const { t } = useTranslation();
   return (
     <>
@@ -490,7 +493,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
             <Text style={styles.aboutValue}>{appVersionText}</Text>
           </View>
           <WhatsNewRow />
-          {isDesktopApp ? <DesktopAppUpdateRow /> : null}
+          {isDesktopApp ? <DesktopAppUpdateRow isPreview={isPreviewBuild} /> : null}
         </View>
       </SettingsSection>
       <ConnectedHostsSection clientVersion={appVersion} />
@@ -624,7 +627,7 @@ function getUpdateButtonLabel(
   return t("settings.about.updates.update");
 }
 
-function DesktopAppUpdateRow() {
+function DesktopAppUpdateRow({ isPreview }: { isPreview: boolean }) {
   const { t } = useTranslation();
   const { settings, updateSettings } = useSettings();
   const {
@@ -705,19 +708,21 @@ function DesktopAppUpdateRow() {
 
   return (
     <>
-      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-        <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>{t("settings.about.releaseChannel.label")}</Text>
-          <Text style={settingsStyles.rowHint}>
-            {t("settings.about.releaseChannel.description")}
-          </Text>
+      {!isPreview ? (
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("settings.about.releaseChannel.label")}</Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.about.releaseChannel.description")}
+            </Text>
+          </View>
+          <SegmentedControl
+            value={settings.releaseChannel}
+            onValueChange={handleReleaseChannelChange}
+            options={releaseChannelOptions}
+          />
         </View>
-        <SegmentedControl
-          value={settings.releaseChannel}
-          onValueChange={handleReleaseChannelChange}
-          options={releaseChannelOptions}
-        />
-      </View>
+      ) : null}
       <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("settings.about.updates.label")}</Text>
