@@ -1,9 +1,9 @@
 import { requestPromptFixture } from "@/timeline/canonical-prompt-context.test-fixture";
-import { canonicalPromptSourceKey } from "./canonical-prompt-model";
 import {
+  canonicalPromptSourceKey,
   CanonicalPromptContextStaleError,
   CanonicalPromptContextUnavailableError,
-} from "./canonical-prompt-context";
+} from "./canonical-prompt-model";
 import { DatabaseSync } from "node:sqlite";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import {

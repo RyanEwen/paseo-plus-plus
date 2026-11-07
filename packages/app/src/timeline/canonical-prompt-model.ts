@@ -48,3 +48,30 @@ export function retainBounded<K, V>(entries: Map<K, V>, key: K, value: V, limit:
   entries.set(key, value);
   if (entries.size > limit) entries.delete(entries.keys().next().value!);
 }
+
+/** Ordinary rows or the source changed under a read; retry resolves the current prompt. */
+export class CanonicalPromptContextChangedError extends Error {
+  constructor() {
+    super("Reading context changed; retry to resolve the current prompt");
+  }
+}
+const PROMPT_CONTEXT_UNAVAILABLE = {
+  "owner-unavailable": "Prompt context owner unavailable",
+  "reader-scope-changed": "Prompt reader scope changed",
+  "provenance-changed": "Prompt context provenance changed",
+  "lookup-unavailable": "Canonical prompt context has a different owner or is unavailable",
+} as const;
+
+/** The owner, its epoch, the reader's scope or the lookup cannot serve this request. */
+export class CanonicalPromptContextUnavailableError extends Error {
+  constructor(readonly reason: keyof typeof PROMPT_CONTEXT_UNAVAILABLE) {
+    super(PROMPT_CONTEXT_UNAVAILABLE[reason]);
+  }
+}
+
+/** A newer request on the same reader channel superseded this one. */
+export class CanonicalPromptContextStaleError extends Error {
+  constructor(options?: ErrorOptions) {
+    super("Prompt context request is no longer current", options);
+  }
+}

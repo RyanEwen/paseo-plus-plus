@@ -11,11 +11,8 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { StreamItem } from "@/types/stream";
-import {
-  retainCanonicalPromptContext,
-  type CanonicalPromptContexts,
-  type CanonicalPromptLookup,
-} from "./canonical-prompt-context";
+import type { CanonicalPromptContexts, CanonicalPromptLookup } from "./canonical-prompt-context";
+import { retainCanonicalPromptContext } from "./prompt-context-scope";
 import {
   canonicalPromptSourceKey,
   CanonicalPromptContextBudgetError,
