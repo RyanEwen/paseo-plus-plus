@@ -1,5 +1,11 @@
-import { RestoreProjectWorkspaceDialog } from "@/components/restore-project-workspace-dialog";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  ArchiveAllMenuItem,
+  ProjectArchiveMenuDialogs,
+  RestoreArchivedWorkspaceMenuItem,
+  useProjectArchiveMenu,
+  type ProjectArchiveMenuController,
+} from "@/workspace/project-archive-menu";
 import {
   View,
   Text,
@@ -38,15 +44,7 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import {
-  Archive,
-  ArchiveRestore,
-  ExternalLink,
-  Settings,
-  MoreVertical,
-  Plus,
-  Trash2,
-} from "lucide-react-native";
+import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -147,8 +145,6 @@ import {
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
-import { useProjectArchive } from "@/workspace/use-project-archive";
-import { resolveProjectRestoreHosts } from "@/workspace/project-archive-restore";
 import {
   getCurrentProjectRemoveReadiness,
   removeProjectFromHosts,
@@ -177,8 +173,6 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
-const ThemedArchive = withUnistyles(Archive);
-const ThemedArchiveRestore = withUnistyles(ArchiveRestore);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -415,8 +409,6 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
   },
 }));
 
-type ProjectArchiveMenuAction = Omit<ReturnType<typeof useProjectArchive>, "confirmation">;
-
 function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
@@ -427,10 +419,9 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint,
   isProjectActive,
   onBeginWorkspaceSetup,
-  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
-  archiveAction,
+  archiveMenu,
 }: {
   projectViewKey: string;
   displayName: string;
@@ -441,10 +432,9 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
   onBeginWorkspaceSetup: () => void;
-  onRestoreProject: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  archiveAction: ProjectArchiveMenuAction;
+  archiveMenu: ProjectArchiveMenuController;
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
   return (
@@ -467,10 +457,9 @@ function ProjectRowTrailingActions({
             projectViewKey={projectViewKey}
             settingsTarget={settingsTarget}
             projectPath={projectPath}
-            onRestoreProject={onRestoreProject}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
-            archiveAction={archiveAction}
+            archiveMenu={archiveMenu}
           />
         </View>
       ) : null}
@@ -480,10 +469,6 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
-const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
-const restoreLeadingIcon = (
-  <ThemedArchiveRestore size={14} uniProps={foregroundMutedColorMapping} />
-);
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -501,18 +486,16 @@ function ProjectKebabMenu({
   projectViewKey,
   settingsTarget,
   projectPath,
-  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
-  archiveAction,
+  archiveMenu,
 }: {
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
-  onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  archiveAction: ProjectArchiveMenuAction;
+  archiveMenu: ProjectArchiveMenuController;
 }) {
   const { t } = useTranslation();
   return (
@@ -532,10 +515,9 @@ function ProjectKebabMenu({
           projectViewKey={projectViewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
-          onRestoreProject={onRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
-          archiveAction={archiveAction}
+          archiveMenu={archiveMenu}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -562,19 +544,17 @@ function ProjectMenuItems({
   projectViewKey,
   settingsTarget,
   projectPath,
-  onRestoreProject,
   onRemoveProject,
   removeProjectStatus,
-  archiveAction,
+  archiveMenu,
 }: {
   surface: ProjectMenuSurface;
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
-  onRestoreProject: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  archiveAction: ProjectArchiveMenuAction;
+  archiveMenu: ProjectArchiveMenuController;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -606,16 +586,11 @@ function ProjectMenuItems({
           {t("sidebar.project.actions.openSettings")}
         </ProjectMenuItem>
       ) : null}
-      {settingsTarget ? (
-        <ProjectMenuItem
-          surface={surface}
-          testID={`sidebar-project-menu-restore-${projectViewKey}`}
-          leading={restoreLeadingIcon}
-          onSelect={onRestoreProject}
-        >
-          {t("sidebar.project.restore.title")}
-        </ProjectMenuItem>
-      ) : null}
+      <RestoreArchivedWorkspaceMenuItem
+        surface={surface}
+        projectViewKey={projectViewKey}
+        menu={archiveMenu}
+      />
       {canOpenInNewWindow ? (
         <ProjectMenuItem
           surface={surface}
@@ -631,17 +606,12 @@ function ProjectMenuItems({
         path={projectPath}
         testID={`sidebar-project-menu-open-folder-${projectViewKey}`}
       />
-      <ProjectMenuItem
+      <ArchiveAllMenuItem
         surface={surface}
-        testID={`sidebar-project-menu-archive-all-${projectViewKey}`}
-        leading={archiveLeadingIcon}
-        status={archiveAction.pending ? "pending" : "idle"}
-        pendingLabel={archiveAction.pendingLabel}
-        disabled={removeProjectStatus !== "idle"}
-        onSelect={archiveAction.archive}
-      >
-        {t("sidebar.project.archive.action")}
-      </ProjectMenuItem>
+        projectViewKey={projectViewKey}
+        menu={archiveMenu}
+        removePending={removeProjectStatus !== "idle"}
+      />
       <ProjectMenuItem
         surface={surface}
         testID={`sidebar-project-menu-remove-${projectViewKey}`}
@@ -649,7 +619,7 @@ function ProjectMenuItems({
         status={removeProjectStatus}
         pendingLabel={t("sidebar.project.actions.removing")}
         onSelect={onRemoveProject}
-        disabled={archiveAction.pending}
+        disabled={archiveMenu.archive.pending}
       >
         {t("sidebar.project.actions.remove")}
       </ProjectMenuItem>
@@ -931,15 +901,11 @@ function ProjectHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const [restoreProjectOpen, setRestoreProjectOpen] = useState(false);
-  const openRestoreProject = useCallback(() => setRestoreProjectOpen(true), []);
-  const closeRestoreProject = useCallback(() => setRestoreProjectOpen(false), []);
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
-  const restoreHosts = useMemo(() => resolveProjectRestoreHosts(project), [project]);
-  const archiveAction = useProjectArchive({ projectName: displayName, hosts: project.hosts });
+  const archiveMenu = useProjectArchiveMenu({ projectName: displayName, hosts: project.hosts });
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
@@ -1034,10 +1000,9 @@ function ProjectHeaderRow({
         isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
-        onRestoreProject={openRestoreProject}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
-        archiveAction={archiveAction}
+        archiveMenu={archiveMenu}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1105,19 +1070,12 @@ function ProjectHeaderRow({
           projectViewKey={project.viewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
-          onRestoreProject={openRestoreProject}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
-          archiveAction={archiveAction}
+          archiveMenu={archiveMenu}
         />
       </ContextMenuContent>
-      <RestoreProjectWorkspaceDialog
-        visible={restoreProjectOpen}
-        hosts={restoreHosts}
-        onClose={closeRestoreProject}
-        onWorkspacePress={onWorkspacePress}
-      />
-      {archiveAction.confirmation}
+      <ProjectArchiveMenuDialogs menu={archiveMenu} onWorkspacePress={onWorkspacePress} />
     </ContextMenu>
   );
 }
