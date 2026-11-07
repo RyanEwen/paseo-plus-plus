@@ -2492,9 +2492,10 @@ function ProjectModeList({
         storedWorkspaceOrder: getWorkspaceOrder(projectViewKey),
         move,
       });
-      if (result.projectPinKeys.length > 0) {
+      if (result.pinOrder) {
+        const pinOrder = new Set(result.pinOrder);
         onPinnedWorkspaceReorder(
-          reorderedWorkspaces.filter((workspace) => projectPinnedKeys.has(workspace.workspaceKey)),
+          reorderedWorkspaces.filter((workspace) => pinOrder.has(workspace.workspaceKey)),
         );
       }
       if (result.workspaceOrder === null) return;
