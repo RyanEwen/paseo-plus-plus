@@ -595,7 +595,7 @@ uses the singleton id.
 
 The store is a typed persistence boundary. It returns values to directory and timeline owners and
 accepts their explicit commits; it never reads or writes UI state. Reads are scoped to the requested
-host, kinds, and ids. Opening a cached workspace uses exact workspace and project keys rather than a
+host, kinds, and ids. Opening a cached workspace uses exact workspace, checkpoint, and project keys rather than a
 directory scan. One invalid row is deleted and returned as a miss without affecting other rows.
 An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
@@ -603,6 +603,11 @@ checkpoint are also applied in one transaction. Reads wait for accepted changes 
 then retry only when a requested row changes during the read. Unrelated agent streams do not
 invalidate the read. Directory baseline replacements and host removal or renaming still invalidate
 the affected reads.
+
+A workspace cursor claims a complete cached workspace baseline. Reject a current-checkpoint
+workspace missing its visibility flag and invalidate only the workspace cursor. Without that
+cursor, retain otherwise-valid legacy rows provisionally until the daemon supplies a baseline.
+Retain timelines and unrelated entity cursors during repair.
 
 Compare captured raw rows and the checkpoint (including its absence) before applying repair,
 in the same storage transaction. A repair from one browser context must not delete a newer
