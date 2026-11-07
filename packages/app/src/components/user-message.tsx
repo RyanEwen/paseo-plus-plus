@@ -1,5 +1,4 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import { trailingRailStyles } from "./user-message-measured-styles";
 import { MessageSender } from "./user-message/index";
 import { useTextLink, type TextLinkEvent } from "@/hooks/use-text-link";
 import { TextPreview } from "@/components/ui/text-preview";
@@ -13,7 +12,7 @@ import {
 } from "./user-message-flow";
 import { WebUserMessageFlow } from "./user-message-web-flow";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
-import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
+import type { RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -25,9 +24,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ReactNode } from "react";
-import * as React from "react";
 import { memo, useCallback, useContext, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType, type TextLayoutEvent } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
@@ -38,12 +35,8 @@ import {
   NativeMessageVisibility,
 } from "./user-message-native-flow";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  useDisableOuterSpacing,
-  STREAM_METADATA_FONT_SIZE,
-  MESSAGE_TEXT_DATASET,
-} from "./message-layout";
-import { TurnCopyButton } from "./turn-copy-button";
+import { useDisableOuterSpacing, MESSAGE_TEXT_DATASET } from "./message-layout";
+import { UserMessageTextActions, UserMessageTrailingRow } from "./user-message-trailing-row";
 interface UserMessageProps {
   /** Shared fallback callers retain natural layout unless the chat owner opts into previews. */
   bodyPresentation?: UserMessageBodyPresentation;
@@ -156,22 +149,9 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
         }
       : {}),
   },
-  copyButton: {
-    alignSelf: "center",
-    padding: theme.spacing[1],
-    paddingTop: theme.spacing[1],
-    marginTop: 0,
-    marginRight: -theme.spacing[1],
-  },
   trailingRow: {
     alignSelf: "flex-end",
     marginTop: theme.spacing[2],
-  },
-  trailingContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    minHeight: 24,
-    gap: theme.spacing[2],
   },
   // The absolute-fill backdrop follows this padding, keeping content inside its edges.
   trailingRowWithBackdrop: { padding: theme.spacing[2], flexShrink: 0 },
@@ -182,10 +162,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   trailingRowVisible: {
     opacity: 1,
-  },
-  timestampText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
   },
 }));
 
@@ -669,84 +645,6 @@ export const UserMessage = memo(function UserMessage({
  * into the existing chat gutter instead of narrowing and rewrapping the content.
  * Native keeps the same single View and the original composed row styles.
  */
-function UserMessageTrailingRow({
-  backed,
-  backdrop,
-  style,
-  children,
-  ...props
-}: React.ComponentProps<typeof View> & { backed: boolean; backdrop: ReactNode }) {
-  const flow = useContext(NaturalMessageFlowContext);
-  const web = flow?.web === true;
-  const railWidth = flow?.webRailWidth;
-  const padding = backed ? SPACING[2] : 0;
-  const rails = useMemo(() => trailingRailStyles({ railWidth, padding }), [railWidth, padding]);
-  const paintStyle = useMemo<React.ComponentProps<typeof View>["style"]>(() => {
-    if (!web) return [userMessageStylesheet.trailingContent, style];
-    return [style, rails.paint];
-  }, [web, style, rails]);
-  const contentStyle = useMemo<React.ComponentProps<typeof View>["style"]>(
-    () => [userMessageStylesheet.trailingContent, rails.content],
-    [rails],
-  );
-  if (!web)
-    return (
-      <View {...props} style={paintStyle}>
-        {backdrop}
-        {children}
-      </View>
-    );
-  return (
-    <View {...props} style={paintStyle}>
-      {backdrop}
-      <View style={contentStyle} testID="user-message-action-content">
-        {children}
-      </View>
-    </View>
-  );
-}
-
-/** Keep timestamp, rewind and copy together beside optional prompt navigation. */
-function UserMessageTextActions({
-  formattedTimestamp,
-  capabilities,
-  messageId,
-  isRewindPending,
-  message,
-  onRewind,
-  getContent,
-}: {
-  formattedTimestamp: string;
-  capabilities?: AgentCapabilityFlags;
-  messageId?: string;
-  isRewindPending: boolean;
-  message: string;
-  onRewind: React.ComponentProps<typeof RewindMenu>["onRewind"];
-  getContent: () => string;
-}) {
-  const { t } = useTranslation();
-  return (
-    <>
-      <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
-        {formattedTimestamp}
-      </Text>
-      {capabilities && messageId ? (
-        <RewindMenu
-          capabilities={capabilities}
-          isPending={isRewindPending}
-          rewoundText={message}
-          onRewind={onRewind}
-        />
-      ) : null}
-      <TurnCopyButton
-        getContent={getContent}
-        containerStyle={userMessageStylesheet.copyButton}
-        accessibilityLabel={t("message.actions.copyMessage")}
-      />
-    </>
-  );
-}
-
 function renderMessageSender(
   sender: AgentMessage["sender"] | undefined,
   serverId: string | undefined,
