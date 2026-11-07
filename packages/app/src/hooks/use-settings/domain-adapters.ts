@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createStore } from "zustand/vanilla";
 import type { AppSettings } from "./storage";
 
 /**
@@ -44,8 +45,10 @@ export interface SettingsDomainAdapter {
 }
 
 const RESERVED_ADAPTER_IDS = new Set(["app"]);
-const adapters = new Map<string, SettingsDomainAdapter>();
-const listeners = new Set<() => void>();
+/** Adapters by id in registration order. Each change replaces the map. */
+const registry = createStore<{ adapters: ReadonlyMap<string, SettingsDomainAdapter> }>(() => ({
+  adapters: new Map(),
+}));
 
 /**
  * Register an adapter. Call it from an effect or startup hook, never at module import: Fast
@@ -60,33 +63,29 @@ export function registerSettingsDomainAdapter(adapter: SettingsDomainAdapter): (
   if (RESERVED_ADAPTER_IDS.has(adapter.id)) {
     throw new Error(`Settings domain adapter id "${adapter.id}" is reserved`);
   }
-  if (adapters.has(adapter.id)) {
+  if (registry.getState().adapters.has(adapter.id)) {
     throw new Error(`Settings domain adapter "${adapter.id}" is already registered`);
   }
-  adapters.set(adapter.id, adapter);
-  notify();
+  const added = new Map(registry.getState().adapters);
+  added.set(adapter.id, adapter);
+  registry.setState({ adapters: added });
   return () => {
-    if (adapters.get(adapter.id) !== adapter) return;
-    adapters.delete(adapter.id);
-    notify();
+    const current = registry.getState().adapters;
+    if (current.get(adapter.id) !== adapter) return;
+    const remaining = new Map(current);
+    remaining.delete(adapter.id);
+    registry.setState({ adapters: remaining });
   };
 }
 
 /** Registered adapters in registration order. */
 export function listSettingsDomainAdapters(): readonly SettingsDomainAdapter[] {
-  return [...adapters.values()];
+  return [...registry.getState().adapters.values()];
 }
 
 /** Notify the listener after every registration or removal; return an unsubscribe function. */
 export function subscribeSettingsDomainAdapters(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function notify(): void {
-  for (const listener of listeners) listener();
+  return registry.subscribe(() => listener());
 }
 
 /**

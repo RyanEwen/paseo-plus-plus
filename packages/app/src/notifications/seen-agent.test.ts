@@ -1,58 +1,10 @@
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
+import { describe, expect, it } from "vitest";
 import {
   createSeenAgentNotifications,
   isAgentNotificationViewVisible,
   type PresentedAgentNotification,
-} from "@/notifications/seen-agent";
-import { describe, expect, it } from "vitest";
-
-import { resolveNotificationTarget } from "./notification-routing";
-
-describe("resolveNotificationTarget", () => {
-  it("extracts non-empty server and agent ids", () => {
-    expect(
-      resolveNotificationTarget({
-        serverId: " server-123 ",
-        agentId: " agent-456 ",
-      }),
-    ).toEqual({
-      serverId: "server-123",
-      agentId: "agent-456",
-      workspaceId: null,
-      terminalId: null,
-    });
-  });
-
-  it("returns null for missing/empty ids", () => {
-    expect(resolveNotificationTarget({ serverId: "", agentId: "   " })).toEqual({
-      serverId: null,
-      agentId: null,
-      workspaceId: null,
-      terminalId: null,
-    });
-    expect(resolveNotificationTarget(undefined)).toEqual({
-      serverId: null,
-      agentId: null,
-      workspaceId: null,
-      terminalId: null,
-    });
-  });
-
-  it("does not treat cwd as a workspace id alias", () => {
-    expect(
-      resolveNotificationTarget({
-        serverId: "srv-1",
-        agentId: "agent-1",
-        cwd: "/tmp/repo",
-      }),
-    ).toEqual({
-      serverId: "srv-1",
-      agentId: "agent-1",
-      workspaceId: null,
-      terminalId: null,
-    });
-  });
-});
+} from "./seen-agent";
 
 // The notification adapter represents a real platform tray, not app component internals.
 
@@ -90,31 +42,43 @@ describe("seen chat notification dismissal", () => {
       { identifier: "other-chat", data: { serverId: "host", agentId: "other" } },
       { identifier: "other-host", data: { serverId: "other", agentId: "chat" } },
       { identifier: "workspace-only", data: { serverId: "host", workspaceId: "workspace" } },
+      {
+        identifier: "terminal",
+        data: { serverId: "host", agentId: "chat", workspaceId: "workspace", terminalId: "term" },
+      },
     ]);
-    tray.seen.view({ target: { serverId: "host", agentId: "chat" }, isVisible: () => true });
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    await tray.seen.view({ target: { serverId: "host", agentId: "chat" }, isVisible: () => true })
+      .settled;
     expect(tray.removed).toEqual(["seen"]);
   });
 
   it("rejects a history read that completes after rapid tab changes", async () => {
     const tray = platformTray();
     let resolveHistory: (value: PresentedAgentNotification[]) => void = () => {};
+    let markListStarted: () => void = () => {};
+    const listStarted = new Promise<void>((resolve) => {
+      markListStarted = resolve;
+    });
     tray.setList(
       () =>
         new Promise((resolve) => {
           resolveHistory = resolve;
+          markListStarted();
         }),
     );
-    const releaseOld = tray.seen.view({
+    const oldView = tray.seen.view({
       target: { serverId: "host", agentId: "old" },
       isVisible: () => true,
     });
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    await listStarted;
     tray.setList(async () => []);
-    tray.seen.view({ target: { serverId: "host", agentId: "new" }, isVisible: () => true });
-    releaseOld();
+    const newView = tray.seen.view({
+      target: { serverId: "host", agentId: "new" },
+      isVisible: () => true,
+    });
+    const released = oldView.release();
     resolveHistory([{ identifier: "old-arrival", data: { serverId: "host", agentId: "old" } }]);
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    await Promise.all([oldView.settled, newView.settled, released]);
     expect(tray.removed).toEqual([]);
     expect(tray.seen.isViewed({ serverId: "host", agentId: "new" })).toBe(true);
   });
@@ -122,7 +86,7 @@ describe("seen chat notification dismissal", () => {
   it("clears arrivals while the chat remains visible but not after foreground is lost", async () => {
     const tray = platformTray();
     let visible = true;
-    const release = tray.seen.view({
+    const view = tray.seen.view({
       target: { serverId: "host", agentId: "chat" },
       isVisible: () => visible,
     });
@@ -135,7 +99,7 @@ describe("seen chat notification dismissal", () => {
       identifier: "after-blur",
       data: { serverId: "host", agentId: "chat" },
     });
-    release();
+    await view.release();
     expect(tray.removed).toEqual(["during-view"]);
     expect(tray.views).toEqual([
       { target: { serverId: "host", agentId: "chat" }, revision: 1 },
@@ -148,15 +112,16 @@ describe("seen chat notification dismissal", () => {
     tray.setList(async () => [
       { identifier: "at-rest", data: { serverId: "host", agentId: "chat" } },
     ]);
-    const release = tray.seen.view({
+    const view = tray.seen.view({
       target: { serverId: "host", agentId: "chat" },
       isVisible: () => settled,
     });
+    await view.settled;
     expect(tray.seen.isViewed({ serverId: "host", agentId: "chat" })).toBe(false);
     settled = true;
     await tray.seen.refreshVisibility();
     expect(tray.removed).toEqual(["at-rest"]);
-    release();
+    await view.release();
     expect(tray.seen.isViewed({ serverId: "host", agentId: "chat" })).toBe(false);
   });
 });

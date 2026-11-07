@@ -1,5 +1,5 @@
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
-import { resolveNotificationTarget } from "@/utils/notification-routing";
+import { parseNotificationOpenTarget } from "@/notification-open";
 
 export interface PresentedAgentNotification {
   identifier: string;
@@ -16,6 +16,11 @@ export interface AgentNotificationAdapter {
 export interface AgentNotificationViewLease {
   target: AgentDeepLinkTarget;
   isVisible(): boolean;
+}
+
+export interface AgentNotificationViewHandle {
+  settled: Promise<void>;
+  release(): Promise<void>;
 }
 
 export interface AgentNotificationView {
@@ -40,8 +45,12 @@ export function notificationMatchesAgent(
   data: Record<string, unknown> | undefined,
   target: AgentDeepLinkTarget,
 ): boolean {
-  const resolved = resolveNotificationTarget(data);
-  return resolved.serverId === target.serverId && resolved.agentId === target.agentId;
+  const parsed = parseNotificationOpenTarget(data);
+  return (
+    parsed?.kind === "agent" &&
+    parsed.serverId === target.serverId &&
+    parsed.agentId === target.agentId
+  );
 }
 
 /** Keep dismissal tied to the latest committed visible chat, including arrivals during history reads. */
@@ -88,18 +97,27 @@ export function createSeenAgentNotifications(adapter: AgentNotificationAdapter) 
     }
   }
 
-  /** Release only this view lease; a retained tab's cleanup cannot cancel the newer focused chat. */
-  function view(input: AgentNotificationViewLease): () => void {
+  /**
+   * Show a chat as viewed until released.
+   *
+   * `settled` resolves once this view's visibility report and tray cleanup finish. `release`
+   * ends only this lease, so a retained tab's cleanup cannot cancel the newer focused chat, and
+   * resolves once the cleared report finishes.
+   */
+  function view(input: AgentNotificationViewLease): AgentNotificationViewHandle {
     target = input.target;
     canView = input.isVisible;
     const ownLease = Symbol("visible-agent-notification-owner");
     lease = ownLease;
-    void refreshVisibility();
-    return () => {
-      if (lease !== ownLease) return;
-      lease = null;
-      target = null;
-      void refreshVisibility();
+    const settled = refreshVisibility();
+    return {
+      settled,
+      release: async () => {
+        if (lease !== ownLease) return;
+        lease = null;
+        target = null;
+        await refreshVisibility();
+      },
     };
   }
 

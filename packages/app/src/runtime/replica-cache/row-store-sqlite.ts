@@ -5,6 +5,7 @@ import type {
   ReplicaRowExpectation,
   ReplicaRowStore,
 } from "./row-store";
+import { matchesRowExpectation } from "./row-store-expectation";
 
 export type SqliteValue = string | number | null;
 
@@ -150,12 +151,7 @@ export function createSqliteReplicaRowStore(
           "SELECT server_id, kind, id, payload FROM rows WHERE server_id = ? AND kind = ? AND id = ?",
           [condition.serverId, condition.kind, condition.id],
         );
-        if (
-          condition.payload === null
-            ? current[0] !== undefined
-            : current[0] === undefined || current[0].payload !== condition.payload
-        )
-          return;
+        if (!matchesRowExpectation(current[0], condition)) return;
       }
       for (const key of changes.deletes) {
         await transaction.run("DELETE FROM rows WHERE server_id = ? AND kind = ? AND id = ?", [

@@ -22,6 +22,7 @@ import {
 } from "react-native-reanimated";
 import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 import { isNative } from "@/constants/platform";
+import { useMobilePanelRestPublisher } from "./rest";
 import {
   usePanelStore,
   type MobilePanelSelection,
@@ -31,7 +32,6 @@ import {
   canBeginMobilePanelGesture,
   createMobilePanelMotionState,
   getMobilePanelAnchor,
-  isMobilePanelAtRest,
   isMobilePanelGestureCurrent,
   transitionMobilePanel,
   type MobilePanelCommit,
@@ -43,7 +43,6 @@ const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
 
 interface MobilePanelsRuntime {
-  subscribeMotionActivity(listener: () => void): () => void;
   beginGesture: (input: BeginGestureInput) => number;
   finishGesture: (input: FinishGestureInput) => MobilePanelCommit | null;
   leftCloseGestureRef: RefObject<GestureType | undefined>;
@@ -80,19 +79,6 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const leftOpenGestureRef = useRef<GestureType | undefined>(undefined);
   const leftCloseGestureRef = useRef<GestureType | undefined>(undefined);
   const rightOpenGestureRef = useRef<GestureType | undefined>(undefined);
-  const motionActivityListeners = useRef(new Set<() => void>()).current;
-  const subscribeMotionActivity = useCallback(
-    (listener: () => void) => {
-      motionActivityListeners.add(listener);
-      return () => {
-        motionActivityListeners.delete(listener);
-      };
-    },
-    [motionActivityListeners],
-  );
-  const publishMotionActivity = useCallback(() => {
-    for (const listener of motionActivityListeners) listener();
-  }, [motionActivityListeners]);
   const [activePanel, setActivePanel] = useState(initialSelection.target);
 
   const setOpenGestureBlocked = useCallback(
@@ -118,16 +104,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
     setActivePanel(panel);
   }, []);
 
-  // Notification policy needs the actual anchor, but retained content must not
-  // render gesture progress. Publish only the motion boundary to imperative consumers.
-  useAnimatedReaction(
-    () =>
-      isMobilePanelAtRest({ state: motionState.value, position: position.value, panel: "agent" }),
-    (atRest, previous) => {
-      if (previous !== null && atRest !== previous) scheduleOnRN(publishMotionActivity);
-    },
-    [publishMotionActivity],
-  );
+  useMobilePanelRestPublisher({ motionState, position });
 
   useAnimatedReaction(
     () => ({ motionState: motionState.value, position: position.value }),
@@ -239,7 +216,6 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<MobilePanelsRuntime>(
     () => ({
-      subscribeMotionActivity,
       beginGesture,
       finishGesture,
       leftCloseGestureRef,
@@ -253,7 +229,6 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       windowWidth,
     }),
     [
-      subscribeMotionActivity,
       beginGesture,
       finishGesture,
       motionState,
@@ -295,14 +270,4 @@ export function useBlockMobilePanelOpenGestures(blocked: boolean): void {
     setOpenGestureBlocked(owner, blocked);
     return () => setOpenGestureBlocked(owner, false);
   }, [blocked, owner, setOpenGestureBlocked]);
-}
-
-/** Check motion only at acknowledgement dispatch, without subscribing React to gesture frames. */
-export function useMobilePanelVisibilityCheck(panel: MobilePanelView) {
-  const runtime = useMobilePanelsRuntime();
-  const isAtRest = useCallback(() => {
-    const position = runtime.position.value;
-    return isMobilePanelAtRest({ state: runtime.motionState.value, panel, position });
-  }, [runtime.motionState, runtime.position, panel]);
-  return { isAtRest, subscribe: runtime.subscribeMotionActivity };
 }

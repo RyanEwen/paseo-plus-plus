@@ -253,7 +253,7 @@ export function createWorkspaceProvisioningService(deps: {
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
-    const untrustedSource = await findCheckoutAutomationRestriction(
+    const untrustedSource = await findCheckoutUntrustedSource(
       checkout.worktreeRoot ?? normalizedCwd,
     );
     const workspace = createPersistedWorkspaceRecord({
@@ -274,7 +274,7 @@ export function createWorkspaceProvisioningService(deps: {
   }
 
   /** Preserve recorded fork restrictions when another workspace adopts the same checkout. */
-  async function findCheckoutAutomationRestriction(
+  async function findCheckoutUntrustedSource(
     checkoutRoot: string,
   ): Promise<UntrustedWorkspaceSource | undefined> {
     const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);

@@ -6,10 +6,16 @@ const notifications = new Map<
 >();
 let nextIdentifier = 0;
 
+/** The browser Notification surface the app uses for its own web notifications. */
+export interface WebNotificationInstance {
+  close(): void;
+  addEventListener: (type: "click" | "close", listener: (event: Event) => void) => void;
+}
+
 /** Retain only this browser session's own notifications; browsers do not expose durable OS history. */
 export function retainWebNotification(
   data: Record<string, unknown> | undefined,
-  notification: { close(): void; addEventListener(type: "close", listener: () => void): void },
+  notification: WebNotificationInstance,
 ): void {
   const identifier = `web-${++nextIdentifier}`;
   notifications.set(identifier, {
