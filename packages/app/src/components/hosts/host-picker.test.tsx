@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HostUpdateAction, HostUpdateSheet } from "./host-update-action";
+import { HostUpdateAction } from "./host-update-action";
+import type { HostUpdateSupport } from "./host-update-eligibility";
 import { HostPickerOption } from "./host-picker";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { i18n } from "@/i18n/i18next";
@@ -14,32 +15,17 @@ void i18n;
 const runtime = vi.hoisted(() => ({
   connected: true,
   version: "0.11.1-preview.12",
-  pid: 1,
   check: vi.fn(),
-  update: vi.fn(),
-  confirm: vi.fn(),
 }));
 vi.mock("@/runtime/host-runtime", () => {
-  const client = {
-    checkDaemonUpdateAvailability: runtime.check,
-    updateDaemon: runtime.update,
-    getDaemonStatus: async () => ({ pid: runtime.pid }),
-    getLastServerInfoMessage: () => ({ serverId: "host-a", version: runtime.version }),
-    on: () => () => {},
-  };
+  const client = { checkDaemonUpdateAvailability: runtime.check };
   return {
     useHostRuntimeClient: () => client,
     useHostRuntimeIsConnected: () => runtime.connected,
     useHostRuntimeSnapshot: () => ({ activeConnection: null }),
     useHostRuntimeConnectionStatus: () => (runtime.connected ? "online" : "offline"),
-    getHostRuntimeStore: () => ({
-      getSnapshot: () => runtime.connected,
-      getClient: () => client,
-    }),
-    isHostRuntimeConnected: (connected: boolean) => connected,
   };
 });
-vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: runtime.confirm }));
 // The real picker row imports the popover module, but these cases never render a popover.
 // Keep native positioning outside this DOM unit boundary and fail if a case starts using it.
 vi.mock("@floating-ui/react-native", () => {
@@ -54,7 +40,7 @@ vi.mock("@floating-ui/react-native", () => {
     useFloating: unexpectedPopoverPositioning,
   };
 });
-// The native sheet boundary is substituted; the shared update hook, lifecycle and rendered feedback are real.
+// The picker's combobox imports the native sheet; keep that boundary out of this DOM unit test.
 vi.mock("@/components/adaptive-modal-sheet", () => ({
   AdaptiveModalSheet: ({ visible, children }: { visible: boolean; children: React.ReactNode }) =>
     visible ? <div>{children}</div> : null,
@@ -105,14 +91,7 @@ beforeEach(() => {
   notifyManager.setScheduler(queueMicrotask);
   runtime.connected = true;
   runtime.version = "0.11.1-preview.12";
-  runtime.pid = 1;
   runtime.check.mockReset().mockResolvedValue({ version: "0.11.1-preview.13", reason: null });
-  runtime.confirm.mockReset().mockResolvedValue(true);
-  runtime.update.mockReset().mockImplementation(async () => {
-    runtime.pid = 2;
-    runtime.version = "0.11.1-preview.13";
-    return { success: true, error: null, newVersion: runtime.version };
-  });
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -127,8 +106,7 @@ afterEach(() => {
 });
 async function renderAction(
   options: {
-    supportsAvailability?: boolean;
-    legacyManualUpdate?: boolean;
+    updateSupport?: HostUpdateSupport;
     onUpdate?: (host: HostProfile) => void;
     onRow?: () => void;
   } = {},
@@ -139,8 +117,7 @@ async function renderAction(
         <div onClick={options.onRow}>
           <HostUpdateAction
             host={updateHost}
-            supportsAvailability={options.supportsAvailability ?? true}
-            legacyManualUpdate={options.legacyManualUpdate ?? false}
+            updateSupport={options.updateSupport ?? "checked"}
             daemonVersion={runtime.version}
             enabled
             busy={false}
@@ -164,23 +141,19 @@ describe("footer host update actions", () => {
   });
   it("offers the shared manual action for a connected host missing availability capability", async () => {
     const onUpdate = vi.fn();
-    await renderAction({
-      supportsAvailability: false,
-      legacyManualUpdate: true,
-      onUpdate,
-    });
+    await renderAction({ updateSupport: "manual", onUpdate });
     expect(runtime.check).not.toHaveBeenCalled();
     await act(async () => within(container).getByRole("button", { name: "Update Host A" }).click());
     expect(onUpdate).toHaveBeenCalledExactlyOnceWith(updateHost);
   });
   it("keeps an unhydrated host hidden without checking availability", async () => {
-    await renderAction({ supportsAvailability: false });
+    await renderAction({ updateSupport: "none" });
     expect(runtime.check).not.toHaveBeenCalled();
     expect(within(container).queryByRole("button", { name: "Update Host A" })).toBeNull();
   });
   it("keeps the legacy manual action hidden while disconnected", async () => {
     runtime.connected = false;
-    await renderAction({ supportsAvailability: false, legacyManualUpdate: true });
+    await renderAction({ updateSupport: "manual" });
     expect(runtime.check).not.toHaveBeenCalled();
     expect(within(container).queryByRole("button", { name: "Update Host A" })).toBeNull();
   });
@@ -196,68 +169,6 @@ describe("footer host update actions", () => {
       expect(within(container).queryByRole("button", { name: "Update Host A" })).toBeNull();
     },
   );
-  it("preserves confirmation cancellation without installing", async () => {
-    runtime.confirm.mockResolvedValue(false);
-    const closed = vi.fn();
-    await act(async () =>
-      root.render(<HostUpdateSheet host={updateHost} onFinished={vi.fn()} onClose={closed} />),
-    );
-    expect(runtime.update).not.toHaveBeenCalled();
-    expect(closed).toHaveBeenCalledOnce();
-  });
-  it("shows success only after the replacement worker reports the installed version", async () => {
-    await act(async () =>
-      root.render(<HostUpdateSheet host={updateHost} onFinished={vi.fn()} onClose={vi.fn()} />),
-    );
-    expect(within(container).getByText(/0.11.1-preview.13/).textContent).toContain(
-      "0.11.1-preview.13",
-    );
-    expect(runtime.update).toHaveBeenCalledOnce();
-  });
-  it("can dismiss progress while replacement-worker verification stays owned", async () => {
-    let finishInstall:
-      | ((result: { success: boolean; error: null; newVersion: string }) => void)
-      | undefined;
-    runtime.update.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finishInstall = resolve;
-        }),
-    );
-    const finished = vi.fn();
-    const closed = vi.fn();
-    await act(async () =>
-      root.render(<HostUpdateSheet host={updateHost} onFinished={finished} onClose={closed} />),
-    );
-    expect(runtime.update).toHaveBeenCalledOnce();
-    await act(async () => within(container).getByRole("button", { name: "Close" }).click());
-    expect(within(container).queryByRole("button", { name: "Close" })).toBeNull();
-    expect(closed).not.toHaveBeenCalled();
-    expect(finished).not.toHaveBeenCalled();
-    await act(async () => {
-      runtime.pid = 2;
-      runtime.version = "0.11.1-preview.13";
-      if (!finishInstall) throw new Error("Expected pending installation");
-      finishInstall({ success: true, error: null, newVersion: runtime.version });
-    });
-    expect(finished).toHaveBeenCalledOnce();
-  });
-  it("retains an actionable failure when installation fails", async () => {
-    runtime.update.mockResolvedValue({
-      success: false,
-      error: "Installation denied",
-      newVersion: null,
-    });
-    await act(async () =>
-      root.render(<HostUpdateSheet host={updateHost} onFinished={vi.fn()} onClose={vi.fn()} />),
-    );
-    expect(within(container).getByText(/Installation denied/).textContent).toContain(
-      "Installation denied",
-    );
-    expect(
-      within(container).getByRole("button", { name: "Close" }).getAttribute("aria-disabled"),
-    ).not.toBe("true");
-  });
 });
 
 interface HostRowActionsProps {
@@ -273,8 +184,7 @@ function HostRowActions({ onRow, onSettings, onUpdate }: HostRowActionsProps) {
     () => (
       <HostUpdateAction
         host={updateHost}
-        supportsAvailability
-        legacyManualUpdate={false}
+        updateSupport="checked"
         daemonVersion={daemonVersion}
         enabled
         busy={false}

@@ -1,8 +1,3 @@
-import { useAppSettings } from "@/hooks/use-settings";
-import { useShallow } from "zustand/react/shallow";
-import { useSessionStore, type DaemonServerInfo } from "@/stores/session-store";
-import type { HostProfile } from "@/types/host-connection";
-import { HostUpdateAction, HostUpdateSheet } from "@/components/hosts/host-update-action";
 import { router } from "expo-router";
 import {
   CircleGauge,
@@ -13,16 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useReducer,
-  type RefObject,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
   StyleSheet as RNStyleSheet,
@@ -43,6 +29,7 @@ import {
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
+import { useSidebarHostUpdates } from "@/components/hosts/sidebar-host-updates";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
@@ -345,33 +332,6 @@ function FooterIconButton({
   );
 }
 
-interface HostUpdatePresentation {
-  host: HostProfile | null;
-  busy: boolean;
-  attempt: number;
-}
-
-type HostUpdatePresentationAction =
-  | { type: "start"; host: HostProfile }
-  | { type: "finished" }
-  | { type: "close" };
-
-/** Keep dismissed operations mounted until settled; each retry owns a fresh confirmation flow. */
-function reduceHostUpdate(
-  state: HostUpdatePresentation,
-  action: HostUpdatePresentationAction,
-): HostUpdatePresentation {
-  switch (action.type) {
-    case "start":
-      if (state.busy) return state;
-      return { host: action.host, busy: true, attempt: state.attempt + 1 };
-    case "finished":
-      return { ...state, busy: false };
-    case "close":
-      return { ...state, host: null };
-  }
-}
-
 function SidebarHostPicker({
   label,
   onAddHost,
@@ -381,59 +341,11 @@ function SidebarHostPicker({
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
 }) {
-  const { settings, isLoading: settingsLoading, error: settingsError } = useAppSettings();
-  const showHostUpdates =
-    !settingsLoading && settingsError === null && settings.paseoPlusPlus.sidebarHostUpdates;
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
   const [isOpen, setIsOpen] = useState(false);
-
-  const [update, dispatchUpdate] = useReducer(reduceHostUpdate, {
-    host: null,
-    busy: false,
-    attempt: 0,
-  });
-  // The collection owns the hot session subscription; action rows receive stable server-info facts.
-  const selectHostInfo = useMemo(() => {
-    let previousSessions: ReturnType<typeof useSessionStore.getState>["sessions"] | null = null;
-    let previousInfo: Array<DaemonServerInfo | null> = [];
-    return (state: ReturnType<typeof useSessionStore.getState>) => {
-      if (state.sessions === previousSessions) return previousInfo;
-      previousSessions = state.sessions;
-      previousInfo = hosts.map((host) => state.sessions[host.serverId]?.serverInfo);
-      return previousInfo;
-    };
-  }, [hosts]);
-  const hostInfo = useSessionStore(useShallow(selectHostInfo));
-  const finishUpdate = useCallback(() => dispatchUpdate({ type: "finished" }), []);
-  const closeUpdate = useCallback(() => dispatchUpdate({ type: "close" }), []);
-  const beginUpdate = useCallback((host: HostProfile) => {
-    setIsOpen(false);
-    dispatchUpdate({ type: "start", host });
-  }, []);
-  const renderHostAction = useCallback(
-    (serverId: string) => {
-      // Unmount availability observers without interrupting an already-started update sheet.
-      if (!showHostUpdates) return null;
-      const index = hosts.findIndex((host) => host.serverId === serverId);
-      const host = hosts[index];
-      if (!host) return null;
-      const info = hostInfo[index];
-      return (
-        <HostUpdateAction
-          host={host}
-          // COMPAT(daemonUpdateAvailability): added after v0.11.2, remove gate after 2027-04-14.
-          supportsAvailability={info?.features?.daemonUpdateAvailability === true}
-          legacyManualUpdate={info != null && info.features?.daemonUpdateAvailability === undefined}
-          daemonVersion={info?.version ?? null}
-          enabled={isOpen}
-          busy={update.busy}
-          onUpdate={beginUpdate}
-        />
-      );
-    },
-    [hosts, hostInfo, isOpen, update.busy, beginUpdate, showHostUpdates],
-  );
+  const closePicker = useCallback(() => setIsOpen(false), []);
+  const hostUpdates = useSidebarHostUpdates({ hosts, isOpen, onBeforeUpdate: closePicker });
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -457,7 +369,7 @@ function SidebarHostPicker({
         onAddHost={onAddHost}
         showActiveConnection
         onOpenHostSettings={onOpenHostSettings}
-        renderHostAction={renderHostAction}
+        renderHostAction={hostUpdates.renderHostAction}
         searchable
         desktopPlacement="top-start"
         desktopMinWidth={240}
@@ -474,14 +386,7 @@ function SidebarHostPicker({
           iconSizeAdjustment={-1}
         />
       </HostPicker>
-      {update.host ? (
-        <HostUpdateSheet
-          key={update.attempt}
-          host={update.host}
-          onFinished={finishUpdate}
-          onClose={closeUpdate}
-        />
-      ) : null}
+      {hostUpdates.sheet}
     </>
   );
 }
