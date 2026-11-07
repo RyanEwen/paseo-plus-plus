@@ -859,6 +859,12 @@ interface PendingReplicaChanges {
   baselines: Set<string>;
 }
 
+/**
+ * Applies one stored directory row to the accumulator, throwing when the row is invalid.
+ *
+ * Workspace rows are validated against `result.checkpoint`, so callers apply the checkpoint row
+ * before any entity row (see `scanDirectoryRows`).
+ */
 function applyDirectoryRow(
   serverId: string,
   row: ReplicaRow,
@@ -872,12 +878,7 @@ function applyDirectoryRow(
       return;
     }
     case "workspace": {
-      const stored = parseStoredPayload(StoredWorkspaceSchema, row.payload);
-      if (stored.id !== row.id) throw new Error("Replica workspace row id mismatch");
-      if (stored.background === undefined && result.checkpoint?.workspaces) {
-        throw new Error("Current workspace baseline is missing background visibility");
-      }
-      result.workspaces.set(row.id, restoreWorkspace(stored));
+      result.workspaces.set(row.id, parseWorkspaceRow(row, result.checkpoint));
       return;
     }
     case "project": {
@@ -904,10 +905,48 @@ function directoryEntityForRow(row: ReplicaRow): keyof DirectoryCheckpoint | und
   return undefined;
 }
 
+/**
+ * Parses a cached workspace row against the checkpoint read with it.
+ *
+ * Rows written before background visibility was cached have no `background` flag. Such a row is
+ * acceptable provisionally while no workspace cursor vouches for it. A current workspace cursor
+ * claims a complete baseline, so under that cursor a missing flag makes the row invalid and the
+ * daemon must resend it.
+ *
+ * @param checkpoint The checkpoint cursors read in the same scope, if any.
+ * @throws When the payload is invalid, its id does not match the row, or the flag is missing
+ *   under a current workspace cursor.
+ */
+function parseWorkspaceRow(
+  row: ReplicaRow,
+  checkpoint: DirectoryCheckpoint | undefined,
+): WorkspaceDescriptor {
+  const stored = parseStoredPayload(StoredWorkspaceSchema, row.payload);
+  if (stored.id !== row.id) throw new Error("Replica workspace row id mismatch");
+  if (stored.background === undefined && checkpoint?.workspaces) {
+    throw new Error("Current workspace baseline is missing background visibility");
+  }
+  return restoreWorkspace(stored);
+}
+
+/** One workspace row validated against the checkpoint read with it. */
+interface WorkspaceSnapshot {
+  /** The workspace, or undefined when its row is invalid. */
+  workspace: WorkspaceDescriptor | undefined;
+  /** The checkpoint to keep; without its workspace cursor when the workspace row is invalid. */
+  checkpoint: DirectoryCheckpoint | undefined;
+  /** Rows the repair deletes: an unreadable checkpoint and an invalid workspace row. */
+  invalidRows: ReplicaRow[];
+}
+
+/**
+ * Validates a single workspace read: the checkpoint first, then the workspace row against it.
+ * An invalid workspace row voids only the workspace cursor; the other cursors stay trusted.
+ */
 function validateWorkspaceSnapshot(
   workspaceRow: ReplicaRow,
   checkpointRow: ReplicaRow | undefined,
-) {
+): WorkspaceSnapshot {
   let checkpoint: DirectoryCheckpoint | undefined;
   const invalidRows: ReplicaRow[] = [];
   if (checkpointRow) {
@@ -919,12 +958,7 @@ function validateWorkspaceSnapshot(
   }
   let workspace: WorkspaceDescriptor | undefined;
   try {
-    const stored = parseStoredPayload(StoredWorkspaceSchema, workspaceRow.payload);
-    if (stored.id !== workspaceRow.id) throw new Error("Replica workspace row id mismatch");
-    if (stored.background === undefined && checkpoint?.workspaces) {
-      throw new Error("Current workspace baseline is missing background visibility");
-    }
-    workspace = restoreWorkspace(stored);
+    workspace = parseWorkspaceRow(workspaceRow, checkpoint);
   } catch {
     invalidRows.push(workspaceRow);
     if (checkpoint) {
@@ -933,6 +967,56 @@ function validateWorkspaceSnapshot(
     }
   }
   return { workspace, checkpoint, invalidRows };
+}
+
+function emptyDirectory(): DirectoryReadAccumulator {
+  return { agents: new Map(), workspaces: new Map(), projects: new Map() };
+}
+
+/** The result of applying one directory read's rows. */
+interface DirectoryRowScan {
+  /** Every valid row, with the checkpoint stripped of cursors the invalid rows voided. */
+  result: DirectoryReadAccumulator;
+  invalidRows: ReplicaRow[];
+  /** The checkpoint row as read, or undefined when the read found none. */
+  checkpointRow: ReplicaRow | undefined;
+}
+
+/**
+ * Applies a directory read's rows, checkpoint rows first. Workspace validity depends on the
+ * checkpoint read in the same snapshot, so the order must not follow storage enumeration.
+ */
+function scanDirectoryRows(serverId: string, rows: readonly ReplicaRow[]): DirectoryRowScan {
+  const result = emptyDirectory();
+  const invalidEntities = new Set<keyof DirectoryCheckpoint>();
+  const invalidRows: ReplicaRow[] = [];
+  for (const row of rows.filter((candidate) => candidate.kind === "checkpoint")) {
+    try {
+      applyDirectoryRow(serverId, row, result);
+    } catch {
+      invalidRows.push(row);
+    }
+  }
+  for (const row of rows) {
+    if (row.kind === "checkpoint") {
+      continue;
+    }
+    try {
+      applyDirectoryRow(serverId, row, result);
+    } catch {
+      const entity = directoryEntityForRow(row);
+      if (entity) invalidEntities.add(entity);
+      invalidRows.push(row);
+    }
+  }
+  if (result.checkpoint && invalidEntities.size) {
+    result.checkpoint = { ...result.checkpoint };
+    for (const entity of invalidEntities) delete result.checkpoint[entity];
+  }
+  const checkpointRow = rows.find(
+    (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+  );
+  return { result, invalidRows, checkpointRow };
 }
 
 interface ReplicaRead {
@@ -1129,40 +1213,9 @@ export class ReplicaCache {
           );
           if (!rows) return undefined;
           if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
-          const result: DirectoryReadAccumulator = {
-            agents: new Map(),
-            workspaces: new Map(),
-            projects: new Map(),
-          };
-          const invalidEntities = new Set<keyof DirectoryCheckpoint>();
-          const invalidRows: ReplicaRow[] = [];
-          // Authority comes from this snapshot, not storage enumeration order or a previous read.
-          for (const row of rows.filter((candidate) => candidate.kind === "checkpoint")) {
-            try {
-              applyDirectoryRow(serverId, row, result);
-            } catch {
-              invalidRows.push(row);
-            }
-          }
-          for (const row of rows) {
-            if (row.kind === "checkpoint") continue;
-            try {
-              applyDirectoryRow(serverId, row, result);
-            } catch {
-              const entity = directoryEntityForRow(row);
-              if (entity) invalidEntities.add(entity);
-              invalidRows.push(row);
-            }
-          }
-          if (result.checkpoint && invalidEntities.size) {
-            result.checkpoint = { ...result.checkpoint };
-            for (const entity of invalidEntities) delete result.checkpoint[entity];
-          }
+          const { result, invalidRows, checkpointRow } = scanDirectoryRows(serverId, rows);
           if (invalidRows.length) {
             try {
-              const checkpointRow = rows.find(
-                (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
-              );
               if (
                 !(await this.repairInvalidDirectoryRows({
                   serverId,
@@ -1181,7 +1234,7 @@ export class ReplicaCache {
           return result;
         },
         false,
-      )) ?? { agents: new Map(), workspaces: new Map(), projects: new Map() }
+      )) ?? emptyDirectory()
     );
   }
 
