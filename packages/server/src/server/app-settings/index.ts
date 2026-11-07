@@ -1,5 +1,6 @@
 import {
   EMPTY_APP_SETTINGS_SNAPSHOT,
+  applySettingsPatches,
   FORBIDDEN_SETTINGS_KEYS,
   settingsFieldKey,
   settingsPathRevision,
@@ -76,21 +77,8 @@ export class AppSettingsStore {
     const next = structuredClone(snapshot);
     next.initialized = true;
     next.revision += 1;
-    for (const patch of patches) {
-      let target = next.values;
-      for (const part of patch.path.slice(0, -1)) {
-        const child = target[part];
-        if (
-          child !== undefined &&
-          (typeof child !== "object" || child === null || Array.isArray(child))
-        )
-          throw new Error("Preference path is not an object");
-        target[part] ??= {};
-        target = target[part] as Record<string, unknown>;
-      }
-      target[patch.path.at(-1)!] = structuredClone(patch.value);
-      next.fieldRevisions[settingsFieldKey(patch.path)] = next.revision;
-    }
+    next.values = applySettingsPatches(next.values, patches);
+    for (const patch of patches) next.fieldRevisions[settingsFieldKey(patch.path)] = next.revision;
     if (JSON.stringify(next).length > 256_000)
       throw new Error("App settings exceed the storage limit");
     await this.write(this.file, next);
