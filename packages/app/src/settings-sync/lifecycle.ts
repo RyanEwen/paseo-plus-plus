@@ -43,20 +43,24 @@ export function startSettingsSync(onHydrated: () => void): () => void {
   const stopGate = settingsSync.subscribe(updateGate);
   const stopDomainEdits = observeSettingsSyncDomainEdits();
 
+  /** Hydrate once. A failure is logged, and a later local settings recovery retries. */
+  const runHydration = async () => {
+    try {
+      const hydrated = await hydrateSettingsSync(owner.signal, isCurrent);
+      if (!hydrated) return;
+      progress.hydrated = true;
+      onHydrated();
+      updateGate();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      progress.hydrating = false;
+    }
+  };
   const startHydration = () => {
     if (!isCurrent() || progress.hydrated || progress.hydrating) return;
     progress.hydrating = true;
-    void hydrateSettingsSync(owner.signal, isCurrent)
-      .then((hydrated) => {
-        if (!hydrated) return;
-        progress.hydrated = true;
-        onHydrated();
-        updateGate();
-      })
-      .catch(console.error)
-      .finally(() => {
-        progress.hydrating = false;
-      });
+    void runHydration();
   };
   const stopRetry = resumeAfterLocalSettingsRecovery(startHydration);
   startHydration();

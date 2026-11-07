@@ -19,7 +19,10 @@ function fakeSettingsClient(options: { beforeReady?: () => void } = {}) {
     permissions: ["daemon.read"],
     features: { appSettingsSync: true },
   });
-  type Recorded = { handlers: Handlers | null; released: boolean };
+  interface Recorded {
+    handlers: Handlers | null;
+    released: boolean;
+  }
   const observations: Recorded[] = [];
   const client: Client = {
     getLastServerInfoMessage: () => info,

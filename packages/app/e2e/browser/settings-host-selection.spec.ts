@@ -68,6 +68,27 @@ test.describe("Settings host selection", () => {
   });
 });
 
+/** In the page: the current viewport size. */
+function viewportSize(): { width: number; height: number } {
+  return { width: innerWidth, height: innerHeight };
+}
+
+/**
+ * In the page: return the saved label of the host with `serverId`, and skip the next default
+ * host seed so the reload keeps the host list as it is.
+ */
+function prepareRemoteHostSwitch(serverId: string): string {
+  const hosts: { serverId: string; label: string }[] = JSON.parse(
+    localStorage.getItem("@paseo:daemon-registry")!,
+  );
+  const profile = hosts.find((host) => host.serverId === serverId);
+  localStorage.setItem(
+    "@paseo:e2e-disable-default-seed-once",
+    localStorage.getItem("@paseo:e2e-seed-nonce")!,
+  );
+  return profile!.label;
+}
+
 test("explicit settings host sync shares preferences across independent clients without overwriting an initialized host", async ({
   page,
   browser,
@@ -160,24 +181,12 @@ test("explicit settings host sync shares preferences across independent clients 
       // The responsive screen remounts at the breakpoint; assertions resolve its current node.
       await expect(secondSync).toBeVisible();
       await expect(secondSync).toBeInViewport();
-      await expect
-        .poll(() => second.evaluate(() => ({ width: innerWidth, height: innerHeight })))
-        .toEqual({ width: 390, height: 900 });
+      await expect.poll(() => second.evaluate(viewportSize)).toEqual({ width: 390, height: 900 });
     });
 
     await test.step("switching to an initialized host adopts it without writing", async () => {
       await addDirectHostFromSettings(page, { host: "127.0.0.1", port: remote.port });
-      const remoteLabel = await page.evaluate((serverId) => {
-        const hosts = JSON.parse(localStorage.getItem("@paseo:daemon-registry")!);
-        const profile = hosts.find(
-          (host: { serverId: string; label: string }) => host.serverId === serverId,
-        );
-        localStorage.setItem(
-          "@paseo:e2e-disable-default-seed-once",
-          localStorage.getItem("@paseo:e2e-seed-nonce")!,
-        );
-        return profile.label as string;
-      }, remote.serverId);
+      const remoteLabel = await page.evaluate(prepareRemoteHostSwitch, remote.serverId);
       await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
       const beforeSwitch = (await remoteClient.getAppSettings()).snapshot;
       await sync.getByRole("button", { name: `Settings host: ${hostLabel}`, exact: true }).click();
