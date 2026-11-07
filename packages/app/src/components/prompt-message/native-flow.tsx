@@ -10,6 +10,7 @@ import {
 import {
   View,
   StyleSheet,
+  useWindowDimensions,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
@@ -30,6 +31,7 @@ import { ScrollView } from "../ui/scroll-view";
 import {
   NaturalMessageFlowContext,
   useNaturalMessageMeasurements,
+  useNaturalMessageMeasurementsAtScale,
   type MessageFlowContext,
   type UserMessageFlowProps,
 } from "./flow";
@@ -397,15 +399,35 @@ function useNativeMessageProjection({
 /** Native paint consumes complete ordinary measurements; the old iOS renderer
  * continues to use UserMessageFlow. No React pinned flag enters this component.
  */
+/**
+ * The Android sticky owner's natural measurements. Disclosure chrome and driver objects can
+ * change without changing the natural body, so only content and the driver's binding
+ * revise them.
+ */
+export function useNativeNaturalMeasurements(
+  input: Pick<UserMessageFlowProps, "revision" | "message"> & {
+    driver: Pick<NativeMessagePresentationDriver, "binding">;
+  },
+  fontScale: number,
+) {
+  const revision = useMemo(
+    () => ({ content: input.revision, binding: input.driver.binding }),
+    [input.revision, input.driver.binding],
+  );
+  return useNaturalMessageMeasurementsAtScale(
+    { revision, message: input.message, bounded: true },
+    fontScale,
+  );
+}
+
 export function NativeUserMessageFlow(props: UserMessageFlowProps) {
   const driver = nativePresentationDriver(props);
   const { onGeometry } = props;
-  // Disclosure chrome and driver objects can change without changing the natural body.
-  const revision = useMemo(
-    () => ({ content: props.revision, binding: driver.binding }),
-    [props.revision, driver.binding],
+  const { fontScale } = useWindowDimensions();
+  const measurements = useNativeNaturalMeasurements(
+    { revision: props.revision, message: props.message, driver },
+    fontScale,
   );
-  const measurements = useNaturalMessageMeasurements({ ...props, revision, bounded: true });
   const {
     key,
     currentKey,
