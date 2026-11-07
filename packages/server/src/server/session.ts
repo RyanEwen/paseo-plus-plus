@@ -16,11 +16,8 @@ import type {
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
-import type {
-  CreationSnapshot,
-  AgentCreateRequest,
-  WorkspacePinScope,
-} from "@getpaseo/protocol/messages";
+import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
+import { resolveWorkspacePinFields, type WorkspacePinScope } from "./workspace-pin-scope.js";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
@@ -3986,9 +3983,7 @@ export class Session {
       const updatedAt = new Date().toISOString();
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
-        // One registry update switches scope without exposing a double-pinned state.
-        pinnedAt: scope === "global" ? nextPinnedAt : null,
-        projectPinnedAt: scope === "project" ? nextPinnedAt : null,
+        ...resolveWorkspacePinFields(scope, nextPinnedAt),
         updatedAt,
       }));
       if (!updated) {
