@@ -75,7 +75,7 @@ describe("sidebar collapsed projects transitions", () => {
 
 describe("one project at a time", () => {
   const projectKeys = ["host-a:project-a", "host-b:project-a", "offline:project-b"];
-  const options = { mode: "project" as const, oneProjectAtATime: true, projectKeys };
+  const options = { collapseOthers: projectKeys };
 
   it("expanding B collapses A across hosts while preserving unrelated collapse owners", () => {
     const initial = {
@@ -99,12 +99,9 @@ describe("one project at a time", () => {
     expect([...collapsed.collapsedProjectKeys].sort()).toEqual([...projectKeys].sort());
   });
 
-  it.each([
-    { mode: "project" as const, oneProjectAtATime: false },
-    { mode: "status" as const, oneProjectAtATime: true },
-  ])("keeps multiple projects open for %o", (policy) => {
+  it("keeps other projects open when the caller passes no projects to collapse", () => {
     const initial = { ...emptyState(), collapsedProjectKeys: new Set([projectKeys[1]]) };
-    const next = toggleProjectCollapsed(initial, projectKeys[1], { ...policy, projectKeys });
+    const next = toggleProjectCollapsed(initial, projectKeys[1], { collapseOthers: [] });
     expect(next.collapsedProjectKeys.size).toBe(0);
   });
 });

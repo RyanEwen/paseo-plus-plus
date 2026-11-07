@@ -8,6 +8,16 @@ type SettingsClient = Pick<
   "getLastServerInfoMessage" | "observeAppSettings" | "patchAppSettings" | "subscribeRawMessages"
 >;
 
+/** What the selected host lets this connection do with settings. */
+interface HostAuthority {
+  supported: boolean;
+  writable: boolean;
+}
+
+function sameAuthority(a: HostAuthority | null, b: HostAuthority): boolean {
+  return a !== null && a.supported === b.supported && a.writable === b.writable;
+}
+
 /** Authority changes replace the read owner; unrelated server-info broadcasts keep it. */
 export function bindSettingsHost(input: {
   client: SettingsClient;
@@ -15,15 +25,15 @@ export function bindSettingsHost(input: {
   onTransport(transport: SettingsSyncTransport): void;
 }): () => void {
   let controller: AbortController | null = null;
-  let authority: string | null = null;
+  let authority: HostAuthority | null = null;
   let stopped = false;
   const refresh = () => {
     const info = input.client.getLastServerInfoMessage();
-    const next = JSON.stringify([
-      info?.features?.appSettingsSync === true,
-      info?.permissions?.includes("daemon.manage") === true,
-    ]);
-    if (stopped || next === authority) return;
+    const next: HostAuthority = {
+      supported: info?.features?.appSettingsSync === true,
+      writable: info?.permissions?.includes("daemon.manage") === true,
+    };
+    if (stopped || sameAuthority(authority, next)) return;
     authority = next;
     controller?.abort();
     controller = new AbortController();

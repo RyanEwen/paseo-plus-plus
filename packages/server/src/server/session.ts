@@ -1130,12 +1130,12 @@ export class Session {
         })
       : null;
     this.daemonConfigStore = daemonConfigStore;
-    this.appSettingsSession = new AppSettingsSession(
-      (message) => this.emit(message),
-      this.delivery,
+    this.appSettingsSession = new AppSettingsSession({
+      emit: (message) => this.emit(message),
+      delivery: this.delivery,
+      store: options.appSettingsStore,
       paseoHome,
-      options.appSettingsStore,
-    );
+    });
     this.terminalManager = terminalManager;
     this.terminalController = new TerminalSessionController({
       terminalManager,
