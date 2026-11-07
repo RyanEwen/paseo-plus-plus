@@ -1,5 +1,5 @@
 import { AgentAttentionObjectives } from "./attention/objectives.js";
-import { buildStoredAgentPayload } from "./agent-projections.js";
+import { buildStoredAgentPayload, toStoredAgentRecord } from "./agent-projections.js";
 import { WorkspaceAttention, clearStoredAttentionIfUnchanged } from "./workspace-attention.js";
 import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
@@ -9,9 +9,7 @@ import {
   sameHistoryStorage,
   preserveSnapshotHistoryBinding,
 } from "./provider-history/binding.js";
-import { toStoredAgentRecord } from "./agent-projections.js";
 import { createClaudeIdentityStore } from "./provider-history/claude-identity.js";
-import { buildStoredAgentPayload } from "./agent-projections.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
