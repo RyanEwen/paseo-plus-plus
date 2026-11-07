@@ -453,6 +453,8 @@ async function useThinkingDisplay(
         "@paseo:app-settings",
         JSON.stringify({
           ...settings,
+          // The group assertions read the classic "Read 1 file" wording in both variants.
+          paseoPlusPlus: { descriptiveToolCalls: false },
           chatDisplay: sessionStorage.getItem("e2e-chat-display") ?? settings.chatDisplay,
         }),
       );

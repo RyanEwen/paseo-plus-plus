@@ -20,6 +20,7 @@ import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
+import { useReadableActivityTranslation } from "@/tool-calls/use-readable-tool-activity";
 import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
@@ -2271,6 +2272,7 @@ export const ToolCall = memo(function ToolCall({
   standalone = true,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
+  const activityTranslation = useReadableActivityTranslation();
   const { expanded: isExpanded, toggle: toggleExpanded } = useToolCallExpanded({
     callId: itemId,
     defaultExpanded: defaultExpanded ?? false,
@@ -2307,8 +2309,19 @@ export const ToolCall = memo(function ToolCall({
         cwd,
         targetAgentTitle,
         resolveIcon: resolveToolCallIcon,
+        activityTranslation,
       }),
-    [toolName, status, error, effectiveDetail, metadata, cwd, agentMessage, targetAgentTitle],
+    [
+      toolName,
+      status,
+      error,
+      effectiveDetail,
+      metadata,
+      cwd,
+      agentMessage,
+      targetAgentTitle,
+      activityTranslation,
+    ],
   );
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;

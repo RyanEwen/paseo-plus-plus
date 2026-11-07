@@ -32,6 +32,7 @@ import type {
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { buildToolActivityScene, requestsToolActivityScene } from "./mock-tool-activity-scene.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
@@ -798,6 +799,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private modeId: string | null;
   private modelId: string | null;
+  private readonly cwd: string;
   private readonly assistantResponse: string | null;
   private readonly assistantResponses: string[];
   private readonly streamingAssistantResponse: string | null;
@@ -811,6 +813,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
+    this.cwd = options.config.cwd;
     this.assistantResponse =
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
@@ -931,6 +934,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleLargePayloadTurn(turn, largePayload);
       } else if (stress) {
         this.scheduleStressTurn(turn, stress);
+      } else if (requestsToolActivityScene(promptToText(prompt))) {
+        this.scheduleToolActivitySceneTurn(turn);
       } else {
         this.schedule(turn, 0);
       }
@@ -1272,6 +1277,19 @@ export class MockLoadTestAgentSession implements AgentSession {
   private scheduleStressTurn(turn: ActiveTurn, stress: AgentStreamStressRequest): void {
     turn.timer = setTimeout(() => {
       this.emitStressTurn(turn, stress);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  /** Emit the readable tool activity scene and keep the turn open, as its running script is. */
+  private scheduleToolActivitySceneTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) return;
+      this.clearTurnTimer(turn);
+      this.emitTurnStarted(turn);
+      for (const item of buildToolActivityScene(this.cwd)) {
+        this.emitTimeline(turn.turnId, item);
+      }
     }, 0);
     turn.timer.unref?.();
   }
