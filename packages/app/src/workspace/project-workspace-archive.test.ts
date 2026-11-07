@@ -1,4 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import {
+  clearWorkspaceArchivePending,
+  isWorkspaceArchivePending,
+} from "@/contexts/session-workspace-upserts";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { seedRuntimeWorkspaces, seedSessionHosts } from "@/test/seed-session";
+import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
 import {
   archiveProjectWorkspaces,
   type ProjectArchiveConfirmation,
@@ -602,4 +610,98 @@ describe("project archive authoritative postconditions", () => {
       ).resolves.toBeUndefined();
     },
   );
+});
+
+describe("archiveProjectWorkspaces with the optimistic workspace archive", () => {
+  const SERVER_ID = "project-archive-batch-test";
+
+  function sessionWorkspace(input: Partial<WorkspaceDescriptor> = {}): WorkspaceDescriptor {
+    return {
+      createdAt: null,
+      lastUserMessageAt: null,
+      id: "workspace-1",
+      projectId: "project-1",
+      projectDisplayName: "Project",
+      projectRootPath: "/repo/project",
+      workspaceDirectory: "/repo/project/workspace-1",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "workspace-1",
+      status: "done",
+      archivingAt: null,
+      statusEnteredAt: null,
+      diffStat: null,
+      scripts: [],
+      ...input,
+    };
+  }
+
+  function storedWorkspace(id: string): WorkspaceDescriptor | undefined {
+    return useSessionStore.getState().sessions[SERVER_ID]?.workspaces.get(id);
+  }
+
+  beforeEach(() => {
+    seedSessionHosts([SERVER_ID]);
+    useSessionStore.getState().initializeSession(SERVER_ID, {} as DaemonClient);
+  });
+
+  afterEach(() => {
+    seedSessionHosts([]);
+    for (const workspaceId of ["workspace-1", "workspace-2", "workspace-3"]) {
+      clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId });
+    }
+    useSessionStore.setState((state) => Object.assign({}, state, { sessions: {} }));
+  });
+
+  it("retains the project and restores failed targets while a project batch leaves later targets untouched", async () => {
+    const records = [
+      sessionWorkspace(),
+      sessionWorkspace({ id: "workspace-2" }),
+      sessionWorkspace({ id: "workspace-3" }),
+    ];
+    seedRuntimeWorkspaces(SERVER_ID, new Map(records.map((record) => [record.id, record])));
+    const plan: ProjectArchiveWorkspace[] = records.map((record) => ({
+      serverId: SERVER_ID,
+      workspaceId: record.id,
+      workspaceKind: record.workspaceKind,
+      name: record.name,
+      background: false,
+      agentIds: [],
+      runningAgentCount: 0,
+      archiveHasUncommittedChanges: null,
+      archiveUnpushedCommitCount: null,
+      diffStat: null,
+    }));
+    const request = vi.fn<DaemonClient["archiveWorkspace"]>(async (workspaceId: string) => ({
+      requestId: "request",
+      workspaceId,
+      archivedAt: null,
+      error: workspaceId === "workspace-2" ? "archive rejected" : null,
+    }));
+    const client = { archiveWorkspace: request };
+    const outcome = await archiveProjectWorkspaces({
+      workspaces: plan,
+      confirm: async () => ({ kind: "confirmed", includeBackground: false }),
+      refresh: async () => plan,
+      archive: async (entry) => archiveWorkspaceOptimistically({ client, workspace: entry }),
+      onProgress: () => {},
+    });
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      archivedCount: 1,
+      failed: { workspaceId: "workspace-2" },
+      unprocessedCount: 1,
+    });
+    expect(request.mock.calls.map(([id]) => id)).toEqual(["workspace-1", "workspace-2"]);
+    expect(storedWorkspace("workspace-1")).toBeUndefined();
+    expect(storedWorkspace("workspace-2")).toEqual(records[1]);
+    expect(storedWorkspace("workspace-3")).toEqual(records[2]);
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.projects.has("project-1")).toBe(true);
+    expect(isWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-2" })).toBe(
+      false,
+    );
+    expect(isWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-3" })).toBe(
+      false,
+    );
+  });
 });
