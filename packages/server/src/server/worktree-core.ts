@@ -4,8 +4,10 @@ import { createNameId } from "mnemonic-id";
 
 import type { ForgeService } from "../services/forge-service.js";
 import {
-  createWorktree,
+  createWorktreeInLane,
+  getPaseoWorktreesRoot,
   resolveDefaultWorktreePath,
+  runInWorktreeCreationLane,
   slugify,
   validateBranchSlug,
   type CreatedWorktree,
@@ -98,7 +100,7 @@ async function createWorktreeCoreWithPriority(
   }
 
   const forge = await resolveForge(repoRoot, deps, intentInput);
-  let intent = await resolveWorktreeCreationIntent(intentInput, repoRoot, {
+  const intent = await resolveWorktreeCreationIntent(intentInput, repoRoot, {
     forge: forge.forge,
     forgeService: forge.service,
     resolveDefaultBranch: (root) => resolveDefaultBranch(root, deps),
@@ -122,43 +124,55 @@ async function createWorktreeCoreWithPriority(
     }
   }
 
-  const defaultPath = await resolveDefaultWorktreePath({
-    cwd: repoRoot,
-    paseoHome: input.paseoHome,
-    worktreesRoot: input.worktreesRoot,
-    worktreeSlug: normalizedSlug,
-    exactNames: input.exactNames,
-  });
   const { stdout: sourceRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd: input.cwd,
   });
   const sourceCheckout = sourceRoot.trim();
-  const request = describeCreationRequest(intent, {
+  const projectDirectory = await getPaseoWorktreesRoot(
     repoRoot,
-    sourceCheckout,
-    slug: normalizedSlug,
-    path: defaultPath,
-  });
-  const transformed = deps.lifecycle
-    ? await deps.lifecycle.before("worktree.create.before", request)
-    : request;
-  normalizedSlug = validateWorktreeSlug(transformed.slug);
-  intent = creationIntentFromRequest(transformed, intent);
+    input.paseoHome,
+    input.worktreesRoot,
+  );
 
-  return {
-    worktree: await createWorktree({
+  // Hold the creation lane from default placement until Git has created the checkout.
+  // Otherwise two concurrent requests for one slug resolve the same free path before
+  // either creates it, and the second fails instead of receiving the next suffix. The
+  // before-create hook runs inside the lane because it may rewrite the planned path.
+  return runInWorktreeCreationLane(projectDirectory, async () => {
+    const defaultPath = await resolveDefaultWorktreePath({
       cwd: repoRoot,
-      worktreeSlug: normalizedSlug,
-      worktreePath: transformed.path,
-      source: intent,
-      exactNames: input.exactNames,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
-    }),
-    intent,
-    repoRoot,
-    created: true,
-  };
+      worktreeSlug: normalizedSlug,
+      exactNames: input.exactNames,
+    });
+    const request = describeCreationRequest(intent, {
+      repoRoot,
+      sourceCheckout,
+      slug: normalizedSlug,
+      path: defaultPath,
+    });
+    const transformed = deps.lifecycle
+      ? await deps.lifecycle.before("worktree.create.before", request)
+      : request;
+    const createdSlug = validateWorktreeSlug(transformed.slug);
+    const createdIntent = creationIntentFromRequest(transformed, intent);
+
+    return {
+      worktree: await createWorktreeInLane({
+        cwd: repoRoot,
+        worktreeSlug: createdSlug,
+        worktreePath: transformed.path,
+        source: createdIntent,
+        exactNames: input.exactNames,
+        paseoHome: input.paseoHome,
+        worktreesRoot: input.worktreesRoot,
+      }),
+      intent: createdIntent,
+      repoRoot,
+      created: true,
+    };
+  });
 }
 
 function describeCreationRequest(

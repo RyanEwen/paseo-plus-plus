@@ -1491,6 +1491,26 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(second.worktree.branchName).toBe("reused-worktree-1");
     });
 
+    test("gives concurrent default placements for one slug distinct suffixed paths", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const deps = createCoreDeps();
+
+      const created = await Promise.all(
+        ["concurrent-first", "concurrent-second"].map((branchName) =>
+          createCoreWorktree({ cwd: repoDir, paseoHome, branchName, worktreeSlug: "shared" }, deps),
+        ),
+      );
+
+      expect(created.map((result) => path.basename(result.worktree.worktreePath)).sort()).toEqual(
+        ["shared", "shared-1"],
+      );
+      expect(created.map((result) => result.worktree.branchName).sort()).toEqual([
+        "concurrent-first",
+        "concurrent-second",
+      ]);
+    });
+
     test("creates a suffixed GitHub PR worktree for the resolved slug", async () => {
       const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);

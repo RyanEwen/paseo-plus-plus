@@ -1402,9 +1402,26 @@ export async function resolveDefaultWorktreePath(
 }
 
 /**
- * Create a git worktree with proper naming conventions
+ * Create a git worktree with proper naming conventions, inside the project's creation lane.
+ *
+ * Use this when the caller does not resolve placement itself. A caller that resolves the
+ * default path first (createWorktreeCore) must hold the lane across placement and creation
+ * and call createWorktreeInLane instead.
  */
-export const createWorktree = async ({
+export const createWorktree = async (options: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+  const projectDirectory = await getPaseoWorktreesRoot(
+    options.cwd,
+    options.paseoHome,
+    options.worktreesRoot,
+  );
+  return runInWorktreeCreationLane(projectDirectory, () => createWorktreeInLane(options));
+};
+
+/**
+ * Create a git worktree. The caller must already hold runInWorktreeCreationLane for the
+ * project directory, otherwise concurrent callers can claim the same name.
+ */
+export async function createWorktreeInLane({
   cwd,
   source,
   worktreeSlug,
@@ -1412,89 +1429,87 @@ export const createWorktree = async ({
   paseoHome,
   worktreesRoot,
   worktreePath: explicitWorktreePath,
-}: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+}: CreateWorktreeOptions): Promise<CreatedWorktree> {
   const projectDirectory = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
-  return runInWorktreeCreationLane(projectDirectory, async () => {
-    const plannedPath =
-      explicitWorktreePath ??
-      (exactNames ? join(projectDirectory, worktreeSlug) : undefined) ??
-      (await resolveDefaultWorktreePath({ cwd, paseoHome, worktreesRoot, worktreeSlug }));
-    if (await pathExists(plannedPath)) {
-      const hint = exactNames
-        ? ". Choose another worktree name or select the existing worktree."
-        : "";
-      throw new Error(`Worktree directory already exists: ${plannedPath}${hint}`);
-    }
-    const branchesBefore =
-      source.kind === "checkout-branch" ||
-      source.kind === "checkout-change-request" ||
-      source.kind === "checkout-github-pr"
-        ? await listLocalBranchNames(cwd)
-        : new Set<string>();
-    const sourcePlan = await resolveWorktreeSourcePlan({
-      cwd,
-      source,
-      desiredSlug: worktreeSlug,
-      exactNames,
-    });
-    const fetchedBranch = planCreatedLocalBranch(source, sourcePlan);
-    const fetchedTip =
-      fetchedBranch && !branchesBefore.has(fetchedBranch)
-        ? await readLocalBranchTip(cwd, fetchedBranch)
-        : null;
-    try {
-      let worktreePath = plannedPath;
-      await mkdir(dirname(worktreePath), { recursive: true });
-
-      // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-      await runGitCommand(["worktree", "add", worktreePath, ...sourcePlan.addArguments], {
-        cwd,
-        timeout: 120_000,
-      });
-      worktreePath = await normalizePathForOwnership(worktreePath);
-
-      if (sourcePlan.pushRemote) {
-        await configureWorktreePushRemote({
-          cwd,
-          branchName: sourcePlan.branchName,
-          remote: sourcePlan.pushRemote,
-        });
-      }
-      if (sourcePlan.trackingRemote) {
-        await configureWorktreeTrackingRemote({
-          cwd,
-          branchName: sourcePlan.branchName,
-          remote: sourcePlan.trackingRemote,
-        });
-      }
-
-      await writePaseoWorktreeMetadata(worktreePath, {
-        baseRefName: sourcePlan.metadataBaseRefName,
-        ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
-        ...(sourcePlan.changeRequestLookupTarget
-          ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
-          : {}),
-      });
-
-      await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
-
-      return {
-        branchName: sourcePlan.branchName,
-        worktreePath,
-        comparisonBaseRef: sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName,
-      };
-    } catch (error) {
-      if (
-        fetchedBranch &&
-        fetchedTip &&
-        (await readLocalBranchTip(cwd, fetchedBranch)) === fetchedTip
-      ) {
-        await runGitCommand(["branch", "-D", fetchedBranch], { cwd }).catch(() => {});
-      }
-      throw error;
-    }
+  const plannedPath =
+    explicitWorktreePath ??
+    (exactNames ? join(projectDirectory, worktreeSlug) : undefined) ??
+    (await resolveDefaultWorktreePath({ cwd, paseoHome, worktreesRoot, worktreeSlug }));
+  if (await pathExists(plannedPath)) {
+    const hint = exactNames
+      ? ". Choose another worktree name or select the existing worktree."
+      : "";
+    throw new Error(`Worktree directory already exists: ${plannedPath}${hint}`);
+  }
+  const branchesBefore =
+    source.kind === "checkout-branch" ||
+    source.kind === "checkout-change-request" ||
+    source.kind === "checkout-github-pr"
+      ? await listLocalBranchNames(cwd)
+      : new Set<string>();
+  const sourcePlan = await resolveWorktreeSourcePlan({
+    cwd,
+    source,
+    desiredSlug: worktreeSlug,
+    exactNames,
   });
-};
+  const fetchedBranch = planCreatedLocalBranch(source, sourcePlan);
+  const fetchedTip =
+    fetchedBranch && !branchesBefore.has(fetchedBranch)
+      ? await readLocalBranchTip(cwd, fetchedBranch)
+      : null;
+  try {
+    let worktreePath = plannedPath;
+    await mkdir(dirname(worktreePath), { recursive: true });
+
+    // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
+    await runGitCommand(["worktree", "add", worktreePath, ...sourcePlan.addArguments], {
+      cwd,
+      timeout: 120_000,
+    });
+    worktreePath = await normalizePathForOwnership(worktreePath);
+
+    if (sourcePlan.pushRemote) {
+      await configureWorktreePushRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.pushRemote,
+      });
+    }
+    if (sourcePlan.trackingRemote) {
+      await configureWorktreeTrackingRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.trackingRemote,
+      });
+    }
+
+    await writePaseoWorktreeMetadata(worktreePath, {
+      baseRefName: sourcePlan.metadataBaseRefName,
+      ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
+      ...(sourcePlan.changeRequestLookupTarget
+        ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
+        : {}),
+    });
+
+    await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+
+    return {
+      branchName: sourcePlan.branchName,
+      worktreePath,
+      comparisonBaseRef: sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName,
+    };
+  } catch (error) {
+    if (
+      fetchedBranch &&
+      fetchedTip &&
+      (await readLocalBranchTip(cwd, fetchedBranch)) === fetchedTip
+    ) {
+      await runGitCommand(["branch", "-D", fetchedBranch], { cwd }).catch(() => {});
+    }
+    throw error;
+  }
+}
 
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;
