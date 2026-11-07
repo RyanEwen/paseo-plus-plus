@@ -823,6 +823,9 @@ export class AgentManager {
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private attentionServerId?: string;
+  private readonly attentionPresentation = new AttentionPresentation();
+  /** Requester losses committed by archives since the last runArchiveMutation recheck. */
+  private readonly committedArchiveLosses = new Set<string>();
   private resolveRemoteAttentionRequester?: (
     requester: AgentAttentionPeer,
   ) => Promise<"available" | "missing" | "unknown">;
@@ -1136,8 +1139,6 @@ export class AgentManager {
       input.signal.removeEventListener("abort", abort);
     }
   }
-
-  private readonly attentionPresentation = new AttentionPresentation();
 
   get agentAwareAttentionEnabled(): boolean {
     return this.attentionPresentation.agentAware;
@@ -2622,9 +2623,7 @@ export class AgentManager {
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
-    return this.runArchiveMutation(agentId, (committedLosses) =>
-      this.archiveAgentUnlocked({ agentId, committedLosses }),
-    );
+    return this.runArchiveMutation(agentId, () => this.archiveAgentUnlocked(agentId));
   }
 
   /** Report durable removal before later cleanup can fail; ordinary runtime close is not loss. */
@@ -2641,27 +2640,30 @@ export class AgentManager {
     for (const worker of this.agents.values()) this.checkOrphanedAttention(worker, committedLosses);
   }
 
-  /** Collect nested durable losses, then recheck only after every acquired lifecycle lane settles. */
-  private async runArchiveMutation<T>(
-    agentId: string,
-    mutation: (committedLosses: Set<string>) => Promise<T>,
-  ): Promise<T> {
-    const committedLosses = new Set<string>();
+  /**
+   * Run an archive under its lifecycle lane, then recheck requester losses its nested archives
+   * committed, only after every acquired lane settles.
+   *
+   * persistArchivedRecord records each committed loss in `committedArchiveLosses`. A concurrent
+   * archive may drain another's losses first; rechecking an already committed loss early or twice
+   * is harmless because the recheck is idempotent.
+   */
+  private async runArchiveMutation<T>(agentId: string, mutation: () => Promise<T>): Promise<T> {
     try {
-      return await this.runLifecycleMutation(agentId, () => mutation(committedLosses));
+      return await this.runLifecycleMutation(agentId, mutation);
     } finally {
       // The outer action may reject after saving an archive flag. Do not await another
       // agent's foreground lane while holding this requester's lifecycle lane.
+      const committedLosses = new Set(this.committedArchiveLosses);
+      this.committedArchiveLosses.clear();
       this.recheckCommittedRequesterLosses(committedLosses);
     }
   }
 
-  private async archiveAgentUnlocked(input: {
-    agentId: string;
-    committedLosses: Set<string>;
-    archivedAt?: string;
-  }): Promise<{ archivedAt: string }> {
-    const { agentId, committedLosses, archivedAt: requestedArchivedAt } = input;
+  private async archiveAgentUnlocked(
+    agentId: string,
+    requestedArchivedAt?: string,
+  ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     if (agent.internal) {
       // Nothing about an internal agent is on disk, and archiving must not put
@@ -2677,7 +2679,7 @@ export class AgentManager {
       await this.closeAgentRuntime(agentId);
       await this.deleteAgentState(agentId);
       this.retireInternalAgent({ record, lastMessage });
-      await this.cascadeArchiveChildren(record, committedLosses);
+      await this.cascadeArchiveChildren(record);
       return { archivedAt };
     }
     if (!this.registry) {
@@ -2692,16 +2694,13 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
-    const { archivedAt } = await this.markRecordArchived(stored, {
-      archivedAt: requestedArchivedAt,
-      committedLosses,
-    });
+    const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgentRuntime(agentId);
     await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(stored, committedLosses);
+    await this.cascadeArchiveChildren(stored);
 
     return { archivedAt };
   }
@@ -2712,7 +2711,6 @@ export class AgentManager {
   // handoff agents omit this label, so they stand outside the cascade.
   private async cascadeArchiveChildren(
     parent: Pick<StoredAgentRecord, "id" | "workspaceId">,
-    committedLosses: Set<string>,
   ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
@@ -2743,13 +2741,9 @@ export class AgentManager {
         if (shouldDetachFromArchivedParent(parent, currentChild)) {
           await this.detachAgentUnlocked(currentChild.id);
         } else if (this.agents.has(currentChild.id)) {
-          await this.archiveAgentUnlocked({ agentId: currentChild.id, committedLosses });
+          await this.archiveAgentUnlocked(currentChild.id);
         } else {
-          await this.archiveSnapshotUnlocked({
-            agentId: currentChild.id,
-            archivedAt: new Date().toISOString(),
-            committedLosses,
-          });
+          await this.archiveSnapshotUnlocked(currentChild.id, new Date().toISOString());
         }
       });
     }
@@ -2765,20 +2759,18 @@ export class AgentManager {
         if (!current || getParentAgentIdFromLabels(current.labels) !== parentAgentId) {
           return;
         }
-        await this.archiveAgentUnlocked({ agentId: current.id, committedLosses });
+        await this.archiveAgentUnlocked(current.id);
       });
     }
   }
 
   private async markRecordArchived(
     record: StoredAgentRecord,
-    input: { archivedAt?: string; committedLosses: Set<string> },
+    archivedAt = new Date().toISOString(),
   ): Promise<ArchivedStoredAgentRecord> {
-    const archivedAt = input.archivedAt ?? new Date().toISOString();
     const archivedRecord = await this.persistArchivedRecord(record, {
       archivedAt,
       updatedAt: archivedAt,
-      committedLosses: input.committedLosses,
     });
 
     if (this.agents.has(record.id)) {
@@ -2794,12 +2786,12 @@ export class AgentManager {
 
   private async persistArchivedRecord(
     record: StoredAgentRecord,
-    options: { archivedAt: string; updatedAt?: string; committedLosses: Set<string> },
+    options: { archivedAt: string; updatedAt?: string },
   ): Promise<ArchivedStoredAgentRecord> {
     const archivedRecord = buildArchivedAgentRecord(record, options);
     await this.requireRegistry().upsert(archivedRecord);
     // This is committed requester loss even if an observer, runtime close, or cascade fails.
-    options.committedLosses.add(record.id);
+    this.committedArchiveLosses.add(record.id);
     this.agents.get(record.id)?.attentionObjectives?.blockers.suspend();
     if (!record.archivedAt && !record.internal) {
       this.pluginLifecycle?.emit("agent.archive.after", {
@@ -3121,22 +3113,20 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
-    return this.runArchiveMutation(agentId, (committedLosses) =>
-      this.archiveSnapshotUnlocked({ agentId, archivedAt, committedLosses }),
+    return this.runArchiveMutation(agentId, () =>
+      this.archiveSnapshotUnlocked(agentId, archivedAt),
     );
   }
 
-  private async archiveSnapshotUnlocked(input: {
-    agentId: string;
-    archivedAt: string;
-    committedLosses: Set<string>;
-  }): Promise<StoredAgentRecord> {
-    const { agentId, archivedAt, committedLosses } = input;
+  private async archiveSnapshotUnlocked(
+    agentId: string,
+    archivedAt: string,
+  ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
     // A stored-only archive can have waited behind a persisted resume. Reuse the
     // live archive transition so its newly acquired runtime is closed as well.
     if (this.agents.has(agentId)) {
-      await this.archiveAgentUnlocked({ agentId, archivedAt, committedLosses });
+      await this.archiveAgentUnlocked(agentId, archivedAt);
       const archivedRecord = await registry.get(agentId);
       if (!archivedRecord) throw new Error(`Agent not found: ${agentId}`);
       return archivedRecord;
@@ -3147,7 +3137,7 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = await this.persistArchivedRecord(record, { archivedAt, committedLosses });
+    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
@@ -3155,7 +3145,7 @@ export class AgentManager {
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(record, committedLosses);
+    await this.cascadeArchiveChildren(record);
 
     return nextRecord;
   }
