@@ -72,22 +72,6 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
-  it("opens workspace recovery without opening or unarchiving an agent", () => {
-    const { deps, navigations, remembered, openedTabs, revealed } = createFakeDeps();
-    navigateToWorkspace(
-      {
-        serverId: "archive-host",
-        workspaceId: "archived-workspace",
-        recoveryRequested: true,
-      },
-      deps,
-    );
-    expect(navigations).toEqual(["/h/archive-host/workspace/archived-workspace?recover=1"]);
-    expect(remembered).toEqual([{ serverId: "archive-host", workspaceId: "archived-workspace" }]);
-    expect(openedTabs).toEqual([]);
-    expect(revealed).toEqual([null]);
-  });
-
   it("reveals the workspace pane at once when a target's open is deferred", () => {
     const workspace = {
       id: "workspace-a",
@@ -191,7 +175,6 @@ describe("workspace navigation", () => {
       workspaceId: "workspace-a",
       requiresAttention: true,
       attentionReason: "permission",
-      pendingPermissions: [],
     } as unknown as Agent;
     const { deps, openedTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
@@ -220,7 +203,6 @@ describe("workspace navigation", () => {
       workspaceId: "workspace-a",
       requiresAttention: true,
       attentionReason: "permission",
-      pendingPermissions: [],
     } as unknown as Agent;
     const { deps, openedTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),

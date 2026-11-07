@@ -29,8 +29,6 @@ export interface NavigateToWorkspaceInput {
   target?: WorkspaceTabTarget;
   pin?: boolean;
   placement?: WorkspaceTabPlacement;
-  /** Open the authoritative recovery confirmation without selecting or unarchiving an agent. */
-  recoveryRequested?: boolean;
 }
 
 export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
@@ -127,8 +125,7 @@ export function navigateToWorkspace(
     }
   }
 
-  const workspaceRoute = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
-  const route = input.recoveryRequested ? `${workspaceRoute}?recover=1` : workspaceRoute;
+  const route = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
   deps.rememberLastWorkspace({ serverId: input.serverId, workspaceId: input.workspaceId });
   deps.navigateToRoute(route);
   return route;

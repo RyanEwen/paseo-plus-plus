@@ -167,6 +167,7 @@ import {
 import { renderWorkspaceRouteGate } from "@/screens/workspace/workspace-route-state-views";
 import { useWorkspaceRecovery } from "@/workspace-recovery/use-workspace-recovery";
 import type { WorkspaceRecoveryModel } from "@/workspace-recovery/model";
+import { useWorkspaceRecoveryRequested } from "@/workspace/workspace-recovery-intent";
 import {
   buildWorkspaceTabSnapshot,
   createWorkspaceAgentVisibilitySelector,
@@ -275,7 +276,6 @@ interface WorkspaceScreenProps {
   serverId: string;
   workspaceId: string;
   isRouteFocused?: boolean;
-  recoveryRequested?: boolean;
 }
 
 type WorkspaceScreenContentProps = WorkspaceScreenProps & {
@@ -422,7 +422,6 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   serverId,
   workspaceId,
   isRouteFocused,
-  recoveryRequested,
 }: WorkspaceScreenProps) {
   // Every reader of the panel registry renders inside the workspace screen, so it registers the
   // panels before any of them renders. A reader importing the registration instead would import
@@ -440,7 +439,6 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
       serverId={serverId}
       workspaceId={workspaceId}
       isRouteFocused={isRouteFocused ?? navigationFocused}
-      recoveryRequested={recoveryRequested}
     />
   );
 });
@@ -756,11 +754,10 @@ function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
   pendingOpenTarget: WorkspaceTabTarget | null,
-  // Optional so WorkspaceScreenContent passes its prop through without a default branch.
-  recoveryRequested: boolean | undefined,
+  recoveryRequested: boolean,
 ): boolean {
   return (
-    (recoveryRequested === true || pendingOpenTarget?.kind === "agent") &&
+    (recoveryRequested || pendingOpenTarget?.kind === "agent") &&
     hasHydratedWorkspaces &&
     workspace === null
   );
@@ -1026,7 +1023,6 @@ function WorkspaceScreenContent({
   serverId,
   workspaceId,
   isRouteFocused,
-  recoveryRequested,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
@@ -1148,6 +1144,10 @@ function WorkspaceScreenContent({
     onOpened: revealWorkspaceTab,
     workspaceKey: persistenceKey,
     hasHydratedWorkspaces,
+    workspaceExists: workspaceDescriptor !== null,
+  });
+  const recoveryRequested = useWorkspaceRecoveryRequested({
+    workspaceKey: persistenceKey,
     workspaceExists: workspaceDescriptor !== null,
   });
   const workspaceRecovery = useWorkspaceRecovery({

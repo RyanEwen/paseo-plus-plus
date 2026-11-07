@@ -12,6 +12,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { useSessionStore } from "@/stores/session-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { requestWorkspaceRecovery } from "@/workspace/workspace-recovery-intent";
 import { toErrorMessage } from "@/utils/error-messages";
 import type { Theme } from "@/styles/theme";
 
@@ -85,7 +86,8 @@ function OpenRestoreProjectWorkspaceDialog({
   const selectWorkspace = useCallback(
     (workspaceId: string) => {
       // The destination inspects again so a stale row cannot bypass recovery confirmation.
-      navigateToWorkspace({ serverId, workspaceId, recoveryRequested: true });
+      requestWorkspaceRecovery({ serverId, workspaceId });
+      navigateToWorkspace({ serverId, workspaceId });
       onClose();
       onWorkspacePress?.();
     },

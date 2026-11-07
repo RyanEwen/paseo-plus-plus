@@ -104,7 +104,6 @@ function HostWorkspaceRouteContent() {
     serverId?: string | string[];
     workspaceId?: string | string[];
     open?: string | string[];
-    recover?: string | string[];
   }>();
   const serverId = getParamValue(params.serverId);
   const workspaceValue = getParamValue(params.workspaceId);
@@ -112,11 +111,6 @@ function HostWorkspaceRouteContent() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(params.open);
-  const recoveryRequested = getParamValue(params.recover) === "1";
-  const recoverySelection = useMemo(
-    () => (recoveryRequested ? { serverId, workspaceId } : null),
-    [recoveryRequested, serverId, workspaceId],
-  );
   // A restored workspace with no open chat has nothing else demanding its host's directory on a
   // phone, where the sidebar only demands while its panel is active. Without demand the deck
   // waits on workspace hydration that never starts.
@@ -149,14 +143,10 @@ function HostWorkspaceRouteContent() {
     });
   }, [navigation, openValue, serverId, workspaceId]);
 
-  return <WorkspaceDeck recoverySelection={recoverySelection} />;
+  return <WorkspaceDeck />;
 }
 
-function WorkspaceDeck({
-  recoverySelection,
-}: {
-  recoverySelection: ActiveWorkspaceSelection | null;
-}) {
+function WorkspaceDeck() {
   const activeSelection = useActiveWorkspaceSelection();
   const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
     activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],
@@ -226,11 +216,6 @@ function WorkspaceDeck({
             <WorkspaceDeckEntry
               key={getWorkspaceSelectionKey(selection)}
               selection={selection}
-              recoveryRequested={
-                active &&
-                recoverySelection?.serverId === selection.serverId &&
-                recoverySelection.workspaceId === selection.workspaceId
-              }
               active={active}
               onUnmountInactive={unmountWorkspaceSelection}
             />
@@ -243,12 +228,10 @@ function WorkspaceDeck({
 
 function WorkspaceDeckEntry({
   selection,
-  recoveryRequested,
   active,
   onUnmountInactive,
 }: {
   selection: ActiveWorkspaceSelection;
-  recoveryRequested: boolean;
   active: boolean;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
 }) {
@@ -279,7 +262,6 @@ function WorkspaceDeckEntry({
         serverId={selection.serverId}
         workspaceId={selection.workspaceId}
         isRouteFocused={active}
-        recoveryRequested={recoveryRequested}
       />
     </RetainedPanel>
   );
