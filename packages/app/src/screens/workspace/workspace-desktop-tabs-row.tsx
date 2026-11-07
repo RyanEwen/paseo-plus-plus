@@ -585,7 +585,7 @@ interface ResolvedWorkspaceDesktopTabsRowProps extends Omit<WorkspaceDesktopTabs
   tabs: ResolvedWorkspaceDesktopTabRowItem[];
 }
 
-interface WorkspaceTabPresentationSlotProps {
+interface WorkspaceDesktopTabPresentationSlotProps {
   tab: WorkspaceTabDescriptor;
   serverId: string;
   workspaceId: string;
@@ -594,16 +594,16 @@ interface WorkspaceTabPresentationSlotProps {
 
 const EMPTY_RESOLVED_TAB_ROWS: ResolvedWorkspaceDesktopTabRowItem[] = [];
 
-function WorkspaceTabPresentationSlot({
+function WorkspaceDesktopTabPresentationSlot({
   tab,
   serverId,
   workspaceId,
   onResolve,
-}: WorkspaceTabPresentationSlotProps) {
+}: WorkspaceDesktopTabPresentationSlotProps) {
   return (
     <WorkspaceTabPresentationResolver tab={tab} serverId={serverId} workspaceId={workspaceId}>
       {(presentation) => (
-        <WorkspaceTabPresentationCommit
+        <WorkspaceDesktopTabPresentationCommit
           tabKey={tab.key}
           presentation={presentation}
           onResolve={onResolve}
@@ -613,7 +613,7 @@ function WorkspaceTabPresentationSlot({
   );
 }
 
-function WorkspaceTabPresentationCommit({
+function WorkspaceDesktopTabPresentationCommit({
   tabKey,
   presentation,
   onResolve,
@@ -1045,7 +1045,7 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
     <>
       <ResolvedWorkspaceDesktopTabsRow {...props} tabs={resolvedTabs} />
       {props.tabs.map(({ tab }) => (
-        <WorkspaceTabPresentationSlot
+        <WorkspaceDesktopTabPresentationSlot
           key={`${tab.key}:${tab.kind}`}
           tab={tab}
           serverId={props.normalizedServerId}
@@ -1364,7 +1364,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         index === displayedTabs.length - 1;
 
       return (
-        <ResolvedWorkspaceTabChip
+        <ResolvedDesktopTabChip
           key={`${item.tab.key}:${item.tab.kind}`}
           serverId={normalizedServerId}
           workspaceId={normalizedWorkspaceId}
@@ -1591,7 +1591,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     </RenderProfile>
   );
 }
-function ResolvedWorkspaceTabChip({
+function ResolvedDesktopTabChip({
   serverId,
   workspaceId,
   item,

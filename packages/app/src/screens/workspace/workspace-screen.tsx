@@ -7,6 +7,7 @@ import {
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
+import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
@@ -31,11 +32,12 @@ import {
 } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "expo-router/react-navigation";
-import { BackHandler, Text, View, type LayoutChangeEvent } from "react-native";
+import { BackHandler, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
@@ -44,7 +46,10 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { FloatingHeaderLayout } from "@/components/floating-header";
 import { StreamTopOverlayProvider, supportsStreamTopOverlay } from "@/agent-stream/top-overlay";
-import { CompactWorkspaceHeader } from "@/screens/workspace/compact-workspace-header";
+import {
+  CompactWorkspaceHeader,
+  MobileWorkspaceTabSwitcher,
+} from "@/screens/workspace/compact-workspace-header";
 import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-project-row";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import {
@@ -138,8 +143,10 @@ import {
   useWorkspaceTabRename,
   WorkspaceTabRenameModal,
 } from "@/screens/workspace/use-workspace-tab-rename";
-import { MobileWorkspaceTabSwitcher } from "@/screens/workspace/compact-workspace-header";
-import { WorkspaceTabsRow, type WorkspaceTabRowItem } from "@/screens/workspace/workspace-tabs-row";
+import {
+  WorkspaceDesktopTabsRow,
+  type WorkspaceDesktopTabRowItem,
+} from "@/screens/workspace/workspace-desktop-tabs-row";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
@@ -1030,6 +1037,7 @@ function WorkspaceScreenContent({
   isRouteFocused,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
+  const _insets = useSafeAreaInsets();
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
@@ -1791,7 +1799,6 @@ function WorkspaceScreenContent({
     : t("workspace.tabs.explorerSidebar.open");
 
   const activeTabKey = useMemo(() => activeTabId ?? "", [activeTabId]);
-
   const handleCreateDraftTab = useCallback(
     (input?: { paneId?: string }) => {
       openWorkspaceDraftTab({ paneId: input?.paneId });
@@ -1893,6 +1900,13 @@ function WorkspaceScreenContent({
     workspaceLayout,
     openUrl: handleOpenUrlInBrowserTab,
   });
+
+  const handleSelectSwitcherTab = useCallback(
+    (key: string) => {
+      navigateToTabId(key);
+    },
+    [navigateToTabId],
+  );
 
   // The new pane opens empty and the user picks what goes in it from the launcher.
   // Seeding a draft here guessed for them, and guessed "new agent" every time.
@@ -3110,7 +3124,7 @@ function WorkspaceScreenContent({
     [buildPaneContentModel],
   );
 
-  const desktopTabRowItems = useMemo<WorkspaceTabRowItem[]>(
+  const desktopTabRowItems = useMemo<WorkspaceDesktopTabRowItem[]>(
     () =>
       tabs.map((tab) => ({
         tab,
@@ -3520,7 +3534,7 @@ function WorkspaceScreenContent({
     () =>
       showStandaloneTabs ? (
         <NewTabLauncherProvider value={newTabLauncher}>
-          <WorkspaceTabsRow
+          <WorkspaceDesktopTabsRow
             paneId={focusedPaneIdOrUndefined}
             isFocused={isRouteFocused}
             tabs={desktopTabRowItems}
@@ -3581,7 +3595,7 @@ function WorkspaceScreenContent({
             activeTabKey={activeTabKey}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
-            onSelectSwitcherTab={navigateToTabId}
+            onSelectSwitcherTab={handleSelectSwitcherTab}
             createTerminalDisabled={createTerminalDisabled}
             onCreateDraftTab={handleCreateDraftTab}
             onCreateTerminal={handleCreateTerminal}
@@ -3609,7 +3623,7 @@ function WorkspaceScreenContent({
       activeTabKey,
       normalizedServerId,
       normalizedWorkspaceId,
-      navigateToTabId,
+      handleSelectSwitcherTab,
       handleCopyResumeCommand,
       handleCopyAgentId,
       handleCopyTerminalId,
