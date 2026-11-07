@@ -745,8 +745,7 @@ function createToolCatalog(
                   callerAgentId,
                   serverId: destination,
                   requireParentOwnership,
-                  attention: finishAttentionQuery(
-                    attention,
+                  attention: finishAttentionQuery(attention, () =>
                     agentManager.attentionRequester(callerAgentId),
                   ),
                 },
@@ -2081,8 +2080,7 @@ function createToolCatalog(
                 {
                   childAgentId: agentId,
                   callerAgentId,
-                  attention: finishAttentionQuery(
-                    attention,
+                  attention: finishAttentionQuery(attention, () =>
                     agentManager.attentionRequester(callerAgentId),
                   ),
                 },

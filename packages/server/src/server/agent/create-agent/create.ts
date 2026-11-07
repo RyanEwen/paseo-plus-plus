@@ -635,7 +635,8 @@ async function registerCreatedFinish(input: {
   ) {
     return undefined;
   }
-  const requester = input.dependencies.agentManager.attentionRequester(command.callerAgentId);
+  const callerAgentId = command.callerAgentId;
+  const requester = () => input.dependencies.agentManager.attentionRequester(callerAgentId);
   return requireFinishSubscriptions(input.dependencies).register(
     {
       childAgentId: input.snapshot.id,

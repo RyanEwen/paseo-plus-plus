@@ -243,8 +243,9 @@ export class AgentAttentionRequests {
  */
 export function finishAttentionQuery(
   attention: AgentMessageAttention | undefined,
-  requester: AgentAttentionPeer,
+  requester: () => AgentAttentionPeer,
 ): AgentAttentionRequestQuery | undefined {
   const link = attention?.requesterObjective;
-  return link ? { link, requester } : undefined;
+  // The requester is resolved only for a correlated request, as before this helper existed.
+  return link ? { link, requester: requester() } : undefined;
 }
