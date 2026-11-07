@@ -30,7 +30,11 @@ import {
   resetSeededPageState,
   reloadWorkspace,
 } from "../support/helpers/archive-tab";
-import { expectAgentTabActive } from "../support/helpers/launcher";
+import {
+  countTabsOfKind,
+  expectAgentTabActive,
+  openNewTabMenuWithShortcut,
+} from "../support/helpers/launcher";
 
 /** Open the shared launcher dialog from the active desktop workspace. */
 async function openReopenDialog(page: Page): Promise<void> {
@@ -167,6 +171,38 @@ test.describe("Archive tab reconciliation", () => {
       );
     });
   }
+
+  test("Reopen closed agent from an empty pane replaces the launcher tab with the agent", async ({
+    page,
+  }) => {
+    const closed = await createMockIdleAgent(client, {
+      cwd: tempRepo.path,
+      workspaceId,
+      title: `previous-closed-${randomUUID().slice(0, 8)}`,
+    });
+    const open = await createMockIdleAgent(client, {
+      cwd: tempRepo.path,
+      workspaceId,
+      title: `previous-kept-${randomUUID().slice(0, 8)}`,
+    });
+    await resetSeededPageState(page);
+    await openWorkspaceWithAgents(page, [closed, open]);
+    await closeWorkspaceAgentTab(page, closed.id);
+
+    await openNewTabMenuWithShortcut(page);
+    const launcherTabs = await countTabsOfKind(page, "new_tab");
+    expect(launcherTabs).toBeGreaterThan(0);
+    await page
+      .getByTestId("workspace-new-tab-panel")
+      .filter({ visible: true })
+      .getByTestId("workspace-new-tab-reopen-closed-agent")
+      .click();
+    await clickSessionRow(page, closed.title);
+
+    await expect(page.getByTestId("reopen-closed-agent-dialog-content")).toHaveCount(0);
+    await expectAgentTabActive(page, closed.id);
+    await expect.poll(() => countTabsOfKind(page, "new_tab")).toBe(launcherTabs - 1);
+  });
 
   test("Reopen closed agent opens a hidden live subagent without creating or archiving a session", async ({
     page,

@@ -34,6 +34,8 @@ interface AgentListProps {
   onRefresh?: () => void;
   selectedAgentId?: string;
   onAgentSelect?: () => void;
+  /** Open a picked agent in place of navigating to it, when the caller decides where it opens. */
+  onAgentOpen?: (agent: AggregatedAgent) => void;
   listFooterComponent?: ReactElement | null;
   showAttentionIndicator?: boolean;
   showHostColumn?: boolean;
@@ -347,6 +349,7 @@ export function AgentList({
   onRefresh,
   selectedAgentId,
   onAgentSelect,
+  onAgentOpen,
   listFooterComponent,
   showAttentionIndicator = true,
   showHostColumn = false,
@@ -378,6 +381,10 @@ export function AgentList({
       const agentId = agent.id;
 
       onAgentSelect?.();
+      if (onAgentOpen) {
+        onAgentOpen(agent);
+        return;
+      }
       navigateToAgent({
         serverId,
         agentId,
@@ -385,7 +392,7 @@ export function AgentList({
         pin: true,
       });
     },
-    [isActionSheetVisible, onAgentSelect],
+    [isActionSheetVisible, onAgentOpen, onAgentSelect],
   );
 
   const handleAgentLongPress = useCallback(

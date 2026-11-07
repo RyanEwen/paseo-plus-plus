@@ -7,6 +7,7 @@ import { AgentList } from "@/components/agent-list";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useAgentHistory } from "@/hooks/use-agent-history";
+import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { resolveClosedAgentDialogState, selectPreviousAgents } from "@/hooks/previous-agents";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useSessionStore } from "@/stores/session-store";
@@ -23,10 +24,13 @@ const SNAP_POINTS = ["70%", "92%"];
 export function ReopenClosedAgentDialog({
   serverId,
   workspaceId,
+  onOpenAgent,
   onClose,
 }: {
   serverId: string;
   workspaceId: string;
+  /** Open the picked agent where the dialog was launched from. */
+  onOpenAgent: (agentId: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -53,6 +57,12 @@ export function ReopenClosedAgentDialog({
   useEffect(() => {
     if (scanningOpenPages && !isLoadingMore) loadMore();
   }, [scanningOpenPages, isLoadingMore, loadMore]);
+  const openAgent = useCallback(
+    (agent: AggregatedAgent) => {
+      onOpenAgent(agent.id);
+    },
+    [onOpenAgent],
+  );
   const refresh = useCallback(() => {
     void refreshAll();
   }, [refreshAll]);
@@ -120,6 +130,7 @@ export function ReopenClosedAgentDialog({
             showCheckoutInfo={false}
             showAttentionIndicator={false}
             onAgentSelect={onClose}
+            onAgentOpen={openAgent}
             onRefresh={refresh}
             isRefreshing={history.isRevalidating}
             listFooterComponent={footer}

@@ -22,7 +22,6 @@ import { useInstalledPlugins } from "@/plugins/registry";
 import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
-import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { panelCanLaunchInPane, panelSupportsHost, type PaneHost } from "@/panels/panel-manifest";
 import {
@@ -35,6 +34,9 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
+import { openReopenedAgentTab } from "./internal/reopen-closed-agent";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -75,14 +77,18 @@ const EMPTY_PANE_PANEL_KINDS: readonly WorkspaceTabTarget["kind"][] = [];
 interface NewTabLauncherContextValue extends NewTabLauncher {
   /** The Reopen closed agent setting is on and readable for this workspace. */
   previousAgentsEnabled: boolean;
-  /** Open this workspace's Reopen closed agent dialog; does nothing while the setting is off. */
-  reopenClosedAgent: () => void;
+  /**
+   * Open this workspace's Reopen closed agent dialog for a launch destination; the picked agent
+   * opens there. Does nothing while the setting is off.
+   */
+  reopenClosedAgent: (destination: WorkspaceTabLaunchDestination) => void;
 }
 
-/** The workspace a Reopen closed agent dialog was opened for. */
+/** The workspace a Reopen closed agent dialog was opened for, and where its pick opens. */
 interface ReopenClosedAgentRequest {
   serverId: string;
   workspaceId: string;
+  destination: WorkspaceTabLaunchDestination;
 }
 
 const NewTabLauncherContext = createContext<NewTabLauncherContextValue | null>(null);
@@ -116,11 +122,20 @@ export function NewTabLauncherProvider({
   }
 
   // Menu rows can outlive the render that built them, so the setting is checked at press time.
-  const reopenClosedAgent = useStableEvent(() => {
+  const reopenClosedAgent = useStableEvent((destination: WorkspaceTabLaunchDestination) => {
     if (!previousAgentsEnabled) return;
-    setReopenRequest({ serverId: value.serverId, workspaceId: value.workspaceId });
+    setReopenRequest({ serverId: value.serverId, workspaceId: value.workspaceId, destination });
   });
   const closeReopenDialog = useCallback(() => setReopenRequest(null), []);
+  const openReopenedAgent = useStableEvent((agentId: string) => {
+    if (!reopenRequest) return;
+    const workspaceKey = buildWorkspaceTabPersistenceKey(reopenRequest);
+    if (!workspaceKey) return;
+    openReopenedAgentTab(
+      { workspaceKey, agentId, destination: reopenRequest.destination },
+      useWorkspaceLayoutStore.getState(),
+    );
+  });
   const context = useMemo(
     () => ({ ...value, previousAgentsEnabled, reopenClosedAgent }),
     [value, previousAgentsEnabled, reopenClosedAgent],
@@ -132,6 +147,7 @@ export function NewTabLauncherProvider({
         <ReopenClosedAgentDialog
           serverId={reopenRequest.serverId}
           workspaceId={reopenRequest.workspaceId}
+          onOpenAgent={openReopenedAgent}
           onClose={closeReopenDialog}
         />
       ) : null}
