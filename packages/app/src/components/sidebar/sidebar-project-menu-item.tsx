@@ -3,7 +3,7 @@ import type { SidebarProjectActivity } from "./sidebar-project-activity";
 import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { MenuItem } from "@/components/ui/menu";
+import { MenuItem, type MenuItemSecondary } from "@/components/ui/menu";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 
@@ -33,10 +33,11 @@ export function SidebarProjectMenuItem({
   const { t } = useTranslation();
   const handleSelect = useCallback(() => onSelect(viewKey), [viewKey, onSelect]);
   const handleToggle = useCallback(() => onToggle?.(viewKey), [onToggle, viewKey]);
-  const secondaryToggle = useMemo(
+  const secondary = useMemo<MenuItemSecondary | undefined>(
     () =>
       onToggle
         ? {
+            kind: "toggle",
             checked: selected,
             accessibilityLabel: t("sidebar.projectSelector.includeProject", { project: label }),
             onSelect: handleToggle,
@@ -74,7 +75,7 @@ export function SidebarProjectMenuItem({
   return (
     <MenuItem
       selected={onToggle ? undefined : selected}
-      secondaryToggle={secondaryToggle}
+      secondary={secondary}
       trailing={trailing}
       accessibilityLabel={
         onToggle ? t("sidebar.projectSelector.selectOnlyProject", { project: label }) : label
