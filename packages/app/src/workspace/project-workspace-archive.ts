@@ -77,14 +77,28 @@ export function selectProjectArchiveScope(
   };
 }
 
-/** Ignore listing order while detecting changes to membership, running work, and archive risks. */
+/**
+ * The facts the user confirmed: membership, agents, running work and archive risk.
+ * Display fields such as the name and the live diff stat are left out, because a running
+ * agent refreshes them continuously and they do not change what Archive all will do.
+ */
+function confirmedArchiveFacts(workspace: ProjectArchiveWorkspace) {
+  return {
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    background: workspace.background,
+    agentIds: [...workspace.agentIds].sort(),
+    runningAgentCount: workspace.runningAgentCount,
+    archiveHasUncommittedChanges: workspace.archiveHasUncommittedChanges,
+    archiveUnpushedCommitCount: workspace.archiveUnpushedCommitCount,
+  };
+}
+
+/** Compare confirmed facts while ignoring listing order. */
 function archiveSelectionSignature(workspaces: readonly ProjectArchiveWorkspace[]): string {
   return JSON.stringify(
     workspaces
-      .map((workspace) => ({
-        ...workspace,
-        agentIds: [...workspace.agentIds].sort(),
-      }))
+      .map(confirmedArchiveFacts)
       .sort((left, right) =>
         JSON.stringify([left.serverId, left.workspaceId]).localeCompare(
           JSON.stringify([right.serverId, right.workspaceId]),

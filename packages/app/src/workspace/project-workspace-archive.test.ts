@@ -232,6 +232,17 @@ describe("project archive confirmation and execution", () => {
     },
   );
 
+  it.each([
+    { field: "diff stat", refreshed: { diffStat: { additions: 12, deletions: 4 } } },
+    { field: "name", refreshed: { name: "renamed" } },
+  ])("archives after confirmation when only the $field refreshes", async ({ refreshed }) => {
+    const original = archiveWorkspace({ diffStat: { additions: 1, deletions: 0 } });
+    const flow = archiveFlow([original]);
+    flow.refresh.mockResolvedValue([archiveWorkspace({ ...original, ...refreshed })]);
+    expect(await archiveProjectWorkspaces(flow)).toEqual({ kind: "archived", archivedCount: 1 });
+    expect(flow.archive).toHaveBeenCalledOnce();
+  });
+
   it("archives serially and leaves failed and unprocessed targets available after a partial failure", async () => {
     const workspaces = [
       archiveWorkspace(),
