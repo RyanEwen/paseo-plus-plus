@@ -1,8 +1,8 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import "@/i18n/i18next"; // registers the update copy resources
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import { AndroidAppUpdateRow } from "./settings-row";
 import type { AndroidUpdater } from "./store";
 import {
@@ -12,6 +12,10 @@ import {
   type FakeAndroidUpdaterNative,
 } from "./test-utils/fake-android-updater";
 import { AndroidUpdaterProvider } from "./use-android-updater";
+
+beforeAll(async () => {
+  await i18n.changeLanguage("en");
+});
 
 // Chromium renders the real update row and store; Android and the release service are fakes.
 const update = buildAndroidUpdate(14);

@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
-import "@/i18n/i18next"; // registers the update copy resources
+import { beforeAll, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import { describeAndroidUpdate, type AndroidUpdateDescriptionInput } from "./status";
 import { buildAndroidUpdate } from "./test-utils/fake-android-updater";
+
+beforeAll(async () => {
+  await i18n.changeLanguage("en");
+});
 
 const update = buildAndroidUpdate(14);
 

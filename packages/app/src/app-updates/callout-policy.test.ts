@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import "@/i18n/i18next"; // registers the update copy resources
+import { beforeAll, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   AUTOMATIC_CHECK_INTERVAL_MS,
   resolveAndroidUpdateCallout,
@@ -8,6 +8,10 @@ import {
 } from "./callout-policy";
 import type { AndroidUpdateState } from "./store";
 import { buildAndroidUpdate } from "./test-utils/fake-android-updater";
+
+beforeAll(async () => {
+  await i18n.changeLanguage("en");
+});
 
 const update = buildAndroidUpdate(14);
 
