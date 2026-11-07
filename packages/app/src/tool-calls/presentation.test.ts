@@ -157,6 +157,54 @@ describe("tool-call presentation", () => {
       },
     });
   });
+  it("resolves readable activity icons through the canonical detail type they represent", () => {
+    const resolvedTypes: (string | undefined)[] = [];
+    const recordIcon: typeof fakeResolveIcon = (toolName, detail, agentMessage) => {
+      resolvedTypes.push(detail?.type);
+      return fakeResolveIcon(toolName, detail, agentMessage);
+    };
+    const base = {
+      toolName: "shell",
+      status: "completed" as const,
+      error: null,
+      cwd: "/work",
+      resolveIcon: recordIcon,
+    };
+    const shellDetail = { type: "shell", command: "rg needle; ls" } satisfies ToolCallDetail;
+    const actions = (commandActions: unknown[]) => ({ detail: shellDetail, metadata: { commandActions } });
+    buildToolCallPresentation({
+      ...base,
+      ...actions([{ type: "search", command: "rg needle", query: "needle" }]),
+      activityTranslation: translation.t,
+    });
+    buildToolCallPresentation({
+      ...base,
+      ...actions([{ type: "listFiles", command: "ls", path: "src" }]),
+      activityTranslation: translation.t,
+    });
+    buildToolCallPresentation({
+      ...base,
+      detail: { type: "edit", filePath: "/work/a.ts" },
+      metadata: {
+        fileChanges: [
+          { path: "/work/a.ts", kind: "add" },
+          { path: "/work/b.ts", kind: "update" },
+        ],
+      },
+      activityTranslation: translation.t,
+    });
+    buildToolCallPresentation({
+      ...base,
+      detail: { type: "shell", command: "npm run test" },
+      activityTranslation: translation.t,
+    });
+    buildToolCallPresentation({
+      ...base,
+      ...actions([{ type: "search", command: "rg needle", query: "needle" }]),
+    });
+    expect(resolvedTypes).toEqual(["search", "read", "edit", "shell", "shell"]);
+  });
+
   it("builds badge, detail, icon, and file-open policy in one model", () => {
     const presentation = buildToolCallPresentation({
       toolName: "read_file",
