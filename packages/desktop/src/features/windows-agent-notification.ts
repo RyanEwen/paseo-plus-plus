@@ -1,12 +1,17 @@
 import { buildAgentDeepLink, parseAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 
-interface WindowsAgentNotificationInput {
-  notificationId: string;
+interface WindowsAgentToastInput {
+  /** Activation arguments from buildWindowsAgentNotificationArguments. */
+  launch: string;
   title: string;
   body: string | undefined;
-  data: Record<string, unknown> | undefined;
   iconPath: string | null;
   silent: boolean;
+}
+
+interface WindowsNotificationActivation {
+  type: string;
+  arguments: string;
 }
 
 /** XML 1.0 allows whitespace controls and valid Unicode, but rejects lone surrogates. */
@@ -33,9 +38,10 @@ function escapeXml(value: string): string {
 }
 
 /** Return durable activation arguments only when the notification names a valid chat target. */
-export function buildWindowsAgentNotificationArguments(
-  input: Pick<WindowsAgentNotificationInput, "data" | "notificationId">,
-): string | null {
+export function buildWindowsAgentNotificationArguments(input: {
+  notificationId: string;
+  data: Record<string, unknown> | undefined;
+}): string | null {
   const serverId = input.data?.serverId;
   const agentId = input.data?.agentId;
   if (typeof serverId !== "string" || typeof agentId !== "string") {
@@ -54,33 +60,14 @@ export function buildWindowsAgentNotificationArguments(
 }
 
 /** Embed the stable chat URL in the toast so activation survives renderer reloads and app restarts. */
-export function buildWindowsAgentToast(input: WindowsAgentNotificationInput): string | null {
-  const launchArguments = buildWindowsAgentNotificationArguments(input);
-  if (!launchArguments) {
-    return null;
-  }
-  const launch = escapeXml(launchArguments);
+export function buildWindowsAgentToast(input: WindowsAgentToastInput): string {
+  const launch = escapeXml(input.launch);
   const body = input.body ? `<text>${escapeXml(input.body)}</text>` : "";
   const icon = input.iconPath
     ? `<image placement="appLogoOverride" hint-crop="none" src="${escapeXml(input.iconPath)}"/>`
     : "";
   const audio = input.silent ? '<audio silent="true"/>' : "";
   return `<toast launch="${launch}" activationType="foreground"><visual><binding template="ToastGeneric"><text>${escapeXml(input.title)}</text>${body}${icon}</binding></visual>${audio}</toast>`;
-}
-
-/** Only accept Paseo chat activations, leaving other Windows notification actions alone. */
-export function openWindowsAgentNotification(
-  input: { type: string; arguments: string },
-  openAgentLink: (url: string) => void,
-): void {
-  if (input.type !== "click") {
-    return;
-  }
-  const link = new URLSearchParams(input.arguments).get("paseoAgent");
-  if (!link || !parseAgentDeepLink(link)) {
-    return;
-  }
-  openAgentLink(link);
 }
 
 /** A timed-out Windows banner is still available to click in Notification Center. */
@@ -117,33 +104,33 @@ export function createTimedOutNotificationRetention<T>(limit = NOTIFICATION_CENT
   };
 }
 
-interface WindowsNotificationActivation {
-  type: string;
-  arguments: string;
-}
-
-/** Share one opener between instance clicks and durable activations, which can both report a tap. */
+/**
+ * Share one opener between instance clicks and durable activations, which can both report a tap.
+ * Only Paseo chat activations open a link; other Windows notification actions are left alone.
+ */
 export function createWindowsAgentNotificationOpener(openAgentLink: (url: string) => void) {
   const handledTags = new Set<string>();
 
+  /** Records a tap's tag; false when that tap was already opened. */
+  function rememberTag(tag: string): boolean {
+    if (handledTags.has(tag)) return false;
+    handledTags.add(tag);
+    // Only recent clicks can have a second callback pending. Bound this
+    // metadata independently of the retained Notification Center objects.
+    if (handledTags.size > 256) {
+      const oldest = handledTags.values().next().value;
+      if (oldest) handledTags.delete(oldest);
+    }
+    return true;
+  }
+
   return function open(input: WindowsNotificationActivation): void {
-    openWindowsAgentNotification(input, (url) => {
-      const tag = new URLSearchParams(input.arguments).get("tag");
-      if (tag) {
-        if (handledTags.has(tag)) {
-          return;
-        }
-        handledTags.add(tag);
-        // Only recent clicks can have a second callback pending. Bound this
-        // metadata independently of the retained Notification Center objects.
-        if (handledTags.size > 256) {
-          const oldest = handledTags.values().next().value;
-          if (oldest) {
-            handledTags.delete(oldest);
-          }
-        }
-      }
-      openAgentLink(url);
-    });
+    if (input.type !== "click") return;
+    const params = new URLSearchParams(input.arguments);
+    const link = params.get("paseoAgent");
+    if (!link || !parseAgentDeepLink(link)) return;
+    const tag = params.get("tag");
+    if (tag && !rememberTag(tag)) return;
+    openAgentLink(link);
   };
 }

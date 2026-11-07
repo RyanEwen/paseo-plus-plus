@@ -2,16 +2,28 @@ import { describe, expect, it } from "vitest";
 import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
-  openWindowsAgentNotification,
   shouldRetainWindowsNotification,
   createWindowsAgentNotificationOpener,
   createTimedOutNotificationRetention,
 } from "./windows-agent-notification.js";
 
+/** Builds a toast the way the desktop notification handler does. */
+function chatToast(input: {
+  title: string;
+  body: string | undefined;
+  data: Record<string, unknown>;
+  iconPath: string | null;
+  silent: boolean;
+}): string {
+  const { data, ...display } = input;
+  const launch = buildWindowsAgentNotificationArguments({ notificationId: "notice-1", data });
+  if (!launch) throw new Error("Chat target did not produce activation arguments");
+  return buildWindowsAgentToast({ ...display, launch });
+}
+
 describe("Windows chat notification activation", () => {
   it("carries the chat target independently of the notification object and escapes its display content", () => {
-    const toast = buildWindowsAgentToast({
-      notificationId: "notice-1",
+    const toast = chatToast({
       title: 'Agent <ready> & "waiting"',
       body: "Ryan's chat",
       data: { serverId: "host/one", agentId: "chat one", workspaceId: "workspace-one" },
@@ -23,21 +35,17 @@ describe("Windows chat notification activation", () => {
     );
 
     const links: string[] = [];
-    openWindowsAgentNotification(
-      {
-        type: "click",
-        arguments:
-          "type=click&tag=notice-1&paseoAgent=paseo%3A%2F%2Fh%2Fhost%252Fone%2Fagent%2Fchat%2520one",
-      },
-      (url) => links.push(url),
-    );
+    createWindowsAgentNotificationOpener((url) => links.push(url))({
+      type: "click",
+      arguments:
+        "type=click&tag=notice-1&paseoAgent=paseo%3A%2F%2Fh%2Fhost%252Fone%2Fagent%2Fchat%2520one",
+    });
     expect(links).toEqual(["paseo://h/host%2Fone/agent/chat%20one"]);
   });
 
   it("keeps sound enabled and supports notifications with no body, icon, or workspace", () => {
     expect(
-      buildWindowsAgentToast({
-        notificationId: "notice-1",
+      chatToast({
         title: "Finished",
         body: undefined,
         data: { serverId: "host", agentId: "chat" },
@@ -101,8 +109,7 @@ describe("Windows chat notification activation", () => {
 
   it("strips invalid XML controls while preserving Unicode and line breaks", () => {
     expect(
-      buildWindowsAgentToast({
-        notificationId: "notice-1",
+      chatToast({
         title: "Ready\u0000\u001b",
         body: "Chat 😀\nLine two\uD800",
         data: { serverId: "host", agentId: "chat" },
@@ -120,18 +127,12 @@ describe("Windows chat notification activation", () => {
       { serverId: "host", terminalId: "terminal" },
       { serverId: "host", agentId: " " },
     ]) {
-      expect(
-        buildWindowsAgentToast({
-          notificationId: "notice-1",
-          title: "Test",
-          body: undefined,
-          data,
-          iconPath: null,
-          silent: false,
-        }),
-      ).toBe(null);
+      expect(buildWindowsAgentNotificationArguments({ notificationId: "notice-1", data })).toBe(
+        null,
+      );
     }
     const links: string[] = [];
+    const open = createWindowsAgentNotificationOpener((url) => links.push(url));
     for (const input of [
       { type: "click", arguments: "" },
       { type: "click", arguments: "https://example.com" },
@@ -140,7 +141,7 @@ describe("Windows chat notification activation", () => {
         arguments: "type=click&tag=notice-1&paseoAgent=paseo%3A%2F%2Fh%2Fhost%2Fagent%2Fchat",
       },
     ]) {
-      openWindowsAgentNotification(input, (url) => links.push(url));
+      open(input);
     }
     expect(links).toEqual([]);
   });
