@@ -1,5 +1,8 @@
 import { DEVICE_LOCAL_FORK_SETTING_KEYS } from "@/paseo-plus-plus/device-local-settings";
-import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
+import {
+  FEATURE_EXAMPLE_CAPTION_KEYS,
+  FEATURE_EXAMPLE_IMAGES,
+} from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
 import { useQueryClient } from "@tanstack/react-query";
 import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
@@ -28,6 +31,13 @@ const OPTIONAL_FEATURES: readonly PaseoPlusPlusFeature[] = [
   "sidebarWorkspaceTransitions",
   "androidAutomaticUpdateChecks",
 ];
+
+/** Android update checks only apply to the Android app; other platforms never show the switch. */
+const VISIBLE_FEATURES = OPTIONAL_FEATURES.filter(
+  (feature) => feature !== "androidAutomaticUpdateChecks" || Platform.OS === "android",
+);
+
+const DEVICE_LOCAL_FEATURES: ReadonlySet<string> = new Set(DEVICE_LOCAL_FORK_SETTING_KEYS);
 
 const ADDITIONS = ["ssh", "worktrees", "video"] as const;
 
@@ -79,25 +89,24 @@ export function PaseoPlusPlusSection() {
           </Alert>
         ) : null}
         <SettingsCard testID="paseo-plus-plus-features">
-          {OPTIONAL_FEATURES.filter(
-            (feature) => feature !== "androidAutomaticUpdateChecks" || Platform.OS === "android",
-          ).map((feature) => (
-            <FeatureSwitch
-              key={feature}
-              feature={feature}
-              value={settings.paseoPlusPlus[feature]}
-              disabled={
-                (DEVICE_LOCAL_FORK_SETTING_KEYS.some((key) => key === feature)
-                  ? isLocalLoading
-                  : isLoading) ||
-                settingsError !== null ||
-                pending !== null
-              }
-              pending={pending === feature}
-              failed={failed === feature}
-              onChange={changeFeature}
-            />
-          ))}
+          {VISIBLE_FEATURES.map((feature) => {
+            // Device-local choices only wait for this device's settings, not a settings host.
+            const waitingForSettings = DEVICE_LOCAL_FEATURES.has(feature)
+              ? isLocalLoading
+              : isLoading;
+            const canEdit = !waitingForSettings && settingsError === null && pending === null;
+            return (
+              <FeatureSwitch
+                key={feature}
+                feature={feature}
+                value={settings.paseoPlusPlus[feature]}
+                disabled={!canEdit}
+                pending={pending === feature}
+                failed={failed === feature}
+                onChange={changeFeature}
+              />
+            );
+          })}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title={t("paseoPlusPlus.preferences")}>
@@ -159,20 +168,17 @@ function FeatureSwitch({
   );
   const label = t(`paseoPlusPlus.features.${feature}.label`);
   const hint = t(`paseoPlusPlus.features.${feature}.hint`);
+  const extraCaptionKey = FEATURE_EXAMPLE_CAPTION_KEYS[feature];
   const help = useMemo(
     () => (
       <SettingsExample
         title={label}
-        caption={
-          feature === "sidebarWorkspaceTransitions"
-            ? `${hint} ${t("paseoPlusPlus.examples.positions")}`
-            : hint
-        }
+        caption={extraCaptionKey ? `${hint} ${t(extraCaptionKey)}` : hint}
         images={FEATURE_EXAMPLE_IMAGES[feature]}
         testID={`settings-example-${feature}`}
       />
     ),
-    [feature, label, hint, t],
+    [feature, label, hint, extraCaptionKey, t],
   );
   return (
     <SettingsSwitch

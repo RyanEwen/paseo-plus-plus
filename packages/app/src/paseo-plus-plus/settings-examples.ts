@@ -66,6 +66,11 @@ export const FEATURE_EXAMPLE_IMAGES: Partial<
   ],
 };
 
+/** Extra help text appended after a feature's hint in its example tip. */
+export const FEATURE_EXAMPLE_CAPTION_KEYS: Partial<Record<PaseoPlusPlusFeature, string>> = {
+  sidebarWorkspaceTransitions: "paseoPlusPlus.examples.positions",
+};
+
 /** Shared preference help slots stay empty until genuine captures are qualified. */
 export const PREFERENCE_EXAMPLE_IMAGES: Partial<
   Record<"explorer" | "workspaceLimit", readonly SettingsExampleImage[]>
