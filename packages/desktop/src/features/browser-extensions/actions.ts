@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain, nativeImage, type Session, type WebContents } f
 import { z } from "zod";
 import { getPaseoBrowserWebContentsForHostWindow } from "../browser-webviews/index.js";
 import type { BrowserExtensionCatalog } from "./catalog.js";
+import type { BrowserExtensionAction } from "./contracts.js";
 import {
   getExtensionPopupUrl,
   getExtensionToolbarMetadata,
@@ -69,7 +70,7 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
       profile.extensions
         .getAllExtensions()
         .filter((extension) => options.isExtensionReady(extension.id))
-        .map(async (extension) => {
+        .map(async (extension): Promise<BrowserExtensionAction> => {
           const metadata = getExtensionToolbarMetadata(extension.manifest, extension.name);
           const iconDataUrl = await toolbarIcon(extension);
           if (

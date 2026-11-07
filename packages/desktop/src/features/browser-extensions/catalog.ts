@@ -4,6 +4,7 @@ import { writeAtomicJson } from "./atomic-json.js";
 import { z } from "zod";
 import log from "electron-log";
 import { ExtensionHostCrashError } from "./runtime-failure.js";
+import type { BrowserExtensionListing } from "./contracts.js";
 
 const EntrySchema = z.object({
   id: z.string().regex(/^[a-p]{32}$/),
@@ -121,7 +122,7 @@ export class BrowserExtensionCatalog {
   }
 
   /** Wait for pending installs and return snapshots including recoverable load errors. */
-  public async list(): Promise<Array<BrowserExtensionEntry & { error?: string }>> {
+  public async list(): Promise<BrowserExtensionListing[]> {
     await this.serialize(() => this.pruneStoreRemovals());
     return this.entries.map((entry) => ({ ...entry, error: this.errors.get(entry.id)?.message }));
   }

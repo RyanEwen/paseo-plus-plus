@@ -184,6 +184,7 @@ export interface DesktopBrowserExtensionsBridge {
   openStore(): Promise<void>;
 }
 
+/** Mirrors `BrowserExtensionListing` in packages/desktop/src/features/browser-extensions/contracts.ts. */
 export interface DesktopBrowserExtension {
   id: string;
   name: string;
@@ -193,6 +194,7 @@ export interface DesktopBrowserExtension {
   error?: string;
 }
 
+/** Mirrors `BrowserExtensionAction` in packages/desktop/src/features/browser-extensions/contracts.ts. */
 export interface DesktopBrowserExtensionAction {
   badge?: {
     text: string;
