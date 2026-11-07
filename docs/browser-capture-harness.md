@@ -130,19 +130,15 @@ releasing activity because wheel acknowledgments can precede animation-aligned d
 Captures retain their five-second budget. Sample actionability with main-process
 timers because guest timers and animation frames can be suspended.
 
-Input has a 15-second main-process deadline, including time waiting behind another
-gesture. A stalled renderer or debugger must release the activity scope. Already
-dispatched input cannot be recalled, so a missing acknowledgment after dispatch
-is not retryable. Actionability failures before dispatch remain safe to retry.
-Fence later gesture steps and release a possibly held pointer at the last
-acknowledged position; never repeat the press or synthesize a drop at the
-unreached destination. Dialog interception ends with its command: prompt
-restoration cannot wait behind a missing pointer acknowledgment. Navigation or closure after delivery can interrupt the paint wait
-without turning successful input into a failed action.
+The automation group checks that a stalled renderer releases activity without late input and
+that a cancelled drag releases its pointer without a drop. The input deadline, retry and
+pointer-release rules live beside the code in `input-lifetime.ts` and `trusted-input.ts`.
 
-Use Electron 44.5 or newer ([upstream restoration fix](https://github.com/electron/electron/pull/54341)). Earlier runtimes can leave hidden webview widgets and their
-Blink schedulers active after background throttling is restored. The runtime fix is required
-for command-scoped activity to return to idle without presenting the pane or focusing the host.
+Use Electron 44.5 or newer
+([upstream restoration fix](https://github.com/electron/electron/pull/54341)). Earlier runtimes
+can leave hidden webview widgets and their Blink schedulers active after background throttling
+is restored. The runtime fix is required for command-scoped activity to return to idle without
+presenting the pane or focusing the host.
 The browser tool takes one viewport frame through Electron's frame subscription and releases the
 subscription on completion or cancellation. A resized resident guest can produce fresh pixels
 while `capturePage()` leaves its surface-copy request pending; waiting for animation frames or
