@@ -1,6 +1,11 @@
 import { WorkspaceAttention } from "./agent/workspace-attention.js";
 import type { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
-import { NotificationReceipts } from "@getpaseo/protocol/notification-receipts";
+import {
+  NotificationReceipts,
+  NotificationRejectedError,
+  isNotificationRejection,
+  type NotificationRejection,
+} from "@getpaseo/protocol/notification-receipts";
 import type { AgentPromptSource } from "./agent/agent-messages/envelope.js";
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
@@ -7735,6 +7740,7 @@ export class Session {
       error: string | null;
     }> = [];
 
+    let notificationRejection: NotificationRejection | undefined;
     const attention = new WorkspaceAttention({
       manager: this.agentManager,
       storage: this.agentStorage,
@@ -7748,7 +7754,10 @@ export class Session {
       try {
         const workspace = await this.workspaceRegistry.get(requestedWorkspaceId);
         if (!workspace || workspace.archivedAt) {
-          throw new Error(`Workspace not found: ${requestedWorkspaceId}`);
+          throw new NotificationRejectedError(
+            "workspace_unavailable",
+            `Workspace not found: ${requestedWorkspaceId}`,
+          );
         }
 
         // Reject unavailable sync and impossible future receipts before any attention mutation.
@@ -7776,6 +7785,10 @@ export class Session {
         });
       } catch (error) {
         const message = getErrorMessage(error);
+        // Only an acknowledgement carries a receipt the client would otherwise retry forever.
+        if (notification && isNotificationRejection(error)) {
+          notificationRejection = error.rejection;
+        }
         this.sessionLogger.error(
           { err: error, workspaceId: requestedWorkspaceId },
           "Failed to clear workspace attention",
@@ -7806,6 +7819,7 @@ export class Session {
                 .map((result) => result.error)
                 .filter((error) => error !== null)
                 .join("; "),
+        ...(notificationRejection ? { notificationRejection } : {}),
       },
     });
   }

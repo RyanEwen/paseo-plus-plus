@@ -3,6 +3,7 @@ import {
   NotificationAcknowledgementSchema,
   WORKSPACE_NOTIFICATION_ATTENTION_LIMIT,
   NotificationReceipts,
+  isNotificationRejection,
   type NotificationAcknowledgement,
   type WorkspaceNotificationReceipts,
 } from "@getpaseo/protocol/notification-receipts";
@@ -332,7 +333,7 @@ export class WorkspaceNotificationSynchronizer {
             data.agentId && data.attentionTimestamp
               ? [{ agentId: data.agentId, timestamp: data.attentionTimestamp }]
               : [];
-          await this.ports.acknowledge(data.workspaceId, {
+          await this.deliver(data.workspaceId, {
             kind: "event",
             acknowledgementId: dismissal.id,
             sequence: data.notificationSequence,
@@ -347,7 +348,7 @@ export class WorkspaceNotificationSynchronizer {
           if (!persisted) throw new Error("Notification acknowledgement has not been persisted");
           await persisted;
           if (this.disposed) return;
-          await this.ports.acknowledge(acknowledgement.workspaceId, acknowledgement.notification);
+          await this.deliver(acknowledgement.workspaceId, acknowledgement.notification);
           this.outbox.shift();
           await this.persist();
         }
@@ -356,6 +357,24 @@ export class WorkspaceNotificationSynchronizer {
       const reconcile = this.reconcileTail.then(() => this.reconcilePresented());
       this.reconcileTail = reconcile.catch(this.ports.report);
       await reconcile;
+    }
+  }
+
+  /**
+   * Send one acknowledgement. A permanent host refusal is reported and treated as settled, so the
+   * caller drops the entry instead of retrying it ahead of every later receipt for this host.
+   *
+   * @throws Transport and other transient failures, which keep the entry queued for a retry.
+   */
+  private async deliver(
+    workspaceId: string,
+    acknowledgement: NotificationAcknowledgement,
+  ): Promise<void> {
+    try {
+      await this.ports.acknowledge(workspaceId, acknowledgement);
+    } catch (error) {
+      if (!isNotificationRejection(error)) throw error;
+      this.ports.report(error);
     }
   }
 

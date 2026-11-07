@@ -1,6 +1,7 @@
 import {
   NotificationAcknowledgementSchema,
   NotificationReceipts,
+  NotificationRejectedError,
 } from "@getpaseo/protocol/notification-receipts";
 import type {
   NotificationAcknowledgement,
@@ -373,6 +374,59 @@ describe("Cross-device workspace notification receipts", () => {
     acknowledgedThrough = 0,
     lastWorkspaceReadId?: string,
   ) => ({ latestSequence, acknowledgedThrough, dismissedSequences: [], lastWorkspaceReadId });
+
+  it("drops permanently rejected acknowledgements without stalling other workspaces", async () => {
+    const device = memoryDevice();
+    device.pending.push({
+      id: "swipe-in-removed-workspace",
+      data: { serverId: "host", workspaceId: "removed", notificationSequence: 3 },
+    });
+    const f = fixture(device);
+    f.ports.acknowledge = async (workspaceId, notification) => {
+      if (workspaceId === "removed") {
+        throw new NotificationRejectedError(
+          "workspace_unavailable",
+          "Workspace not found: removed",
+        );
+      }
+      f.requests.push({ workspaceId, notification });
+    };
+    await f.sync.start();
+    f.sync.accept([
+      { id: "removed", notificationReceipts: state(3, 0, "read") },
+      { id: "other", notificationReceipts: state(2, 0, "read") },
+    ]);
+    await f.sync.markRead("removed");
+    await f.sync.markRead("other");
+    f.sync.setConnected(true);
+    await f.sync.flush();
+
+    expect(f.requests.map((request) => request.workspaceId)).toEqual(["other"]);
+    expect(JSON.parse(f.storage.get("@paseo:notification-receipts:host")!).outbox).toEqual([]);
+    expect(device.confirmed).toEqual(["swipe-in-removed-workspace"]);
+    expect(f.errors).toHaveLength(2);
+    f.sync.dispose();
+  });
+
+  it("keeps a transiently failed acknowledgement queued for the next flush", async () => {
+    const f = fixture();
+    let available = false;
+    f.ports.acknowledge = async (workspaceId, notification) => {
+      if (!available) throw new Error("Socket closed");
+      f.requests.push({ workspaceId, notification });
+    };
+    await f.sync.start();
+    f.sync.accept([{ id: "workspace", notificationReceipts: state(2, 0, "read") }]);
+    await f.sync.markRead("workspace");
+    f.sync.setConnected(true);
+    await expect(f.sync.flush()).rejects.toThrow("Socket closed");
+    expect(JSON.parse(f.storage.get("@paseo:notification-receipts:host")!).outbox).toHaveLength(1);
+
+    available = true;
+    await f.sync.flush();
+    expect(f.requests.map((request) => request.workspaceId)).toEqual(["workspace"]);
+    f.sync.dispose();
+  });
 
   it("preserves the activation boundary while startup and newer snapshots are pending", async () => {
     const f = fixture();

@@ -1,5 +1,6 @@
 import {
   NotificationAcknowledgementSchema,
+  NotificationRejectionSchema,
   WorkspaceNotificationReceiptsSchema,
 } from "./notification-receipts.js";
 import {
@@ -5168,6 +5169,8 @@ export const WorkspaceClearAttentionResponseSchema = z.object({
     ),
     success: z.boolean(),
     error: z.string().nullable(),
+    /** Set when a notification acknowledgement can never succeed; absent from older hosts. */
+    notificationRejection: NotificationRejectionSchema.optional(),
   }),
 });
 

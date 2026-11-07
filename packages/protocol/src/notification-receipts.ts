@@ -34,6 +34,36 @@ export const NotificationAcknowledgementSchema = z.discriminatedUnion("kind", [
 ]);
 export type NotificationAcknowledgement = z.infer<typeof NotificationAcknowledgementSchema>;
 
+/**
+ * Why a host permanently refused a notification acknowledgement. Retrying cannot succeed:
+ * the workspace is archived or gone, or the receipt names a sequence the host never issued.
+ */
+export const NotificationRejectionSchema = z.enum(["workspace_unavailable", "unknown_sequence"]);
+export type NotificationRejection = z.infer<typeof NotificationRejectionSchema>;
+
+/** A permanent refusal, as distinct from a transport failure the sender should retry. */
+export class NotificationRejectedError extends Error {
+  constructor(
+    readonly rejection: NotificationRejection,
+    message: string,
+  ) {
+    super(message);
+    this.name = "NotificationRejectedError";
+  }
+}
+
+/**
+ * Whether an error is a permanent acknowledgement refusal. Matches by name and reason rather than
+ * `instanceof`, so the check holds when the protocol package is loaded more than once.
+ */
+export function isNotificationRejection(error: unknown): error is NotificationRejectedError {
+  return (
+    error instanceof Error &&
+    error.name === "NotificationRejectedError" &&
+    NotificationRejectionSchema.safeParse((error as { rejection?: unknown }).rejection).success
+  );
+}
+
 /** Compact durable acknowledgement policy for one workspace's ordered delivery events. */
 export class NotificationReceipts {
   private value: WorkspaceNotificationReceipts;
@@ -71,7 +101,7 @@ export class NotificationReceipts {
       sequence < minimum ||
       sequence > this.value.latestSequence
     ) {
-      throw new Error("Unknown notification sequence");
+      throw new NotificationRejectedError("unknown_sequence", "Unknown notification sequence");
     }
     if (acknowledgement.kind === "workspace") {
       this.value.acknowledgedThrough = Math.max(this.value.acknowledgedThrough, sequence);

@@ -1,4 +1,7 @@
-import type { NotificationAcknowledgement } from "@getpaseo/protocol/notification-receipts";
+import {
+  NotificationRejectedError,
+  type NotificationAcknowledgement,
+} from "@getpaseo/protocol/notification-receipts";
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import {
   ChunkedTransport,
@@ -2463,7 +2466,12 @@ export class DaemonClient {
     }
   }
 
-  /** Acknowledge only events captured by the caller; reconnect never widens this boundary. */
+  /**
+   * Acknowledge only events captured by the caller; reconnect never widens this boundary.
+   *
+   * @throws NotificationRejectedError when the host refuses the receipt permanently (the
+   *   workspace is gone or the sequence was never issued); a plain Error for anything else.
+   */
   async acknowledgeWorkspaceNotifications(
     workspaceId: string,
     notification: NotificationAcknowledgement,
@@ -2472,7 +2480,12 @@ export class DaemonClient {
       await this.sendNamespacedCorrelatedSessionRequest<"workspace.clear_attention.response">({
         message: { type: "workspace.clear_attention.request", workspaceId, notification },
       });
-    if (!response.success) throw new Error(response.error ?? "Failed to acknowledge notifications");
+    if (response.success) return;
+    const message = response.error ?? "Failed to acknowledge notifications";
+    if (response.notificationRejection) {
+      throw new NotificationRejectedError(response.notificationRejection, message);
+    }
+    throw new Error(message);
   }
 
   async markWorkspaceUnread(workspaceId: string, requestId?: string): Promise<void> {

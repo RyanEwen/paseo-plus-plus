@@ -10091,10 +10091,29 @@ test("workspace notification acknowledgement rejects a future boundary before cl
     expect(findByType(messages, "workspace.clear_attention.response").payload).toMatchObject({
       success: false,
       error: "Unknown notification sequence",
+      notificationRejection: "unknown_sequence",
     });
     expect(
       (await registry.get("receipt-workspace"))?.notificationReceipts?.acknowledgedThrough,
     ).toBe(0);
+
+    // A removed workspace can never accept the receipt, so the client must stop retrying it.
+    messages.length = 0;
+    await session.handleMessage({
+      type: "workspace.clear_attention.request",
+      workspaceId: "removed-workspace",
+      requestId: "removed",
+      notification: {
+        kind: "event",
+        acknowledgementId: "removed-swipe",
+        sequence: 1,
+        attention: [],
+      },
+    });
+    expect(findByType(messages, "workspace.clear_attention.response").payload).toMatchObject({
+      success: false,
+      notificationRejection: "workspace_unavailable",
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

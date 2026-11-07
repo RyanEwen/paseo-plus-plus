@@ -1,5 +1,6 @@
 import {
   NotificationReceipts,
+  NotificationRejectedError,
   type NotificationAcknowledgement,
 } from "@getpaseo/protocol/notification-receipts";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
@@ -35,12 +36,16 @@ export class WorkspaceNotificationReceipts {
     acknowledgement: NotificationAcknowledgement,
   ): Promise<void> {
     const updated = await this.workspaces.update(workspaceId, (workspace) => {
-      if (workspace.archivedAt) throw new Error("Workspace is archived");
+      if (workspace.archivedAt) {
+        throw new NotificationRejectedError("workspace_unavailable", "Workspace is archived");
+      }
       const receipts = new NotificationReceipts(workspace.notificationReceipts);
       receipts.acknowledge(acknowledgement);
       return { ...workspace, notificationReceipts: receipts.snapshot() };
     });
-    if (!updated) throw new Error("Workspace not found");
+    if (!updated) {
+      throw new NotificationRejectedError("workspace_unavailable", "Workspace not found");
+    }
     await this.publish(workspaceId);
   }
 }
