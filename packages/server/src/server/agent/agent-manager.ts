@@ -5462,11 +5462,9 @@ export class AgentManager {
         });
         return undefined;
       case "turn_started":
-        if (options?.fromHistory) return undefined;
         this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, flags });
         return undefined;
       case "permission_requested":
-        if (options?.fromHistory) return undefined;
         this.onStreamPermissionRequested(agent, event);
         return undefined;
       case "permission_resolved":
