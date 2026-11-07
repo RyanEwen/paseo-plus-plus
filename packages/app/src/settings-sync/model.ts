@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { syncedSettingsPatches } from "./scope";
 import { SYNC_STATUS_POLICY } from "./status-policy";
+import { dropAcknowledged, dropAlreadyDurable, mergePending, rebaseOnto } from "./outbox";
 import {
   AppSettingsPatchSchema,
   AppSettingsSnapshotSchema,
@@ -14,9 +15,6 @@ import {
   applySettingsPatches,
   cloneSettingsJson,
   settingsDiff,
-  settingsFieldKey,
-  settingsValueAtPath,
-  settingsPathRevision,
 } from "@getpaseo/protocol/app-settings-values";
 
 const HostStateSchema = z.object({
@@ -28,6 +26,7 @@ const LocalStateSchema = z.object({
   selectedHost: z.string().nullable(),
   hosts: z.record(z.string(), HostStateSchema),
 });
+type HostState = z.infer<typeof HostStateSchema>;
 type LocalState = z.infer<typeof LocalStateSchema>;
 
 export type SyncStatus =
@@ -211,15 +210,8 @@ export class SettingsSyncModel {
         const backup = old?.backup ?? (await this.deps.getDeviceValues("backup"));
         if (!this.current(host, generation)) return;
         // An unknown-outcome write that is already durable needs no second write.
-        const pending = syncedSettingsPatches(old?.pending ?? []).filter(
-          (patch) =>
-            JSON.stringify(settingsValueAtPath(snapshot.values, patch.path)) !==
-            JSON.stringify(patch.value),
-        );
-        const next = {
-          ...this.local,
-          hosts: { ...this.local.hosts, [host]: { snapshot, pending, backup } },
-        };
+        const pending = dropAlreadyDurable(syncedSettingsPatches(old?.pending ?? []), snapshot);
+        const next = this.withHost(host, { snapshot, pending, backup });
         await this.deps.writeLocal(next);
         this.local = next;
         if (!this.current(host, generation)) return;
@@ -256,25 +248,8 @@ export class SettingsSyncModel {
       await this.serialize(async () => {
         if (!this.current(host, generation)) throw new Error("Settings host changed before saving");
         const record = this.local.hosts[host]!;
-        const merged = new Map(
-          syncedSettingsPatches(record.pending).map((patch) => [
-            settingsFieldKey(patch.path),
-            patch,
-          ]),
-        );
-        for (const patch of patches) {
-          const key = settingsFieldKey(patch.path);
-          const previous = merged.get(key);
-          merged.set(key, {
-            ...patch,
-            expectedRevision: previous?.expectedRevision ?? patch.expectedRevision,
-          });
-        }
-        const pending = [...merged.values()];
-        const next = {
-          ...this.local,
-          hosts: { ...this.local.hosts, [host]: { ...record, pending } },
-        };
+        const pending = mergePending(syncedSettingsPatches(record.pending), patches);
+        const next = this.withHost(host, { ...record, pending });
         await this.deps.writeLocal(next);
         this.local = next;
         if (!this.current(host, generation)) return;
@@ -309,10 +284,7 @@ export class SettingsSyncModel {
       await this.serialize(async () => {
         if (!this.current(host, generation)) return;
         const record = this.local.hosts[host]!;
-        const next = {
-          ...this.local,
-          hosts: { ...this.local.hosts, [host]: { ...record, pending: patches } },
-        };
+        const next = this.withHost(host, { ...record, pending: patches });
         await this.deps.writeLocal(next);
         this.local = next;
       });
@@ -355,17 +327,8 @@ export class SettingsSyncModel {
       if (!this.current(host, generation)) return;
       const record = this.local.hosts[host];
       if (!record) return;
-      const pending = keepDevice
-        ? syncedSettingsPatches(record.pending).map((patch) => ({
-            path: patch.path,
-            value: patch.value,
-            expectedRevision: settingsPathRevision(snapshot, patch.path),
-          }))
-        : [];
-      const next = {
-        ...this.local,
-        hosts: { ...this.local.hosts, [host]: { ...record, pending } },
-      };
+      const pending = keepDevice ? rebaseOnto(syncedSettingsPatches(record.pending), snapshot) : [];
+      const next = this.withHost(host, { ...record, pending });
       await this.deps.writeLocal(next);
       this.local = next;
     });
@@ -408,46 +371,7 @@ export class SettingsSyncModel {
     this.sending = (async () => {
       try {
         const result = await transport.patch({ patches: sent });
-        await this.serialize(async () => {
-          const current = this.local.hosts[host]!;
-          const acknowledged = new Set(sent.map((patch) => JSON.stringify(patch)));
-          const sentKeys = new Set(sent.map((patch) => settingsFieldKey(patch.path)));
-          const pending = cloneSettingsJson(current.pending);
-          if (!result.conflicts.length) {
-            for (let index = pending.length - 1; index >= 0; index -= 1) {
-              const patch = pending[index]!;
-              if (acknowledged.has(JSON.stringify(patch))) pending.splice(index, 1);
-              else if (sentKeys.has(settingsFieldKey(patch.path)))
-                patch.expectedRevision = settingsPathRevision(result.snapshot, patch.path);
-            }
-          }
-          const next = {
-            ...this.local,
-            hosts: {
-              ...this.local.hosts,
-              [host]: {
-                ...current,
-                snapshot:
-                  result.snapshot.revision >= current.snapshot.revision
-                    ? result.snapshot
-                    : current.snapshot,
-                pending,
-              },
-            },
-          };
-          await this.deps.writeLocal(next);
-          this.local = next;
-          if (!this.current(host, generation)) return;
-          await this.deps.applyValues(
-            applySettingsPatches(next.hosts[host]!.snapshot.values, pending),
-          );
-          if (!this.current(host, generation)) return;
-          this.publish({
-            status: result.conflicts.length ? "conflict" : "ready",
-            conflicts: result.conflicts,
-            pendingCount: pending.length,
-          });
-        });
+        await this.serialize(() => this.settleWrite(host, generation, sent, result));
       } catch (error) {
         if (this.current(host, generation)) this.fail(error);
       }
@@ -461,6 +385,37 @@ export class SettingsSyncModel {
       await this.flush();
   }
 
+  /**
+   * Record a finished write for `host`: settle its outbox and keep the newer snapshot durably,
+   * then, if the host is still selected, project the result and publish its status.
+   */
+  private async settleWrite(
+    host: string,
+    generation: number,
+    sent: readonly AppSettingsPatch[],
+    result: AppSettingsPatchResult,
+  ): Promise<void> {
+    const current = this.local.hosts[host]!;
+    const pending = dropAcknowledged(current.pending, sent, result);
+    const newer = result.snapshot.revision >= current.snapshot.revision;
+    const snapshot = newer ? result.snapshot : current.snapshot;
+    const next = this.withHost(host, { ...current, snapshot, pending });
+    await this.deps.writeLocal(next);
+    this.local = next;
+    if (!this.current(host, generation)) return;
+    await this.deps.applyValues(applySettingsPatches(snapshot.values, pending));
+    if (!this.current(host, generation)) return;
+    this.publish({
+      status: result.conflicts.length ? "conflict" : "ready",
+      conflicts: result.conflicts,
+      pendingCount: pending.length,
+    });
+  }
+
+  /** The local state with one host's record replaced. */
+  private withHost(host: string, record: HostState): LocalState {
+    return { ...this.local, hosts: { ...this.local.hosts, [host]: record } };
+  }
   private current(host: string, generation: number): boolean {
     return this.state.selectedHost === host && this.generation === generation;
   }
