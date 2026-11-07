@@ -83,7 +83,7 @@ interface HostUpdateSheetProps {
 /** Live outside the picker so its dismissal cannot discard update progress or verification. */
 export function HostUpdateSheet({ host, onFinished, onClose }: HostUpdateSheetProps) {
   const { t } = useTranslation();
-  const { updateState, handleUpdate } = useDaemonUpdate(host);
+  const { updateState, handleUpdate } = useDaemonUpdate();
   const started = useRef(false);
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
@@ -91,14 +91,14 @@ export function HostUpdateSheet({ host, onFinished, onClose }: HostUpdateSheetPr
     started.current = true;
     async function startUpdate() {
       try {
-        const attempted = await handleUpdate();
-        if (!attempted) onClose();
+        const outcome = await handleUpdate(host);
+        if (outcome !== "settled") onClose();
       } finally {
         onFinished();
       }
     }
     void startUpdate();
-  }, [handleUpdate, onFinished, onClose]);
+  }, [handleUpdate, host, onFinished, onClose]);
 
   const updating = updateState.status === "updating";
   const dismiss = useCallback(() => {

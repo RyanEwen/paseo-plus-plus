@@ -19,20 +19,26 @@ const runtime = vi.hoisted(() => ({
   update: vi.fn(),
   confirm: vi.fn(),
 }));
-vi.mock("@/runtime/host-runtime", () => ({
-  useHostRuntimeClient: () => ({
+vi.mock("@/runtime/host-runtime", () => {
+  const client = {
     checkDaemonUpdateAvailability: runtime.check,
     updateDaemon: runtime.update,
     getDaemonStatus: async () => ({ pid: runtime.pid }),
     getLastServerInfoMessage: () => ({ serverId: "host-a", version: runtime.version }),
     on: () => () => {},
-  }),
-  useHostRuntimeIsConnected: () => runtime.connected,
-  useHostRuntimeSnapshot: () => ({ activeConnection: null }),
-  useHostRuntimeConnectionStatus: () => (runtime.connected ? "online" : "offline"),
-  getHostRuntimeStore: () => ({ getSnapshot: () => runtime.connected }),
-  isHostRuntimeConnected: (connected: boolean) => connected,
-}));
+  };
+  return {
+    useHostRuntimeClient: () => client,
+    useHostRuntimeIsConnected: () => runtime.connected,
+    useHostRuntimeSnapshot: () => ({ activeConnection: null }),
+    useHostRuntimeConnectionStatus: () => (runtime.connected ? "online" : "offline"),
+    getHostRuntimeStore: () => ({
+      getSnapshot: () => runtime.connected,
+      getClient: () => client,
+    }),
+    isHostRuntimeConnected: (connected: boolean) => connected,
+  };
+});
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: runtime.confirm }));
 // The real picker row imports the popover module, but these cases never render a popover.
 // Keep native positioning outside this DOM unit boundary and fail if a case starts using it.

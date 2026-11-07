@@ -713,7 +713,10 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const daemonClient = useHostRuntimeClient(host.serverId);
   const isConnected = useHostRuntimeIsConnected(host.serverId);
-  const { updateState, handleUpdate } = useDaemonUpdate(host);
+  const { updateState, handleUpdate } = useDaemonUpdate();
+  const startUpdate = useCallback(() => {
+    void handleUpdate(host);
+  }, [handleUpdate, host]);
 
   const daemonVersion = useSessionStore(
     (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
@@ -750,7 +753,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
         <Button
           variant="outline"
           leftIcon={updateIcon}
-          onPress={handleUpdate}
+          onPress={startUpdate}
           disabled={desktopManaged || isUpdating || !daemonClient || !isConnected}
           testID="host-page-update-button"
         >
