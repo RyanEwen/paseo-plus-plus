@@ -1164,7 +1164,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       const wasManual = promptReading.getSnapshot().manual;
       // Presentation rows can be Markdown blocks or plugin cards. Resolve their
       // authoritative position before publishing to surfaces that hold canonical prompts.
-      promptReading.publish(
+      promptReading.publish({
         rowId,
         visibleUserIds,
         navigating,
@@ -1173,7 +1173,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         seq,
         userHandoffs,
         viewportWidth,
-      );
+      });
       if (manual && !wasManual) stickyPromptRef.current?.reviewReading();
       chatOutline.reportReadingPosition(seq);
     });

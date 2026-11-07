@@ -62,19 +62,38 @@ export async function fetchReadingPromptContext(
   signal: AbortSignal,
   backwardProjection: "projected" | "canonical" = "canonical",
 ): Promise<UserPrompt | undefined> {
-  return (await fetchCanonicalPromptContext(reader, source, signal, backwardProjection))?.prompt;
+  return (await fetchCanonicalPromptContext({ reader, source, signal, backwardProjection }))
+    ?.prompt;
+}
+
+/** Inputs for one canonical prompt context read. */
+export interface CanonicalPromptContextRead {
+  reader: ContextPageReader;
+  source: StreamItem;
+  signal: AbortSignal;
+  backwardProjection?: "projected" | "canonical";
+  /** Continue a budget-limited read instead of probing the source again. */
+  progress?: CanonicalPromptContextProgress;
+  /** Return a prompt already proven in ordinary rows, ending the read early. */
+  resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined;
+  /** Called once the source start has passed validation. */
+  observeSourceStart?: (sourceStart: number) => void;
+  indexedLookup?: ContextPromptIndexLookup;
 }
 
 export async function fetchCanonicalPromptContext(
-  reader: ContextPageReader,
-  source: StreamItem,
-  signal: AbortSignal,
-  backwardProjection: "projected" | "canonical" = "canonical",
-  progress?: CanonicalPromptContextProgress,
-  resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined,
-  observeSourceStart?: (sourceStart: number) => void,
-  indexedLookup?: ContextPromptIndexLookup,
+  input: CanonicalPromptContextRead,
 ): Promise<CanonicalPromptContext | null | undefined> {
+  const {
+    reader,
+    source,
+    signal,
+    backwardProjection = "canonical",
+    progress,
+    resolveOrdinary,
+    observeSourceStart,
+    indexedLookup,
+  } = input;
   const position = source.timelineCursor;
   if (!position) throw new Error("Reading source has no canonical position");
   const read = async (cursor: number, limit: number, projection: "projected" | "canonical") => {

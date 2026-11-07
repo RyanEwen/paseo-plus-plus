@@ -132,13 +132,13 @@ export function useStickyPrompt(input: StickyPromptInput) {
     () => items.filter((item): item is UserPrompt => item.kind === "user_message"),
     [items],
   );
-  const contextRequested = shouldReadContext(
+  const contextRequested = shouldReadContext({
     enabled,
-    discoverReading,
+    missing: discoverReading,
     cancelled,
-    reading.navigating,
+    navigating: reading.navigating,
     pending,
-  );
+  });
   const contextSource = resolveContextSource(
     items,
     epoch,
@@ -161,14 +161,14 @@ export function useStickyPrompt(input: StickyPromptInput) {
     [loadedTargets, readingContent.item, selected, epoch],
   );
   const readingItem = readingTarget?.item ?? readingContent.item;
-  const message = resolveContextMessage(
+  const message = resolveContextMessage({
     pending,
-    discoverReading,
-    selectedMessage,
-    readingContent.item,
-    missingReadingSeq,
-    input.fetchPrompt !== undefined,
-  );
+    missing: discoverReading,
+    selected: selectedMessage,
+    fetched: readingContent.item,
+    missingSeq: missingReadingSeq,
+    canFetch: input.fetchPrompt !== undefined,
+  });
   const position = message ? findPromptTarget(targets, message) : -1;
   useEffect(() => {
     if (
@@ -199,15 +199,21 @@ export function useStickyPrompt(input: StickyPromptInput) {
     enabled:
       enabled &&
       (!input.contextManaged || pending !== null) &&
-      shouldDiscoverCachedPrompt(pending, indexed, message, cancelled, discoverReading),
-    reached: hasDiscoveredCachedPrompt(
+      shouldDiscoverCachedPrompt({
+        pending,
+        indexed,
+        message,
+        cancelled,
+        readingMissing: discoverReading,
+      }),
+    reached: hasDiscoveredCachedPrompt({
       pending,
-      loadedTargets,
+      loaded: loadedTargets,
       previous,
-      discoverReading,
+      readingMissing: discoverReading,
       readingTarget,
       message,
-    ),
+    }),
     hasOlder,
     loadingOlder,
     progressKey: progressKey ?? items[0]?.id ?? "empty",
@@ -217,10 +223,10 @@ export function useStickyPrompt(input: StickyPromptInput) {
   const selectTarget = useStableEvent(
     (
       target: PromptTarget,
-      scroll: boolean = true,
-      options?: { preserveSelection?: boolean; placement?: PromptJumpPlacement },
+      options?: { scroll?: boolean; preserveSelection?: boolean; placement?: PromptJumpPlacement },
     ) => {
       if (!enabled) return;
+      const scroll = options?.scroll ?? true;
       setError(false);
       const placement = options?.placement ?? "pinned";
       retryTarget.current = {
@@ -379,7 +385,8 @@ export function useStickyPrompt(input: StickyPromptInput) {
     if (previousAttempt) {
       const target =
         targets.find((entry) => entry.key === previousAttempt.target.key) ?? previousAttempt.target;
-      selectTarget(target, previousAttempt.scroll, {
+      selectTarget(target, {
+        scroll: previousAttempt.scroll,
         preserveSelection: previousAttempt.preserveSelection,
         placement: previousAttempt.placement,
       });
@@ -469,7 +476,7 @@ export function useStickyPrompt(input: StickyPromptInput) {
     if (target) {
       // Retain the selected prompt while the owner loads its original row.
       setSelected(target.item ?? message ?? null);
-      selectTarget(target, true, { preserveSelection: true, placement: "original" });
+      selectTarget(target, { scroll: true, preserveSelection: true, placement: "original" });
     }
   });
   return {

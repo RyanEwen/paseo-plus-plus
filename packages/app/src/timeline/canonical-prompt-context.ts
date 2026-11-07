@@ -488,13 +488,13 @@ export function createCanonicalPromptContexts(
     let proof: CanonicalPromptContext | null | undefined;
     let validatedStart: number | undefined;
     try {
-      proof = await fetchCanonicalPromptContext(
-        lookup.readPage,
-        input.source,
-        input.signal,
-        lookup.projection,
+      proof = await fetchCanonicalPromptContext({
+        reader: lookup.readPage,
+        source: input.source,
+        signal: input.signal,
+        backwardProjection: lookup.projection,
         progress,
-        (sourceStart) => {
+        resolveOrdinary: (sourceStart) => {
           const ordinary = ordinaryFor(input.agentId);
           return resolveOrdinaryPromptContext(
             ordinary.items,
@@ -503,19 +503,19 @@ export function createCanonicalPromptContexts(
             sourceStart,
           )?.prompt;
         },
-        (sourceStart) => {
+        observeSourceStart: (sourceStart) => {
           validatedStart = sourceStart;
           if (sourceStartConflict(input, sourceStart))
             throw new CanonicalPromptContextChangedError();
         },
-        lookup.readPromptIndex
+        indexedLookup: lookup.readPromptIndex
           ? {
               agentId: lookup.agentId,
               readPromptIndex: lookup.readPromptIndex,
               assertCurrent: () => assertLookupCurrent(operation, validatedStart),
             }
           : undefined,
-      );
+      });
     } catch (error) {
       if (!isCurrent(operation))
         throw new Error("Prompt context request is no longer current", { cause: error });

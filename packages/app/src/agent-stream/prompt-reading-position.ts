@@ -11,6 +11,10 @@ export interface PromptReadingPosition {
   userHandoffs?: readonly PromptHandoff[];
 }
 
+/** A reading sample; omitted fields take the defaults of a manual, unmeasured sample. */
+export type PromptReadingUpdate = Pick<PromptReadingPosition, "rowId"> &
+  Partial<Omit<PromptReadingPosition, "rowId">>;
+
 export interface PromptReadingSource {
   subscribe(listener: () => void): () => void;
   getSnapshot(): PromptReadingPosition;
@@ -36,16 +40,17 @@ export function createPromptReadingPublisher() {
         listeners.delete(listener);
       };
     },
-    publish(
-      rowId: string | null,
-      visibleUserIds: readonly string[] = [],
-      navigating = false,
-      following = false,
-      manual = true,
-      seq: number | null = null,
-      userHandoffs: readonly PromptHandoff[] = [],
-      viewportWidth: number | null = null,
-    ) {
+    publish(update: PromptReadingUpdate) {
+      const {
+        rowId,
+        visibleUserIds = [],
+        navigating = false,
+        following = false,
+        manual = true,
+        seq = null,
+        userHandoffs = [],
+        viewportWidth = null,
+      } = update;
       if (
         sameHandoffs(snapshot.userHandoffs ?? [], userHandoffs) &&
         snapshot.viewportWidth === viewportWidth &&

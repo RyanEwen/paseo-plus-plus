@@ -190,13 +190,14 @@ export function isStickyPromptVisible(
 }
 
 /** Discovery may also begin before the first loaded user message exists. */
-export function shouldDiscoverPrompt(
-  previous: boolean,
-  indexed: boolean,
-  message: UserPrompt | undefined,
-  cancelled: boolean,
-  readingMissing: boolean,
-): boolean {
+export function shouldDiscoverPrompt(input: {
+  previous: boolean;
+  indexed: boolean;
+  message: UserPrompt | undefined;
+  cancelled: boolean;
+  readingMissing: boolean;
+}): boolean {
+  const { previous, indexed, message, cancelled, readingMissing } = input;
   return previous || (!indexed && !cancelled && (!message || readingMissing));
 }
 
@@ -220,26 +221,28 @@ export function needsReadingPromptDiscovery(
 }
 
 /** Keep discovery aimed at its original reading turn while older pages are prepended. */
-export function hasDiscoveredPrompt(
-  previousMode: boolean,
-  previous: PromptTarget | undefined,
-  readingMode: boolean,
-  target: PromptTarget | undefined,
-  message: UserPrompt | undefined,
-): boolean {
+export function hasDiscoveredPrompt(input: {
+  previousMode: boolean;
+  previous: PromptTarget | undefined;
+  readingMode: boolean;
+  target: PromptTarget | undefined;
+  message: UserPrompt | undefined;
+}): boolean {
+  const { previousMode, previous, readingMode, target, message } = input;
   if (previousMode) return previous !== undefined;
   if (readingMode) return target !== undefined;
   return message !== undefined;
 }
 
 /** A missing active prompt gets discovery feedback instead of an unrelated loaded prompt. */
-export function resolveStickyPromptMessage(
-  selected: UserPrompt | undefined,
-  fetched: UserPrompt | undefined,
-  readingMissing: boolean,
-  missingSeq: number | undefined,
-  canFetch: boolean,
-): UserPrompt | undefined {
+export function resolveStickyPromptMessage(input: {
+  selected: UserPrompt | undefined;
+  fetched: UserPrompt | undefined;
+  readingMissing: boolean;
+  missingSeq: number | undefined;
+  canFetch: boolean;
+}): UserPrompt | undefined {
+  const { selected, fetched, readingMissing, missingSeq, canFetch } = input;
   if (readingMissing) return undefined;
   if (missingSeq !== undefined && canFetch) return fetched;
   return selected;
@@ -358,65 +361,79 @@ export function mergeCachedPromptTarget(
 }
 
 /** Only manual missing context uses the passive reader; explicit jumps keep their selection. */
-export function shouldReadContext(
-  enabled: boolean,
-  missing: boolean,
-  cancelled: boolean,
-  navigating: boolean,
-  pending: PromptTarget | "previous" | null,
-): boolean {
+export function shouldReadContext(input: {
+  enabled: boolean;
+  missing: boolean;
+  cancelled: boolean;
+  navigating: boolean;
+  pending: PromptTarget | "previous" | null;
+}): boolean {
+  const { enabled, missing, cancelled, navigating, pending } = input;
   return enabled && missing && !cancelled && !navigating && pending === null;
 }
 
 /** Freeze explicit selection while its original loads; otherwise use the active reading cache. */
-export function resolveContextMessage(
-  pending: PromptTarget | "previous" | null,
-  missing: boolean,
-  selected: UserPrompt | undefined,
-  fetched: UserPrompt | undefined,
-  missingSeq: number | undefined,
-  canFetch: boolean,
-): UserPrompt | undefined {
+export function resolveContextMessage(input: {
+  pending: PromptTarget | "previous" | null;
+  missing: boolean;
+  selected: UserPrompt | undefined;
+  fetched: UserPrompt | undefined;
+  missingSeq: number | undefined;
+  canFetch: boolean;
+}): UserPrompt | undefined {
+  const { pending, missing, selected, fetched, missingSeq, canFetch } = input;
   if (pending) return selected;
   if (missing) return fetched;
-  return resolveStickyPromptMessage(selected, fetched, false, missingSeq, canFetch);
+  return resolveStickyPromptMessage({
+    selected,
+    fetched,
+    readingMissing: false,
+    missingSeq,
+    canFetch,
+  });
 }
 
 /** Explicit cached-row revelation loads history; passive context never does. */
-export function shouldDiscoverCachedPrompt(
-  pending: PromptTarget | "previous" | null,
-  indexed: boolean,
-  message: UserPrompt | undefined,
-  cancelled: boolean,
-  readingMissing: boolean,
-): boolean {
+export function shouldDiscoverCachedPrompt(input: {
+  pending: PromptTarget | "previous" | null;
+  indexed: boolean;
+  message: UserPrompt | undefined;
+  cancelled: boolean;
+  readingMissing: boolean;
+}): boolean {
+  const { pending, indexed, message, cancelled, readingMissing } = input;
   if (pending !== null && pending !== "previous" && pending.cached) return !indexed;
-  return (
-    !readingMissing &&
-    shouldDiscoverPrompt(pending === "previous", indexed, message, cancelled, false)
-  );
+  if (readingMissing) return false;
+  return shouldDiscoverPrompt({
+    previous: pending === "previous",
+    indexed,
+    message,
+    cancelled,
+    readingMissing: false,
+  });
 }
 
 /** Stop pagination only when the actual original row is loaded, not its cache copy. */
-export function hasDiscoveredCachedPrompt(
-  pending: PromptTarget | "previous" | null,
-  loaded: PromptTarget[],
-  previous: PromptTarget | undefined,
-  readingMissing: boolean,
-  readingTarget: PromptTarget | undefined,
-  message: UserPrompt | undefined,
-): boolean {
+export function hasDiscoveredCachedPrompt(input: {
+  pending: PromptTarget | "previous" | null;
+  loaded: PromptTarget[];
+  previous: PromptTarget | undefined;
+  readingMissing: boolean;
+  readingTarget: PromptTarget | undefined;
+  message: UserPrompt | undefined;
+}): boolean {
+  const { pending, loaded, previous, readingMissing, readingTarget, message } = input;
   if (pending !== null && pending !== "previous" && pending.cached)
     return loaded.some(
       (target) => target.key === pending.key && target.item !== undefined && !target.cached,
     );
-  return hasDiscoveredPrompt(
-    pending === "previous",
+  return hasDiscoveredPrompt({
+    previousMode: pending === "previous",
     previous,
-    readingMissing,
-    readingTarget,
+    readingMode: readingMissing,
+    target: readingTarget,
     message,
-  );
+  });
 }
 
 /** Missing canonical identity is an actionable error, never a guessed source cursor. */
