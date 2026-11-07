@@ -1259,7 +1259,10 @@ describe("configured Claude rewind commits", () => {
         next: { ...newHandle, sessionId: "second", nativeHandle: "second" },
         onCommitted: () => {},
       }),
-    ).rejects.toMatchObject({ code: "HISTORY_STORAGE_CONFLICT" });
+    ).rejects.toMatchObject({
+      code: "HISTORY_STORAGE_CONFLICT",
+      reason: "query-admission-identity-changed",
+    });
     await expect(
       registry.applySnapshot(
         createManagedAgent({
@@ -1443,9 +1446,12 @@ describe("configured Claude rewind commits", () => {
       providerHistory: { sessionId: "new", origin: "imported" },
     });
   });
-  test.each(["codex", "foreign-handle"])(
-    "refuses %s transition without weakening Codex snapshots",
-    async (kind) => {
+  test.each([
+    { kind: "codex", reason: "rewind-canonical-record-changed" },
+    { kind: "foreign-handle", reason: "rewind-handle-conflict" },
+  ])(
+    "refuses $kind transition with $reason without weakening Codex snapshots",
+    async ({ kind, reason }) => {
       if (kind === "codex") {
         const old = (await registry.get("guarded"))!;
         await registry.update("guarded", (r) => ({
@@ -1468,7 +1474,7 @@ describe("configured Claude rewind commits", () => {
           next: kind === "codex" ? newHandle : { ...newHandle, provider: "other" },
           onCommitted: () => {},
         }),
-      ).rejects.toThrow();
+      ).rejects.toMatchObject({ code: "HISTORY_STORAGE_CONFLICT", reason });
       expect(await new AgentStorage(directory, log).get("guarded")).toEqual(
         normalizeStoredRecord(before),
       );

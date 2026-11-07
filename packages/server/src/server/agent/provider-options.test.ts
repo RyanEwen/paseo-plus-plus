@@ -389,21 +389,33 @@ describe("configured Codex history admission", () => {
   });
 
   test.each([
-    { mode: "replace", argv: ["wrapper"] },
-    { mode: "append", args: ["--profile", "other"] },
-    { mode: "append", args: ["-c", "sqlite_home='/other'"] },
-    { mode: "append", args: ["-c", "profiles.other.sqlite_home='/other'"] },
-    { mode: "append", args: ["--config", "broken"] },
-  ] satisfies ProviderCommand[])(
-    "rejects unresolved or conflicting native selector %j",
-    async (command) => {
+    { command: { mode: "replace", argv: ["wrapper"] }, reason: "unresolved-command-contract" },
+    {
+      command: { mode: "append", args: ["--profile", "other"] },
+      reason: "unresolved-native-profile-selector",
+    },
+    {
+      command: { mode: "append", args: ["-c", "sqlite_home='/other'"] },
+      reason: "command-sqlite-selector-conflict",
+    },
+    {
+      command: { mode: "append", args: ["-c", "profiles.other.sqlite_home='/other'"] },
+      reason: "unresolved-native-profile-selector",
+    },
+    {
+      command: { mode: "append", args: ["--config", "broken"] },
+      reason: "unresolved-command-config-selector",
+    },
+  ] satisfies { command: ProviderCommand; reason: string }[])(
+    "rejects unresolved or conflicting native selector $command.args with $reason",
+    async ({ command, reason }) => {
       const input = await configuredHistoryFixture();
       await expect(
         resolveConfiguredCodexHistory({
           ...input,
           runtimeSettings: { ...input.runtimeSettings, command },
         }),
-      ).rejects.toMatchObject({ code: "HISTORY_STORAGE_CONFLICT" });
+      ).rejects.toMatchObject({ code: "HISTORY_STORAGE_CONFLICT", reason });
     },
   );
 
@@ -491,7 +503,10 @@ describe("configured Codex history admission", () => {
         config: { provider: "claude", cwd: "/tmp" },
         operation: "create",
       }),
-    ).rejects.toMatchObject({ code: "HISTORY_STORAGE_CONFLICT" });
+    ).rejects.toMatchObject({
+      code: "HISTORY_STORAGE_CONFLICT",
+      reason: "explicit-profile-home-required",
+    });
   });
 });
 

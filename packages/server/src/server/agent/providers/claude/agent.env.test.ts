@@ -313,34 +313,39 @@ describe("configured Claude admission", () => {
       c.resumeSession(handle, undefined, { historyStorage: { ...storage, home: root } }),
     ).rejects.toThrow("bound-storage-changed");
   });
-  test.each(["symlink", "hardlink", "native", "missing", "namespace", "wrapper", "extraArgs"])(
-    "rejects %s route before subprocess",
-    async (kind) => {
-      let selected = home;
-      if (kind === "symlink") await symlink(root, path.join(home, "projects"));
-      if (kind === "hardlink") {
-        await writeFile(path.join(root, "source"), "fixture");
-        await link(path.join(root, "source"), path.join(home, "history.jsonl"));
-      }
-      if (kind === "native") selected = path.join(root, ".claude");
-      if (kind === "missing") selected = path.join(root, "missing");
-      expect(() =>
-        resolveConfiguredClaudeHistory({
-          policy: { mode: "configured" },
-          runtimeSettings: {
-            env: { CLAUDE_CONFIG_DIR: selected },
-            ...(kind === "wrapper"
-              ? { command: { mode: "replace" as const, argv: ["wrapper"] } }
-              : {}),
-          },
-          env: {
-            HOME: root,
-            CLAUDE_CONFIG_DIR: selected,
-            ...(kind === "namespace" ? { CLAUDE_CODE_PROJECT_DIR_NAME: "other" } : {}),
-          },
-          ...(kind === "extraArgs" ? { extraArgs: { resume: "other" } } : {}),
-        }),
-      ).toThrow();
-    },
-  );
+  test.each([
+    { kind: "symlink", reason: "history-symlink" },
+    { kind: "hardlink", reason: "history-hardlink" },
+    { kind: "native", reason: "known-native-history-root" },
+    { kind: "missing", reason: "configured-root-must-already-exist" },
+    { kind: "namespace", reason: "unsupported-project-namespace" },
+    { kind: "wrapper", reason: "unresolved-command-contract" },
+    { kind: "extraArgs", reason: "unresolved-command-selectors" },
+  ])("rejects $kind route before subprocess with $reason", async ({ kind, reason }) => {
+    let selected = home;
+    if (kind === "symlink") await symlink(root, path.join(home, "projects"));
+    if (kind === "hardlink") {
+      await writeFile(path.join(root, "source"), "fixture");
+      await link(path.join(root, "source"), path.join(home, "history.jsonl"));
+    }
+    if (kind === "native") selected = path.join(root, ".claude");
+    if (kind === "missing") selected = path.join(root, "missing");
+    expect(() =>
+      resolveConfiguredClaudeHistory({
+        policy: { mode: "configured" },
+        runtimeSettings: {
+          env: { CLAUDE_CONFIG_DIR: selected },
+          ...(kind === "wrapper"
+            ? { command: { mode: "replace" as const, argv: ["wrapper"] } }
+            : {}),
+        },
+        env: {
+          HOME: root,
+          CLAUDE_CONFIG_DIR: selected,
+          ...(kind === "namespace" ? { CLAUDE_CODE_PROJECT_DIR_NAME: "other" } : {}),
+        },
+        ...(kind === "extraArgs" ? { extraArgs: { resume: "other" } } : {}),
+      }),
+    ).toThrow(`Configured provider history cannot use this route: ${reason}`);
+  });
 });
