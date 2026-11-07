@@ -1,6 +1,7 @@
 import type { AppSettingsUpdate } from "@/hooks/use-settings/storage";
 import type { QueryClient } from "@tanstack/react-query";
 import type { SyncStatus } from "./model";
+import { SYNC_STATUS_POLICY } from "./status-policy";
 
 let handler: ((queryClient: QueryClient, updates: AppSettingsUpdate) => Promise<boolean>) | null =
   null;
@@ -38,7 +39,7 @@ export function installSettingsSyncSaveHandler(next: typeof handler) {
       latestGeneration = input.generation;
       if (!input.hydrated) {
         successfulReadGeneration = null;
-      } else if (["local", "ready", "readonly", "offline", "conflict"].includes(input.status)) {
+      } else if (SYNC_STATUS_POLICY[input.status].hasReadableValues) {
         successfulReadGeneration = input.generation;
       } else if (input.status !== "error" || successfulReadGeneration !== input.generation) {
         successfulReadGeneration = null;

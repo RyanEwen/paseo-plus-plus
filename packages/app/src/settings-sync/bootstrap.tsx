@@ -6,6 +6,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { loadAppSettingsFromStorage } from "@/hooks/use-settings";
 import { registerSettingsEditingBlocker } from "@/hooks/use-settings/editing-blocker";
 import { createSyncedAppSettingsSave } from "./app-edits";
+import { SYNC_STATUS_POLICY } from "./status-policy";
 import {
   settingsSync,
   initializeSettingsSyncDomains,
@@ -62,7 +63,7 @@ export function SettingsSyncBootstrap() {
       });
       setSettingsHostSelected(state.selectedHost !== null);
       setSettingsEditingBlocked(
-        !hydrated || !state.canWrite || !["local", "ready", "offline"].includes(state.status),
+        !hydrated || !state.canWrite || !SYNC_STATUS_POLICY[state.status].allowsEdits,
       );
     };
     updateGate();

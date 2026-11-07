@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { syncedSettingsPatches } from "./scope";
+import { SYNC_STATUS_POLICY } from "./status-policy";
 import {
   AppSettingsPatchSchema,
   AppSettingsSnapshotSchema,
@@ -248,7 +249,7 @@ export class SettingsSyncModel {
     if (
       !this.state.canWrite ||
       this.adoptedHost !== host ||
-      !["ready", "offline"].includes(this.state.status)
+      !SYNC_STATUS_POLICY[this.state.status].allowsEdits
     )
       throw new Error("Load the selected host's settings before editing");
     try {
