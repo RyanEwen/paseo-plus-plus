@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef } from "react";
 import { View, type CellRendererProps, type LayoutChangeEvent } from "react-native";
 import type { StreamItem } from "@/types/stream";
-import type { PaintedNativeTailBinding } from "../bottom-anchor-controller";
+import type { PaintedNativeTailBinding } from "../painted-landing";
 import { ActualPromptRowsContext } from "../actual-prompt-rows";
 import { NativeStickyLayoutContext } from "../native-sticky-layout-context";
 import {

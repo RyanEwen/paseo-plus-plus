@@ -4,10 +4,9 @@ import {
   deriveBottomAnchorBlockedReason,
   type BottomAnchorMode,
   type BottomAnchorRouteRequest,
-  type PaintedNativeTailBinding,
-  type PaintedNativeTailEvidence,
   type BottomAnchorUserScroll,
 } from "./bottom-anchor-controller";
+import type { PaintedNativeTailBinding, PaintedNativeTailEvidence } from "./painted-landing";
 import type { BottomAnchorTransportBehavior } from "./strategy";
 import {
   createNativeViewportLifetime,

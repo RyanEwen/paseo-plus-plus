@@ -60,12 +60,12 @@ import { createNativePromptJumpController } from "./native-prompt-jump";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 import { useRevisedHistoryRows } from "./history-row-revision";
-import {
-  useBottomAnchorController,
-  type PaintedNativeTailBinding,
-  type PaintedNativeTailRow,
-  type PaintedNativeTailEvidence,
-} from "./bottom-anchor-controller";
+import { useBottomAnchorController } from "./bottom-anchor-controller";
+import type {
+  PaintedNativeTailBinding,
+  PaintedNativeTailEvidence,
+  PaintedNativeTailRow,
+} from "./painted-landing";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type {
   StreamRenderInput,

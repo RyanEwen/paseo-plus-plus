@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { BottomAnchorTransportBehavior } from "./strategy";
+import {
+  createPaintedLanding,
+  getPaintedNativeTailGeometry,
+  type PaintedNativeTailEvidence,
+  type PaintedNativeTailGeometry,
+} from "./painted-landing";
 
 export type BottomAnchorMode = "sticky-bottom" | "detached";
 
@@ -14,47 +20,10 @@ export interface BottomAnchorLocalRequest {
   agentId: string;
 }
 
-/** Native layout evidence is scoped to one committed route, data snapshot and held list. */
-export interface PaintedNativeTailBinding {
-  agentId: string;
-  requestKey: string;
-  containerKey: string;
-  items: readonly { id: string }[];
-  scopeIdentity: object;
-  viewportIdentity: object;
-}
-
-/** A positive native cell frame, captured under its own committed binding. */
-export interface PaintedNativeTailRow {
-  binding: PaintedNativeTailBinding;
-  id: string;
-  index: number;
-  height: number;
-  mounted: boolean;
-}
-
-/** The caller must retain both current measurements and mounted-row identity. */
-export interface PaintedNativeTailEvidence {
-  current: PaintedNativeTailBinding;
-  row: PaintedNativeTailRow;
-}
-
 /** Terminal work belongs to the driver, agent, request and gesture that began it. */
 export interface BottomAnchorUserScroll {
   finish(params: { isNearBottom: boolean }): void;
   retire(): void;
-}
-
-interface PaintedNativeTailGeometry {
-  binding: PaintedNativeTailBinding;
-  viewportWidth: number;
-  viewportHeight: number;
-  contentHeight: number;
-}
-
-interface PaintedNativeLanding {
-  requestId: number;
-  geometry: PaintedNativeTailGeometry;
 }
 
 export type BottomAnchorBlockedReason =
@@ -67,14 +36,14 @@ type BottomAnchorRequestReason =
   | BottomAnchorRouteRequest["reason"]
   | BottomAnchorLocalRequest["reason"];
 
-interface BottomAnchorRequest {
+export interface BottomAnchorRequest {
   id: number;
   agentId: string;
   reason: BottomAnchorRequestReason;
   requestKey: string;
 }
 
-interface ControllerMeasurementState {
+export interface ControllerMeasurementState {
   containerKey: string;
   viewportWidth: number;
   viewportHeight: number;
@@ -84,7 +53,7 @@ interface ControllerMeasurementState {
   contentMeasuredForKey: string | null;
 }
 
-interface AttemptContext {
+export interface AttemptContext {
   requestId: number | null;
   retries: number;
   confirmationPasses?: number;
@@ -136,7 +105,7 @@ interface BottomAnchorControllerDriver {
   reevaluate: (animated?: boolean) => void;
 }
 
-interface CreateBottomAnchorControllerDriverInput {
+export interface CreateBottomAnchorControllerDriverInput {
   getAgentId: () => string;
   getIsAuthoritativeHistoryReady: () => boolean;
   getRenderStrategy: () => string;
@@ -157,84 +126,6 @@ interface CreateBottomAnchorControllerDriverInput {
 const MAX_VERIFICATION_RETRIES = 3;
 const WEB_PARTIAL_VIRTUALIZED_CONFIRMATION_DELAY_FRAMES = 1;
 const USER_SCROLL_AWAY_DELTA_PX = 24;
-
-/** Bind a physical painted row to the exact current conversation and viewport. */
-function samePaintedNativeBinding(left: PaintedNativeTailBinding, right: PaintedNativeTailBinding) {
-  return (
-    left.agentId === right.agentId &&
-    left.requestKey === right.requestKey &&
-    left.containerKey === right.containerKey &&
-    left.items === right.items &&
-    left.scopeIdentity === right.scopeIdentity &&
-    left.viewportIdentity === right.viewportIdentity
-  );
-}
-
-function samePaintedNativeGeometry(
-  left: PaintedNativeTailGeometry,
-  right: PaintedNativeTailGeometry,
-) {
-  return (
-    samePaintedNativeBinding(left.binding, right.binding) &&
-    left.viewportWidth === right.viewportWidth &&
-    left.viewportHeight === right.viewportHeight &&
-    left.contentHeight === right.contentHeight
-  );
-}
-
-function hasPaintedNativeMeasurements(metrics: ControllerMeasurementState) {
-  const currentViewport =
-    metrics.viewportHeight > 0 &&
-    metrics.viewportWidth > 0 &&
-    metrics.viewportMeasuredForKey === metrics.containerKey;
-  const currentContent =
-    metrics.contentHeight > 0 && metrics.contentMeasuredForKey === metrics.containerKey;
-  return currentViewport && currentContent && metrics.containerKey === "native-virtualized";
-}
-
-function isCurrentPaintedNativeRow({ current, row }: PaintedNativeTailEvidence) {
-  return (
-    samePaintedNativeBinding(current, row.binding) &&
-    row.mounted &&
-    row.height > 0 &&
-    Number.isFinite(row.height) &&
-    Number.isInteger(row.index) &&
-    row.index >= 0 &&
-    current.items[row.index]?.id === row.id
-  );
-}
-
-interface PaintedNativeTailInput {
-  input: CreateBottomAnchorControllerDriverInput;
-  request: BottomAnchorRequest | null;
-  metrics: ControllerMeasurementState;
-}
-
-/** Painted content permits only a provisional native route landing, never history readiness. */
-function getPaintedNativeTailGeometry({
-  input,
-  request,
-  metrics,
-}: PaintedNativeTailInput): PaintedNativeTailGeometry | null {
-  if (!request || (request.reason !== "initial-entry" && request.reason !== "resume")) return null;
-  if (input.getRenderStrategy() !== "chronological-native-stream") return null;
-  const evidence = input.getPaintedNativeTailEvidence?.();
-  if (!evidence) return null;
-  if (!hasPaintedNativeMeasurements(metrics)) return null;
-  const { current } = evidence;
-  const currentRoute =
-    current.agentId === input.getAgentId() &&
-    current.agentId === request.agentId &&
-    current.requestKey === request.requestKey &&
-    current.containerKey === metrics.containerKey;
-  if (!currentRoute || !isCurrentPaintedNativeRow(evidence)) return null;
-  return {
-    binding: current,
-    viewportWidth: metrics.viewportWidth,
-    viewportHeight: metrics.viewportHeight,
-    contentHeight: metrics.contentHeight,
-  };
-}
 
 function scheduleAnimationFrameWithDelay(input: {
   callback: () => void;
@@ -363,7 +254,6 @@ function createBottomAnchorControllerDriver(
   let mode: BottomAnchorMode = "sticky-bottom";
   let pendingRequest: BottomAnchorRequest | null = null;
   let pendingVerification: AttemptContext | null = null;
-  let paintedLanding: PaintedNativeLanding | null = null;
   let blockedReason: BottomAnchorBlockedReason | null = null;
   let attemptHandle: unknown = null;
   let verificationHandle: unknown = null;
@@ -372,6 +262,27 @@ function createBottomAnchorControllerDriver(
   let lastVerifiedStickyMeasurementRevision = 0;
   let isUserScrollActive = false;
   let activeUserScrollOwner: object | null = null;
+
+  // The painted-landing machine owns its own landing; it reaches the driver's
+  // request, verification and blocked-reason state only through this host.
+  const painted = createPaintedLanding({
+    input,
+    maxRetries: MAX_VERIFICATION_RETRIES,
+    getPendingRequest: () => pendingRequest,
+    clearPendingRequest: () => {
+      pendingRequest = null;
+    },
+    getPendingVerification: () => pendingVerification,
+    setPendingVerification: (attempt) => {
+      pendingVerification = attempt;
+    },
+    setBlockedReason: (reason) => setBlockedReason(reason),
+    deriveBlockedReason: (metrics) => deriveDriverBlockedReason(metrics),
+    markVerified: () => markStickyMeasurementVerified(),
+    cancelPendingAttempt: () => cancelPendingAttempt(),
+    scheduleVerification: (attempt) => scheduleVerification(attempt),
+    evaluate: (reason) => evaluate(false, reason),
+  });
 
   const setBlockedReason = (nextBlockedReason: BottomAnchorBlockedReason | null) => {
     if (blockedReason === nextBlockedReason) {
@@ -412,7 +323,7 @@ function createBottomAnchorControllerDriver(
   };
 
   const cancelPendingRequest = (_reason: string) => {
-    paintedLanding = null;
+    painted.reset();
     const currentRequest = pendingRequest;
     if (!currentRequest) {
       cancelPendingAttempt();
@@ -433,101 +344,6 @@ function createBottomAnchorControllerDriver(
         verificationHandle !== null ? (pendingVerification?.requestId ?? null) : null,
     });
 
-  /** Physical verification retires attempt debt; authority still owns route completion. */
-  function settlePaintedLanding() {
-    pendingVerification = null;
-    markStickyMeasurementVerified();
-    if (!input.getIsAuthoritativeHistoryReady()) {
-      setBlockedReason("waiting_for_history_readiness");
-      return;
-    }
-    pendingRequest = null;
-    paintedLanding = null;
-    setBlockedReason(null);
-  }
-
-  function blockPaintedLanding() {
-    setBlockedReason(
-      input.getIsAuthoritativeHistoryReady()
-        ? "waiting_for_post_layout_verification"
-        : "waiting_for_history_readiness",
-    );
-  }
-
-  /** Recheck observed native state within the existing three-retry frame budget.
-   * Unchanged geometry never causes another command, even after that budget ends.
-   */
-  function verifyPaintedLanding(attempt: AttemptContext, expected: PaintedNativeTailGeometry) {
-    const geometry = getPaintedNativeTailGeometry({
-      input,
-      request: pendingRequest,
-      metrics: input.getMeasurementState(),
-    });
-    if (!geometry || pendingRequest?.id !== attempt.requestId || !paintedLanding) {
-      pendingVerification = null;
-      paintedLanding = null;
-      setBlockedReason(deriveDriverBlockedReason(input.getMeasurementState()));
-      return;
-    }
-    if (!samePaintedNativeGeometry(geometry, expected)) {
-      pendingVerification = null;
-      evaluate(false, "painted_content_change");
-      return;
-    }
-    if (input.isNearBottom()) {
-      settlePaintedLanding();
-      return;
-    }
-    if (attempt.retries < MAX_VERIFICATION_RETRIES) {
-      pendingVerification = { ...attempt, retries: attempt.retries + 1 };
-      scheduleVerification(pendingVerification);
-    } else {
-      pendingVerification = null;
-    }
-    blockPaintedLanding();
-  }
-
-  /** Keep one provisional command per current target geometry under the same request. */
-  function tryPaintedLanding(metrics: ControllerMeasurementState): boolean {
-    const geometry = getPaintedNativeTailGeometry({ input, request: pendingRequest, metrics });
-    if (!geometry || !pendingRequest) {
-      if (pendingVerification?.paintedGeometry) cancelPendingAttempt();
-      paintedLanding = null;
-      return false;
-    }
-    const previous = paintedLanding;
-    const unchanged =
-      previous !== null &&
-      previous.requestId === pendingRequest.id &&
-      samePaintedNativeGeometry(previous.geometry, geometry);
-    if (unchanged) {
-      if (!pendingVerification && input.isNearBottom()) {
-        settlePaintedLanding();
-      } else {
-        blockPaintedLanding();
-      }
-      return true;
-    }
-    cancelPendingAttempt();
-    paintedLanding = { requestId: pendingRequest.id, geometry };
-    if (input.isNearBottom()) {
-      settlePaintedLanding();
-      return true;
-    }
-    pendingVerification = {
-      requestId: pendingRequest.id,
-      retries: 0,
-      paintedGeometry: geometry,
-      startedContentHeight: metrics.contentHeight,
-      startedOffsetY: metrics.offsetY,
-      startedViewportHeight: metrics.viewportHeight,
-    };
-    input.scrollToBottom(false);
-    scheduleVerification(pendingVerification);
-    blockPaintedLanding();
-    return true;
-  }
-
   const scheduleVerification = (attemptContext: AttemptContext, delayFramesOverride?: number) => {
     if (verificationHandle) {
       input.cancelFrame(verificationHandle);
@@ -538,7 +354,7 @@ function createBottomAnchorControllerDriver(
       callback: () => {
         verificationHandle = null;
         if (attemptContext.paintedGeometry) {
-          verifyPaintedLanding(attemptContext, attemptContext.paintedGeometry);
+          painted.verify(attemptContext, attemptContext.paintedGeometry);
           return;
         }
         const currentRequest = pendingRequest;
@@ -658,7 +474,7 @@ function createBottomAnchorControllerDriver(
       callback: () => {
         attemptHandle = null;
         const measurementState = input.getMeasurementState();
-        if (tryPaintedLanding(measurementState)) return;
+        if (painted.tryLand(measurementState)) return;
         const nextBlockedReason = deriveDriverBlockedReason(measurementState);
         setBlockedReason(nextBlockedReason);
 
@@ -678,7 +494,7 @@ function createBottomAnchorControllerDriver(
 
   const createRequest = (request: BottomAnchorRouteRequest | BottomAnchorLocalRequest) => {
     cancelPendingAttempt();
-    paintedLanding = null;
+    painted.reset();
     const nextRequest: BottomAnchorRequest = {
       id: requestSequence + 1,
       agentId: request.agentId,
@@ -716,7 +532,7 @@ function createBottomAnchorControllerDriver(
     resetForAgent() {
       lastRouteRequestKey = null;
       pendingRequest = null;
-      paintedLanding = null;
+      painted.reset();
       blockedReason = null;
       cancelPendingAttempt();
       stickyMeasurementRevision = 0;
@@ -742,7 +558,7 @@ function createBottomAnchorControllerDriver(
     beginUserScroll(): BottomAnchorUserScroll {
       isUserScrollActive = true;
       cancelPendingAttempt();
-      paintedLanding = null;
+      painted.reset();
       const owner = {};
       const startedRequestSequence = requestSequence;
       const startedAgent = input.getAgentId();
