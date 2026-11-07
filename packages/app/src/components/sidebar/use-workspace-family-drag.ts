@@ -7,12 +7,16 @@ import {
   type WorkspaceFamilyDragAuthority,
 } from "./workspace-tree-context";
 
-/** Observe authoritative inputs once per sidebar, without adding hot-store subscriptions per row. */
+/**
+ * Observe authoritative inputs once per sidebar, without adding hot-store subscriptions per row.
+ *
+ * @param serverIds the distinct hosts that own the rendered families (`placementServerIds`).
+ */
 export function useWorkspaceFamilyDragAuthority(
   serverIds: readonly string[],
 ): WorkspaceFamilyDragAuthority {
   // Placement metadata can change without changing the hosts that own the projection.
-  const hostScope = [...new Set(serverIds)].sort();
+  const hostScope = [...serverIds].sort();
   const scopeRef = useRef(hostScope);
   if (!shallow(scopeRef.current, hostScope)) scopeRef.current = hostScope;
   const stableHostScope = scopeRef.current;

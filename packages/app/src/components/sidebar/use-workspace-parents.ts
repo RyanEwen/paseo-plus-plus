@@ -46,12 +46,16 @@ function sameRelationships(left: WorkspaceTreeSession[], right: WorkspaceTreeSes
   });
 }
 
-/** Subscribe once for the sidebar, with agent IDs interpreted only inside their owning host. */
-export function useWorkspaceParents(workspaces: readonly SidebarWorkspacePlacement[]) {
-  const serverIds = useMemo(
-    () => [...new Set(workspaces.map((workspace) => workspace.serverId))],
-    [workspaces],
-  );
+/**
+ * Subscribe once for the sidebar, with agent IDs interpreted only inside their owning host.
+ *
+ * @param serverIds the distinct hosts of `workspaces` (`placementServerIds`), computed once by the
+ *   sidebar model and shared with the drag authority.
+ */
+export function useWorkspaceParents(
+  workspaces: readonly SidebarWorkspacePlacement[],
+  serverIds: readonly string[],
+) {
   const sessions = useStoreWithEqualityFn(
     useSessionStore,
     (state) =>

@@ -3,7 +3,7 @@ import { useWorkspaceFamilyDragAuthority } from "./use-workspace-family-drag";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceParents } from "./use-workspace-parents";
 import { SidebarWorkspaceTreeProvider } from "./workspace-tree-context";
-import type { WorkspaceTreeNode } from "./workspace-tree";
+import { placementServerIds, type WorkspaceTreeNode } from "./workspace-tree";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import { filterSidebarByText } from "./sidebar-text-filter";
 import { ProjectPinGutterProvider } from "./project-pin-gutter";
@@ -232,12 +232,12 @@ export function SidebarModelProvider({
       showBranch,
     ],
   );
-  const workspaceParents = useWorkspaceParents(list.workspacePlacements);
-  const familyDragServerIds = useMemo(
-    () => [...new Set(list.workspacePlacements.map((workspace) => workspace.serverId))],
+  const familyServerIds = useMemo(
+    () => placementServerIds(list.workspacePlacements),
     [list.workspacePlacements],
   );
-  const dragAuthority = useWorkspaceFamilyDragAuthority(familyDragServerIds);
+  const workspaceParents = useWorkspaceParents(list.workspacePlacements, familyServerIds);
+  const dragAuthority = useWorkspaceFamilyDragAuthority(familyServerIds);
   const activeWorkspace = useActiveWorkspaceSelection();
   const activeWorkspaceKey =
     list.workspacePlacements.find((workspace) => {

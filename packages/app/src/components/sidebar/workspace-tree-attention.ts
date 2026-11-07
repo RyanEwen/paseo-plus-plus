@@ -5,6 +5,7 @@ import {
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { SidebarWorkspacePlacement } from "@/hooks/use-sidebar-workspaces-list";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import { placementServerIds } from "./workspace-tree";
 
 /** Project only the shared attention fields and the authoritative workspace boundary. */
 export type WorkspaceAttentionAgent = Pick<
@@ -74,7 +75,7 @@ export function buildWorkspaceHumanAttentionKeys(input: {
 export function createWorkspaceHumanAttentionSelector(
   workspaces: readonly SidebarWorkspacePlacement[],
 ) {
-  const serverIds = [...new Set(workspaces.map((workspace) => workspace.serverId))];
+  const serverIds = placementServerIds(workspaces);
   let previousMaps: WorkspaceAttentionMaps[] | null = null;
   let previousKeys: ReadonlySet<string> = new Set();
   return function select(

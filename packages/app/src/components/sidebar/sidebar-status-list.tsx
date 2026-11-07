@@ -67,6 +67,7 @@ import { useOpenWorkspaceKeep } from "@/components/sidebar/use-limited-sidebar-g
 import { useWorkspaceFamilyWindow } from "./use-workspace-family-window";
 import { useSidebarWorkspaceFamilyPresentation } from "./workspace-tree-context";
 import { WorkspaceTreeBranch } from "./workspace-tree-branch";
+import { indexByWorkspaceKey } from "./workspace-tree";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
@@ -315,12 +316,7 @@ function StatusGroupList({
     collapsedGroupKeys: collapsedWorkspaceGroupKeys,
   });
   const familyItemsByKey = useMemo(
-    () =>
-      new Map(
-        groups
-          .flatMap((group) => group.rows)
-          .map((workspace) => [workspace.workspaceKey, workspace]),
-      ),
+    () => indexByWorkspaceKey(groups.flatMap((group) => group.rows)),
     [groups],
   );
   const positionTransitionDuration = useSidebarPositionTransitionDuration();

@@ -4,6 +4,7 @@ import { useLimitedSidebarGroup } from "./use-limited-sidebar-group";
 import {
   collectActiveWorkspaceKeys,
   includeActiveWorkspaceFamily,
+  indexByWorkspaceKey,
   workspaceFamilyRoots,
   workspaceFamilyUpdatedAt,
 } from "./workspace-tree";
@@ -21,10 +22,7 @@ export function useWorkspaceFamilyWindow<T extends SidebarWorkspacePlacement>(
   keep?: (item: T) => boolean,
 ) {
   const { tree, activeWorkspaceKey, entries } = useSidebarWorkspaceTree();
-  const itemsByKey = useMemo(
-    () => new Map(items.map((item) => [item.workspaceKey, item])),
-    [items],
-  );
+  const itemsByKey = useMemo(() => indexByWorkspaceKey(items), [items]);
   const activeWorkspaceKeys = useMemo(
     () => collectActiveWorkspaceKeys(entries, itemsByKey.keys()),
     [entries, itemsByKey],

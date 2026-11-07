@@ -2,6 +2,7 @@ import {
   EMPTY_WORKSPACE_TREE,
   collectActiveWorkspaceKeys,
   includeActiveWorkspaceFamily,
+  indexByWorkspaceKey,
   workspaceFamilyRoots,
   workspaceFamilyUpdatedAt,
   type WorkspaceTreeNode,
@@ -57,7 +58,7 @@ export function buildStatusListItems({
     result.push({ kind: "header", group, collapsed });
     if (collapsed) continue;
     const expanded = expandedGroupKeys.has(group.key);
-    const entries = new Map(group.rows.map((row) => [row.workspaceKey, row]));
+    const entries = indexByWorkspaceKey(group.rows);
     const roots = workspaceFamilyRoots(group.rows, workspaceTree);
     const { visibleItems, canToggle } = limitSidebarWorkspaces({
       items: roots,

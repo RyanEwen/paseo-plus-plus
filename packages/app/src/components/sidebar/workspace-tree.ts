@@ -29,6 +29,20 @@ export function sameWorkspaceTreeAgents(
   return true;
 }
 
+/** The distinct hosts that own a set of placements, in first-seen order. */
+export function placementServerIds(
+  workspaces: readonly Pick<SidebarWorkspacePlacement, "serverId">[],
+): string[] {
+  return [...new Set(workspaces.map((workspace) => workspace.serverId))];
+}
+
+/** Index rows by their host-qualified workspace key. */
+export function indexByWorkspaceKey<T extends Pick<SidebarWorkspacePlacement, "workspaceKey">>(
+  items: readonly T[],
+): Map<string, T> {
+  return new Map(items.map((item) => [item.workspaceKey, item]));
+}
+
 export interface WorkspaceTreeSession {
   serverId: string;
   hasHydratedAgents: boolean;
@@ -128,7 +142,7 @@ export function orderWorkspaceFamilies<T extends SidebarWorkspacePlacement>(inpu
   workspaces: readonly T[];
   parents: ReadonlyMap<string, string>;
 }): { rows: T[]; tree: ReadonlyMap<string, WorkspaceTreeNode> } {
-  const items = new Map(input.workspaces.map((workspace) => [workspace.workspaceKey, workspace]));
+  const items = indexByWorkspaceKey(input.workspaces);
   const tree = new Map<string, WorkspaceTreeNode>();
   for (const key of items.keys()) {
     const parent = input.parents.get(key);
