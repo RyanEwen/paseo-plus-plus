@@ -5,11 +5,8 @@ import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { queryClient } from "@/data/query-client";
 import { useAppSettings } from "@/hooks/use-settings";
-import {
-  APP_SETTINGS_QUERY_KEY,
-  DEFAULT_CLIENT_SETTINGS,
-  type AppSettings,
-} from "@/hooks/use-settings/storage";
+import { readAppSettingsSnapshot } from "@/hooks/use-settings/snapshot";
+import type { AppSettings } from "@/hooks/use-settings/storage";
 import { create } from "zustand";
 import {
   expireWorkingDiffComparisonsInState,
@@ -63,9 +60,7 @@ function comparisonPolicy(settings: AppSettings): WorkingDiffComparisonPolicy {
 }
 
 function currentComparisonPolicy(): WorkingDiffComparisonPolicy {
-  const settings =
-    queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS;
-  return comparisonPolicy(settings);
+  return comparisonPolicy(readAppSettingsSnapshot(queryClient));
 }
 
 /** Shares a hydrated comparison and remembers explicit selections for this workspace. */

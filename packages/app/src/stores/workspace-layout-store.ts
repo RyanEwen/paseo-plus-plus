@@ -1,9 +1,5 @@
 import { queryClient } from "@/data/query-client";
-import {
-  APP_SETTINGS_QUERY_KEY,
-  DEFAULT_CLIENT_SETTINGS,
-  type AppSettings,
-} from "@/hooks/use-settings/storage";
+import { readAppSettingsSnapshot } from "@/hooks/use-settings/snapshot";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
@@ -490,8 +486,7 @@ function getWorkspaceLayout(
   if (state[workspaceKey]) {
     return normalizeLayout(state[workspaceKey]);
   }
-  const settings =
-    queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS;
+  const settings = readAppSettingsSnapshot(queryClient);
   return createWorkspaceLayoutWithExplorerSidebar({ autoOpen: settings.autoOpenExplorerSidebar });
 }
 
