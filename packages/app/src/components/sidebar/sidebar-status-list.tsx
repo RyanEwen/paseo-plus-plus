@@ -98,7 +98,6 @@ interface StatusWorkspaceListProps {
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspaceEntry[]) => void;
-  listHeaderComponent?: ReactNode;
   emptyProjectContent?: ReactNode;
   /** Swaps the group list for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty?: boolean;
@@ -117,7 +116,6 @@ export function SidebarStatusWorkspaceList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
-  listHeaderComponent,
   emptyProjectContent,
   sidebarFilterEmpty = false,
   parentGestureRef,
@@ -235,7 +233,6 @@ export function SidebarStatusWorkspaceList({
           )}
         </View>
       ) : null}
-      {listHeaderComponent}
       {sidebarFilterEmpty ? (
         <SidebarFilterEmptyState />
       ) : (

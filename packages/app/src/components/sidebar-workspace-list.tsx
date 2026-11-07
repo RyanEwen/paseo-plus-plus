@@ -106,6 +106,8 @@ import {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { SidebarHeadingFrame } from "@/components/sidebar/sidebar-heading-frame";
+import { shouldShowSidebarHeading } from "@/components/sidebar/sidebar-heading-visibility";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import {
   ContextMenu,
@@ -281,8 +283,8 @@ interface SidebarWorkspaceListProps {
   onAddProject?: () => void;
   onImportSession?: () => void;
   listFooterComponent?: ReactElement | null;
-  // Rendered inside the scroll area, below the Pinned section and above the workspace
-  // list. Holds the "Workspaces" section header so pinned items sit above it.
+  // The "Workspaces" section header. Rendered above the mode's scroll container, so it stays in
+  // place while the list scrolls; `shouldShowSidebarHeading` decides when it is shown.
   listHeaderComponent?: ReactElement | null;
   /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -2194,6 +2196,7 @@ export function SidebarWorkspaceList({
   );
   const sidebarFilterEmpty =
     (hasProjectsBeforeFilter || quickFilterActive) && projects.length === 0;
+  const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
 
   // Project mode is the one that keeps its project headers; every other grouping mode is a flat
   // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
@@ -2238,7 +2241,6 @@ export function SidebarWorkspaceList({
           shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
           onWorkspacePress={onWorkspacePress}
           sidebarFilterEmpty={false}
-          hasActiveProjectFilter={false}
           parentGestureRef={parentGestureRef}
           dragGestureHostActive={dragGestureHostActive}
           pathname={pathname}
@@ -2282,7 +2284,6 @@ export function SidebarWorkspaceList({
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
-        listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
         parentGestureRef={parentGestureRef}
         dragGestureHostActive={dragGestureHostActive}
@@ -2301,9 +2302,7 @@ export function SidebarWorkspaceList({
         onAddProject={onAddProject}
         onImportSession={onImportSession}
         listFooterComponent={listFooterComponent}
-        listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
-        hasActiveProjectFilter={hasActiveProjectFilter}
         parentGestureRef={parentGestureRef}
         dragGestureHostActive={dragGestureHostActive}
         pathname={pathname}
@@ -2315,7 +2314,24 @@ export function SidebarWorkspaceList({
       />
     );
 
-  return <SidebarPositionTransitions>{content}</SidebarPositionTransitions>;
+  const showHeading = shouldShowSidebarHeading({
+    groupMode,
+    unpinnedProjectCount: projectModePins.unpinnedProjects.length,
+    pinnedWorkspaceCount: pinnedGroups.pinnedChats.length,
+    emptyProjectCount: emptyProjects.length,
+    groupsEmptyProjects: groupEmptyProjects,
+    hasActiveHostFilter,
+    hasActiveProjectFilter,
+    sidebarFilterEmpty,
+  });
+
+  return (
+    <SidebarPositionTransitions>
+      <SidebarHeadingFrame heading={listHeaderComponent} showHeading={showHeading}>
+        {content}
+      </SidebarHeadingFrame>
+    </SidebarPositionTransitions>
+  );
 }
 
 /**
@@ -2336,7 +2352,6 @@ function SidebarGroupedModeList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
-  listHeaderComponent,
   sidebarFilterEmpty,
   parentGestureRef,
   dragGestureHostActive,
@@ -2352,7 +2367,6 @@ function SidebarGroupedModeList({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
-  listHeaderComponent?: ReactElement | null;
   sidebarFilterEmpty: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
@@ -2380,7 +2394,6 @@ function SidebarGroupedModeList({
       supportsPinningByServerId={supportsPinningByServerId}
       onToggleWorkspacePin={onToggleWorkspacePin}
       onPinnedWorkspaceReorder={onPinnedWorkspaceReorder}
-      listHeaderComponent={listHeaderComponent}
       sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
       dragGestureHostActive={dragGestureHostActive}
@@ -2402,9 +2415,7 @@ function ProjectModeList({
   onAddProject,
   onImportSession,
   listFooterComponent,
-  listHeaderComponent,
   sidebarFilterEmpty,
-  hasActiveProjectFilter,
   parentGestureRef,
   dragGestureHostActive,
   pathname,
@@ -2419,6 +2430,8 @@ function ProjectModeList({
   | "projectIconTargets"
   | "groupMode"
   | "hasProjectsBeforeFilter"
+  | "listHeaderComponent"
+  | "hasActiveProjectFilter"
   | "isRefreshing"
   | "onRefresh"
 > & {
@@ -2440,7 +2453,6 @@ function ProjectModeList({
   const projectActivity = useSidebarProjectActivity(projects, workspaceEntriesByKey);
   const projectPinningEnabled = useProjectPinningEnabled();
   const { t } = useTranslation();
-  const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
@@ -2836,20 +2848,6 @@ function ProjectModeList({
           )}
         </View>
       ) : null}
-      {/* The header carries the display menu, which is the only way back out of a filter, so it
-        stays for as long as a filter is what emptied the list. It is absent only when the
-        sidebar is genuinely empty, where a section heading would sit over nothing.
-        Every filter that can empty this branch needs a term here: a project filter pinned to a
-        project whose chats are all pinned leaves `unpinnedProjects` empty, and without its term
-        the header would go with it, taking the only route back to the filter page. */}
-      {unpinnedProjects.length > 0 ||
-      pinnedChats.length > 0 ||
-      emptyProjectContent ||
-      hasActiveHostFilter ||
-      hasActiveProjectFilter ||
-      sidebarFilterEmpty
-        ? listHeaderComponent
-        : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {emptyProjectContent ? (
         <SidebarEmptyProjectGroup>{emptyProjectContent}</SidebarEmptyProjectGroup>
