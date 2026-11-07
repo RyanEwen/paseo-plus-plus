@@ -23,10 +23,24 @@ export interface CreationAgentAttempt {
   acknowledgeManager(agentId: string): void;
   markProviderDispatch(agentId: string): void;
   certifyHistoryIntentReservation(agentId: string, workspaceId: string | undefined): void;
+  /** The original workspace of a proven-safe retry; throws once the manager has the attempt. */
   resolveRetryWorkspaceId(agentId: string): string;
+  /** Throws unless retry placement is still admitted; the same check as resolveRetryWorkspaceId. */
+  assertRetryPlacementAdmitted(agentId: string): void;
   consumeHistoryRetry(agentId: string): void;
 }
 
+/**
+ * Where one agent creation attempt stands. It only moves forward:
+ * entered -> acknowledged (manager has it) -> reserved (owns its history intent) -> dispatched,
+ * and acknowledged may dispatch without a reservation.
+ */
+type AttemptStage = "entered" | "acknowledged" | "reserved" | "dispatched";
+
+/**
+ * Track one agent creation attempt so a failure can be classified as safe to retry or unknown.
+ * Every callback refuses an expired attempt, another agent ID, or an out-of-order step.
+ */
 function createAgentAttempt(
   agentId: string,
   retryHistoryIntent: boolean,
@@ -34,52 +48,50 @@ function createAgentAttempt(
   assertCurrent: () => void,
 ) {
   let live = true;
-  let acknowledged = false;
-  let dispatched = false;
-  let ownsIntent = false;
+  let stage: AttemptStage = "entered";
   let reservedWorkspaceId: string | undefined;
-  let consumed = false;
+  let retryConsumed = false;
   const assertLive = (id: string) => {
     if (!live || id !== agentId)
       throw new Error("Creation attempt is expired or has another agent ID");
     assertCurrent();
   };
+  const isPreDispatch = () => stage === "acknowledged" || stage === "reserved";
+  const retryPlacement = (id: string): string => {
+    assertLive(id);
+    if (!retryHistoryIntent || stage !== "entered" || !originalWorkspaceId)
+      throw new Error("Creation retry placement is not admitted");
+    return originalWorkspaceId;
+  };
   const context: CreationAgentAttempt = Object.freeze({
     retryHistoryIntent,
     acknowledgeManager(id: string) {
       assertLive(id);
-      if (acknowledged) throw new Error("Creation attempt already entered its manager");
-      acknowledged = true;
+      if (stage !== "entered") throw new Error("Creation attempt already entered its manager");
+      stage = "acknowledged";
     },
     certifyHistoryIntentReservation(id: string, workspaceId: string | undefined) {
       assertLive(id);
-      if (
-        !acknowledged ||
-        dispatched ||
-        ownsIntent ||
-        (originalWorkspaceId !== null && originalWorkspaceId !== workspaceId)
-      )
+      const workspaceMismatch = originalWorkspaceId !== null && originalWorkspaceId !== workspaceId;
+      if (stage !== "acknowledged" || workspaceMismatch)
         throw new Error("Creation intent ownership is not admitted");
       reservedWorkspaceId = workspaceId;
-      ownsIntent = true;
+      stage = "reserved";
     },
-    resolveRetryWorkspaceId(id: string) {
-      assertLive(id);
-      if (!retryHistoryIntent || acknowledged || dispatched || !originalWorkspaceId)
-        throw new Error("Creation retry placement is not admitted");
-      return originalWorkspaceId;
+    resolveRetryWorkspaceId: retryPlacement,
+    assertRetryPlacementAdmitted(id: string) {
+      retryPlacement(id);
     },
     markProviderDispatch(id: string) {
       assertLive(id);
-      if (!acknowledged || dispatched)
-        throw new Error("Creation provider dispatch is not admitted");
-      dispatched = true;
+      if (!isPreDispatch()) throw new Error("Creation provider dispatch is not admitted");
+      stage = "dispatched";
     },
     consumeHistoryRetry(id: string) {
       assertLive(id);
-      if (!acknowledged || dispatched || !retryHistoryIntent || consumed)
+      if (!isPreDispatch() || !retryHistoryIntent || retryConsumed)
         throw new Error("Creation history retry is not admitted");
-      consumed = true;
+      retryConsumed = true;
     },
   });
   return {
@@ -87,17 +99,11 @@ function createAgentAttempt(
     finish() {
       live = false;
     },
-    get acknowledged() {
-      return acknowledged;
-    },
-    get ownsIntent() {
-      return ownsIntent;
+    get stage() {
+      return stage;
     },
     get workspaceId() {
       return reservedWorkspaceId;
-    },
-    get dispatched() {
-      return dispatched;
     },
   };
 }
@@ -165,7 +171,8 @@ function hasUnknownCreationEffects(
   return (
     stage === "prompt" ||
     (stage === "workspace" && !rejectedBeforeProvision) ||
-    (stage === "agent" && (!attempt?.acknowledged || !attempt.ownsIntent || attempt.dispatched))
+    // Only an attempt that reserved its intent and never dispatched is known to be effect-free.
+    (stage === "agent" && attempt?.stage !== "reserved")
   );
 }
 
@@ -175,14 +182,7 @@ function isSafeOwnedCreationFailure(
   unknown: boolean,
   attempt: ReturnType<typeof createAgentAttempt> | undefined,
 ): boolean {
-  return (
-    stage === "agent" &&
-    !unknown &&
-    attempt?.acknowledged === true &&
-    attempt.ownsIntent &&
-    !attempt.dispatched &&
-    !record.snapshot.agent
-  );
+  return stage === "agent" && !unknown && attempt?.stage === "reserved" && !record.snapshot.agent;
 }
 
 /** Owns creation across socket lifetimes. Resource owners perform work; this module commits its milestones. */

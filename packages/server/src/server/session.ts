@@ -4429,14 +4429,12 @@ export class Session {
     agentId: string | undefined,
     creationAttempt: CreationAgentAttempt,
   ) {
-    const createdDirectoryWorkspace = Boolean(
-      !msg.workspaceId && !msg.callerAgentId && !msg.worktree,
-    );
+    const createdDirectoryWorkspace = !msg.workspaceId && !msg.callerAgentId && !msg.worktree;
     if (!agentId) throw new Error("Creation retry is missing its reserved agent ID");
     const workspaceId = creationAttempt.resolveRetryWorkspaceId(agentId);
     // This ID came from this operation's certified reservation, not a cwd lookup.
     const original = await this.agentStorage.get(agentId, { includeHistoryIntents: true });
-    creationAttempt.resolveRetryWorkspaceId(agentId);
+    creationAttempt.assertRetryPlacementAdmitted(agentId);
     if (
       !isUncommittedCreatedIntent(original) ||
       original.workspaceId !== workspaceId ||
@@ -4445,7 +4443,7 @@ export class Session {
     )
       throw new Error("Creation retry no longer matches its original intention");
     const workspace = await this.workspaceRegistry.get(workspaceId);
-    creationAttempt.resolveRetryWorkspaceId(agentId);
+    creationAttempt.assertRetryPlacementAdmitted(agentId);
     if (!workspace || workspace.archivedAt || resolve(workspace.cwd) !== resolve(original.cwd))
       throw new Error("Creation retry's original workspace is missing or changed");
     // The legacy worktree path cleans up on failure. Reprovisioning or converting

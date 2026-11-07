@@ -429,6 +429,7 @@ test("safe restart retry joins once and dispatched uncertainty never grants a th
     attempt.certifyHistoryIntentReservation(id, workspace.id);
     expect(() => attempt.certifyHistoryIntentReservation(id, workspace.id)).toThrow("not admitted");
     expect(() => attempt.acknowledgeManager(id)).toThrow("already entered");
+    expect(() => attempt.assertRetryPlacementAdmitted(id)).toThrow("not admitted");
     if (callbacks === 1) {
       firstAttempt = attempt;
       expect(() => attempt.consumeHistoryRetry(id)).toThrow("not admitted");
@@ -450,6 +451,7 @@ test("safe restart retry joins once and dispatched uncertainty never grants a th
   for (const act of [
     () => firstAttempt!.certifyHistoryIntentReservation(agent.id, workspace.id),
     () => firstAttempt!.resolveRetryWorkspaceId(agent.id),
+    () => firstAttempt!.assertRetryPlacementAdmitted(agent.id),
     () => firstAttempt!.acknowledgeManager(agent.id),
     () => firstAttempt!.markProviderDispatch(agent.id),
     () => firstAttempt!.consumeHistoryRetry(agent.id),
