@@ -1,4 +1,3 @@
-import type { WorkspaceTabSplitMenu } from "./workspace-tab-split-menu";
 import { Fragment, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text } from "react-native";
@@ -90,13 +89,11 @@ export function MobileTabTrailingAccessory({
   menuTestIDBase,
   presentationLabel,
   menuEntries,
-  splitMenu,
   openWith,
 }: {
   menuTestIDBase: string;
   presentationLabel: string;
   menuEntries: WorkspaceTabMenuEntry[];
-  splitMenu?: WorkspaceTabSplitMenu;
   /** A file tab's "Open with…" row and its page. */
   openWith?: FilePanelOpenWithMenu;
 }): ReactElement {
@@ -117,11 +114,9 @@ export function MobileTabTrailingAccessory({
         align="end"
         width={220}
         sheetTitle={presentationLabel}
-        pages={[...(splitMenu?.pages ?? []), ...(openWith?.pages ?? [])]}
-        scrollable={Boolean(splitMenu?.pages.length || openWith?.pages.length)}
+        pages={openWith?.pages}
         testID={menuTestIDBase}
       >
-        {splitMenu?.trigger}
         {menuEntries.map((entry) => {
           if (entry.kind === "separator") return <DropdownMenuSeparator key={entry.key} />;
           if (entry.kind === "file-panel-open-with") {
