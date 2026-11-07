@@ -3,8 +3,8 @@ import { getStreamItemMessageId } from "@/types/stream";
 import {
   mergeRetainedPrompts,
   retainedCanonicalPositions,
-  type CanonicalPromptContext,
 } from "@/timeline/canonical-prompt-context";
+import type { CanonicalPromptContext } from "@/timeline/canonical-prompt-model";
 import { nativeChronologicalRows } from "./native-actual-row-model";
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";

@@ -14,8 +14,8 @@ import { createStreamPresentation } from "../presentation";
 import {
   mergeRetainedPrompts,
   retainedCanonicalPositions,
-  type CanonicalPromptContext,
 } from "@/timeline/canonical-prompt-context";
+import type { CanonicalPromptContext } from "@/timeline/canonical-prompt-model";
 import { useStreamHistoryWindow } from "../use-stream-history-window";
 
 export const ACTUAL_PROMPT_ID = "message-1";

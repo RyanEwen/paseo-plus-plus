@@ -17,13 +17,21 @@ import {
 } from "@/timeline/canonical-reading-source";
 import {
   createCanonicalPromptContexts,
+  type CanonicalPromptLookup,
+} from "@/timeline/canonical-prompt-context";
+import {
   canonicalPromptSourceKey,
   CanonicalPromptContextBudgetError,
   type CanonicalPromptContext,
-  type CanonicalPromptLookup,
-} from "@/timeline/canonical-prompt-context";
+} from "@/timeline/canonical-prompt-model";
 import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
-import type { ContextPromptIndexReader } from "@/timeline/read-canonical-prompt-context";
+import {
+  fetchReadingPromptContext,
+  type ContextPromptIndexReader,
+  type ContextPage,
+  type ContextEntry,
+  type ContextPageReader,
+} from "@/timeline/read-canonical-prompt-context";
 import { useNativeReadingRefresh } from "../native-sticky-viewport";
 import {
   createNativeMeasuredHeaderIndex,
@@ -43,7 +51,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StreamViewportHandle } from "../strategy";
-import { PROMPT_DISCOVERY_PAGE_BUDGET } from "../use-prompt-discovery";
+import { PROMPT_DISCOVERY_PAGE_BUDGET } from "@/timeline/timeline-fetch-policy";
 import { createPromptReadingPublisher } from "../prompt-reading-position";
 import { usePromptNavigationControls } from "../use-prompt-navigation-controls";
 import * as protocolSchemas from "@getpaseo/protocol/messages";
@@ -52,14 +60,7 @@ import type {
   AgentTimelinePromptIndexPayload,
   DaemonClient,
 } from "@getpaseo/client/internal/daemon-client";
-import {
-  fetchReadingPromptContext,
-  childContextPageReader,
-  normalContextPageReader,
-  type ContextPage,
-  type ContextEntry,
-  type ContextPageReader,
-} from "../fetch-reading-prompt-context";
+import { childContextPageReader, normalContextPageReader } from "../fetch-reading-prompt-context";
 import {
   resolveRetainedContextSource,
   resolvePromptFeedback,
@@ -922,7 +923,7 @@ describe("initial prompt discovery", () => {
 });
 
 describe("viewport-owned sticky prompt", () => {
-  it("hides while the original bubble intersects the viewport and follows manual reading", () => {
+  it("follows manual reading", () => {
     const first = stickyUser("first", 1);
     const second = stickyUser("second", 3);
     const answer = {
@@ -936,39 +937,36 @@ describe("viewport-owned sticky prompt", () => {
     const input = { ...stickyInput([first, answer, second], stickyOutline([1, 3])), reading };
     const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
     expect(result.current.message?.id).toBe("second");
-    act(() => reading.publish(first.id, [first.id]));
+    act(() => reading.publish({ rowId: first.id }));
     expect(result.current.message?.id).toBe("first");
-    expect(result.current.stickyVisible).toBe(false);
     act(() =>
-      reading.publish(first.id, [first.id], false, false, true, null, [
-        { id: first.id, progress: 1 },
-      ]),
+      reading.publish({
+        rowId: first.id,
+        navigating: false,
+        following: false,
+        manual: true,
+        seq: null,
+      }),
     );
-    expect(result.current.stickyVisible).toBe(true);
-    expect(result.current.stickyProgress).toBe(1);
-    act(() => reading.publish(first.id, [first.id]));
-    expect(result.current.stickyVisible).toBe(false);
-    act(() => reading.publish(answer.id));
-    expect(result.current.stickyVisible).toBe(true);
+    act(() => reading.publish({ rowId: first.id }));
+    act(() => reading.publish({ rowId: answer.id }));
     const incoming = stickyUser("third", 4);
     rerender({ ...input, items: [...input.items, incoming], outline: stickyOutline([1, 3, 4]) });
     expect(result.current.message?.id).toBe("first");
-    act(() => reading.publish(second.id, [second.id]));
+    act(() => reading.publish({ rowId: second.id }));
     expect(result.current.message?.id).toBe("second");
-    expect(result.current.stickyVisible).toBe(false);
   });
   it("keeps an arrow target selected while smooth scrolling passes other prompts", () => {
     const users = [stickyUser("first", 1), stickyUser("second", 2), stickyUser("third", 3)];
     const reading = createPromptReadingPublisher();
     const input = { ...stickyInput(users, stickyOutline([1, 2, 3])), reading };
     const { result } = renderHook(useStickyPrompt, { initialProps: input });
-    act(() => reading.publish(users[2]!.id, [users[2]!.id]));
+    act(() => reading.publish({ rowId: users[2]!.id }));
     act(() => result.current.activate("third", -1));
-    act(() => reading.publish("third", [], true));
+    act(() => reading.publish({ rowId: "third", navigating: true }));
     expect(result.current.message?.id).toBe("second");
-    act(() => reading.publish("second", ["second"], false));
+    act(() => reading.publish({ rowId: "second", navigating: false }));
     expect(result.current.message?.id).toBe("second");
-    expect(result.current.stickyVisible).toBe(false);
     expect(input.jumpToLoaded).toHaveBeenCalledWith("second", "pinned");
   });
 });
@@ -995,7 +993,7 @@ it("reads an unloaded active prompt without replacing or scrolling the viewport,
     fetchPrompt,
   };
   const { result } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() => reading.publish(olderAnswer.id));
+  act(() => reading.publish({ rowId: olderAnswer.id }));
   await waitFor(() => expect(result.current.error).toBe(true));
   expect(result.current.message).toBeUndefined();
   act(() => result.current.retry());
@@ -1010,7 +1008,6 @@ it("reads an unloaded active prompt without replacing or scrolling the viewport,
   });
   expect(input.items).toEqual([olderAnswer, latest]);
   expect(result.current.message).toEqual(loadedOlder);
-  expect(result.current.stickyVisible).toBe(true);
   expect(result.current.error).toBe(false);
   expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
   expect(input.jumpToLoaded).not.toHaveBeenCalled();
@@ -1036,11 +1033,11 @@ it("ignores a late content-only read after return to latest and isolates new pan
     fetchPrompt: vi.fn(() => content.promise),
   };
   const { result } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() => reading.publish(answer.id));
+  act(() => reading.publish({ rowId: answer.id }));
   await waitFor(() => expect(input.fetchPrompt).toHaveBeenCalledTimes(1));
   act(() => {
     result.current.followLatest();
-    reading.publish(latest.id, [latest.id]);
+    reading.publish({ rowId: latest.id });
   });
   await act(async () => content.resolve(old));
   expect(result.current.message?.id).toBe("latest");
@@ -1057,10 +1054,25 @@ it("uses authoritative source positions for projected Markdown reading rows", ()
   const reading = createPromptReadingPublisher();
   const input = { ...stickyInput([older, latest], stickyOutline([1, 3])), reading };
   const { result } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() => reading.publish("projected-markdown-block", [], false, false, true, 2));
+  act(() =>
+    reading.publish({
+      rowId: "projected-markdown-block",
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    }),
+  );
   expect(result.current.message?.id).toBe("older");
-  expect(result.current.stickyVisible).toBe(true);
-  act(() => reading.publish("same-block", [], false, true, false, 2));
+  act(() =>
+    reading.publish({
+      rowId: "same-block",
+      navigating: false,
+      following: true,
+      manual: false,
+      seq: 2,
+    }),
+  );
   expect(result.current.message?.id).toBe("latest");
 });
 
@@ -1070,10 +1082,13 @@ it("does not transfer an arrow selection to a different reading-edge prompt afte
   const input = { ...stickyInput(users, stickyOutline([1, 2, 3])), reading };
   const { result } = renderHook(useStickyPrompt, { initialProps: input });
   act(() => result.current.activate("third", -1));
-  act(() => reading.publish("first", ["first", "second"], false, false, false, 1));
+  act(() =>
+    reading.publish({ rowId: "first", navigating: false, following: false, manual: false, seq: 1 }),
+  );
   expect(result.current.message?.id).toBe("second");
-  expect(result.current.stickyVisible).toBe(false);
-  act(() => reading.publish("first", ["first"], false, false, true, 1));
+  act(() =>
+    reading.publish({ rowId: "first", navigating: false, following: false, manual: true, seq: 1 }),
+  );
   expect(result.current.message?.id).toBe("first");
 });
 
@@ -1099,13 +1114,12 @@ it("reads index-free context without applying an older viewed window", async () 
     loadOlder: vi.fn(() => ownerPage.promise),
   };
   const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() => reading.publish(answer.id));
+  act(() => reading.publish({ rowId: answer.id }));
   expect(input.loadOlder).not.toHaveBeenCalled();
   await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
   expect(input.loadOlder).not.toHaveBeenCalled();
   await act(async () => held.resolve(old));
   expect(result.current.message?.id).toBe("old");
-  expect(result.current.stickyVisible).toBe(true);
   expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
   expect(reading.getSnapshot().rowId).toBe("answer");
   act(() => result.current.reveal());
@@ -1128,7 +1142,15 @@ it("preserves known attachment content when its indexed prompt leaves the loaded
   const input = { ...stickyInput([old, latest], stickyOutline([1, 3])), reading, fetchPrompt };
   const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
   rerender({ ...input, items: [latest] });
-  act(() => reading.publish("projected-old-response", [], false, false, true, 2));
+  act(() =>
+    reading.publish({
+      rowId: "projected-old-response",
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    }),
+  );
   await waitFor(() => expect(result.current.message?.id).toBe("old"));
   expect(result.current.message?.images).toBe(old.images);
   expect(result.current.message?.attachments).toBe(old.attachments);
@@ -1179,7 +1201,6 @@ describe("sticky optional feature", () => {
     expect(input.loadOlder).not.toHaveBeenCalled();
     expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
     expect(input.outline.cancelJump).not.toHaveBeenCalled();
-    expect(result.current.stickyVisible).toBe(false);
     rerender({ ...input, enabled: true });
     await waitFor(() => expect(input.loadOlder).toHaveBeenCalledTimes(1));
   });
@@ -1199,7 +1220,6 @@ describe("sticky optional feature", () => {
     expect(input.outline.cancelStickyJump).toHaveBeenCalledTimes(1);
     expect(input.outline.cancelJump).not.toHaveBeenCalled();
     await act(async () => page.resolve(true));
-    expect(result.current.stickyVisible).toBe(false);
     expect(loadOlder).toHaveBeenCalledTimes(1);
   });
   it("does not read missing content when disabled", async () => {
@@ -1212,7 +1232,13 @@ describe("sticky optional feature", () => {
       timelineCursor: { epoch: "epoch-1", seq: 2 },
     } as const;
     const reading = createPromptReadingPublisher();
-    reading.publish(answer.id, [], false, false, true, 2);
+    reading.publish({
+      rowId: answer.id,
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    });
     const fetchPrompt = vi.fn(() => deferred<ReturnType<typeof stickyUser>>().promise);
     const input = {
       ...stickyInput([answer, user], stickyOutline([1, 3])),
@@ -1222,7 +1248,6 @@ describe("sticky optional feature", () => {
     };
     const { result } = renderHook(useStickyPrompt, { initialProps: input });
     expect(fetchPrompt).not.toHaveBeenCalled();
-    expect(result.current.stickyVisible).toBe(false);
   });
   it("cancels late content reads on opt-out and preserves loaded data", async () => {
     const user = { ...stickyUser("latest", 3), attachments: [{ id: "file" }] } as ReturnType<
@@ -1236,7 +1261,13 @@ describe("sticky optional feature", () => {
       timelineCursor: { epoch: "epoch-1", seq: 2 },
     } as const;
     const reading = createPromptReadingPublisher();
-    reading.publish(answer.id, [], false, false, true, 2);
+    reading.publish({
+      rowId: answer.id,
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    });
     const page = deferred<ReturnType<typeof stickyUser>>();
     const fetchPrompt = vi.fn(() => page.promise);
     const input = {
@@ -1249,10 +1280,9 @@ describe("sticky optional feature", () => {
     expect(fetchPrompt).toHaveBeenCalledTimes(1);
     rerender({ ...input, enabled: false });
     await act(async () => page.resolve(stickyUser("old", 1)));
-    expect(result.current.stickyVisible).toBe(false);
     expect(result.current.message).toBe(user);
     expect(result.current.message?.attachments).toBe(user.attachments);
-    act(() => reading.publish(user.id, [user.id], false, true));
+    act(() => reading.publish({ rowId: user.id, navigating: false, following: true }));
     rerender({ ...input, enabled: true });
     expect(result.current.message).toBe(user);
     expect(fetchPrompt).toHaveBeenCalledTimes(1);
@@ -1277,69 +1307,6 @@ describe("sticky optional feature", () => {
   });
 });
 
-it("lets a newer original cover an older sticky copy before replacing it", () => {
-  const first = stickyUser("first", 1);
-  const second = stickyUser("second", 3);
-  const reading = createPromptReadingPublisher();
-  const input = { ...stickyInput([first, second], stickyOutline([1, 3])), reading };
-  const { result } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() =>
-    reading.publish(first.id, [second.id], false, false, true, 1, [
-      { id: second.id, progress: 0, top: 60 },
-    ]),
-  );
-  expect(result.current.message?.id).toBe(first.id);
-  expect(result.current.occlusionTop).toBe(60);
-  act(() =>
-    reading.publish(first.id, [second.id], false, false, true, 1, [
-      { id: second.id, progress: 0, top: 12 },
-    ]),
-  );
-  expect(result.current.occlusionTop).toBe(12);
-  act(() =>
-    reading.publish(second.id, [second.id], false, false, true, 3, [
-      { id: second.id, progress: 1, top: -24 },
-    ]),
-  );
-  expect(result.current.message?.id).toBe(second.id);
-  expect(result.current.occlusionTop).toBeUndefined();
-});
-
-it("preserves measured bubble placement through virtualization and invalidates it on resize", () => {
-  const user = stickyUser("prompt", 1);
-  const reading = createPromptReadingPublisher();
-  const input = { ...stickyInput([user], stickyOutline([1])), reading };
-  const { result } = renderHook(useStickyPrompt, { initialProps: input });
-  act(() =>
-    reading.publish(
-      user.id,
-      [user.id],
-      false,
-      false,
-      true,
-      1,
-      [
-        {
-          id: user.id,
-          progress: 1,
-          top: 0,
-          left: 180,
-          width: 120,
-          viewportWidth: 320,
-          prefixHeightOne: 20,
-          prefixHeightTwo: 20,
-        },
-      ],
-      320,
-    ),
-  );
-  expect(result.current.geometry).toMatchObject({ left: 180, width: 120, viewportWidth: 320 });
-  act(() => reading.publish("answer", [], false, false, true, 2, [], 320));
-  expect(result.current.geometry).toMatchObject({ left: 180, width: 120, viewportWidth: 320 });
-  act(() => reading.publish("answer", [], false, false, true, 2, [], 480));
-  expect(result.current.geometry).toBeUndefined();
-});
-
 describe("return to the pinned prompt", () => {
   it("reveals this loaded prompt rather than an adjacent one and retains it through incoming prompts", () => {
     const latest = stickyUser("three", 3);
@@ -1349,7 +1316,15 @@ describe("return to the pinned prompt", () => {
     act(() => result.current.reveal());
     expect(input.jumpToLoaded).toHaveBeenCalledWith(latest.id, "original");
     expect(input.outline.jumpToPrompt).not.toHaveBeenCalled();
-    act(() => reading.publish(latest.id, [latest.id], false, false, false, 3));
+    act(() =>
+      reading.publish({
+        rowId: latest.id,
+        navigating: false,
+        following: false,
+        manual: false,
+        seq: 3,
+      }),
+    );
     const incoming = stickyUser("four", 4);
     rerender({ ...input, items: [latest, incoming], outline: stickyOutline([1, 2, 3, 4]) });
     expect(result.current.message?.id).toBe(latest.id);
@@ -1367,7 +1342,13 @@ describe("return to the pinned prompt", () => {
       timelineCursor: { epoch: "epoch-1", seq: 2 },
     } as const;
     const reading = createPromptReadingPublisher();
-    reading.publish(answer.id, [], false, false, true, 2);
+    reading.publish({
+      rowId: answer.id,
+      navigating: false,
+      following: false,
+      manual: true,
+      seq: 2,
+    });
     const input = {
       ...stickyInput([answer, latest], stickyOutline([1, 3])),
       reading,
@@ -1431,10 +1412,9 @@ describe("prompt ownership across authoritative epochs", () => {
     const fresh = deferred<ReturnType<typeof stickyUser>>();
     const fetchPrompt = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
     const input = {
-      seq: 1,
       epoch: "epoch-1",
       knownPrompts: [] as ReturnType<typeof stickyUser>[],
-      fetchPrompt,
+      request: { kind: "prompt" as const, seq: 1, fetchPrompt },
     };
     const { result, rerender } = renderHook(useReadingPrompt, { initialProps: input });
     rerender({ ...input, epoch: "epoch-2" });
@@ -1453,10 +1433,9 @@ describe("prompt ownership across authoritative epochs", () => {
     const replacement = { ...stickyUser("same", 1, "epoch-2"), text: "Fresh content" };
     const fetchPrompt = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce(replacement);
     const input = {
-      seq: 1,
       epoch: "epoch-1",
       knownPrompts: [] as ReturnType<typeof stickyUser>[],
-      fetchPrompt,
+      request: { kind: "prompt" as const, seq: 1, fetchPrompt },
     };
     const { result, rerender } = renderHook(useReadingPrompt, { initialProps: input });
     await waitFor(() => expect(result.current.item).toEqual(old));
@@ -1465,6 +1444,14 @@ describe("prompt ownership across authoritative epochs", () => {
     expect(fetchPrompt).toHaveBeenCalledTimes(2);
   });
 });
+
+/** A reading request for the user row before `source`. */
+function contextRequest(
+  source: StreamItem,
+  fetchContext: (source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>,
+) {
+  return { kind: "context" as const, source, fetchContext };
+}
 
 /** Use the real advertised feature and canonical index to exercise the test gate's contract. */
 function indexedReadLedger() {
@@ -1740,7 +1727,13 @@ describe("passive indexed latest prompt content", () => {
       timelineCursor: { epoch: "epoch-1", seq: 206 },
     };
     const reading = createPromptReadingPublisher();
-    reading.publish(assistant.id, [], false, true, false, 206);
+    reading.publish({
+      rowId: assistant.id,
+      navigating: false,
+      following: true,
+      manual: false,
+      seq: 206,
+    });
     const before = reading.getSnapshot();
     const scrollToMessage = vi.fn();
     const viewportRef = {
@@ -2610,7 +2603,11 @@ describe("index-free cache-only context", () => {
       .mockRejectedValueOnce(new Error("missing source"))
       .mockResolvedValue(undefined);
     const { result, rerender } = renderHook(useReadingPrompt, {
-      initialProps: { epoch: "epoch", seq: undefined, knownPrompts: [], source, fetchContext },
+      initialProps: {
+        epoch: "epoch",
+        knownPrompts: [] as UserPrompt[],
+        request: contextRequest(source, fetchContext),
+      },
     });
     await waitFor(() => expect(result.current.error).toBe(true));
     act(() => result.current.retry());
@@ -2618,10 +2615,8 @@ describe("index-free cache-only context", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     rerender({
       epoch: "epoch",
-      seq: undefined,
       knownPrompts: [],
-      source: { ...source },
-      fetchContext,
+      request: contextRequest({ ...source }, fetchContext),
     });
     expect(result.current.error).toBe(false);
     expect(fetchContext).toHaveBeenCalledTimes(2);
@@ -2635,22 +2630,18 @@ describe("index-free cache-only context", () => {
     const { result, rerender } = renderHook(useReadingPrompt, {
       initialProps: {
         epoch: "epoch",
-        seq: undefined,
         knownPrompts: [] as UserPrompt[],
-        source,
-        fetchContext,
+        request: contextRequest(source, fetchContext),
       },
     });
     await waitFor(() => expect(result.current.item?.id).toBe("context"));
     rerender({
       epoch: "epoch",
-      seq: undefined,
       knownPrompts,
-      source: { ...source, id: "other" },
-      fetchContext,
+      request: contextRequest({ ...source, id: "other" }, fetchContext),
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(2));
-    rerender({ epoch: "epoch", seq: undefined, knownPrompts, source, fetchContext });
+    rerender({ epoch: "epoch", knownPrompts, request: contextRequest(source, fetchContext) });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(3));
   });
 
@@ -2683,15 +2674,20 @@ describe("index-free cache-only context", () => {
     const held = deferred<UserPrompt | undefined>();
     const fetchContext = vi.fn((_source: StreamItem, _signal: AbortSignal) => held.promise);
     const { result, rerender } = renderHook(useReadingPrompt, {
-      initialProps: { epoch: "epoch", seq: undefined, knownPrompts: [], source, fetchContext },
+      initialProps: {
+        epoch: "epoch",
+        knownPrompts: [] as UserPrompt[],
+        request: contextRequest(source, fetchContext),
+      },
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
     rerender({
       epoch: "new",
-      seq: undefined,
       knownPrompts: [],
-      source: { ...source, timelineCursor: { epoch: "new", seq: 256 } },
-      fetchContext,
+      request: contextRequest(
+        { ...source, timelineCursor: { epoch: "new", seq: 256 } },
+        fetchContext,
+      ),
     });
     expect(fetchContext.mock.calls[0]![1].aborted).toBe(true);
     await act(async () => held.resolve(stickyUser("old", 1, "epoch")));
@@ -4557,7 +4553,6 @@ describe("certified ordinary reading context", () => {
         channel: {},
         source,
         signal: new AbortController().signal,
-        knownContext: { ...proof },
         lookupAllowed: false,
         fetchContext,
       }),
@@ -4716,7 +4711,6 @@ describe("certified ordinary reading context", () => {
         channel,
         source,
         signal: new AbortController().signal,
-        knownContext: proof,
         fetchContext,
         retryToken: 0,
       };
@@ -5146,9 +5140,9 @@ describe("canonical prompt admission ownership", () => {
         lookupAllowed: false,
         retryToken: 0,
       };
-      await expect(
-        owner.request(Object.assign(input, { knownContext: context, fetchContext: rogue })),
-      ).rejects.toThrow("Reading context changed");
+      await expect(owner.request(Object.assign(input, { fetchContext: rogue }))).rejects.toThrow(
+        "Reading context changed",
+      );
     }
     expect(rogue).not.toHaveBeenCalled();
     expect(raw.readPage).toHaveBeenCalledTimes(2);
@@ -5217,9 +5211,7 @@ describe("canonical prompt admission ownership", () => {
         retryToken: 0,
         signal: new AbortController().signal,
       };
-      await expect(
-        owner.request(Object.assign(input, { knownContext: heldPreview })),
-      ).rejects.toThrow("Reading context changed");
+      await expect(owner.request(input)).rejects.toThrow("Reading context changed");
       expect(raw.readPage).toHaveBeenCalledTimes(2);
       owner.dispose();
     }
@@ -5473,9 +5465,7 @@ describe("latest sticky context source", () => {
 
   it("keeps an unproved older manual edge lookup held and cancellation-owned", async () => {
     const owner = createCanonicalPromptContexts();
-    const held = deferred<
-      import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
-    >();
+    const held = deferred<CanonicalPromptContext | undefined>();
     const fetchContext = vi.fn(() => held.promise);
     const older: typeof answer = {
       ...answer,
@@ -5515,9 +5505,7 @@ describe("latest sticky context source", () => {
     "keeps %s latest discovery pending and fences a cancelled completion",
     async (mode) => {
       const owner = createCanonicalPromptContexts();
-      const held = deferred<
-        import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
-      >();
+      const held = deferred<CanonicalPromptContext | undefined>();
       const fetchContext = vi.fn(() => held.promise);
       const sparseCoverage = [
         { epoch, startSeq: 4, endSeq: 10 },
@@ -5726,7 +5714,7 @@ describe("published reading edge while following latest output", () => {
     }));
     const lookup = rawPromptLookup(edge, fetchContext);
     const reading = createPromptReadingPublisher();
-    reading.publish(edge.id, [later.id], false, true, false, 40);
+    reading.publish({ rowId: edge.id, navigating: false, following: true, manual: false, seq: 40 });
     const input = { ...stickyInput(items, stickyOutline([4, 60])), epoch };
     const fixture = renderHook(() => {
       const source = resolveRetainedContextSource(items, epoch, reading.getSnapshot(), coverage);
@@ -5867,7 +5855,7 @@ describe("published reading edge while following latest output", () => {
     const ordinary: StreamItem[] = [edge, tail];
     expect(resolveRetainedContextSource(ordinary, epoch, following, coverage)).toBe(edge);
     const reading = createPromptReadingPublisher();
-    reading.publish(edge.id, [], false, true, false, 40);
+    reading.publish({ rowId: edge.id, navigating: false, following: true, manual: false, seq: 40 });
     // This guard starts after the preceding owner-acquisition case's boundary:
     // edge content is retained, while the later index locator has no loaded body.
     const input = {
@@ -6094,9 +6082,7 @@ describe("canonical context remote admission controls", () => {
 
   it("aborts a held context read at the readiness-loss commit and rejects its late completion", async () => {
     const owner = createCanonicalPromptContexts();
-    const held = deferred<
-      import("@/timeline/canonical-prompt-context").CanonicalPromptContext | undefined
-    >();
+    const held = deferred<CanonicalPromptContext | undefined>();
     const fetchContext = vi.fn((_source: StreamItem, _signal: AbortSignal) => held.promise);
     const input = {
       owner,
