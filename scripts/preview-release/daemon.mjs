@@ -81,23 +81,29 @@ export function buildDaemonPackage({ root, output, release }) {
   }
 }
 
-/** Check the installed distribution identity and native modules, without starting a host daemon. */
-export async function smokeDaemonPackage(packageRoot) {
-  const manifest = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
-  const serverRoot = path.join(packageRoot, "runtime/packages/server");
-  const runtime = path.join(serverRoot, "dist/server/server/session/daemon");
-  const npmModule = await import(pathToFileURL(path.join(runtime, "npm-global-cli.js")).href);
-  if (npmModule.PASEO_CLI_PACKAGE !== manifest.name)
-    throw new Error("Installed daemon lost its fork update identity");
-  assert.deepEqual(manifest.bin, { "paseo-plus-plus": "bin/paseo-plus-plus" });
-  const control = await import(
-    pathToFileURL(path.join(serverRoot, "dist/server/server/daemon-instance.js")).href
+/** Import a compiled server module from the installed package's runtime. */
+function importServerModule(serverRoot, relativePath) {
+  return import(pathToFileURL(path.join(serverRoot, "dist/server/server", relativePath)).href);
+}
+
+/** The installed package must keep the fork's npm update identity and command name. */
+async function assertDistributionIdentity({ manifest, serverRoot }) {
+  const npmModule = await importServerModule(serverRoot, "session/daemon/npm-global-cli.js");
+  assert.equal(
+    npmModule.PASEO_CLI_PACKAGE,
+    manifest.name,
+    "Installed daemon lost its fork update identity",
   );
+  assert.deepEqual(manifest.bin, { "paseo-plus-plus": "bin/paseo-plus-plus" });
+}
+
+/** The fork daemon defaults to its own home and port, and explicit overrides still win. */
+async function assertDefaultHomeAndListen({ packageRoot, serverRoot }) {
+  const control = await importServerModule(serverRoot, "daemon-instance.js");
   assert.equal(control.daemonDistribution.defaultHome, "~/.paseo-plus-plus");
   assert.equal(control.daemonDistribution.defaultPort, 6791);
-  const persisted = await import(
-    pathToFileURL(path.join(serverRoot, "dist/server/server/persisted-config.js")).href
-  );
+
+  const persisted = await importServerModule(serverRoot, "persisted-config.js");
   const freshHome = mkdtempSync(path.join(tmpdir(), "paseo-plus-plus-defaults-"));
   try {
     const defaults = persisted.readPersistedConfig(freshHome, { defaultsIfMissing: true });
@@ -105,12 +111,12 @@ export async function smokeDaemonPackage(packageRoot) {
   } finally {
     rmSync(freshHome, { recursive: true, force: true });
   }
+
   const defaultHome = path.join(homedir(), ".paseo-plus-plus");
   assert.equal(control.resolvePaseoHome({}), defaultHome);
   assert.equal(control.resolvePaseoHome({ PASEO_HOME: packageRoot }), packageRoot);
-  const configModule = await import(
-    pathToFileURL(path.join(serverRoot, "dist/server/server/config.js")).href
-  );
+
+  const configModule = await importServerModule(serverRoot, "config.js");
   assert.equal(
     configModule.resolveConfigFromPersisted(defaultHome, {}, { env: {} }).listen,
     "127.0.0.1:6791",
@@ -131,30 +137,46 @@ export async function smokeDaemonPackage(packageRoot) {
     ).listen,
     "127.0.0.1:7010",
   );
+}
 
+/** The bundled server matches the package version and loads its native PTY and speech runtimes. */
+function assertNativeRuntime({ manifest, serverRoot }) {
   const serverManifest = JSON.parse(readFileSync(path.join(serverRoot, "package.json"), "utf8"));
-  if (serverManifest.version !== manifest.version)
-    throw new Error("Installed daemon version does not match its distribution");
+  assert.equal(
+    serverManifest.version,
+    manifest.version,
+    "Installed daemon version does not match its distribution",
+  );
   const require = createRequire(path.join(serverRoot, "package.json"));
   loadNativePtyModules(require);
   const speech = require("sherpa-onnx-node");
-  if (typeof speech.OfflineRecognizer !== "function") {
-    throw new Error("Installed speech runtime is unavailable");
-  }
-  const version = execFileSync(
-    process.execPath,
-    [path.join(packageRoot, "bin/paseo-plus-plus"), "--version"],
-    { encoding: "utf8" },
-  ).trim();
-  const help = execFileSync(
-    process.execPath,
-    [path.join(packageRoot, "bin/paseo-plus-plus"), "--help"],
-    { encoding: "utf8" },
+  assert.equal(
+    typeof speech.OfflineRecognizer,
+    "function",
+    "Installed speech runtime is unavailable",
   );
+}
+
+/** The installed CLI reports the package version and documents the fork's command and home. */
+function assertCliEntrypoint({ manifest, packageRoot }) {
+  const cli = path.join(packageRoot, "bin/paseo-plus-plus");
+  const version = execFileSync(process.execPath, [cli, "--version"], { encoding: "utf8" }).trim();
+  const help = execFileSync(process.execPath, [cli, "--help"], { encoding: "utf8" });
   assert.match(help, /Usage: paseo-plus-plus/);
   assert.match(help, /~\/.paseo-plus-plus/);
-  if (version !== manifest.version)
-    throw new Error(`Installed CLI reports unexpected version: ${version}`);
+  assert.equal(version, manifest.version, `Installed CLI reports unexpected version: ${version}`);
+  return version;
+}
+
+/** Check the installed distribution identity and native modules, without starting a host daemon. */
+export async function smokeDaemonPackage(packageRoot) {
+  const manifest = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+  const serverRoot = path.join(packageRoot, "runtime/packages/server");
+
+  await assertDistributionIdentity({ manifest, serverRoot });
+  await assertDefaultHomeAndListen({ packageRoot, serverRoot });
+  assertNativeRuntime({ manifest, serverRoot });
+  const version = assertCliEntrypoint({ manifest, packageRoot });
   process.stdout.write(
     `Installed fork daemon ${version}: distribution and native modules verified\n`,
   );
