@@ -6,13 +6,13 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 import { queryClient } from "@/data/query-client";
 import { useAppSettings } from "@/hooks/use-settings";
 import { readAppSettingsSnapshot } from "@/hooks/use-settings/snapshot";
-import type { AppSettings } from "@/hooks/use-settings/storage";
 import { create } from "zustand";
 import {
   expireWorkingDiffComparisonsInState,
   resolveWorkingDiffComparisonFromState,
   selectWorkingDiffComparisonInState,
   WorkingDiffComparisonOverrideSchema,
+  workingDiffComparisonPolicy,
   type WorkingDiffComparisonPolicy,
   type WorkingDiffCheckoutIdentity,
   type WorkingDiffComparison,
@@ -51,16 +51,9 @@ export function createWorkingDiffComparisonStore(storage: StateStorage = AsyncSt
 
 const useWorkingDiffComparisonStore = createWorkingDiffComparisonStore();
 
-/** Reads the same policy for React consumers and checkout-status boundary updates. */
-function comparisonPolicy(settings: AppSettings): WorkingDiffComparisonPolicy {
-  return {
-    defaultComparison: settings.workingDiffDefaultComparison,
-    autoSwitch: settings.workingDiffAutoSwitch,
-  };
-}
-
+/** The comparison policy for checkout-status boundary updates outside React. */
 function currentComparisonPolicy(): WorkingDiffComparisonPolicy {
-  return comparisonPolicy(readAppSettingsSnapshot(queryClient));
+  return workingDiffComparisonPolicy(readAppSettingsSnapshot(queryClient));
 }
 
 /** Shares a hydrated comparison and remembers explicit selections for this workspace. */
@@ -78,7 +71,7 @@ export function useWorkingDiffComparison(
     useWorkingDiffComparisonStore.persist.hasHydrated,
     useWorkingDiffComparisonStore.persist.hasHydrated,
   );
-  const policy = comparisonPolicy(settings);
+  const policy = workingDiffComparisonPolicy(settings);
   const comparison = useWorkingDiffComparisonStore((state) =>
     resolveWorkingDiffComparisonFromState(state, { serverId, workspaceId, cwd, isDirty, policy }),
   );

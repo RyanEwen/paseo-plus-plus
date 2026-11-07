@@ -6,7 +6,11 @@ import {
   selectWorkingDiffComparisonInState,
   type WorkingDiffComparisonState,
   workingDiffComparisonKey,
+  workingDiffComparisonPolicy,
 } from "./state";
+import { DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
+
+const defaultPolicy = workingDiffComparisonPolicy(DEFAULT_CLIENT_SETTINGS);
 
 const checkout = {
   serverId: "server-1",
@@ -30,7 +34,7 @@ describe("working diff comparison", () => {
     expect(
       resolveWorkingDiffComparisonFromState(restored.getState(), {
         ...checkout,
-        policy: undefined,
+        policy: defaultPolicy,
         isDirty: true,
       }),
     ).toBe("base");
@@ -40,7 +44,7 @@ describe("working diff comparison", () => {
     expect(
       resolveWorkingDiffComparisonFromState(emptyState(), {
         ...checkout,
-        policy: undefined,
+        policy: defaultPolicy,
         isDirty: false,
       }),
     ).toBe("uncommitted");
@@ -62,7 +66,7 @@ describe("working diff comparison", () => {
     expect(
       resolveWorkingDiffComparisonFromState(state, {
         ...checkout,
-        policy: undefined,
+        policy: defaultPolicy,
         isDirty: false,
       }),
     ).toBe("uncommitted");
@@ -74,7 +78,7 @@ describe("working diff comparison", () => {
     expect(
       resolveWorkingDiffComparisonFromState(committed, {
         ...checkout,
-        policy: undefined,
+        policy: defaultPolicy,
         isDirty: true,
       }),
     ).toBe("base");

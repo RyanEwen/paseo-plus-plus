@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AppSettings } from "@/hooks/use-settings/storage";
 
 export type WorkingDiffComparison = "uncommitted" | "base" | "all";
 
@@ -15,10 +16,15 @@ export interface WorkingDiffComparisonPolicy {
   autoSwitch: boolean;
 }
 
-export const DEFAULT_WORKING_DIFF_COMPARISON_POLICY: WorkingDiffComparisonPolicy = {
-  defaultComparison: "uncommitted",
-  autoSwitch: false,
-};
+/** The comparison preferences from app settings, which own their defaults. */
+export function workingDiffComparisonPolicy(
+  settings: Pick<AppSettings, "workingDiffDefaultComparison" | "workingDiffAutoSwitch">,
+): WorkingDiffComparisonPolicy {
+  return {
+    defaultComparison: settings.workingDiffDefaultComparison,
+    autoSwitch: settings.workingDiffAutoSwitch,
+  };
+}
 
 export interface WorkingDiffComparisonState {
   overrides: Record<string, WorkingDiffComparisonOverride>;
@@ -65,9 +71,9 @@ export function selectWorkingDiffComparisonInState(
 
 export function resolveWorkingDiffComparisonFromState(
   state: WorkingDiffComparisonState,
-  input: WorkingDiffCheckoutIdentity & { isDirty: boolean; policy?: WorkingDiffComparisonPolicy },
+  input: WorkingDiffCheckoutIdentity & { isDirty: boolean; policy: WorkingDiffComparisonPolicy },
 ): WorkingDiffComparison {
-  const policy = input.policy ?? DEFAULT_WORKING_DIFF_COMPARISON_POLICY;
+  const { policy } = input;
   const override = state.overrides[workingDiffComparisonKey(input)];
   if (!policy.autoSwitch) {
     return override?.comparison ?? policy.defaultComparison;
