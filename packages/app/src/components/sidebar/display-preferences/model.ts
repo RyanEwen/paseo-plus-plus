@@ -4,6 +4,7 @@ import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import { useSettingsSyncState } from "@/settings-sync/bootstrap";
 import { useHostFeature } from "@/runtime/host-features";
 import { useCallback, useMemo } from "react";
+import { emptyProjectsChoice, resolvePreferenceAvailability } from "./preference-state";
 import { type SidebarWorkspaceTrailing, type WorkspaceTitleSource } from "@/hooks/use-settings";
 import {
   useSidebarViewStore,
@@ -120,10 +121,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [update],
   );
   const setSorting = useCallback((mode: SidebarSortMode) => update({ sortMode: mode }), [update]);
-  let emptyWorkspaces: SidebarDisplayPreferences["emptyWorkspaces"] = groupEmptyProjects
-    ? "group"
-    : "show";
-  if (projectVisibility === "unarchived") emptyWorkspaces = "hide";
+  const emptyWorkspaces = emptyProjectsChoice(projectVisibility, groupEmptyProjects);
   const setEmptyWorkspaces = useCallback(
     (mode: "show" | "group" | "hide") =>
       update({
@@ -178,17 +176,16 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const hostSupported = useHostFeature(sync.selectedHost, "appSettingsSidebarModeProfiles");
   const unsupported = sync.selectedHost !== null && !hostSupported;
   const blocked = useSettingsEditingBlocked();
-  const preferencesDisabled =
-    blocked ||
-    !ready ||
-    unsupported ||
-    !sync.canWrite ||
-    !["local", "ready", "offline"].includes(sync.status);
-  let preferencesDisabledReason: string | null = error;
-  if (pending && !error) preferencesDisabledReason = "Saving sidebar preferences";
-  if (preferencesDisabled) preferencesDisabledReason = "Load writable settings before editing";
-  if (unsupported)
-    preferencesDisabledReason = "Update the settings host to use separate sidebar modes";
+  const { disabled: preferencesDisabled, reason: preferencesDisabledReason } =
+    resolvePreferenceAvailability({
+      blocked,
+      ready,
+      unsupported,
+      canWrite: sync.canWrite,
+      syncStatus: sync.status,
+      error,
+      pending,
+    });
   const setInitialWorkspaceCount = useCallback(
     (count: number | null) => update({ initialWorkspaceCount: count }),
     [update],
