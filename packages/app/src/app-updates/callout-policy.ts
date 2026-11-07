@@ -74,12 +74,21 @@ export function resolveAndroidUpdateCallout(
     // A new version or a new status brings back a callout the user dismissed earlier.
     dismissalKey: `android-app-update:${update?.version ?? "error"}:${status}`,
     priority: 200,
-    titleKey: status === "available" ? "desktop.updates.callout.availableTitle" : "androidUpdates.title",
+    titleKey:
+      status === "available" ? "desktop.updates.callout.availableTitle" : "androidUpdates.title",
     description: describeAndroidUpdate({ status, update, error, progress }),
     variant: status === "error" ? "error" : "default",
     action: update
-      ? { role: "install", labelKey: "androidUpdates.install", disabled: isAndroidUpdateTransferring(status) }
-      : { role: "retry", labelKey: "common.actions.retry", disabled: isAndroidUpdateTransferring(status) },
+      ? {
+          role: "install",
+          labelKey: "androidUpdates.install",
+          disabled: isAndroidUpdateTransferring(status),
+        }
+      : {
+          role: "retry",
+          labelKey: "common.actions.retry",
+          disabled: isAndroidUpdateTransferring(status),
+        },
     testID: "android-update-callout",
   };
 }

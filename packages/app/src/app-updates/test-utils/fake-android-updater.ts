@@ -44,7 +44,10 @@ export class FakeAndroidUpdaterNative implements AndroidUpdaterNative {
     return this.versionCode;
   }
 
-  addListener(_name: "downloadProgress", handler: (progress: AndroidUpdateDownloadProgress) => void) {
+  addListener(
+    _name: "downloadProgress",
+    handler: (progress: AndroidUpdateDownloadProgress) => void,
+  ) {
     this.listeners.add(handler);
     return {
       remove: () => {

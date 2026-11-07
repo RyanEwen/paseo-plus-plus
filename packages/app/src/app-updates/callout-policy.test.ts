@@ -11,7 +11,10 @@ import { buildAndroidUpdate } from "./test-utils/fake-android-updater";
 
 const update = buildAndroidUpdate(14);
 
-type CalloutInput = Pick<AndroidUpdateState, "available" | "status" | "update" | "error" | "progress">;
+type CalloutInput = Pick<
+  AndroidUpdateState,
+  "available" | "status" | "update" | "error" | "progress"
+>;
 
 function calloutFor(input: Partial<CalloutInput>) {
   return resolveAndroidUpdateCallout({
@@ -54,7 +57,11 @@ describe("automatic Android update checks", () => {
     const { clock, every } = manualInterval();
     let checks = 0;
     let active = true;
-    const stop = startAutomaticChecks({ check: () => (checks += 1), isActive: () => active, every });
+    const stop = startAutomaticChecks({
+      check: () => (checks += 1),
+      isActive: () => active,
+      every,
+    });
     expect(checks).toBe(1);
     expect(clock.periodMs).toBe(AUTOMATIC_CHECK_INTERVAL_MS);
     clock.tick();
@@ -99,7 +106,9 @@ describe("Android update callout", () => {
   });
 
   it("keeps install as the action after a failed installation", () => {
-    expect(calloutFor({ status: "error", update, error: "Update checksum mismatch" })).toMatchObject({
+    expect(
+      calloutFor({ status: "error", update, error: "Update checksum mismatch" }),
+    ).toMatchObject({
       variant: "error",
       description: "Update checksum mismatch",
       action: { role: "install", disabled: false },

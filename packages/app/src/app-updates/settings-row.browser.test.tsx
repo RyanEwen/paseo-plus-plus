@@ -103,9 +103,9 @@ describe("Android update feedback", () => {
 
   it("shows permission guidance, retains the install action, and acknowledges the installer handoff", async () => {
     await click("Check");
-    expect(
-      within(container).getByText("Preview 0.11.1-preview.14 is available.").textContent,
-    ).toBe("Preview 0.11.1-preview.14 is available.");
+    expect(within(container).getByText("Preview 0.11.1-preview.14 is available.").textContent).toBe(
+      "Preview 0.11.1-preview.14 is available.",
+    );
     native.installResults = ["permission_required"];
     await click("Install update");
     expect(
