@@ -460,14 +460,18 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     revertConversation: inner.revertConversation
       ? (input) =>
           inner.revertConversation!(
-            mapClaudeRewindInput(input, (handle) => mapPersistenceHandle(provider, handle)),
+            mapClaudeRewindInput(input, (persistence) =>
+              mapPersistenceHandle(provider, persistence),
+            ),
           )
       : undefined,
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth
       ? (input) =>
           inner.revertBoth!(
-            mapClaudeRewindInput(input, (handle) => mapPersistenceHandle(provider, handle)),
+            mapClaudeRewindInput(input, (persistence) =>
+              mapPersistenceHandle(provider, persistence),
+            ),
           )
       : undefined,
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
@@ -523,8 +527,8 @@ function wrapClientProvider(
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
           },
-          mapClaudeIdentityLaunchContext(launchContext, (handle) =>
-            mapPersistenceHandle(provider, handle),
+          mapClaudeIdentityLaunchContext(launchContext, (persistence) =>
+            mapPersistenceHandle(provider, persistence),
           ),
           { ...options, configuredModelIds },
         ),
@@ -542,8 +546,8 @@ function wrapClientProvider(
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
           },
-          mapClaudeIdentityLaunchContext(launchContext, (handle) =>
-            mapPersistenceHandle(provider, handle),
+          mapClaudeIdentityLaunchContext(launchContext, (persistence) =>
+            mapPersistenceHandle(provider, persistence),
           ),
           { ...options, configuredModelIds },
         ),

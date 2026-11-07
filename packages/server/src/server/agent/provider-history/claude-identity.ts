@@ -209,6 +209,18 @@ function adoptCommitted(
   }
 }
 
+/**
+ * The identity store an agent manager uses: the injected one, else one over its record
+ * storage, else none (a manager without durable storage cannot bind configured history).
+ */
+export function resolveClaudeIdentityStore(options: {
+  claudeIdentityStore?: ClaudeIdentityStore;
+  registry?: HistoryRecordQueue;
+}): ClaudeIdentityStore | undefined {
+  if (options.claudeIdentityStore) return options.claudeIdentityStore;
+  return options.registry ? createClaudeIdentityStore(options.registry) : undefined;
+}
+
 /** The default identity store over an agent record queue. */
 export function createClaudeIdentityStore(queue: HistoryRecordQueue): ClaudeIdentityStore {
   return {

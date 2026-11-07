@@ -1,8 +1,8 @@
 import type { CreationAgentAttempt } from "../creation/index.js";
 import type { CommitClaudeRewind } from "./provider-history/claude-identity-types.js";
 import {
-  createClaudeIdentityStore,
   isBoundEmptyClaudeCreation,
+  resolveClaudeIdentityStore,
   type ClaudeIdentityStore,
 } from "./provider-history/claude-identity.js";
 import { ClaudeIdentityCoordinator } from "./provider-history/claude-identity-contexts.js";
@@ -849,9 +849,7 @@ export class AgentManager {
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
-    this.claudeIdentityStore =
-      options?.claudeIdentityStore ??
-      (options?.registry ? createClaudeIdentityStore(options.registry) : undefined);
+    this.claudeIdentityStore = resolveClaudeIdentityStore(options);
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
