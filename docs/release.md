@@ -310,7 +310,7 @@ It checks retained workspace state and another terminal command before stopping 
 This mode builds no app installers and publishes no release. Its log artifacts are the update
 acceptance evidence for both Linux architectures.
 
-`windows_powershell_probe=true` runs only the diagnostic `windows-powershell-probe` job; its scope and recorded fields are in `scripts/preview-release/windows-powershell-probe.mjs`. It is not release qualification: it runs standalone Node without the release job's build load, so a clean result does not clear the packaged app. It cannot be combined with `publish`, `bridge`, `latest` or daemon verification. Each run consumes a `run_number`, which leaves a gap in preview numbers.
+`windows_powershell_probe=true` runs only the diagnostic `windows-powershell-probe` job; its scope and recorded fields are in `scripts/preview-release/windows-powershell-probe/`. It is not release qualification: it runs standalone Node without the release job's build load, so a clean result does not clear the packaged app. It cannot be combined with `publish`, `bridge`, `latest` or daemon verification. Each run consumes a `run_number`, which leaves a gap in preview numbers.
 
 ### Signing configuration
 

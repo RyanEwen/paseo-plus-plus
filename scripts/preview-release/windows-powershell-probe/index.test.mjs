@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { jobBlocks } from "../test-support/workflow-jobs.mjs";
+import { jobBlocks } from "../../test-support/workflow-jobs.mjs";
 import {
   buildComparison,
   buildProbePlan,
@@ -23,9 +23,9 @@ import {
   runProbe,
   sanitizeErrorLine,
   SENTINEL_ARGUMENTS,
-} from "./windows-powershell-probe.mjs";
+} from "./index.mjs";
 
-const repoRoot = new URL("../../", import.meta.url);
+const repoRoot = new URL("../../../", import.meta.url);
 
 test("the PowerShell probe measures the inspector's exact command against its own parent pid", () => {
   const inspector = readFileSync(
@@ -38,7 +38,7 @@ test("the PowerShell probe measures the inspector's exact command against its ow
   assert.match(inspector, /"-NoProfile",\s+"-NonInteractive",\s+"-Command",\s+command,/);
 
   const script = readFileSync(
-    new URL("scripts/preview-release/windows-powershell-probe.mjs", repoRoot),
+    new URL("scripts/preview-release/windows-powershell-probe/index.mjs", repoRoot),
     "utf8",
   );
   assert.match(script, /self: process\.pid/);
@@ -532,7 +532,7 @@ test("the identity probe's worst case fits its job cap, leaving time to upload",
   // Upload runs even after a failure or cancellation, so partial results survive.
   assert.match(probe, /upload-artifact@[^\n]*\n\s+if: always\(\)/);
   const script = readFileSync(
-    new URL("scripts/preview-release/windows-powershell-probe.mjs", repoRoot),
+    new URL("scripts/preview-release/windows-powershell-probe/index.mjs", repoRoot),
     "utf8",
   );
   assert.match(script, /skippedForBudget: true/);
@@ -674,7 +674,8 @@ test("a PowerShell probe never signals a child that already exited but left its 
 });
 
 test("the PowerShell probe command refuses without its guard and writes only allowed fields", () => {
-  const script = new URL("scripts/preview-release/windows-powershell-probe.mjs", repoRoot).pathname;
+  const script = new URL("scripts/preview-release/windows-powershell-probe/index.mjs", repoRoot)
+    .pathname;
   const directory = mkdtempSync(join(tmpdir(), "powershell-probe-"));
   try {
     const output = join(directory, "results.json");

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { jobBlocks } from "../test-support/workflow-jobs.mjs";
-import { requireDiagnosticOnly } from "./windows-powershell-probe.mjs";
+import { requireDiagnosticOnly } from "./windows-powershell-probe/index.mjs";
 
 const repoRoot = new URL("../../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
