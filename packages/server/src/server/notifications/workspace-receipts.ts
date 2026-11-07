@@ -17,18 +17,24 @@ export class WorkspaceNotificationReceipts {
     private readonly publish: (workspaceId: string) => Promise<void>,
   ) {}
 
+  /**
+   * Reserve the next delivery sequence for a workspace event and publish the committed receipts.
+   *
+   * @param attention the agent attention event this delivery reports, if any.
+   * @returns the reserved sequence, or undefined when the workspace no longer exists.
+   */
   async issue(
     workspaceId: string,
     attention?: { agentId: string; timestamp: string },
   ): Promise<number | undefined> {
-    let sequence: number | undefined;
     const updated = await this.workspaces.update(workspaceId, (workspace) => {
       const receipts = new NotificationReceipts(workspace.notificationReceipts);
-      sequence = receipts.issue(attention);
+      receipts.issue(attention);
       return { ...workspace, notificationReceipts: receipts.snapshot() };
     });
-    if (updated) await this.publish(workspaceId);
-    return sequence;
+    if (!updated) return undefined;
+    await this.publish(workspaceId);
+    return updated.notificationReceipts?.latestSequence;
   }
 
   /**
