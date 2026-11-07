@@ -3,6 +3,11 @@ import {
   type NotificationAcknowledgement,
 } from "@getpaseo/protocol/notification-receipts";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
+import { registerForkCapability } from "../fork-capabilities.js";
+
+// COMPAT(workspaceNotificationReceipts): added after v0.12.0-beta.3; keep advertising after the
+// client gate is removed, so newer apps can still detect hosts that sync receipts.
+registerForkCapability("workspaceNotificationReceipts");
 
 /** Persist delivery receipts with their workspace and publish only committed registry state. */
 export class WorkspaceNotificationReceipts {
