@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test as base } from "../support/fixtures";
+import type { Page } from "@playwright/test";
+import { expect, test as base } from "../support/fixtures";
 import {
   beginWorkspaceFromProject,
   createWorkspaceWithoutAgent,
@@ -21,7 +22,15 @@ import {
   type IsolatedHostDaemon,
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
-import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
+import {
+  connectSeedClient,
+  seedWorkspace,
+  type SeedDaemonClient,
+  type SeededWorkspace,
+} from "../support/helpers/seed-client";
+import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { gotoAppShell } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { createTempGitRepo } from "../support/helpers/workspace";
 
@@ -445,4 +454,59 @@ test.describe("Sidebar project grouping", () => {
       count: 2,
     });
   });
+});
+
+const EMPHASIS_WORKSPACE_TITLE = "Project emphasis workspace";
+
+/** Save the Paseo++ project emphasis switch before the app loads; other preferences keep their defaults. */
+async function useProjectEmphasis(page: Page, enabled: boolean): Promise<void> {
+  await page.addInitScript((value) => {
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({ paseoPlusPlus: { sidebarProjectEmphasis: value } }),
+    );
+  }, enabled);
+}
+
+/** The project name text inside the visible header row for the seeded project. */
+function projectHeaderTitle(page: Page, seed: SeededWorkspace) {
+  const viewKey = projectEquivalenceViewKey(seed.projectKey);
+  return page
+    .locator(`[data-testid="sidebar-project-row-${viewKey}"]:visible`)
+    .getByText(seed.projectDisplayName, { exact: true });
+}
+
+/** The title text of the seeded workspace row under that project. */
+function workspaceRowTitle(page: Page) {
+  return page
+    .locator('[data-testid^="sidebar-workspace-row-"]:visible')
+    .getByText(EMPHASIS_WORKSPACE_TITLE, { exact: true });
+}
+
+test.describe("Sidebar project emphasis", () => {
+  for (const enabled of [true, false]) {
+    test(`project headers are ${enabled ? "bold" : "normal weight"} with Bold project names ${enabled ? "on" : "off"}`, async ({
+      page,
+    }) => {
+      const seed = await seedWorkspace({
+        repoPrefix: "sidebar-project-emphasis-",
+        title: EMPHASIS_WORKSPACE_TITLE,
+      });
+
+      try {
+        await useProjectEmphasis(page, enabled);
+        await gotoAppShell(page);
+        await waitForSidebarHydration(page);
+
+        await expect(projectHeaderTitle(page, seed)).toHaveCSS(
+          "font-weight",
+          enabled ? "700" : "400",
+        );
+        // Only the project header changes; workspace rows keep Content weight.
+        await expect(workspaceRowTitle(page)).toHaveCSS("font-weight", "400");
+      } finally {
+        await seed.cleanup().catch(() => undefined);
+      }
+    });
+  }
 });
