@@ -5,7 +5,7 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
-import type { ProjectArchiveWorkspace } from "./project-workspace-archive";
+import { projectArchiveHostKey, type ProjectArchiveWorkspace } from "./project-workspace-archive";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 export interface ProjectArchiveHost {
@@ -20,7 +20,8 @@ interface ProjectArchiveWorkspacePage {
   pageInfo: DirectoryPageInfo;
 }
 
-interface ProjectArchiveAgentEntry {
+/** The agent fields Archive all reads, shared by discovery and verification. */
+export interface ProjectArchiveAgentEntry {
   agent: Pick<AgentSnapshotPayload, "id" | "workspaceId" | "archivedAt" | "status">;
 }
 
@@ -68,7 +69,7 @@ function requireProjectArchiveClients(input: {
   const clients: ProjectArchiveHostClient[] = [];
   const seen = new Set<string>();
   for (const host of input.hosts) {
-    const key = JSON.stringify([host.serverId, host.projectId]);
+    const key = projectArchiveHostKey(host);
     if (seen.has(key)) continue;
     seen.add(key);
     const client = input.getClient(host.serverId);

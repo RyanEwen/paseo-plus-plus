@@ -1,21 +1,18 @@
-import type { AgentSnapshotPayload, WorkspaceRecoveryState } from "@getpaseo/protocol/messages";
+import type { WorkspaceRecoveryState } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 import {
   listUnarchivedProjectAgents,
+  type ProjectArchiveAgentEntry,
   type ProjectArchiveDiscoveryClient,
 } from "./project-archive-discovery";
 import type { ProjectArchiveWorkspace } from "./project-workspace-archive";
-
-interface ArchiveAgentResult {
-  agent: Pick<AgentSnapshotPayload, "id" | "workspaceId" | "archivedAt" | "status">;
-}
 
 export interface ProjectArchiveVerificationClient extends Pick<
   ProjectArchiveDiscoveryClient,
   "fetchAgentHistory"
 > {
   inspectWorkspaceRecovery: (workspaceId: string) => Promise<WorkspaceRecoveryState>;
-  fetchAgent: (agentId: string) => Promise<ArchiveAgentResult | null>;
+  fetchAgent: (agentId: string) => Promise<ProjectArchiveAgentEntry | null>;
 }
 
 /**

@@ -18,6 +18,7 @@ import {
 import {
   archiveProjectWorkspaces,
   buildProjectArchiveConfirmation,
+  projectArchiveHostKey,
   selectProjectArchiveScope,
   type ProjectArchiveConfirmation,
   type ProjectArchiveWorkspace,
@@ -128,10 +129,8 @@ export function useProjectArchive(input: {
               hosts: input.hosts,
               projects: currentProjects,
             });
-            const hostKey = (host: ProjectArchiveHost) =>
-              JSON.stringify([host.serverId, host.projectId]);
-            const expectedHosts = hosts.map(hostKey).sort();
-            const observedHosts = currentHosts.map(hostKey).sort();
+            const expectedHosts = hosts.map(projectArchiveHostKey).sort();
+            const observedHosts = currentHosts.map(projectArchiveHostKey).sort();
             if (JSON.stringify(expectedHosts) !== JSON.stringify(observedHosts)) {
               throw new Error(t("sidebar.project.archive.projectChanged"));
             }

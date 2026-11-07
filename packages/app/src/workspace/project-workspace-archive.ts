@@ -29,6 +29,16 @@ export interface ProjectArchiveSelection {
   runningAgentCount: number;
 }
 
+/** Identity of one host's copy of a project, for de-duplication and comparison. */
+export function projectArchiveHostKey(host: { serverId: string; projectId: string }): string {
+  return JSON.stringify([host.serverId, host.projectId]);
+}
+
+/** Identity of one workspace on its host, for ordering and comparison. */
+export function workspaceArchiveKey(target: { serverId: string; workspaceId: string }): string {
+  return JSON.stringify([target.serverId, target.workspaceId]);
+}
+
 /** Share the counted warning between ordinary confirmations and the background opt-in sheet. */
 export function buildProjectArchiveConfirmation(input: {
   projectName: string;
@@ -104,11 +114,7 @@ function archiveSelectionSignature(workspaces: readonly ProjectArchiveWorkspace[
   return JSON.stringify(
     workspaces
       .map(confirmedArchiveFacts)
-      .sort((left, right) =>
-        JSON.stringify([left.serverId, left.workspaceId]).localeCompare(
-          JSON.stringify([right.serverId, right.workspaceId]),
-        ),
-      ),
+      .sort((left, right) => workspaceArchiveKey(left).localeCompare(workspaceArchiveKey(right))),
   );
 }
 
