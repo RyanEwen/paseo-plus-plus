@@ -1,7 +1,7 @@
 import { isAgentNotificationViewVisible } from "@/notifications/seen-agent";
 import { usePanelStore } from "@/stores/panel-store";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
-import { useLayoutEffect } from "react";
+import { useEffect } from "react";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useMobilePanelRestCheck } from "@/mobile-panels/use-mobile-panel-rest-check";
@@ -31,8 +31,11 @@ export function useSeenAgentNotifications(input: {
     focused: input.focused,
     ready: input.ready,
   });
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!visible || !input.agentId) return;
+    // Panel, focus and readiness change only through renders, which re-run this effect. Window
+    // focus, the requested compact pane and UI-thread motion change without one, so the lease
+    // re-reads only those when a notification arrives or the panel's rest changes.
     const view = seenAgentNotifications.view({
       target: { serverId: input.serverId, agentId: input.agentId },
       isVisible: () =>
