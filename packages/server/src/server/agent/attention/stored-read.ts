@@ -13,7 +13,9 @@ export function clearStoredAttentionEvent(record: StoredAgentRecord): StoredAgen
     attentionTimestamp: null,
     attentionMessage: null,
   };
-  if (record.humanAttentionRequired === undefined) return next;
+  if (record.humanAttentionRequired === undefined) {
+    return next;
+  }
   const hasProblem = record.lastStatus === "error";
   const derived = record.attentionObjectives
     ? new AgentAttentionObjectives(record.attentionObjectives).requiresHumanAttention({

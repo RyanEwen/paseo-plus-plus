@@ -14,8 +14,8 @@ import { serializeSnapshotWithMetadata } from "../../mcp-shared.js";
 import { createHostObservationResolver, type ToolHosts } from "../../host-operations/index.js";
 import { openFinishObservation } from "./observation-stream.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
-import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import type { FinishObservation } from "../index.js";
+import type { AgentAttentionOutcome, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { FinishObservation, FinishSubscription } from "../index.js";
 
 export function createFinishObservation(input: {
   agentManager: AgentManager;
@@ -26,6 +26,11 @@ export function createFinishObservation(input: {
   hosts(): ToolHosts;
   serverId: string;
   logger: Logger;
+  /**
+   * Awaited after an exact callback outcome is reserved and before it is enqueued. A watcher
+   * retired or superseded meanwhile releases the reservation instead of dispatching.
+   */
+  beforeCallbackEnqueue?(input: { record: FinishSubscription; outcomeId: string }): Promise<void>;
 }): FinishObservation {
   const { agentManager, agentStorage } = input;
   async function exactSnapshot(agentId: string) {
@@ -155,14 +160,12 @@ export function createFinishObservation(input: {
       };
     },
     acknowledgeExact: async (record, outcomeId, signal) => {
-      if (!record.attention) throw new Error("Missing exact finish correlation");
+      const attention = record.attention;
+      if (!attention) throw new Error("Missing exact finish correlation");
       await resolver.use(
         record.serverId,
         (host) =>
-          host.wait(record.childAgentId, signal, {
-            ...record.attention!,
-            acknowledgeOutcomeId: outcomeId,
-          }),
+          host.wait(record.childAgentId, signal, { ...attention, acknowledgeOutcomeId: outcomeId }),
         signal,
       );
     },
@@ -191,14 +194,15 @@ export function createFinishObservation(input: {
       const reserved = await agentManager.reserveAttentionCallback({ ...claim, outcome });
       if (reserved.status === "consumed") {
         await agentManager.persistAttentionDelivery(record.callerAgentId);
-        return { outcomeId: outcome.id, terminal: outcome.kind !== "permission" };
+        return { outcomeId: outcome.id, terminal: isTerminalOutcome(outcome.kind) };
       }
       try {
+        await input.beforeCallbackEnqueue?.({ record, outcomeId: outcome.id });
         // Archive and retirement may occur while the durable reservation is written.
         if ((await agentStorage.get(record.callerAgentId))?.archivedAt)
           throw new Error("Finish caller is archived");
         signal.throwIfAborted();
-        const reason = exactReason(outcome.kind);
+        const reason = EXACT_REASON[outcome.kind];
         const title = result.final.title ?? record.childAgentId;
         const receipt = input.messages().enqueue({
           recipientId: record.callerAgentId,
@@ -228,7 +232,7 @@ export function createFinishObservation(input: {
         });
         await receipt.dispatched;
         await agentManager.persistAttentionDelivery(record.callerAgentId);
-        return { outcomeId: outcome.id, terminal: outcome.kind !== "permission" };
+        return { outcomeId: outcome.id, terminal: isTerminalOutcome(outcome.kind) };
       } catch (error) {
         await agentManager.releaseAttentionCallback({ ...claim, lease: reserved.lease });
         throw error;
@@ -237,14 +241,29 @@ export function createFinishObservation(input: {
   };
 }
 
-function exactStatus(kind: string | undefined): "idle" | "permission" | "error" {
-  if (kind === "finished") return "idle";
-  if (kind === "permission") return "permission";
-  return "error";
+type AttentionOutcomeKind = AgentAttentionOutcome["kind"];
+
+/** Finish status reported for each exact outcome; a missing outcome reads as a failure. */
+const EXACT_STATUS: Record<AttentionOutcomeKind, "idle" | "permission" | "error"> = {
+  finished: "idle",
+  permission: "permission",
+  error: "error",
+  canceled: "error",
+  rejected: "error",
+};
+/** Caller-facing finish reason for each exact outcome. A rejected request reads as an error. */
+const EXACT_REASON: Record<AttentionOutcomeKind, FinishNotificationReason> = {
+  finished: "finished",
+  permission: "needs permission",
+  error: "errored",
+  canceled: "was canceled",
+  rejected: "errored",
+};
+
+function exactStatus(kind: AttentionOutcomeKind | undefined): "idle" | "permission" | "error" {
+  return kind === undefined ? "error" : EXACT_STATUS[kind];
 }
-function exactReason(kind: string): FinishNotificationReason {
-  if (kind === "finished") return "finished";
-  if (kind === "permission") return "needs permission";
-  if (kind === "canceled") return "was canceled";
-  return "errored";
+/** A permission checkpoint keeps the watch open; every other outcome ends it. */
+function isTerminalOutcome(kind: AttentionOutcomeKind): boolean {
+  return kind !== "permission";
 }

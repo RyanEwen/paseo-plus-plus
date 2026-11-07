@@ -25,6 +25,8 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import type { ToolHosts } from "./host-operations/index.js";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -985,9 +987,9 @@ describe("Paseo tool timeline presentation", () => {
         "request_human_attention",
       ]) {
         const tool = tools.find((entry) => entry.name === name);
-        expect(tool).toBeDefined();
-        expect(tool?.inputSchema.properties).not.toHaveProperty("agentId");
-        expect(tool?.inputSchema.properties).not.toHaveProperty("serverId");
+        if (!tool) throw new Error(`Expected ${name} to be advertised`);
+        expect(tool.inputSchema.properties).not.toHaveProperty("agentId");
+        expect(tool.inputSchema.properties).not.toHaveProperty("serverId");
       }
     } finally {
       await client.close();
@@ -3966,6 +3968,31 @@ describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
+  it("rejects an unknown recipient before recording any delegation", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(null);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "send_agent_prompt");
+    const parsed = await tool.inputSchema.safeParseAsync({
+      agentId: "mistyped-agent",
+      prompt: "Follow up",
+    });
+    if (!parsed.success) {
+      throw new Error("Expected caller send_agent_prompt input to parse");
+    }
+
+    await expect(tool.handler(parsed.data as Record<string, unknown>)).rejects.toThrow(
+      "Agent mistyped-agent not found",
+    );
+    expect(spies.agentManager.prepareAttentionMessage).not.toHaveBeenCalled();
+  });
+
   it("defaults agent-scoped prompts to background finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
@@ -6152,27 +6179,39 @@ describe("speak MCP tool", () => {
 describe("agent snapshot MCP serialization", () => {
   const logger = createTestLogger();
 
-  it.each(["live", "stored"] as const)(
-    "omits absent attention metadata from %s MCP snapshots and list items",
-    async (source) => {
-      const { agentManager, agentStorage, spies } = createTestDeps();
-      const id = "legacy-attention-agent";
-      const now = new Date().toISOString();
-      if (source === "live") {
-        const agent = createManagedAgent({ id });
-        spies.agentManager.getAgent.mockReturnValue(agent);
-        spies.agentManager.listAgents.mockReturnValue([agent]);
-      } else {
-        const record = createStoredRecord({
-          id,
-          archivedAt: null,
-          updatedAt: now,
-          lastActivityAt: now,
-        });
-        spies.agentManager.getAgent.mockReturnValue(null);
-        spies.agentStorage.get.mockResolvedValue(record);
-        spies.agentStorage.list.mockResolvedValue([record]);
-      }
+  const legacyAttentionId = "legacy-attention-agent";
+
+  /** Serve one agent with no attention metadata as a live manager agent. */
+  function seedLiveLegacyAgent({ spies }: TestDeps) {
+    const agent = createManagedAgent({ id: legacyAttentionId });
+    spies.agentManager.getAgent.mockReturnValue(agent);
+    spies.agentManager.listAgents.mockReturnValue([agent]);
+  }
+
+  /** Serve the same agent only from storage. */
+  function seedStoredLegacyAgent({ spies }: TestDeps) {
+    const now = new Date().toISOString();
+    const record = createStoredRecord({
+      id: legacyAttentionId,
+      archivedAt: null,
+      updatedAt: now,
+      lastActivityAt: now,
+    });
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentStorage.get.mockResolvedValue(record);
+    spies.agentStorage.list.mockResolvedValue([record]);
+  }
+
+  it.each([
+    { source: "live", seed: seedLiveLegacyAgent },
+    { source: "stored", seed: seedStoredLegacyAgent },
+  ])(
+    "omits absent attention metadata from $source MCP snapshots and list items",
+    async ({ seed }) => {
+      const deps = createTestDeps();
+      const { agentManager, agentStorage } = deps;
+      const id = legacyAttentionId;
+      seed(deps);
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -7093,6 +7132,75 @@ describe("local durable finish subscription MCP wiring", () => {
       expect(await subscriptions.list()).toEqual([]);
     } finally {
       await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+});
+
+describe("remote delegated creation", () => {
+  const logger = createTestLogger();
+
+  it("drops the finish watch when the host returns a different delegated identity", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-remote-identity-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new HeldTurnAgentClient("codex", true) },
+      registry: storage,
+      logger,
+    });
+    try {
+      const caller = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        undefined,
+        { workspaceId: "wks_caller" },
+      );
+      // An idempotent replay that matches an agent created before delegated identities existed.
+      const remoteClient = {
+        fetchWorkspaces: async () => ({
+          entries: [{ id: "wks_remote", workspaceDirectory: "/tmp/remote" }],
+        }),
+        createAgent: async () => ({
+          id: "previously-created-agent",
+          provider: "codex",
+          status: "idle",
+          cwd: "/tmp/remote",
+          workspaceId: "wks_remote",
+          currentModeId: null,
+          availableModes: [],
+        }),
+      } as unknown as DaemonClient;
+      const hosts: ToolHosts = {
+        directory: async () => {
+          throw new Error("This test addresses the host directly");
+        },
+        use: async (_serverId, action) => action(remoteClient),
+      };
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: caller.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        serverId: "self",
+        hosts: () => hosts,
+        logger,
+      });
+
+      const response = await invokeToolWithParsedInput(registeredTool(server, "create_agent"), {
+        serverId: "remote",
+        provider: "codex/gpt-5.4",
+        title: "Remote child",
+        initialPrompt: "Do the remote work",
+        workspaceId: "wks_remote",
+        idempotencyKey: "replayed-request",
+      });
+
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toMatchObject({
+        serverId: "remote",
+        error: "Host returned a different agent identity for the delegated request",
+      });
+      expect([...serverSubscriptionRecords.get(server)!.values()]).toEqual([]);
+    } finally {
       await removeAgentStateDir(manager, storage, workdir);
     }
   });

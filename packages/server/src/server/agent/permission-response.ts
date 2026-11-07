@@ -30,6 +30,7 @@ export async function respondToAgentPermission(
     `Handling permission response for agent ${agentId}, request ${requestId}`,
   );
 
+  // Capture before responding: the response can retire the admission this continuation names.
   const attention = agentManager.captureAttentionContinuation(agentId);
   const result = await agentManager.respondToPermission(agentId, requestId, response);
   logger.debug({ agentId }, `Permission response forwarded to agent ${agentId}`);

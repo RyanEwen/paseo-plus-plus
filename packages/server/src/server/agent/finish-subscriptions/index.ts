@@ -19,7 +19,10 @@ export interface FinishSubscription {
   callerAgentId: string;
   childAgentId: string;
   serverId?: string;
-  /** Creation subscriptions stop reporting after the child is detached. */
+  /**
+   * Creation subscriptions stop reporting after the child is detached. Exact attention watches
+   * ignore it: their request correlation, not the parent label, decides who is told.
+   */
   requireParentOwnership?: boolean;
   /** Correlated callbacks consume only this request's immutable outcomes. */
   attention?: AgentAttentionRequestQuery;
@@ -54,6 +57,13 @@ interface Dependencies extends FinishObservation {
   serverId: string;
   logger: Logger;
   retryDelayMs?: number;
+  /**
+   * Wait before retry `attempt`; resolves early, without throwing, when `signal` aborts.
+   * Defaults to the capped exponential pause derived from `retryDelayMs`.
+   */
+  retryDelay?(attempt: number, signal: AbortSignal): Promise<void>;
+  /** Observes every retried delivery or storage failure; logging still reports the first. */
+  onRetry?(input: { subscription: FinishSubscription; error: unknown }): void;
 }
 export interface FinishRegistration {
   /** The prompt was accepted. Replaces preceding registrations for this pair. */
@@ -141,6 +151,10 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     for (const record of watch.records) await deps.store.remove(record.id);
   }
   async function delay(signal: AbortSignal, attempt: number): Promise<void> {
+    if (deps.retryDelay) {
+      await deps.retryDelay(attempt, signal);
+      return;
+    }
     try {
       await pause(
         Math.min((deps.retryDelayMs ?? 1000) * 2 ** Math.min(attempt, 3), 5000),
@@ -279,6 +293,36 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       await deps.store.put({ ...captured, pendingAcknowledgement: cursor });
     record.pendingAcknowledgement = cursor;
   }
+  /**
+   * Decide how one observation reaches the caller.
+   *
+   * Exact watches deliver only through their exact outcome evidence ("exact"); a missing or
+   * mismatched outcome is refused there and retried. The one exception is a child that no
+   * longer exists (null outcome and null final snapshot): it ends through the ordinary "is
+   * unavailable" notification with no child output. Legacy watches and host-visibility results
+   * use the ordinary notification ("ordinary").
+   */
+  function routeObservation(
+    record: FinishSubscription,
+    result: FinishObservationResult,
+  ): { kind: "exact" | "ordinary"; result: FinishObservationResult } {
+    if (!record.attention || result.reason) {
+      return { kind: "ordinary", result };
+    }
+    const childGone = result.attentionOutcome === null && result.final === null;
+    if (childGone) {
+      return { kind: "ordinary", result: { ...result, lastMessage: null } };
+    }
+    return { kind: "exact", result };
+  }
+  /** Tell the retry observer about every retry and log only the first; returns `warned`. */
+  function reportRetry(record: FinishSubscription, error: unknown, warned: boolean): boolean {
+    deps.onRetry?.({ subscription: record, error });
+    if (!warned) {
+      deps.logger.warn({ err: error, subscription: record.id }, "Retrying finish subscription");
+    }
+    return true;
+  }
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
     const signal = watch.controller.signal;
     if (!(await watch.decision) || signal.aborted) return;
@@ -340,7 +384,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             stop(watch, group);
             return;
           }
-          if (record.attention && !pending.reason) {
+          const route = routeObservation(record, pending);
+          pending = route.result;
+          if (route.kind === "exact") {
             await captureExactAcknowledgement(record, watch, pending, signal);
             pending = undefined;
             continue;
@@ -359,13 +405,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           if (signal.aborted) return;
           // Delivery and storage failures retain the captured outcome and durable intent.
           // They do not spend the remote-observation budget or change the child's outcome.
-          if (!warned) {
-            deps.logger.warn(
-              { err: error, subscription: record.id },
-              "Retrying finish subscription",
-            );
-            warned = true;
-          }
+          warned = reportRetry(record, error, warned);
           await delay(signal, retries++);
         }
       }

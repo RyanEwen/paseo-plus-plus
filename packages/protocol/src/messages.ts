@@ -1,6 +1,6 @@
 import {
   DaemonNotificationPreferencesSchema,
-  AgentAttentionObjectivesSchema,
+  AgentAttentionContextSchema,
   AgentAttentionPeerSchema,
   AgentAttentionRequestQuerySchema,
   AgentMessageAttentionSchema,
@@ -905,7 +905,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   humanAttentionRequired: z.boolean().optional(),
   attentionMessage: z.string().nullable().optional(),
-  attentionObjectives: AgentAttentionObjectivesSchema.optional(),
+  attentionObjectives: AgentAttentionContextSchema.optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.

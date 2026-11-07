@@ -5,6 +5,7 @@ import type { AgentTimelineRow } from "./agent-manager.js";
 import {
   projectTimelineRows,
   selectTimelineWindowByProjectedLimit,
+  TimelineProjection,
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
@@ -924,5 +925,35 @@ describe("selectProjectedTimelinePage", () => {
 
     expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
     expect(page.endSeq).toBe(501);
+  });
+});
+
+describe("TimelineProjection.getLastAssistantMessage", () => {
+  test("returns a fenced turn's last reply after a later turn replied", () => {
+    const projection = new TimelineProjection([
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        turnId: "turn-1",
+        item: { type: "assistant_message", text: "First answer" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:01.000Z",
+        turnId: "turn-2",
+        item: { type: "user_message", text: "Follow-up" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:02.000Z",
+        turnId: "turn-2",
+        item: { type: "assistant_message", text: "Second answer" },
+      },
+    ]);
+
+    expect(projection.getLastAssistantMessage("turn-1")).toBe("First answer");
+    expect(projection.getLastAssistantMessage("turn-2")).toBe("Second answer");
+    expect(projection.getLastAssistantMessage("turn-3")).toBeNull();
+    expect(projection.getLastAssistantMessage()).toBe("Second answer");
   });
 });

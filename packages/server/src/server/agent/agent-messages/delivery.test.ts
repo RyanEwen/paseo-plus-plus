@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { createAgentMessageDelivery, parseAgentMessages } from "./index.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
+import type { DispatchRequest } from "./delivery.js";
 
 function createClock() {
   let now = 0;
@@ -285,9 +286,7 @@ test("batches retain each sender's attachment context and image order", async ()
 });
 
 test("batch provenance retains separate recipients and capability links without rendering tokens", async () => {
-  const requests: Array<
-    Parameters<Parameters<typeof createAgentMessageDelivery>[0]["dispatch"]>[0]
-  > = [];
+  const requests: DispatchRequest[] = [];
   const delivery = createAgentMessageDelivery({
     dispatch: async (request) => {
       requests.push(request);

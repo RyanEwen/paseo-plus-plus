@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isRemotePeer } from "./peers.js";
 import { z } from "zod";
 import type { AgentAttentionPeer } from "@getpaseo/protocol/agent-attention";
 
@@ -80,8 +81,9 @@ export class AttentionBlockers {
       const objectiveIds = checkpoint.members
         .filter((member) => member.isCurrent())
         .map((member) => member.objectiveId);
-      if (objectiveIds.length > 0)
+      if (objectiveIds.length > 0) {
         states.push({ ...structuredClone(checkpoint.state), objectiveIds });
+      }
     }
     return states;
   }
@@ -94,15 +96,21 @@ export class AttentionBlockers {
 
   /** A steer keeps earlier checkpoints; a new accepted SDK turn permanently retires them. */
   admit(input: { turnId?: string; steering: boolean }): void {
-    if (!input.steering || input.turnId !== this.acceptedTurnId) this.retire();
+    if (!input.steering || input.turnId !== this.acceptedTurnId) {
+      this.retire();
+    }
     this.acceptedTurnId = input.turnId;
   }
 
   /** Duplicate delivery of an unresolved permission cannot acquire a later steer's membership. */
   observePermission(input: { turnId: string; permissionId: string }): void {
-    if (this.suspended || input.turnId !== this.acceptedTurnId) return;
+    if (this.suspended || input.turnId !== this.acceptedTurnId) {
+      return;
+    }
     const key = `permission:${input.permissionId}`;
-    if (this.checkpoints.has(key)) return;
+    if (this.checkpoints.has(key)) {
+      return;
+    }
     this.store({
       id: randomUUID(),
       reason: "permission",
@@ -114,7 +122,9 @@ export class AttentionBlockers {
 
   /** A real failure may belong to a rejected startup, without minting SDK acceptance evidence. */
   observeFailure(): void {
-    if (this.suspended) return;
+    if (this.suspended) {
+      return;
+    }
     this.store({
       id: randomUUID(),
       reason: "error",
@@ -133,12 +143,19 @@ export class AttentionBlockers {
    * Historical resolved questions are pruned, and no checkpoint or alert is inferred from history.
    */
   synchronizePermissions(permissionIds: readonly string[]): void {
-    if (this.suspended) return;
+    if (this.suspended) {
+      return;
+    }
     const pending = new Set(permissionIds);
     for (const [key, checkpoint] of this.checkpoints) {
-      if (checkpoint.state.reason !== "permission") continue;
-      if (pending.has(checkpoint.state.permissionId)) checkpoint.verified = true;
-      else this.checkpoints.delete(key);
+      if (checkpoint.state.reason !== "permission") {
+        continue;
+      }
+      if (pending.has(checkpoint.state.permissionId)) {
+        checkpoint.verified = true;
+      } else {
+        this.checkpoints.delete(key);
+      }
     }
   }
 
@@ -157,21 +174,26 @@ export class AttentionBlockers {
   async verify(options: VerificationOptions): Promise<void> {
     const tasks: Promise<void>[] = [];
     for (const checkpoint of this.checkpoints.values()) {
-      for (const member of checkpoint.members)
+      for (const member of checkpoint.members) {
         tasks.push(this.verifyMember(checkpoint, member, options));
+      }
     }
     await Promise.all(tasks);
   }
 
   private store(state: AttentionBlockerCheckpoint): void {
     const members = this.captureMembers();
-    if (members.length === 0) return;
+    if (members.length === 0) {
+      return;
+    }
     state.objectiveIds = members.map((member) => member.objectiveId);
     this.checkpoints.set(this.key(state), { state, members, verified: true });
   }
 
   private key(state: AttentionBlockerCheckpoint): string {
-    if (state.reason === "permission") return `permission:${state.permissionId}`;
+    if (state.reason === "permission") {
+      return `permission:${state.permissionId}`;
+    }
     return "error";
   }
 
@@ -181,7 +203,9 @@ export class AttentionBlockers {
     member: AttentionBlockerMember,
     options: VerificationOptions,
   ): Promise<void> {
-    if (!this.matchesLocalLoss(member.requester, options.lostLocalRequesters)) return;
+    if (!this.matchesLocalLoss(member.requester, options.lostLocalRequesters)) {
+      return;
+    }
     const availabilityEpoch = this.availabilityEpoch;
     const isCurrent = () =>
       !this.suspended &&
@@ -190,9 +214,13 @@ export class AttentionBlockers {
       this.checkpoints.get(this.key(checkpoint.state)) === checkpoint &&
       member.isCurrent() &&
       options.isCurrent(checkpoint.state);
-    if (!isCurrent()) return;
+    if (!isCurrent()) {
+      return;
+    }
     const availability = await options.resolveRequester(member.requester);
-    if (availability !== "missing" || !isCurrent()) return;
+    if (availability !== "missing" || !isCurrent()) {
+      return;
+    }
     await options.escalate({
       objectiveId: member.objectiveId,
       reason: checkpoint.state.reason,
@@ -204,8 +232,11 @@ export class AttentionBlockers {
     requester: AgentAttentionPeer,
     lostLocalRequesters?: ReadonlySet<string>,
   ): boolean {
-    if (!lostLocalRequesters) return true;
-    const remote = requester.serverId && requester.serverId !== this.localServerId;
-    return !remote && lostLocalRequesters.has(requester.agentId);
+    if (!lostLocalRequesters) {
+      return true;
+    }
+    return (
+      !isRemotePeer(requester, this.localServerId) && lostLocalRequesters.has(requester.agentId)
+    );
   }
 }

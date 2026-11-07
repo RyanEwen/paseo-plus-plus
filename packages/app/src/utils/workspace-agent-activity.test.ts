@@ -325,9 +325,13 @@ describe("workspace agent activity index", () => {
   });
 });
 
-it.each(["same", "other", undefined])(
-  "projects human escalation in its owning workspace with parent workspace %s",
-  (parentWorkspace) => {
+it.each([
+  { parentWorkspace: "same", otherStatus: undefined },
+  { parentWorkspace: "other", otherStatus: "done" },
+  { parentWorkspace: undefined, otherStatus: undefined },
+] as const)(
+  "projects human escalation in its owning workspace with parent workspace $parentWorkspace",
+  ({ parentWorkspace, otherStatus }) => {
     const parent = agent({
       id: "parent",
       workspaceId: parentWorkspace ?? "same",
@@ -350,7 +354,7 @@ it.each(["same", "other", undefined])(
       ]),
     );
     expect(index.get("same")).toMatchObject({ agentId: "worker", status: "attention" });
-    if (parentWorkspace === "other") expect(index.get("other")?.status).toBe("done");
+    expect(index.get("other")?.status).toBe(otherStatus);
     const quiet = buildWorkspaceAgentActivityIndex(
       new Map([
         [parent.id, parent],
@@ -402,4 +406,32 @@ it("keeps an explicit escalating child Ready while its parent works and lets blo
     turn: { phase: "idle", cancellationRequestId: null },
   });
   expect(buildWorkspaceAgentActivityIndex(agents).get("same")?.status).toBe("failed");
+});
+
+it("selects the same activity for a mixed-metadata workspace in any agent order", () => {
+  const reviewed = agent({
+    id: "reviewed",
+    workspaceId: "workspace",
+    updatedAt: "2026-01-01T00:00:01.000Z",
+    requiresAttention: true,
+    humanAttentionRequired: true,
+    attentionReason: "finished",
+  });
+  const running = agent({
+    id: "running",
+    workspaceId: "workspace",
+    status: "running",
+    updatedAt: "2026-01-01T00:00:03.000Z",
+  });
+  const idle = agent({
+    id: "idle",
+    workspaceId: "workspace",
+    updatedAt: "2026-01-01T00:00:05.000Z",
+  });
+  const forward = new Map([reviewed, running, idle].map((entry) => [entry.id, entry]));
+  const reverse = new Map([idle, running, reviewed].map((entry) => [entry.id, entry]));
+
+  const expected = { agentId: "running", status: "running" };
+  expect(buildWorkspaceAgentActivityIndex(forward).get("workspace")).toMatchObject(expected);
+  expect(buildWorkspaceAgentActivityIndex(reverse).get("workspace")).toMatchObject(expected);
 });
