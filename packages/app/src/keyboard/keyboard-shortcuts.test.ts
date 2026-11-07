@@ -1411,3 +1411,51 @@ describe("shortcut capture completion", () => {
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+0"])).toBe(true);
   });
 });
+
+describe("interactive-control Space guard", () => {
+  const bareSpace = { key: " ", code: "Space" };
+
+  it("leaves bare Space to a focused control", () => {
+    expectNoShortcutResolution({
+      event: bareSpace,
+      context: { focusScope: "other", interactiveControlFocused: true },
+    });
+  });
+
+  it("routes bare Space to voice mute on a neutral surface", () => {
+    expectShortcutResolution({
+      event: bareSpace,
+      context: { focusScope: "other", interactiveControlFocused: false },
+      action: "message-input.action",
+      payload: { kind: "voice-mute-toggle" },
+    });
+  });
+
+  it("handles a modified voice mute override on a focused control", () => {
+    const result = resolveShortcut({
+      event: { key: "m", code: "KeyM", ctrlKey: true },
+      context: { focusScope: "other", interactiveControlFocused: true },
+      bindings: buildEffectiveBindings({ "message-input-voice-mute-toggle": "Ctrl+M" }),
+    });
+    expect(result.match?.payload).toEqual({ kind: "voice-mute-toggle" });
+    expect(result.match?.preventDefault).toBe(true);
+  });
+
+  it("still protects a focused control from an explicit bare Space override", () => {
+    const result = resolveShortcut({
+      event: bareSpace,
+      context: { focusScope: "other", interactiveControlFocused: true },
+      bindings: buildEffectiveBindings({ "message-input-voice-mute-toggle": "Space" }),
+    });
+    expect(result.match).toBeNull();
+    expect(result.preventDefault).toBe(false);
+  });
+
+  it("keeps the Enter shortcut on a focused control", () => {
+    const result = resolveShortcut({
+      event: { key: "Enter", code: "Enter" },
+      context: { focusScope: "other", interactiveControlFocused: true },
+    });
+    expect(result.match?.payload).toEqual({ kind: "dictation-confirm" });
+  });
+});
