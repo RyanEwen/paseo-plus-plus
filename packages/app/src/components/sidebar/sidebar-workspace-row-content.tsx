@@ -149,7 +149,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           />
         ) : (
           <WorkspaceLeadingStatusSpace
-            workspace={workspace}
             loading={isLoading}
             reserveIdleSpace={reserveIdleStatusIndicatorSpace}
           />
@@ -190,23 +189,23 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   );
 });
 
-/** Keep title indentation stable; operation loaders stay here while activity moves right. */
+/**
+ * Hold the leading slot so title indentation stays stable.
+ *
+ * Startup and archive loaders stay here; every activity status renders on the trailing rail.
+ */
 function WorkspaceLeadingStatusSpace({
-  workspace,
   loading,
   reserveIdleSpace,
 }: {
-  workspace: SidebarWorkspaceEntry;
   loading: boolean;
   reserveIdleSpace: boolean;
 }) {
   if (loading) {
     return (
-      <WorkspaceStatusIndicator
-        bucket={workspace.statusBucket}
-        workspaceKind={workspace.workspaceKind}
-        loading
-      />
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
+        <StatusRing />
+      </View>
     );
   }
   return reserveIdleSpace ? <View style={styles.workspaceStatusDot} /> : null;
@@ -215,23 +214,10 @@ function WorkspaceLeadingStatusSpace({
 function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
-  loading = false,
-  reserveIdleSpace = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
-  loading?: boolean;
-  reserveIdleSpace?: boolean;
 }) {
-  // Startup and archive loaders stay on the leading rail; working activity lives at the right.
-  if (loading) {
-    return (
-      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
-        <StatusRing />
-      </View>
-    );
-  }
-
   if (shouldRenderSyncedStatusLoader({ bucket })) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
@@ -258,11 +244,11 @@ function WorkspaceStatusIndicator({
 
   if (bucket === "done") {
     // Keep a quiet idle mark on the trailing rail so activity changes preserve its geometry.
-    return reserveIdleSpace ? (
+    return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done">
         <View style={styles.idleStatusDot} />
       </View>
-    ) : null;
+    );
   }
 
   let KindIcon: typeof Monitor;
@@ -365,7 +351,9 @@ export type SidebarWorkspaceTrailingPresentation = "visible" | "hidden" | "absen
 
 /**
  * Shared metadata and menu policy for every workspace row renderer.
- * Metadata stays beside the status and actions; touch keeps the menu visible alongside it. Shortcut hints temporarily conceal metadata without changing width.
+ *
+ * Metadata is concealed, without giving up its width, only while shortcut hints show. The kebab
+ * shows on hover, or permanently on touch, beside the metadata unless a hint is up.
  */
 export function resolveTrailingActionVisibility({
   workspace,
@@ -389,16 +377,14 @@ export function resolveTrailingActionVisibility({
 } {
   const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
   const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
-  // Only temporary shortcut hints conceal metadata; persistent touch menus share the row.
-  const hasContent = hasTrailing;
   let trailingPresentation: SidebarWorkspaceTrailingPresentation = "absent";
-  if (hasContent) trailingPresentation = showShortcut ? "hidden" : "visible";
+  if (hasTrailing) trailingPresentation = showShortcut ? "hidden" : "visible";
   return {
     trailingPresentation,
     showKebab,
     renderSlot: true,
     // Metadata reserves its own width; the status and actions lay out alongside it.
-    reserveSlotWidth: hasContent || (hasArchiveAction && isTouchPlatform),
+    reserveSlotWidth: hasTrailing || (hasArchiveAction && isTouchPlatform),
   };
 }
 
@@ -450,22 +436,20 @@ export function SidebarWorkspaceTrailingStatusActions({
 }) {
   const compact = useIsCompactFormFactor();
   return (
-    <View style={styles.workspaceStatusActionsFrame}>
-      <View style={styles.trailingContentRow}>
-        <WorkspaceStatusIndicator
-          bucket={workspace.statusBucket}
-          workspaceKind={workspace.workspaceKind}
-        />
-        <HoverRevealActions
-          visible={visible}
-          width={workspaceKebabRevealWidth({ compact })}
-          height={20}
-          testID={`sidebar-workspace-hover-actions-${workspace.workspaceKey}`}
-        >
-          {children}
-        </HoverRevealActions>
-      </View>
-    </View>
+    <>
+      <WorkspaceStatusIndicator
+        bucket={workspace.statusBucket}
+        workspaceKind={workspace.workspaceKind}
+      />
+      <HoverRevealActions
+        visible={visible}
+        width={workspaceKebabRevealWidth({ compact })}
+        height={TITLE_LINE_HEIGHT}
+        testID={`sidebar-workspace-hover-actions-${workspace.workspaceKey}`}
+      >
+        {children}
+      </HoverRevealActions>
+    </>
   );
 }
 
@@ -473,13 +457,8 @@ export function SidebarWorkspaceTrailingStatusActions({
 const TITLE_LINE_HEIGHT = 20;
 
 const styles = StyleSheet.create((theme) => ({
-  // Hidden actions consume no width. HoverRevealActions expands the row only while
-  // its controls are visible, keeping idle titles beside their metadata and status.
-  workspaceStatusActionsFrame: {
-    position: "relative",
-    height: 20,
-    flexShrink: 0,
-  },
+  // Metadata, status and actions share one row. Hidden actions take no width; the reveal
+  // widens the row only while its controls show, so idle titles keep that space.
   trailingContentRow: {
     flexDirection: "row",
     alignItems: "center",
