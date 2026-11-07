@@ -1,3 +1,15 @@
+import { useTranslation } from "react-i18next";
+import { PanelRightOpen } from "lucide-react-native";
+import {
+  MenuSubTrigger,
+  useMenuContext,
+  type MenuItemSecondary,
+  type MenuPageDefinition,
+} from "@/components/ui/menu";
+import { SPLIT_LAYOUT_PICKER_WIDTH, SplitLayoutPicker } from "@/components/split-layout-picker";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSplitLayoutControlsEnabled } from "@/paseo-plus-plus/split-layout-controls";
+import type { SplitSide } from "@/stores/workspace-layout-splits";
 import { useCallback, useMemo, type ComponentType, type ReactElement } from "react";
 import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -13,6 +25,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { Theme } from "@/styles/theme";
 import {
   useWorkspaceTabLaunchCatalog,
+  useWorkspaceTabSplitLaunchEnabled,
   type WorkspaceTabLaunchItem,
   type WorkspaceTabLaunchPurpose,
 } from "@/workspace-tabs/launcher";
@@ -20,7 +33,9 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { PaneHost } from "@/panels/panel-manifest";
 import type { PanelIconProps } from "@/panels/panel-registry";
 
+const ThemedPanelRightOpen = withUnistyles(PanelRightOpen);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const SPLIT_LAUNCH_ICON = <ThemedPanelRightOpen size={16} uniProps={mutedColorMapping} />;
 
 function LaunchItemIconGlyph({
   Icon,
@@ -52,16 +67,37 @@ function LaunchItemIcon({ item }: { item: WorkspaceTabLaunchItem }): ReactElemen
 export function WorkspaceNewTabMenuItem({
   item,
   paneId,
+  splitPageId,
 }: {
   item: WorkspaceTabLaunchItem;
   paneId?: string;
+  splitPageId?: string;
 }) {
+  const { t } = useTranslation();
   const leading = useMemo(() => <LaunchItemIcon item={item} />, [item]);
   const trailing = useMemo(
     () =>
       item.shortcutActionId ? <LaunchItemShortcut actionId={item.shortcutActionId} /> : undefined,
     [item.shortcutActionId],
   );
+  const splitAction = useMemo<MenuItemSecondary | undefined>(() => {
+    if (!splitPageId) {
+      return undefined;
+    }
+    return {
+      kind: "action",
+      element: (
+        <MenuSubTrigger
+          id={splitPageId}
+          iconOnly
+          accessibilityLabel={t("workspace.splits.openToSide", { item: item.label })}
+          leading={SPLIT_LAUNCH_ICON}
+          disabled={item.disabled}
+          testID={splitPageId}
+        />
+      ),
+    };
+  }, [splitPageId, item.label, item.disabled, t]);
   const handleSelect = useCallback(() => item.launch({ kind: "open", paneId }), [item, paneId]);
 
   return (
@@ -69,6 +105,7 @@ export function WorkspaceNewTabMenuItem({
       testID={`workspace-new-tab-menu-${item.id}`}
       leading={leading}
       trailing={trailing}
+      secondary={splitAction}
       disabled={item.disabled}
       onSelect={handleSelect}
     >
@@ -103,12 +140,31 @@ export function WorkspaceNewTabMenuContent({
     panePanelKinds,
   });
 
+  const featureEnabled = useSplitLayoutControlsEnabled();
+  const scopeEnabled = useWorkspaceTabSplitLaunchEnabled();
+  const canSplit = featureEnabled && scopeEnabled && host === "main";
+  const { t } = useTranslation();
+  const pages = useMemo<MenuPageDefinition[]>(() => {
+    if (!canSplit) {
+      return [];
+    }
+    return groups.flatMap((group) =>
+      group.items.filter(canLaunchInSplit).map((item) => ({
+        id: launchSplitPageId(item),
+        title: t("workspace.splits.openToSide", { item: item.label }),
+        hoverIntent: false,
+        content: <LaunchSplitPicker item={item} paneId={paneId} />,
+      })),
+    );
+  }, [canSplit, groups, paneId, t]);
   return (
     <DropdownMenuContent
       side="bottom"
       align="start"
       offset={4}
-      minWidth={200}
+      minWidth={canSplit ? SPLIT_LAYOUT_PICKER_WIDTH : 200}
+      scrollable={canSplit}
+      pages={pages}
       testID="workspace-new-tab-menu"
     >
       {groups.map((group, index) => (
@@ -116,7 +172,12 @@ export function WorkspaceNewTabMenuContent({
           {index > 0 ? <DropdownMenuSeparator /> : null}
           {group.label ? <DropdownMenuLabel>{group.label}</DropdownMenuLabel> : null}
           {group.items.map((item) => (
-            <WorkspaceNewTabMenuItem key={item.id} item={item} paneId={paneId} />
+            <WorkspaceNewTabMenuItem
+              key={item.id}
+              item={item}
+              paneId={paneId}
+              splitPageId={canSplit && canLaunchInSplit(item) ? launchSplitPageId(item) : undefined}
+            />
           ))}
           {group.accessory ? (
             <>
@@ -132,5 +193,40 @@ export function WorkspaceNewTabMenuContent({
         </View>
       ))}
     </DropdownMenuContent>
+  );
+}
+
+/** Previous agents opens a dialog rather than a view, so it has no split placement. */
+function canLaunchInSplit(item: WorkspaceTabLaunchItem): boolean {
+  return item.id !== "reopen-closed-agent";
+}
+
+/** Menu page id shared by a catalog row's split control and the page it opens. */
+function launchSplitPageId(item: WorkspaceTabLaunchItem): string {
+  return `workspace-new-tab-split-${item.id}`;
+}
+
+/** Keep normal row activation separate from creating the selected view in a new split. */
+function LaunchSplitPicker({ item, paneId }: { item: WorkspaceTabLaunchItem; paneId?: string }) {
+  const menu = useMenuContext("LaunchSplitPicker");
+  const compact = useIsCompactFormFactor();
+  const intent = useMemo(() => ({ kind: "open" as const, item: item.label }), [item.label]);
+  const select = useCallback(
+    (position: SplitSide, firstPaneFraction: number) => {
+      menu.selectItem(
+        () => item.launch({ kind: "split", paneId, position, firstPaneFraction }),
+        true,
+      );
+    },
+    [item, menu, paneId],
+  );
+  return (
+    <SplitLayoutPicker
+      intent={intent}
+      onSelect={select}
+      disabled={item.disabled}
+      compact={compact}
+      testIDPrefix={`workspace-new-tab-layout-${item.id}`}
+    />
   );
 }

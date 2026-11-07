@@ -76,6 +76,8 @@ the sheet's tab into a pane, and edits the autosave has not started writing are 
 
 The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits never read or modify that width.
 
+The dock divider shares the workspace split preset controls. A preset must fit both the dock’s 240 px minimum and the main area’s 360 px minimum. Disable choices that cannot produce their labeled ratio; do not offer a ratio and then clamp it to a different width.
+
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching workspace tab in Explorer. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
@@ -161,9 +163,7 @@ Desktop **Settings → Layout → Open location** has independent Main panel or 
 Explorer Files, diffs, chat files, files opened from diffs, and subagents. They default to Main
 panel. Mobile ignores them.
 
-Pull requests have a three-way open location: Main panel, On the side, or Explorer sidebar. Explorer
-sidebar is the default. Compact layouts always open pull requests in Explorer regardless of this
-desktop preference.
+Pull requests have a three-way open location: Main panel, On the side, or Explorer sidebar. Explorer sidebar is the default. The saved destination applies in every layout; On the side resolves to Main panel when workspace splits are unavailable.
 
 Panels request an implicit open through the narrow `openPreferredTarget(target, source)` pane
 contract. Entry points outside panels use `openPreferredWorkspaceTarget`. Do not branch on a

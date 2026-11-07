@@ -1,3 +1,5 @@
+import { useWorkspaceTabSplitMenu, type WorkspaceTabSplitMenu } from "./workspace-tab-split-menu";
+import { SPLIT_LAYOUT_PICKER_WIDTH } from "@/components/split-layout-picker";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
@@ -712,6 +714,39 @@ function TabHandleContent({
   );
 }
 
+/** Keeps tab menu pages and their matching triggers together without changing hook ownership. */
+function TabChipContextMenuContent({
+  contextMenuTestId,
+  splitMenu,
+  openWith,
+  menuEntries,
+}: {
+  contextMenuTestId: string;
+  splitMenu: WorkspaceTabSplitMenu;
+  openWith: ReturnType<typeof useFilePanelOpenWithMenu>;
+  menuEntries: WorkspaceTabMenuEntry[];
+}) {
+  return (
+    <ContextMenuContent
+      align="start"
+      width={DROPDOWN_WIDTH}
+      testID={contextMenuTestId}
+      pages={[...splitMenu.pages, ...openWith.pages]}
+      minWidth={splitMenu.pages.length > 0 ? SPLIT_LAYOUT_PICKER_WIDTH : undefined}
+      scrollable={Boolean(splitMenu.pages.length || openWith.pages.length)}
+    >
+      {splitMenu.trigger}
+      {menuEntries.map((entry) => {
+        if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
+        if (entry.kind === "file-panel-open-with") {
+          return <Fragment key={entry.key}>{openWith.trigger}</Fragment>;
+        }
+        return <TabContextMenuItem key={entry.key} entry={entry} />;
+      })}
+    </ContextMenuContent>
+  );
+}
+
 function TabChip({
   serverId,
   workspaceId,
@@ -757,6 +792,7 @@ function TabChip({
   dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
+  const splitMenu = useWorkspaceTabSplitMenu(tab.tabId);
   const { t } = useTranslation();
   const openWith = useFilePanelOpenWithMenu(
     { serverId, workspaceId, tabId: tab.tabId },
@@ -939,20 +975,12 @@ function TabChip({
           </View>
         ) : null}
 
-        <ContextMenuContent
-          align="start"
-          width={DROPDOWN_WIDTH}
-          pages={openWith.pages}
-          testID={contextMenuTestId}
-        >
-          {menuEntries.map((entry) => {
-            if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
-            if (entry.kind === "file-panel-open-with") {
-              return <Fragment key={entry.key}>{openWith.trigger}</Fragment>;
-            }
-            return <TabContextMenuItem key={entry.key} entry={entry} />;
-          })}
-        </ContextMenuContent>
+        <TabChipContextMenuContent
+          contextMenuTestId={contextMenuTestId}
+          splitMenu={splitMenu}
+          openWith={openWith}
+          menuEntries={menuEntries}
+        />
       </ContextMenu>
     </View>
   );
