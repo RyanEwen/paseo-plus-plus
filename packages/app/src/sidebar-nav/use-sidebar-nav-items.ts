@@ -1,9 +1,6 @@
-import {
-  getSettingsEditingBlocked,
-  subscribeSettingsEditingBlocked,
-} from "@/settings-sync/save-handler";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo } from "react";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useSettingsEditingBlocked } from "@/hooks/use-settings/editing-blocker";
 import type { AppSettings } from "@/hooks/use-settings/storage";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { groupPluginSidebarItems } from "@/plugins/sidebar-groups";
@@ -31,11 +28,7 @@ export interface UseSidebarNavItemsReturn<Section extends SidebarSection> {
 export function useSidebarNavItems<Section extends SidebarSection>(
   section: Section,
 ): UseSidebarNavItemsReturn<Section> {
-  const syncBlocked = useSyncExternalStore(
-    subscribeSettingsEditingBlocked,
-    getSettingsEditingBlocked,
-    getSettingsEditingBlocked,
-  );
+  const editingBlocked = useSettingsEditingBlocked();
   const plugins = useInstalledPlugins();
   const { settings, updateSettings, isLoading, error } = useAppSettings();
   const field = PREFERENCE_FIELDS[section];
@@ -81,5 +74,5 @@ export function useSidebarNavItems<Section extends SidebarSection>(
     [field, pluginGroups, section, updateSettings],
   );
 
-  return { items, setVisible, move, disabled: isLoading || syncBlocked || error !== null };
+  return { items, setVisible, move, disabled: isLoading || editingBlocked || error !== null };
 }
