@@ -254,21 +254,23 @@ function installCompatibility(isWorker: boolean): void {
         .concat(255);
     }
     const rgba = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/.exec(first);
-    if (rgba)
+    if (rgba) {
       return [
         Number(rgba[1]),
         Number(rgba[2]),
         Number(rgba[3]),
         Math.round(Number(rgba[4] ?? 1) * 255),
       ];
+    }
     context.fillRect(0, 0, 1, 1);
     return Array.from(context.getImageData(0, 0, 1, 1).data);
   }
   function badgeColorMethod(name: string) {
     return (details: unknown, callback?: unknown) => {
       async function invoke(): Promise<unknown> {
-        if (!details || typeof details !== "object" || Array.isArray(details))
+        if (!details || typeof details !== "object" || Array.isArray(details)) {
           throw new Error("Invalid badge details.");
+        }
         const input = { ...details } as Record<string, unknown>;
         input.color = badgeColor(input.color);
         return bridge.invoke(name, [input]);

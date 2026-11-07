@@ -280,8 +280,9 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
     });
     // Complete navigation may depend on background startup. It must never release the gate.
     void contents.loadURL(observer.url).catch(() => {
-      if (!observer.retired)
+      if (!observer.retired) {
         fail(observer, new Error("Could not load the extension storage observer."));
+      }
     });
     return observer;
   }
@@ -315,8 +316,9 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
     const frame = event.senderFrame;
     if (!frame || event.sender.session !== profile) return;
     const observer = [...observers.values()].find((row) => row.view.webContents === event.sender);
-    if (!observer || observer.retired || !profile.extensions.getExtension(observer.extension.id))
+    if (!observer || observer.retired || !profile.extensions.getExtension(observer.extension.id)) {
       return;
+    }
     const current = event.sender.mainFrame;
     if (
       frame.url !== observer.url ||
@@ -325,8 +327,9 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
       (observer.frame !== undefined &&
         (frame.routingId !== observer.frame.routingId ||
           frame.processId !== observer.frame.processId))
-    )
+    ) {
       return;
+    }
     return observer;
   }
 
@@ -428,8 +431,9 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
       observer.retired ||
       observer.extension.path !== extension.path ||
       observer.extension.version !== extension.version
-    )
+    ) {
       throw failures.get(extension.id) ?? new Error("Extension storage observer is unavailable.");
+    }
     const cancelled = () => fail(observer, new Error("Extension startup was cancelled."));
     if (signal?.aborted) cancelled();
     signal?.addEventListener("abort", cancelled, { once: true });
@@ -438,8 +442,9 @@ export function registerExtensionStorageObservers(profile: Session, hooks: Obser
     } finally {
       signal?.removeEventListener("abort", cancelled);
     }
-    if (observer.retired || observers.get(extension.id) !== observer)
+    if (observer.retired || observers.get(extension.id) !== observer) {
       throw failures.get(extension.id) ?? new Error("The extension closed during startup.");
+    }
   }
 
   /** Dispose before app quit so no blocked preload or ownerless document can survive shutdown. */

@@ -270,8 +270,9 @@ export class BrowserExtensionCatalog {
       !this.isCurrentRecovery(recovery) ||
       recovery.status !== "idle" ||
       recovery.timer !== undefined
-    )
+    ) {
       return;
+    }
     const delayMs = RECOVERY_DELAYS_MS[recovery.attempts];
     if (delayMs === undefined) {
       if (!recovery.exhausted) this.logRecovery(recovery, "exhausted");

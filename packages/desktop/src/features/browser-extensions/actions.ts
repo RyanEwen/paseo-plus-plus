@@ -63,8 +63,9 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
     assertAppSender(event);
     const { browserId } = z.strictObject({ browserId: z.string().min(1) }).parse(input);
     const guest = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
-    if (!guest || guest.isDestroyed() || guest.session !== profile)
+    if (!guest || guest.isDestroyed() || guest.session !== profile) {
       throw new Error("The browser tab is no longer available.");
+    }
     const entries = await options.catalog.list();
     return Promise.all(
       profile.extensions
@@ -76,8 +77,9 @@ export function registerBrowserExtensionActions(options: ExtensionActionsOptions
           if (
             getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id) !== guest ||
             guest.isDestroyed()
-          )
+          ) {
             throw new Error("The browser tab is no longer available.");
+          }
           return {
             id: extension.id,
             name: extension.name,

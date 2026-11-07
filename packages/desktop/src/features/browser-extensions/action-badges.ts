@@ -79,8 +79,9 @@ export function createExtensionActionBadges(options: {
     const target = tabId === undefined ? action.defaults : (action.tabs.get(tabId) ?? {});
     if ("color" in details) {
       const rgba = details.color;
-      if (isTextColor && rgba[3] === 0)
+      if (isTextColor && rgba[3] === 0) {
         throw new Error("Badge text color must not be transparent.");
+      }
       if (isBackground) target.backgroundColor = [...rgba];
       else target.textColor = [...rgba];
     } else {

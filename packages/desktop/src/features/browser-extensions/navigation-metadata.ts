@@ -62,7 +62,8 @@ export async function readCommittedTransition(
     throw new Error("Navigation metadata could not retain its committed document.");
   }
   if (entry.transitionType === "auto_toplevel") return "start_page";
-  if (!coreTypes.has(entry.transitionType))
+  if (!coreTypes.has(entry.transitionType)) {
     throw new Error("Unsupported native navigation core type.");
+  }
   return entry.transitionType;
 }

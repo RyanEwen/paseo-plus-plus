@@ -86,8 +86,9 @@ export async function readExtensionToolbarIcon(
       relative.startsWith(`..${path.sep}`) ||
       relative === ".." ||
       path.isAbsolute(relative)
-    )
+    ) {
       return null;
+    }
     const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const info = await file.stat();
