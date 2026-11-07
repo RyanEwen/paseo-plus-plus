@@ -304,6 +304,16 @@ async function configuredHistoryFixture(): Promise<ConfiguredCodexHistoryInput> 
 }
 
 describe("configured Codex history admission", () => {
+  test("refuses a history tree deeper than the bounded path check", async () => {
+    const input = await configuredHistoryFixture();
+    const nested = join(input.env.CODEX_HOME!, "sessions", "1", "2", "3", "4", "5", "6", "7");
+    await fs.mkdir(nested, { recursive: true });
+    await expect(resolveConfiguredCodexHistory(input)).rejects.toMatchObject({
+      code: "HISTORY_STORAGE_CONFLICT",
+      reason: "history-path-check-limit",
+    });
+  });
+
   test("uses explicit native startup selection and preserves auth/config links", async () => {
     const input = await configuredHistoryFixture();
     const home = input.env.CODEX_HOME!;

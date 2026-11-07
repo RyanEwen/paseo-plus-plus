@@ -313,6 +313,18 @@ describe("configured Claude admission", () => {
       c.resumeSession(handle, undefined, { historyStorage: { ...storage, home: root } }),
     ).rejects.toThrow("bound-storage-changed");
   });
+  test("refuses a history tree deeper than the bounded path check", async () => {
+    await mkdir(path.join(home, "projects", "1", "2", "3", "4", "5", "6", "7", "8", "9"), {
+      recursive: true,
+    });
+    expect(() =>
+      resolveConfiguredClaudeHistory({
+        policy: { mode: "configured" },
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: home } },
+        env: { HOME: root, CLAUDE_CONFIG_DIR: home },
+      }),
+    ).toThrow("Configured provider history cannot use this route: history-path-check-limit");
+  });
   test.each([
     { kind: "symlink", reason: "history-symlink" },
     { kind: "hardlink", reason: "history-hardlink" },
