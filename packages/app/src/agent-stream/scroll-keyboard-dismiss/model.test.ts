@@ -174,7 +174,7 @@ describe("chronological scroll keyboard dismissal", () => {
           { ts: 1080, y: 484 },
         ],
         { ts: 1120, y: 476 },
-        false,
+        "chronological",
       ),
     ).toBe(false);
   });

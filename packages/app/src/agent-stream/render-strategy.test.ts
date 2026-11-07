@@ -463,7 +463,11 @@ describe("native keyboard dismissal direction", () => {
     };
     expect(strategy.getFlatListInverted()).toBe(false);
     expect(
-      releaseDrag(beginDrag(start), release, strategy.getFlatListInverted()).shouldDismiss,
+      releaseDrag(
+        beginDrag(start),
+        release,
+        strategy.getFlatListInverted() ? "inverted" : "chronological",
+      ).shouldDismiss,
     ).toBe(true);
   });
 });
