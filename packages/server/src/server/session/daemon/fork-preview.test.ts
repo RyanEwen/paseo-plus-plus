@@ -9,7 +9,15 @@ import {
   verifyForkChecksum,
 } from "./fork-preview.js";
 
-function release(build: number, options: { draft?: boolean; missingPackage?: boolean } = {}) {
+const CURRENT_REPOSITORY = "RyanEwen/paseo-plus-plus";
+const LEGACY_REPOSITORY = "RyanEwen/paseo";
+
+/** A published preview fixture whose assets use canonical URLs under `repository`. */
+function release(
+  build: number,
+  options: { draft?: boolean; missingPackage?: boolean; repository?: string } = {},
+) {
+  const repository = options.repository ?? CURRENT_REPOSITORY;
   const tag = `v0.11.1-preview.${build}`;
   const filename = `paseo-daemon-${tag.slice(1)}-${process.platform}-${process.arch}.tgz`;
   const names = options.missingPackage ? ["SHA256SUMS"] : [filename, "SHA256SUMS"];
@@ -19,7 +27,7 @@ function release(build: number, options: { draft?: boolean; missingPackage?: boo
     prerelease: true,
     assets: names.map((name) => ({
       name,
-      browser_download_url: `https://github.com/RyanEwen/paseo/releases/download/${tag}/${name}`,
+      browser_download_url: `https://github.com/${repository}/releases/download/${tag}/${name}`,
     })),
   };
 }
@@ -111,22 +119,9 @@ test("downloads the selected fork bytes, verifies them, and removes the temporar
   expect(existsSync(download.file)).toBe(false);
 });
 
-function renamedRelease() {
-  const preview = release(12);
-  for (const asset of preview.assets) {
-    asset.browser_download_url = asset.browser_download_url.replace(
-      "RyanEwen/paseo/",
-      "RyanEwen/paseo-plus-plus/",
-    );
-  }
-  return preview;
-}
-
-// COMPAT(fork-repo-rename): added in v0.11.2-preview, remove after the final prerelease updater
-// bridge is retired (no calendar date; see docs/release.md, final prerelease bridge).
 describe("daemon repository rename bridge", () => {
-  test("accepts canonical assets from the renamed repository", () => {
-    const preview = renamedRelease();
+  test("accepts canonical assets from the current repository", () => {
+    const preview = release(12);
     expect(selectForkPreview([preview])).toEqual({
       version: "0.11.1-preview.12",
       filename: preview.assets[0].name,
@@ -135,12 +130,19 @@ describe("daemon repository rename bridge", () => {
     });
   });
 
+  // COMPAT(fork-repo-rename): added in v0.11.2-preview, remove after the final prerelease updater
+  // bridge is retired (no calendar date; see docs/release.md, final prerelease bridge).
+  test("accepts canonical assets published under the legacy repository name", () => {
+    const preview = release(12, { repository: LEGACY_REPOSITORY });
+    expect(selectForkPreview([preview]).packageAsset).toEqual(preview.assets[0]);
+  });
+
   test.each([
     ["RyanEwen", "paseo-plus-plus-extra"],
     ["AnotherOwner", "paseo-plus-plus"],
     ["getpaseo", "paseo"],
   ])("rejects an unapproved repository %s/%s", (owner, repository) => {
-    const preview = renamedRelease();
+    const preview = release(12);
     preview.assets[0].browser_download_url = preview.assets[0].browser_download_url.replace(
       "RyanEwen/paseo-plus-plus/",
       `${owner}/${repository}/`,
@@ -149,13 +151,13 @@ describe("daemon repository rename bridge", () => {
   });
 
   test.each(["?download=1", "#fragment", "/extra"])("rejects asset URL suffix %s", (suffix) => {
-    const preview = renamedRelease();
+    const preview = release(12);
     preview.assets[0].browser_download_url += suffix;
     expect(() => selectForkPreview([preview])).toThrow("Unexpected fork release asset URL");
   });
 
   test("rejects a different tag, filename, escaped path, protocol, or port", () => {
-    const preview = renamedRelease();
+    const preview = release(12);
     const url = preview.assets[0].browser_download_url;
     const replacements = [
       url.replace("preview.12", "preview.13"),
@@ -173,7 +175,7 @@ describe("daemon repository rename bridge", () => {
   test.each(["../daemon.tgz", "daemon..tgz", ".tgz", "daemon%20.tgz"])(
     "refuses a malformed daemon package name %s",
     (name) => {
-      const preview = renamedRelease();
+      const preview = release(12);
       preview.assets[0] = {
         name,
         browser_download_url: `https://github.com/RyanEwen/paseo-plus-plus/releases/download/${preview.tag_name}/${name}`,
@@ -183,7 +185,7 @@ describe("daemon repository rename bridge", () => {
   );
 
   test("discovers through the current API and downloads only the canonical package and checksum", async () => {
-    const preview = renamedRelease();
+    const preview = release(12);
     const filename = preview.assets[0].name;
     const bytes = Buffer.from("verified renamed daemon");
     const calls: string[] = [];
@@ -223,7 +225,7 @@ describe("daemon repository rename bridge", () => {
   });
 
   test("still rejects tampered bytes from a renamed canonical asset", async () => {
-    const preview = renamedRelease();
+    const preview = release(12);
     const filename = preview.assets[0].name;
     const digest = createHash("sha256").update("approved bytes").digest("hex");
     await expect(

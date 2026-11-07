@@ -44,6 +44,8 @@ export function selectForkPreview(value: unknown): ForkPreviewSelection {
     // Keep the tag namespace and monotonic counter when GitHub classification changes.
     if (release.draft || !match) return [];
     const build = Number(match[1]);
+    // Android preview version codes are 1_000_000_000 + build and must stay within Google
+    // Play's 2_100_000_000 maximum, so a larger build number cannot be a real preview.
     if (!Number.isSafeInteger(build) || build < 1 || build > 1_100_000_000) {
       throw new Error("Invalid preview build number");
     }
