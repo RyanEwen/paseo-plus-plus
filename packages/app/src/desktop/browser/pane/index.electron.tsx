@@ -78,6 +78,7 @@ import {
   type BrowserElementSelection,
   type ElementSelectorOutcome,
 } from "./element-selector.electron";
+import { subscribeAncestorScroll } from "./ancestor-scroll";
 import { ExtensionsMenu } from "./extensions-menu.electron";
 import { PageZoomMenu } from "./page-zoom-menu.electron";
 import { ToolbarMenuContent, useToolbarMenuTriggerStyle } from "./toolbar-menu-trigger.electron";
@@ -777,7 +778,7 @@ export function BrowserPane({
     const sizeObserver =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updatePresentation);
     window.addEventListener("resize", updatePresentation);
-    document.addEventListener("scroll", updatePresentation, true);
+    const unsubscribeAncestorScroll = subscribeAncestorScroll({ host, update: updatePresentation });
 
     const handleStartLoading = () => {
       selectorControllerRef.current?.stopForWebview(webview);
@@ -896,7 +897,7 @@ export function BrowserPane({
       webview.removeEventListener(BROWSER_PRESENTATION_CHANGED_EVENT, syncPresentationScale);
       sizeObserver?.disconnect();
       window.removeEventListener("resize", updatePresentation);
-      document.removeEventListener("scroll", updatePresentation, true);
+      unsubscribeAncestorScroll();
       webview.removeEventListener("did-start-loading", handleStartLoading);
       webview.removeEventListener("did-stop-loading", handleStopLoading);
       webview.removeEventListener("will-navigate", handleWillNavigate);
