@@ -44,10 +44,14 @@ export function reduceHostUpdatePresentation(
   }
 }
 
-/** The sheet shows a presented attempt once it has something to show and was not dismissed. */
+/**
+ * The sheet shows a presented attempt once it has something to show. Dismissing hides progress
+ * and a success, but a failure is shown again: the user dismissed progress, not the error.
+ */
 export function isHostUpdateSheetVisible(
   presentation: HostUpdatePresentation,
   status: DaemonUpdateState["status"],
 ): boolean {
-  return presentation.host !== null && !presentation.dismissed && status !== "idle";
+  if (presentation.host === null || status === "idle") return false;
+  return status === "failed" || !presentation.dismissed;
 }

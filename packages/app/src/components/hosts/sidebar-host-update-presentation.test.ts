@@ -86,6 +86,23 @@ describe("isHostUpdateSheetVisible", () => {
     expect(isHostUpdateSheetVisible({ ...running, dismissed: true }, "updating")).toBe(false);
   });
 
+  test("a failure after dismissed progress is shown again", () => {
+    const dismissed = reduceHostUpdatePresentation(running, { type: "dismiss" });
+    const failed = reduceHostUpdatePresentation(dismissed, { type: "finished", outcome: "settled" });
+
+    expect(isHostUpdateSheetVisible(failed, "failed")).toBe(true);
+  });
+
+  test("a success after dismissed progress stays hidden", () => {
+    const dismissed = reduceHostUpdatePresentation(running, { type: "dismiss" });
+    const succeeded = reduceHostUpdatePresentation(dismissed, {
+      type: "finished",
+      outcome: "settled",
+    });
+
+    expect(isHostUpdateSheetVisible(succeeded, "complete")).toBe(false);
+  });
+
   test("a closed sheet is hidden", () => {
     expect(isHostUpdateSheetVisible(CLOSED_HOST_UPDATE, "complete")).toBe(false);
   });
