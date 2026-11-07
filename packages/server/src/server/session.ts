@@ -8,6 +8,7 @@ import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
+import { scopeAgentsToWorkspace } from "./agent-directory-scope.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
 import type {
@@ -5603,15 +5604,6 @@ export class Session {
     return matchedEntries;
   }
 
-  /** Apply workspace identity before cursor pagination; cwd is not an ownership key. */
-  private scopeHistoryAgents(
-    agents: AgentSnapshotPayload[],
-    request: AgentDirectoryRequestMessage,
-  ): AgentSnapshotPayload[] {
-    if (request.type !== "fetch_agent_history_request" || !request.workspaceId) return agents;
-    return agents.filter((agent) => agent.workspaceId === request.workspaceId);
-  }
-
   private async listFetchAgentsEntries(request: AgentDirectoryRequestMessage): Promise<{
     entries: FetchAgentsResponseEntry[];
     pageInfo: FetchAgentsResponsePageInfo;
@@ -5633,7 +5625,10 @@ export class Session {
         (request.type === "fetch_agents_request" && request.includeBackground),
       includeUnavailablePersisted: request.type === "fetch_agent_history_request",
     });
-    agents = this.scopeHistoryAgents(agents, request);
+    agents = scopeAgentsToWorkspace(
+      agents,
+      request.type === "fetch_agent_history_request" ? request.workspaceId : undefined,
+    );
     const activePlacementsByWorkspaceId =
       scope === "active" ? await this.buildActiveProjectPlacementsByWorkspaceId() : null;
     if (activePlacementsByWorkspaceId) {
