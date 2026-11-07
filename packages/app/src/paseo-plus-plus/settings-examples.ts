@@ -3,7 +3,7 @@ import type { PaseoPlusPlusFeature } from "./preferences";
 
 /** Original app captures with contextual display frames. Android checks have text help only. */
 export const FEATURE_EXAMPLE_IMAGES: Partial<
-  Record<PaseoPlusPlusFeature | "descriptiveToolCalls", readonly SettingsExampleImage[]>
+  Record<PaseoPlusPlusFeature, readonly SettingsExampleImage[]>
 > = {
   descriptiveToolCalls: [
     {
