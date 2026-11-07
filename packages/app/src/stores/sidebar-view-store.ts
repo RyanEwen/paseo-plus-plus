@@ -531,6 +531,8 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
         clearLabelFilter: () => setPreferences({ labelFilter: emptyLabelFilter() }),
         reconcileLabelFilter: (labels) =>
           set((state) => {
+            // A synced profile's labels may come from another client's catalog. Pruning them here
+            // would be a silent synced edit, so only a local profile is reconciled.
             if (settingsHostSelected()) return state;
             const available = new Set(labels.map(workspaceLabelKey));
             const next = state.labelFilter.labels.filter(
