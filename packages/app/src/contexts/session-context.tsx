@@ -1,4 +1,5 @@
 import { workspaceNotificationRuntime } from "@/notifications/workspace-receipts-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
 import { AppState } from "react-native";
@@ -254,10 +255,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     focusedTerminalId,
   });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
-  const supportsNotificationReceipts = useSessionStore(
-    (state) =>
-      state.sessions[serverId]?.serverInfo?.features?.workspaceNotificationReceipts === true,
-  );
+  const supportsNotificationReceipts = useHostFeature(serverId, "workspaceNotificationReceipts");
   useEffect(() => {
     if (!supportsNotificationReceipts) return;
     return workspaceNotificationRuntime.start({

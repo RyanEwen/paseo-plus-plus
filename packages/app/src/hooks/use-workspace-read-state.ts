@@ -34,9 +34,13 @@ export function useWorkspaceReadState({
     if (!client) {
       throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
     }
-    if (supportsNotificationReceipts)
+    if (supportsNotificationReceipts) {
       await workspaceNotificationRuntime.markRead(serverId, workspaceId);
-    else await client.clearWorkspaceAttention(workspaceId);
+      return;
+    }
+    // COMPAT(workspaceNotificationReceipts): added after v0.12.0-beta.3; remove this older-host
+    // branch after 2027-10-21 once host floors include receipt sync.
+    await client.clearWorkspaceAttention(workspaceId);
   }, [hasClearableAttention, serverId, workspaceId, supportsNotificationReceipts]);
 
   const markUnread = useCallback(async () => {
