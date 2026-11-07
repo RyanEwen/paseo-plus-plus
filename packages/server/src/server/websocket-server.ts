@@ -1,5 +1,10 @@
-import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { AppSettingsStore } from "./app-settings/index.js";
+import { forkCapabilities } from "./fork-capabilities.js";
+import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
+import {
+  attachAttentionPresentationConfig,
+  resolveRemoteAttentionRequester,
+} from "./agent/attention/host-wiring.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -716,33 +721,31 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
-      dispatch: async (batch) => {
-        try {
-          const { disposition } = await sendPreparedPromptToAgent({
-            agentManager,
-            agentStorage,
-            agentId: batch.recipientId,
-            prompt: batch.prompt,
-            activeTurnBehavior: batch.activeTurnBehavior,
-            sessionMode: batch.sessionMode,
-            clearPendingPermissions: batch.clearPendingPermissions,
-            unarchive: batch.unarchive,
-            runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
-            onDispatch: batch.onDispatch,
-            logger: this.logger,
-          });
-          if (disposition === "turn_started")
-            await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
-          return disposition;
-        } catch (error) {
-          await agentManager.recordAttentionRejection({
-            agentId: batch.recipientId,
-            admissions: batch.attention,
-            error: error instanceof Error ? error.message : "Agent request dispatch failed",
-          });
-          throw error;
-        }
-      },
+      dispatch: (batch) =>
+        dispatchWithAttentionRejection({
+          agentManager,
+          logger: this.logger,
+          recipientId: batch.recipientId,
+          admissions: batch.attention,
+          dispatch: async () => {
+            const { disposition } = await sendPreparedPromptToAgent({
+              agentManager,
+              agentStorage,
+              agentId: batch.recipientId,
+              prompt: batch.prompt,
+              activeTurnBehavior: batch.activeTurnBehavior,
+              sessionMode: batch.sessionMode,
+              clearPendingPermissions: batch.clearPendingPermissions,
+              unarchive: batch.unarchive,
+              runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
+              onDispatch: batch.onDispatch,
+              logger: this.logger,
+            });
+            if (disposition === "turn_started")
+              await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
+            return disposition;
+          },
+        }),
       onError: (err, batch) =>
         this.logger.error(
           { err, agentId: batch.recipientId, messageIds: batch.messageIds },
@@ -773,18 +776,8 @@ export class VoiceAssistantWebSocketServer {
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
     this.agentManager.setAttentionHost({
       serverId,
-      resolveRemoteRequester: async (peer) => {
-        if (!peer.serverId) return "unknown";
-        try {
-          return await this.toolHosts().use(peer.serverId, async (client) => {
-            const result = await client.fetchAgent(peer.agentId);
-            return !result || result.agent.archivedAt ? "missing" : "available";
-          });
-        } catch {
-          // A transport or authority failure cannot prove that a requester is gone.
-          return "unknown";
-        }
-      },
+      resolveRemoteRequester: (peer) =>
+        resolveRemoteAttentionRequester(peer, () => this.toolHosts()),
     });
     this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
@@ -820,26 +813,14 @@ export class VoiceAssistantWebSocketServer {
       providerSnapshotManager: this.providerSnapshotManager,
       updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
     });
-    this.agentManager.setAttentionPresentationEnabled(
-      isAgentAwareAttentionEnabled(this.daemonConfigStore.get()),
-    );
-    const unsubscribeAttention = this.daemonConfigStore.onApply((config, previous) => {
-      this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(config));
-      return () =>
-        this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(previous));
-    });
-    let publishedAttentionMode = this.agentManager.agentAwareAttentionEnabled;
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
-      const nextMode = this.agentManager.agentAwareAttentionEnabled;
-      if (nextMode === publishedAttentionMode) return;
-      publishedAttentionMode = nextMode;
-      // Config ownership is committed. Reprojection never replays provider events or notifications.
-      const sessions = new Set([...this.sessions.values()].map((connection) => connection.session));
-      for (const session of sessions)
-        void session.refreshAttentionPresentation().catch((error) => {
-          this.logger.warn({ err: error }, "Failed to refresh attention presentation");
-        });
+    });
+    const unsubscribeAttention = attachAttentionPresentationConfig({
+      store: this.daemonConfigStore,
+      agentManager: this.agentManager,
+      sessions: () => [...this.sessions.values()].map((connection) => connection.session),
+      logger: this.logger,
     });
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();
@@ -2048,11 +2029,6 @@ export class VoiceAssistantWebSocketServer {
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
-        appSettingsSync: true,
-        appSettingsAccentColor: true,
-        appSettingsChatPreferences: true,
-        appSettingsSidebarModeProfiles: true,
-        checkoutFileDiff: true,
         connectedHosts: true,
         hostMultiplexing: true,
         // COMPAT(relayProtectedSecurity): added in v0.13.0, remove gate after 2027-04-21.
@@ -2139,12 +2115,10 @@ export class VoiceAssistantWebSocketServer {
         agentTimelinePromptIndex: true,
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: true,
-        workspaceAgentHistory: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: true,
-        workspaceWorktreeOptions: true,
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: true,
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -2157,8 +2131,6 @@ export class VoiceAssistantWebSocketServer {
         worktreeRestore: true,
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: true,
-        workspaceArchiveComplete: true,
-        projectArchivedWorkspaces: true,
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: true,
         // COMPAT(fileByteWrites): added in v0.13.0, remove gate after 2027-04-20.
@@ -2173,7 +2145,6 @@ export class VoiceAssistantWebSocketServer {
         daemonDiagnostics: true,
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
         daemonSelfUpdate: this.daemonRuntimeConfig?.desktopManaged !== true,
-        daemonUpdateAvailability: true,
         // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
         terminalsSurviveRestart: true,
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
@@ -2189,9 +2160,6 @@ export class VoiceAssistantWebSocketServer {
         providerSubagentNesting: true,
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: true,
-        projectWorkspacePinning: true,
-        // COMPAT(workspaceNotificationReceipts): added after v0.12.0-beta.3; retain advertisement after removing the client gate.
-        workspaceNotificationReceipts: true,
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: true,
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -2223,8 +2191,6 @@ export class VoiceAssistantWebSocketServer {
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
         agentMessageBatching: true,
-        agentAudienceAttention: true,
-        agentAudienceAttentionSettings: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
@@ -2242,6 +2208,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // Fork feature layers register their own flags beside their handlers.
+        ...forkCapabilities(),
       },
     };
   }

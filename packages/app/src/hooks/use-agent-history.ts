@@ -28,33 +28,24 @@ export type {
   AgentHistoryHostError,
 } from "./agent-history-fetch";
 
-export function useAgentHistory(options: {
-  serverId?: string | null;
-  enabled?: boolean;
-  search?: string;
-  workspaceId?: string;
-}): AgentHistoryResult {
+/**
+ * Splits the hosts a history query targets into reachable and unreachable ones.
+ * Opted out of React Compiler: the selection reads the mutable host runtime and must keep its
+ * explicit version dependency, which the compiler otherwise removes as an unused read.
+ */
+function useAgentHistoryHosts(daemons: ReturnType<typeof useHosts>, serverId: string | null) {
   "use no memo";
-  // Host selection reads a mutable external store. Preserve its explicit version
-  // dependency, which React Compiler otherwise removes as an unused read.
-  const { t } = useTranslation();
-  const daemons = useHosts();
   const runtime = getHostRuntimeStore();
   const runtimeVersion = useSyncExternalStore(
     (onStoreChange) => runtime.subscribeAll(onStoreChange),
     () => runtime.getVersion(),
     () => runtime.getVersion(),
   );
-  const serverId = useMemo(() => {
-    const value = options.serverId;
-    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-  }, [options.serverId]);
-  const enabled = options.enabled ?? true;
   // A host the user asked about splits two ways: one this fetch can reach, and
   // one whose sessions will be missing from the answer. Both come out of here,
   // because dropping the unreachable ones silently is what lets the list — and
   // worse, "No sessions match" — overstate what was actually searched.
-  const { targetHosts, unreachableHosts } = useMemo(() => {
+  return useMemo(() => {
     void runtimeVersion;
     const serverLabelById = new Map(daemons.map((daemon) => [daemon.serverId, daemon.label]));
     const serverIds = serverId ? [serverId] : daemons.map((daemon) => daemon.serverId);
@@ -74,6 +65,22 @@ export function useAgentHistory(options: {
 
     return { targetHosts: hosts, unreachableHosts: unreachable };
   }, [daemons, runtime, runtimeVersion, serverId]);
+}
+
+export function useAgentHistory(options: {
+  serverId?: string | null;
+  enabled?: boolean;
+  search?: string;
+  workspaceId?: string;
+}): AgentHistoryResult {
+  const { t } = useTranslation();
+  const daemons = useHosts();
+  const serverId = useMemo(() => {
+    const value = options.serverId;
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  }, [options.serverId]);
+  const enabled = options.enabled ?? true;
+  const { targetHosts, unreachableHosts } = useAgentHistoryHosts(daemons, serverId);
   const targetServerIds = useMemo(() => targetHosts.map((host) => host.serverId), [targetHosts]);
   // One gate, checked before the field is offered: a fleet where any host
   // predates search has no search, rather than a list that silently omits that

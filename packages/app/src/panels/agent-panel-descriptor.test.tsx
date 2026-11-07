@@ -77,6 +77,7 @@ describe("shared agent descriptor", () => {
       pendingPermissionCount: 0,
       requiresAttention: false,
       attentionReason: null,
+      attentionMessage: null,
       isTurnActive: false,
       icon: TestIcon,
       ...overrides,

@@ -29,8 +29,12 @@ export class AttentionPermissionCompletion {
 
   /** Current admission and still-active membership fence every delayed response and terminal. */
   matches(objectives: AgentAttentionObjectives, turnId = this.turnId): boolean {
-    if (this.retired || this.completed || !this.ownsManagedInstance()) return false;
-    if (objectives !== this.objectives || turnId !== this.turnId) return false;
+    if (this.retired || this.completed || !this.ownsManagedInstance()) {
+      return false;
+    }
+    if (objectives !== this.objectives || turnId !== this.turnId) {
+      return false;
+    }
     const current = objectives.capture();
     return (
       current.admissionId === this.membership.admissionId &&
@@ -47,24 +51,32 @@ export class AttentionPermissionCompletion {
     objectives: AgentAttentionObjectives,
     turnId: string,
   ): (() => boolean) | undefined {
-    if (!this.matches(objectives, turnId) || this.finishRequests) return undefined;
+    if (!this.matches(objectives, turnId) || this.finishRequests) {
+      return undefined;
+    }
     const previous = this.membership;
     let consumed = false;
     return () => {
-      if (consumed) return false;
+      if (consumed) {
+        return false;
+      }
       consumed = true;
       const sameOwner =
         this.membership === previous &&
         !this.retired &&
         !this.completed &&
         this.ownsManagedInstance();
-      if (!sameOwner || this.finishRequests) return false;
+      if (!sameOwner || this.finishRequests) {
+        return false;
+      }
       const current = objectives.capture();
       const renewedAdmission = current.admissionId !== previous.admissionId;
       const retainedMembers = previous.objectiveIds.every((id) =>
         current.objectiveIds.includes(id),
       );
-      if (!renewedAdmission || !retainedMembers) return false;
+      if (!renewedAdmission || !retainedMembers) {
+        return false;
+      }
       this.membership = current;
       return true;
     };
@@ -77,7 +89,9 @@ export class AttentionPermissionCompletion {
 
   /** Retry replaces only this permission's failed/unknown attempt, never a competing operation. */
   beginResponse(permissionId: string): symbol | undefined {
-    if (!this.matches(this.objectives) || !this.permissions.has(permissionId)) return undefined;
+    if (!this.matches(this.objectives) || !this.permissions.has(permissionId)) {
+      return undefined;
+    }
     const token = Symbol("permission response");
     this.responses.set(permissionId, { token, disposition: "pending" });
     return token;
@@ -85,21 +99,31 @@ export class AttentionPermissionCompletion {
 
   /** A completed scope may finish its response cleanup, but a retired admission may not. */
   ownsResponse(token: symbol): boolean {
-    if (this.retired || !this.ownsManagedInstance()) return false;
-    if (this.objectives.capture().admissionId !== this.membership.admissionId) return false;
+    if (this.retired || !this.ownsManagedInstance()) {
+      return false;
+    }
+    if (this.objectives.capture().admissionId !== this.membership.admissionId) {
+      return false;
+    }
     return [...this.responses.values()].some((response) => response.token === token);
   }
 
   /** Classify immediately after the provider await; later refresh failures cannot undo its result. */
   classify(token: symbol, disposition: Exclude<ResponseDisposition, "pending">): void {
-    if (!this.matches(this.objectives)) return;
+    if (!this.matches(this.objectives)) {
+      return;
+    }
     const response = [...this.responses.values()].find((entry) => entry.token === token);
-    if (response?.disposition === "pending") response.disposition = disposition;
+    if (response?.disposition === "pending") {
+      response.disposition = disposition;
+    }
   }
 
   /** Capture once from the real SDK terminal, after canonical content has been flushed. */
   observeTerminal(objectives: AgentAttentionObjectives, turnId: string): boolean {
-    if (!this.matches(objectives, turnId)) return false;
+    if (!this.matches(objectives, turnId)) {
+      return false;
+    }
     this.finishRequests ??= objectives.requests.captureCompletion(turnId);
     return true;
   }
@@ -110,12 +134,18 @@ export class AttentionPermissionCompletion {
    * Undefined means deferred; false means a completed agent/waiting objective, without human alert.
    */
   reconcile(pendingPermissionCount: number): boolean | undefined {
-    if (!this.matches(this.objectives) || !this.finishRequests) return undefined;
-    if (pendingPermissionCount > 0) return undefined;
+    if (!this.matches(this.objectives) || !this.finishRequests) {
+      return undefined;
+    }
+    if (pendingPermissionCount > 0) {
+      return undefined;
+    }
     const allSettledWithoutFollowUp = [...this.responses.values()].every(
       (response) => response.disposition === "no_follow_up",
     );
-    if (!allSettledWithoutFollowUp) return undefined;
+    if (!allSettledWithoutFollowUp) {
+      return undefined;
+    }
 
     // Consume before external state/outcome observers can re-enter the manager.
     this.completed = true;

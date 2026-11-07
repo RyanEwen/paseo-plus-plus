@@ -536,6 +536,16 @@ The desktop-managed daemon disables the bundled web UI by default (`PASEO_WEB_UI
 See [worktree development and integration](worktree-development.md) for dependency qualification,
 validation handoffs, frozen preview evidence, and combining concurrent feature changes.
 
+A prepared worktree can run Metro against dependencies installed in another checkout. `packages/app/metro.config.cjs` reads three variables for that:
+
+| Variable                              | Effect                                                                                                                                                                                                           |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PASEO_METRO_REUSED_DEPENDENCY_ROOTS` | Path-delimited list of read-only dependency directories to watch and resolve from. Modules inside them resolve through this checkout's `node_modules`, so React and other shared packages stay single instances. |
+| `PASEO_METRO_CACHE_ROOT`              | Directory for Metro's transform cache and file map, kept outside the shared dependency directories.                                                                                                              |
+| `PASEO_METRO_MAX_WORKERS`             | Positive integer Metro worker count, for running under a memory cap.                                                                                                                                             |
+
+Leave them unset in an ordinary checkout.
+
 ## Built workspace packages
 
 Package imports resolve through package exports to compiled `dist/` output, not sibling `src/` files. This is true in local dev and in published packages: the app, daemon, CLI, and SDK consumers should all exercise the same runtime paths.
