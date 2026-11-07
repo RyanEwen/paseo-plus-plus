@@ -5,7 +5,10 @@ import { anchorProjectExpansion } from "./project-expansion-anchor";
 import { createProjectScrollRef } from "./project-scroll-ref";
 import { useExpansionFollowing } from "./use-expansion-following";
 
-type HeaderGeometry = { headerTop: number; viewportTop: number };
+interface HeaderGeometry {
+  headerTop: number;
+  viewportTop: number;
+}
 
 /** Measure the header and the scroll viewport in window coordinates; null once it is hidden. */
 function measureNativeHeader(
