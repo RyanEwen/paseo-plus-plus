@@ -1,3 +1,4 @@
+import type { AttentionCallbackReservation } from "./attention/delegations.js";
 import type { AgentAttentionOutcome } from "@getpaseo/protocol/messages";
 import {
   AgentAttentionCoordinator,
@@ -113,7 +114,6 @@ import {
   AgentAttentionObjectives,
   AttentionObjectiveError,
   type AttentionAdmission,
-  type AttentionCallbackReservation,
   type StoredAttentionObjectives,
 } from "./attention/objectives.js";
 import type {

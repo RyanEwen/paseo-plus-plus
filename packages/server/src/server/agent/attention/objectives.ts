@@ -1,4 +1,6 @@
 import { AgentAttentionRequests, StoredAttentionRequestsSchema } from "./requests.js";
+import { CallbackReservations, type AttentionCallbackReservation } from "./delegations.js";
+import { HumanAttentionClaims } from "./human-claims.js";
 import { samePeer } from "./peers.js";
 import {
   AttentionBlockers,
@@ -54,17 +56,6 @@ export const StoredAttentionObjectivesSchema = z.object({
 });
 export type StoredAttentionObjectives = z.infer<typeof StoredAttentionObjectivesSchema>;
 type AttentionObjective = z.infer<typeof objectiveSchema>;
-type CallbackDelivery = z.infer<typeof callbackDeliverySchema>;
-
-interface HumanAttentionReservation {
-  objective: AttentionObjective;
-  reason: string;
-}
-
-/** A lease belongs to one live watcher and is deliberately absent from persisted and wire state. */
-export type AttentionCallbackReservation =
-  | { status: "reserved"; lease: symbol }
-  | { status: "consumed" };
 
 export type AttentionAdmission =
   | { kind: "human"; requestId: string }
@@ -91,8 +82,10 @@ export class AgentAttentionObjectives {
   readonly requests: AgentAttentionRequests;
   readonly blockers: AttentionBlockers;
   private readonly state: StoredAttentionObjectives & { admissionId: string };
-  private readonly callbackOwners = new WeakMap<CallbackDelivery, symbol>();
-  private readonly humanAttentionOwners = new Map<symbol, HumanAttentionReservation>();
+  private readonly callbacks = new CallbackReservations(
+    (reason) => new AttentionObjectiveError(reason),
+  );
+  private readonly humanClaims = new HumanAttentionClaims<AttentionObjective>();
 
   constructor(
     stored?: StoredAttentionObjectives,
@@ -172,20 +165,7 @@ export class AgentAttentionObjectives {
       return ids;
     });
     if (acceptance?.accepted !== false) {
-      for (const input of inputs) {
-        if (input.kind !== "agent" || !input.attention?.continuation) {
-          continue;
-        }
-        const delegation = this.findDelegation(input.attention.continuation, input.requester);
-        (delegation.acceptedMessageIds ??= []).push(input.requestId);
-        const delivery = delegation.deliveries?.find(
-          (entry) => entry.deliveryId === input.requestId,
-        );
-        if (delivery) {
-          delivery.status = "consumed";
-          this.callbackOwners.delete(delivery);
-        }
-      }
+      this.consumeContinuationDeliveries(inputs);
     }
     if (acceptance?.turnId) {
       this.requests.accept({
@@ -203,6 +183,21 @@ export class AgentAttentionObjectives {
       turnId: acceptance?.accepted === false ? undefined : acceptance?.turnId,
       steering,
     });
+  }
+
+  /** An accepted callback continuation consumes the delivery it carried and cannot replay. */
+  private consumeContinuationDeliveries(inputs: readonly AttentionAdmission[]): void {
+    for (const input of inputs) {
+      if (input.kind !== "agent" || !input.attention?.continuation) {
+        continue;
+      }
+      const delegation = this.findDelegation(input.attention.continuation, input.requester);
+      (delegation.acceptedMessageIds ??= []).push(input.requestId);
+      const delivery = delegation.deliveries?.find((entry) => entry.deliveryId === input.requestId);
+      if (delivery) {
+        this.callbacks.consume(delivery);
+      }
+    }
   }
 
   /** Capture continuation membership before a permission response can settle its provider turn. */
@@ -245,21 +240,30 @@ export class AgentAttentionObjectives {
         !(input.kind === "agent" && input.attention?.continuation)
       ) {
         const existing = this.state.objectives.find((entry) => entry.id === input.requestId);
-        if (
-          existing &&
-          (existing.audience.kind !== input.kind ||
-            (existing.audience.kind === "agent" &&
-              input.kind === "agent" &&
-              !samePeer({
-                left: existing.audience.requester,
-                right: input.requester,
-                localServerId: this.localServerId,
-              })))
-        ) {
+        if (existing && this.isAudienceConflict(existing, input)) {
           throw new AttentionObjectiveError("request identity belongs to another audience");
         }
       }
     }
+  }
+
+  /** A reused request id must keep the audience (and agent requester) it was first admitted with. */
+  private isAudienceConflict(
+    existing: AttentionObjective,
+    input: Exclude<AttentionAdmission, { kind: "continuation" }>,
+  ): boolean {
+    if (existing.audience.kind !== input.kind) {
+      return true;
+    }
+    return (
+      existing.audience.kind === "agent" &&
+      input.kind === "agent" &&
+      !samePeer({
+        left: existing.audience.requester,
+        right: input.requester,
+        localServerId: this.localServerId,
+      })
+    );
   }
 
   /** Only an actual human obligation in this accepted turn can produce automatic human completion. */
@@ -301,16 +305,7 @@ export class AgentAttentionObjectives {
 
   /** Keep pending reasons process-local so ordinary close/reload snapshots cannot commit them. */
   reserveHumanAttention(objectiveId: string, reason: string): symbol | null {
-    const objective = this.requireActiveObjective(objectiveId);
-    const pending = [...this.humanAttentionOwners.values()].some(
-      (owner) => owner.objective === objective && owner.reason === reason,
-    );
-    if (objective.announcedReasons.includes(reason) || pending) {
-      return null;
-    }
-    const lease = Symbol("human attention owner");
-    this.humanAttentionOwners.set(lease, { objective, reason });
-    return lease;
+    return this.humanClaims.reserve(this.requireActiveObjective(objectiveId), reason);
   }
 
   /**
@@ -318,7 +313,7 @@ export class AgentAttentionObjectives {
    * Storage projects snapshots lazily, so this detached ledger must own the candidate reason.
    */
   humanAttentionCandidate(lease: symbol): AgentAttentionObjectives {
-    const owner = this.humanAttentionOwners.get(lease);
+    const owner = this.humanClaims.owner(lease);
     if (!owner || !this.isHumanAttentionReservationCurrent(lease)) {
       throw new AttentionObjectiveError("retired human attention claim");
     }
@@ -333,23 +328,18 @@ export class AgentAttentionObjectives {
 
   /** A reused string ID cannot make a retired objective's in-flight announcement current again. */
   isHumanAttentionReservationCurrent(lease: symbol): boolean {
-    const reservation = this.humanAttentionOwners.get(lease);
-    return reservation !== undefined && this.activeObjectives().includes(reservation.objective);
+    const owner = this.humanClaims.owner(lease);
+    return owner !== undefined && this.activeObjectives().includes(owner.objective);
   }
 
   /** Commit only the exact owned objective's reason after persistence and current-attempt checks. */
   commitHumanAttention(lease: symbol): void {
-    const owner = this.humanAttentionOwners.get(lease);
-    if (!owner) {
-      return;
-    }
-    owner.objective.announcedReasons.push(owner.reason);
-    this.humanAttentionOwners.delete(lease);
+    this.humanClaims.commit(lease);
   }
 
   /** Release only the failed process-local claim; no ordinary or restored ledger needs rollback. */
   releaseHumanAttention(lease: symbol): void {
-    this.humanAttentionOwners.delete(lease);
+    this.humanClaims.release(lease);
   }
 
   /** Current agent recipients are used only for verified requester-unavailability checks. */
@@ -411,10 +401,7 @@ export class AgentAttentionObjectives {
     return { requesterObjective };
   }
 
-  /**
-   * Reserve an immutable outcome for one exact callback message before enqueueing it.
-   * A restored unconsumed reservation has no live owner and can be reacquired only for its original message.
-   */
+  /** Reserve an immutable outcome for one exact callback message before enqueueing it. */
   reserveCallback(input: {
     link: AgentAttentionLink;
     peer: AgentAttentionPeer;
@@ -422,47 +409,14 @@ export class AgentAttentionObjectives {
     outcome: AgentAttentionOutcome;
     deliveryId: string;
   }): AttentionCallbackReservation {
-    const delegation = this.findDelegation(input.link, input.peer);
-    if (
-      (input.outcome.kind === "rejected") !== (input.outcome.acceptedTurnId === null) ||
-      (input.outcome.kind === "permission" && !input.outcome.permission)
-    ) {
-      throw new AttentionObjectiveError("invalid request outcome evidence");
-    }
-    if (
-      input.outcome.requestId !== input.link.requestId ||
-      !samePeer({
-        left: input.requester,
-        right: input.outcome.requester,
-        localServerId: this.localServerId,
-      })
-    ) {
-      throw new AttentionObjectiveError("outcome identity mismatch");
-    }
-    const deliveries = (delegation.deliveries ??= []);
-    const existing = deliveries.find((entry) => entry.outcomeId === input.outcome.id);
-    if (existing) {
-      if (existing.deliveryId !== input.deliveryId) {
-        throw new AttentionObjectiveError("outcome message identity changed");
-      }
-      if (existing.status === "consumed") {
-        return { status: "consumed" };
-      }
-      if (this.callbackOwners.has(existing)) {
-        throw new AttentionObjectiveError("outcome already reserved");
-      }
-    }
-    const delivery = existing ?? {
-      outcomeId: input.outcome.id,
+    return this.callbacks.reserve({
+      delegation: this.findDelegation(input.link, input.peer),
+      link: input.link,
+      requester: input.requester,
+      outcome: input.outcome,
       deliveryId: input.deliveryId,
-      status: "reserved" as const,
-    };
-    if (!existing) {
-      deliveries.push(delivery);
-    }
-    const lease = Symbol("attention callback owner");
-    this.callbackOwners.set(delivery, lease);
-    return { status: "reserved", lease };
+      localServerId: this.localServerId,
+    });
   }
 
   /** Recheck an owned reservation after an await without acquiring a second delivery owner. */
@@ -473,16 +427,12 @@ export class AgentAttentionObjectives {
     deliveryId: string;
     lease: symbol;
   }): void {
-    const delegation = this.findDelegation(input.link, input.peer);
-    const reservation = delegation.deliveries?.find((entry) => entry.outcomeId === input.outcomeId);
-    if (
-      !reservation ||
-      reservation.status !== "reserved" ||
-      reservation.deliveryId !== input.deliveryId ||
-      this.callbackOwners.get(reservation) !== input.lease
-    ) {
-      throw new AttentionObjectiveError("callback reservation changed");
-    }
+    this.callbacks.assert({
+      delegation: this.findDelegation(input.link, input.peer),
+      outcomeId: input.outcomeId,
+      deliveryId: input.deliveryId,
+      lease: input.lease,
+    });
   }
 
   /** A failed queue/start admission leaves the same immutable outcome available for a retry. */
@@ -492,17 +442,10 @@ export class AgentAttentionObjectives {
     deliveryId: string;
     lease: symbol;
   }): void {
-    const delegation = this.findDelegation(input.link, input.peer);
-    delegation.deliveries = delegation.deliveries?.filter((entry) => {
-      if (
-        entry.deliveryId !== input.deliveryId ||
-        entry.status === "consumed" ||
-        this.callbackOwners.get(entry) !== input.lease
-      ) {
-        return true;
-      }
-      this.callbackOwners.delete(entry);
-      return false;
+    this.callbacks.release({
+      delegation: this.findDelegation(input.link, input.peer),
+      deliveryId: input.deliveryId,
+      lease: input.lease,
     });
   }
 
@@ -557,7 +500,7 @@ export class AgentAttentionObjectives {
 
   private admitInput(input: AttentionAdmission): string[] {
     if (input.kind === "continuation") {
-      this.assertContinuation(input);
+      // assertAdmissions has already validated this continuation for the whole batch.
       const known = new Set(this.state.objectives.map(({ id }) => id));
       return input.objectiveIds.filter((id) => known.has(id));
     }
@@ -607,7 +550,7 @@ export class AgentAttentionObjectives {
         reservation.status !== "reserved" ||
         reservation.deliveryId !== deliveryClaim.deliveryId ||
         input.requestId !== deliveryClaim.deliveryId ||
-        !this.callbackOwners.has(reservation)
+        !this.callbacks.isOwned(reservation)
       ) {
         throw new AttentionObjectiveError("unreserved outcome delivery");
       }

@@ -1,3 +1,4 @@
+import type { AttentionCallbackReservation } from "./delegations.js";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { AgentAttentionOutcome } from "@getpaseo/protocol/messages";
@@ -26,7 +27,6 @@ import {
   AgentAttentionObjectives,
   AttentionObjectiveError,
   type AttentionAdmission,
-  type AttentionCallbackReservation,
   type StoredAttentionObjectives,
 } from "./objectives.js";
 import { AttentionPermissionCompletion } from "./permission-completion.js";
