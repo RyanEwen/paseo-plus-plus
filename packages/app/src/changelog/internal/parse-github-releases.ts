@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getDeviceTimeZone } from "@/utils/device-timezone";
 import type { ChangelogRelease } from "./parse-changelog";
 
 /** The fields of a GitHub release that What's new reads. */
@@ -20,8 +21,14 @@ type PublishedRelease = GitHubRelease & { body: string; published_at: string };
  * Throws when the payload is not a list (for example a GitHub error object such as a rate
  * limit), so the caller shows its error state. Individual entries that are malformed, drafts
  * or lack notes are skipped rather than failing the whole list.
+ *
+ * @param timeZone IANA zone that decides each release's calendar date. Defaults to the
+ *   viewer's zone, since a publish time is an instant and readers are everywhere.
  */
-export function parseGitHubReleases(payload: unknown): ChangelogRelease[] {
+export function parseGitHubReleases(
+  payload: unknown,
+  timeZone: string = getDeviceTimeZone(),
+): ChangelogRelease[] {
   const entries = z.array(z.unknown()).safeParse(payload);
   if (!entries.success) {
     throw new Error("Expected a GitHub releases list");
@@ -34,9 +41,7 @@ export function parseGitHubReleases(payload: unknown): ChangelogRelease[] {
 
   return published.map((entry) => ({
     version: entry.tag_name.replace(/^v(?=\d)/, ""),
-    date: new Date(entry.published_at).toLocaleDateString("en-CA", {
-      timeZone: "America/Toronto",
-    }),
+    date: toCalendarDate(entry.published_at, timeZone),
     sections: [{ title: null, body: entry.body }],
   }));
 }
@@ -57,4 +62,21 @@ function isPublished(release: GitHubRelease | null): release is PublishedRelease
   const hasPublishTime =
     release.published_at !== null && Number.isFinite(Date.parse(release.published_at));
   return hasNotes && hasPublishTime;
+}
+
+/**
+ * The `YYYY-MM-DD` calendar date of an instant in the given zone. Built from the
+ * formatter's parts so it does not depend on any locale's short-date layout.
+ */
+function toCalendarDate(instant: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(instant));
+
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
