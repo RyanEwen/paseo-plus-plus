@@ -8,6 +8,8 @@ import { registerForkCapability } from "../fork-capabilities.js";
 registerForkCapability("appSettingsSync");
 // COMPAT(appSettingsChatPreferences): added in v0.15.0, remove gate after 2027-05-02.
 registerForkCapability("appSettingsChatPreferences");
+// COMPAT(appSettingsSidebarModeProfiles): added in v0.11.2, remove after 2027-10-16.
+registerForkCapability("appSettingsSidebarModeProfiles");
 
 /** Settings RPC adapter. Subscription lifetimes belong to the existing delivery owner. */
 export class AppSettingsSession {
