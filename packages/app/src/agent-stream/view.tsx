@@ -1,3 +1,12 @@
+import {
+  historyContextPropsEqual,
+  resolveContextPageReader,
+  resolveHistoryPagination,
+  useRetainedCanonicalTranscript,
+  useTranscriptCursor,
+  type TranscriptHistoryPagination,
+} from "./use-retained-canonical-transcript";
+import { shouldIndexUserPrompts } from "./chat-outline/model";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -32,7 +41,6 @@ import { openExplorerSidebarView } from "@/workspace-tabs/explorer-sidebar";
 import {
   AssistantMessage,
   SpeakMessage,
-  UserMessage,
   Notification,
   ToolCall,
   TodoListCard,
@@ -75,6 +83,13 @@ import { TurnSummaryLine } from "./turn-collapse/summary-line";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import type { PromptJumpPlacement } from "./prompt-jump-placement";
+import {
+  createPromptReadingPublisher,
+  type PromptReadingPosition,
+} from "./prompt-reading-position";
+import { PromptUserMessage } from "./prompt-user-message";
+import { StickyPrompt, type StickyPromptHandle } from "./sticky-prompt";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -289,12 +304,7 @@ export interface AgentStreamViewProps {
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
-  historyPagination?: {
-    hasOlder: boolean;
-    isLoadingOlder: boolean;
-    progressKey: string | null;
-    onLoadOlder: () => boolean | Promise<boolean>;
-  };
+  historyPagination?: TranscriptHistoryPagination;
 }
 
 const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
@@ -351,6 +361,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
     const readableToolActivity = useReadableToolActivity();
+    const stickyEnabled = useSettings((settings) => settings.paseoPlusPlus.stickyUserPrompts);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -393,9 +404,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
     );
-    const timelineEpoch = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
-    );
+    const { rootTimelineCursor, timelineEpoch } = useTranscriptCursor({
+      serverId: resolvedServerId,
+      agentId,
+      historyPagination,
+    });
     const isTimelineDetached = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
@@ -411,19 +424,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       toast,
     });
+    const pagination = useMemo(
+      () => resolveHistoryPagination(historyPagination, agentHistoryPagination),
+      [historyPagination, agentHistoryPagination],
+    );
     const {
       isLoadingOlder: remoteIsLoadingOlder,
       hasOlder: remoteHasOlder,
       progressKey: remoteProgressKey,
       loadOlder: loadRemoteOlder,
-    } = historyPagination
-      ? {
-          isLoadingOlder: historyPagination.isLoadingOlder,
-          hasOlder: historyPagination.hasOlder,
-          progressKey: historyPagination.progressKey,
-          loadOlder: historyPagination.onLoadOlder,
-        }
-      : agentHistoryPagination;
+    } = pagination;
+    const canIndexPrompts = supportsChatOutline && !historyPagination;
     // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
     // tracked in react-native-reanimated#8422.
     const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -525,11 +536,32 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const promptReading = useMemo(createPromptReadingPublisher, [
+      resolvedServerId,
+      agentId,
+      timelineEpoch,
+    ]);
+    const { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds } =
+      useRetainedCanonicalTranscript({
+        resolvedServerId,
+        agentId,
+        timelineEpoch,
+        historyPagination,
+        rootTimelineCursor,
+        client,
+        promptReading,
+        effectiveStreamItems,
+        effectiveStreamHead,
+        stickyEnabled,
+        canIndexPrompts,
+        isActive,
+        isAuthoritativeHistoryReady,
+      });
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
       () =>
         presentStream({
-          tail: effectiveStreamItems,
+          tail: isWeb ? effectiveStreamItems : canonicalTail,
           head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
           transform: transformTimelineItem,
           display: chatDisplay,
@@ -541,6 +573,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [
         presentStream,
+        canonicalTail,
         effectiveStreamItems,
         effectiveStreamHead,
         transformTimelineItem,
@@ -575,6 +608,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
         historyStart: historyWindowStart,
+        retainedPositions: isWeb ? undefined : retainedPositions,
       });
     }, [
       isMobile,
@@ -583,7 +617,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       presentation.tail,
       effectiveTurnPresentation.startedAt,
       historyWindowStart,
+      retainedPositions,
     ]);
+    const viewportContextOnlyIds = useMemo(
+      () => (isWeb ? undefined : contextOnlyIds),
+      [contextOnlyIds],
+    );
     const streamLayout = useMemo(
       () =>
         layoutStream({
@@ -626,27 +665,38 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: supportsChatOutline && chatOutlineEnabled,
+      enabled: shouldIndexUserPrompts(canIndexPrompts, chatOutlineEnabled, stickyEnabled),
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       mountedHistoryMessageIds,
       revealLoadedMessage: revealLoadedHistory,
     });
 
+    const jumpToStickyMessage = useStableEvent((id: string, placement?: PromptJumpPlacement) =>
+      chatOutline.jumpToMessage(id, { source: "sticky", placement }),
+    );
+    const stickyPromptRef = useRef<StickyPromptHandle>(null);
+    const followLatestPrompt = useStableEvent(() => {
+      chatOutline.cancelJump();
+      stickyPromptRef.current?.followLatest();
+    });
+
     useImperativeHandle(
       ref,
       () => ({
         scrollToBottom(reason = "jump-to-bottom") {
+          followLatestPrompt();
           viewportRef.current?.scrollToBottom(reason);
         },
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
       }),
-      [],
+      [followLatestPrompt],
     );
 
     const scrollToBottom = useCallback(() => {
+      followLatestPrompt();
       if (!isTimelineDetached) {
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
@@ -659,7 +709,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
         onError: handleTimelineHistoryLoadError,
       });
-    }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
+    }, [
+      agentId,
+      followLatestPrompt,
+      handleTimelineHistoryLoadError,
+      isTimelineDetached,
+      resolvedServerId,
+    ]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -722,10 +778,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         const collapsedTurn = getCollapsedTurn(item.id);
         const message = (
-          <UserMessage
+          <PromptUserMessage
             serverId={resolvedServerId}
             agentId={agentId}
             messageId={item.messageId}
+            timelineMessageId={item.id}
             message={item.text}
             sender={item.sender}
             images={item.images}
@@ -1100,12 +1157,25 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return itemById;
     }, [streamLayout.liveHead]);
 
-    const handleReadingPositionChange = useStableEvent((rowId: string | null) => {
+    const handleReadingPositionChange = useStableEvent((position: PromptReadingPosition) => {
+      const { rowId, navigating, following, manual } = position;
       const row =
         rowId === null
           ? undefined
           : (layoutHistoryItemById.get(rowId) ?? layoutLiveHeadItemById.get(rowId));
-      chatOutline.reportReadingPosition(row?.item.timelineCursor?.seq ?? null);
+      const seq = row?.item.timelineCursor?.seq ?? null;
+      const wasManual = promptReading.getSnapshot().manual;
+      // Presentation rows can be Markdown blocks or plugin cards. Resolve their
+      // authoritative position before publishing to surfaces that hold canonical prompts.
+      promptReading.publish({
+        rowId,
+        navigating,
+        following,
+        manual,
+        seq,
+      });
+      if (manual && !wasManual) stickyPromptRef.current?.reviewReading();
+      chatOutline.reportReadingPosition(seq);
     });
 
     const renderHistoryRow = useCallback(
@@ -1193,52 +1263,76 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const findItems = useMemo(
-      () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
-      [effectiveStreamItems, effectiveStreamHead],
+    const navigationItems = useMemo(
+      () => canonicalTail.concat(effectiveStreamHead ?? []),
+      [canonicalTail, effectiveStreamHead],
     );
     return (
       <ChatFind
         agentId={agentId}
         serverId={resolvedServerId}
         epoch={timelineEpoch}
-        items={findItems}
+        items={sourceItems}
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedMessage}
         visibleMessageIds={mountedMessageIds}
       >
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
-            <MessageOuterSpacingProvider disableOuterSpacing>
-              <ToolCallExpansionContext.Provider value={toolCallExpansion}>
-                {streamRenderStrategy.render({
-                  readingRowReplacements: presentation.readingRowReplacements,
-                  agentId,
-                  segments: renderModel.segments,
-                  historyRowRevision,
-                  liveHeadRowRevision: expandedToolCallGroups,
-                  boundary,
-                  renderers,
-                  listEmptyComponent,
-                  viewportRef,
-                  routeBottomAnchorRequest,
-                  isAuthoritativeHistoryReady,
-                  onNearBottomChange: setIsNearBottom,
-                  onReadingPositionChange: handleReadingPositionChange,
-                  onNearHistoryStart: loadOlder,
-                  isLoadingOlderHistory: isLoadingOlder,
-                  hasOlderHistory: hasOlder,
-                  olderHistoryProgressKey: progressKey,
-                  scrollEnabled: streamScrollEnabled,
-                  listStyle: stylesheet.list,
-                  baseListContentContainerStyle: stylesheet.listContentContainer,
-                  forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
-                  contentMaxWidth,
-                })}
-              </ToolCallExpansionContext.Provider>
-            </MessageOuterSpacingProvider>
+            <StickyPrompt
+              key={`${resolvedServerId}:${agentId}`}
+              enabled={stickyEnabled}
+              items={navigationItems}
+              contextOnlyIds={contextOnlyIds}
+              epoch={timelineEpoch}
+              outline={chatOutline}
+              indexed={canIndexPrompts}
+              hasOlder={remoteHasOlder}
+              loadingOlder={remoteIsLoadingOlder}
+              progressKey={remoteProgressKey}
+              loadOlder={loadRemoteOlder}
+              contextPageReader={resolveContextPageReader(historyPagination)}
+              retainedContext={retainedContext}
+              jumpToLoaded={jumpToStickyMessage}
+              client={client}
+              ref={stickyPromptRef}
+              contentMaxWidth={contentMaxWidth}
+              agentId={agentId}
+              reading={promptReading}
+            >
+              <MessageOuterSpacingProvider disableOuterSpacing>
+                <ToolCallExpansionContext.Provider value={toolCallExpansion}>
+                  {streamRenderStrategy.render({
+                    readingRowReplacements: presentation.readingRowReplacements,
+                    agentId,
+                    segments: renderModel.segments,
+                    contextOnlyIds: viewportContextOnlyIds,
+                    historyRowRevision,
+                    liveHeadRowRevision: expandedToolCallGroups,
+                    boundary,
+                    renderers,
+                    listEmptyComponent,
+                    viewportRef,
+                    routeBottomAnchorRequest,
+                    isAuthoritativeHistoryReady,
+                    onNearBottomChange: setIsNearBottom,
+                    onMessageNavigationError: chatOutline.reportJumpError,
+                    onReadingPositionChange: handleReadingPositionChange,
+                    onNearHistoryStart: loadOlder,
+                    isLoadingOlderHistory: isLoadingOlder,
+                    hasOlderHistory: hasOlder,
+                    olderHistoryProgressKey: progressKey,
+                    scrollEnabled: streamScrollEnabled,
+                    listStyle: stylesheet.list,
+                    baseListContentContainerStyle: stylesheet.listContentContainer,
+                    forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
+                    contentMaxWidth,
+                  })}
+                </ToolCallExpansionContext.Provider>
+              </MessageOuterSpacingProvider>
+            </StickyPrompt>
             <ChatOutlineRail
-              prompts={chatOutline.prompts}
+              prompts={chatOutlineEnabled ? chatOutline.prompts : []}
               activePrompt={chatOutline.activePrompt}
               onJumpToPrompt={chatOutline.jumpToPrompt}
             />
@@ -1344,10 +1438,12 @@ function historyPaginationPropsEqual(
   right: AgentStreamViewProps["historyPagination"],
 ): boolean {
   return (
+    left?.epoch === right?.epoch &&
     left?.hasOlder === right?.hasOlder &&
     left?.isLoadingOlder === right?.isLoadingOlder &&
     left?.progressKey === right?.progressKey &&
-    left?.onLoadOlder === right?.onLoadOlder
+    left?.onLoadOlder === right?.onLoadOlder &&
+    historyContextPropsEqual(left, right)
   );
 }
 

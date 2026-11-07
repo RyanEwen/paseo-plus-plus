@@ -106,6 +106,10 @@ interface UserMessageProps {
   isLastInGroup?: boolean;
   isPending?: boolean;
   disableOuterSpacing?: boolean;
+  /** Prompt navigation controls shown beside the timestamp, rewind and copy actions. */
+  navigationActions?: ReactNode;
+  /** Explicit arrow navigation holds actions independently of actual pointer hover. */
+  keepActionsVisible?: boolean;
 }
 
 const MessageOuterSpacingContext = createContext(false);
@@ -390,6 +394,11 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
 
+/** Touch actions remain available; desktop navigation visibility does not alter actual hover. */
+function areMessageActionsVisible(compact: boolean, hovered: boolean, navigationHeld?: boolean) {
+  return compact || isNative || hovered || navigationHeld === true;
+}
+
 export const UserMessage = memo(function UserMessage({
   sender,
   serverId,
@@ -405,6 +414,8 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   isPending = false,
   disableOuterSpacing,
+  navigationActions,
+  keepActionsVisible,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
@@ -419,7 +430,11 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
+  const hasTrailingRow = hasText || !!navigationActions;
+  const showTrailingRow =
+    !isPending &&
+    hasTrailingRow &&
+    areMessageActionsVisible(isCompact, isHovered, keepActionsVisible);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
@@ -518,28 +533,33 @@ export const UserMessage = memo(function UserMessage({
             ) : null}
           </MessagePreview>
         </View>
-        {hasText ? (
+        {hasTrailingRow ? (
           <View
             style={trailingRowStyle}
             pointerEvents={showTrailingRow ? "auto" : "none"}
             testID="user-message-trailing-row"
           >
-            <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
-              {formattedTimestamp}
-            </Text>
-            {capabilities && messageId ? (
-              <RewindMenu
-                capabilities={capabilities}
-                isPending={rewindMutation.isPending}
-                rewoundText={message}
-                onRewind={handleRewind}
-              />
+            {hasText ? (
+              <>
+                <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
+                  {formattedTimestamp}
+                </Text>
+                {capabilities && messageId ? (
+                  <RewindMenu
+                    capabilities={capabilities}
+                    isPending={rewindMutation.isPending}
+                    rewoundText={message}
+                    onRewind={handleRewind}
+                  />
+                ) : null}
+                <TurnCopyButton
+                  getContent={getMessageContent}
+                  containerStyle={userMessageStylesheet.copyButton}
+                  accessibilityLabel={t("message.actions.copyMessage")}
+                />
+              </>
             ) : null}
-            <TurnCopyButton
-              getContent={getMessageContent}
-              containerStyle={userMessageStylesheet.copyButton}
-              accessibilityLabel={t("message.actions.copyMessage")}
-            />
+            {navigationActions}
           </View>
         ) : null}
       </View>

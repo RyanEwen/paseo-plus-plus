@@ -25,6 +25,8 @@ export interface StreamRenderAuxiliary {
 
 export interface AgentStreamRenderModel {
   history: StreamItem[];
+  /** Rows copied from before the local window solely by their retained canonical position. */
+  retainedOnlyIds: ReadonlySet<string>;
   segments: StreamRenderSegments;
   turnTiming: StreamTurnTiming;
   boundary: StreamHistoryBoundary;
@@ -39,9 +41,17 @@ export interface BuildAgentStreamRenderModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   historyStart?: number;
+  /** Presented rows selected by retained canonical position survive the local slice. */
+  retainedPositions?: ReadonlySet<string>;
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
+const EMPTY_RETAINED_ONLY_IDS: ReadonlySet<string> = new Set();
+
+interface RenderedTail {
+  items: StreamItem[];
+  retainedOnlyIds: ReadonlySet<string>;
+}
 const EMPTY_AUXILIARY: StreamRenderAuxiliary = {
   pendingPermissions: null,
   turnFooter: null,
@@ -57,22 +67,42 @@ const splitHistoryCache = new WeakMap<
 // the rendered tail's identity, so the slice has to be reused, not recomputed.
 const renderedTailCache = new WeakMap<
   StreamItem[],
-  { historyStart: number; rendered: StreamItem[] }
+  {
+    historyStart: number;
+    retainedPositions: ReadonlySet<string> | undefined;
+    rendered: RenderedTail;
+  }
 >();
 
-function getRenderedTail(tail: StreamItem[], historyStart: number | undefined): StreamItem[] {
-  if (!historyStart) {
+/** Reuse the ordinary window while keeping this branch's leased canonical prompts mounted. */
+function getRenderedTail(
+  tail: StreamItem[],
+  historyStart: number | undefined,
+  retainedPositions: ReadonlySet<string> | undefined,
+): RenderedTail {
+  if (!historyStart || historyStart < 0) {
     renderedTailCache.delete(tail);
-    return tail;
+    return { items: tail, retainedOnlyIds: EMPTY_RETAINED_ONLY_IDS };
   }
   const cached = renderedTailCache.get(tail);
-  if (cached?.historyStart === historyStart) {
+  if (cached?.historyStart === historyStart && cached.retainedPositions === retainedPositions) {
     return cached.rendered;
   }
-  const rendered = tail.slice(historyStart);
+  const retainedOnlyIds = new Set<string>();
+  const items = retainedPositions?.size
+    ? tail.filter((item, index) => {
+        if (index >= historyStart) return true;
+        const cursor = item.timelineCursor;
+        if (!cursor) return false;
+        const retained = retainedPositions.has(`${cursor.epoch}:${cursor.seq}`);
+        if (retained) retainedOnlyIds.add(item.id);
+        return retained;
+      })
+    : tail.slice(historyStart);
   // Revealing older history replaces the previous window, allowing its arrays and
   // downstream layouts to be collected while the unchanged source tail stays alive.
-  renderedTailCache.set(tail, { historyStart, rendered });
+  const rendered = { items, retainedOnlyIds };
+  renderedTailCache.set(tail, { historyStart, retainedPositions, rendered });
   return rendered;
 }
 
@@ -155,7 +185,11 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const orderingCacheKey = `${input.platform}:${input.isMobileBreakpoint}`;
-  const renderedTail = getRenderedTail(input.tail, input.historyStart);
+  const { items: renderedTail, retainedOnlyIds } = getRenderedTail(
+    input.tail,
+    input.historyStart,
+    input.retainedPositions,
+  );
   const orderedTail = getOrderedItems({
     cache: orderedTailCache,
     source: renderedTail,
@@ -190,6 +224,7 @@ export function buildAgentStreamRenderModel(
 
   return {
     history: splitHistory.history,
+    retainedOnlyIds,
     segments: {
       ...splitHistory.segments,
       liveHead: orderedHead,

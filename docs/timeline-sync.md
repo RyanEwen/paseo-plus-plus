@@ -90,6 +90,16 @@ is exhausted.
 
 Upward input that asks a scrollable chat viewport to move takes effect at input time: the reader stops following output and paging arms. The browser publishes the scroll asynchronously, so a stalled frame can deliver it long after the input. Waiting for it leaves following on, which blocks paging and lets new output pull the reader back to the bottom. Scrolling that no input explains neither detaches nor arms. A latch is released only by input at the start edge, so momentum inside the threshold cannot chain pages.
 
+## Prompt navigation
+
+The Chat outline and the sticky prompt share the viewed timeline's prompt index and page loading. Keep scrolling inside that owner: an indexed prompt can sit outside the loaded window, and a loaded row outside the mounted presentation window. Resolve presentation rows to authoritative timeline positions before selecting prompts, because Markdown blocks and plugin cards do not share canonical row IDs. Child transcripts use their own history pagination.
+
+Retained prompt context is isolated coverage. A context row never joins the viewed window and does not prove that the gap before it is loaded. Admit a remote prompt lookup only after authoritative history acceptance; until then, show only a locally proven prompt.
+
+Arrow navigation and original reveal load the target through the ordinary history owner before claiming a landing. Cancel obsolete navigation at both the page-acceptance and scroll boundaries: returning to the bottom, sending, or starting manual reading invalidates delayed page application, errors and animation callbacks without cancelling unrelated shared reads.
+
+Index-free discovery stops with usable feedback on exhaustion, failure, cancellation or its work budget. Streamed cursor advances cannot restart that budget. An explicit Retry can continue past it and restarts every failed owner. A validated user boundary with no rendered body stays neutral: it is not a load failure, and discovery does not cross it. Split panes keep their own reading context, including while hidden or with the feature turned off.
+
 ## Durable item anchors
 
 Provider message IDs are not guaranteed for every displayed item. Paseo-generated system errors are one example. Rendered item indices are not durable either because pagination and projection can merge source rows.

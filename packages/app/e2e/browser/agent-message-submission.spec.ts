@@ -56,6 +56,10 @@ import {
 } from "../support/helpers/archive-tab";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
+  ORIGINAL_USER_MESSAGE_SELECTOR,
+  originalUserMessages,
+  expectUserMessageImageVisible,
+  originalTimelineRows,
   scrollTimelineToNewestLoadedEdge,
   userScrollsTimelineToHistoryStart,
   scrollTimelineUntilOlderHistoryIsReachable,
@@ -174,7 +178,7 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
   await composer.fill(prompt);
   await composer.press("Enter");
   const nextFrame = await composer.evaluate(
-    (composerElement, submittedPrompt) =>
+    (composerElement, { submittedPrompt, userMessageSelector }) =>
       new Promise<{
         rowPresent: boolean;
         workingPresent: boolean;
@@ -182,7 +186,7 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
         attachmentPresent: boolean;
       }>((resolve) => {
         requestAnimationFrame(() => {
-          const rows = Array.from(document.querySelectorAll('[data-testid="user-message"]'));
+          const rows = Array.from(document.querySelectorAll(userMessageSelector));
           const composerInput = composerElement as HTMLInputElement | HTMLTextAreaElement;
           resolve({
             rowPresent: rows.some((row) => row.textContent?.includes(submittedPrompt)),
@@ -196,7 +200,7 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
           });
         });
       }),
-    prompt,
+    { submittedPrompt: prompt, userMessageSelector: ORIGINAL_USER_MESSAGE_SELECTOR },
   );
   expect(nextFrame).toEqual({
     rowPresent: true,
@@ -204,16 +208,16 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
     composerValue: "",
     attachmentPresent: false,
   });
-  return page.getByTestId("user-message").filter({ hasText: prompt }).last();
+  return originalUserMessages(page).filter({ hasText: prompt });
 }
 
 async function submitImageOnlyMessage(page: Page): Promise<Locator> {
   await attachImageFromMenu(page, IMAGE);
   await expectAttachmentPill(page, "composer-image-attachment-pill");
   await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
-  const userMessage = page.getByTestId("user-message").last();
+  const userMessage = originalUserMessages(page).last();
   await expect(userMessage).toBeVisible();
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage, "pending");
   return userMessage;
 }
 
@@ -225,7 +229,7 @@ async function expectPendingSubmission(page: Page, userMessage: Locator): Promis
   await expect(userMessage.getByTestId("user-message-timestamp")).toBeAttached();
   await expect(userMessage.getByTestId("user-message-trailing-row")).toHaveCSS("opacity", "0");
   await expect(userMessage).toHaveAttribute("aria-busy", "true");
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage, "pending");
 }
 
 async function beginTimelineRowStabilityCheck(
@@ -301,16 +305,18 @@ async function expectRejectedSubmissionRestored(
 
 async function retryRestoredSubmission(page: Page, prompt: string): Promise<void> {
   await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
-  const attempts = page.getByTestId("user-message").filter({ hasText: prompt });
+  const attempts = originalUserMessages(page).filter({ hasText: prompt });
   await expect(attempts).toHaveCount(2);
   const userMessage = attempts.last();
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expectUserMessageImageVisible(userMessage);
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
 }
 
 async function expectRejectedPromptBeforeError(page: Page, prompt: string, errorMessage: string) {
-  const messages = page.getByTestId("user-message").or(page.getByTestId("assistant-message"));
+  const messages = originalUserMessages(page).or(
+    originalTimelineRows(page).getByTestId("assistant-message"),
+  );
   await expect(messages).toHaveCount(2);
   await expect(messages.nth(0)).toContainText(prompt);
   await expect(messages.nth(1)).toContainText(`[System Error] ${errorMessage}`);
@@ -319,7 +325,6 @@ async function expectRejectedPromptBeforeError(page: Page, prompt: string, error
 async function configureSteerInSettings(page: Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${modifier}+Comma`);
-  await expect(page).toHaveURL(/\/settings\/general$/);
   await selectSteerInSettings(page);
 }
 
@@ -331,7 +336,6 @@ async function selectSteerInSettings(page: Page): Promise<void> {
 async function configureInterruptInSettings(page: Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${modifier}+Comma`);
-  await expect(page).toHaveURL(/\/settings\/general$/);
   await selectSendBehaviorInSettings(page, "Interrupt", "interrupt");
 }
 
@@ -351,6 +355,34 @@ async function selectSendBehaviorInSettings(
       return raw ? (JSON.parse(raw) as { sendBehavior?: unknown }).sendBehavior : null;
     })
     .toBe(stored);
+}
+
+/** Full chat exposes each operation; require the submitted turn's first completed Read and
+ * the search that follows it, matched through the Read row's canonical identity. */
+async function expectFirstCompletedReadAndSearch(page: Page): Promise<void> {
+  const readRow = page
+    .getByTestId("agent-chat-scroll")
+    .filter({ visible: true })
+    .locator('[data-history-row-id^="agent_tool_turn:"][data-history-row-id$="%3Aread%3A1"]');
+  await expect(readRow).toHaveCount(1, { timeout: 30_000 });
+  const readId = await readRow.getAttribute("data-history-row-id");
+  if (!readId) throw new Error("Completed Read row has no canonical identity");
+  const read = readRow.getByTestId("tool-call-badge");
+  await expect(read).toHaveCount(1);
+  await expect(read.getByText("Read", { exact: true })).toBeVisible();
+  await expect(
+    read.getByText("packages/app/src/components/conversation-list.tsx", { exact: true }),
+  ).toBeVisible();
+  const searchId = readId.replace(/%3Aread%3A1$/, "%3Agrep%3A1");
+  const searchRow = page
+    .getByTestId("agent-chat-scroll")
+    .filter({ visible: true })
+    .locator(`[data-history-row-id="${searchId}"]`);
+  await expect(searchRow).toHaveCount(1);
+  const search = searchRow.getByTestId("tool-call-badge");
+  await expect(search).toHaveCount(1);
+  await expect(search.getByText("Searched", { exact: true })).toBeVisible();
+  await expect(search.getByText("scrollToEnd", { exact: true })).toBeVisible();
 }
 
 /** These streaming races exercise individual tool cards, whatever chat display is stored. */
@@ -406,14 +438,14 @@ async function expectQueuedSendFailuresRestored(page: Page, prompts: string[]): 
     prompts.length,
   );
   for (const prompt of prompts) {
-    await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+    await expect(originalUserMessages(page).filter({ hasText: prompt })).toHaveCount(0);
   }
 }
 
 async function expectFailedSubmissionRestored(page: Page, prompt: string): Promise<void> {
   await expectComposerDraft(page, prompt);
   await expectComposerEditable(page);
-  await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+  await expect(originalUserMessages(page).filter({ hasText: prompt })).toHaveCount(0);
 }
 
 async function expectInterruptedTurnOrderAfterReconnect(
@@ -436,7 +468,7 @@ async function expectInterruptedTurnOrderAfterReconnect(
     await queueMessage(page, prompt);
     gate.setAgentStreamSuppressed(true);
     await page.getByRole("button", { name: "Send queued message now" }).click();
-    const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
+    const promptRow = originalUserMessages(page).filter({ hasText: prompt });
     await expect(promptRow).toBeVisible();
     await gate.waitForServerMessage("send_agent_message_response");
     await gate.drop();
@@ -654,7 +686,7 @@ async function expectLegacyAssistantStartsAfterInterruptedPrompt(
     gate.setAssistantMessageIdsStripped(true);
     gate.setAgentStreamEventSuppressed("turn_canceled", true);
     await page.getByRole("button", { name: "Send queued message now" }).click();
-    const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
+    const promptRow = originalUserMessages(page).filter({ hasText: prompt });
     const replacementAnswer = page.getByText("(end of synthetic stream)", { exact: true }).last();
     await expect(promptRow).toBeVisible();
     await expect(replacementAnswer).toBeVisible({ timeout: 30_000 });
@@ -696,7 +728,7 @@ async function expectStaleCanonicalPagePreservesNewerLiveOutput(
 
     const nextPrompt = "Stream after the stale snapshot.";
     await agent.client.sendAgentMessage(agent.agentId, nextPrompt);
-    const nextPromptRow = page.getByTestId("user-message").filter({ hasText: nextPrompt });
+    const nextPromptRow = originalUserMessages(page).filter({ hasText: nextPrompt });
     const liveAssistant = nextPromptRow.locator(
       'xpath=following::*[@data-testid="assistant-message"][1]',
     );
@@ -731,14 +763,14 @@ async function expectCanonicalOrderWinsAcrossOverlappingClients(
 
     await agent.client.sendAgentMessage(agent.agentId, remotePrompt);
     await agent.client.waitForFinish(agent.agentId, 30_000);
-    const remoteRow = page.getByTestId("user-message").filter({ hasText: remotePrompt });
+    const remoteRow = originalUserMessages(page).filter({ hasText: remotePrompt });
     await expect(remoteRow).toBeVisible();
 
     const userMessageCount = gate.getAgentStreamItemCount("user_message");
     gate.releaseHeldClientRequest();
     await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
     await expect(localRow).toHaveAttribute("aria-busy", "false");
-    await expect(localRow.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+    await expectUserMessageImageVisible(localRow);
     await expect
       .poll(async () => {
         const localElement = await localRow.elementHandle();
@@ -772,7 +804,7 @@ async function expectDaemonHandledSubmissionSurvivesReload(
     await expectComposerVisible(page);
     await expectAgentIdle(page);
     await submitMessage(page, prompt);
-    const command = page.getByTestId("user-message").filter({ hasText: prompt });
+    const command = originalUserMessages(page).filter({ hasText: prompt });
     await expect(command).toHaveAttribute("aria-busy", "false");
     await expect(page.getByText("Mock command handled", { exact: true })).toBeVisible();
     await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
@@ -808,13 +840,13 @@ async function expectOldHostSubmissionBehavior(
     await composer.fill(prompt);
     await composer.press("Enter");
     const nextFrame = await composer.evaluate(
-      (_, submittedPrompt) =>
+      (_, { submittedPrompt, userMessageSelector }) =>
         new Promise<{ rowPresent: boolean; ariaBusy: string | null; workingPresent: boolean }>(
           (resolve) => {
             requestAnimationFrame(() => {
-              const row = Array.from(
-                document.querySelectorAll('[data-testid="user-message"]'),
-              ).find((candidate) => candidate.textContent?.includes(submittedPrompt));
+              const row = Array.from(document.querySelectorAll(userMessageSelector)).find(
+                (candidate) => candidate.textContent?.includes(submittedPrompt),
+              );
               resolve({
                 rowPresent: Boolean(row),
                 ariaBusy: row?.getAttribute("aria-busy") ?? null,
@@ -825,13 +857,13 @@ async function expectOldHostSubmissionBehavior(
             });
           },
         ),
-      prompt,
+      { submittedPrompt: prompt, userMessageSelector: ORIGINAL_USER_MESSAGE_SELECTOR },
     );
     expect(nextFrame).toEqual({ rowPresent: true, ariaBusy: "false", workingPresent: false });
 
     await gate.waitForHeldClientRequest();
     gate.releaseHeldClientRequest();
-    const command = page.getByTestId("user-message").filter({ hasText: prompt });
+    const command = originalUserMessages(page).filter({ hasText: prompt });
     await expect(command).toHaveAttribute("aria-busy", "false");
     await expect(page.getByText("Mock command handled", { exact: true })).toBeVisible();
     await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
@@ -871,8 +903,8 @@ async function expectCreatedAgentHandoff(
   await expect(page.getByTestId(/^workspace-tab-agent_/).first()).toBeVisible({ timeout: 30_000 });
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
-  await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
-  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
+  await expect(originalUserMessages(page).filter({ hasText: prompt })).toHaveCount(1);
+  await expectUserMessageImageVisible(userMessage);
 }
 
 interface DraftCreatePendingSubmission {
@@ -917,7 +949,7 @@ test.describe("Agent message submission", () => {
       await expectAgentReadyToInterrupt(page);
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
 
-      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      const submittedPrompt = originalUserMessages(page).filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
       await expect(page.getByText("(end of synthetic stream)", { exact: true })).toHaveCount(0);
@@ -951,7 +983,7 @@ test.describe("Agent message submission", () => {
       await expectVisibleAgentSurfacesIdle(page);
 
       await page.reload();
-      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      const submittedPrompt = originalUserMessages(page).filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
       await expectVisibleAgentSurfacesIdle(page);
@@ -963,11 +995,11 @@ test.describe("Agent message submission", () => {
         await expect(page.getByText(nextPrompt, { exact: true })).toBeVisible();
         await expectVisibleAgentSurfacesIdle(page);
         await expectComposerEditable(page);
-        await expect(page.getByTestId("user-message")).toHaveCount(index + 2);
+        await expect(originalUserMessages(page)).toHaveCount(index + 2);
       }
       await fillComposerDraft(page, "Keep this unsent draft.");
       await composerLocator(page).blur();
-      await expect(page.getByTestId("user-message")).toHaveCount(3);
+      await expect(originalUserMessages(page)).toHaveCount(3);
       await expectComposerEditable(page);
     } finally {
       await workspace.cleanup();
@@ -986,10 +1018,10 @@ test.describe("Agent message submission", () => {
       await selectModel(page, "one-minute-stream");
 
       await submitMessage(page, prompt);
-      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      const submittedPrompt = originalUserMessages(page).filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
 
-      await submittedPrompt.hover();
+      await submittedPrompt.getByTestId("user-message-bubble").hover();
       await expect(submittedPrompt.getByTestId("rewind-menu-trigger")).toBeVisible({
         timeout: 5_000,
       });
@@ -1013,7 +1045,7 @@ test.describe("Agent message submission", () => {
       await selectModel(page, "one-minute-stream");
 
       await submitMessage(page, prompt);
-      const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+      const submittedPrompt = originalUserMessages(page).filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
       await expectVisibleAgentSurfacesIdle(page);
       await page.reload();
@@ -1087,9 +1119,7 @@ test.describe("Agent message submission", () => {
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
       await gate.waitForHeldServerMessage();
 
-      await expect(page.getByTestId("user-message").filter({ hasText: secondPrompt })).toHaveCount(
-        1,
-      );
+      await expect(originalUserMessages(page).filter({ hasText: secondPrompt })).toHaveCount(1);
       await expectRunningAgentChrome(page, title);
       await expectAgentReadyToInterrupt(page);
 
@@ -1167,14 +1197,14 @@ test.describe("Agent message submission", () => {
     await composer.fill(prompt);
     await expect(composer).toHaveValue(prompt);
     await expect(
-      page.getByTestId("user-message").filter({ hasText: submissionScenario.existingPrompt }),
+      originalUserMessages(page).filter({ hasText: submissionScenario.existingPrompt }),
     ).toBeVisible();
     const finishTimelineRowStabilityCheck = await beginTimelineRowStabilityCheck(
       page,
       page.getByTestId("assistant-message").last(),
     );
     await composer.press("Enter");
-    const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
+    const userMessage = originalUserMessages(page).filter({ hasText: prompt });
     await expect(userMessage).toBeVisible();
     await expect(
       page.getByTestId("assistant-message").filter({
@@ -1192,6 +1222,7 @@ test.describe("Agent message submission", () => {
       summary: "packages/app/src/components/conversation-list.tsx",
     });
     await expectToolCallRowAfter(reply, { label: "Searched", summary: "scrollToEnd" });
+    await expectFirstCompletedReadAndSearch(page);
     await finishTimelineRowStabilityCheck();
   });
 
@@ -1244,7 +1275,7 @@ test.describe("Agent message submission", () => {
         errorMessage: "Requested mock steer transport failure",
         preservesActiveTurn: true,
       });
-      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+      await expect(originalUserMessages(page).filter({ hasText: prompt })).toHaveCount(0);
 
       expect(gate.getClientRequestCount("send_agent_message_request")).toBe(sendsBefore + 1);
       expect(gate.getClientRequestCount("cancel_agent_request")).toBe(cancelsBefore);
@@ -1313,7 +1344,7 @@ test.describe("Agent message submission", () => {
       const request = await gate.waitForRequest();
       expect(request.activeTurnBehavior).toBe("interrupt");
       gate.accept();
-      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
+      await expect(originalUserMessages(page).filter({ hasText: prompt })).toHaveCount(1);
     } finally {
       await agent.cleanup();
     }
@@ -1409,7 +1440,7 @@ test.describe("Agent message submission", () => {
       "Start an unrelated turn.",
     );
     await expect(
-      page.getByTestId("user-message").filter({ hasText: "Start an unrelated turn." }),
+      originalUserMessages(page).filter({ hasText: "Start an unrelated turn." }),
     ).toBeVisible();
     await unrelatedRunningScenario.gate.disconnect();
     await expectFailedSubmissionRestored(page, prompt);
