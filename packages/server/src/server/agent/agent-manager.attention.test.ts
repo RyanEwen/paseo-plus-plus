@@ -331,66 +331,122 @@ test("objective closure during callback reservation persistence prevents forward
 });
 
 /** Real lifecycle/storage fixture whose provider turns finish only through explicit SDK events. */
-function createAttentionRegressionFixture(name: string) {
-  const workdir = mkdtempSync(join(tmpdir(), `agent-attention-${name}-`));
-  const storage = new AgentStorage(join(workdir, "agents"), logger, {
-    writeRecordFile: recordWrites.write,
-  });
-  const sessions: ControlledInterruptSession[] = [];
-  class AttentionRegressionClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const session = new ControlledInterruptSession(
-        config,
-        `attention-turn-${sessions.length + 1}`,
-        async (current) =>
-          current.pushEvent({
-            type: "turn_canceled",
-            provider: "codex",
-            turnId: current.turnId,
-          }),
-      );
-      sessions.push(session);
-      return session;
-    }
+/** Builds a provider session for the `index`-th session this client creates or resumes. */
+interface RecordingSessionHooks<Session extends AgentSession> {
+  create(config: AgentSessionConfig, index: number): Session;
+  /** Omit to keep TestAgentClient's own resume behaviour. */
+  resume?(
+    handle: AgentPersistenceHandle,
+    config: Partial<AgentSessionConfig>,
+    index: number,
+  ): Session;
+}
 
-    override async resumeSession(
-      handle: AgentPersistenceHandle,
-      config?: Partial<AgentSessionConfig>,
-    ): Promise<AgentSession> {
-      const session = await this.createSession({
-        ...config,
-        provider: this.provider,
-        cwd: config?.cwd ?? workdir,
-      });
-      session.describePersistence = () => handle;
-      return session;
-    }
+/** A test client that records every provider session it creates or resumes, in order. */
+class RecordingAgentClient<Session extends AgentSession> extends TestAgentClient {
+  readonly sessions: Session[] = [];
+  readonly resumedHandles: AgentPersistenceHandle[] = [];
+
+  constructor(private readonly hooks: RecordingSessionHooks<Session>) {
+    super();
   }
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    const session = this.hooks.create(config, this.sessions.length);
+    this.sessions.push(session);
+    return session;
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    if (!this.hooks.resume) {
+      return super.resumeSession(handle, config);
+    }
+    this.resumedHandles.push(handle);
+    const session = this.hooks.resume(handle, config ?? {}, this.sessions.length);
+    this.sessions.push(session);
+    return session;
+  }
+}
+
+/**
+ * A manager over real storage whose provider sessions are recorded, so each created agent comes
+ * back with the exact session behind it. Cleans up the manager, storage and directory.
+ */
+function createRecordingClientFixture<Session extends AgentSession>(input: {
+  directoryPrefix: string;
+  hooks: (workdir: string) => RecordingSessionHooks<Session>;
+  storageOptions?: ConstructorParameters<typeof AgentStorage>[2];
+  timelineStore?: InMemoryAgentTimelineStore;
+}) {
+  const workdir = mkdtempSync(join(tmpdir(), input.directoryPrefix));
+  const storage = new AgentStorage(join(workdir, "agents"), logger, input.storageOptions);
+  const client = new RecordingAgentClient(input.hooks(workdir));
   const manager = new AgentManager({
-    clients: { codex: new AttentionRegressionClient() },
+    clients: { codex: client },
     registry: storage,
+    ...(input.timelineStore ? { timelineStore: input.timelineStore } : {}),
     logger,
   });
   onTestFinished(async () => {
-    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    for (const agent of manager.listAgents()) {
+      await manager.closeAgent(agent.id);
+    }
     await manager.flush();
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   });
   return {
-    manager,
+    workdir,
     storage,
-    async createAgent(title: string) {
-      const sessionIndex = sessions.length;
+    client,
+    manager,
+    /** Create an agent and return it with the provider session it was given. */
+    async createAgent(title?: string, labels?: Record<string, string>) {
+      const index = client.sessions.length;
       const agent = await manager.createAgent(
-        { provider: "codex", cwd: workdir, title },
+        { provider: "codex", cwd: workdir, ...(title === undefined ? {} : { title }) },
         undefined,
-        { workspaceId: undefined },
+        { workspaceId: undefined, labels },
       );
-      const session = sessions[sessionIndex];
-      if (!session) throw new Error("Expected the newly registered controlled provider session");
+      const session = client.sessions[index];
+      if (!session) {
+        throw new Error("Expected this agent's actual controlled provider session");
+      }
       return { id: agent.id, session };
     },
+  };
+}
+
+/** Controlled-interrupt sessions that cancel their turn when interrupted. */
+function controlledInterruptSession(config: AgentSessionConfig, index: number) {
+  return new ControlledInterruptSession(config, `attention-turn-${index + 1}`, async (current) =>
+    current.pushEvent({ type: "turn_canceled", provider: "codex", turnId: current.turnId }),
+  );
+}
+
+function createAttentionRegressionFixture(name: string) {
+  const fixture = createRecordingClientFixture({
+    directoryPrefix: `agent-attention-${name}-`,
+    storageOptions: { writeRecordFile: recordWrites.write },
+    hooks: (workdir) => ({
+      create: controlledInterruptSession,
+      resume: (handle, config, index) => {
+        const session = controlledInterruptSession(
+          { ...config, provider: "codex", cwd: config.cwd ?? workdir },
+          index,
+        );
+        session.describePersistence = () => handle;
+        return session;
+      },
+    }),
+  });
+  return {
+    manager: fixture.manager,
+    storage: fixture.storage,
+    createAgent: (title: string) => fixture.createAgent(title),
   };
 }
 
@@ -2396,35 +2452,13 @@ test("permission retired response cannot mute a newer human final", async () => 
 
 /** Real storage/manager fixture using the suite's provider that supports accepted live steers. */
 async function createSameTurnQuestionFixture() {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-attention-same-turn-question-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const sessions: SteeringTestSession[] = [];
-  class QuestionSteerClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const session = new SteeringTestSession(config);
-      sessions.push(session);
-      return session;
-    }
-  }
-  const manager = new AgentManager({
-    clients: { codex: new QuestionSteerClient() },
-    registry: storage,
-    logger,
+  const fixture = createRecordingClientFixture({
+    directoryPrefix: "agent-attention-same-turn-question-",
+    hooks: () => ({ create: (config) => new SteeringTestSession(config) }),
   });
-  onTestFinished(async () => {
-    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
-    await manager.flush();
-    await storage.flush();
-    rmSync(workdir, { recursive: true, force: true });
-  });
-  const requester = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    workspaceId: undefined,
-  });
-  const worker = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    workspaceId: undefined,
-  });
-  const session = sessions[1];
-  if (!session) throw new Error("Expected the worker's own steering provider session");
+  const { manager, storage } = fixture;
+  const requester = await fixture.createAgent();
+  const { session, ...worker } = await fixture.createAgent();
   await startAttentionRegressionTurn({
     manager,
     agentId: requester.id,
@@ -2782,68 +2816,35 @@ class RequesterLossSession extends SteeringTestSession {
 
 /** Reuse real lifecycle/storage contracts and a provider whose resume restores current questions. */
 function createRequesterLossFixture(name: string) {
-  const workdir = mkdtempSync(join(tmpdir(), `agent-requester-loss-${name}-`));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
   const timeline = new InMemoryAgentTimelineStore();
-  class RequesterLossClient extends TestAgentClient {
-    readonly sessions: RequesterLossSession[] = [];
-    readonly resumedHandles: AgentPersistenceHandle[] = [];
-
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const session = new RequesterLossSession(config);
-      this.sessions.push(session);
-      return session;
-    }
-
-    override async resumeSession(
-      handle: AgentPersistenceHandle,
-      config?: Partial<AgentSessionConfig>,
-    ): Promise<AgentSession> {
-      this.resumedHandles.push(handle);
-      const session = new RequesterLossSession(
-        { ...config, provider: "codex", cwd: config?.cwd ?? workdir },
-        handle.metadata?.asyncQuestions,
-      );
-      this.sessions.push(session);
-      const providerSession: AgentSession = session;
-      providerSession.describePersistence = () => ({
-        ...handle,
-        metadata: { ...handle.metadata, asyncQuestions: session.questions.serialize() },
-      });
-      return session;
-    }
-  }
-  const client = new RequesterLossClient();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    registry: storage,
+  const fixture = createRecordingClientFixture({
+    directoryPrefix: `agent-requester-loss-${name}-`,
     timelineStore: timeline,
-    logger,
+    hooks: (workdir) => ({
+      create: (config) => new RequesterLossSession(config),
+      resume: (handle, config) => {
+        const session = new RequesterLossSession(
+          { ...config, provider: "codex", cwd: config.cwd ?? workdir },
+          handle.metadata?.asyncQuestions,
+        );
+        const providerSession: AgentSession = session;
+        providerSession.describePersistence = () => ({
+          ...handle,
+          metadata: { ...handle.metadata, asyncQuestions: session.questions.serialize() },
+        });
+        return session;
+      },
+    }),
   });
-  const notify = observeAttentionNotifications(manager);
-  onTestFinished(async () => {
-    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
-    await manager.flush();
-    await storage.flush();
-    rmSync(workdir, { recursive: true, force: true });
-  });
+  const notify = observeAttentionNotifications(fixture.manager);
   return {
-    manager,
-    storage,
+    manager: fixture.manager,
+    storage: fixture.storage,
     timeline,
-    client,
+    client: fixture.client,
     notify,
-    async createAgent(title: string, labels?: Record<string, string>) {
-      const index = client.sessions.length;
-      const agent = await manager.createAgent(
-        { provider: "codex", cwd: workdir, title },
-        undefined,
-        { workspaceId: undefined, labels },
-      );
-      const session = client.sessions[index];
-      if (!session) throw new Error("Expected this agent's actual controlled provider session");
-      return { id: agent.id, session };
-    },
+    createAgent: (title: string, labels?: Record<string, string>) =>
+      fixture.createAgent(title, labels),
   };
 }
 
