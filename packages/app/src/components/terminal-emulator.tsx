@@ -2,9 +2,7 @@
 
 import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useTranslation } from "react-i18next";
-import { openExternalUrl } from "@/utils/open-external-url";
-import { isHttpUrl } from "@/utils/http-url";
-import { copyToClipboard } from "@/utils/copy-to-clipboard";
+import { buildTerminalLinkMenuInput, runTerminalLinkMenuAction } from "@/terminal/link-menu";
 
 import type {
   TerminalFindHandle,
@@ -553,30 +551,15 @@ export default function TerminalEmulator({
       return;
     }
     // Capture URL and owning opener before the asynchronous native menu can outlive a tab switch.
-    const hoveredUrl = runtimeRef.current?.getHoveredLinkUrl();
-    const linkUrl = hoveredUrl && isHttpUrl(hoveredUrl) ? hoveredUrl : null;
-    const link = linkUrl
-      ? {
-          url: linkUrl,
-          openInPaseo: Boolean(openInPaseo),
-          labels: {
-            internal: t("workspace.browser.openInPaseo"),
-            external: t("workspace.browser.openExternally"),
-            copy: t("workspace.browser.copyLink"),
-          },
-        }
-      : undefined;
+    const link = buildTerminalLinkMenuInput({
+      url: runtimeRef.current?.getHoveredLinkUrl(),
+      hasWorkspaceBrowser: Boolean(openInPaseo),
+      t,
+    });
     const hasSelection = Boolean(window.getSelection()?.toString());
     const action = await showContextMenu({ kind: "terminal", hasSelection, link });
-    if (!linkUrl) {
-      return;
-    }
-    if (action === "open-internal" && openInPaseo) {
-      await openInPaseo(linkUrl);
-    } else if (action === "open-external") {
-      await openExternalUrl(linkUrl);
-    } else if (action === "copy-link") {
-      await copyToClipboard(linkUrl);
+    if (link) {
+      await runTerminalLinkMenuAction({ action, url: link.url, openInPaseo });
     }
   }, [openInPaseo, t]);
 
