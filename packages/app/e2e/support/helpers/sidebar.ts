@@ -6,6 +6,7 @@ import {
   defaultSidebarModeProfiles,
   type SidebarModeProfiles,
 } from "../../../src/stores/sidebar-mode-preferences";
+import type { SidebarStateBucket } from "../../../src/utils/sidebar-agent-state";
 
 interface ContextMenuAnchor {
   x: number;
@@ -416,4 +417,12 @@ export async function seedSidebarModeProfiles(
       state: { groupMode: "project", workspaceSort, modeProfiles },
     },
   );
+}
+
+/** Assert a workspace row draws its status on the trailing rail, not the leading title rail. */
+export async function expectStatusOnRight(row: Locator, state: SidebarStateBucket): Promise<void> {
+  const rowBounds = await row.boundingBox();
+  const statusBounds = await row.getByTestId(`workspace-status-indicator-${state}`).boundingBox();
+  if (!rowBounds || !statusBounds) throw new Error("Workspace status has no rendered bounds");
+  expect(statusBounds.x).toBeGreaterThan(rowBounds.x + rowBounds.width / 2);
 }
