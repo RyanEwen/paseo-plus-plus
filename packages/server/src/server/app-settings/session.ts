@@ -2,6 +2,12 @@ import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/pr
 import type { AppSettingsSnapshot } from "@getpaseo/protocol/app-settings";
 import type { SessionDelivery } from "../session/owned-subscriptions/index.js";
 import { AppSettingsStore } from "./index.js";
+import { registerForkCapability } from "../fork-capabilities.js";
+
+// COMPAT(appSettingsSync): added in v0.11.2, remove after 2027-10-12.
+registerForkCapability("appSettingsSync");
+// COMPAT(appSettingsChatPreferences): added in v0.15.0, remove gate after 2027-05-02.
+registerForkCapability("appSettingsChatPreferences");
 
 /** Settings RPC adapter. Subscription lifetimes belong to the existing delivery owner. */
 export class AppSettingsSession {
