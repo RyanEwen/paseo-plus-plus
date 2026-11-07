@@ -6249,8 +6249,8 @@ export class AgentManager {
     agent: ManagedAgent,
     reason: "finished" | "error" | "permission",
   ): void {
-    // COMPAT(agentAudienceOrigin): added in v0.12.0, remove after 2027-04-22 only once
-    // retained unknown-origin records have been explicitly classified. Never infer their audience.
+    // COMPAT(agentAudienceOrigin): added in v0.15.3, remove after 2027-04-22. Records saved
+    // before audience origins existed keep the previous notification rule; never infer one.
     if (
       !this.attentionPresentation.allowsNotification({
         knownAudience: agent.attentionObjectives?.isAudienceKnown === true,

@@ -41,11 +41,13 @@ export function pickAttentionAgent(agents: Agent[]): string | null {
       continue;
     }
 
-    // COMPAT(agentAudienceAttention): added in v0.12.0, remove after 2027-04-22 once host floor includes audience metadata.
-    if (
-      agent.humanAttentionRequired === false ||
-      (agent.parentAgentId && agent.humanAttentionRequired === undefined)
-    ) {
+    // A known audience decides: routine agent-directed results do not ask for the human.
+    if (agent.humanAttentionRequired === false) {
+      continue;
+    }
+    // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor
+    // includes audience metadata. Older hosts keep child agents out of the human selection.
+    if (agent.parentAgentId && agent.humanAttentionRequired === undefined) {
       continue;
     }
 

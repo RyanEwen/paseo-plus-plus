@@ -385,7 +385,7 @@ export class WorkspaceDirectory {
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
 
     for (const agent of activeAgents) {
-      // COMPAT(agentAudienceAttention): added in v0.12.0, remove after 2027-04-22 once legacy origins are classified.
+      // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor includes audience metadata.
       const workspaceAgent =
         agent.humanAttentionRequired === undefined
           ? resolveWorkspaceRootAgent(agent, activeAgentsById)

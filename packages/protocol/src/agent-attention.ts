@@ -63,7 +63,7 @@ export function hasHumanAgentAttention(input: HumanAttentionInput): boolean {
   if (input.humanAttentionRequired !== undefined) {
     return input.humanAttentionRequired;
   }
-  // COMPAT(agentAudienceAttention): added in v0.12.0, remove after 2027-04-22 once host floor includes audience metadata.
+  // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor includes audience metadata.
   return (
     input.requiresAttention === true ||
     (input.pendingPermissionCount ?? 0) > 0 ||
