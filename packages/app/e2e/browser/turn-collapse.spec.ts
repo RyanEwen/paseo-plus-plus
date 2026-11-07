@@ -446,22 +446,20 @@ async function useThinkingDisplay(
   page: Page,
   autoExpandReasoning: boolean,
   chatDisplay: ChatDisplay,
-  descriptiveToolCalls?: boolean,
 ) {
   await page.addInitScript(
     (settings) => {
       localStorage.setItem(
         "@paseo:app-settings",
         JSON.stringify({
-          autoExpandReasoning: settings.autoExpandReasoning,
-          ...(settings.descriptiveToolCalls === undefined
-            ? {}
-            : { paseoPlusPlus: { descriptiveToolCalls: settings.descriptiveToolCalls } }),
+          ...settings,
+          // The group assertions read the classic "Read 1 file" wording in both variants.
+          paseoPlusPlus: { descriptiveToolCalls: false },
           chatDisplay: sessionStorage.getItem("e2e-chat-display") ?? settings.chatDisplay,
         }),
       );
     },
-    { autoExpandReasoning, chatDisplay, descriptiveToolCalls },
+    { autoExpandReasoning, chatDisplay },
   );
 }
 
@@ -470,12 +468,7 @@ for (const autoExpandReasoning of [false, true]) {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });
-    await useThinkingDisplay(
-      page,
-      autoExpandReasoning,
-      "collapseToolCalls",
-      autoExpandReasoning ? undefined : false,
-    );
+    await useThinkingDisplay(page, autoExpandReasoning, "collapseToolCalls");
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "thinking-group-",
       title: "Thinking with tools",

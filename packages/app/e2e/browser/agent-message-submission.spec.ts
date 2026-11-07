@@ -26,6 +26,8 @@ import {
   submitMessage,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedAppSettings } from "../support/helpers/app-settings";
+import { expectToolCallRowAfter } from "../support/helpers/tool-call-row";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   createAgentTabFromMenu,
@@ -351,13 +353,9 @@ async function selectSendBehaviorInSettings(
     .toBe(stored);
 }
 
-/** These streaming races exercise detailed tool cards, independently of the fork default. */
+/** These streaming races exercise individual tool cards, whatever chat display is stored. */
 async function seedDetailedToolCalls(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const key = "@paseo:app-settings";
-    const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
-    localStorage.setItem(key, JSON.stringify({ ...settings, toolCallDetailLevel: "detailed" }));
-  });
+  await seedAppSettings(page, { chatDisplay: "full" });
 }
 
 async function replaySteeredSleepTurnInBrowser(
@@ -1183,30 +1181,17 @@ test.describe("Agent message submission", () => {
         hasText: "I'll take a look at the scroll anchor behavior you described.",
       }),
     ).toBeVisible();
-    // Full chat exposes each operation; require the submitted turn's first completed pair.
-    const readRow = page
-      .getByTestId("agent-chat-scroll")
-      .filter({ visible: true })
-      .locator('[data-history-row-id^="agent_tool_turn:"][data-history-row-id$="%3Aread%3A1"]');
-    await expect(readRow).toHaveCount(1, { timeout: 30_000 });
-    const readId = await readRow.getAttribute("data-history-row-id");
-    if (!readId) throw new Error("Completed Read row has no canonical identity");
-    const read = readRow.getByTestId("tool-call-badge");
-    await expect(read).toHaveCount(1);
-    await expect(read.getByText("Read", { exact: true })).toBeVisible();
-    await expect(
-      read.getByText("packages/app/src/components/conversation-list.tsx", { exact: true }),
-    ).toBeVisible();
-    const searchId = readId.replace(/%3Aread%3A1$/, "%3Agrep%3A1");
-    const searchRow = page
-      .getByTestId("agent-chat-scroll")
-      .filter({ visible: true })
-      .locator(`[data-history-row-id="${searchId}"]`);
-    await expect(searchRow).toHaveCount(1);
-    const search = searchRow.getByTestId("tool-call-badge");
-    await expect(search).toHaveCount(1);
-    await expect(search.getByText("Searched", { exact: true })).toBeVisible();
-    await expect(search.getByText("scrollToEnd", { exact: true })).toBeVisible();
+    const reply = page
+      .getByTestId("assistant-message")
+      .filter({ hasText: "I'll take a look at the scroll anchor behavior you described." })
+      .last();
+    // Full chat shows each operation; the submitted turn's own read and search follow its reply,
+    // so the earlier turn's identical rows cannot satisfy these.
+    await expectToolCallRowAfter(reply, {
+      label: "Read",
+      summary: "packages/app/src/components/conversation-list.tsx",
+    });
+    await expectToolCallRowAfter(reply, { label: "Searched", summary: "scrollToEnd" });
     await finishTimelineRowStabilityCheck();
   });
 
