@@ -41,7 +41,7 @@ function CreationRow({ create, split }: { create: () => void; split: () => void 
     [split],
   );
   return (
-    <MenuItem onSelect={create} secondaryAction={secondary}>
+    <MenuItem onSelect={create} secondary={{ kind: "action", element: secondary }}>
       Create view
     </MenuItem>
   );
