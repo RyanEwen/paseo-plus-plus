@@ -114,12 +114,24 @@ export function createWindowsToastHistory(
   let pendingList: Promise<DeliveredAgentToast[]> | null = null;
   let changes: Promise<void> = Promise.resolve();
 
+  /** Run a history change after every earlier change has settled. */
+  async function runAfter(previous: Promise<void>, request: WindowsToastHistoryOperation) {
+    await previous;
+    await run(request);
+  }
+
+  /** Wait for a change without rethrowing; its caller already receives the failure. */
+  async function settled(operation: Promise<void>): Promise<void> {
+    try {
+      await operation;
+    } catch {
+      // A failed removal must not block later removals.
+    }
+  }
+
   function change(request: WindowsToastHistoryOperation): Promise<void> {
-    const next = changes.then(async () => {
-      await run(request);
-    });
-    // A failed removal reports to its caller without blocking later removals.
-    changes = next.catch(() => {});
+    const next = runAfter(changes, request);
+    changes = settled(next);
     return next;
   }
 
