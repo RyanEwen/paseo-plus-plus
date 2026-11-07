@@ -33,7 +33,7 @@ import {
 import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
-import { resolveDiffFilePath, useDiffFileScope } from "@/git/diff-scope";
+import { keepsFileOverview, resolveDiffFilePath, useDiffFileScope } from "@/git/diff-scope";
 import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
@@ -1493,10 +1493,11 @@ function useChangesDocumentScope({
     },
     [onSelectDiffFile, presentation],
   );
+  const resolvedPresentation = presentation ?? "combined";
   const acquisitionPath = resolveDiffFilePath({
     filePath,
     selectedPath: documentFocusRequest?.path,
-    presentation: presentation ?? "combined",
+    presentation: resolvedPresentation,
     scope,
     isCompact,
   });
@@ -1504,7 +1505,11 @@ function useChangesDocumentScope({
     documentFocusRequest,
     handleSelectTreeFile,
     acquisitionPath,
-    includeFileOverview: presentation === "combined" || (isCompact && !filePath),
+    includeFileOverview: keepsFileOverview({
+      filePath,
+      presentation: resolvedPresentation,
+      isCompact,
+    }),
   };
 }
 

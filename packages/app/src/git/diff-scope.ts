@@ -20,13 +20,23 @@ export function resolveDiffFilePath(input: Omit<DiffFileScopeInput, "allFiles">)
   return selectsInPlace && input.scope === "single" ? input.selectedPath : undefined;
 }
 
+/**
+ * Whether Changes keeps every changed file listed while its document shows one file. Inline
+ * (combined) Changes keeps its tree; compact Changes keeps its Jump to file overview unless the
+ * tab itself is scoped to one file. The overview query and the tree both follow this decision.
+ */
+export function keepsFileOverview(
+  input: Pick<DiffFileScopeInput, "filePath" | "presentation" | "isCompact">,
+): boolean {
+  const keepsCompactOverview = input.isCompact && !input.filePath;
+  return input.presentation === "combined" || keepsCompactOverview;
+}
+
 /** Narrows the document without removing other files from an inline Changes tree. */
 export function resolveDiffFileScope(input: DiffFileScopeInput) {
   const filePath = resolveDiffFilePath(input);
   const files = filePath ? input.allFiles.filter((file) => file.path === filePath) : input.allFiles;
-  const keepsCompactOverview = input.isCompact && !input.filePath;
-  const keepsFileOverview = input.presentation === "combined" || keepsCompactOverview;
-  const treeFiles = keepsFileOverview ? input.allFiles : files;
+  const treeFiles = keepsFileOverview(input) ? input.allFiles : files;
   return { files, treeFiles };
 }
 
