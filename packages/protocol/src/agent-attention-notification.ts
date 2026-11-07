@@ -18,13 +18,24 @@ export interface AgentAttentionNotificationPayload {
   data: AgentAttentionNotificationData;
 }
 
-interface BuildAgentAttentionNotificationPayloadInput {
+/** Registry names that identify a notification's workspace; null when the record is gone. */
+export interface NotificationWorkspaceContext {
+  workspaceName?: string | null;
+  projectName?: string | null;
+}
+
+/** The longest "workspace · project" heading kept before the project name is omitted. */
+export const NOTIFICATION_TITLE_MAX_LENGTH = 64;
+
+interface BuildAgentAttentionNotificationPayloadInput extends NotificationWorkspaceContext {
   reason: AgentAttentionReason;
   serverId: string;
   workspaceId: string;
   agentId: string;
-  workspaceName?: string | null;
-  projectName?: string | null;
+  /** The delivery receipt sequence reserved for this event, when the host issues receipts. */
+  notificationSequence?: number;
+  /** The attention event the receipt observed, sent only with a receipt sequence. */
+  attentionTimestamp?: string;
   assistantMessage?: string | null;
   attentionMessage?: string;
   permissionRequest?: NotificationPermissionRequest | null;
@@ -36,7 +47,7 @@ interface BuildAgentAttentionNotificationPayloadInput {
  */
 export function withNotificationWorkspaceContext<T extends { title: string; body: string }>(
   notification: T,
-  context: { workspaceName?: string | null; projectName?: string | null },
+  context: NotificationWorkspaceContext,
 ): T {
   const workspaceName = normalizeNotificationText(context.workspaceName ?? "");
   if (!workspaceName) {
@@ -45,8 +56,9 @@ export function withNotificationWorkspaceContext<T extends { title: string; body
 
   const projectName = normalizeNotificationText(context.projectName ?? "");
   const combinedName = `${workspaceName} · ${projectName}`;
-  const includeProject = projectName && projectName !== workspaceName && combinedName.length <= 64;
-  const title = includeProject ? combinedName : workspaceName;
+  const hasDistinctProject = projectName.length > 0 && projectName !== workspaceName;
+  const fitsHeading = combinedName.length <= NOTIFICATION_TITLE_MAX_LENGTH;
+  const title = hasDistinctProject && fitsHeading ? combinedName : workspaceName;
 
   return { ...notification, title, body: `${notification.title}\n${notification.body}` };
 }
@@ -231,6 +243,14 @@ export function buildAgentAttentionNotificationPayload(
   const preview =
     buildNotificationPreview(input.attentionMessage) ?? resolveAgentAttentionPreview(input);
   const body = preview ?? resolveAgentAttentionFallbackBody(input.reason);
+  const receipt = {
+    ...(input.notificationSequence !== undefined
+      ? { notificationSequence: input.notificationSequence }
+      : {}),
+    ...(input.attentionTimestamp !== undefined
+      ? { attentionTimestamp: input.attentionTimestamp }
+      : {}),
+  };
 
   return withNotificationWorkspaceContext(
     {
@@ -241,6 +261,7 @@ export function buildAgentAttentionNotificationPayload(
         workspaceId: input.workspaceId,
         agentId: input.agentId,
         reason: input.reason,
+        ...receipt,
       },
     },
     input,

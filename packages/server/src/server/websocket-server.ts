@@ -107,6 +107,7 @@ import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
   withNotificationWorkspaceContext,
+  type NotificationWorkspaceContext,
 } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -2966,20 +2967,21 @@ export class VoiceAssistantWebSocketServer {
     const nowMs = Date.now();
     const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
     const context = await this.resolveNotificationWorkspaceContext(agent.workspaceId);
+    // The observed attention travels only with the receipt that recorded it.
+    const attentionTimestamp =
+      notificationSequence !== undefined ? observedAttention?.timestamp : undefined;
     const notification = buildAgentAttentionNotificationPayload({
       ...context,
       reason: params.reason,
       serverId: this.serverId,
       workspaceId: agent.workspaceId,
       agentId: params.agentId,
+      notificationSequence,
+      attentionTimestamp,
       assistantMessage,
       attentionMessage: params.message,
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
-    if (notificationSequence !== undefined) {
-      notification.data.notificationSequence = notificationSequence;
-      if (observedAttention) notification.data.attentionTimestamp = observedAttention.timestamp;
-    }
 
     const plan = computeNotificationPlan({
       allStates,
@@ -3038,7 +3040,9 @@ export class VoiceAssistantWebSocketServer {
   }
 
   /** Read identity from the registry relation, never from an agent's working directory. */
-  private async resolveNotificationWorkspaceContext(workspaceId: string | undefined) {
+  private async resolveNotificationWorkspaceContext(
+    workspaceId: string | undefined,
+  ): Promise<NotificationWorkspaceContext> {
     const workspace = workspaceId ? await this.workspaceRegistry.get(workspaceId) : null;
     if (!workspace) {
       return { workspaceName: null, projectName: null };
