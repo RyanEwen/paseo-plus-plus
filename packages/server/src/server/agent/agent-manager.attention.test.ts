@@ -3181,74 +3181,114 @@ test("requester loss earlier checkpoint is not suppressed by an available later 
   ).toEqual([]);
 });
 
-test.each(["resolved", "replaced", "reused-id"] as const)(
-  "requester loss stale %s checkpoint cannot publish after availability resolves",
-  async (variant) => {
-    const fixture = createRequesterLossFixture(`stale-${variant}`);
-    const { manager, notify } = fixture;
-    const requester = await fixture.createAgent("Requester identity");
-    const worker = await fixture.createAgent("Blocked worker");
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    const resolveRequester = vi
-      .fn<(peer: AgentAttentionPeer) => Promise<"available" | "missing" | "unknown">>()
-      .mockResolvedValue("available")
-      .mockImplementationOnce(async () => {
-        entered.resolve();
-        await release.promise;
-        return "missing";
-      });
-    manager.setAttentionHost({ serverId: "local", resolveRemoteRequester: resolveRequester });
-    const remote = { agentId: requester.id, serverId: "remote" };
-    const original = await startRequesterLossWork({
-      fixture,
-      worker,
-      options: requesterLossOptions(remote, "held-job"),
+/**
+ * A worker blocked on a permission for a remote requester whose first availability check is
+ * held. Tests change the blocker while the check is pending, then release it as "missing".
+ */
+async function startStaleRequesterLossCheck(name: string) {
+  const fixture = createRequesterLossFixture(`stale-${name}`);
+  const { manager, notify } = fixture;
+  const requester = await fixture.createAgent("Requester identity");
+  const worker = await fixture.createAgent("Blocked worker");
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const resolveRequester = vi
+    .fn<(peer: AgentAttentionPeer) => Promise<"available" | "missing" | "unknown">>()
+    .mockResolvedValue("available")
+    .mockImplementationOnce(async () => {
+      entered.resolve();
+      await release.promise;
+      return "missing";
     });
-    const permission = requestRequesterLossPermission(worker, "reused-checkpoint");
-    onTestFinished(() => release.resolve());
-    try {
-      await entered.promise;
-      expect(notify).not.toHaveBeenCalled();
-      if (variant === "resolved") {
-        worker.session.pushEvent({
-          type: "permission_resolved",
-          provider: "codex",
-          turnId: original.turnId,
-          requestId: permission.id,
-          resolution: { behavior: "allow" },
-        });
-        await vi.waitFor(() =>
-          expect(manager.getAgent(worker.id)?.pendingPermissions.size).toBe(0),
-        );
-      } else {
-        await manager.cancelAgentRun(worker.id);
-        await original.running;
-        const requestId = variant === "reused-id" ? "held-job" : "replacement-job";
-        const replacement = await startRequesterLossWork({
-          fixture,
-          worker,
-          options: requesterLossOptions(remote, requestId),
-          flush: false,
-        });
-        expect(replacement.turnId).not.toBe(original.turnId);
-        const nextPermissionId = variant === "reused-id" ? permission.id : "replacement-permission";
-        const nextPermission = requestRequesterLossPermission(worker, nextPermissionId);
-        await vi.waitFor(() => expect(resolveRequester).toHaveBeenCalledTimes(2));
-        expect(manager.getAgent(worker.id)?.pendingPermissions.get(nextPermission.id)).toEqual(
-          nextPermission,
-        );
-        expect(manager.getAttentionObjectives(worker.id).activeObjectiveIds).toEqual([requestId]);
-      }
-    } finally {
-      release.resolve();
-    }
+  manager.setAttentionHost({ serverId: "local", resolveRemoteRequester: resolveRequester });
+  const remote = { agentId: requester.id, serverId: "remote" };
+  const original = await startRequesterLossWork({
+    fixture,
+    worker,
+    options: requesterLossOptions(remote, "held-job"),
+  });
+  const permission = requestRequesterLossPermission(worker, "reused-checkpoint");
+  onTestFinished(() => release.resolve());
+  await entered.promise;
+  expect(notify).not.toHaveBeenCalled();
+
+  /** Release the held check and prove the stale checkpoint published nothing. */
+  async function expectStaleCheckDidNotPublish() {
+    release.resolve();
     await manager.flush();
     expect(resolveRequester).toHaveBeenNthCalledWith(1, remote);
     expect(notify).not.toHaveBeenCalled();
     const snapshot = manager.getAgent(worker.id);
     if (!snapshot) throw new Error("Expected the current worker after stale verification");
     expect(toAgentPayload(snapshot).humanAttentionRequired).toBe(false);
+  }
+
+  return {
+    fixture,
+    manager,
+    worker,
+    remote,
+    original,
+    permission,
+    resolveRequester,
+    release,
+    expectStaleCheckDidNotPublish,
+  };
+}
+
+test("requester loss stale resolved checkpoint cannot publish after availability resolves", async () => {
+  const scenario = await startStaleRequesterLossCheck("resolved");
+  const { manager, worker, original, permission } = scenario;
+  try {
+    worker.session.pushEvent({
+      type: "permission_resolved",
+      provider: "codex",
+      turnId: original.turnId,
+      requestId: permission.id,
+      resolution: { behavior: "allow" },
+    });
+    await vi.waitFor(() => expect(manager.getAgent(worker.id)?.pendingPermissions.size).toBe(0));
+  } finally {
+    scenario.release.resolve();
+  }
+  await scenario.expectStaleCheckDidNotPublish();
+});
+
+test.each([
+  {
+    variant: "replaced",
+    requestId: "replacement-job",
+    nextPermissionId: (_original: string) => "replacement-permission",
+  },
+  { variant: "reused-id", requestId: "held-job", nextPermissionId: (original: string) => original },
+])(
+  "requester loss stale $variant checkpoint cannot publish after availability resolves",
+  async ({ variant, requestId, nextPermissionId }) => {
+    const scenario = await startStaleRequesterLossCheck(variant);
+    const { fixture, manager, worker, remote, original, permission } = scenario;
+    try {
+      await manager.cancelAgentRun(worker.id);
+      await original.running;
+      const replacement = await startRequesterLossWork({
+        fixture,
+        worker,
+        options: requesterLossOptions(remote, requestId),
+        flush: false,
+      });
+      expect(replacement.turnId).not.toBe(original.turnId);
+      const nextPermission = requestRequesterLossPermission(
+        worker,
+        nextPermissionId(permission.id),
+      );
+      await vi.waitFor(() => expect(scenario.resolveRequester).toHaveBeenCalledTimes(2));
+      expect(manager.getAgent(worker.id)?.pendingPermissions.get(nextPermission.id)).toEqual(
+        nextPermission,
+      );
+      expect(manager.getAttentionObjectives(worker.id).activeObjectiveIds).toEqual([requestId]);
+    } finally {
+      scenario.release.resolve();
+    }
+    await scenario.expectStaleCheckDidNotPublish();
   },
 );
 
@@ -3311,9 +3351,35 @@ test("requester loss same UUID on another host ignores a local archive", async (
   expect(notify).not.toHaveBeenCalled();
 });
 
-test.each(["current", "historical"] as const)(
-  "requester loss restored %s question waits for committed loss and current blocker",
-  async (variant) => {
+test.each([
+  {
+    variant: "current",
+    // The question is still unanswered, so it is the restored worker's current blocker.
+    answerBeforeClose: async () => {},
+    stillBlocked: true,
+    pendingAfterRestore: (question: AgentPermissionRequest) => [question],
+    notificationsAfterLoss: (loss: Parameters<AgentAttentionCallback>[0]) => [loss],
+  },
+  {
+    variant: "historical",
+    // Answered before close, the question is history and cannot block after restore.
+    answerBeforeClose: async (manager: AgentManager, workerId: string, questionId: string) => {
+      await manager.respondToPermission(workerId, questionId, { behavior: "deny" });
+      await manager.flush();
+    },
+    stillBlocked: false,
+    pendingAfterRestore: (_question: AgentPermissionRequest) => [],
+    notificationsAfterLoss: (_loss: Parameters<AgentAttentionCallback>[0]) => [],
+  },
+])(
+  "requester loss restored $variant question waits for committed loss and current blocker",
+  async ({
+    variant,
+    answerBeforeClose,
+    stillBlocked,
+    pendingAfterRestore,
+    notificationsAfterLoss,
+  }) => {
     const fixture = createRequesterLossFixture(`restored-${variant}`);
     const { manager, storage, client, notify } = fixture;
     const requester = await fixture.createAgent("Requester");
@@ -3332,10 +3398,7 @@ test.each(["current", "historical"] as const)(
     worker.session.pushEvent({ type: "turn_completed", provider: "codex", turnId });
     await running;
     await manager.flush();
-    if (variant === "historical") {
-      await manager.respondToPermission(worker.id, question.id, { behavior: "deny" });
-      await manager.flush();
-    }
+    await answerBeforeClose(manager, worker.id, question.id);
     expect(manager.getAttentionObjectives(worker.id).activeObjectiveIds).toEqual([
       "restored-request",
     ]);
@@ -3376,7 +3439,7 @@ test.each(["current", "historical"] as const)(
       }),
     ]);
     expect(restoredPermissions).toEqual([]);
-    const expectedPending = variant === "current" ? [question] : [];
+    const expectedPending = pendingAfterRestore(question);
     expect(resumedSession.getPendingPermissions()).toEqual(expectedPending);
     expect(manager.getPendingPermissions(worker.id)).toEqual(expectedPending);
     expect(manager.getAttentionObjectives(worker.id).activeObjectiveIds).toEqual([
@@ -3392,17 +3455,17 @@ test.each(["current", "historical"] as const)(
     expect(manager.getPendingPermissions(worker.id)).toEqual(expectedPending);
     const current = manager.getAgent(worker.id);
     if (!current) throw new Error("Expected the resident restored worker");
-    expect(toAgentPayload(current).humanAttentionRequired).toBe(variant === "current");
-    const expectedNotifications: Array<Parameters<AgentAttentionCallback>[0]> = [];
-    if (variant === "current")
-      expectedNotifications.push({
-        agentId: worker.id,
-        provider: "codex",
-        reason: "finished",
-        message: REQUESTER_LOST_PERMISSION_MESSAGE,
-      });
-    expect(notify.mock.calls.map(([event]) => event)).toEqual(expectedNotifications);
-    expect((await storage.get(worker.id))?.requiresAttention).toBe(variant === "current");
+    expect(toAgentPayload(current).humanAttentionRequired).toBe(stillBlocked);
+    const lossNotification: Parameters<AgentAttentionCallback>[0] = {
+      agentId: worker.id,
+      provider: "codex",
+      reason: "finished",
+      message: REQUESTER_LOST_PERMISSION_MESSAGE,
+    };
+    expect(notify.mock.calls.map(([event]) => event)).toEqual(
+      notificationsAfterLoss(lossNotification),
+    );
+    expect((await storage.get(worker.id))?.requiresAttention).toBe(stillBlocked);
   },
 );
 
