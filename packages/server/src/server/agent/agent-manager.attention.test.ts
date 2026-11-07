@@ -439,6 +439,41 @@ async function startAttentionRegressionTurn(input: {
   return { running };
 }
 
+/**
+ * Start a human objective on the requester, mark it waiting, and delegate it to the recipient.
+ * Returns the delegation, its exact request link and the requester's peer identity.
+ */
+async function delegateFromHumanObjective(input: {
+  manager: AgentManager;
+  requesterId: string;
+  recipientId: string;
+  objectiveId: string;
+}) {
+  const { manager, requesterId, objectiveId } = input;
+  await startAttentionRegressionTurn({
+    manager,
+    agentId: requesterId,
+    options: { clientMessageId: objectiveId },
+  });
+  await manager.reportObjectiveStatus({
+    agentId: requesterId,
+    objectiveId,
+    disposition: "waiting",
+  });
+  const attention = await manager.prepareAttentionMessage({
+    agentId: requesterId,
+    recipient: { agentId: input.recipientId },
+  });
+  if (!attention?.requesterObjective) {
+    throw new Error("Expected the exact delegated request");
+  }
+  return {
+    attention,
+    link: attention.requesterObjective,
+    requesterPeer: manager.attentionRequester(requesterId),
+  };
+}
+
 test.each(["human", "agent"] as const)(
   "permission terminal overlap for %s retains the accepted completion",
   async (audience) => {
@@ -447,23 +482,12 @@ test.each(["human", "agent"] as const)(
     const requester = await fixture.createAgent("Requester");
     const worker = await fixture.createAgent("Worker");
     const notify = observeAttentionNotifications(manager);
-    await startAttentionRegressionTurn({
+    const { attention, link, requesterPeer } = await delegateFromHumanObjective({
       manager,
-      agentId: requester.id,
-      options: { clientMessageId: "human-job" },
-    });
-    await manager.reportObjectiveStatus({
-      agentId: requester.id,
+      requesterId: requester.id,
+      recipientId: worker.id,
       objectiveId: "human-job",
-      disposition: "waiting",
     });
-    const attention = await manager.prepareAttentionMessage({
-      agentId: requester.id,
-      recipient: { agentId: worker.id },
-    });
-    if (!attention?.requesterObjective) throw new Error("Expected an exact delegated request");
-    const link = attention.requesterObjective;
-    const requesterPeer = manager.attentionRequester(requester.id);
     const options: AgentRunOptions =
       audience === "human"
         ? { clientMessageId: "human-worker-job" }
@@ -737,23 +761,12 @@ async function createPermissionHandoffFixture(audience: "human" | "agent") {
   const requester = await fixture.createAgent("Plan requester");
   const worker = await fixture.createAgent("Plan worker");
   const notify = observeAttentionNotifications(manager);
-  await startAttentionRegressionTurn({
+  const { attention, link, requesterPeer } = await delegateFromHumanObjective({
     manager,
-    agentId: requester.id,
-    options: { clientMessageId: "handoff-source" },
-  });
-  await manager.reportObjectiveStatus({
-    agentId: requester.id,
+    requesterId: requester.id,
+    recipientId: worker.id,
     objectiveId: "handoff-source",
-    disposition: "waiting",
   });
-  const attention = await manager.prepareAttentionMessage({
-    agentId: requester.id,
-    recipient: { agentId: worker.id },
-  });
-  if (!attention?.requesterObjective) throw new Error("Expected the exact handoff request");
-  const link = attention.requesterObjective;
-  const requesterPeer = manager.attentionRequester(requester.id);
   const objectiveId = audience === "human" ? "human-plan-job" : link.requestId;
   const options: AgentRunOptions =
     audience === "human"
@@ -3413,23 +3426,12 @@ test("permission host binding retains a held accepted response completion", asyn
   const requester = await fixture.createAgent("Requester");
   const worker = await fixture.createAgent("Worker");
   const notify = observeAttentionNotifications(manager);
-  await startAttentionRegressionTurn({
+  const { attention, link, requesterPeer } = await delegateFromHumanObjective({
     manager,
-    agentId: requester.id,
-    options: { clientMessageId: "host-binding-human-job" },
-  });
-  await manager.reportObjectiveStatus({
-    agentId: requester.id,
+    requesterId: requester.id,
+    recipientId: worker.id,
     objectiveId: "host-binding-human-job",
-    disposition: "waiting",
   });
-  const attention = await manager.prepareAttentionMessage({
-    agentId: requester.id,
-    recipient: { agentId: worker.id },
-  });
-  if (!attention?.requesterObjective) throw new Error("Expected the exact delegated request");
-  const link = attention.requesterObjective;
-  const requesterPeer = manager.attentionRequester(requester.id);
   const { running } = await startAttentionRegressionTurn({
     manager,
     agentId: worker.id,
@@ -3631,23 +3633,12 @@ test.each([
     const worker = await fixture.createAgent("Worker");
     if (delegated) await manager.setLabels(worker.id, { "paseo.parent-agent-id": requester.id });
     const notify = observeAttentionNotifications(manager);
-    await startAttentionRegressionTurn({
+    const { attention, link, requesterPeer } = await delegateFromHumanObjective({
       manager,
-      agentId: requester.id,
-      options: { clientMessageId: "mode-human-job" },
-    });
-    await manager.reportObjectiveStatus({
-      agentId: requester.id,
+      requesterId: requester.id,
+      recipientId: worker.id,
       objectiveId: "mode-human-job",
-      disposition: "waiting",
     });
-    const attention = await manager.prepareAttentionMessage({
-      agentId: requester.id,
-      recipient: { agentId: worker.id },
-    });
-    if (!attention?.requesterObjective) throw new Error("Expected the exact source-owned request");
-    const link = attention.requesterObjective;
-    const requesterPeer = manager.attentionRequester(requester.id);
     const { running } = await startAttentionRegressionTurn({
       manager,
       agentId: worker.id,
