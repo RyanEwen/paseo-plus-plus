@@ -1,8 +1,8 @@
 import { useCallback, useContext, useMemo, useState, type ComponentProps } from "react";
-import type { GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { isWeb } from "@/constants/platform";
+import type { TextLinkEvent } from "@/hooks/use-text-link";
 import { Button } from "@/components/ui/button";
 import type { UserMessage } from "@/components/message";
 import { ActualPinnedRowContext, ActualPromptRowsContext } from "./actual-prompt-rows";
@@ -95,7 +95,7 @@ function useNativePromptDisclosure(
   );
 }
 
-function selectedPromptText(event: GestureResponderEvent): boolean {
+function selectedPromptText(event: TextLinkEvent): boolean {
   if (!isWeb) return false;
   const selection = window.getSelection();
   const target: unknown = event.currentTarget;
@@ -157,7 +157,7 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
   const { t } = useTranslation();
   const backdrop = useMemo(() => <PinnedMessageActionBackdrop />, []);
   const reveal = useCallback(
-    (event: GestureResponderEvent) => {
+    (event: TextLinkEvent) => {
       if (!selectedPromptText(event)) navigation?.reveal(id);
     },
     [navigation, id],

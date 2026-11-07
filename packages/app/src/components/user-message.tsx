@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import { MessageSender } from "./user-message/index";
-import { useTextLink } from "@/hooks/use-text-link";
+import { useTextLink, type TextLinkEvent } from "@/hooks/use-text-link";
 import { TextPreview } from "@/components/ui/text-preview";
 import { UserMessagePreviewContent } from "./user-message-preview-content";
 import { UserMessageAttachments } from "./user-message-attachments";
@@ -28,12 +28,7 @@ import type { ReactNode } from "react";
 import * as React from "react";
 import { memo, useCallback, useContext, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Text,
-  View,
-  type GestureResponderEvent,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
 import { NativeMessagePresentationContext } from "./user-message-native-presentation";
@@ -56,7 +51,7 @@ interface UserMessageProps {
   sender?: AgentMessage["sender"];
   /** An optional measured viewport retains the one ordinary body's natural flow. */
   onNaturalFlowGeometry?: (geometry: NaturalMessageGeometry | null) => void;
-  onContentPress?: (event: GestureResponderEvent) => void;
+  onContentPress?: (event: TextLinkEvent) => void;
   contentAccessibilityLabel?: string;
   /** Measured source width keeps the sticky copy's glyph positions aligned at the edge. */
   bubbleWidth?: number;
