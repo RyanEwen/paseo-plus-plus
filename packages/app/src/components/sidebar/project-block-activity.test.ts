@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectBlockActivityEqual } from "./project-block-activity";
+import { getProjectActivity, projectBlockActivityEqual } from "./project-block-activity";
 
 describe("projectBlockActivityEqual", () => {
   it("re-renders a project block when a reconnected host makes its aggregate known", () => {
@@ -27,5 +27,16 @@ describe("projectBlockActivityEqual", () => {
         { aggregateStatusBucket: "attention", workingWorkspaceCount: 1 },
       ),
     ).toBe(true);
+  });
+});
+
+describe("getProjectActivity", () => {
+  it("shows no activity for a project missing from the summary", () => {
+    expect(getProjectActivity(new Map(), "project")).toEqual({ bucket: null, workingCount: 0 });
+  });
+
+  it("returns the summarized activity for a known project", () => {
+    const activity = { bucket: "running", workingCount: 2 } as const;
+    expect(getProjectActivity(new Map([["project", activity]]), "project")).toBe(activity);
   });
 });

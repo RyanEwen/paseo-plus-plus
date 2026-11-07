@@ -12,7 +12,7 @@ import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
 import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sidebar/project-pins";
 import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { ProjectActivityChip } from "./sidebar/project-activity-chip";
-import { projectBlockActivityEqual } from "./sidebar/project-block-activity";
+import { getProjectActivity, projectBlockActivityEqual } from "./sidebar/project-block-activity";
 import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
 import { useAppSettings } from "@/hooks/use-settings";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
@@ -2390,7 +2390,7 @@ function ProjectModeList({
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
-  const projectStatusBuckets = useSidebarProjectActivity(projects, workspaceEntriesByKey);
+  const projectActivity = useSidebarProjectActivity(projects, workspaceEntriesByKey);
   const projectPinningEnabled = useProjectPinningEnabled();
   const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
@@ -2591,12 +2591,13 @@ function ProjectModeList({
         dragHandleProps?: DraggableRenderItemInfo<SidebarProjectEntry>["dragHandleProps"];
       },
     ) => {
+      const activity = getProjectActivity(projectActivity, item.viewKey);
       return (
         <MemoProjectBlock
           key={item.viewKey}
           project={item}
-          aggregateStatusBucket={projectStatusBuckets.get(item.viewKey)?.bucket ?? null}
-          workingWorkspaceCount={projectStatusBuckets.get(item.viewKey)?.workingCount ?? 0}
+          aggregateStatusBucket={activity.bucket}
+          workingWorkspaceCount={activity.workingCount}
           workspaceEntriesByKey={workspaceEntriesByKey}
           collapsed={collapsedProjectKeys.has(item.viewKey)}
           displayName={item.projectName}
@@ -2625,7 +2626,7 @@ function ProjectModeList({
       );
     },
     [
-      projectStatusBuckets,
+      projectActivity,
       collapsedProjectKeys,
       activeWorkspaceSelection,
       handleWorktreeCreated,
