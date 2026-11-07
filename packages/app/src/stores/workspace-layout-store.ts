@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
+import { collectSplitSizes, withCurrentSplitSizes } from "./workspace-layout-split-sizes";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -668,50 +669,6 @@ function getOpenTabPlacement(
     placement: resolvedPlacement,
     explorerSidebarPaneId,
   };
-}
-
-/** Materialize committed divider sizes before a structural edit so unrelated splits retain their proportions. */
-function withCurrentSplitSizes(
-  layout: WorkspaceLayout,
-  sizes: Record<string, number[]>,
-  explorerPaneId: string | null,
-): WorkspaceLayout {
-  function update(node: SplitNode): SplitNode {
-    if (node.kind === "pane") return node;
-    const saved = sizes[node.group.id];
-    let current = node.group.sizes;
-    if (saved?.length === node.group.children.length) current = clampNormalizedSizes(saved);
-    else if (saved && explorerPaneId) {
-      // The sidebar is removed from the rendered main tree. Older resize overlays therefore
-      // contain only content panes; preserve the sidebar's allocation when applying them.
-      const explorerIndex = node.group.children.findIndex(
-        (child) => child.kind === "pane" && child.pane.id === explorerPaneId,
-      );
-      if (explorerIndex >= 0 && saved.length === node.group.children.length - 1) {
-        const contentTotal = 1 - node.group.sizes[explorerIndex];
-        const normalized = clampNormalizedSizes(saved);
-        current = node.group.sizes.map((size, index) =>
-          index === explorerIndex
-            ? size
-            : normalized[index < explorerIndex ? index : index - 1] * contentTotal,
-        );
-      }
-    }
-    return {
-      kind: "group",
-      group: { ...node.group, sizes: current, children: node.group.children.map(update) },
-    };
-  }
-  return { ...layout, root: update(layout.root) };
-}
-
-/** Bind each surviving group's resize overlay to its new child order after moving a tab. */
-function collectSplitSizes(root: SplitNode): Record<string, number[]> {
-  if (root.kind === "pane") return {};
-  return Object.assign(
-    { [root.group.id]: root.group.sizes },
-    ...root.group.children.map(collectSplitSizes),
-  );
 }
 
 function withoutFocusRestoration(

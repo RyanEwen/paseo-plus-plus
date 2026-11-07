@@ -1,4 +1,5 @@
 import { WorkspaceSplitMenuScope } from "@/screens/workspace/workspace-tab-split-menu";
+import { projectMainSplitTree } from "@/stores/workspace-layout-split-sizes";
 import { useWorkspaceTabDrag } from "./workspace-tab-drag-context";
 import {
   Fragment,
@@ -193,7 +194,7 @@ export function SplitContainer({
     (state) => state.splitSizesByWorkspace[workspaceKey],
   );
   const mainRoot = useMemo(
-    () => removePaneFromSplitTree(layout.root, explorerSidebarPaneId, storedSplitSizes),
+    () => projectMainSplitTree(layout.root, explorerSidebarPaneId, storedSplitSizes),
     [layout.root, explorerSidebarPaneId, storedSplitSizes],
   );
   const workspaceHasMultiplePanes = Boolean(mainRoot && hasMultipleVisiblePanes(mainRoot));
@@ -788,44 +789,6 @@ function wrapRootPaneForStableMount(node: SplitNode): SplitNode {
       direction: "horizontal",
       children: [node],
       sizes: [1],
-    },
-  };
-}
-
-/** Project layout and resize weights into the same ordinary child order before rendering or dragging. */
-function removePaneFromSplitTree(
-  node: SplitNode,
-  paneId: string | null,
-  storedSizes: Record<string, number[]> | undefined,
-): SplitNode | null {
-  if (node.kind === "pane") {
-    return node.pane.id === paneId ? null : node;
-  }
-
-  const retained = node.group.children.flatMap((child, sourceIndex) => {
-    const projected = removePaneFromSplitTree(child, paneId, storedSizes);
-    return projected ? [{ node: projected, sourceIndex }] : [];
-  });
-  if (retained.length === 0) {
-    return null;
-  }
-  if (retained.length === 1) {
-    return retained[0].node;
-  }
-
-  const saved = storedSizes?.[node.group.id];
-  const fullSizes = saved?.length === node.group.children.length ? saved : node.group.sizes;
-  // Structural edits save the full group; ordinary divider commits already omit the dock.
-  const projectedSizes = retained.map(({ sourceIndex }, renderedIndex) =>
-    saved?.length === retained.length ? saved[renderedIndex] : fullSizes[sourceIndex],
-  );
-  const total = projectedSizes.reduce((sum, size) => sum + size, 0);
-  return {
-    kind: "group",
-    group: {
-      ...node.group,
-      children: retained.map((child) => child.node),
-      sizes: projectedSizes.map((size) => size / total),
     },
   };
 }
