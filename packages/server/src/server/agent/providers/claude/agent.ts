@@ -1,4 +1,5 @@
 import {
+  HistoryIdentityCommittedError,
   HistoryStorageConflictError,
   type ProviderHistoryStorage,
   type ConfiguredClaudeHistoryStorage,
@@ -3564,10 +3565,7 @@ class ClaudeAgentSession implements AgentSession {
         },
       });
     } catch (error) {
-      if (
-        error instanceof HistoryStorageConflictError &&
-        error.reason.startsWith("rewind-committed-adoption-failed:")
-      ) {
+      if (error instanceof HistoryIdentityCommittedError) {
         this.historyAdoptionFailed = true;
         throw new Error(
           `Claude identity ${id} committed; runtime adoption failed; reload required`,
@@ -3625,10 +3623,7 @@ class ClaudeAgentSession implements AgentSession {
         },
       });
     } catch (error) {
-      if (
-        error instanceof HistoryStorageConflictError &&
-        error.reason.startsWith("rewind-committed-adoption-failed:")
-      ) {
+      if (error instanceof HistoryIdentityCommittedError) {
         this.historyAdoptionFailed = true;
         throw new Error(
           `Claude identity ${id} committed; runtime adoption failed; reload required`,

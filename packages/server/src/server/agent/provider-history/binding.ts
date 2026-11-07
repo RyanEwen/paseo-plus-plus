@@ -58,11 +58,115 @@ export function sameHistoryStorage(
   );
 }
 
+/** Why a configured history route, binding or identity transition was refused. */
+export type HistoryConflictReason =
+  | "bound-native-handle-conflict"
+  | "bound-provider-conflict"
+  | "bound-session-handle-missing"
+  | "bound-session-id-changed"
+  | "bound-storage-changed"
+  | "command-sqlite-selector-conflict"
+  | "committed-identity-reload-required"
+  | "configured-history-cli-version-unsupported"
+  | "configured-root-must-already-exist"
+  | "destination-config-missing-or-linked"
+  | "destination-config-not-ordinary"
+  | "destination-family-unsupported"
+  | "destination-history-not-configured"
+  | "destination-must-be-configured-codex-profile"
+  | "destination-provider-disabled"
+  | "durable-initial-binding-required"
+  | "durable-storage-required"
+  | "empty-creation-registration-conflict"
+  | "environment-sqlite-selector-conflict"
+  | "existing-route-unverified"
+  | "explicit-profile-home-required"
+  | "explicit-profile-sqlite-home-required"
+  | "fresh-admission-conflict-reload-required"
+  | "fresh-query-admission-conflict"
+  | "fresh-rewind-handle-conflict"
+  | "fresh-rewind-record-conflict"
+  | "history-admission-record-missing"
+  | "history-hardlink"
+  | "history-identity-write-refused"
+  | "history-path-check-limit"
+  | "history-special-file"
+  | "history-symlink"
+  | "identity-acknowledgment-limit"
+  | "initial-admission-conflict-reload-required"
+  | "initial-handle-binding-conflict"
+  | "initial-handle-binding-required"
+  | "initial-query-admission-conflict"
+  | "intent-storage-already-bound"
+  | "invalid-session-id"
+  | "known-native-history-root"
+  | "launch-home-conflict"
+  | "launch-home-unresolved"
+  | "launch-sqlite-home-unresolved"
+  | "managed-rewind-required"
+  | "provider-storage-observation-conflict"
+  | "query-admission-identity-changed"
+  | "request-sqlite-home-unresolved"
+  | "request-sqlite-selector-conflict"
+  | "retired-rewind-session"
+  | "rewind-canonical-handle-conflict"
+  | "rewind-canonical-record-changed"
+  | "rewind-committed-adoption-failed"
+  | "rewind-handle-conflict"
+  | "rewind-intent-conflict"
+  | "rewind-record-missing"
+  | "rewind-session-not-ready"
+  | "rewind-transcript-missing"
+  | "rewind-transcript-outside-home"
+  | "session-switch-command-use-managed-rewind"
+  | "snapshot-intent-id-changed"
+  | "snapshot-origin-changed"
+  | "snapshot-registration-regressed"
+  | "snapshot-registration-without-handle"
+  | "snapshot-storage-changed"
+  | "sqlite-home-requires-configured-history"
+  | "stale-fresh-rewind-callback"
+  | "stale-fresh-rewind-query"
+  | "stale-history-query"
+  | "stale-initial-history-callback"
+  | "stale-initial-history-query"
+  | "stale-rewind-callback"
+  | "unexpected-session-id-change"
+  | "unresolved-command-config-key"
+  | "unresolved-command-config-selector"
+  | "unresolved-command-contract"
+  | "unresolved-command-selectors"
+  | "unresolved-command-sqlite-selector"
+  | "unresolved-command-storage-selector"
+  | "unresolved-native-profile-selector"
+  | "unsupported-project-namespace"
+  | "unsupported-provider";
+
+function historyConflictMessage(reason: HistoryConflictReason, detail: string | undefined): string {
+  const suffix = detail === undefined ? "" : `:${detail}`;
+  return `Configured provider history cannot use this route: ${reason}${suffix}`;
+}
+
+/** A configured history route, binding or identity transition was refused; `reason` says which. */
 export class HistoryStorageConflictError extends Error {
   readonly code = "HISTORY_STORAGE_CONFLICT";
-  constructor(readonly reason: string) {
-    super(`Configured provider history cannot use this route: ${reason}`);
+  constructor(
+    readonly reason: HistoryConflictReason,
+    /** Optional data appended to the message after the reason, separated by a colon. */
+    detail?: string,
+  ) {
+    super(historyConflictMessage(reason, detail));
     this.name = "HistoryStorageConflictError";
+  }
+}
+
+/**
+ * The provider identity transition is already durable, but adopting it into the live session
+ * failed. Recovery must reopen the chat from canonical storage at `committedSessionId`.
+ */
+export class HistoryIdentityCommittedError extends HistoryStorageConflictError {
+  constructor(readonly committedSessionId: string | undefined) {
+    super("rewind-committed-adoption-failed", String(committedSessionId));
   }
 }
 

@@ -4,6 +4,7 @@ import {
   registerProviderHistory,
   sameHistoryStorage,
   assertConfiguredHistoryIdentity,
+  HistoryIdentityCommittedError,
   HistoryStorageConflictError,
   type ProviderHistoryBinding,
   type ProviderHistoryStorage,
@@ -1857,10 +1858,7 @@ export class AgentManager {
         },
       });
     } catch (error) {
-      if (
-        error instanceof HistoryStorageConflictError &&
-        error.reason.startsWith("rewind-committed-adoption-failed:")
-      ) {
+      if (error instanceof HistoryIdentityCommittedError) {
         if (fresh) {
           // This callback runs inside the query pump. Awaiting its own close would deadlock.
           // The canonical new handle is retained; the caller reports reload-required.

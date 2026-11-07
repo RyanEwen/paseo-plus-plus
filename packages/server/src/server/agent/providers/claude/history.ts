@@ -7,11 +7,12 @@ import type {
 } from "../../provider-launch-config.js";
 import {
   HistoryStorageConflictError,
+  type HistoryConflictReason,
   type ConfiguredClaudeHistoryStorage,
   type ProviderHistoryStorage,
 } from "../../provider-history/binding.js";
 
-function conflict(reason: string): never {
+function conflict(reason: HistoryConflictReason): never {
   throw new HistoryStorageConflictError(reason);
 }
 

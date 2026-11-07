@@ -1,5 +1,6 @@
 import {
   HistoryIntentConflictError,
+  HistoryIdentityCommittedError,
   HistoryStorageConflictError,
   sameHistoryStorage,
   preserveSnapshotHistoryBinding,
@@ -426,9 +427,7 @@ export class AgentStorage {
         try {
           input.onCommitted(record);
         } catch {
-          throw new HistoryStorageConflictError(
-            `rewind-committed-adoption-failed:${record.persistence?.sessionId}`,
-          );
+          throw new HistoryIdentityCommittedError(record.persistence?.sessionId);
         }
       },
     );
@@ -488,9 +487,7 @@ export class AgentStorage {
         try {
           input.onCommitted(record);
         } catch {
-          throw new HistoryStorageConflictError(
-            `rewind-committed-adoption-failed:${record.persistence?.sessionId}`,
-          );
+          throw new HistoryIdentityCommittedError(record.persistence?.sessionId);
         }
       },
     );

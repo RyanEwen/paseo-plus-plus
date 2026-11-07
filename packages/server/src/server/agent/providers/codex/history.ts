@@ -8,15 +8,16 @@ import type {
 } from "../../provider-launch-config.js";
 import {
   HistoryStorageConflictError,
+  type HistoryConflictReason,
   type ConfiguredHistoryStorage,
   type ProviderHistoryStorage,
 } from "../../provider-history/binding.js";
 
-function conflict(reason: string): never {
+function conflict(reason: HistoryConflictReason): never {
   throw new HistoryStorageConflictError(reason);
 }
 
-function absolute(value: unknown, reason: string): string {
+function absolute(value: unknown, reason: HistoryConflictReason): string {
   if (typeof value !== "string" || !value.trim() || !path.isAbsolute(value)) conflict(reason);
   return path.resolve(value);
 }
