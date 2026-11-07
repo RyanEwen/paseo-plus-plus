@@ -76,7 +76,6 @@ export function originalTimelineText(
 
 interface LongTimelineAgentOptions {
   turns: number;
-  /** Supply real response content when navigation needs substantial later scroll range. */
   /** Live turns stream for ten seconds unless a test needs one that outlasts it. */
   liveTurns?: "ten-second-stream" | "thirty-minute-stream";
 }
