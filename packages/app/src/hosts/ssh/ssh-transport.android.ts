@@ -1,25 +1,12 @@
-import { requireOptionalNativeModule, type EventSubscription } from "expo-modules-core";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import { createBridgeDaemonTransportFactory } from "@/hosts/bridge-daemon-transport";
 import { createRemoteSshHostConnection } from "@/types/host-connection";
-import type { BridgeDaemonTransportEvent } from "@/hosts/daemon-transport-bridge";
 import type { SshKeyImportBridge } from "./ssh-key-import-model";
+import { createSshNativeBridge, type SshNativeModule } from "./ssh-native-bridge";
 
-interface SshNativeModule extends SshKeyImportBridge {
-  remove(id: string): Promise<void>;
-  open(sessionId: string, credentialId: string, target: SshTarget): Promise<void>;
-  send(sessionId: string, text: string | null, binary: string | null): Promise<void>;
-  close(sessionId: string): Promise<void>;
-  addListener(
-    name: "transportEvent",
-    handler: (event: BridgeDaemonTransportEvent) => void,
-  ): EventSubscription;
-}
-export interface SshTarget {
-  host: string;
-  sshPort?: number;
-  daemonPort?: number;
-}
-const native = requireOptionalNativeModule<SshNativeModule>("PaseoSsh");
+const nativeModule = requireOptionalNativeModule<SshNativeModule>("PaseoSsh");
+// Every native call goes through the bridge so rejections carry displayable copy.
+const native = nativeModule ? createSshNativeBridge(nativeModule) : null;
 export const supportsSshKeyImport = true;
 export const isSshAvailable = () => native !== null;
 

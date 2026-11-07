@@ -14,9 +14,13 @@ internal data class SshTarget(val host: String, val sshPort: Int, val daemonPort
   val username: String get() = host.substringBeforeLast('@')
   val hostname: String get() = host.substringAfterLast('@')
   init {
-    require(host.contains('@') && username.isNotBlank() && hostname.isNotBlank() &&
-      !host.any { it.isWhitespace() } && !hostname.startsWith("-")) { "Enter ssh://user@hostname with an explicit username." }
-    require(sshPort in 1..65535 && daemonPort in 1..65535) { "Invalid SSH or daemon port." }
+    if (!(host.contains('@') && username.isNotBlank() && hostname.isNotBlank() &&
+      !host.any { it.isWhitespace() } && !hostname.startsWith("-"))) {
+      throw SshException(SshErrorCode.INVALID_TARGET, "Enter ssh://user@hostname with an explicit username.")
+    }
+    if (sshPort !in 1..65535 || daemonPort !in 1..65535) {
+      throw SshException(SshErrorCode.INVALID_TARGET, "Invalid SSH or daemon port.")
+    }
   }
   companion object {
     fun from(value: Map<String, Any?>) = SshTarget(value["host"] as String,
