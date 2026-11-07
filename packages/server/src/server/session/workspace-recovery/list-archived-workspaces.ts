@@ -4,6 +4,10 @@ import {
   type ProjectRegistry,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
+import { registerForkCapability } from "../../fork-capabilities.js";
+
+// Hosts that load this module answer project-scoped archived workspace listings.
+registerForkCapability("projectArchivedWorkspaces");
 
 /** Read archived records for one active project without inspecting Git or reviving agents. */
 export async function listArchivedProjectWorkspaces(input: {

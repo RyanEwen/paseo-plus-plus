@@ -22,6 +22,7 @@ import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { registerForkCapability } from "./fork-capabilities.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -518,6 +519,9 @@ export type ArchiveWorkspaceContentsDependencies = Pick<
   ArchiveDependencies,
   "agentManager" | "agentStorage" | "killTerminalsForWorkspace" | "sessionLogger"
 >;
+
+// Single-workspace archive keeps the record when required contents teardown fails.
+registerForkCapability("workspaceArchiveComplete");
 
 type ArchiveContentsFailurePolicy = "best-effort" | "require-complete";
 
