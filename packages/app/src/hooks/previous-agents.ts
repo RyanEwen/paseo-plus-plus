@@ -56,21 +56,3 @@ export function isPreviousAgentsAvailable(input: PreviousAgentsAvailability): bo
     input.workspaceId.trim().length > 0
   );
 }
-
-/** Retained menu callbacks recheck current authority and capture the exact destination on invocation. */
-export function createPreviousAgentLaunchAction(input: {
-  identity: { serverId: string; workspaceId: string };
-  readAvailability: () => PreviousAgentsAvailability;
-  open: (identity: { serverId: string; workspaceId: string }) => void;
-}): () => void {
-  return () => {
-    const current = input.readAvailability();
-    if (!isPreviousAgentsAvailable(current)) return;
-    if (
-      current.serverId !== input.identity.serverId ||
-      current.workspaceId !== input.identity.workspaceId
-    )
-      return;
-    input.open({ ...input.identity });
-  };
-}

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { resolveClosedAgentDialogState, selectPreviousAgents } from "./previous-agents";
+import {
+  isPreviousAgentsAvailable,
+  resolveClosedAgentDialogState,
+  selectPreviousAgents,
+} from "./previous-agents";
 
 function agentTab(agentId: string): WorkspaceTab {
   return { tabId: `tab-${agentId}`, createdAt: 0, target: { kind: "agent", agentId } };
@@ -78,5 +82,26 @@ describe("resolveClosedAgentDialogState", () => {
         history: { ...ready, hostErrors: offline },
       }),
     ).toEqual({ failed: true, scanningOpenPages: false, showLoading: false });
+  });
+});
+
+describe("isPreviousAgentsAvailable", () => {
+  const available = { serverId: "host", workspaceId: "workspace", readReady: true, enabled: true };
+
+  it("offers the dialog once settings are read and the setting is on", () => {
+    expect(isPreviousAgentsAvailable(available)).toBe(true);
+  });
+
+  it("waits for settings to be read before trusting the default", () => {
+    expect(isPreviousAgentsAvailable({ ...available, readReady: false })).toBe(false);
+  });
+
+  it("hides the dialog while the setting is off", () => {
+    expect(isPreviousAgentsAvailable({ ...available, enabled: false })).toBe(false);
+  });
+
+  it("needs a workspace to scope the history to", () => {
+    expect(isPreviousAgentsAvailable({ ...available, workspaceId: " " })).toBe(false);
+    expect(isPreviousAgentsAvailable({ ...available, serverId: "" })).toBe(false);
   });
 });
