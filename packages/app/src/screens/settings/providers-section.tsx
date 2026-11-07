@@ -38,7 +38,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
+import { ChevronRight, Copy, MoreHorizontal, Trash2 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import { createHistoryMigrationPrompt } from "@getpaseo/client/provider-history-prompt";
 
@@ -154,6 +154,10 @@ function ProviderActionsMenu({
     ],
     [],
   );
+  const copyLeading = useMemo(
+    () => <Copy size={16} color={foregroundMutedColor} />,
+    [foregroundMutedColor],
+  );
   const trashLeading = useMemo(() => <Trash2 size={16} color={dangerColor} />, [dangerColor]);
 
   return (
@@ -176,6 +180,7 @@ function ProviderActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
         <DropdownMenuItem
+          leading={copyLeading}
           onSelect={handleCopyMigrationPrompt}
           status={isCopying ? "pending" : "idle"}
           pendingLabel={t("settings.providers.actions.copying")}
