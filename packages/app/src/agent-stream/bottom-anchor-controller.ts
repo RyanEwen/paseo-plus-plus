@@ -699,7 +699,7 @@ function createBottomAnchorControllerDriver(
     evaluate(request.reason === "jump-to-bottom", "request_created");
   };
 
-  return {
+  const driver: BottomAnchorControllerDriver = {
     destroy() {
       activeUserScrollOwner = null;
       isUserScrollActive = false;
@@ -747,7 +747,6 @@ function createBottomAnchorControllerDriver(
       const startedRequestSequence = requestSequence;
       const startedAgent = input.getAgentId();
       activeUserScrollOwner = owner;
-      const finishUserScroll = this.endUserScroll.bind(this);
 
       // Departure cannot certify bottom. Retire only this gesture and preserve
       // any route/local request that replaced the one active when it began.
@@ -772,7 +771,7 @@ function createBottomAnchorControllerDriver(
             retireViewportGesture();
             return;
           }
-          finishUserScroll(params);
+          driver.endUserScroll(params);
         },
         retire: retireViewportGesture,
       };
@@ -946,6 +945,7 @@ function createBottomAnchorControllerDriver(
       evaluate(animated, "manual_reevaluate");
     },
   };
+  return driver;
 }
 
 export const __private__ = {
