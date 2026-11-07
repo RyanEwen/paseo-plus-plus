@@ -1213,7 +1213,7 @@ describe("sticky optional feature", () => {
       loadOlder,
       enabled: true,
     };
-    const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
+    const { rerender } = renderHook(useStickyPrompt, { initialProps: input });
     const acceptance = loadOlder.mock.calls[0]![0]!;
     rerender({ ...input, enabled: false });
     expect(acceptance.signal.aborted).toBe(true);
@@ -1246,7 +1246,7 @@ describe("sticky optional feature", () => {
       reading,
       fetchPrompt,
     };
-    const { result } = renderHook(useStickyPrompt, { initialProps: input });
+    renderHook(useStickyPrompt, { initialProps: input });
     expect(fetchPrompt).not.toHaveBeenCalled();
   });
   it("cancels late content reads on opt-out and preserves loaded data", async () => {
@@ -1446,7 +1446,7 @@ describe("prompt ownership across authoritative epochs", () => {
 });
 
 /** A reading request for the user row before `source`. */
-function contextRequest(
+function readingContextRequest(
   source: StreamItem,
   fetchContext: (source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>,
 ) {
@@ -2606,7 +2606,7 @@ describe("index-free cache-only context", () => {
       initialProps: {
         epoch: "epoch",
         knownPrompts: [] as UserPrompt[],
-        request: contextRequest(source, fetchContext),
+        request: readingContextRequest(source, fetchContext),
       },
     });
     await waitFor(() => expect(result.current.error).toBe(true));
@@ -2616,7 +2616,7 @@ describe("index-free cache-only context", () => {
     rerender({
       epoch: "epoch",
       knownPrompts: [],
-      request: contextRequest({ ...source }, fetchContext),
+      request: readingContextRequest({ ...source }, fetchContext),
     });
     expect(result.current.error).toBe(false);
     expect(fetchContext).toHaveBeenCalledTimes(2);
@@ -2631,17 +2631,21 @@ describe("index-free cache-only context", () => {
       initialProps: {
         epoch: "epoch",
         knownPrompts: [] as UserPrompt[],
-        request: contextRequest(source, fetchContext),
+        request: readingContextRequest(source, fetchContext),
       },
     });
     await waitFor(() => expect(result.current.item?.id).toBe("context"));
     rerender({
       epoch: "epoch",
       knownPrompts,
-      request: contextRequest({ ...source, id: "other" }, fetchContext),
+      request: readingContextRequest({ ...source, id: "other" }, fetchContext),
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(2));
-    rerender({ epoch: "epoch", knownPrompts, request: contextRequest(source, fetchContext) });
+    rerender({
+      epoch: "epoch",
+      knownPrompts,
+      request: readingContextRequest(source, fetchContext),
+    });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(3));
   });
 
@@ -2677,14 +2681,14 @@ describe("index-free cache-only context", () => {
       initialProps: {
         epoch: "epoch",
         knownPrompts: [] as UserPrompt[],
-        request: contextRequest(source, fetchContext),
+        request: readingContextRequest(source, fetchContext),
       },
     });
     await waitFor(() => expect(fetchContext).toHaveBeenCalledTimes(1));
     rerender({
       epoch: "new",
       knownPrompts: [],
-      request: contextRequest(
+      request: readingContextRequest(
         { ...source, timelineCursor: { epoch: "new", seq: 256 } },
         fetchContext,
       ),
