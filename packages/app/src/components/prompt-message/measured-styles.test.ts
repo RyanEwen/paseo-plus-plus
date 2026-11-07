@@ -6,7 +6,7 @@ import {
   naturalBubbleFrameStyle,
   previewTextClipStyle,
   trailingRailStyles,
-} from "./user-message-measured-styles";
+} from "./measured-styles";
 
 // Unistyles web adds a CSS rule for every distinct ordinary style object and never removes it.
 // Measured prompt geometry changes per message, resize and disclosure, so it must use the

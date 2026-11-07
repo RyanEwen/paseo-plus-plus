@@ -1,6 +1,6 @@
 import { useWindowDimensions } from "react-native";
 import { SPACING } from "@/styles/theme";
-import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 import {
   createContext,
   useCallback,

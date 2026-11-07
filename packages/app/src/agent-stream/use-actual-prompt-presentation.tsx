@@ -12,11 +12,11 @@ import {
   NativeMessagePresentationContext,
   NativeMessageDisclosureAuthorityContext,
   type NativeMessagePresentationDriver,
-} from "@/components/user-message-native-presentation";
+} from "@/components/prompt-message/native-presentation";
 import {
   NativeMessageDisclosureSlot,
   requestNativeMessageDisclosure,
-} from "@/components/user-message-native-flow";
+} from "@/components/prompt-message/native-flow";
 
 type MessageProps = ComponentProps<typeof UserMessage>;
 type Presentation = Partial<

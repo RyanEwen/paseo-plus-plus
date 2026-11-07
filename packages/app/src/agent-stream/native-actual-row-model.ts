@@ -4,7 +4,7 @@ import { uniqueStreamSegments } from "./actual-row-collection";
 import type {
   NaturalMessageGeometry,
   NativeMessagePresentation,
-} from "@/components/user-message-flow-model";
+} from "@/components/prompt-message/flow-model";
 
 /** One list component owns one physical FlatList. Its callbacks retain this
  * binding through dispatch, rather than acquiring the currently held list.

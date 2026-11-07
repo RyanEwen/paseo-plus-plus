@@ -2,12 +2,8 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import type { ComponentRef } from "react";
 import type { View } from "react-native";
 import { SPACING } from "@/styles/theme";
-import type { MessageFlowContext, UserMessageFlowProps } from "./user-message-flow";
-import {
-  sameFrame,
-  type MessageFlowFrame,
-  type MessageFlowMeasurements,
-} from "./user-message-flow-model";
+import type { MessageFlowContext, UserMessageFlowProps } from "./flow";
+import { sameFrame, type MessageFlowFrame, type MessageFlowMeasurements } from "./flow-model";
 
 type FrameName = Parameters<MessageFlowContext["register"]>[0];
 interface WebMessageMeasurement {

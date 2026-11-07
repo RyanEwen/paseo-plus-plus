@@ -26,13 +26,13 @@ import Animated, {
   type AnimatedRef,
 } from "react-native-reanimated";
 import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
-import { ScrollView } from "./ui/scroll-view";
+import { ScrollView } from "../ui/scroll-view";
 import {
   NaturalMessageFlowContext,
   useNaturalMessageMeasurements,
   type MessageFlowContext,
   type UserMessageFlowProps,
-} from "./user-message-flow";
+} from "./flow";
 import {
   advanceNativeMessagePresentation,
   acceptsNativeMessageDisclosure,
@@ -42,13 +42,13 @@ import {
   bindNativeMessagePreparation,
   type NativeMessagePreparation,
   type NativeMessagePreparationBinding,
-} from "./user-message-flow-model";
+} from "./flow-model";
 import {
   NativeMessageDisclosureAuthorityContext,
   type NativeMessageDisclosureRequest,
   type NativeMessagePresentationDriver,
-} from "./user-message-native-presentation";
-import { resolveHighlightCorners } from "./ui/press-highlight.shape";
+} from "./native-presentation";
+import { resolveHighlightCorners } from "../ui/press-highlight.shape";
 
 const AnimatedScrollView = createAnimatedComponent(ScrollView);
 

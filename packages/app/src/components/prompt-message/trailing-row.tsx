@@ -6,10 +6,10 @@ import { StyleSheet } from "react-native-unistyles";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu } from "@/components/rewind/rewind-menu";
 import { SPACING } from "@/styles/theme";
-import { STREAM_METADATA_FONT_SIZE } from "./message-layout";
-import { TurnCopyButton } from "./turn-copy-button";
-import { NaturalMessageFlowContext } from "./user-message-flow";
-import { trailingRailStyles } from "./user-message-measured-styles";
+import { STREAM_METADATA_FONT_SIZE } from "../message-layout";
+import { TurnCopyButton } from "../turn-copy-button";
+import { NaturalMessageFlowContext } from "./flow";
+import { trailingRailStyles } from "./measured-styles";
 
 /** The action row under a prompt; on web it follows the measured natural rail. */
 export function UserMessageTrailingRow({

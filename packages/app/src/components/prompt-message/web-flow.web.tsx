@@ -14,16 +14,16 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { ScrollView } from "./ui/scroll-view";
-import { controlHeightForLayout } from "./ui/control-geometry";
+import { ScrollView } from "../ui/scroll-view";
+import { controlHeightForLayout } from "../ui/control-geometry";
 import { SPACING } from "@/styles/theme";
 import {
   NaturalMessageFlowContext,
   type MessageFlowContext,
   type UserMessageFlowProps,
-} from "./user-message-flow";
-import { resolveMessageFlow } from "./user-message-flow-model";
-import { useWebMessageMeasurements } from "./user-message-flow-measurements.web";
+} from "./flow";
+import { resolveMessageFlow } from "./flow-model";
+import { useWebMessageMeasurements } from "./flow-measurements.web";
 
 // A semantic paint marker, separate from the rectangular compact ink occlusion regions.
 const bodyBackdropDataSet = { userMessagePaintBackdrop: "body" };

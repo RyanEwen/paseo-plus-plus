@@ -1,4 +1,4 @@
-import { naturalBubbleFrameStyle } from "./user-message-measured-styles";
+import { naturalBubbleFrameStyle } from "./measured-styles";
 import {
   createContext,
   useCallback,
@@ -20,9 +20,9 @@ import {
   type ViewProps,
   type ScrollView as NativeScrollView,
 } from "react-native";
-import { ScrollView } from "./ui/scroll-view";
+import { ScrollView } from "../ui/scroll-view";
 import { StyleSheet } from "react-native-unistyles";
-import type { NativeMessagePresentationDriver } from "./user-message-native-presentation";
+import type { NativeMessagePresentationDriver } from "./native-presentation";
 import {
   resolveMessageFlow,
   readMessageTextLayout,
@@ -33,9 +33,9 @@ import {
   type MessageTextPrefix,
   type NaturalTextLine,
   type NaturalMessageGeometry,
-} from "./user-message-flow-model";
+} from "./flow-model";
 
-export type { NaturalMessageGeometry } from "./user-message-flow-model";
+export type { NaturalMessageGeometry } from "./flow-model";
 
 type FrameName = "bubble" | "content" | "text" | "controls";
 type Measurable = ComponentRef<typeof View>;

@@ -1,4 +1,4 @@
-import { nativeTextPreviewMetrics } from "./ui/native-text-preview-metrics";
+import { nativeTextPreviewMetrics } from "../ui/native-text-preview-metrics";
 
 export interface NaturalTextLine {
   y: number;

@@ -66,7 +66,7 @@ import { ToolCallDetailsContent } from "./tool-call-details";
 import { useToolCallSheet } from "./tool-call-sheet";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
-export { UserMessage } from "./user-message";
+export { UserMessage } from "./prompt-message";
 export { MessageOuterSpacingProvider, STREAM_METADATA_FONT_SIZE } from "./message-layout";
 export { TurnCopyButton } from "./turn-copy-button";
 import {

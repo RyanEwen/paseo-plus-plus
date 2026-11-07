@@ -1,4 +1,4 @@
-import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 
 /** The RN sticky wrapper owns absolute L. Its nested cell's native y is local0.
  * Deliver each actual wrapper layout once to the existing VirtualizedList cell

@@ -36,11 +36,11 @@ import {
   nativeStickyPresentationStyle,
   type NativeStickyGeometry,
 } from "./native-actual-row-model";
-import { ordinaryNativeMessagePresentation } from "@/components/user-message-flow-model";
+import { ordinaryNativeMessagePresentation } from "@/components/prompt-message/flow-model";
 import {
   NativeMessagePresentationContext,
   type NativeMessagePresentationDriver,
-} from "@/components/user-message-native-presentation";
+} from "@/components/prompt-message/native-presentation";
 import type { NativeStickyProps } from "./native-sticky-contract";
 
 interface NativeExpansionRetirementInput extends Pick<

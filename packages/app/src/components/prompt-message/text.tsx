@@ -5,10 +5,10 @@ import { TextPreview } from "@/components/ui/text-preview";
 import { isWeb } from "@/constants/platform";
 import { useTextLink } from "@/hooks/use-text-link";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
-import { MESSAGE_TEXT_DATASET } from "./message-layout";
-import type { UserMessageProps } from "./user-message";
-import { NaturalMessageFlowContext } from "./user-message-flow";
-import { NativeMessageSuffixMask } from "./user-message-native-flow";
+import { MESSAGE_TEXT_DATASET } from "../message-layout";
+import type { UserMessageProps } from "./index";
+import { NaturalMessageFlowContext } from "./flow";
+import { NativeMessageSuffixMask } from "./native-flow";
 
 function ignorePreviewOverflow(_overflowing: boolean): void {
   return;

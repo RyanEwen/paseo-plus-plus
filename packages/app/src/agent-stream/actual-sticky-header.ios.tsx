@@ -23,7 +23,7 @@ import {
   useKeyboardDockDisplacement,
 } from "@/keyboard/shift/internal/dock-displacement.ios";
 import type { NativeStickyProps, NativeStickyHandle } from "./native-sticky-contract";
-import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 import { nativeStickyInterpolation, resolveNativeStickyHeights } from "./native-actual-row-model";
 
 /** Keep the sticky edge below the floating header and at the stationary keyboard clip. */

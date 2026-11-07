@@ -1,10 +1,10 @@
 import { useActualPromptPresentation } from "./use-actual-prompt-presentation";
 import { memo, useMemo, useCallback, useContext, type ComponentProps } from "react";
-import { UserMessage } from "@/components/user-message";
+import { UserMessage } from "@/components/prompt-message";
 import { PromptNavigationActions, PromptNavigationContext } from "./prompt-navigation-actions";
 import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
 import { ActualPromptRowsContext, ActualPromptFlowGeometryContext } from "./actual-prompt-rows";
-import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 import { useChatFindSelectedMessageId } from "./chat-find/selection";
 
 /** Attach viewport-owned navigation without changing the shared message renderer's identity. */

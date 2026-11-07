@@ -1,8 +1,4 @@
-import {
-  measuredHeightStyle,
-  measuredWidthStyle,
-  previewTextClipStyle,
-} from "./user-message-measured-styles";
+import { measuredHeightStyle, measuredWidthStyle, previewTextClipStyle } from "./measured-styles";
 import {
   useCallback,
   useContext,
@@ -15,9 +11,9 @@ import { ScrollView } from "@/components/ui/scroll-view";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { controlHeightForLayout } from "@/components/ui/control-geometry";
-import { NaturalMessageFlowContext, type UserMessageBodyPresentation } from "./user-message-flow";
-import { MessagePreview } from "./user-message/index";
-import { NativeMessageTextPaint } from "./user-message-native-flow";
+import { NaturalMessageFlowContext, type UserMessageBodyPresentation } from "./flow";
+import { MessagePreview } from "../user-message/index";
+import { NativeMessageTextPaint } from "./native-flow";
 
 /** Keep one body ancestry in both disclosure states. The capped parent column
  * reserves its real padding/action height; the body alone may shrink and scroll.

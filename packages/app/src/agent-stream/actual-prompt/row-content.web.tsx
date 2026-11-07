@@ -1,5 +1,5 @@
 import React, { type CSSProperties, useCallback, useContext, useMemo } from "react";
-import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
+import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 import {
   ActualPinnedRowContext,
   ActualPromptFlowGeometryContext,

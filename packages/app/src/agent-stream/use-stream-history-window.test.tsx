@@ -10,13 +10,13 @@ import { parseSync, transformFromAstSync, traverse, types } from "@babel/core";
 import type {
   UserMessageFlowProps,
   useNaturalMessageMeasurements,
-} from "../components/user-message-flow";
-import type { NativeMessagePresentationDriver } from "../components/user-message-native-presentation";
+} from "../components/prompt-message/flow";
+import type { NativeMessagePresentationDriver } from "../components/prompt-message/native-presentation";
 import {
   readMessageTextLayout,
   rebindMessageTextPrefix,
   resolveMessageFlow,
-} from "../components/user-message-flow-model";
+} from "../components/prompt-message/flow-model";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
@@ -262,7 +262,7 @@ describe("native natural measurement revisions", () => {
   function loadMeasurementHook(
     readDimensions: () => { fontScale: number },
   ): (props: HookProps) => Measurements {
-    const native = sourceFunctions("../components/user-message-native-flow.tsx", [
+    const native = sourceFunctions("../components/prompt-message/native-flow.tsx", [
       "nativePresentationDriver",
       "NativeUserMessageFlow",
     ]);
@@ -281,16 +281,16 @@ describe("native natural measurement revisions", () => {
       types.returnStatement(types.identifier("measurements")),
     ];
     const natural = [
-      ...sourceFunctions("../components/user-message-flow.tsx", [
+      ...sourceFunctions("../components/prompt-message/flow.tsx", [
         "emptyMeasurements",
         "useNaturalMessageMeasurements",
       ]),
-      ...sourceFunctions("../components/user-message-flow-model.ts", ["sameFrame"]),
+      ...sourceFunctions("../components/prompt-message/flow-model.ts", ["sameFrame"]),
     ];
     const require = createRequire(import.meta.url);
     const filename = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../components/user-message-native-flow.tsx",
+      "../components/prompt-message/native-flow.tsx",
     );
     const compiled = transformFromAstSync(
       types.file(types.program([...natural, ...native])),

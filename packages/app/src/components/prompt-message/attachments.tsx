@@ -5,9 +5,9 @@ import { useTranslation } from "react-i18next";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
-import { AttachmentFrame, AttachmentLabel, AttachmentThumbnail } from "./attachment-pill";
-import { NaturalMessageFlowContext } from "./user-message-flow";
-import { NativeMessageVisibility } from "./user-message-native-flow";
+import { AttachmentFrame, AttachmentLabel, AttachmentThumbnail } from "../attachment-pill";
+import { NaturalMessageFlowContext } from "./flow";
+import { NativeMessageVisibility } from "./native-flow";
 
 /** Compact paint omits attachments; disclosure reveals the original attachment pills. */
 export function UserMessageAttachments({

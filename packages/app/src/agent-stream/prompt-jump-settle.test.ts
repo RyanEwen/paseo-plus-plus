@@ -15,7 +15,7 @@ import {
   nativeMessageRoleVisible,
   acceptsNativeMessageDisclosure,
   type MessageFlowMeasurements,
-} from "../components/user-message-flow-model";
+} from "../components/prompt-message/flow-model";
 import {
   nativeBottomDistance,
   publishMeasuredNativeNearBottom,
@@ -107,7 +107,7 @@ describe("native presentation reaction inputs", () => {
    */
   function compiledPrepare(input: unknown) {
     const filename = fileURLToPath(
-      new URL("../components/user-message-native-flow.tsx", import.meta.url),
+      new URL("../components/prompt-message/native-flow.tsx", import.meta.url),
     );
     const declaration = sourceFunction(filename, "useNativeMessageProjection");
     const statements = declaration.body.body;
@@ -246,7 +246,7 @@ describe("native presentation reaction inputs", () => {
     if (!prepared) throw new Error("The measured compact body must prepare");
     const filename = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../components/user-message-flow-model.ts",
+      "../components/prompt-message/flow-model.ts",
     );
     const project = bindSourceFunction(
       sourceFunction(filename, "projectNativePinnedMessage"),
@@ -275,7 +275,7 @@ describe("native presentation reaction inputs", () => {
   it("keeps Android painted clip offsets out of the natural body's width and origin", () => {
     const filename = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../components/user-message-flow-model.ts",
+      "../components/prompt-message/flow-model.ts",
     );
     const geometry = bindSourceFunction(
       sourceFunction(filename, "nativeMessageViewportGeometry"),
@@ -563,7 +563,7 @@ describe("native presentation reaction inputs", () => {
   it("rejects queued Android More after handoff retirement despite a stale compact frame", () => {
     const filename = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../components/user-message-native-flow.tsx",
+      "../components/prompt-message/native-flow.tsx",
     );
     const invoke = (callback: unknown, ...args: unknown[]) => {
       if (typeof callback !== "function") throw new Error("Disclosure callback is missing");

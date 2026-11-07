@@ -1,14 +1,14 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import { MessageSender } from "./user-message/index";
+import { MessageSender } from "../user-message/index";
 import type { TextLinkEvent } from "@/hooks/use-text-link";
-import { UserMessagePreviewContent } from "./user-message-preview-content";
-import { UserMessageAttachments } from "./user-message-attachments";
+import { UserMessagePreviewContent } from "./preview-content";
+import { UserMessageAttachments } from "./attachments";
 import {
   NaturalMessageBubble,
   type NaturalMessageGeometry,
   type UserMessageBodyPresentation,
-} from "./user-message-flow";
-import { WebUserMessageFlow } from "./user-message-web-flow";
+} from "./flow";
+import { WebUserMessageFlow } from "./web-flow";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
@@ -26,12 +26,12 @@ import { memo, useCallback, useContext, useMemo, useState } from "react";
 import { View, type PressableStateCallbackType } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
-import { NativeMessagePresentationContext } from "./user-message-native-presentation";
-import { NativeUserMessageFlow, NativeMessageVisibility } from "./user-message-native-flow";
+import { NativeMessagePresentationContext } from "./native-presentation";
+import { NativeUserMessageFlow, NativeMessageVisibility } from "./native-flow";
 import { StyleSheet } from "react-native-unistyles";
-import { useDisableOuterSpacing } from "./message-layout";
-import { UserMessageText } from "./user-message-text";
-import { UserMessageTextActions, UserMessageTrailingRow } from "./user-message-trailing-row";
+import { useDisableOuterSpacing } from "../message-layout";
+import { UserMessageText } from "./text";
+import { UserMessageTextActions, UserMessageTrailingRow } from "./trailing-row";
 export interface UserMessageProps {
   /** Shared fallback callers retain natural layout unless the chat owner opts into previews. */
   bodyPresentation?: UserMessageBodyPresentation;
