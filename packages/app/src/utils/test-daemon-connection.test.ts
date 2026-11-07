@@ -46,6 +46,7 @@ class FakeDaemonProbe {
     },
     resolveAppVersion: () => null,
     createDesktopTransportFactory: () => null,
+    createSshTransportFactory: () => null,
     buildDesktopTransportUrl: (target) => {
       if (target.transportType === "ssh") {
         return `paseo+desktop://ssh?host=${encodeURIComponent(target.host)}`;
@@ -198,7 +199,7 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(config.url).toBe("paseo+desktop://ssh?host=deploy%40example.com");
   });
 
-  it("uses the desktop transport for Remote SSH connections", async () => {
+  it("connects Remote SSH through the platform SSH transport", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const transportFactory = vi.fn();
     const result = await connectToDaemon(
@@ -212,7 +213,7 @@ describe("test-daemon-connection connectToDaemon", () => {
       undefined,
       {
         ...probe.deps,
-        createDesktopTransportFactory: () => transportFactory,
+        createSshTransportFactory: () => transportFactory,
       },
     );
     await result.client.close();

@@ -34,7 +34,7 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createDesktopTransportFactory(): DaemonClientConfig["transportFactory"] | null;
-  createSshTransportFactory?(): DaemonClientConfig["transportFactory"] | null;
+  createSshTransportFactory(): DaemonClientConfig["transportFactory"] | null;
   buildDesktopTransportUrl(input: DesktopDaemonTransportTarget): string;
   createClient(config: DaemonClientConfig): TClient;
 }
@@ -51,15 +51,15 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
 function buildRemoteSshClientConfig(input: {
   connection: Extract<HostConnection, { type: "remoteSsh" }>;
   base: Omit<DaemonClientConfig, "url">;
-  desktopTransportFactory: DaemonClientConfig["transportFactory"] | null;
+  sshTransportFactory: DaemonClientConfig["transportFactory"] | null;
   buildDesktopTransportUrl: (target: DesktopDaemonTransportTarget) => string;
 }): DaemonClientConfig {
-  if (!input.desktopTransportFactory) {
+  if (!input.sshTransportFactory) {
     throw new Error("Remote SSH is unavailable in this app build.");
   }
   return {
     ...input.base,
-    transportFactory: input.desktopTransportFactory,
+    transportFactory: input.sshTransportFactory,
     url: input.buildDesktopTransportUrl({
       transportType: "ssh",
       host: input.connection.host,
@@ -169,9 +169,7 @@ export async function buildClientConfig(
     return buildRemoteSshClientConfig({
       connection,
       base,
-      desktopTransportFactory: deps.createSshTransportFactory
-        ? deps.createSshTransportFactory()
-        : desktopTransportFactory,
+      sshTransportFactory: deps.createSshTransportFactory(),
       buildDesktopTransportUrl: deps.buildDesktopTransportUrl,
     });
   }
