@@ -30,7 +30,11 @@ it("reads guest page zoom on open, changes and resets it without changing applic
     browserId: "menu-zoom",
     workspaceId: "workspace",
     url: "https://example.com",
-    profileHost: { profilePartition: "persist:test-zoom", registerAttachedBrowser: async () => {} },
+    profileHost: {
+      profilePartition: "persist:test-zoom",
+      registerAttachedBrowser: async () => {},
+      getHostZoomFactor: () => 1,
+    },
   });
   if (!guest) throw new Error("Expected fixture guest");
   let zoom = 1.25;

@@ -23,6 +23,13 @@ export interface BrowserDimensions {
 }
 const residentWebviewSizesByBrowserId = new Map<string, BrowserDimensions>();
 const residentZoomCleanups = new Map<string, () => void>();
+/** Host UI zoom readers for prepared guests; each comes from the profile host that prepared it. */
+const hostZoomReaders = new WeakMap<HTMLElement, () => number | undefined>();
+
+/** The Paseo window's own zoom, independent of monitor scale and guest page zoom. */
+function readDesktopHostZoom(): number | undefined {
+  return getDesktopHost()?.window?.getCurrentWindow?.().getZoomFactor?.();
+}
 
 /** Read the guest's actual page zoom; attachment and navigation can make it unavailable. */
 export function getBrowserWebviewZoom(webview: HTMLElement | null): number | null {
@@ -59,7 +66,7 @@ export function setBrowserWebviewZoom(browserId: string, factor: number): boolea
 export function getBrowserWebviewPresentationScale(webview: HTMLElement): number | null {
   try {
     const pageZoom = (webview as HTMLElement & { getZoomFactor?: () => number }).getZoomFactor?.();
-    const hostZoom = getDesktopHost()?.window?.getCurrentWindow?.().getZoomFactor?.();
+    const hostZoom = (hostZoomReaders.get(webview) ?? readDesktopHostZoom)();
     if (
       !Number.isFinite(pageZoom) ||
       !Number.isFinite(hostZoom) ||
@@ -114,11 +121,13 @@ interface BrowserWebviewIdentity {
 export interface BrowserWebviewProfileHost {
   profilePartition: string;
   registerAttachedBrowser(input: DesktopAttachedBrowserRegistration): Promise<void>;
+  /** The host window's UI zoom, used to keep fixed page-CSS sizes across interface zoom. */
+  getHostZoomFactor(): number | undefined;
 }
 
 function isAttachedBrowserBridge(
   browser: DesktopBrowserBridge | undefined,
-): browser is BrowserWebviewProfileHost {
+): browser is DesktopBrowserBridge & Omit<BrowserWebviewProfileHost, "getHostZoomFactor"> {
   return (
     browser !== undefined &&
     typeof browser.profilePartition === "string" &&
@@ -135,7 +144,11 @@ function getBrowserBridge(override?: BrowserWebviewProfileHost): BrowserWebviewP
   if (!isAttachedBrowserBridge(browser)) {
     throw new Error("Electron browser profile bridge is unavailable");
   }
-  return browser;
+  return {
+    profilePartition: browser.profilePartition,
+    registerAttachedBrowser: (input) => browser.registerAttachedBrowser(input),
+    getHostZoomFactor: readDesktopHostZoom,
+  };
 }
 
 function registerBrowserWhenReady(
@@ -396,6 +409,7 @@ export function prepareBrowserWebview(
   },
 ): void {
   const browser = getBrowserBridge(input.profileHost);
+  hostZoomReaders.set(webview, () => browser.getHostZoomFactor());
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
   webview.setAttribute("partition", browser.profilePartition);
   webview.setAttribute("allowpopups", "true");

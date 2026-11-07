@@ -28,7 +28,6 @@ import {
 } from "../../utils/command-center-focus-restore";
 
 let hostZoom = 1;
-const originalHost = window.paseoDesktop;
 const originalZoomDescriptor = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
   "getZoomFactor",
@@ -45,6 +44,7 @@ const profileHost: BrowserWebviewProfileHost = {
   registerAttachedBrowser: async (input) => {
     attachedBrowsers.push(input);
   },
+  getHostZoomFactor: () => hostZoom,
 };
 
 function ensureTestBrowser(input: {
@@ -60,6 +60,13 @@ function prepareTestBrowser(
   input: { browserId: string; workspaceId: string; initialUrl?: string | null },
 ): void {
   prepareBrowserWebview(webview, { ...input, profileHost });
+}
+
+/** A webview prepared through the test profile host, so its presentation reads that host's zoom. */
+function createTestWebview(browserId: string): HTMLElement {
+  const webview = document.createElement("webview");
+  prepareTestBrowser(webview, { browserId, workspaceId: "workspace-a" });
+  return webview;
 }
 
 function residentHost(): HTMLElement {
@@ -113,9 +120,6 @@ describe("resident browser webviews", () => {
   beforeEach(() => {
     attachedBrowsers.length = 0;
     hostZoom = 1;
-    window.paseoDesktop = {
-      window: { getCurrentWindow: () => ({ getZoomFactor: () => hostZoom }) },
-    };
     Object.defineProperty(HTMLElement.prototype, "getZoomFactor", {
       configurable: true,
       value: () => 1,
@@ -124,7 +128,6 @@ describe("resident browser webviews", () => {
 
   afterEach(() => {
     clearResidentBrowserWebviewsForTests();
-    window.paseoDesktop = originalHost;
     if (originalZoomDescriptor)
       Object.defineProperty(HTMLElement.prototype, "getZoomFactor", originalZoomDescriptor);
     else
@@ -134,7 +137,7 @@ describe("resident browser webviews", () => {
 
   it("parks a browser webview in the permanent paintable 1x1 host", () => {
     const visibleHost = document.createElement("div");
-    const webview = document.createElement("webview");
+    const webview = createTestWebview("browser-a");
     visibleHost.appendChild(webview);
     document.body.appendChild(visibleHost);
 
@@ -641,7 +644,7 @@ describe("resident browser webviews", () => {
   });
 
   it("applies an exact fixed viewport without a flex width override", () => {
-    const webview = document.createElement("webview");
+    const webview = createTestWebview("browser-fixed");
     const anchor = document.createElement("div");
     const clip = document.createElement("div");
     Object.defineProperty(anchor, "getBoundingClientRect", {
@@ -664,7 +667,7 @@ describe("resident browser webviews", () => {
 
   it("parks a browser at its last resolved viewport dimensions", () => {
     const visibleHost = document.createElement("div");
-    const webview = document.createElement("webview");
+    const webview = createTestWebview("browser-sized");
     visibleHost.appendChild(webview);
     document.body.appendChild(visibleHost);
     rememberBrowserWebviewSize({ browserId: "browser-sized", width: 640, height: 480 });
@@ -676,7 +679,7 @@ describe("resident browser webviews", () => {
   });
 
   it("keeps an inactive in-place browser at its last resolved viewport dimensions", () => {
-    const webview = document.createElement("webview");
+    const webview = createTestWebview("browser-inactive");
     rememberBrowserWebviewSize({ browserId: "browser-inactive", width: 640, height: 480 });
 
     applyInactiveBrowserWebviewViewport("browser-inactive", webview, { mode: "responsive" });
@@ -687,7 +690,7 @@ describe("resident browser webviews", () => {
   });
 
   it("parks a cold inactive browser at its canonical fixed viewport", () => {
-    const webview = document.createElement("webview");
+    const webview = createTestWebview("browser-restored-fixed");
 
     applyInactiveBrowserWebviewViewport("browser-restored-fixed", webview, {
       mode: "fixed",
