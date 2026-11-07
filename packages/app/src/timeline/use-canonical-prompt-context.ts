@@ -187,26 +187,12 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     )
       return;
     if (!owner) {
-      setState({
-        scope: requestScope,
-        key: sourceKey,
-        loading: false,
-        error: true,
-        limited: false,
-        exhausted: false,
-      });
+      setState(contextLookupState(requestScope, sourceKey, { error: true }));
       return;
     }
     const controller = new AbortController();
     active.current = controller;
-    setState({
-      scope: requestScope,
-      key: sourceKey,
-      loading: !local,
-      error: false,
-      limited: false,
-      exhausted: false,
-    });
+    setState(contextLookupState(requestScope, sourceKey, { loading: !local }));
     void owner
       .request({
         agentId: input.agentId,
@@ -220,26 +206,16 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
       .then(
         (prompt) => {
           if (!controller.signal.aborted)
-            setState({
-              scope: requestScope,
-              key: sourceKey,
-              loading: false,
-              error: false,
-              limited: false,
-              exhausted: prompt === undefined,
-            });
+            setState(
+              contextLookupState(requestScope, sourceKey, { exhausted: prompt === undefined }),
+            );
           return null;
         },
         (error: unknown) => {
-          if (!controller.signal.aborted)
-            setState({
-              scope: requestScope,
-              key: sourceKey,
-              loading: false,
-              error: !(error instanceof CanonicalPromptContextBudgetError),
-              limited: error instanceof CanonicalPromptContextBudgetError,
-              exhausted: false,
-            });
+          if (controller.signal.aborted) return null;
+          // A spent discovery budget is a limit the reader can retry, not a failure.
+          const limited = error instanceof CanonicalPromptContextBudgetError;
+          setState(contextLookupState(requestScope, sourceKey, { error: !limited, limited }));
           return null;
         },
       );
@@ -268,14 +244,7 @@ export function useCanonicalPromptContext(input: CanonicalPromptContextInput) {
     active.current?.abort();
     input.owner?.cancel(channel);
     suppressed.current = { scope: requestScope, key: sourceKey };
-    setState({
-      scope: requestScope,
-      key: sourceKey,
-      loading: false,
-      error: false,
-      limited: false,
-      exhausted: false,
-    });
+    setState(contextLookupState(requestScope, sourceKey, {}));
   });
   const retry = useStableEvent(() => {
     suppressed.current = null;
@@ -351,4 +320,13 @@ function hasCoveredCurrentOccurrence(
     !!cursor &&
     coversCanonicalInterval(coverage, cursor.epoch, descriptor.startSeq, cursor.seq)
   );
+}
+
+/** One lookup outcome for this scope and source; unspecified flags are false. */
+function contextLookupState(
+  scope: object,
+  key: string | null,
+  flags: Partial<Pick<CanonicalPromptContextState, "loading" | "error" | "limited" | "exhausted">>,
+): CanonicalPromptContextState {
+  return { scope, key, loading: false, error: false, limited: false, exhausted: false, ...flags };
 }

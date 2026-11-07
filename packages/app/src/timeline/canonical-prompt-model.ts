@@ -41,3 +41,10 @@ export function canonicalPromptOccurrenceKey(source: StreamItem): string {
 export function canonicalPromptSourceKey(source: StreamItem): string {
   return JSON.stringify([canonicalPromptOccurrenceKey(source), source.timelineCursor?.seq]);
 }
+
+/** Insert or refresh a key as most recent, evicting the oldest entry past `limit`. */
+export function retainBounded<K, V>(entries: Map<K, V>, key: K, value: V, limit: number): void {
+  entries.delete(key);
+  entries.set(key, value);
+  if (entries.size > limit) entries.delete(entries.keys().next().value!);
+}

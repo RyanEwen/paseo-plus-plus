@@ -473,9 +473,7 @@ function mergeTimelineWindow(args: {
     older,
     sideEffects: [],
     acknowledgedClientMessageIds: reconciled.acknowledgedClientMessageIds,
-    acceptedSourceEntries: timelineUnits.flatMap((unit) =>
-      unit.sourceEntry ? [unit.sourceEntry] : [],
-    ),
+    acceptedSourceEntries: acceptedSourceEntries(timelineUnits),
   };
 }
 
@@ -562,9 +560,7 @@ function applyTimelineReplacePath(args: {
     older: payload.hasOlder ? "available" : "none",
     sideEffects,
     acknowledgedClientMessageIds,
-    acceptedSourceEntries: timelineUnits.flatMap((unit) =>
-      unit.sourceEntry ? [unit.sourceEntry] : [],
-    ),
+    acceptedSourceEntries: acceptedSourceEntries(timelineUnits),
   };
 }
 interface IncrementalAcceptResult {
@@ -1240,10 +1236,15 @@ function applyTimelineIncrementalPath(args: {
     older: resolveOlderTimelineAvailability({ payload, cursor, currentCursor }),
     sideEffects,
     acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds,
-    acceptedSourceEntries: acceptedUnits.flatMap((unit) =>
-      unit.sourceEntry ? [unit.sourceEntry] : [],
-    ),
+    acceptedSourceEntries: acceptedSourceEntries(acceptedUnits),
   };
+}
+
+/** Source entries of the units a page or stream event accepted, in unit order. */
+function acceptedSourceEntries(
+  units: readonly { sourceEntry?: TimelineResponseEntry }[],
+): TimelineResponseEntry[] {
+  return units.flatMap((unit) => (unit.sourceEntry ? [unit.sourceEntry] : []));
 }
 
 /** Report the canonical source entries an applied page accepted, for prompt context coverage. */

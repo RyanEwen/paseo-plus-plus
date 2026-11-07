@@ -1,8 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { StreamItem } from "@/types/stream";
+import { retainBounded } from "@/timeline/canonical-prompt-model";
 import { contextSourceKey } from "./fetch-reading-prompt-context";
 import type { UserPrompt } from "./sticky-prompt-model";
+
+/** Prompts and reading contexts kept per epoch for revisiting nearby responses. */
+const MAX_CACHED_PROMPTS = 16;
 
 /** Read only the prompt belonging to a visible response. This cache never applies a
  * transcript window or owns scrolling. Epoch-scoped state and cancellation isolate its bounded contents without remounting the viewport.
@@ -71,9 +75,7 @@ export function useReadingPrompt(input: {
     for (const item of input.knownPrompts) {
       const seq = item.timelineCursor?.seq;
       if (seq === undefined || item.timelineCursor?.epoch !== epoch) continue;
-      cache.delete(`prompt:${seq}`);
-      cache.set(`prompt:${seq}`, item);
-      if (cache.size > 16) cache.delete(cache.keys().next().value!);
+      retainBounded(cache, `prompt:${seq}`, item, MAX_CACHED_PROMPTS);
     }
   }, [input.knownPrompts, cache, epoch]);
   const canRead = input.source ? !!input.fetchContext : !!fetchPrompt;
@@ -92,8 +94,7 @@ export function useReadingPrompt(input: {
         const item = await readContent(current.controller.signal);
         if (current.cancelled || ownerEpoch.current !== epoch) return;
 
-        cache.set(key, item);
-        if (cache.size > 16) cache.delete(cache.keys().next().value!);
+        retainBounded(cache, key, item, MAX_CACHED_PROMPTS);
         setState({ epoch, key, loading: false, error: false, item });
       } catch {
         if (!current.cancelled && ownerEpoch.current === epoch)

@@ -21,6 +21,7 @@ import {
 import {
   canonicalPromptSourceKey,
   CanonicalPromptContextBudgetError,
+  retainBounded,
   type CanonicalPromptContext,
   type CanonicalPromptContextProgress,
   type CanonicalTimelineCoverage,
@@ -137,11 +138,6 @@ function samePositions(previous: ReadonlySet<string> | null, next: ReadonlySet<s
     previous.size === next.size &&
     Array.from(next).every((key) => previous.has(key))
   );
-}
-function retainBounded<K, V>(entries: Map<K, V>, key: K, value: V): void {
-  entries.delete(key);
-  entries.set(key, value);
-  if (entries.size > MAX_CONTEXTS_PER_READER) entries.delete(entries.keys().next().value!);
 }
 
 /** Canonical rows and reuse certificates have separate lifetimes. Only committed
@@ -367,7 +363,7 @@ export function createCanonicalPromptContexts(
   }
   function blockChanged(reader: ReaderLease, key: string, retryToken: number): never {
     reader.continuations.delete(key);
-    retainBounded(reader.blocked, key, retryToken);
+    retainBounded(reader.blocked, key, retryToken, MAX_CONTEXTS_PER_READER);
     throw new CanonicalPromptContextChangedError();
   }
   function settleCurrent(input: CanonicalPromptRequest, reader: ReaderLease): Prompt | undefined {
@@ -535,11 +531,12 @@ export function createCanonicalPromptContexts(
           sourceStartConflict(input, error.progress.sourceStart)
         )
           return settleChanged(operation);
-        retainBounded(reader.continuations, key, {
-          progress: error.progress,
-          userGeneration,
-          retryToken: input.retryToken,
-        });
+        retainBounded(
+          reader.continuations,
+          key,
+          { progress: error.progress, userGeneration, retryToken: input.retryToken },
+          MAX_CONTEXTS_PER_READER,
+        );
       }
       throw error;
     }
