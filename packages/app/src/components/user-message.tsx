@@ -1,12 +1,10 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import { MessageSender } from "./user-message/index";
-import { useTextLink, type TextLinkEvent } from "@/hooks/use-text-link";
-import { TextPreview } from "@/components/ui/text-preview";
+import type { TextLinkEvent } from "@/hooks/use-text-link";
 import { UserMessagePreviewContent } from "./user-message-preview-content";
 import { UserMessageAttachments } from "./user-message-attachments";
 import {
   NaturalMessageBubble,
-  NaturalMessageFlowContext,
   type NaturalMessageGeometry,
   type UserMessageBodyPresentation,
 } from "./user-message-flow";
@@ -25,19 +23,16 @@ import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ReactNode } from "react";
 import { memo, useCallback, useContext, useMemo, useState } from "react";
-import { Text, View, type PressableStateCallbackType, type TextLayoutEvent } from "react-native";
+import { View, type PressableStateCallbackType } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { resolveHighlightCorners } from "@/components/ui/press-highlight.shape";
 import { NativeMessagePresentationContext } from "./user-message-native-presentation";
-import {
-  NativeUserMessageFlow,
-  NativeMessageSuffixMask,
-  NativeMessageVisibility,
-} from "./user-message-native-flow";
+import { NativeUserMessageFlow, NativeMessageVisibility } from "./user-message-native-flow";
 import { StyleSheet } from "react-native-unistyles";
-import { useDisableOuterSpacing, MESSAGE_TEXT_DATASET } from "./message-layout";
+import { useDisableOuterSpacing } from "./message-layout";
+import { UserMessageText } from "./user-message-text";
 import { UserMessageTextActions, UserMessageTrailingRow } from "./user-message-trailing-row";
-interface UserMessageProps {
+export interface UserMessageProps {
   /** Shared fallback callers retain natural layout unless the chat owner opts into previews. */
   bodyPresentation?: UserMessageBodyPresentation;
   forceOrdinaryPreviewExpanded?: boolean;
@@ -95,14 +90,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     cursor: "pointer",
   },
   contentPressFeedback: { backgroundColor: theme.colors.interactionHighlight },
-  textRegion: { minWidth: 0, flexShrink: 1 },
-  textMask: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: theme.colors.userMessageBackground,
-  },
   container: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -139,16 +126,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   pinnedBubble: { borderTopLeftRadius: 0 },
   previewBubble: { paddingVertical: 0 },
-  text: {
-    color: theme.colors.userMessageForeground,
-    fontSize: theme.fontSize.content,
-    ...(isWeb
-      ? {
-          lineHeight: Math.round(theme.fontSize.content * 1.4),
-          overflowWrap: "anywhere" as const,
-        }
-      : {}),
-  },
   trailingRow: {
     alignSelf: "flex-end",
     marginTop: theme.spacing[2],
@@ -164,112 +141,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     opacity: 1,
   },
 }));
-
-function ignorePreviewOverflow(_overflowing: boolean): void {
-  return;
-}
-
-/** Keep the actual message text mounted while disclosure changes its visible height. */
-function UserMessageText({
-  message,
-  hasText,
-  previewLines,
-  previewExpanded,
-  onPreviewOverflowChange,
-  hideTextAccessibility,
-  onContentPress,
-  contentAccessibilityLabel,
-}: Pick<
-  UserMessageProps,
-  | "message"
-  | "previewLines"
-  | "previewExpanded"
-  | "onPreviewOverflowChange"
-  | "hideTextAccessibility"
-  | "onContentPress"
-  | "contentAccessibilityLabel"
-> & { hasText: boolean }) {
-  const naturalFlow = useContext(NaturalMessageFlowContext);
-  const reportTextLayout = useCallback(
-    (event: TextLayoutEvent) => {
-      naturalFlow?.reportText(event.nativeEvent.lines);
-      if (naturalFlow) {
-        onPreviewOverflowChange?.(event.nativeEvent.lines.length > (previewLines ?? 1));
-      }
-    },
-    [naturalFlow, onPreviewOverflowChange, previewLines],
-  );
-  const compactPrefixHeight = naturalFlow?.textPrefixHeight;
-  const suffixMaskStyle = useMemo(
-    () => [
-      userMessageStylesheet.textMask,
-      inlineUnistylesStyle({ top: compactPrefixHeight ?? 0, bottom: 0 }),
-    ],
-    [compactPrefixHeight],
-  );
-  const keyboardLink = useTextLink(onContentPress);
-  const textAccessibility = useMemo(
-    () =>
-      onContentPress && !naturalFlow?.nativePresentation
-        ? {
-            accessible: true,
-            "aria-hidden": false,
-            accessibilityRole: "link" as const,
-            accessibilityLabel: hideTextAccessibility ? contentAccessibilityLabel : undefined,
-            accessibilityHint: contentAccessibilityLabel,
-            onPress: onContentPress,
-            ...keyboardLink,
-          }
-        : { accessible: !hideTextAccessibility, "aria-hidden": hideTextAccessibility },
-    [
-      onContentPress,
-      hideTextAccessibility,
-      contentAccessibilityLabel,
-      keyboardLink,
-      naturalFlow?.nativePresentation,
-    ],
-  );
-  return (
-    <View style={userMessageStylesheet.textRegion}>
-      {hasText && (
-        <TextPreview
-          onTextLayout={reportTextLayout}
-          selectable
-          numberOfLines={previewLines ?? 1}
-          expanded={
-            !naturalFlow?.clipText &&
-            (naturalFlow !== null || previewExpanded || previewLines === undefined)
-          }
-          onOverflowChange={onPreviewOverflowChange ?? ignorePreviewOverflow}
-          style={userMessageStylesheet.text}
-          {...textAccessibility}
-          testID="user-message-text"
-          dataSet={MESSAGE_TEXT_DATASET}
-        >
-          {message}
-        </TextPreview>
-      )}
-      {/* Keep the one natural Text fully laid out; mask only suffix ink beyond
-          the current measured first line, without changing its flow height. */}
-      {naturalFlow?.nativePresentation ? (
-        <NativeMessageSuffixMask
-          driver={naturalFlow.nativePresentation}
-          backgroundStyle={userMessageStylesheet.textMask}
-        />
-      ) : (
-        compactPrefixHeight !== undefined && (
-          <View
-            style={suffixMaskStyle}
-            pointerEvents="none"
-            accessible={false}
-            testID="user-message-suffix-mask"
-            aria-hidden
-          />
-        )
-      )}
-    </View>
-  );
-}
 
 /** Preserve the original bubble geometry, with a square top edge only for its pinned copy. */
 function resolveUserMessageBubbleStyle(
