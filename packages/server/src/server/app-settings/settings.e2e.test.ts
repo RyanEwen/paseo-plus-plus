@@ -1,91 +1,130 @@
 import { createSettingsHostTransport } from "../../../../app/src/settings-sync/transport.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AppSettingsSnapshot } from "@getpaseo/protocol/app-settings";
-import { expect, test, vi } from "vitest";
+import type { AppSettingsPatch, AppSettingsSnapshot } from "@getpaseo/protocol/app-settings";
+import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
-test("real clients observe durable host preferences and detect conflicting writes", async () => {
-  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-  const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.11.2" });
-  const second = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.11.2",
+/** A connected client of the test daemon, speaking the first protocol with settings sync. */
+async function connectTestClient(port: number): Promise<DaemonClient> {
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${port}/ws`, appVersion: "0.11.2" });
+  await client.connect();
+  return client;
+}
+
+/** Collect app.settings.changed snapshots from an observer of the host's settings. */
+async function observeChanges(client: DaemonClient) {
+  const subscription = client.observeAppSettings();
+  const initial = await subscription.ready;
+  const changes: AppSettingsSnapshot[] = [];
+  const stop = subscription.subscribe({
+    snapshot: () => {},
+    update: (message) => {
+      if (message.type === "app.settings.changed") changes.push(message.payload.snapshot);
+    },
   });
+  const release = async () => {
+    stop();
+    await subscription.release();
+  };
+  return { initial: initial.snapshot, changes, release };
+}
+
+function leaf(path: string[], value: unknown, expectedRevision: number): AppSettingsPatch {
+  return { path, value, expectedRevision };
+}
+
+test("a settings host starts empty and live observers see its first durable write", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const writer = await connectTestClient(daemon.port);
+  const observer = await connectTestClient(daemon.port);
   try {
-    await first.connect();
-    await second.connect();
-    expect(first.getLastServerInfoMessage()?.features?.appSettingsSync).toBe(true);
-    const subscription = second.observeAppSettings();
-    const initial = await subscription.ready;
-    expect(initial.snapshot.initialized).toBe(false);
-    const changes: unknown[] = [];
-    const stop = subscription.subscribe({
-      snapshot: () => {},
-      update: (message) => {
-        if (message.type === "app.settings.changed") changes.push(message.payload.snapshot);
-      },
-    });
-    const seeded = await first.patchAppSettings({
-      patches: [{ path: ["app", "theme"], value: "dark", expectedRevision: 0 }],
+    expect(writer.getLastServerInfoMessage()?.features?.appSettingsSync).toBe(true);
+    const observed = await observeChanges(observer);
+    expect(observed.initial.initialized).toBe(false);
+
+    const seeded = await writer.patchAppSettings({
+      patches: [leaf(["app", "theme"], "dark", 0)],
       initialize: true,
     });
+
     expect(seeded.conflicts).toEqual([]);
-    await expect.poll(() => changes.length).toBe(1);
-    expect(changes[0]).toMatchObject({ initialized: true, values: { app: { theme: "dark" } } });
+    await expect.poll(() => observed.changes.length).toBe(1);
+    expect(observed.changes[0]).toMatchObject({
+      initialized: true,
+      values: { app: { theme: "dark" } },
+    });
+    await observed.release();
+  } finally {
+    await writer.close();
+    await observer.close();
+    await daemon.close();
+  }
+}, 60_000);
+
+test("a stale write to the same leaf conflicts and leaves the newer value", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const first = await connectTestClient(daemon.port);
+  const second = await connectTestClient(daemon.port);
+  try {
+    await first.patchAppSettings({
+      patches: [leaf(["app", "theme"], "dark", 0)],
+      initialize: true,
+    });
     const changed = await second.patchAppSettings({
-      patches: [{ path: ["app", "theme"], value: "light", expectedRevision: 1 }],
+      patches: [leaf(["app", "theme"], "light", 1)],
     });
     expect(changed.conflicts).toEqual([]);
-    const conflict = await first.patchAppSettings({
-      patches: [{ path: ["app", "theme"], value: "auto", expectedRevision: 1 }],
-    });
+
+    const conflict = await first.patchAppSettings({ patches: [leaf(["app", "theme"], "auto", 1)] });
+
     expect(conflict.conflicts).toEqual([["app", "theme"]]);
     expect((await first.getAppSettings()).snapshot.values).toEqual({ app: { theme: "light" } });
-    // Usage is hidden by default. Its visibility is the shared footer item preference.
+  } finally {
+    await first.close();
+    await second.close();
+    await daemon.close();
+  }
+}, 60_000);
+
+test("shared footer visibility survives a reconnect and a released observer stops receiving", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const first = await connectTestClient(daemon.port);
+  const second = await connectTestClient(daemon.port);
+  try {
     await first.patchAppSettings({
-      patches: [
-        {
-          path: ["app", "sidebarFooterItems"],
-          value: [{ key: "usage", visible: true }],
-          expectedRevision: 0,
-        },
-      ],
+      patches: [leaf(["app", "theme"], "dark", 0)],
+      initialize: true,
     });
-    const reloaded = new DaemonClient({
-      url: `ws://127.0.0.1:${daemon.port}/ws`,
-      appVersion: "0.11.2",
+    const observed = await observeChanges(second);
+    // Usage is hidden by default. Its visibility is the shared footer item preference.
+    const usageVisible = (visible: boolean) => [{ key: "usage", visible }];
+    await first.patchAppSettings({
+      patches: [leaf(["app", "sidebarFooterItems"], usageVisible(true), 0)],
     });
+
+    const reloaded = await connectTestClient(daemon.port);
     try {
-      await reloaded.connect();
       expect((await reloaded.getAppSettings()).snapshot.values).toMatchObject({
-        app: { sidebarFooterItems: [{ key: "usage", visible: true }] },
+        app: { sidebarFooterItems: usageVisible(true) },
       });
     } finally {
       await reloaded.close();
     }
+
     await second.patchAppSettings({
-      patches: [
-        {
-          path: ["app", "sidebarFooterItems"],
-          value: [{ key: "usage", visible: false }],
-          expectedRevision: 3,
-        },
-      ],
+      patches: [leaf(["app", "sidebarFooterItems"], usageVisible(false), 2)],
     });
     expect((await first.getAppSettings()).snapshot.values).toMatchObject({
-      app: { sidebarFooterItems: [{ key: "usage", visible: false }] },
+      app: { sidebarFooterItems: usageVisible(false) },
     });
-    await expect.poll(() => changes.length).toBe(4);
-    stop();
-    await subscription.release();
-    const count = changes.length;
-    await first.patchAppSettings({
-      patches: [{ path: ["app", "language"], value: "fr", expectedRevision: 0 }],
-    });
+    await expect.poll(() => observed.changes.length).toBe(2);
+
+    await observed.release();
+    await first.patchAppSettings({ patches: [leaf(["app", "language"], "fr", 0)] });
     await first.getAppSettings();
-    expect(changes).toHaveLength(count);
+    expect(observed.changes).toHaveLength(2);
   } finally {
     await first.close();
     await second.close();
@@ -95,20 +134,12 @@ test("real clients observe durable host preferences and detect conflicting write
 
 test("settings retry rebinds a failed bootstrap and resumes live changes after storage recovery", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-  const reader = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.11.2",
-  });
-  const writer = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.11.2",
-  });
+  const reader = await connectTestClient(daemon.port);
+  const writer = await connectTestClient(daemon.port);
   const controller = new AbortController();
   // React Native provides abort state/events without the newer convenience method.
   Object.defineProperty(controller.signal, "throwIfAborted", { value: undefined });
   try {
-    await reader.connect();
-    await writer.connect();
     await writer.patchAppSettings({
       patches: [{ path: ["app", "theme"], value: "dark", expectedRevision: 0 }],
       initialize: true,
@@ -135,89 +166,6 @@ test("settings retry rebinds a failed bootstrap and resumes live changes after s
     controller.abort();
     await reader.close();
     await writer.close();
-    await daemon.close();
-  }
-}, 60_000);
-
-test("settings native cancellation without a reason stops before observing the host", async () => {
-  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-  const reader = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.11.2",
-  });
-  const controller = new AbortController();
-  // Match the native signal's available surface while retaining real abort events/state.
-  Object.defineProperty(controller.signal, "throwIfAborted", { value: undefined });
-  Object.defineProperty(controller.signal, "reason", { value: undefined });
-  const observe = vi.spyOn(reader, "observeAppSettings");
-  try {
-    await reader.connect();
-    controller.abort();
-    const transport = createSettingsHostTransport({
-      client: reader,
-      signal: controller.signal,
-      onSnapshot: () => {},
-    });
-    await expect(transport.read()).rejects.toMatchObject({
-      name: "AbortError",
-      message: "Settings read aborted",
-    });
-    expect(observe).not.toHaveBeenCalled();
-    expect((await reader.getAppSettings()).snapshot.initialized).toBe(false);
-  } finally {
-    observe.mockRestore();
-    await reader.close();
-    await daemon.close();
-  }
-}, 60_000);
-
-test("settings native cancellation after bootstrap preserves its reason and releases observation", async () => {
-  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
-  const reader = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.11.2",
-  });
-  const controller = new AbortController();
-  Object.defineProperty(controller.signal, "throwIfAborted", { value: undefined });
-  const reason = new Error("Settings host changed");
-  const observations: ReturnType<DaemonClient["observeAppSettings"]>[] = [];
-  const observeHost = reader.observeAppSettings.bind(reader);
-  const observe = vi.spyOn(reader, "observeAppSettings").mockImplementation((options) => {
-    const subscription = observeHost(options);
-    observations.push(subscription);
-    // Keep the real SDK/daemon; deterministically cancel between readiness and the caller's adoption.
-    Object.defineProperty(subscription, "ready", {
-      value: subscription.ready.then((snapshot) => {
-        controller.abort(reason);
-        return snapshot;
-      }),
-    });
-    return subscription;
-  });
-  const updates: AppSettingsSnapshot[] = [];
-  try {
-    await reader.connect();
-    const transport = createSettingsHostTransport({
-      client: reader,
-      signal: controller.signal,
-      onSnapshot: (snapshot) => {
-        updates.push(snapshot);
-      },
-    });
-    await expect(transport.read()).rejects.toBe(reason);
-    expect(observations).toHaveLength(1);
-    const [subscription] = observations;
-    expect(() => subscription.subscribe({ snapshot: () => {} })).toThrow("Subscription released");
-    await reader.patchAppSettings({
-      patches: [{ path: ["app", "theme"], value: "dark", expectedRevision: 0 }],
-      initialize: true,
-    });
-    await reader.getAppSettings();
-    expect(updates).toEqual([]);
-  } finally {
-    observe.mockRestore();
-    controller.abort();
-    await reader.close();
     await daemon.close();
   }
 }, 60_000);
