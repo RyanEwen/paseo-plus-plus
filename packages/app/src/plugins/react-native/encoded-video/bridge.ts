@@ -24,6 +24,11 @@ export interface EncodedVideoBridgeOptions {
   transport(): EncodedVideoTransport | null;
   /** The plugin's latest callbacks; read on every event so prop changes apply immediately. */
   callbacks(): EncodedVideoCallbacks;
+  /**
+   * Mount a fresh WebView document. Android does not restart a WebView whose render
+   * process was killed; the dead view must be replaced before anything can report ready.
+   */
+  replaceDocument(): void;
 }
 
 export interface EncodedVideoBridge {
@@ -33,6 +38,8 @@ export interface EncodedVideoBridge {
   receive(data: string): void;
   /** The WebView document failed or its render process stopped; it must report ready again. */
   documentFailed(error: Error): void;
+  /** Android killed the WebView render process: fail like documentFailed, then load a new document. */
+  renderProcessGone(): void;
   /** The component unmounted: reject pending paints and ignore all later output. */
   dispose(): void;
 }
@@ -172,6 +179,12 @@ export function createEncodedVideoBridge(options: EncodedVideoBridgeOptions): En
       dispatch(message);
     },
     documentFailed,
+    renderProcessGone() {
+      documentFailed(new Error("Video decoder process stopped"));
+      // Load and parse failures are not replaced: a document that fails deterministically
+      // would reload forever. A killed renderer is transient (memory pressure).
+      options.replaceDocument();
+    },
     dispose() {
       ready = false;
       generation += 1;

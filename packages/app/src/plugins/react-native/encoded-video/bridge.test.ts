@@ -25,13 +25,17 @@ function createHarness() {
       events.errors.push(error.message);
     },
   };
+  const replacements = { count: 0 };
   const bridge = createEncodedVideoBridge({
     transport: () => ({ injectJavaScript: (script) => scripts.push(script) }),
     callbacks: () => callbacks,
+    replaceDocument: () => {
+      replacements.count += 1;
+    },
   });
   const receive = (message: object) => bridge.receive(JSON.stringify(message));
   receive({ type: "ready" });
-  return { bridge, handle: bridge.handle, scripts, events, receive };
+  return { bridge, handle: bridge.handle, scripts, events, receive, replacements };
 }
 
 const config: EncodedVideoConfig = {
@@ -66,17 +70,27 @@ describe("createEncodedVideoBridge", () => {
     expect(events.ready).toBe(1);
   });
 
-  it("keeps a stopped document unavailable until it reports ready again", async () => {
-    const { bridge, handle, receive } = createHarness();
+  it("loads a replacement document after the render process stops", async () => {
+    const { bridge, handle, events, receive, replacements } = createHarness();
     handle.configure(config);
     const failedPaint = expect(handle.present(1)).rejects.toThrow("Video decoder process stopped");
-    bridge.documentFailed(new Error("Video decoder process stopped"));
+    bridge.renderProcessGone();
     await failedPaint;
+    expect(events.errors).toEqual(["Video decoder process stopped"]);
+    expect(replacements.count).toBe(1);
     expect(() => handle.configure(config)).toThrow("Video decoder is not ready");
     expect(() => handle.reset()).not.toThrow();
 
     receive({ type: "ready" });
+    expect(events.ready).toBe(2);
     expect(() => handle.configure(config)).not.toThrow();
+  });
+
+  it("does not reload a document that fails to load or sends invalid messages", () => {
+    const { bridge, replacements } = createHarness();
+    bridge.documentFailed(new Error("net::ERR_FAILED"));
+    bridge.receive("not json");
+    expect(replacements.count).toBe(0);
   });
 
   it("treats an unparseable canvas message as a document failure", () => {

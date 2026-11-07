@@ -5,6 +5,7 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from "react";
 import { StyleSheet } from "react-native";
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
@@ -26,12 +27,15 @@ const styles = StyleSheet.create({ canvas: { backgroundColor: "transparent" } })
 export const EncodedVideo = forwardRef<EncodedVideoHandle, EncodedVideoProps>(
   function EncodedVideo(props, ref) {
     const webview = useRef<WebView>(null);
+    // A new key mounts a fresh WebView after Android kills the render process.
+    const [documentKey, setDocumentKey] = useState(0);
     const callbacks = useRef(props);
     callbacks.current = props;
     const bridgeRef = useRef<EncodedVideoBridge | null>(null);
     bridgeRef.current ??= createEncodedVideoBridge({
       transport: () => webview.current,
       callbacks: () => callbacks.current,
+      replaceDocument: () => setDocumentKey((key) => key + 1),
     });
     const bridge = bridgeRef.current;
 
@@ -46,13 +50,11 @@ export const EncodedVideo = forwardRef<EncodedVideoHandle, EncodedVideoProps>(
       (event) => bridge.documentFailed(new Error(event.nativeEvent.description)),
       [bridge],
     );
-    const onRenderProcessGone = useCallback(
-      () => bridge.documentFailed(new Error("Video decoder process stopped")),
-      [bridge],
-    );
+    const onRenderProcessGone = useCallback(() => bridge.renderProcessGone(), [bridge]);
 
     return (
       <WebView
+        key={documentKey}
         ref={webview}
         source={source}
         originWhitelist={originWhitelist}
