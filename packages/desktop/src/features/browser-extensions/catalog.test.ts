@@ -179,6 +179,29 @@ describe("browser extension catalog", () => {
     expect(await catalog.list()).toEqual([]);
   });
 
+  test("saves and lists only the catalog fields of a native Electron extension", async () => {
+    const f = await fixture();
+    // Electron.Extension also carries its full manifest copy and extension URL.
+    const nativeExtension = {
+      ...f.extension,
+      manifest: { manifest_version: 3, name: "Fixture extension", permissions: ["storage"] },
+      url: `chrome-extension://${f.extension.id}/`,
+    };
+    f.runtime.load = async () => nativeExtension;
+    const expected = { ...f.extension, source: "store", enabled: true };
+
+    const catalog = f.create();
+    await catalog.remember(nativeExtension);
+    await catalog.setEnabled(f.extension.id, false);
+    await catalog.setEnabled(f.extension.id, true);
+    expect(JSON.parse(await readFile(f.filePath, "utf8"))).toEqual([expected]);
+    expect(await catalog.list()).toEqual([{ ...expected, error: undefined }]);
+
+    const restarted = f.create();
+    await restarted.restore();
+    expect(await restarted.list()).toEqual([{ ...expected, error: undefined }]);
+  });
+
   test("unreadable catalogs are preserved instead of replaced with an empty list", async () => {
     const f = await fixture();
     await writeFile(f.filePath, "broken JSON");

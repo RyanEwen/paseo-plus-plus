@@ -21,6 +21,20 @@ export type LoadedBrowserExtension = Pick<
   "id" | "name" | "version" | "path"
 >;
 
+/**
+ * Keep only the identity fields the catalog persists and lists. A native `Electron.Extension`
+ * also carries its full manifest copy and extension URL, which must not reach the saved JSON
+ * or the settings IPC payload.
+ */
+export function toLoadedExtension(extension: LoadedBrowserExtension): LoadedBrowserExtension {
+  return {
+    id: extension.id,
+    name: extension.name,
+    version: extension.version,
+    path: extension.path,
+  };
+}
+
 export interface BrowserExtensionRuntime {
   isLoaded(id: string): boolean;
   load(extensionPath: string): Promise<LoadedBrowserExtension>;
@@ -87,7 +101,7 @@ export class BrowserExtensionCatalog {
       }
     }
 
-    for (const entry of this.entries) {
+    for (const [index, entry] of this.entries.entries()) {
       if (!entry.enabled) {
         continue;
       }
@@ -99,7 +113,7 @@ export class BrowserExtensionCatalog {
             "The extension folder now contains a different extension. Remove and add it again.",
           );
         }
-        Object.assign(entry, loaded);
+        this.entries[index] = { ...entry, ...toLoadedExtension(loaded) };
       } catch (error) {
         this.errors.set(entry.id, error instanceof Error ? error : new Error(String(error)));
       }
@@ -147,7 +161,7 @@ export class BrowserExtensionCatalog {
       const previous = this.entries.find((entry) => entry.id === extension.id);
       const next = this.entries.filter((entry) => entry.id !== extension.id);
       next.push({
-        ...extension,
+        ...toLoadedExtension(extension),
         source,
         enabled: true,
         ...(previous?.pinned === undefined ? {} : { pinned: previous.pinned }),
@@ -177,7 +191,9 @@ export class BrowserExtensionCatalog {
         }
         try {
           await this.save(
-            this.entries.map((item) => (item.id === id ? { ...item, ...loaded, enabled } : item)),
+            this.entries.map((item) =>
+              item.id === id ? { ...item, ...toLoadedExtension(loaded), enabled } : item,
+            ),
           );
         } catch (error) {
           if (!wasLoaded) {
@@ -309,7 +325,10 @@ export class BrowserExtensionCatalog {
       if (newerFailure || !this.runtime.isLoaded(entry.id)) {
         throw this.errors.get(entry.id) ?? new Error("Extension recovery did not become ready.");
       }
-      Object.assign(entry, loaded);
+      const refreshed = toLoadedExtension(loaded);
+      this.entries = this.entries.map((item) =>
+        item.id === entry.id ? { ...item, ...refreshed } : item,
+      );
       this.clearUnchangedError(entry.id, priorError);
       this.onChanged();
       this.logRecovery(recovery, "ready");

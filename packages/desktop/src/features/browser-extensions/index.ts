@@ -5,7 +5,7 @@ import { installChromeWebStore, uninstallExtension } from "electron-chrome-web-s
 import { z } from "zod";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
 import { registerBrowserWebviewNavigationGuards } from "../browser-webviews/index.js";
-import { BrowserExtensionCatalog } from "./catalog.js";
+import { BrowserExtensionCatalog, toLoadedExtension } from "./catalog.js";
 import { registerBrowserExtensionActions } from "./actions.js";
 import { registerBrowserExtensionCompatibility } from "./compatibility.js";
 
@@ -56,7 +56,7 @@ export async function registerBrowserExtensions(): Promise<void> {
     extensionsPath,
     {
       isLoaded: compatibility.isExtensionReady,
-      load: loadReadyExtension,
+      load: async (extensionPath) => toLoadedExtension(await loadReadyExtension(extensionPath)),
       unload: (id) => profile.extensions.removeExtension(id),
       uninstall: (id) => uninstallExtension(id, { session: profile, extensionsPath }),
     },
@@ -80,7 +80,7 @@ export async function registerBrowserExtensions(): Promise<void> {
     }
     async function rememberReady(): Promise<void> {
       await compatibility.waitUntilReady(extension);
-      await catalog.remember(extension);
+      await catalog.remember(toLoadedExtension(extension));
     }
     void rememberReady().catch((error) => {
       profile.extensions.removeExtension(extension.id);
@@ -194,7 +194,7 @@ export async function registerBrowserExtensions(): Promise<void> {
     try {
       const extension = await loadReadyExtension(extensionPath);
       try {
-        await catalog.remember(extension);
+        await catalog.remember(toLoadedExtension(extension));
       } catch (error) {
         profile.extensions.removeExtension(extension.id);
         throw error;
