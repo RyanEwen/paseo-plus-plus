@@ -698,7 +698,7 @@ function TabHandleContent({
 
   return (
     <View
-      style={showLabel ? styles.tabHandle : iconOnlyTabStyles.handle}
+      style={[styles.tabHandle, !showLabel && iconOnlyTabStyles.handle]}
       dataSet={tabHandleDataSet}
     >
       <View style={styles.tabIcon}>

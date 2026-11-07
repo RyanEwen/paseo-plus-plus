@@ -128,11 +128,5 @@ const styles = StyleSheet.create({
 /** Square, label-less tab cells; applied alongside the tab row's own chip and handle styles. */
 export const iconOnlyTabStyles = StyleSheet.create({
   tab: { paddingHorizontal: 0, justifyContent: "center" },
-  handle: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-    minWidth: 0,
-  },
+  handle: { justifyContent: "center", gap: 0 },
 });
