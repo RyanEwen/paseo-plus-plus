@@ -6,6 +6,7 @@ import {
   releaseDrag,
   type ScrollKeyboardDismissEvent,
   type ScrollKeyboardDismissGesture,
+  type ScrollListOrder,
 } from "./model";
 
 interface Point {
@@ -31,8 +32,13 @@ function dragThrough(start: Point, points: Point[]): ScrollKeyboardDismissGestur
   );
 }
 
-function shouldDismiss(start: Point, points: Point[], release: Point): boolean {
-  return releaseDrag(dragThrough(start, points), event(release)).shouldDismiss;
+function shouldDismiss(
+  start: Point,
+  points: Point[],
+  release: Point,
+  order: ScrollListOrder = "inverted",
+): boolean {
+  return releaseDrag(dragThrough(start, points), event(release), order).shouldDismiss;
 }
 
 describe("scroll keyboard dismissal", () => {
@@ -135,5 +141,41 @@ describe("scroll keyboard dismissal", () => {
   it("returns to idle after release", () => {
     const release = releaseDrag(beginDrag(event({ ts: 1000, y: 0 })), event({ ts: 1020, y: 60 }));
     expect(release.gesture).toBe(IDLE_SCROLL_KEYBOARD_DISMISS_GESTURE);
+  });
+});
+
+describe("chronological scroll keyboard dismissal", () => {
+  it("dismisses a fast flick toward older chronological messages", () => {
+    expect(
+      shouldDismiss(
+        { ts: 1000, y: 500 },
+        [{ ts: 1040, y: 380 }],
+        { ts: 1080, y: 260 },
+        "chronological",
+      ),
+    ).toBe(true);
+  });
+  it("keeps the keyboard up toward newer chronological messages", () => {
+    expect(
+      shouldDismiss(
+        { ts: 1000, y: 260 },
+        [{ ts: 1040, y: 380 }],
+        { ts: 1080, y: 500 },
+        "chronological",
+      ),
+    ).toBe(false);
+  });
+  it("keeps the keyboard up for slow chronological reading", () => {
+    expect(
+      shouldDismiss(
+        { ts: 1000, y: 500 },
+        [
+          { ts: 1040, y: 492 },
+          { ts: 1080, y: 484 },
+        ],
+        { ts: 1120, y: 476 },
+        "chronological",
+      ),
+    ).toBe(false);
   });
 });

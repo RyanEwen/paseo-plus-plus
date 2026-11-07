@@ -2,6 +2,7 @@ import { verifySettingsExamplesHelp } from "../support/helpers/settings-example-
 import {
   capturePreviousAgentsExample,
   captureExplorerExample,
+  captureStickyExample,
   captureSidebarControlsExample,
   captureWorkspacePositionsExample,
 } from "../support/helpers/settings-example-scenes";
@@ -365,6 +366,10 @@ test.describe("Settings example captures", () => {
     await captureExplorerExample(page, directory!);
   });
 
+  test("capture only sticky prompt example", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await captureStickyExample(page, directory!);
+  });
   test("capture only sidebar controls examples", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await captureSidebarControlsExample(page, directory!);

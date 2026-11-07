@@ -1,6 +1,9 @@
+import { DockReservationContext } from "./dock-reservation";
+import { usePublishDockReservation } from "./use-dock-reservation";
+import { KeyboardDockDisplacementContext } from "./dock-displacement.android";
 import { useMemo, useRef, type ReactNode } from "react";
 import type { View, ViewProps } from "react-native";
-import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import Animated, { useAnimatedStyle, useDerivedValue } from "react-native-reanimated";
 import { KeyboardTranslationContext, useKeyboardShift } from "./context";
 import { useKeyboardTranslationScope } from "./measure";
 import { resolveKeyboardLift } from "./policy";
@@ -19,18 +22,27 @@ export function KeyboardTranslateView({
   style,
   ...props
 }: KeyboardTranslateViewProps) {
+  const reservation = usePublishDockReservation(enabled, bottomClearance);
   const { shift } = useKeyboardShift();
   const frameRef = useRef<View>(null);
   const translation = useMemo(() => ({ enabled, bottomClearance }), [bottomClearance, enabled]);
   const scope = useKeyboardTranslationScope(frameRef, translation);
+  const displacement = useDerivedValue(
+    () => resolveKeyboardLift({ shift: shift.value, ...translation }),
+    [translation],
+  );
   const keyboardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -resolveKeyboardLift({ shift: shift.value, ...translation }) }],
+    transform: [{ translateY: -displacement.value }],
   }));
 
   return (
     <Animated.View ref={frameRef} style={[style, keyboardStyle]} {...props}>
       <KeyboardTranslationContext.Provider value={scope}>
-        {children}
+        <KeyboardDockDisplacementContext.Provider value={displacement}>
+          <DockReservationContext.Provider value={reservation}>
+            {children}
+          </DockReservationContext.Provider>
+        </KeyboardDockDisplacementContext.Provider>
       </KeyboardTranslationContext.Provider>
     </Animated.View>
   );

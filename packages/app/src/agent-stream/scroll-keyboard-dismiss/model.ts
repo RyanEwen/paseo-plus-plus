@@ -90,9 +90,13 @@ export function recordScroll(
   };
 }
 
+/** Whether the history list renders newest-first (inverted) or oldest-first (chronological). */
+export type ScrollListOrder = "inverted" | "chronological";
+
 export function releaseDrag(
   gesture: ScrollKeyboardDismissGesture,
   event: ScrollKeyboardDismissEvent,
+  order: ScrollListOrder = "inverted",
 ): { gesture: ScrollKeyboardDismissGesture; shouldDismiss: boolean } {
   if (gesture.phase === "idle") {
     return { gesture, shouldDismiss: false };
@@ -115,7 +119,9 @@ export function releaseDrag(
   }
 
   const spanDurationMs = releaseTs - spanStartTs;
-  const releaseVelocity = spanDurationMs > 0 ? (releaseY - spanStartY) / spanDurationMs : 0;
+  // Positive history velocity always means older messages, regardless of list order.
+  const historyDelta = (releaseY - spanStartY) * (order === "inverted" ? 1 : -1);
+  const releaseVelocity = spanDurationMs > 0 ? historyDelta / spanDurationMs : 0;
 
   return {
     gesture: IDLE_SCROLL_KEYBOARD_DISMISS_GESTURE,
