@@ -12,6 +12,8 @@ interface AtomicFileRuntime {
 
 const runtime: AtomicFileRuntime = {
   platform: process.platform,
+  // Look up fs.rename per call, so vi.spyOn(fs, "rename") in agent-manager and creation tests
+  // replaces it after this module loads.
   rename: (source, destination) => fs.rename(source, destination),
   now: () => performance.now(),
   sleep,

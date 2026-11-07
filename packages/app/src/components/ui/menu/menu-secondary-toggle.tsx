@@ -22,23 +22,33 @@ export interface MenuItemSecondaryToggle {
   testID?: string;
 }
 
+/**
+ * A second control beside a menu item's primary action: a checkbox toggle, or a caller-built
+ * sibling element such as an icon-only menu row.
+ */
+export type MenuItemSecondary =
+  | ({ kind: "toggle" } & MenuItemSecondaryToggle)
+  | { kind: "action"; element: ReactElement };
+
 /** Keep primary and secondary hit targets separate; each action retains its own selection policy. */
 export function MenuItemActions({
   children,
-  toggle,
-  action,
+  secondary,
   disabled,
 }: {
   children: ReactElement;
-  toggle?: MenuItemSecondaryToggle;
-  action?: ReactElement;
+  secondary?: MenuItemSecondary;
   disabled: boolean;
 }): ReactElement {
-  if (!toggle && !action) return children;
+  if (!secondary) return children;
   return (
     <View style={styles.splitRow}>
       {children}
-      {action ?? (toggle ? <MenuSecondaryToggle toggle={toggle} disabled={disabled} /> : null)}
+      {secondary.kind === "action" ? (
+        secondary.element
+      ) : (
+        <MenuSecondaryToggle toggle={secondary} disabled={disabled} />
+      )}
     </View>
   );
 }
