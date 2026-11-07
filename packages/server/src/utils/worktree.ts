@@ -237,6 +237,36 @@ export class BranchAlreadyCheckedOutError extends Error {
   }
 }
 
+/** Which exact name is already taken when creating a worktree. */
+export type WorktreeNameConflictKind = "directory" | "branch" | "stale-registration";
+
+/**
+ * A worktree folder or branch name is already in use, so the requested names cannot be kept.
+ * `code` is forwarded as the workspace.create errorCode; the message stays user-facing.
+ */
+export class WorktreeNameConflictError extends Error {
+  readonly code = "worktree_name_conflict";
+  readonly kind: WorktreeNameConflictKind;
+  /** The branch name, or the folder path for a directory conflict. */
+  readonly conflictingName: string;
+
+  constructor(params: { kind: WorktreeNameConflictKind; conflictingName: string; message: string }) {
+    super(params.message);
+    this.name = "WorktreeNameConflictError";
+    this.kind = params.kind;
+    this.conflictingName = params.conflictingName;
+  }
+}
+
+/** Exact checkout of a branch that another worktree already has checked out. */
+export class ExactBranchCheckedOutError extends BranchAlreadyCheckedOutError {
+  constructor(branchName: string) {
+    super(branchName);
+    this.message = `Branch already checked out: ${branchName}. Select its existing worktree instead.`;
+    this.name = "ExactBranchCheckedOutError";
+  }
+}
+
 export class UnknownBranchError extends Error {
   readonly branchName: string;
   readonly cwd: string;
@@ -1432,7 +1462,11 @@ export async function createWorktreeInLane({
     const hint = exactNames
       ? ". Choose another worktree name or select the existing worktree."
       : "";
-    throw new Error(`Worktree directory already exists: ${plannedPath}${hint}`);
+    throw new WorktreeNameConflictError({
+      kind: "directory",
+      conflictingName: plannedPath,
+      message: `Worktree directory already exists: ${plannedPath}${hint}`,
+    });
   }
   const branchesBefore =
     source.kind === "checkout-branch" ||
@@ -1588,9 +1622,11 @@ async function resolveBranchOffWorktreeSourcePlan(
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
   if (exactNames && branchExists) {
-    throw new Error(
-      `Branch already exists: ${branchName}. Choose another new branch name or use an existing branch.`,
-    );
+    throw new WorktreeNameConflictError({
+      kind: "branch",
+      conflictingName: branchName,
+      message: `Branch already exists: ${branchName}. Choose another new branch name or use an existing branch.`,
+    });
   }
   const base = branchExists ? branchName : resolvedBaseBranch;
   await refreshRemoteTrackingBaseRef(cwd, base);
@@ -1628,12 +1664,9 @@ async function resolveWorktreeSourcePlan({
       await validateGitBranchName(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);
       const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
-      if (await isBranchCheckedOut(cwd, source.branchName, exactNames)) {
-        if (exactNames) {
-          throw new Error(
-            `Branch already checked out: ${source.branchName}. Select its existing worktree instead.`,
-          );
-        }
+      if (exactNames) {
+        await assertExactCheckoutAvailable(cwd, source.branchName);
+      } else if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
@@ -2039,21 +2072,38 @@ async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string
   }
 }
 
-/** Exact checkout reports stale registrations rather than suggesting a missing checkout. */
-async function isBranchCheckedOut(
-  cwd: string,
-  branchName: string,
-  exactNames?: boolean,
-): Promise<boolean> {
+async function isBranchCheckedOut(cwd: string, branchName: string): Promise<boolean> {
   const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
   });
-  const worktree = parseWorktreeList(stdout).find((entry) => entry.branchName === branchName);
-  if (exactNames && worktree && !(await worktreeDirectoryExists(worktree.path))) {
-    throw new Error(
-      `Branch ${branchName} is registered to a missing worktree at ${worktree.path}. Restore that checkout or remove its stale registration with git worktree prune, then retry.`,
-    );
+  return parseWorktreeList(stdout).some((entry) => entry.branchName === branchName);
+}
+
+/** The registered worktree that has `branchName` checked out, if any. */
+async function findWorktreeForBranch(cwd: string, branchName: string) {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  return parseWorktreeList(stdout).find((entry) => entry.branchName === branchName);
+}
+
+/**
+ * Reject an exact checkout of a branch another worktree holds. A registration whose folder is
+ * gone is reported as stale, so the user prunes it instead of hunting for a missing checkout.
+ */
+async function assertExactCheckoutAvailable(cwd: string, branchName: string): Promise<void> {
+  const worktree = await findWorktreeForBranch(cwd, branchName);
+  if (!worktree) {
+    return;
   }
-  return worktree !== undefined;
+  if (!(await worktreeDirectoryExists(worktree.path))) {
+    throw new WorktreeNameConflictError({
+      kind: "stale-registration",
+      conflictingName: branchName,
+      message: `Branch ${branchName} is registered to a missing worktree at ${worktree.path}. Restore that checkout or remove its stale registration with git worktree prune, then retry.`,
+    });
+  }
+  throw new ExactBranchCheckedOutError(branchName);
 }
