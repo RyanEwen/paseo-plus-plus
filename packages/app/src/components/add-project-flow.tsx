@@ -88,6 +88,7 @@ import {
 } from "@/runtime/host-runtime";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
+import { revealCreatedProjectInSidebar } from "@/components/sidebar/project-selection";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
@@ -468,6 +469,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const openNewWorkspaceForProject = useCallback(
     (serverId: string, project: WorkspaceProjectDescriptorPayload) => {
+      revealCreatedProjectInSidebar({ serverId, projectId: project.projectId });
       onClose();
       usePanelStore.getState().showMobileAgent();
       router.push(
