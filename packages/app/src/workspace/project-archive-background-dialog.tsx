@@ -46,7 +46,6 @@ export function ProjectArchiveBackgroundDialog({
       <View style={styles.actions}>
         <Button
           variant="secondary"
-          size="sm"
           style={styles.action}
           onPress={cancel}
           testID="project-archive-cancel"
@@ -55,7 +54,6 @@ export function ProjectArchiveBackgroundDialog({
         </Button>
         <Button
           variant="destructive"
-          size="sm"
           style={styles.action}
           onPress={confirm}
           disabled={selection.workspaces.length === 0}
