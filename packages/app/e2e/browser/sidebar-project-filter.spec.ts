@@ -11,7 +11,11 @@ import { expect, type Page, type Locator } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedAppSettings } from "../support/helpers/app-settings";
-import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client";
+import {
+  connectSeedClient,
+  seedOverflowingProjects,
+  seedWorkspace,
+} from "../support/helpers/seed-client";
 import {
   addProjectFlowInput,
   chooseAddProjectMethod,
@@ -79,6 +83,30 @@ function selectorSurface(page: Page, compact: boolean): Locator {
 /** Read the actual scroll owner so a stationary list cannot satisfy the geometry case. */
 async function readScrollTop(scroll: Locator): Promise<number> {
   return scroll.evaluate((element) => element.scrollTop);
+}
+
+/** Scroll a list's scroll owner to its end. */
+async function scrollToEnd(scroll: Locator): Promise<void> {
+  await scroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+}
+
+/** Read a locator's rendered bounds, failing the test when it has none. */
+async function requireBox(locator: Locator, name: string) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error(`${name} has no rendered bounds`);
+  return box;
+}
+
+/** The vertical positions of the heading's project selector and display menu trigger. */
+async function readHeadingGeometry(page: Page): Promise<{ selectorY: number; displayY: number }> {
+  const selector = await requireBox(page.getByTestId("sidebar-project-selector"), "Selector");
+  const display = await requireBox(
+    page.getByTestId("sidebar-display-preferences-menu"),
+    "Display menu",
+  );
+  return { selectorY: selector.y, displayY: display.y };
 }
 
 /** Remove a project the test created through Add Project. */
@@ -310,19 +338,14 @@ test.describe("Sidebar project selector", () => {
     test(`workspace controls stay anchored while the list scrolls on ${compact ? "compact" : "desktop"}`, async ({
       page,
     }, testInfo) => {
-      const projects: Awaited<ReturnType<typeof seedWorkspace>>[] = [];
+      // Enough rows to overflow the phone-height sidebar that openSidebarAt opens.
+      const seeded = await seedOverflowingProjects({
+        count: 16,
+        repoPrefix: "sticky-header-",
+        titlePrefix: "Scroll workspace",
+      });
+      const { projects } = seeded;
       try {
-        // Plain directories provide enough real rows to overflow the phone-height sidebar
-        // without creating worktrees.
-        for (let index = 0; index < 16; index += 1) {
-          projects.push(
-            await seedWorkspace({
-              repoPrefix: `sticky-header-${index}-`,
-              title: `Scroll workspace ${index}`,
-              git: false,
-            }),
-          );
-        }
         await openSidebarAt(page, compact);
         await waitForSidebarHydration(page);
 
@@ -332,24 +355,20 @@ test.describe("Sidebar project selector", () => {
         const firstProject = page.getByTestId(`sidebar-project-row-${projects[0].projectKey}`);
         await expect(selector).toHaveText("All Workspaces");
         await expect(firstProject).toBeVisible();
-        const selectorBefore = await selector.boundingBox();
-        const displayBefore = await display.boundingBox();
-        const projectBefore = await firstProject.boundingBox();
-        if (!selectorBefore || !displayBefore || !projectBefore) {
-          throw new Error("Sidebar controls and rows must have rendered bounds");
-        }
+        const headingBefore = await readHeadingGeometry(page);
+        const projectBefore = await requireBox(firstProject, "First project row");
 
-        await scroll.evaluate((element) => {
-          element.scrollTop = element.scrollHeight;
-        });
+        // Scroll, then expect the rows to have moved and the heading to be where it was.
+        await scrollToEnd(scroll);
         await expect.poll(() => readScrollTop(scroll)).toBeGreaterThan(150);
         await expect
           .poll(async () => (await firstProject.boundingBox())?.y ?? Infinity)
           .toBeLessThan(projectBefore.y - 150);
         await expect(selector).toBeInViewport();
         await expect(display).toBeInViewport();
-        expect((await selector.boundingBox())?.y).toBeCloseTo(selectorBefore.y, 0);
-        expect((await display.boundingBox())?.y).toBeCloseTo(displayBefore.y, 0);
+        const headingAfter = await readHeadingGeometry(page);
+        expect(headingAfter.selectorY).toBeCloseTo(headingBefore.selectorY, 0);
+        expect(headingAfter.displayY).toBeCloseTo(headingBefore.displayY, 0);
         await page.screenshot({
           path: testInfo.outputPath(
             `sticky-workspace-header-${compact ? "compact" : "desktop"}.png`,
@@ -364,7 +383,7 @@ test.describe("Sidebar project selector", () => {
           .click();
         await expect.poll(() => readStoredProjectFilters(page)).toEqual([projects[0].projectKey]);
       } finally {
-        for (const project of projects.toReversed()) await project.cleanup();
+        await seeded.cleanup();
       }
     });
   }
