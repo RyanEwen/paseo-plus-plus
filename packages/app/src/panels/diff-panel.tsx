@@ -11,6 +11,7 @@ import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { isWeb, isNative } from "@/constants/platform";
 import { changedFileDiffTarget } from "@/git/diff-scope";
 import { DiffDocument } from "@/git/diff-document";
+import { fileNameForPath } from "@/git/file-header-presentation";
 import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
@@ -228,7 +229,7 @@ function useWorkingDiffPanelDescriptor(
   const { t } = useTranslation();
   const path = target.filePath;
   return {
-    label: path ? (path.split("/").findLast(Boolean) ?? path) : workingDiffPresentation.label(t),
+    label: path ? fileNameForPath(path) : workingDiffPresentation.label(t),
     subtitle: path ?? workingDiffPresentation.subtitle(t),
     tooltip: path ?? workingDiffPresentation.tooltip(t),
     titleState: "ready",
