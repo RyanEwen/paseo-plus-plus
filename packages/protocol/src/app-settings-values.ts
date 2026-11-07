@@ -75,7 +75,11 @@ export function settingsDiff(
   return patches;
 }
 
-/** Overlay only explicit pending edits; never replace the host's entire document. */
+/**
+ * Overlay only explicit pending edits; never replace the host's entire document. Missing
+ * intermediate objects are created; a stored non-object value on the path throws, as the
+ * daemon store does, instead of being silently replaced.
+ */
 export function applySettingsPatches(
   values: Record<string, unknown>,
   patches: readonly AppSettingsPatch[],
@@ -86,7 +90,9 @@ export function applySettingsPatches(
       throw new Error("Unsafe preference path");
     let target = next;
     for (const key of patch.path.slice(0, -1)) {
-      if (!isSettingsObject(target[key])) target[key] = {};
+      const child = target[key];
+      if (child === undefined) target[key] = {};
+      else if (!isSettingsObject(child)) throw new Error("Preference path is not an object");
       target = target[key] as Record<string, unknown>;
     }
     target[patch.path.at(-1)!] = cloneSettingsJson(patch.value);
