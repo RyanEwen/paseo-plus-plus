@@ -167,7 +167,7 @@ async function verifyWorkspaceLinkOptions({ page, url, artifactDir, externalOpen
   await page.getByText("Open in Paseo browser", { exact: true }).click();
   await expectPresentedBrowser(page, url);
   await page.screenshot({ path: path.join(artifactDir, "workspace-link-internal-option.png") });
-  return { defaultExternal: true, internalOption: true };
+  return { externalOpens: readExternalOpens(externalOpenLog) };
 }
 
 /** Verify settled chat links use their real renderer, provider, workspace tabs and OS opener. */
@@ -211,10 +211,13 @@ async function verifyChatLinkDestinations({
       .toEqual([url, url, url, url]);
   }
   await expect(agentTab).toHaveAttribute("aria-selected", "true");
-  return { agentId, primaryInternal: true, externalContextMenu: true };
+  return { agentId, externalOpens: readExternalOpens(externalOpenLog) };
 }
 
-/** Exercise repository links through the workspace preference and both explicit destinations. */
+/**
+ * Exercise repository links: the primary row follows the Workspace links preference (on here),
+ * so the dropdown offers only the other destination, the external browser.
+ */
 async function verifyRepositoryLinkOptions({ page, artifactDir, externalOpenLog }) {
   const url = "https://github.com/acme/workspace-links/tree/main";
   const caret = page.getByTestId("workspace-open-in-editor-caret");
@@ -234,8 +237,7 @@ async function verifyRepositoryLinkOptions({ page, artifactDir, externalOpenLog 
   await primary.click();
   await expectPresentedBrowser(page, url);
   const primaryBrowserIds = await readPresentedBrowserIds();
-  expect(primaryBrowserIds).toHaveLength(1);
-  expect(primaryBrowserIds[0]).toBeTruthy();
+  expect(primaryBrowserIds).toEqual([expect.stringMatching(/\S/)]);
   if (externalOpenLog) {
     expect(fs.readFileSync(externalOpenLog, "utf8")).toBe(priorExternal);
   }
@@ -246,40 +248,26 @@ async function verifyRepositoryLinkOptions({ page, artifactDir, externalOpenLog 
       .poll(() => fs.readFileSync(externalOpenLog, "utf8").trim().split("\n"))
       .toEqual([...priorExternal.trim().split("\n"), url]);
   }
-  const afterExternal = externalOpenLog ? fs.readFileSync(externalOpenLog, "utf8") : null;
   await caret.click();
   await expect(page.getByTestId("workspace-open-in-editor-menu")).toHaveCSS("opacity", "1");
-  const internalOption = page.getByText("Open in Paseo browser", { exact: true });
-  await expect
-    .poll(() =>
-      internalOption.evaluate((element) => {
-        const hasWidth = element.clientWidth > 0;
-        const fits = element.scrollWidth <= element.clientWidth;
-        return hasWidth && fits;
-      }),
-    )
-    .toBe(true);
+  // The primary row already opens in the Paseo browser, so the menu does not repeat it.
+  await expect(page.getByText("Open in Paseo browser", { exact: true })).toHaveCount(0);
   await page.screenshot({
-    path: path.join(artifactDir, "workspace-repository-internal-option.png"),
+    path: path.join(artifactDir, "workspace-repository-destinations.png"),
   });
-  await page.getByText("Open in Paseo browser", { exact: true }).click();
-  // The previously opened repository URL must not satisfy this second navigation.
-  await expect
-    .poll(async () => {
-      const ids = await readPresentedBrowserIds();
-      return ids.length === 1 && Boolean(ids[0]) && ids[0] !== primaryBrowserIds[0];
-    })
-    .toBe(true);
-  await expectPresentedBrowser(page, url);
+  await page.keyboard.press("Escape");
   await expect(primary).toHaveAttribute("aria-label", "Open workspace in GitHub");
-  if (externalOpenLog) {
-    expect(fs.readFileSync(externalOpenLog, "utf8")).toBe(afterExternal);
-  }
   return {
     url,
-    primaryInternal: true,
-    externalOption: true,
-    internalOption: true,
-    preferredTargetRetained: true,
+    primaryBrowserId: primaryBrowserIds[0],
+    externalOpens: readExternalOpens(externalOpenLog),
   };
+}
+
+/** Lines the stub system opener logged (Linux runner only), or null where it is not observed. */
+function readExternalOpens(externalOpenLog) {
+  if (!externalOpenLog) {
+    return null;
+  }
+  return fs.readFileSync(externalOpenLog, "utf8").trim().split("\n").length;
 }
