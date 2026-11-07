@@ -860,15 +860,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       enabled:
         actualRows !== null && !isJumpSettling() && originalFindMessageId !== retainedPrompt?.id,
     });
-    const next = syncActualPromptPin(
+    const next = syncActualPromptPin({
       content,
-      container,
-      actualRows !== null,
+      viewport: container,
+      enabled: actualRows !== null,
       virtualPrompts,
       virtualEnd,
-      originalFindMessageId,
-      retained !== null,
-    );
+      originalMessageId: originalFindMessageId,
+      yieldOrdinaryPaint: retained !== null,
+    });
     const owner = retained ?? next;
     setPinnedRowId((current) => (current === owner ? current : owner));
   });

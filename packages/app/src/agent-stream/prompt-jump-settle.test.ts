@@ -694,19 +694,19 @@ describe("native natural-flow sticky geometry", () => {
       next: 1840,
       handoff: "full-row" as const,
     };
-    const outerTranslation = nativeStickyTranslation(
-      motion.offset,
-      motion.layout,
-      motion.flowHeight,
-      motion.next,
-    );
+    const outerTranslation = nativeStickyTranslation({
+      y: motion.offset,
+      layout: motion.layout,
+      height: motion.flowHeight,
+      next: motion.next,
+    });
     const innerCorrection = nativeStickyVisualDelta(motion);
-    const topTranslation = nativeStickyTranslation(
-      input.offset,
-      motion.layout,
-      motion.flowHeight,
-      motion.next,
-    );
+    const topTranslation = nativeStickyTranslation({
+      y: input.offset,
+      layout: motion.layout,
+      height: motion.flowHeight,
+      next: motion.next,
+    });
     const topCorrection = nativeStickyVisualDelta({ ...motion, offset: input.offset });
 
     // Delaying only JS disclosure would leave RN moving the full ordinary body.
@@ -718,7 +718,7 @@ describe("native natural-flow sticky geometry", () => {
     expect(atRowTop.rowId).toBe("old");
     expect(insideOrdinaryBody.rowId).toBe("old");
     expect(geometry.get("old")?.height).toBe(340);
-    expect(nativeOriginalTop(1340, 1100, 0, 0)).toBe(240);
+    expect(nativeOriginalTop({ layout: 1340, offset: 1100, listTop: 0, clipTop: 0 })).toBe(240);
   });
 
   it("recovers a changed natural line shape from current same-width frames without another Text event", () => {
@@ -902,12 +902,12 @@ describe("native natural-flow sticky geometry", () => {
       pinnedHeight: 148,
       next: 800,
     };
-    const original = nativeStickyTranslation(
-      input.offset,
-      input.layout,
-      input.flowHeight,
-      input.next,
-    );
+    const original = nativeStickyTranslation({
+      y: input.offset,
+      layout: input.layout,
+      height: input.flowHeight,
+      next: input.next,
+    });
     const delta = nativeStickyVisualDelta(input);
     expect(original).toBe(328);
     expect(delta).toBe(224);
@@ -2154,32 +2154,49 @@ describe("actual native row coordinates", () => {
     const height = 1800,
       viewport = 600,
       offset = 1160;
-    expect(nativeBottomDistance(height, 0, viewport, offset)).toBe(40);
-    expect(nativeBottomDistance(height, 20, viewport, offset)).toBe(60);
+    expect(nativeBottomDistance({ height, bottomInset: 0, viewport, offset })).toBe(40);
+    expect(nativeBottomDistance({ height, bottomInset: 20, viewport, offset })).toBe(60);
     // Native top inset, if installed elsewhere, normalizes H and y together.
-    expect(nativeBottomDistance(height + 80, 0, viewport, offset + 80)).toBe(40);
+    expect(
+      nativeBottomDistance({ height: height + 80, bottomInset: 0, viewport, offset: offset + 80 }),
+    ).toBe(40);
   });
   it("measures original top at the stationary clip while the actual child is sticky", () => {
-    expect(nativeOriginalTop(900, 750, 100, 100)).toBe(150);
-    expect(nativeOriginalTop(900, 750, -200, 100)).toBe(-150);
-    const translation = nativeStickyTranslation(750 + 300, 900, 53, null);
+    expect(nativeOriginalTop({ layout: 900, offset: 750, listTop: 100, clipTop: 100 })).toBe(150);
+    expect(nativeOriginalTop({ layout: 900, offset: 750, listTop: -200, clipTop: 100 })).toBe(-150);
+    const translation = nativeStickyTranslation({
+      y: 750 + 300,
+      layout: 900,
+      height: 53,
+      next: null,
+    });
     expect(translation).toBe(150);
-    expect(nativeOriginalTop(900, 750, -200, 100) + translation).toBe(0);
+    expect(
+      nativeOriginalTop({ layout: 900, offset: 750, listTop: -200, clipTop: 100 }) + translation,
+    ).toBe(0);
     const headerInset = 64;
-    const belowHeader = nativeStickyTranslation(750 + 300 + headerInset, 900, 53, null);
+    const belowHeader = nativeStickyTranslation({
+      y: 750 + 300 + headerInset,
+      layout: 900,
+      height: 53,
+      next: null,
+    });
     expect(belowHeader).toBe(214);
-    expect(nativeOriginalTop(900, 750, -200, 100 + headerInset) + belowHeader).toBe(0);
+    expect(
+      nativeOriginalTop({ layout: 900, offset: 750, listTop: -200, clipTop: 100 + headerInset }) +
+        belowHeader,
+    ).toBe(0);
   });
   it("matches RN uncapped unknown or overlapping next-header interpolation", () => {
-    expect(nativeStickyTranslation(700, 100, 53, null)).toBe(600);
-    expect(nativeStickyTranslation(700, 100, 53, 120)).toBe(600);
-    expect(nativeStickyTranslation(99, 100, 53, null)).toBe(0);
+    expect(nativeStickyTranslation({ y: 700, layout: 100, height: 53, next: null })).toBe(600);
+    expect(nativeStickyTranslation({ y: 700, layout: 100, height: 53, next: 120 })).toBe(600);
+    expect(nativeStickyTranslation({ y: 99, layout: 100, height: 53, next: null })).toBe(0);
   });
   it("caps both drivers at the same measured next prompt collision", () => {
-    expect(nativeStickyTranslation(300, 100, 53, 500)).toBe(200);
-    expect(nativeStickyTranslation(600, 100, 53, 500)).toBe(347);
-    const t0 = nativeStickyTranslation(440, 100, 53, 500);
-    const tk = nativeStickyTranslation(440 + 300, 100, 53, 500);
+    expect(nativeStickyTranslation({ y: 300, layout: 100, height: 53, next: 500 })).toBe(200);
+    expect(nativeStickyTranslation({ y: 600, layout: 100, height: 53, next: 500 })).toBe(347);
+    const t0 = nativeStickyTranslation({ y: 440, layout: 100, height: 53, next: 500 });
+    const tk = nativeStickyTranslation({ y: 440 + 300, layout: 100, height: 53, next: 500 });
     expect(tk - t0).toBe(7);
     expect(100 - 440 - 300 + tk).toBe(-293);
   });
@@ -2553,30 +2570,72 @@ describe("native mounted reading geometry", () => {
 
 describe("actual native motion owner topology", () => {
   it("uses the actual unshifted child viewport as its stationary measurement edge", () => {
-    const mode = resolveNativeMotionOwner(true, false, false);
+    const mode = resolveNativeMotionOwner({
+      allowStandalone: true,
+      hasMotion: false,
+      hasStationaryClip: false,
+    });
     expect(mode).toBe("standalone");
     const viewport = { top: 20 };
     const owner = resolveNativeMeasurementOwner(mode, viewport, null)!;
     expect(owner.viewport).toBe(viewport);
     expect(owner.clip).toBe(viewport);
-    expect(nativeOriginalTop(1250, 1000, owner.viewport.top, owner.clip.top)).toBe(250);
-    expect(nativeStickyTranslation(1000, 1250, 53, null)).toBe(0);
+    expect(
+      nativeOriginalTop({
+        layout: 1250,
+        offset: 1000,
+        listTop: owner.viewport.top,
+        clipTop: owner.clip.top,
+      }),
+    ).toBe(250);
+    expect(nativeStickyTranslation({ y: 1000, layout: 1250, height: 53, next: null })).toBe(0);
   });
   it("retains the real dock measurement owner and physical K even when a child is eligible for standalone", () => {
-    const mode = resolveNativeMotionOwner(true, true, true);
+    const mode = resolveNativeMotionOwner({
+      allowStandalone: true,
+      hasMotion: true,
+      hasStationaryClip: true,
+    });
     expect(mode).toBe("docked");
     const viewport = { top: -200 };
     const clip = { top: 100 };
     const owner = resolveNativeMeasurementOwner(mode, viewport, clip)!;
     expect(owner.viewport).toBe(viewport);
     expect(owner.clip).toBe(clip);
-    expect(nativeOriginalTop(1250, 1000, owner.viewport.top, owner.clip.top)).toBe(-50);
-    expect(nativeStickyTranslation(1000 + 300, 1250, 53, null)).toBe(50);
+    expect(
+      nativeOriginalTop({
+        layout: 1250,
+        offset: 1000,
+        listTop: owner.viewport.top,
+        clipTop: owner.clip.top,
+      }),
+    ).toBe(-50);
+    expect(nativeStickyTranslation({ y: 1000 + 300, layout: 1250, height: 53, next: null })).toBe(
+      50,
+    );
   });
   it("rejects partial/missing dock contracts and waits for actual refs rather than guessing zero", () => {
-    expect(() => resolveNativeMotionOwner(false, false, false)).toThrow("owners must match");
-    expect(() => resolveNativeMotionOwner(true, true, false)).toThrow("owners must match");
-    expect(() => resolveNativeMotionOwner(true, false, true)).toThrow("owners must match");
+    expect(() =>
+      resolveNativeMotionOwner({
+        allowStandalone: false,
+        hasMotion: false,
+        hasStationaryClip: false,
+      }),
+    ).toThrow("owners must match");
+    expect(() =>
+      resolveNativeMotionOwner({
+        allowStandalone: true,
+        hasMotion: true,
+        hasStationaryClip: false,
+      }),
+    ).toThrow("owners must match");
+    expect(() =>
+      resolveNativeMotionOwner({
+        allowStandalone: true,
+        hasMotion: false,
+        hasStationaryClip: true,
+      }),
+    ).toThrow("owners must match");
     expect(resolveNativeMeasurementOwner("docked", { top: -200 }, null)).toBeNull();
     expect(resolveNativeMeasurementOwner("standalone", null, null)).toBeNull();
   });

@@ -70,19 +70,33 @@ export interface PromptLayoutPosition {
   top: number;
 }
 
+export interface ActualPromptPinInput {
+  content: HTMLElement;
+  viewport: HTMLElement;
+  enabled: boolean;
+  /** Virtual prompt rows that are not mounted, with their layout tops. */
+  virtualPrompts?: readonly PromptLayoutPosition[];
+  /** The virtual content end, bounding the last prompt's lane. */
+  virtualEnd?: number;
+  /** A message Find is revealing at its original row, which must not pin. */
+  originalMessageId?: string | null;
+  /** Ordinary paint is owned elsewhere (retained prompt paint), so rows yield it. */
+  yieldOrdinaryPaint?: boolean;
+}
+
 /** The lane supplies CSS's collision boundary; its negative margin preserves the
  * natural transcript flow. Virtual rows use layout top, never a transformed parent.
  * Scrolling only publishes ownership; the browser moves the real message body.
  */
-export function syncActualPromptPin(
-  content: HTMLElement,
-  viewport: HTMLElement,
-  enabled: boolean,
-  virtualPrompts: readonly PromptLayoutPosition[] = [],
+export function syncActualPromptPin({
+  content,
+  viewport,
+  enabled,
+  virtualPrompts = [],
   virtualEnd = 0,
-  originalMessageId: string | null = null,
+  originalMessageId = null,
   yieldOrdinaryPaint = false,
-): string | null {
+}: ActualPromptPinInput): string | null {
   if (!isWeb) return null;
   reconcilePromptFlow(content, enabled);
   const viewportTop = viewport.getBoundingClientRect().top;
@@ -139,30 +153,43 @@ export function syncActualPromptPin(
     const index = ordered.findIndex((item) => item.id === own.id);
     const end = ordered[index + 1]?.top ?? naturalEnd;
     const height = Math.max(own.height, end - own.top);
-    applyPromptLane(
+    applyPromptLane({
       row,
       body,
-      enabled && !originalRows.has(own.id),
-      own.height,
-      own.compactHeight,
+      enabled: enabled && !originalRows.has(own.id),
+      naturalHeight: own.height,
+      compactHeight: own.compactHeight,
       height,
-      own.id === pinnedId,
-      yieldOrdinaryPaint,
-    );
+      pinned: own.id === pinnedId,
+      yieldPaint: yieldOrdinaryPaint,
+    });
   }
   return pinnedId;
 }
 
-function applyPromptLane(
-  row: HTMLElement,
-  body: HTMLElement,
-  enabled: boolean,
-  naturalHeight: number,
-  compactHeight: number | undefined,
-  height: number,
-  pinned: boolean,
-  yieldPaint: boolean,
-): void {
+interface PromptLaneInput {
+  row: HTMLElement;
+  body: HTMLElement;
+  enabled: boolean;
+  naturalHeight: number;
+  compactHeight: number | undefined;
+  /** The lane height: the row's own natural height, or the gap to the next prompt. */
+  height: number;
+  pinned: boolean;
+  /** An ordinary paint owner (such as Find) holds paint, so this row yields it. */
+  yieldPaint: boolean;
+}
+
+function applyPromptLane({
+  row,
+  body,
+  enabled,
+  naturalHeight,
+  compactHeight,
+  height,
+  pinned,
+  yieldPaint,
+}: PromptLaneInput): void {
   row.style.height = enabled ? `${height}px` : "";
   if (enabled && !row.hasAttribute("data-index"))
     row.style.marginBottom = `${naturalHeight - height}px`;

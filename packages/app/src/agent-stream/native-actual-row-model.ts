@@ -225,32 +225,45 @@ export function publishMeasuredNativeNearBottom({
     metrics.contentHeight > 0 && metrics.contentMeasuredForKey === metrics.containerKey;
   if (!viewportReady || !contentReady) return;
 
-  const distance = nativeBottomDistance(
-    metrics.contentHeight,
-    0,
-    metrics.viewportHeight,
-    metrics.offsetY,
-  );
+  const distance = nativeBottomDistance({
+    height: metrics.contentHeight,
+    bottomInset: 0,
+    viewport: metrics.viewportHeight,
+    offset: metrics.offsetY,
+  });
   publish(distance <= threshold);
 }
 
 /** Raw chronological content coordinates. Keyboard motion K cancels from bottom
  * distance; it changes the visible leading edge, never H or the content offset. */
-export function nativeBottomDistance(
-  height: number,
-  bottomInset: number,
-  viewport: number,
-  offset: number,
-) {
+export function nativeBottomDistance({
+  height,
+  bottomInset,
+  viewport,
+  offset,
+}: {
+  height: number;
+  bottomInset: number;
+  viewport: number;
+  offset: number;
+}) {
   return Math.max(0, height + bottomInset - viewport - offset);
 }
 /** Match RN 0.86.3's forward sticky interpolation, including an unknown next cell. */
-export function nativeStickyTranslation(
-  y: number,
-  layout: number,
-  height: number,
-  next: number | null,
-) {
+export function nativeStickyTranslation({
+  y,
+  layout,
+  height,
+  next,
+}: {
+  /** The leading scroll edge in content coordinates. */
+  y: number;
+  /** The header's own layout top. */
+  layout: number;
+  height: number;
+  /** The next sticky header's layout top, or null while unknown. */
+  next: number | null;
+}) {
   "worklet";
   const collision = (next ?? 0) - height;
   const translated = Math.max(0, y - layout);
@@ -333,7 +346,9 @@ export function nativeStickyPresentationStyle(input: NativeStickyPresentationSty
   const expanded = current && presentation.mode === "expanded";
   const collision = expanded ? null : geometry.next;
   const height = geometry.flowHeight - presentation.flowHeight + presentation.visualHeight;
-  const translateY = current ? nativeStickyTranslation(leading, geometry.y, height, collision) : 0;
+  const translateY = current
+    ? nativeStickyTranslation({ y: leading, layout: geometry.y, height, next: collision })
+    : 0;
   // The translated root is a direct ScrollView child, alongside sticky roots at level 10.
   const zIndex = expanded ? 20 : 10;
   return { transform: [{ translateY }], overflow: "visible" as const, zIndex };
@@ -347,7 +362,12 @@ export function nativeFullRowStickyTranslation(input: NativeStickyVisualInput): 
   const leading = input.offset + input.leadingInset;
   if (!nativeFullRowExited({ layout: input.layout, flowHeight: input.flowHeight, leading }))
     return 0;
-  return nativeStickyTranslation(leading, input.layout, input.pinnedHeight, input.next);
+  return nativeStickyTranslation({
+    y: leading,
+    layout: input.layout,
+    height: input.pinnedHeight,
+    next: input.next,
+  });
 }
 
 /** Correct RN's full-flow outer transform using the whole visible sticky extent. */
@@ -356,27 +376,32 @@ export function nativeStickyVisualDelta(input: NativeStickyVisualInput): number 
   const visible =
     input.handoff === "full-row"
       ? nativeFullRowStickyTranslation(input)
-      : nativeStickyTranslation(
-          input.offset + input.leadingInset,
-          input.layout,
-          input.pinnedHeight,
-          input.next,
-        );
-  const original = nativeStickyTranslation(
-    input.offset,
-    input.layout,
-    input.flowHeight,
-    input.next,
-  );
+      : nativeStickyTranslation({
+          y: input.offset + input.leadingInset,
+          layout: input.layout,
+          height: input.pinnedHeight,
+          next: input.next,
+        });
+  const original = nativeStickyTranslation({
+    y: input.offset,
+    layout: input.layout,
+    height: input.flowHeight,
+    next: input.next,
+  });
   return visible - original;
 }
 
-export function nativeOriginalTop(
-  layout: number,
-  offset: number,
-  listTop: number,
-  clipTop: number,
-) {
+export function nativeOriginalTop({
+  layout,
+  offset,
+  listTop,
+  clipTop,
+}: {
+  layout: number;
+  offset: number;
+  listTop: number;
+  clipTop: number;
+}) {
   return layout - offset + listTop - Math.max(clipTop, listTop);
 }
 
@@ -534,7 +559,13 @@ function retainedNativePromptIsVisible(
   const row = input.geometry.get(pinned.id)!;
   const pinnedHeight = row.pinnedHeight ?? row.height;
   const top =
-    row.y + nativeStickyTranslation(leading, row.y, pinnedHeight, input.headers.nextTop(index));
+    row.y +
+    nativeStickyTranslation({
+      y: leading,
+      layout: row.y,
+      height: pinnedHeight,
+      next: input.headers.nextTop(index),
+    });
   return top < trailing && top + pinnedHeight > leading;
 }
 export function resolveActualNativeReading(input: ActualNativeReadingInput) {
@@ -561,11 +592,15 @@ export function resolveActualNativeReading(input: ActualNativeReadingInput) {
 }
 
 /** Only the explicitly standalone child topology may omit BOTH dock contracts. */
-export function resolveNativeMotionOwner(
-  allowStandalone: boolean,
-  hasMotion: boolean,
-  hasStationaryClip: boolean,
-): "docked" | "standalone" {
+export function resolveNativeMotionOwner({
+  allowStandalone,
+  hasMotion,
+  hasStationaryClip,
+}: {
+  allowStandalone: boolean;
+  hasMotion: boolean;
+  hasStationaryClip: boolean;
+}): "docked" | "standalone" {
   if (hasMotion && hasStationaryClip) return "docked";
   if (allowStandalone && !hasMotion && !hasStationaryClip) return "standalone";
   throw new Error("Native transcript motion and stationary viewport owners must match");

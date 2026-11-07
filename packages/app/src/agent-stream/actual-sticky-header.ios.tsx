@@ -151,11 +151,11 @@ export function NativeActualMotionBoundary({
   const inherited = useContext(KeyboardDockDisplacementContext);
   const stationaryViewportRef = useComposerViewportRef();
   const zero = useMemo(() => new Animated.Value(0), []);
-  const mode = resolveNativeMotionOwner(
+  const mode = resolveNativeMotionOwner({
     allowStandalone,
-    inherited !== null,
-    stationaryViewportRef !== null,
-  );
+    hasMotion: inherited !== null,
+    hasStationaryClip: stationaryViewportRef !== null,
+  });
   const value = useMemo(() => ({ mode, stationaryViewportRef }), [mode, stationaryViewportRef]);
   return (
     <KeyboardDockDisplacementContext.Provider value={inherited ?? zero}>

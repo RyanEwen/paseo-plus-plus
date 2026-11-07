@@ -2450,11 +2450,11 @@ describe("actual web prompt cells", () => {
           viewport.scrollTop,
       }) as DOMRect;
     content.append(first, next);
-    syncActualPromptPin(content, viewport, true, [], 1200);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
     expect(first.style.height).toBe("280px");
     expect(first.style.marginBottom).toBe("-200px");
     intrinsic = 120;
-    syncActualPromptPin(content, viewport, true, [], 1200);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
     expect(next.getBoundingClientRect().top).toBe(200);
     expect(first.style.height).toBe("320px");
     expect(first.style.marginBottom).toBe("-200px");
@@ -2463,17 +2463,17 @@ describe("actual web prompt cells", () => {
     // A virtual-to-normal handoff can carry its old lane height with no flow margin.
     first.dataset.index = "0";
     first.style.removeProperty("margin-bottom");
-    syncActualPromptPin(content, viewport, true, [], 1200);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
     delete first.dataset.index;
-    syncActualPromptPin(content, viewport, true, [], 1200);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
     expect(next.getBoundingClientRect().top).toBe(200);
     const auxiliary = document.createElement("div");
     auxiliary.dataset.streamAuxiliary = "true";
     auxiliary.getBoundingClientRect = () => ({ bottom: 1400 - viewport.scrollTop }) as DOMRect;
     content.append(auxiliary);
-    syncActualPromptPin(content, viewport, true, [], 1200);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
     expect(next.style.height).toBe("1000px");
-    syncActualPromptPin(content, viewport, false);
+    syncActualPromptPin({ content, viewport, enabled: false });
     expect(first.style.height).toBe("");
     expect(first.style.marginBottom).toBe("");
   });
@@ -2523,7 +2523,7 @@ describe("actual web prompt cells", () => {
     text.getBoundingClientRect = body.getBoundingClientRect;
     try {
       viewport.scrollTop = 200;
-      expect(syncActualPromptPin(content, viewport, true)).toBe("old");
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBe("old");
       expect(body.style.position).toBe("sticky");
       expect(body.style.top).toBe("0px");
       expect(body.style.transform).toBe("");
@@ -2536,18 +2536,18 @@ describe("actual web prompt cells", () => {
       expect(content.querySelectorAll("span")).toHaveLength(1);
       expect(source.firstChild?.firstChild).toBe(text);
       viewport.scrollTop = 350;
-      syncActualPromptPin(content, viewport, true);
+      syncActualPromptPin({ content, viewport, enabled: true });
       expect(body.getBoundingClientRect().top).toBe(70);
       expect(getOriginalPromptTop(text)).toBe(-170);
       expect(body.style.transform).toBe("");
       viewport.scrollTop = 400;
-      expect(syncActualPromptPin(content, viewport, true)).toBe("next");
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBe("next");
       expect(body.style.transform).toBe("");
       viewport.scrollTop = 79;
-      expect(syncActualPromptPin(content, viewport, true)).toBeNull();
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBeNull();
       expect(nextBody.style.transform).toBe("");
       expect(source.firstChild?.firstChild).toBe(text);
-      expect(syncActualPromptPin(content, viewport, false)).toBeNull();
+      expect(syncActualPromptPin({ content, viewport, enabled: false })).toBeNull();
       expect(body.style.position).toBe("");
       expect(source.style.height).toBe("");
       expect(source.style.marginBottom).toBe("");
@@ -2585,29 +2585,44 @@ describe("actual web prompt cells", () => {
     body.getBoundingClientRect = () => ({ top: 100, height: 80 }) as DOMRect;
     viewport.scrollTop = 200;
     expect(
-      syncActualPromptPin(content, viewport, true, [
-        { id: "old", top: 80 },
-        { id: "unmounted", top: 400 },
-      ]),
+      syncActualPromptPin({
+        content,
+        viewport,
+        enabled: true,
+        virtualPrompts: [
+          { id: "old", top: 80 },
+          { id: "unmounted", top: 400 },
+        ],
+      }),
     ).toBe("old");
     expect(row.style.height).toBe("320px");
     expect(row.style.top).toBe("80px");
     expect(row.style.transform).toBe("");
     expect(row.style.marginBottom).toBe("");
-    syncActualPromptPin(content, viewport, true, [
-      { id: "old", top: 80 },
-      { id: "unmounted", top: 400 },
-    ]);
+    syncActualPromptPin({
+      content,
+      viewport,
+      enabled: true,
+      virtualPrompts: [
+        { id: "old", top: 80 },
+        { id: "unmounted", top: 400 },
+      ],
+    });
     expect(row.style.height).toBe("320px");
     viewport.scrollTop = 400;
     // The successor still ends this lane, but has no mounted body/compact
     // publication to own physical sticky paint. Never claim an unmounted owner.
     expect(content.querySelector('[data-history-row-id="unmounted"]')).toBeNull();
     expect(
-      syncActualPromptPin(content, viewport, true, [
-        { id: "old", top: 80 },
-        { id: "unmounted", top: 400 },
-      ]),
+      syncActualPromptPin({
+        content,
+        viewport,
+        enabled: true,
+        virtualPrompts: [
+          { id: "old", top: 80 },
+          { id: "unmounted", top: 400 },
+        ],
+      }),
     ).toBeNull();
     expect(row.dataset.promptPinned).toBe("false");
     expect(row.firstChild).toBe(body);

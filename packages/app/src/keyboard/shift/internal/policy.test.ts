@@ -125,24 +125,39 @@ describe("shouldReconcileHiddenKeyboardEnd", () => {
 
 describe("actual chronological dock reservation", () => {
   it("reserves a small actual iOS accessory displacement without the provider threshold", () => {
-    expect(resolveDockReservation(90, 1, 34, 0)).toBe(56);
-    expect(resolveDockReservation(90, 1, 34, 20)).toBe(36);
+    expect(resolveDockReservation({ height: 90, progress: 1, bottomInset: 34, clearance: 0 })).toBe(
+      56,
+    );
+    expect(
+      resolveDockReservation({ height: 90, progress: 1, bottomInset: 34, clearance: 20 }),
+    ).toBe(36);
   });
   it("uses the identical platform endpoint while preserving the closing reservation", () => {
-    const open = resolveDockReservation(342, 1, 34, 0);
+    const open = resolveDockReservation({
+      height: 342,
+      progress: 1,
+      bottomInset: 34,
+      clearance: 0,
+    });
     expect(open).toBe(308);
     expect(
       reserveKeyboardLayoutShift({
         current: open,
-        target: resolveDockReservation(0, 0, 34, 0),
+        target: resolveDockReservation({ height: 0, progress: 0, bottomInset: 34, clearance: 0 }),
         phase: "start",
       }),
     ).toBe(308);
     expect(reserveKeyboardLayoutShift({ current: open, target: 0, phase: "end" })).toBe(0);
   });
   it("does not reserve safe area twice or create a negative leading extent", () => {
-    expect(resolveDockReservation(-342, 1, 34, 0)).toBe(308);
-    expect(resolveDockReservation(20, 1, 34, 0)).toBe(0);
-    expect(resolveDockReservation(342, 0, 34, 0)).toBe(0);
+    expect(
+      resolveDockReservation({ height: -342, progress: 1, bottomInset: 34, clearance: 0 }),
+    ).toBe(308);
+    expect(resolveDockReservation({ height: 20, progress: 1, bottomInset: 34, clearance: 0 })).toBe(
+      0,
+    );
+    expect(
+      resolveDockReservation({ height: 342, progress: 0, bottomInset: 34, clearance: 0 }),
+    ).toBe(0);
   });
 });

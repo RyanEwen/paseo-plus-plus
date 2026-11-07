@@ -72,12 +72,17 @@ export function shouldReconcileHiddenKeyboardEnd(input: {
 
 /** Physical translated dock endpoint: unlike app keyboard policy, accessory bars
  * below 120px still displace the iOS graph and must reserve their actual extent. */
-export function resolveDockReservation(
-  height: number,
-  progress: number,
-  bottomInset: number,
-  clearance: number,
-): number {
+export function resolveDockReservation({
+  height,
+  progress,
+  bottomInset,
+  clearance,
+}: {
+  height: number;
+  progress: number;
+  bottomInset: number;
+  clearance: number;
+}): number {
   "worklet";
   return progress > 0 ? Math.max(0, Math.abs(height) - bottomInset * progress - clearance) : 0;
 }

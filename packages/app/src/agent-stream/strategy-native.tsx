@@ -258,7 +258,9 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
   const viewportGesture = useRef<NativeViewportGesture | null>(null);
-  const scrollKeyboardDismiss = useScrollKeyboardDismiss(strategy.getFlatListInverted());
+  const scrollKeyboardDismiss = useScrollKeyboardDismiss(
+    strategy.getFlatListInverted() ? "inverted" : "chronological",
+  );
 
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
@@ -594,7 +596,12 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
                   return;
                 }
                 callback({
-                  top: nativeOriginalTop(row.y, metrics.offsetY, listY, clipY + topOverlayInset),
+                  top: nativeOriginalTop({
+                    layout: row.y,
+                    offset: metrics.offsetY,
+                    listTop: listY,
+                    clipTop: clipY + topOverlayInset,
+                  }),
                   offset: metrics.offsetY,
                   maxOffset: Math.max(0, metrics.contentHeight - metrics.viewportHeight),
                 });
@@ -1142,8 +1149,12 @@ export function createNativeStreamStrategy(): StreamStrategy {
     animateManualScrollToBottom: true,
     useVirtualizedList: true,
     isNearBottom: (input) =>
-      nativeBottomDistance(input.contentHeight, 0, input.viewportHeight, input.offsetY) <=
-      input.threshold,
+      nativeBottomDistance({
+        height: input.contentHeight,
+        bottomInset: 0,
+        viewport: input.viewportHeight,
+        offset: input.offsetY,
+      }) <= input.threshold,
     getBottomOffset: (input) => Math.max(0, input.contentHeight - input.viewportHeight),
   });
   return strategy;

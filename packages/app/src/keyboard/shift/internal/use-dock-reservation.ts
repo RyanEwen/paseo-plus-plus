@@ -11,7 +11,12 @@ export function usePublishDockReservation(enabled: boolean, bottomClearance: num
   const [reservation, setReservation] = useState(() => ({
     extent:
       enabled && KeyboardController.isVisible()
-        ? resolveDockReservation(KeyboardController.state().height, 1, bottom, bottomClearance)
+        ? resolveDockReservation({
+            height: KeyboardController.state().height,
+            progress: 1,
+            bottomInset: bottom,
+            clearance: bottomClearance,
+          })
         : 0,
     settledRevision: 0,
   }));
@@ -31,7 +36,12 @@ export function usePublishDockReservation(enabled: boolean, bottomClearance: num
     const config = latest.current;
     const target =
       config.enabled && progress > 0
-        ? resolveDockReservation(height, progress, config.bottom, config.bottomClearance)
+        ? resolveDockReservation({
+            height,
+            progress,
+            bottomInset: config.bottom,
+            clearance: config.bottomClearance,
+          })
         : 0;
     setReservation((previous) =>
       updateDockReservation(previous, target, starting ? "start" : "end"),
@@ -41,7 +51,12 @@ export function usePublishDockReservation(enabled: boolean, bottomClearance: num
     const visible = KeyboardController.isVisible();
     const target =
       enabled && visible
-        ? resolveDockReservation(KeyboardController.state().height, 1, bottom, bottomClearance)
+        ? resolveDockReservation({
+            height: KeyboardController.state().height,
+            progress: 1,
+            bottomInset: bottom,
+            clearance: bottomClearance,
+          })
         : 0;
     setReservation((previous) => {
       if (moving.current) return updateDockReservation(previous, target, "start");

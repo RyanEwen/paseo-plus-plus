@@ -2079,14 +2079,24 @@ it("yields ordinary sticky paint without releasing its full natural inline alloc
   expect(before.flowHeight).toBeGreaterThan(scroll.clientHeight);
   // Exercise the real DOM paint owner before React expands the yielding body.
   // No dimensions or source/row geometry are fabricated for this transition.
-  expect(syncActualPromptPin(content, scroll, true, [], 0, null, true)).toBeNull();
+  expect(
+    syncActualPromptPin({
+      content,
+      viewport: scroll,
+      enabled: true,
+      virtualPrompts: [],
+      virtualEnd: 0,
+      originalMessageId: null,
+      yieldOrdinaryPaint: true,
+    }),
+  ).toBeNull();
   expect(pinnedPromptIds(fixture.host)).toEqual([]);
   expect(body.getBoundingClientRect().top).toBeLessThan(scroll.getBoundingClientRect().top);
   expect(naturalPromptFlow(fixture.host)).toEqual(before);
   expect(scroll.scrollTop).toBe(top);
   expect(row.querySelector('[data-testid="user-message-text"]')).toBe(text);
   expect(exactTextNodes(row, prompt)).toEqual([node]);
-  expect(syncActualPromptPin(content, scroll, true)).toBe(ACTUAL_PROMPT_ID);
+  expect(syncActualPromptPin({ content, viewport: scroll, enabled: true })).toBe(ACTUAL_PROMPT_ID);
   expect(pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
   expect(naturalPromptFlow(fixture.host)).toEqual(before);
   expect(scroll.scrollTop).toBe(top);
