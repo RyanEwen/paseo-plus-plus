@@ -8,10 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { en } from "@/i18n/resources/en";
-import type {
-  DesktopBrowserExtensionAction,
-  DesktopBrowserExtensionsBridge,
-} from "@/desktop/host";
+import type { DesktopBrowserExtensionAction, DesktopBrowserExtensionsBridge } from "@/desktop/host";
 import { ExtensionsMenu } from "./extensions-menu.electron";
 
 const i18n = createInstance();

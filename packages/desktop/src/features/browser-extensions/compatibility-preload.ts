@@ -287,7 +287,8 @@ function installCompatibility(isWorker: boolean): void {
     // Electron 44.5.1 explicitly no-ops these six methods; leave every other native action method intact.
     const actionManifest = chrome.runtime.getManifest();
     for (const namespace of ["action", "browserAction"] as const) {
-      if (namespace === "action" ? !actionManifest.action : !actionManifest.browser_action) continue;
+      if (namespace === "action" ? !actionManifest.action : !actionManifest.browser_action)
+        continue;
       installNamespace(namespace, {
         setBadgeText: method(`${namespace}.setBadgeText`),
         getBadgeText: method(`${namespace}.getBadgeText`),
@@ -316,7 +317,10 @@ function installCompatibility(isWorker: boolean): void {
       const target = all
         ? { tabId: input.tabId, allFrames: true }
         : { tabId: input.tabId, frameIds: [input.frameId ?? 0] };
-      const injections = await chrome.scripting.executeScript({ target, func: () => location.href });
+      const injections = await chrome.scripting.executeScript({
+        target,
+        func: () => location.href,
+      });
       function enrich(detail: unknown) {
         if (
           typeof detail !== "object" ||

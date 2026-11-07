@@ -25,13 +25,16 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { MenuItemSecondary } from "@/components/ui/menu";
 
-import { ToolbarMenuContent, useToolbarMenuTriggerStyle, mutedIconProps } from "./toolbar-menu-trigger.electron";
+import {
+  ToolbarMenuContent,
+  useToolbarMenuTriggerStyle,
+  mutedIconProps,
+} from "./toolbar-menu-trigger.electron";
 
 const ThemedPuzzle = withUnistyles(BrowserExtensionsIcon);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 const ACTIONS_QUERY_KEY = ["desktop", "browser", "extension-actions"];
-
 
 interface ExtensionsMenuProps {
   browserId: string;

@@ -3293,13 +3293,7 @@ function findNativeFixtureContextAction(menu) {
 }
 
 /** Exercise the actual browser right-click parameters and wake an idle worker for a native menu action. */
-async function assertBrowserExtensionContextMenus({
-  owner,
-  profile,
-  runtime,
-  guest,
-  extension,
-}) {
+async function assertBrowserExtensionContextMenus({ owner, profile, runtime, guest, extension }) {
   const { openBrowserExtensionPopup } = require("../dist/features/browser-extensions/actions.js");
   const {
     buildBrowserExtensionContextMenuItems,

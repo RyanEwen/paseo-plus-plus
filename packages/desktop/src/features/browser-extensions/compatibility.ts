@@ -472,8 +472,7 @@ export function registerBrowserExtensionCompatibility(
       requirePermission(request, "notifications");
       return notifications.request(request.method, request.args, request.extension.id);
     },
-    contextMenus: ({ method, args, extension }) =>
-      contextMenus.request(extension.id, method, args),
+    contextMenus: ({ method, args, extension }) => contextMenus.request(extension.id, method, args),
     alarms: (request) => {
       requirePermission(request, "alarms");
       return alarms.request(request.extension.id, request.method, request.args);

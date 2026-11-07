@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getBrowserWebviewZoom, setBrowserWebviewZoom } from "../resident-webviews";
-import { ToolbarMenuContent, useToolbarMenuTriggerStyle, mutedIconProps } from "./toolbar-menu-trigger.electron";
+import {
+  ToolbarMenuContent,
+  useToolbarMenuTriggerStyle,
+  mutedIconProps,
+} from "./toolbar-menu-trigger.electron";
 
 const ZOOM_FACTORS = [0.25, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
 const ThemedZoom = withUnistyles(ZoomIn);
