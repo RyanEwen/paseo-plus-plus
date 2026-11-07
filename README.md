@@ -10,7 +10,7 @@ For fork development and integration, follow the [worktree guide](docs/worktree-
 
 ## Optional features
 
-- [Keep user prompts in view](docs/fork-features/keep-user-prompts-in-view.md) — full messages and sticky prompts when enabled; standard collapsed previews when off.
+- [Keep user prompts in view](docs/fork-features/keep-user-prompts-in-view.md)
 - [Readable tool activity](docs/fork-features/readable-tool-activity.md)
 
 - [Reopen closed agent](docs/fork-features/previous-agents.md)
