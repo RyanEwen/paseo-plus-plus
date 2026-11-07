@@ -41,10 +41,10 @@ const HELP_CONTENT = {
 /** Explorer defaults for new workspaces and changed-file navigation. */
 export function ExplorerSection() {
   const { t } = useTranslation();
-  const { settings, save, pending, failed, isLoading, isLocalLoading, error } =
+  const { settings, save, pending, failed, isLoading, isEditingBlocked, error } =
     useSettingsSave<ExplorerSetting>();
 
-  const disabled = isLoading || error !== null || pending !== null;
+  const disabled = isLoading || isEditingBlocked || error !== null || pending !== null;
   const help = useMemo(
     () =>
       Object.fromEntries(
@@ -76,7 +76,7 @@ export function ExplorerSection() {
   function feedback(key: ExplorerSetting, hint: string) {
     return {
       disabled:
-        (key === "autoOpenExplorerSidebar" ? isLocalLoading : isLoading) ||
+        (key === "autoOpenExplorerSidebar" ? isLoading : isLoading || isEditingBlocked) ||
         error !== null ||
         pending !== null,
       hint: pending === key ? t("paseoPlusPlus.saving") : hint,
