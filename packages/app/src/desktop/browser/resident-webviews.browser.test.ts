@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getOverlayRoot } from "@/lib/overlay-root";
 import {
-  hasWebOverlayPresentationGuard,
-  requestWebOverlayPresentation,
-} from "@/lib/overlay-presentation";
-import {
   applyInactiveBrowserWebviewViewport,
   BROWSER_PRESENTATION_CHANGED_EVENT,
   getBrowserWebviewPresentationScale,
@@ -308,7 +304,7 @@ describe("resident browser webviews", () => {
     expect(getResidentBrowserWebview("browser-replacement")).toBe(webview);
   });
 
-  it("keeps the presented guest live beneath the DOM overlay plane without a native suppression lease", () => {
+  it("keeps the presented guest live beneath the DOM overlay plane", () => {
     const webview = ensureTestBrowser({
       browserId: "browser-overlay",
       workspaceId: "workspace-a",
@@ -324,8 +320,6 @@ describe("resident browser webviews", () => {
     const before = surface.style.cssText;
     const overlay = getOverlayRoot();
     expect(Number(overlay.style.zIndex)).toBeGreaterThan(Number(residentHost().style.zIndex));
-    expect(hasWebOverlayPresentationGuard()).toBe(false);
-    expect(requestWebOverlayPresentation(overlay)).toBeNull();
     expect(surface.style.cssText).toBe(before);
     expect(surface.style.visibility).toBe("visible");
     expect(webview.isConnected).toBe(true);

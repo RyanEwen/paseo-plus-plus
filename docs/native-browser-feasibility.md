@@ -15,9 +15,6 @@ WebContentsView path, its menu still-frame handoff and the separate-engine proto
 were removed; their research and evidence stay in git history and do not qualify
 the DOM path.
 
-The Gorhom 5.2.14 tracked patch still owns ordinary modal/provider scheduling. Its
-removal condition is documented in `scripts/postinstall-patches.mjs`.
-
 Keeping a guest resident preserves tab identity; it does not establish reliable
 background keyboard input on Windows. Live video beneath menus, clipping, focus,
 fixed viewports and hidden automation need acceptance on the restored Windows build.

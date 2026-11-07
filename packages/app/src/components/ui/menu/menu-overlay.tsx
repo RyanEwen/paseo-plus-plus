@@ -21,7 +21,6 @@ import {
 } from "react-native";
 import { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { hasWebOverlayPresentationGuard } from "@/lib/overlay-presentation";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
@@ -393,29 +392,18 @@ export function AnchoredSurface({
  * root, or a transparent Modal on native. Submenus render inside their parent's layer rather
  * than opening another one, so there is exactly one Modal per menu no matter how deep it goes.
  */
-interface MenuOverlayProps {
-  visible: boolean;
-  onClose: () => void;
-  restoreFocusRef?: RefObject<View | null>;
-  children: ReactElement | null;
-}
-
-export function MenuOverlay(props: MenuOverlayProps): ReactElement | null {
-  return props.visible ? <VisibleMenuOverlay {...props} /> : null;
-}
-
-/** One mounted scope owns admission for the root menu and its flyouts. Children
- * mount after admission so an autofocus field cannot run before native hiding.
- */
-function VisibleMenuOverlay({
+export function MenuOverlay({
   visible,
   onClose,
   restoreFocusRef,
   children,
-}: MenuOverlayProps): ReactElement | null {
+}: {
+  visible: boolean;
+  onClose: () => void;
+  restoreFocusRef?: RefObject<View | null>;
+  children: ReactElement | null;
+}): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
-  const [presented, setPresented] = useState(() => !isWeb || !hasWebOverlayPresentationGuard());
-  const onPresentationReady = useCallback(() => setPresented(true), []);
 
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -461,9 +449,6 @@ function VisibleMenuOverlay({
     [onClose],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
-    nativeBrowserOverlap: true,
-    onPresentationReady,
-    onPresentationFailed: onClose,
     active: isWeb && visible,
     layer: floatingLayer,
     onKeyDown: handleWebOverlayKeyDown,
@@ -486,7 +471,7 @@ function VisibleMenuOverlay({
           isWeb ? { zIndex: floatingLayer } : null,
         ]}
       >
-        {presented ? children : null}
+        {children}
       </View>
     </OverlayLayerProvider>
   );

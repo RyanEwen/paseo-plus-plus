@@ -162,10 +162,6 @@ export default defineConfig({
           "react-native-worklets",
           "react-native-gesture-handler",
           "react-native-keyboard-controller",
-          // Exercise shipped modal/portal scheduling in Vite: their ESM builds
-          // use Metro-style directory imports that Node cannot load directly.
-          "@gorhom/bottom-sheet",
-          "@gorhom/portal",
         ],
       },
     },

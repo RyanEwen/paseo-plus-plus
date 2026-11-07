@@ -1,9 +1,5 @@
 import { Modal } from "@/components/ui/modal";
 import {
-  useWebOverlayPresentationLifetime,
-  WebOverlayLifetimeMarker,
-} from "@/lib/overlay-presentation-lifetime";
-import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -980,7 +976,6 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
   return (
     <IsolatedBottomSheetModal
       ref={bottomSheetRef}
-      nativeBrowserOverlap
       contextBridge={null}
       snapPoints={props.snapPoints}
       index={0}
@@ -1193,12 +1188,6 @@ function DesktopComboboxOptionsBody(props: {
 }
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
-  const { ready: presentationReady, retainNode: retainPresentationNode } =
-    useWebOverlayPresentationLifetime({
-      active: isWeb && props.isOpen,
-      nativeBrowserOverlap: true,
-      onAdmissionFailed: props.handleClose,
-    });
   const active = useRetainedPanelActive();
   const handleDesktopKey = props.handleDesktopKey;
   const handleWebOverlayKeyDown = useCallback(
@@ -1209,7 +1198,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
     [handleDesktopKey],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && props.isOpen && presentationReady,
+    active: isWeb && props.isOpen,
     layer: props.overlayLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
@@ -1217,25 +1206,17 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
     (node: View | null) => {
       props.refs.setFloating(node);
       setWebOverlayScope(node);
-      retainPresentationNode(node);
     },
-    [props.refs, setWebOverlayScope, retainPresentationNode],
+    [props.refs, setWebOverlayScope],
   );
 
-  const setOffsetParent = useCallback(
-    (node: View | null) => {
-      props.refs.setOffsetParent(node);
-      retainPresentationNode(node);
-    },
-    [props.refs, retainPresentationNode],
-  );
-
-  if (!presentationReady || !active) return null;
+  // Remove the portal before a retained chat can freeze its closing update.
+  if (!active) return null;
 
   const overlay = (
     <OverlayLayerProvider layer={props.overlayLayer}>
       <View
-        ref={setOffsetParent}
+        ref={props.refs.setOffsetParent}
         collapsable={false}
         style={[
           styles.desktopOverlay,
@@ -1257,7 +1238,6 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
           tabIndex={-1}
           onLayout={props.handleDesktopContentLayout}
         >
-          <WebOverlayLifetimeMarker retainNode={retainPresentationNode} />
           {props.hasChildren ? (
             <DesktopComboboxChildrenBody
               header={props.header}

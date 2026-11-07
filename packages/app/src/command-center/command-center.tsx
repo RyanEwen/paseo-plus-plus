@@ -1,4 +1,3 @@
-import { useWebOverlayPresentationLifetime } from "@/lib/overlay-presentation-lifetime";
 import { Modal } from "@/components/ui/modal";
 import equal from "fast-deep-equal";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
@@ -391,8 +390,10 @@ function useCommandCenterState(
   useEffect(() => {
     const wasOpen = previousOpenRef.current;
     previousOpenRef.current = open;
-    if (open) return;
-    interaction.setQuery("");
+    if (open) {
+      const timer = setTimeout(() => inputRef.current?.focus(), 0);
+      return () => clearTimeout(timer);
+    }
     if (!wasOpen) return;
     const element = takeCommandCenterFocusRestoreElement();
     if (!element) return;
@@ -403,7 +404,7 @@ function useCommandCenterState(
         keyboardActionDispatcher.dispatch({ id: "message-input.focus", scope: "message-input" }),
     });
     return cancel;
-  }, [interaction, keyboardActionDispatcher, open]);
+  }, [keyboardActionDispatcher, open]);
 
   return {
     open,
@@ -780,17 +781,6 @@ export function CommandCenter() {
   );
   const showBottomSheet = isCompact && isNative;
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
-  const { ready: presentationReady, retainNode: retainPresentationNode } =
-    useWebOverlayPresentationLifetime({
-      active: isWeb && state.open && !showBottomSheet,
-      nativeBrowserOverlap: true,
-      onAdmissionFailed: state.close,
-    });
-  useEffect(() => {
-    if (!state.open || showBottomSheet || !presentationReady) return;
-    const timer = setTimeout(() => state.inputRef.current?.focus(), 0);
-    return () => clearTimeout(timer);
-  }, [presentationReady, showBottomSheet, state.inputRef, state.open]);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
     isEnabled: showBottomSheet,
@@ -898,8 +888,7 @@ export function CommandCenter() {
     [state],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && state.open && !showBottomSheet && presentationReady,
-    restoreFocusOnClose: false,
+    active: isWeb && state.open && !showBottomSheet,
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
@@ -954,11 +943,11 @@ export function CommandCenter() {
       </IsolatedBottomSheetModal>
     );
   }
-  if (!state.open || !presentationReady) return null;
+  if (!state.open) return null;
   return (
     <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
       <Modal visible transparent animationType="fade" onRequestClose={state.close}>
-        <View ref={retainPresentationNode} style={styles.overlay}>
+        <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
           <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
             <View style={[styles.header, styles.searchRow]} testID="command-center-header">

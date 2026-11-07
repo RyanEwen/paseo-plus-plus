@@ -406,7 +406,6 @@ function MenuSheetSurface({
   return (
     <IsolatedBottomSheetModal
       ref={sheetRef}
-      nativeBrowserOverlap
       contextBridge={contextBridge}
       backgroundComponent={SheetBackground}
       handleComponent={SheetHandle}

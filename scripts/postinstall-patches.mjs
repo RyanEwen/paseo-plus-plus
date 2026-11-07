@@ -64,10 +64,6 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
   },
-  // 5.2.14 leaves public present's RAF/portal generation alive after pending dismiss.
-  // Remove when the installed modal cancels pre-RAF and pre-commit presentations
-  // and reentrant registration preserves the live queue; the isolated modal
-  // scheduling regressions must then pass with this patch removed.
   // Exports BottomSheetModalInternalProvider so a subtree can host its own sheets on the shared
   // modal stack (see packages/app/src/components/ui/isolated-bottom-sheet-modal/host-scope.tsx), and
   // keeps a dismissing modal's status through its final onChange(-1), so a modal with

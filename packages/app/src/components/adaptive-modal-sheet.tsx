@@ -1,4 +1,3 @@
-import { useWebOverlayPresentationLifetime } from "@/lib/overlay-presentation-lifetime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -567,84 +566,6 @@ export interface AdaptiveModalSheetProps {
   contextBridge?: ContextBridge | null;
 }
 
-/** Own the wide web modal's admission, keyboard scope and retained exit lifetime. */
-function useWebModalSheetPresentation({
-  visible,
-  isMobile,
-  onClose,
-  onDismiss,
-}: {
-  visible: boolean;
-  isMobile: boolean;
-  onClose: () => void;
-  onDismiss?: () => void;
-}) {
-  const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
-  const [isWebClosing, setIsWebClosing] = useState(false);
-  const { ready: presentationReady, retainNode: retainPresentationNode } =
-    useWebOverlayPresentationLifetime({
-      active: isWeb && !isMobile && shouldRenderWeb,
-      nativeBrowserOverlap: true,
-      onAdmissionFailed: onClose,
-    });
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
-  const desktopOverlayStyle = useMemo(
-    () => [
-      styles.desktopOverlay,
-      isWeb && {
-        zIndex: modalLayer,
-        opacity: isWebClosing ? 0 : 1,
-        transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
-        transitionProperty: "opacity",
-        transitionTimingFunction: "ease",
-      },
-    ],
-    [isWebClosing, modalLayer],
-  );
-
-  const handleWebOverlayKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return false;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-      return true;
-    },
-    [onClose],
-  );
-  const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb && !isMobile && shouldRenderWeb && presentationReady,
-    layer: modalLayer,
-    onKeyDown: handleWebOverlayKeyDown,
-  });
-
-  useEffect(() => {
-    if (!isWeb || isMobile) return;
-    if (visible) {
-      setShouldRenderWeb(true);
-      setIsWebClosing(false);
-      return;
-    }
-    if (!shouldRenderWeb) return;
-    setIsWebClosing(true);
-    const timeout = window.setTimeout(() => {
-      setShouldRenderWeb(false);
-      setIsWebClosing(false);
-      onDismiss?.();
-    }, WEB_EXIT_DURATION_MS);
-    return () => window.clearTimeout(timeout);
-  }, [visible, isMobile, onDismiss, shouldRenderWeb]);
-
-  return {
-    shouldRenderWeb,
-    presentationReady,
-    retainPresentationNode,
-    modalLayer,
-    desktopOverlayStyle,
-    setWebOverlayScope,
-  };
-}
-
 /**
  * The compact sheet's body. It renders on the far side of the sheet's portal so it reads the
  * screen's bottom inset, not the one left where the sheet was opened: inside a sheet tab, none is.
@@ -754,14 +675,9 @@ export function AdaptiveModalSheet({
     isEnabled: isMobile || !isWeb,
     onClose,
   });
-  const {
-    shouldRenderWeb,
-    presentationReady,
-    retainPresentationNode,
-    modalLayer,
-    desktopOverlayStyle,
-    setWebOverlayScope,
-  } = useWebModalSheetPresentation({ visible, isMobile, onClose, onDismiss });
+  const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
+  const [isWebClosing, setIsWebClosing] = useState(false);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && !isMobile && shouldRenderWeb);
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
     onDismiss?.();
@@ -776,13 +692,57 @@ export function AdaptiveModalSheet({
     ],
     [desktopMaxWidth, desktopHeight],
   );
-  if (isWeb && !isMobile && !presentationReady) return null;
+  const desktopOverlayStyle = useMemo(
+    () => [
+      styles.desktopOverlay,
+      isWeb && {
+        zIndex: modalLayer,
+        opacity: isWebClosing ? 0 : 1,
+        transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
+        transitionProperty: "opacity",
+        transitionTimingFunction: "ease",
+      },
+    ],
+    [isWebClosing, modalLayer],
+  );
+
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return true;
+    },
+    [onClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && !isMobile && visible,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
+
+  useEffect(() => {
+    if (!isWeb || isMobile) return;
+    if (visible) {
+      setShouldRenderWeb(true);
+      setIsWebClosing(false);
+      return;
+    }
+    if (!shouldRenderWeb) return;
+    setIsWebClosing(true);
+    const timeout = window.setTimeout(() => {
+      setShouldRenderWeb(false);
+      setIsWebClosing(false);
+      onDismiss?.();
+    }, WEB_EXIT_DURATION_MS);
+    return () => window.clearTimeout(timeout);
+  }, [visible, isMobile, onDismiss, shouldRenderWeb]);
 
   if (isMobile) {
     return (
       <IsolatedBottomSheetModal
         ref={sheetRef}
-        nativeBrowserOverlap
         contextBridge={contextBridge}
         snapPoints={resolvedSnapPoints}
         index={0}
@@ -847,7 +807,7 @@ export function AdaptiveModalSheet({
   );
 
   const desktopContent = (
-    <View ref={retainPresentationNode} style={desktopOverlayStyle} testID={testID}>
+    <View style={desktopOverlayStyle} testID={testID}>
       <Pressable
         accessibilityLabel={t("common.actions.dismiss")}
         style={ABSOLUTE_FILL_STYLE}
