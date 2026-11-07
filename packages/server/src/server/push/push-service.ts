@@ -30,10 +30,19 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 export class PushService {
   private readonly logger: pino.Logger;
   private readonly revokeToken: (token: string) => void;
+  private readonly fetchImpl: typeof fetch;
 
-  constructor(logger: pino.Logger, revokeToken: (token: string) => void) {
+  /**
+   * @param fetchImpl HTTP port for the Expo push API; tests pass a fake because Expo has no sandbox.
+   */
+  constructor(
+    logger: pino.Logger,
+    revokeToken: (token: string) => void,
+    fetchImpl: typeof fetch = globalThis.fetch,
+  ) {
     this.logger = logger.child({ component: "push-service" });
     this.revokeToken = revokeToken;
+    this.fetchImpl = fetchImpl;
   }
 
   /** Deliver to every device, including clients built with different Expo projects. */
@@ -60,7 +69,7 @@ export class PushService {
 
   private async sendBatch(messages: ExpoPushMessage[]): Promise<void> {
     try {
-      const response = await fetch(EXPO_PUSH_URL, {
+      const response = await this.fetchImpl(EXPO_PUSH_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
