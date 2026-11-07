@@ -915,6 +915,7 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  // COMPAT(workspaceWorktreeOptions): added in v0.11.0-beta.5, remove gate after 2027-10-06.
   const supportsWorktreeOptions = useHostFeature(selectedServerId, "workspaceWorktreeOptions");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [creationIdentity] = useState(() => ({

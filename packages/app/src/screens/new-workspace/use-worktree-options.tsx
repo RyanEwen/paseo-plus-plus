@@ -54,14 +54,19 @@ export function useWorktreeOptions(input: {
   useEffect(() => {
     model.applyScope(scope);
   }, [model, scope]);
+  // COMPAT(workspaceWorktreeOptions): the capability is read once here. On an older host the
+  // form shows upstream's fields and no worktree list. A choice already made on a capable host
+  // (an adopted checkout or a checkout branch) is kept so prepareSource can refuse it.
+  const supported = input.supported;
+  const checkoutMode = supported && state.mode === "checkout";
+  const existing = state.scope === scope ? state.existing : null;
   const baseItem = useMemo(
-    () => normalizeCheckoutItem(input.item, input.supported && state.mode === "checkout"),
-    [input.item, input.supported, state.mode],
+    () => normalizeCheckoutItem(input.item, checkoutMode),
+    [input.item, checkoutMode],
   );
   useEffect(() => {
     model.applyRef(baseItem);
   }, [model, baseItem]);
-  const existing = state.scope === scope ? state.existing : null;
   const listAvailability = worktreeListAvailability(input, existing !== null);
   const query = useFetchQuery({
     queryKey: ["new-workspace-worktrees", input.serverId, input.cwd],
@@ -103,7 +108,7 @@ export function useWorktreeOptions(input: {
       refName?: string;
     }): Promise<CreateWorkspaceRequestOptions["source"] | undefined> => {
       if (!request.createsWorktree && !existing) return undefined;
-      if (!input.supported) {
+      if (!supported) {
         if (model.requiresCapability()) {
           throw new Error("Update this host to use the selected worktree options.");
         }
@@ -129,22 +134,18 @@ export function useWorktreeOptions(input: {
         },
       );
     },
-    [input.supported, input.cwd, existing, baseItem, model, refetch],
+    [supported, input.cwd, existing, baseItem, model, refetch],
   );
   const showFields =
-    input.supported &&
-    input.isolation === "worktree" &&
-    !existing &&
-    baseItem?.kind !== "github-pr";
+    supported && input.isolation === "worktree" && !existing && baseItem?.kind !== "github-pr";
   return {
     baseItem,
     existing,
     selectIsolation,
     prepareSource,
-    checkoutMode: input.supported && state.mode === "checkout",
+    checkoutMode,
     ...worktreePickerPresentation(state.mode, showFields, model.setMode),
-    showRefPicker:
-      input.showRefPicker && !existing && !(input.supported && state.mode === "checkout"),
+    showRefPicker: input.showRefPicker && !existing && !checkoutMode,
     isolationProps: {
       selectedId: existing ? existingWorktreeOptionId(existing.worktreePath) : input.isolation,
       selectedLabel: existing ? existingWorktreeLabel(existing) : input.isolationLabel,
