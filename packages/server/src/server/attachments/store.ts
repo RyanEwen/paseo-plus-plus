@@ -256,7 +256,11 @@ export class AttachmentStore {
 
   /** Confirm an existing blob has the expected size and content hash. */
   private async verifyBlob(hash: string, size: number): Promise<void> {
-    const handle = await safeOpen(this.io, this.directory, path.join(this.directory, "blobs", hash));
+    const handle = await safeOpen(
+      this.io,
+      this.directory,
+      path.join(this.directory, "blobs", hash),
+    );
     await withAttachmentResource(
       async () => {
         if ((await handle.stat()).size !== size)
@@ -443,7 +447,8 @@ export class AttachmentStore {
       const reference = await this.readReference(referenceId, signal);
       if (reference.agentId !== agentId)
         throw new AttachmentStoreError("Attachment reference does not belong to this agent.");
-      if (lease.isClosed) throw new AttachmentStoreError("Original transfer closed before opening.");
+      if (lease.isClosed)
+        throw new AttachmentStoreError("Original transfer closed before opening.");
       const file = await safeOpen(
         this.io,
         this.directory,

@@ -837,7 +837,6 @@ describe("relay external socket reconnect behavior", () => {
       writeError: null,
     });
 
-
     await server.close();
   });
 

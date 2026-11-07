@@ -1,7 +1,11 @@
 import { constants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { AttachmentIdSchema, AttachmentReferenceSchema, type AttachmentReference } from "@getpaseo/protocol/attachments";
+import {
+  AttachmentIdSchema,
+  AttachmentReferenceSchema,
+  type AttachmentReference,
+} from "@getpaseo/protocol/attachments";
 import {
   AttachmentStoreError,
   closeAfterFailure,

@@ -1,7 +1,16 @@
 import { AttachmentStore } from "./store.js";
 import { attachmentFileSystem, type AttachmentFileSystem } from "./io.js";
 import { ATTACHMENT_LIMITS } from "./limits.js";
-import { mkdtemp, rm, writeFile, readFile, lstat, unlink, symlink, readdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  readFile,
+  lstat,
+  unlink,
+  symlink,
+  readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -9,7 +18,6 @@ import { ATTACHMENT_ORIGINAL_MAX_BYTES } from "@getpaseo/protocol/attachments";
 
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
-
 
 const durableFixtures: Array<{ home: string; stores: AttachmentStore[] }> = [];
 async function durableFixture(

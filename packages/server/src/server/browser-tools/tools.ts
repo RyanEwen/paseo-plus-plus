@@ -902,7 +902,9 @@ function browserToolResult(params: {
   };
 }
 
-function attachmentReferenceContent(reference: AttachmentReference): PaseoToolResult["content"][number] {
+function attachmentReferenceContent(
+  reference: AttachmentReference,
+): PaseoToolResult["content"][number] {
   return {
     type: "text",
     text: `Original screenshot reference: ${reference.id} (agent ${reference.agentId}).`,

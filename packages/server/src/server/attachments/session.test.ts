@@ -12,7 +12,11 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { decodeFileTransferFrame, FileTransferOpcode, type FileTransferFrame } from "@getpaseo/protocol/binary-frames/index";
+import {
+  decodeFileTransferFrame,
+  FileTransferOpcode,
+  type FileTransferFrame,
+} from "@getpaseo/protocol/binary-frames/index";
 import type { SessionOutboundMessage } from "../messages.js";
 
 const tempDirs: string[] = [];
@@ -76,7 +80,8 @@ async function attachmentSubsystem(
   });
   const host: AttachmentSessionHost = {
     emit: (message) => emitted.push(message),
-    hasAcknowledgedBinaryChannel: (candidate) => candidate === source && options.supported !== false,
+    hasAcknowledgedBinaryChannel: (candidate) =>
+      candidate === source && options.supported !== false,
     mayRead: () => options.allowed !== false,
     requestSignal: () => cancellation.signal,
     reportFailure: options.onFailure,

@@ -223,7 +223,6 @@ describe("materializeProviderImage", async () => {
   });
 });
 
-
 describe("provider image paragraph boundaries", () => {
   test.each(["", "\n"])("keeps image outputs separate from prose ending in %j", async (ending) => {
     const image = await renderProviderImageOutputAsAssistantMarkdown({

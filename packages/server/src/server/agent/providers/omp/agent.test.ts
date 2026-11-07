@@ -1,4 +1,7 @@
-import { VALID_PNG_BASE64, signedPngBase64 } from "../../../../test-utils/provider-image-fixtures.js";
+import {
+  VALID_PNG_BASE64,
+  signedPngBase64,
+} from "../../../../test-utils/provider-image-fixtures.js";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";

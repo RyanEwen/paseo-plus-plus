@@ -3,7 +3,8 @@ import { z } from "zod";
 /** Largest original image the store admits and the wire carries, in decoded bytes. */
 export const ATTACHMENT_ORIGINAL_MAX_BYTES = 16 * 1024 * 1024;
 /** Longest standard base64 encoding of an original at the size limit. */
-export const ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH = Math.ceil(ATTACHMENT_ORIGINAL_MAX_BYTES / 3) * 4;
+export const ATTACHMENT_ORIGINAL_MAX_BASE64_LENGTH =
+  Math.ceil(ATTACHMENT_ORIGINAL_MAX_BYTES / 3) * 4;
 /** Largest payload in one original-transfer chunk frame. */
 export const ATTACHMENT_TRANSFER_CHUNK_MAX_BYTES = 64 * 1024;
 /** Most references one list page returns. */

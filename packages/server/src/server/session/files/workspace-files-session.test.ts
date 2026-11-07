@@ -1,11 +1,26 @@
 import { SessionDelivery } from "../owned-subscriptions/index.js";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import pino from "pino";
-import { decodeFileTransferFrame, encodeFileTransferFrame, FileTransferOpcode, type FileTransferFrame } from "@getpaseo/protocol/binary-frames/index";
-import { WorkspaceFilesSession, type WorkspaceFilesSessionHost } from "./workspace-files-session.js";
+import {
+  decodeFileTransferFrame,
+  encodeFileTransferFrame,
+  FileTransferOpcode,
+  type FileTransferFrame,
+} from "@getpaseo/protocol/binary-frames/index";
+import {
+  WorkspaceFilesSession,
+  type WorkspaceFilesSessionHost,
+} from "./workspace-files-session.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 

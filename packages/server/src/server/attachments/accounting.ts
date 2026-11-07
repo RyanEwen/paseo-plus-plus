@@ -141,7 +141,11 @@ export class AttachmentAccounting {
   }
 
   /** An existing reference this owner already holds for identical content and type. */
-  findOwnedCopy(agentId: string, sha256: string, mimeType: string): AttachmentReference | undefined {
+  findOwnedCopy(
+    agentId: string,
+    sha256: string,
+    mimeType: string,
+  ): AttachmentReference | undefined {
     return [...this.references.values()].find(
       (reference) =>
         reference.agentId === agentId &&

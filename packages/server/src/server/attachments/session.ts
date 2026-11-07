@@ -65,10 +65,7 @@ function waitForTransfer<T>(signal: AbortSignal, operation: Promise<T>): Promise
 }
 
 /** The failure reply for each request type: the empty result plus the error message. */
-function failureResponse(
-  request: AttachmentQuery,
-  message: string,
-): AttachmentResponse {
+function failureResponse(request: AttachmentQuery, message: string): AttachmentResponse {
   const requestId = request.requestId;
   switch (request.type) {
     case "attachments.list.request":
@@ -324,7 +321,11 @@ export class AttachmentSession {
     );
     for await (const chunk of lease.chunks(operation.signal))
       await send(
-        encodeFileTransferFrame({ opcode: FileTransferOpcode.FileChunk, requestId, payload: chunk }),
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileChunk,
+          requestId,
+          payload: chunk,
+        }),
       );
     await send(encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }));
     return reference;
