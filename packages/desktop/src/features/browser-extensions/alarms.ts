@@ -220,15 +220,8 @@ export function createExtensionAlarms(options: AlarmOptions) {
 
   /** Normalize both create(name, info) and create(info), including Chrome's info.name overload. */
   function createAlarm(id: string, args: unknown[]): BrowserExtensionAlarm {
-    const separateName = typeof args[0] === "string";
-    const separateArgument = args.length === 2;
-    if (
-      (separateArgument && !separateName && args[0] !== undefined) ||
-      (!separateArgument && args.length !== 1)
-    ) {
-      throw new Error("Invalid alarms.create arguments.");
-    }
-    const info = InfoSchema.parse(args[separateArgument ? 1 : 0]);
+    const { separateName, infoArgument } = parseCreateForm(args);
+    const info = InfoSchema.parse(infoArgument);
     if (separateName && info.name !== undefined) {
       throw new Error("Cannot set alarm name in both separate argument and object form.");
     }
@@ -353,4 +346,19 @@ export function createExtensionAlarms(options: AlarmOptions) {
       }
     },
   };
+}
+
+/**
+ * Split alarms.create arguments: create(name, info) and create(undefined, info) take two,
+ * create(info) takes one. Any other shape is invalid.
+ */
+function parseCreateForm(args: unknown[]): { separateName: boolean; infoArgument: unknown } {
+  const separateName = typeof args[0] === "string";
+  const hasSeparateArgument = args.length === 2;
+  const invalidPair = hasSeparateArgument && !separateName && args[0] !== undefined;
+  const invalidSingle = !hasSeparateArgument && args.length !== 1;
+  if (invalidPair || invalidSingle) {
+    throw new Error("Invalid alarms.create arguments.");
+  }
+  return { separateName, infoArgument: args[hasSeparateArgument ? 1 : 0] };
 }

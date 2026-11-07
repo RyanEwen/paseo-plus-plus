@@ -31,13 +31,21 @@ function readDesktopHostZoom(): number | undefined {
   return getDesktopHost()?.window?.getCurrentWindow?.().getZoomFactor?.();
 }
 
+/** A zoom factor usable as a divisor: finite and positive, otherwise null. */
+function readPositiveFactor(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}
+
 /** Read the guest's actual page zoom; attachment and navigation can make it unavailable. */
 export function getBrowserWebviewZoom(webview: HTMLElement | null): number | null {
   try {
     const zoom = (
       webview as (HTMLElement & { getZoomFactor?: () => number }) | null
     )?.getZoomFactor?.();
-    return typeof zoom === "number" && Number.isFinite(zoom) && zoom > 0 ? zoom : null;
+    return readPositiveFactor(zoom);
   } catch {
     return null;
   }
@@ -65,19 +73,14 @@ export function setBrowserWebviewZoom(browserId: string, factor: number): boolea
 /** Read native factors only; an unattached guest cannot yet supply its zoom. */
 export function getBrowserWebviewPresentationScale(webview: HTMLElement): number | null {
   try {
-    const pageZoom = (webview as HTMLElement & { getZoomFactor?: () => number }).getZoomFactor?.();
-    const hostZoom = (hostZoomReaders.get(webview) ?? readDesktopHostZoom)();
-    if (
-      !Number.isFinite(pageZoom) ||
-      !Number.isFinite(hostZoom) ||
-      !pageZoom ||
-      !hostZoom ||
-      pageZoom <= 0 ||
-      hostZoom <= 0
-    )
+    const pageZoom = readPositiveFactor(
+      (webview as HTMLElement & { getZoomFactor?: () => number }).getZoomFactor?.(),
+    );
+    const hostZoom = readPositiveFactor((hostZoomReaders.get(webview) ?? readDesktopHostZoom)());
+    if (pageZoom === null || hostZoom === null) {
       return null;
-    const ratio = pageZoom / hostZoom;
-    return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
+    }
+    return readPositiveFactor(pageZoom / hostZoom);
   } catch {
     return null;
   }
@@ -386,13 +389,12 @@ export function presentBrowserWebview(
   surface.style.display = "flex";
   surface.style.visibility = "visible";
   clearResidentWebviewParkingStyle(webview);
-  rememberBrowserWebviewSize({
-    browserId: normalizedBrowserId,
-    ...(viewport.mode === "responsive"
+  // A responsive page fills its pane; a fixed device preset keeps its requested size.
+  const size =
+    viewport.mode === "responsive"
       ? { width: anchorBounds.width, height: anchorBounds.height }
-      : viewport),
-    mode: viewport.mode,
-  });
+      : { width: viewport.width, height: viewport.height };
+  rememberBrowserWebviewSize({ browserId: normalizedBrowserId, ...size, mode: viewport.mode });
   applyBrowserWebviewDimensions(webview, dimensionsForBrowser(normalizedBrowserId));
   webview.style.position = "absolute";
   webview.style.left = `${Math.round(anchorBounds.left - surfaceLeft)}px`;

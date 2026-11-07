@@ -203,7 +203,9 @@ export function registerBrowserExtensionCompatibility(
 
   /** Deliver only to extension contexts in the browser profile, never app or remote-page preloads. */
   function emit(id: string, name: string, ...args: unknown[]): void {
-    for (const contents of name === "storage.onChanged" ? [] : webContents.getAllWebContents()) {
+    // Frames already receive native storage events; only workers need them delivered here.
+    const frames = name === "storage.onChanged" ? [] : webContents.getAllWebContents();
+    for (const contents of frames) {
       if (
         contents.session === profile &&
         contents.getURL().startsWith(`chrome-extension://${id}/`)

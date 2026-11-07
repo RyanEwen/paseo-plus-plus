@@ -54,19 +54,29 @@ export function getExtensionToolbarMetadata(
   if (!parsed.success) return { title: name, iconPath: null };
   const action = parsed.data.action ?? parsed.data.browser_action ?? parsed.data.page_action;
   const title = action?.default_title;
-  const icon = action?.default_icon ?? parsed.data.icons;
-  const sizes =
-    typeof icon === "object"
-      ? Object.keys(icon)
-          .map(Number)
-          .filter((size) => Number.isFinite(size) && size > 0)
-          .sort((a, b) => a - b)
-      : [];
+  // Localized titles need the extension's message catalog, which Paseo does not resolve.
+  const usableTitle = title && !title.startsWith("__MSG_") ? title : name;
+  const iconPath = selectIconPath(action?.default_icon ?? parsed.data.icons);
+  return { title: usableTitle, iconPath };
+}
+
+/** Use a single icon path as is; otherwise the smallest size of at least 32px, else the largest. */
+function selectIconPath(icon: string | Record<string, string> | undefined): string | null {
+  if (typeof icon === "string") {
+    return icon;
+  }
+  if (icon === undefined) {
+    return null;
+  }
+  const sizes = Object.keys(icon)
+    .map(Number)
+    .filter((size) => Number.isFinite(size) && size > 0)
+    .sort((a, b) => a - b);
   const size = sizes.find((value) => value >= 32) ?? sizes.at(-1);
-  let iconPath: string | null = null;
-  if (typeof icon === "string") iconPath = icon;
-  else if (size !== undefined) iconPath = icon?.[String(size)] ?? null;
-  return { title: title && !title.startsWith("__MSG_") ? title : name, iconPath };
+  if (size === undefined) {
+    return null;
+  }
+  return icon[String(size)] ?? null;
 }
 
 /** Never return bytes from a manifest path outside the installed extension package. */

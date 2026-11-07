@@ -143,15 +143,19 @@ export function createExtensionWindows(options: ExtensionWindowsOptions) {
       top: bounds.y,
       width: bounds.width,
       height: bounds.height,
-      ...(populate
-        ? {
-            tabs: (popup
-              ? getPopupTabs().filter((tab) => tab.windowId === window.id)
-              : options.getTabs(window.id)
-            ).map((tab) => (extension ? describeVisibleExtensionTab(extension, tab) : tab)),
-          }
-        : {}),
+      ...(populate ? { tabs: describeWindowTabs(window, popup, extension) } : {}),
     };
+  }
+
+  /** A window's tabs, limited to the fields `extension` may read when one is given. */
+  function describeWindowTabs(window: BrowserWindow, popup: boolean, extension?: Extension) {
+    const windowTabs = popup
+      ? getPopupTabs().filter((tab) => tab.windowId === window.id)
+      : options.getTabs(window.id);
+    if (!extension) {
+      return windowTabs;
+    }
+    return windowTabs.map((tab) => describeVisibleExtensionTab(extension, tab));
   }
 
   function emit(name: string, ...args: unknown[]): void {
@@ -348,10 +352,11 @@ export function createExtensionWindows(options: ExtensionWindowsOptions) {
           .filter((window) => types.includes(isPopupWindow(window) ? "popup" : "normal"))
           .map((window) => describe(window, query.populate, extension));
       }
-      const id = method === "windows.get" ? WindowIdSchema.parse(args[0]) : -2;
       if (method !== "windows.get" && method !== "windows.getCurrent") {
         throw new Error(`Extension window API ${method} is not supported.`);
       }
+      // windows.getCurrent resolves the caller's own window through the WINDOW_ID_CURRENT id.
+      const id = method === "windows.get" ? WindowIdSchema.parse(args[0]) : -2;
       const query = QuerySchema.parse(args[method === "windows.get" ? 1 : 0] ?? {});
       const window = resolveWindow(id, owner, extension);
       if (
