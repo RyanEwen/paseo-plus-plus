@@ -88,6 +88,7 @@ async function createPaseoWorktreeWithPriority(
         },
       });
     }
+    // A branch name the user typed is kept as is, so the first agent must not rename it.
     if (!input.exactNames) {
       await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
     }

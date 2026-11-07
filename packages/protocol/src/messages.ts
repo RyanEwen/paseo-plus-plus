@@ -2571,6 +2571,7 @@ export const DirectorySuggestionsRequestSchema = z.object({
 
 export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
+  // Also list checkouts Paseo did not create, so they can be offered for adoption.
   includeAll: z.boolean().optional(),
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),

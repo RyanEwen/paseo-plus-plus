@@ -29,6 +29,8 @@ export async function listPaseoWorktreesCommand(
   input: ListPaseoWorktreesCommandInput,
 ): Promise<WorkspaceGitWorktreeInfo[]> {
   if (input.includeAll) {
+    // The picker decides whether a checkout can be adopted or a name is free, so it reads
+    // Git directly: a cached list can miss checkouts created or removed outside Paseo.
     return dependencies.workspaceGitService.listWorktrees(input.cwd, {
       includeAll: true,
       force: true,
