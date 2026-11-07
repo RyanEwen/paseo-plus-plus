@@ -240,16 +240,9 @@ Agent browser_keypress -> guest sendInputEvent(skipIfUnhandled)
 
 #### Screenshot capture guards
 
-Reject requests whose sampled geometry exceeds the capture limits before dispatch. Admission is
-shared across windows and workspaces: one active capture, four waiting requests, and a five-second
-request deadline. Canceling a waiter removes it. An already-dispatched CDP capture retains its slot
-until acknowledgment, even after its caller times out; releasing it early would allow overlapping
-allocations. A stuck CDP operation can therefore leave capture busy until it settles.
+Reject requests whose sampled geometry exceeds the capture limits before dispatch; the limits live in `packages/desktop/src/features/browser-automation/capture-admission.ts`. Admission is shared across windows and workspaces, with one active capture, a short waiting queue and one request deadline. Canceling a waiter removes it. An already-dispatched CDP capture keeps its slot until acknowledgment, even after its caller times out, because releasing it early would allow overlapping allocations; a stuck CDP operation can therefore leave capture busy until it settles.
 
-Capture preflight checks use 8,192 pixels per physical axis and 8 million physical pixels. The
-physical estimate uses CDP layout metrics, the largest connected display scale and page zoom.
-Rejected requests fail without clipping or scaling. Viewport results have their returned dimensions
-checked before PNG encoding; PNG output and CDP base64 output have a 16 MiB size check after encoding.
+The physical size estimate uses CDP layout metrics, the largest connected display scale and page zoom, never the page's own `devicePixelRatio`. Rejected requests fail without clipping or scaling. Viewport results have their returned dimensions checked before PNG encoding, and the encoded output is size-checked against the durable original limit.
 
 These are best-effort Electron/CDP capture guards. Sampled geometry is not bound atomically to the
 captured frame: native retries or guest presentation can observe a later viewport, and an explicit
