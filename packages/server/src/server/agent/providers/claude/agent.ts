@@ -131,6 +131,7 @@ import {
   type AgentPermissionResponse,
   type AgentPermissionUpdate,
   type AgentPersistenceHandle,
+  type CommitClaudeRewind,
   type AgentProviderNotice,
   type AgentPromptInput,
   type AgentRunOptions,
@@ -3292,33 +3293,13 @@ class ClaudeAgentSession implements AgentSession {
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
       setSessionId: async (sessionId) => {
-        if (this.boundHistory && previous && input.commitClaudeRewind) {
-          const file = await this.resolveHistoryPath(sessionId);
-          if (!file) throw new HistoryStorageConflictError("rewind-transcript-missing");
-          checkClaudeRewindHandle(this.boundHistory, this.harnessEnvironment, file);
-          const next = { ...previous, sessionId, nativeHandle: sessionId };
-          try {
-            await input.commitClaudeRewind({
-              previous,
-              next,
-              storage: this.boundHistory,
-              assertCurrent: () => {
-                if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
-              },
-              adopt: () => {
-                if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
-                this.claudeSessionId = sessionId;
-                this.persistence = next;
-                this.cachedRuntimeInfo = null;
-              },
-            });
-          } catch (error) {
-            throw new Error(
-              `Claude rewind child ${sessionId} retained in ${this.boundHistory.home}; identity commit failed (${error instanceof HistoryStorageConflictError ? error.reason : "unavailable"})`,
-              { cause: error },
-            );
-          }
-        }
+        if (this.boundHistory && previous && input.commitClaudeRewind)
+          await this.commitForkedHandle({
+            sessionId,
+            previous,
+            storage: this.boundHistory,
+            commit: input.commitClaudeRewind,
+          });
         await this.rebindConversationSession(
           sessionId,
           currentSessionId ?? undefined,
@@ -3326,6 +3307,46 @@ class ClaudeAgentSession implements AgentSession {
         );
       },
     });
+  }
+
+  /**
+   * Durably commit the native session a conversation rewind forked into the bound home before
+   * the session switches to it. A failed commit reports the retained child without deleting it.
+   */
+  private async commitForkedHandle(input: {
+    sessionId: string;
+    previous: AgentPersistenceHandle;
+    storage: ConfiguredClaudeHistoryStorage;
+    commit: CommitClaudeRewind;
+  }): Promise<void> {
+    const { sessionId, previous, storage } = input;
+    const file = await this.resolveHistoryPath(sessionId);
+    if (!file) throw new HistoryStorageConflictError("rewind-transcript-missing");
+    checkClaudeRewindHandle(storage, this.harnessEnvironment, file);
+    const next = { ...previous, sessionId, nativeHandle: sessionId };
+    const assertOpen = () => {
+      if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
+    };
+    try {
+      await input.commit({
+        previous,
+        next,
+        storage,
+        assertCurrent: assertOpen,
+        adopt: () => {
+          assertOpen();
+          this.claudeSessionId = sessionId;
+          this.persistence = next;
+          this.cachedRuntimeInfo = null;
+        },
+      });
+    } catch (error) {
+      const reason = error instanceof HistoryStorageConflictError ? error.reason : "unavailable";
+      throw new Error(
+        `Claude rewind child ${sessionId} retained in ${storage.home}; identity commit failed (${reason})`,
+        { cause: error },
+      );
+    }
   }
 
   async revertFiles(input: AgentRewindInput): Promise<void> {
