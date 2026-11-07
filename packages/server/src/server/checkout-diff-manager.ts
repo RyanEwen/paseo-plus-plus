@@ -4,6 +4,11 @@ import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./mes
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
+import { registerForkCapability } from "./fork-capabilities.js";
+
+// Literal single-file scopes (compare.filePath) are read through this manager.
+// COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
+registerForkCapability("checkoutFileDiff");
 
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
