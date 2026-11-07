@@ -1,4 +1,5 @@
 import { requestPromptFixture } from "@/timeline/canonical-prompt-context.test-fixture";
+import { createProviderSubagentPromptContexts } from "./prompt-contexts";
 import { canonicalPromptSourceKey } from "@/timeline/canonical-prompt-context";
 import type { StreamItem } from "@/types/stream";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
@@ -6,7 +7,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   observeProviderSubagentTimeline,
-  createProviderSubagentPromptContexts,
   providerSubagentKey,
   refreshProviderSubagents,
   resyncProviderSubagents,

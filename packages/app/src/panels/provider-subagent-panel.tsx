@@ -23,9 +23,9 @@ import { ParentAgentCallout } from "@/subagents/parent";
 import { type SubagentRow, useSubagentsForParent } from "@/subagents/select";
 import { useSubagentSheetTab } from "@/subagents/sheet-tab";
 import { SubagentsTrack } from "@/subagents/track";
+import { createProviderSubagentPromptContexts } from "@/subagents/prompt-contexts";
 import {
   providerSubagentKey,
-  createProviderSubagentPromptContexts,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
   observeProviderSubagentTimeline,
@@ -257,17 +257,17 @@ function ProviderSubagentPanel() {
         : undefined,
     [client, supported, target.parentAgentId, target.subagentId],
   );
-  const contextScope = useMemo(() => {
-    const scope = {
-      serverId,
-      parentAgentId: target.parentAgentId,
-      subagentId: target.subagentId,
-      epoch,
-      agentId: streamId,
-    };
-    return { ...scope, contexts: createProviderSubagentPromptContexts(scope) };
-  }, [serverId, target.parentAgentId, target.subagentId, epoch, streamId]);
-  const promptContexts = contextScope.contexts;
+  const promptContexts = useMemo(
+    () =>
+      createProviderSubagentPromptContexts({
+        serverId,
+        parentAgentId: target.parentAgentId,
+        subagentId: target.subagentId,
+        epoch,
+        agentId: streamId,
+      }),
+    [serverId, target.parentAgentId, target.subagentId, epoch, streamId],
+  );
   useEffect(() => () => promptContexts.dispose(), [promptContexts]);
   const coverage = useMemo(() => canonicalCoverageForCursor(timeline?.cursor), [timeline?.cursor]);
   const historyPagination = useMemo(
