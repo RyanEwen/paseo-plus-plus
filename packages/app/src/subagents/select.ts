@@ -20,10 +20,10 @@ export interface PaseoSubagentRow {
   status: Agent["status"];
   turn: Agent["turn"];
   requiresAttention: Agent["requiresAttention"];
-  humanAttentionRequired?: Agent["humanAttentionRequired"];
-  attentionMessage?: Agent["attentionMessage"];
-  attentionReason?: Agent["attentionReason"];
-  pendingPermissionCount?: number;
+  humanAttentionRequired: Agent["humanAttentionRequired"];
+  attentionMessage: Agent["attentionMessage"];
+  attentionReason: Agent["attentionReason"];
+  pendingPermissionCount: number;
   createdAt: Agent["createdAt"];
 }
 

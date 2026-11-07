@@ -29,7 +29,7 @@ function row(
     humanAttentionRequired: overrides.humanAttentionRequired,
     attentionReason: overrides.attentionReason,
     attentionMessage: overrides.attentionMessage,
-    pendingPermissionCount: overrides.pendingPermissionCount,
+    pendingPermissionCount: overrides.pendingPermissionCount ?? 0,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };
 }
