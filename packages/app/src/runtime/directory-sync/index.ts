@@ -364,7 +364,11 @@ export class DirectorySync {
 
   private releaseSubscriptions(input: DirectoryReleaseOptions = {}): void {
     this.subscriptionGeneration += 1;
-    const released = [this.agentSubscription, this.eventSubscription];
+    // The agent, workspace and event subscriptions carry different entries; only release() matters.
+    const released: Array<{ release(): Promise<unknown> } | null> = [
+      this.agentSubscription,
+      this.eventSubscription,
+    ];
     if (!input.preserveWorkspaces) released.push(this.workspaceSubscription);
     for (const subscription of released) {
       void subscription?.release().catch(() => undefined);
