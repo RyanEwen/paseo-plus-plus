@@ -34,6 +34,19 @@ const compactFillMetrics = {
   tabGap: 0,
 };
 
+describe("workspaceTabMinimumWidth", () => {
+  it.each([
+    ["main", false, 96],
+    ["sheet", false, 96],
+    ["main", true, 64],
+    ["sheet", true, 64],
+    ["explorer", false, 64],
+    ["explorer", true, 64],
+  ] as const)("gives %s tabs (compact: %s) a %i px minimum", (host, compact, minimum) => {
+    expect(workspaceTabMinimumWidth(host, compact)).toBe(minimum);
+  });
+});
+
 describe("computeWorkspaceTabLayout", () => {
   it.each([
     { tabCount: 2, width: 150, scrolling: false },
@@ -114,13 +127,7 @@ describe("computeWorkspaceTabLayout", () => {
     );
   });
 
-  it("exempts Explorer from workspace minimum widths on wide and compact layouts", () => {
-    expect(workspaceTabMinimumWidth("main", false)).toBe(96);
-    expect(workspaceTabMinimumWidth("main", true)).toBe(64);
-    expect(workspaceTabMinimumWidth("sheet", false)).toBe(96);
-    expect(workspaceTabMinimumWidth("sheet", true)).toBe(64);
-    expect(workspaceTabMinimumWidth("explorer", false)).toBe(64);
-    expect(workspaceTabMinimumWidth("explorer", true)).toBe(64);
+  it("lets short Explorer titles use the smaller Explorer minimum on wide layouts", () => {
     const result = computeWorkspaceTabLayout({
       compact: false,
       viewportWidth: 220,
@@ -131,46 +138,63 @@ describe("computeWorkspaceTabLayout", () => {
         minTabWidth: workspaceTabMinimumWidth("explorer", false),
       },
     });
+
     expect(result.items.map((item) => item.width)).toEqual([64, 86]);
     expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
-  it("uses square desktop icons independent of titles and scrolls when the strip is full", () => {
-    const input = {
-      compact: false,
-      viewportWidth: 230,
-      tabLabelWidths: [29, 52, 400],
-      metrics: { ...metrics, actionsReservedWidth: 36, closeButtonWidth: 20 },
-      iconOnly: true,
-      iconOnlyTabWidth: 28,
-    };
-    const result = computeWorkspaceTabLayout(input);
+
+  const desktopIconOnlyInput = {
+    compact: false,
+    viewportWidth: 230,
+    tabLabelWidths: [29, 52, 400],
+    metrics: { ...metrics, actionsReservedWidth: 36, closeButtonWidth: 20 },
+    iconOnlyTabWidth: 28,
+  };
+
+  it("sizes every icon-only tab as the same square cell regardless of its title", () => {
+    const result = computeWorkspaceTabLayout(desktopIconOnlyInput);
+
     expect(result.items).toEqual(
       Array.from({ length: 3 }, () => ({ width: 28, showLabel: false })),
     );
-    expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(
-      computeWorkspaceTabLayout({ ...input, viewportWidth: 120 }).requiresHorizontalScrollFallback,
-    ).toBe(true);
-    expect(
-      computeWorkspaceTabLayout({ ...input, iconOnly: false }).items.some((item) => item.showLabel),
-    ).toBe(true);
   });
-  it("keeps icon-only tabs touch-sized on compact layouts without label or close-button allowance", () => {
+
+  it("gives icon-only tabs no inline close button", () => {
+    expect(computeWorkspaceTabLayout(desktopIconOnlyInput).closeButtonPolicy).toBe("none");
+  });
+
+  it("scrolls icon-only tabs once their squares no longer fit", () => {
+    const result = computeWorkspaceTabLayout({ ...desktopIconOnlyInput, viewportWidth: 120 });
+
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+  });
+
+  it("restores labelled tabs when no icon-only width is given", () => {
+    const result = computeWorkspaceTabLayout({
+      ...desktopIconOnlyInput,
+      iconOnlyTabWidth: undefined,
+    });
+
+    expect(result.items.some((item) => item.showLabel)).toBe(true);
+  });
+
+  it("keeps icon-only tabs touch-sized on compact layouts", () => {
     const result = computeWorkspaceTabLayout({
       compact: true,
       viewportWidth: 240,
       tabLabelWidths: [400, 800],
       metrics: { ...metrics, actionsReservedWidth: 44, closeButtonWidth: 44 },
-      iconOnly: true,
       iconOnlyTabWidth: 44,
     });
+
     expect(result.items).toEqual([
       { width: 44, showLabel: false },
       { width: 44, showLabel: false },
     ]);
     expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
+
   it("keeps short desktop tab names at the fork minimum width", () => {
     const result = computeWorkspaceTabLayout({
       compact: false,
@@ -178,9 +202,11 @@ describe("computeWorkspaceTabLayout", () => {
       tabLabelWidths: [0, 29, 52, 400],
       metrics: { ...metrics, minTabWidth: MIN_WORKSPACE_TAB_WIDTH },
     });
+
     expect(result.items.map((item) => item.width)).toEqual([96, 96, 96, 160]);
     expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
+
   it("scrolls instead of shrinking desktop tabs below the fork minimum", () => {
     const result = computeWorkspaceTabLayout({
       compact: false,
@@ -188,6 +214,7 @@ describe("computeWorkspaceTabLayout", () => {
       tabLabelWidths: [29, 52, 180],
       metrics: { ...metrics, minTabWidth: MIN_WORKSPACE_TAB_WIDTH },
     });
+
     expect(result.items.map((item) => item.width)).toEqual([96, 96, 160]);
     expect(result.requiresHorizontalScrollFallback).toBe(true);
     expect(result.items.every((item) => item.showLabel)).toBe(true);

@@ -1,7 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
-  createContext,
-  useContext,
   Fragment,
   useCallback,
   useEffect,
@@ -51,7 +49,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabScroll } from "@/screens/workspace/use-workspace-tab-scroll";
@@ -59,7 +57,6 @@ import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-lay
 import {
   workspaceTabMinimumWidth,
   retainWorkspaceTabMeasuredWidth,
-  type WorkspaceTabLayoutMetrics,
 } from "@/screens/workspace/workspace-tab-layout";
 import {
   WorkspaceTabPresentationResolver,
@@ -101,88 +98,15 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 import { MobileHorizontalScrollGesture } from "@/mobile-panels/horizontal-scroll-gesture";
-import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
+import {
+  ExplorerIconOnlyMenuItem,
+  ExplorerTabStripContextMenu,
+  iconOnlyTabStyles,
+  iconOnlyTabWidth,
+  useExplorerTabDisplay,
+  type ExplorerTabDisplayControl,
+} from "@/screens/workspace/explorer-tab-display";
 import { useSessionStore } from "@/stores/session-store";
-
-interface ExplorerTabDisplayControl {
-  enabled: boolean;
-  disabled: boolean;
-  pending: boolean;
-  failed: boolean;
-  toggle(): void;
-}
-const ExplorerTabDisplayContext = createContext<ExplorerTabDisplayControl | null>(null);
-
-function ExplorerIconOnlyMenuItem({ separator = false }: { separator?: boolean }) {
-  const control = useContext(ExplorerTabDisplayContext);
-  const { t } = useTranslation();
-  if (!control) return null;
-  return (
-    <>
-      {separator ? <ContextMenuSeparator /> : null}
-      <ContextMenuItem
-        selected={control.enabled}
-        showSelectedCheck
-        disabled={control.disabled}
-        status={control.pending ? "pending" : "idle"}
-        tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
-        closeOnSelect={false}
-        onSelect={control.toggle}
-        testID="explorer-icon-only-tabs-menu-item"
-      >
-        {t("explorerTabs.iconOnlyLabel")}
-      </ContextMenuItem>
-    </>
-  );
-}
-
-function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl {
-  const { settings, save, pending, failed, isLoading, error } =
-    useSettingsSave<"explorerIconOnlyTabs">();
-  const iconOnly = host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
-  const toggleIconOnly = useCallback(() => {
-    void save("explorerIconOnlyTabs", (current) => ({
-      paseoPlusPlus: {
-        ...current.paseoPlusPlus,
-        explorerIconOnlyTabs: !current.paseoPlusPlus.explorerIconOnlyTabs,
-      },
-    }));
-  }, [save]);
-  return useMemo<ExplorerTabDisplayControl>(
-    () => ({
-      enabled: iconOnly,
-      disabled: isLoading || error !== null || pending !== null,
-      pending: pending !== null,
-      failed: failed !== null,
-      toggle: toggleIconOnly,
-    }),
-    [iconOnly, isLoading, error, pending, failed, toggleIconOnly],
-  );
-}
-
-function ExplorerTabStripContextMenu({
-  host,
-  control,
-  children,
-}: {
-  host: PaneHost;
-  control: ExplorerTabDisplayControl;
-  children: React.ReactNode;
-}) {
-  if (host !== "explorer") return children;
-  return (
-    <ExplorerTabDisplayContext.Provider value={control}>
-      <ContextMenu>
-        <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
-          {children}
-        </ContextMenuTrigger>
-        <ContextMenuContent width={DROPDOWN_WIDTH} testID="explorer-tab-strip-menu">
-          <ExplorerIconOnlyMenuItem />
-        </ContextMenuContent>
-      </ContextMenu>
-    </ExplorerTabDisplayContext.Provider>
-  );
-}
 
 const DROPDOWN_WIDTH = 220;
 /** Compact tab chips and the compact new-tab button keep the full touch-target height. */
@@ -788,7 +712,7 @@ function TabHandleContent({
 
   return (
     <View
-      style={showLabel ? styles.tabHandle : styles.iconOnlyTabHandle}
+      style={[styles.tabHandle, !showLabel && iconOnlyTabStyles.handle]}
       dataSet={tabHandleDataSet}
     >
       <View style={styles.tabIcon}>
@@ -836,6 +760,7 @@ function TabChip({
   onNavigateTab,
   onCloseTab,
   dragHandleProps,
+  explorerDisplay,
 }: {
   serverId: string;
   workspaceId: string;
@@ -858,6 +783,8 @@ function TabChip({
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
+  /** Explorer display control for the Icon-only tabs row, or null outside the Explorer. */
+  explorerDisplay: ExplorerTabDisplayControl | null;
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
   const { t } = useTranslation();
@@ -900,7 +827,7 @@ function TabChip({
     () => [
       styles.tab,
       isCompact && styles.compactTab,
-      !showLabel && styles.iconOnlyTab,
+      !showLabel && iconOnlyTabStyles.tab,
       isFilled && styles.tabFill(chipBackdrop),
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
@@ -1055,7 +982,7 @@ function TabChip({
           pages={openWith.pages}
           testID={contextMenuTestId}
         >
-          <ExplorerIconOnlyMenuItem />
+          <ExplorerIconOnlyMenuItem control={explorerDisplay} />
           {menuEntries.map((entry) => {
             if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
             if (entry.kind === "file-panel-open-with") {
@@ -1178,29 +1105,6 @@ function CompactWorkspaceTabSlot({
   );
 }
 
-/** Selects the measured track for fill sizing and preserves other layouts' initial fallbacks. */
-function useMeasuredWorkspaceTabLayout(input: {
-  host: PaneHost;
-  iconOnlyTabWidth: number;
-  trackSnapshot: WorkspaceTabTrackSnapshot | null;
-  containerWidth: number;
-  scrollWidth: number;
-  metrics: WorkspaceTabLayoutMetrics;
-  compact: boolean;
-  fillAvailableWidth: boolean;
-}) {
-  const measuredWidth = input.fillAvailableWidth ? input.scrollWidth : input.containerWidth;
-  return useWorkspaceTabLayout({
-    host: input.host,
-    iconOnlyTabWidth: input.iconOnlyTabWidth,
-    tabLabelWidths: input.trackSnapshot?.labelWidths ?? [],
-    viewportWidthOverride: measuredWidth > 0 ? measuredWidth : null,
-    metrics: input.metrics,
-    compact: input.compact,
-    fillAvailableWidth: input.fillAvailableWidth,
-  });
-}
-
 function ResolvedWorkspaceDesktopTabsRow({
   host = "main",
   launchPurpose = "primary",
@@ -1245,7 +1149,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const [tabsScrollWidth, setTabsScrollWidth] = useState(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const explorerDisplay = useExplorerTabDisplay(host);
-  const iconOnly = explorerDisplay.enabled;
+  const iconOnly = explorerDisplay !== null && explorerDisplay.enabled;
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const tabScroll = useWorkspaceTabScroll({
     activeTabKey: tabs.find((item) => item.isActive)?.tab.key,
@@ -1429,17 +1333,11 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
-  // Icon-only tabs match the adjacent new-tab control: 28 on desktop, the 44 touch height on compact.
-  const iconOnlyTabWidth = useMemo(
-    () => controlHeightForLayout(isCompact ? "md" : "sm", isCompact),
-    [isCompact],
-  );
-  const { layout } = useMeasuredWorkspaceTabLayout({
-    host,
-    iconOnlyTabWidth,
-    trackSnapshot,
-    containerWidth: tabsContainerWidth,
-    scrollWidth: tabsScrollWidth,
+  const measuredTabsWidth = fillAvailableWidth ? tabsScrollWidth : tabsContainerWidth;
+  const { layout } = useWorkspaceTabLayout({
+    iconOnlyTabWidth: iconOnly ? iconOnlyTabWidth(isCompact) : null,
+    tabLabelWidths: trackSnapshot?.labelWidths ?? [],
+    viewportWidthOverride: measuredTabsWidth > 0 ? measuredTabsWidth : null,
     metrics: layoutMetrics,
     compact: isCompact,
     fillAvailableWidth,
@@ -1506,7 +1404,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       isActive,
     }: DraggableRenderItemInfo<ResolvedWorkspaceDesktopTabRowItem>) => {
       const shouldShowCloseButton =
-        !iconOnly && layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
+        layout.closeButtonPolicy === "all" && item.presentation.showCloseButton;
       const layoutItem = layout.items[index] ?? null;
       const resolvedTabWidth = layoutItem?.width ?? 150;
       const showLabel = layoutItem?.showLabel ?? true;
@@ -1544,6 +1442,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCloseTab={onCloseTab}
           labels={tabMenuLabels}
           dragHandleProps={dragHandleProps}
+          explorerDisplay={explorerDisplay}
           showDropIndicatorBefore={showDropIndicatorBefore}
           showDropIndicatorAfter={showDropIndicatorAfter}
         />
@@ -1551,8 +1450,8 @@ function ResolvedWorkspaceDesktopTabsRow({
     },
     [
       activeDragTabId,
+      explorerDisplay,
       isFocused,
-      iconOnly,
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,
@@ -1722,10 +1621,8 @@ function ResolvedWorkspaceDesktopTabsRow({
   );
 
   return (
-    <RenderProfile id="WorkspaceTabsRow">
-      <ExplorerTabStripContextMenu host={host} control={explorerDisplay}>
-        {row}
-      </ExplorerTabStripContextMenu>
+    <RenderProfile id="WorkspaceDesktopTabsRow">
+      <ExplorerTabStripContextMenu control={explorerDisplay}>{row}</ExplorerTabStripContextMenu>
     </RenderProfile>
   );
 }
@@ -1755,6 +1652,7 @@ function ResolvedWorkspaceTabChip({
   onCloseTab,
   labels,
   dragHandleProps,
+  explorerDisplay,
   showDropIndicatorBefore,
   showDropIndicatorAfter,
 }: {
@@ -1783,6 +1681,7 @@ function ResolvedWorkspaceTabChip({
   onCloseTab: (tabId: string) => Promise<void> | void;
   labels: WorkspaceTabMenuLabels;
   dragHandleProps: DraggableListDragHandleProps | undefined;
+  explorerDisplay: ExplorerTabDisplayControl | null;
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
 }) {
@@ -1864,6 +1763,7 @@ function ResolvedWorkspaceTabChip({
         onNavigateTab={onNavigateTab}
         onCloseTab={onCloseTab}
         dragHandleProps={dragHandleProps}
+        explorerDisplay={explorerDisplay}
       />
       {showDropIndicatorAfter ? (
         <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
@@ -1962,15 +1862,6 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     overflow: "visible",
     marginHorizontal: TAB_CHIP_GAP / 2,
-  },
-  stripContextHost: { flex: 1, minWidth: 0 },
-  iconOnlyTab: { paddingHorizontal: 0, justifyContent: "center" },
-  iconOnlyTabHandle: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-    minWidth: 0,
   },
   tabHandle: {
     flexDirection: "row",

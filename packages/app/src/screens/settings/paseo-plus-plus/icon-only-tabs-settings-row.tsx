@@ -21,8 +21,14 @@ const ICON_ONLY_TABS_ROW: SettingsSectionExtensionRow = {
 
 /**
  * Adds the Icon-only tabs note to the Explorer settings section while the Paseo++ settings are
- * mounted. Registering from an effect, rather than at import, unregisters on unmount, so Fast
- * Refresh and Strict Mode never hit the registry's duplicate-id error. Renders nothing itself.
+ * mounted. Renders nothing itself.
+ *
+ * The section host is the Explorer settings section from the Explorer settings layer
+ * (fix/git-prefs), which renders `<SettingsSectionExtensionRows sectionId="explorer" />`. Without
+ * that layer nothing renders the note; the tab context menus still own the toggle. Mount this
+ * inside `PaseoPlusPlusSection`, the Explorer section's parent, so the row is registered whenever
+ * that section can render. Registering from an effect, rather than at import, unregisters on
+ * unmount, so Fast Refresh and Strict Mode never hit the registry's duplicate-id error.
  */
 export function IconOnlyTabsSettingsRegistration() {
   useEffect(() => registerSettingsSectionRow("explorer", ICON_ONLY_TABS_ROW), []);

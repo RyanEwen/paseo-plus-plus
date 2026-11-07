@@ -90,7 +90,9 @@ The persisted layout still contains the Explorer pane so tabs survive reloads. T
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-Explorer uses the shared workspace tab row and ordinary tab context menus. Its tabs are exempt from the main workspace strip’s 96 px minimum. Right-click an Explorer tab or the empty strip and choose **Icon-only tabs** to hide labels while retaining tooltips, accessible names and tab actions. Settings mentions the feature and directs you to these menus. Icon-only tabs match the adjacent + control’s size; close them from their context menu. Files and Changes
+Explorer uses the shared workspace tab row and ordinary tab context menus. Explorer tabs keep
+the upstream 64 px minimum and can hide their labels; see
+[Workspace tab widths](fork-features/workspace-tab-widths.md). Files and Changes
 hide their close buttons through the panel manifest; close them from the tab context menu.
 Other tabs reveal the close control on hover. Compact layouts show no inline close on any tab,
 since a narrow X beside the label is easy to hit by accident; the long-press menu closes it.

@@ -1,4 +1,3 @@
-import type { PaneHost } from "@/panels/panel-manifest";
 import { useMemo } from "react";
 import { useWindowDimensions } from "react-native";
 import { useSettings } from "@/hooks/use-settings";
@@ -14,8 +13,8 @@ interface UseWorkspaceTabLayoutInput {
   metrics: WorkspaceTabLayoutMetrics;
   compact: boolean;
   fillAvailableWidth?: boolean;
-  host?: PaneHost;
-  iconOnlyTabWidth?: number;
+  /** The square icon-only tab width, or null for labelled tabs. */
+  iconOnlyTabWidth: number | null;
 }
 
 interface UseWorkspaceTabLayoutResult {
@@ -26,9 +25,7 @@ export function useWorkspaceTabLayout(
   input: UseWorkspaceTabLayoutInput,
 ): UseWorkspaceTabLayoutResult {
   const { width: viewportWidth } = useWindowDimensions();
-  const { settings } = useSettings();
-  const widerTabs = settings.paseoPlusPlus.widerWorkspaceTabs;
-  const iconOnly = input.host === "explorer" && settings.paseoPlusPlus.explorerIconOnlyTabs;
+  const widerTabs = useSettings((settings) => settings.paseoPlusPlus.widerWorkspaceTabs);
   // Fill only from the tab track's own geometry, never from a guessed window width.
   const fallbackViewportWidth = input.fillAvailableWidth ? 0 : viewportWidth;
   const resolvedViewportWidth =
@@ -45,17 +42,15 @@ export function useWorkspaceTabLayout(
         compact: input.compact,
         fillAvailableWidth: input.fillAvailableWidth,
         widerTabs,
-        iconOnly,
-        iconOnlyTabWidth: input.iconOnlyTabWidth,
+        iconOnlyTabWidth: input.iconOnlyTabWidth ?? undefined,
       }),
     [
-      input.metrics,
-      input.tabLabelWidths,
       input.compact,
       input.fillAvailableWidth,
+      input.metrics,
+      input.tabLabelWidths,
       resolvedViewportWidth,
       widerTabs,
-      iconOnly,
       input.iconOnlyTabWidth,
     ],
   );

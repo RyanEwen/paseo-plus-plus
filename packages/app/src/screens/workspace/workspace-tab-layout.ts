@@ -1,9 +1,21 @@
 import type { PaneHost } from "@/panels/panel-manifest";
-export const MIN_WORKSPACE_TAB_WIDTH = 96;
 
-/** Desktop main/sheet tabs retain the fork minimum; compact chips use the upstream touch layout. */
+/** Paseo++ minimum for main and sheet tabs on wide layouts, so short names stay easy to click. */
+export const MIN_WORKSPACE_TAB_WIDTH = 96;
+/** Upstream's tab minimum, kept wherever the wider fork minimum does not fit. */
+const UPSTREAM_TAB_MIN_WIDTH = 64;
+
+/**
+ * The narrowest a labelled tab may become in `host` before its strip scrolls.
+ *
+ * Wide main and sheet panes use the fork minimum. Compact chips keep upstream's touch layout, and
+ * the Explorer keeps upstream's minimum because its dock can be as narrow as 240 points, where
+ * 96-point tabs would make the strip scroll after a single tab.
+ */
 export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
-  if (compact || host === "explorer") return 64;
+  if (compact || host === "explorer") {
+    return UPSTREAM_TAB_MIN_WIDTH;
+  }
   return MIN_WORKSPACE_TAB_WIDTH;
 }
 
@@ -32,7 +44,7 @@ export interface WorkspaceTabLayoutInput {
   fillAvailableWidth?: boolean;
   /** Raise only the title-width ceiling; short tabs stay content-driven. */
   widerTabs?: boolean;
-  iconOnly?: boolean;
+  /** Present for icon-only tabs: every tab is a square cell of this width with no label. */
   iconOnlyTabWidth?: number;
 }
 
@@ -89,20 +101,21 @@ export function computeWorkspaceTabLayout(
   const gapCount = fillAvailableWidth ? tabCount : Math.max(tabCount - 1, 0);
   const rowOverhead = input.metrics.rowPaddingHorizontal * 2 + gapCount * input.metrics.tabGap;
   const availableTabsWidth = Math.max(0, availableWidth - rowOverhead);
+  if (input.iconOnlyTabWidth !== undefined) {
+    const width = input.iconOnlyTabWidth;
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      // A square cell has no room for an inline X; icon-only tabs close from their context menu.
+      closeButtonPolicy: "none",
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const tabChromeWidth =
     input.metrics.tabIconWidth +
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
   const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
-  if (input.iconOnly) {
-    const width = Math.max(input.metrics.tabIconWidth, input.iconOnlyTabWidth ?? 44);
-    return {
-      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
-      closeButtonPolicy,
-      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
-    };
-  }
   if (fillAvailableWidth) {
     const width = Math.max(input.metrics.minTabWidth, availableTabsWidth / tabCount);
     return {
