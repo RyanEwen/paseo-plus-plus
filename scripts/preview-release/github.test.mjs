@@ -32,8 +32,8 @@ test("does not retry an authentication failure while waiting for a draft", async
   assert.equal(attempts, 1);
 });
 
-test("accepts a draft whose uploaded assets match the validated set", () => {
-  requireUploadedDraftAssets({
+test("accepts a draft whose uploaded assets match the validated set", async () => {
+  await requireUploadedDraftAssets({
     repo: "RyanEwen/paseo-plus-plus",
     tag: "v0.15.3-preview.43",
     names: ["SHA256SUMS", "app.apk"],
@@ -41,8 +41,8 @@ test("accepts a draft whose uploaded assets match the validated set", () => {
   });
 });
 
-test("rejects a draft whose uploaded assets differ from the validated set", () => {
-  assert.throws(
+test("rejects a draft whose uploaded assets differ from the validated set", async () => {
+  await assert.rejects(
     () =>
       requireUploadedDraftAssets({
         repo: "RyanEwen/paseo-plus-plus",
@@ -51,5 +51,31 @@ test("rejects a draft whose uploaded assets differ from the validated set", () =
         lookup: () => ({ assets: [{ name: "app.apk" }] }),
       }),
     /do not match the validated set/,
+  );
+});
+
+test("waits for the uploaded draft to reappear before comparing its assets", async () => {
+  let attempts = 0;
+  await requireUploadedDraftAssets({
+    repo: "RyanEwen/paseo-plus-plus",
+    tag: "v0.15.3-preview.43",
+    names: ["app.apk"],
+    lookup: () => (++attempts === 3 ? { assets: [{ name: "app.apk" }] } : null),
+    sleep: async () => {},
+  });
+  assert.equal(attempts, 3);
+});
+
+test("reports a draft that never reappears after upload as a release-state failure", async () => {
+  await assert.rejects(
+    () =>
+      requireUploadedDraftAssets({
+        repo: "RyanEwen/paseo-plus-plus",
+        tag: "v0.15.3-preview.43",
+        names: ["app.apk"],
+        lookup: () => null,
+        sleep: async () => {},
+      }),
+    /Draft is not visible after upload; the release remains a draft/,
   );
 });

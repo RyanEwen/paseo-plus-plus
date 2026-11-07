@@ -28,11 +28,23 @@ export async function waitForGitHubRelease(
 /**
  * Confirm that a draft holds exactly the validated assets after upload.
  *
- * `names` is the sorted list of file names that were uploaded. Throws when GitHub reports a
- * different set, leaving the release as a draft.
+ * `names` is the sorted list of file names that were uploaded. The draft can briefly drop out of
+ * GitHub's list after uploads, so this waits for it like the pre-upload lookup does. Throws when the
+ * draft stays invisible or GitHub reports a different asset set, leaving the release as a draft.
+ * `lookup` and `sleep` are injectable for tests.
  */
-export function requireUploadedDraftAssets({ repo, tag, names, lookup = getGitHubRelease }) {
-  const uploaded = lookup(repo, tag);
+export async function requireUploadedDraftAssets({
+  repo,
+  tag,
+  names,
+  lookup = getGitHubRelease,
+  sleep,
+}) {
+  const uploaded = await waitForGitHubRelease(repo, tag, { lookup, sleep });
+  if (!uploaded) {
+    throw new Error("Draft is not visible after upload; the release remains a draft");
+  }
+
   const uploadedNames = uploaded.assets.map((asset) => asset.name).sort();
   if (JSON.stringify(uploadedNames) !== JSON.stringify(names)) {
     throw new Error(

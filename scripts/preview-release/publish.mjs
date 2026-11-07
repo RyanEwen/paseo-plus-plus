@@ -93,7 +93,7 @@ ${kind === "bridge" ? updaterBridgeMarker : ""}
   if (exitCode !== 0) {
     throw new Error("Preview asset upload failed; the release remains a draft");
   }
-  requireUploadedDraftAssets({ repo, tag: release.tag, names });
+  await requireUploadedDraftAssets({ repo, tag: release.tag, names });
   if (publish) {
     // The qualified bridge must still be public and unchanged after uploads finish.
     const policy = requirePublicationPolicy({ kind, repo, release });
