@@ -128,7 +128,9 @@ it("shows the explicit intervention reason and routes to the escalating child's 
     attentionMessage: "Choose which account to use",
     assistantMessage: "Unrelated routine output",
   });
-  expect(payload.body).toBe("Agent needs attention\nChoose which account to use");
+  // Notification workspace context moves this title into the body behind the workspace name.
+  expect(payload.title).toBe("Agent needs attention");
+  expect(payload.body).toBe("Choose which account to use");
   expect(payload.data).toMatchObject({
     serverId: "host",
     workspaceId: "worker-workspace",
