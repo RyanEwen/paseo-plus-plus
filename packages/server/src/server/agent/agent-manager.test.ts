@@ -6245,6 +6245,35 @@ test("getAgent does not expose committed history internals once manager owns the
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
 });
 
+test("an exact wait ends when no run can still admit the request", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unadmitted-request-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new StreamingAssistantClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000121",
+  });
+  const idle = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const query = {
+    requester: { agentId: "waiting-requester" },
+    link: { objectiveId: "caller-job", requestId: "never-submitted", token: "cap-lost" },
+  };
+
+  for (const agentId of [idle.id, "00000000-0000-4000-8000-000000000999"]) {
+    await expect(
+      manager.waitForAttentionOutcome({
+        agentId,
+        query,
+        signal: AbortSignal.timeout(5_000),
+        waitForSubmission: true,
+      }),
+    ).resolves.toBeNull();
+  }
+});
+
 test("streams coalesced assistant chunks and retains the projected message", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provisional-timeline-"));
   const storagePath = join(workdir, "agents");

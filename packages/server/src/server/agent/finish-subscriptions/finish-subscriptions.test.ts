@@ -549,6 +549,32 @@ test("distinct exact requests for the same child coexist and settle in reverse o
   expect(h.delivery.prompts).toEqual([]);
 });
 
+test("an exact watch whose child can never answer tells the caller and ends", async () => {
+  const delivered: string[] = [];
+  const h = await scenario(undefined, 0, 1, {
+    deliverExact: async (record) => {
+      delivered.push(record.attention!.link.requestId);
+      return { outcomeId: "unexpected", terminal: true };
+    },
+    acknowledgeExact: async () => {},
+  });
+  await h.service.register(exactIntent("lost-request"));
+  await until(() => h.observation.waits.length === 1);
+  h.observation.waits[0]!.result.resolve({
+    status: "error",
+    final: null,
+    lastMessage: null,
+    error: null,
+    attentionOutcome: null,
+  });
+  await until(() => h.delivery.acknowledgments.length === 1);
+  h.delivery.acknowledgments[0]!.resolve("steered");
+  await expect.poll(() => h.store.list()).toEqual([]);
+  expect(delivered).toEqual([]);
+  expect(h.delivery.prompts).toHaveLength(1);
+  expect(h.delivery.prompts[0]).toContain("is unavailable");
+});
+
 test("restart retries only target acknowledgment after exact source consumption", async () => {
   let delivered = 0;
   let ackAttempts = 0;

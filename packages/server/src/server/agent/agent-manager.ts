@@ -1041,7 +1041,12 @@ export class AgentManager {
     });
   }
 
-  /** Wait for one immutable request outcome under the caller's existing agent observation authority. */
+  /**
+   * Wait for one immutable request outcome under the caller's existing agent observation authority.
+   *
+   * Resolves null when no outcome can arrive: the request is known without one, or it is unknown
+   * and no unadmitted run could still accept it (for example a deleted child or a lost prompt).
+   */
   async waitForAttentionOutcome(input: {
     agentId: string;
     query: AgentAttentionRequestQuery;
@@ -1066,13 +1071,17 @@ export class AgentManager {
         const before = changed;
         const state = await this.runForegroundMutation(input.agentId, async () => {
           const agent = this.agents.get(input.agentId);
+          // Only a run that has not been admitted yet can still accept this request.
+          const submissionPossible = this.hasInFlightRun(input.agentId);
           if (agent?.attentionObjectives) {
             const result = agent.attentionObjectives.requests.read(query);
             if (query.acknowledgeOutcomeId) await this.persistSnapshot(agent);
-            return result;
+            return { ...result, submissionPossible };
           }
           const record = await this.registry?.get(input.agentId);
-          if (!record?.attentionObjectives) return { outcome: null, pending: false, known: false };
+          if (!record?.attentionObjectives) {
+            return { outcome: null, pending: false, known: false, submissionPossible };
+          }
           if (query.acknowledgeOutcomeId) {
             await this.registry?.update(input.agentId, (current) => {
               const ledger = this.createAttentionObjectives(current.attentionObjectives);
@@ -1081,16 +1090,23 @@ export class AgentManager {
             });
           }
           const latest = await this.registry?.get(input.agentId);
-          return this.createAttentionObjectives(latest?.attentionObjectives).requests.read({
+          const result = this.createAttentionObjectives(latest?.attentionObjectives).requests.read({
             link: query.link,
             requester: query.requester,
           });
+          return { ...result, submissionPossible };
         });
         const wasAcknowledgement = query.acknowledgeOutcomeId !== undefined;
         query = { link: query.link, requester: query.requester };
-        if (state.outcome) return state.outcome;
-        if (!state.pending && (state.known || !input.waitForSubmission || wasAcknowledgement))
+        if (state.outcome) {
+          return state.outcome;
+        }
+        // A deleted child, or one whose queued submission was lost, never admits the request.
+        const awaitingSubmission =
+          input.waitForSubmission === true && !wasAcknowledgement && state.submissionPossible;
+        if (!state.pending && (state.known || !awaitingSubmission)) {
           return null;
+        }
         if (before !== changed) continue;
         await new Promise<void>((resumeWait) => {
           wake = resumeWait;

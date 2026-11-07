@@ -340,7 +340,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
             stop(watch, group);
             return;
           }
-          if (record.attention && !pending.reason) {
+          // A null exact outcome means the child can never answer this request, so the
+          // caller is told through the ordinary finish notification and the intent ends.
+          if (record.attention && !pending.reason && pending.attentionOutcome !== null) {
             await captureExactAcknowledgement(record, watch, pending, signal);
             pending = undefined;
             continue;
