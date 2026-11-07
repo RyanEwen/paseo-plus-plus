@@ -27,7 +27,7 @@ export function createSettingsHostTransport(
       );
     },
     read,
-    patch: (patches, initialize) => input.client.patchAppSettings(patches, initialize),
+    patch: (request) => input.client.patchAppSettings(request),
   };
 
   /** Replace failed or stale bootstrap ownership before reading; applying values never writes. */

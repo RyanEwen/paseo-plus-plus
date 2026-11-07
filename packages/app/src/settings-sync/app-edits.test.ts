@@ -21,7 +21,10 @@ function deviceOnlyModel() {
 describe("device-only app settings saves", () => {
   it("takes the ordinary local path when a save arrives before sync state loads", async () => {
     const { model } = deviceOnlyModel();
-    const save = createSyncedAppSettingsSave(model, async () => DEFAULT_CLIENT_SETTINGS);
+    const save = createSyncedAppSettingsSave({
+      model,
+      loadSettings: async () => DEFAULT_CLIENT_SETTINGS,
+    });
     expect(model.getState().status).toBe("loading");
 
     // false hands the write back to ordinary local storage.
@@ -36,7 +39,10 @@ describe("device-only app settings saves", () => {
     await expect(model.selectHost("A")).rejects.toThrow("disk full");
     expect(model.getState()).toMatchObject({ status: "error", selectedHost: null });
 
-    const save = createSyncedAppSettingsSave(model, async () => DEFAULT_CLIENT_SETTINGS);
+    const save = createSyncedAppSettingsSave({
+      model,
+      loadSettings: async () => DEFAULT_CLIENT_SETTINGS,
+    });
     await expect(save(new QueryClient(), { theme: "light" })).resolves.toBe(false);
   });
 });

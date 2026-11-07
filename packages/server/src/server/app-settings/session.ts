@@ -11,14 +11,20 @@ registerForkCapability("appSettingsChatPreferences");
 
 /** Settings RPC adapter. Subscription lifetimes belong to the existing delivery owner. */
 export class AppSettingsSession {
+  private readonly emit: (message: SessionOutboundMessage) => void;
+  private readonly delivery: SessionDelivery;
   private readonly store: AppSettingsStore;
-  constructor(
-    private readonly emit: (message: SessionOutboundMessage) => void,
-    private readonly delivery: SessionDelivery,
-    paseoHome: string,
-    store?: AppSettingsStore,
-  ) {
-    this.store = store ?? new AppSettingsStore(paseoHome);
+
+  constructor(input: {
+    emit: (message: SessionOutboundMessage) => void;
+    delivery: SessionDelivery;
+    /** The daemon-wide store; a session without one gets a private store under paseoHome. */
+    store?: AppSettingsStore;
+    paseoHome: string;
+  }) {
+    this.emit = input.emit;
+    this.delivery = input.delivery;
+    this.store = input.store ?? new AppSettingsStore(input.paseoHome);
   }
 
   dispatch(message: SessionInboundMessage): Promise<void> | undefined {
@@ -72,7 +78,10 @@ export class AppSettingsSession {
   private async patch(
     request: Extract<SessionInboundMessage, { type: "app.settings.patch.request" }>,
   ): Promise<void> {
-    const result = await this.store.patch(request.patches, request.initialize);
+    const result = await this.store.patch({
+      patches: request.patches,
+      initialize: request.initialize,
+    });
     this.emit({
       type: "app.settings.patch.response",
       payload: { requestId: request.requestId, ...result },

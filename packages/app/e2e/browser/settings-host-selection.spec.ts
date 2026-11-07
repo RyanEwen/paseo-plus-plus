@@ -91,10 +91,12 @@ test("explicit settings host sync shares preferences across independent clients 
   try {
     await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
     await installUsageReportsFixture(second, { lists: [() => claudeAndCodexReports()] });
-    await remoteClient.patchAppSettings(
-      [{ path: ["app", "paseoPlusPlus", "stickyUserPrompts"], value: false, expectedRevision: 0 }],
-      true,
-    );
+    await remoteClient.patchAppSettings({
+      patches: [
+        { path: ["app", "paseoPlusPlus", "stickyUserPrompts"], value: false, expectedRevision: 0 },
+      ],
+      initialize: true,
+    });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(buildSettingsSectionRoute("paseo-plus-plus"));
     const sync = page.getByTestId("settings-sync");

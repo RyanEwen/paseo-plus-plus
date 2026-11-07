@@ -13,6 +13,8 @@ import {
   SYNC_SETTING_DOMAINS,
   type AppSettingsSnapshot,
   type AppSettingsPatch,
+  type AppSettingsPatchInput,
+  type AppSettingsPatchResult,
 } from "@getpaseo/protocol/app-settings";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 
@@ -51,18 +53,15 @@ export class AppSettingsStore {
   }
 
   /** Apply all leaves atomically or return conflicting paths without writing any of them. */
-  patch(
-    patches: AppSettingsPatch[],
-    initialize = false,
-  ): Promise<{ snapshot: AppSettingsSnapshot; conflicts: string[][] }> {
-    const operation = this.queue.then(() => this.persistPatch(patches, initialize));
+  patch(input: AppSettingsPatchInput): Promise<AppSettingsPatchResult> {
+    const operation = this.queue.then(() => this.persistPatch(input));
     this.queue = operation.catch(() => undefined);
     return operation;
   }
-  private async persistPatch(
-    patches: AppSettingsPatch[],
-    initialize: boolean,
-  ): Promise<{ snapshot: AppSettingsSnapshot; conflicts: string[][] }> {
+  private async persistPatch({
+    patches,
+    initialize = false,
+  }: AppSettingsPatchInput): Promise<AppSettingsPatchResult> {
     const snapshot = await this.readFile();
     validatePatches(patches);
     if (!snapshot.initialized && !initialize)

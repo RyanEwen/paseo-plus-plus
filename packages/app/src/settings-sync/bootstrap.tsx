@@ -41,12 +41,12 @@ export function SettingsSyncBootstrap() {
       subscribe: subscribeSettingsEditingBlocked,
     });
     const uninstall = installSettingsSyncSaveHandler(
-      createSyncedAppSettingsSave(
-        settingsSync,
-        loadAppSettingsFromStorage,
+      createSyncedAppSettingsSave({
+        model: settingsSync,
+        loadSettings: loadAppSettingsFromStorage,
         saveLocalUsageHost,
-        saveLocalDeviceSettings,
-      ),
+        saveLocalSettings: saveLocalDeviceSettings,
+      }),
     );
     let hydrated = false;
     let initializing = false;

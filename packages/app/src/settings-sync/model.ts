@@ -4,6 +4,8 @@ import {
   AppSettingsPatchSchema,
   AppSettingsSnapshotSchema,
   type AppSettingsPatch,
+  type AppSettingsPatchInput,
+  type AppSettingsPatchResult,
   type AppSettingsSnapshot,
 } from "@getpaseo/protocol/app-settings";
 import {
@@ -50,10 +52,7 @@ export interface SettingsSyncTransport {
   supported: boolean;
   writable: boolean;
   read(): Promise<AppSettingsSnapshot>;
-  patch(
-    patches: AppSettingsPatch[],
-    initialize: boolean,
-  ): Promise<{ snapshot: AppSettingsSnapshot; conflicts: string[][] }>;
+  patch(input: AppSettingsPatchInput): Promise<AppSettingsPatchResult>;
 }
 export interface SettingsSyncDeps {
   readLocal(): Promise<unknown>;
@@ -303,7 +302,7 @@ export class SettingsSyncModel {
     const values = await this.deps.getDeviceValues("publish");
     if (!this.current(host, generation)) return;
     const patches = syncedSettingsPatches(settingsDiff({}, values, EMPTY_APP_SETTINGS_SNAPSHOT));
-    const result = await transport.patch(patches, true);
+    const result = await transport.patch({ patches, initialize: true });
     if (!this.current(host, generation)) return;
     if (result.conflicts.length) {
       await this.serialize(async () => {
@@ -407,7 +406,7 @@ export class SettingsSyncModel {
     if (!sent.length) return;
     this.sending = (async () => {
       try {
-        const result = await transport.patch(sent, false);
+        const result = await transport.patch({ patches: sent });
         await this.serialize(async () => {
           const current = this.local.hosts[host]!;
           const acknowledged = new Set(sent.map((patch) => JSON.stringify(patch)));

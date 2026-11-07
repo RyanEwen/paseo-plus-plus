@@ -26,7 +26,11 @@ import {
 import { createSyncedAppSettingsSave } from "./app-edits";
 import { describe, expect, it } from "vitest";
 import { SettingsSyncModel, type SettingsSyncTransport } from "./model";
-import type { AppSettingsSnapshot, AppSettingsPatch } from "@getpaseo/protocol/app-settings";
+import type {
+  AppSettingsSnapshot,
+  AppSettingsPatch,
+  AppSettingsPatchInput,
+} from "@getpaseo/protocol/app-settings";
 import { applySettingsPatches, settingsDiff } from "@getpaseo/protocol/app-settings-values";
 
 function snapshot(theme: string | null, revision = 1): AppSettingsSnapshot {
@@ -70,7 +74,7 @@ function host(initial: AppSettingsSnapshot) {
     supported: true,
     writable: true,
     read: async () => structuredClone(remote),
-    patch: async (patches, initialize) => {
+    patch: async ({ patches, initialize = false }) => {
       writes.push({ patches: structuredClone(patches), initialize });
       remote = {
         initialized: true,
@@ -309,11 +313,11 @@ it("rebases a second same-field edit after its own earlier in-flight write", asy
   let calls = 0;
   const transport = {
     ...a.transport,
-    patch: async (patches: AppSettingsPatch[], initialize: boolean) => {
+    patch: async ({ patches, initialize }: AppSettingsPatchInput) => {
       calls += 1;
       if (calls === 1) return firstSave.promise;
       expect(patches[0]!.expectedRevision).toBe(2);
-      return a.transport.patch(patches, initialize);
+      return a.transport.patch({ patches, initialize });
     },
   };
   await model.load();
@@ -388,7 +392,10 @@ it("evaluates queued functional app edits against the latest durable settings", 
   await model.selectHost("A");
   await model.connect("A", a.transport);
   await model.connect("A", null);
-  const save = createSyncedAppSettingsSave(model, async () => DEFAULT_CLIENT_SETTINGS);
+  const save = createSyncedAppSettingsSave({
+    model,
+    loadSettings: async () => DEFAULT_CLIENT_SETTINGS,
+  });
   await Promise.all([
     save(queryClient, (current) => ({ autoExpandReasoning: !current.autoExpandReasoning })),
     save(queryClient, (current) => ({ autoExpandReasoning: !current.autoExpandReasoning })),
@@ -409,7 +416,7 @@ it("fences a queued app edit while its old host's local settings are still loadi
   await model.load();
   await model.selectHost("A");
   await model.connect("A", a.transport);
-  const save = createSyncedAppSettingsSave(model, () => loading.promise);
+  const save = createSyncedAppSettingsSave({ model, loadSettings: () => loading.promise });
   const saving = save(queryClient, { theme: "auto" });
   // Attach rejection handling before resolving the deliberately delayed read.
   const rejected = expect(saving).rejects.toThrow("Settings host changed");
@@ -483,16 +490,16 @@ it("syncs Usage display and footer visibility while each client keeps its own re
   const adopted = client.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)!;
   expect(adopted.usage).toMatchObject({ displayAs: "remaining", serverId: "device-host" });
   expect(adopted.sidebarFooterItems).toEqual([{ key: "usage", visible: true }]);
-  const save = createSyncedAppSettingsSave(
+  const save = createSyncedAppSettingsSave({
     model,
-    async () => DEFAULT_CLIENT_SETTINGS,
-    async (_query, serverId) => {
+    loadSettings: async () => DEFAULT_CLIENT_SETTINGS,
+    saveLocalUsageHost: async (_query, serverId) => {
       client.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, (current) => ({
         ...current!,
         usage: { ...current!.usage, serverId },
       }));
     },
-  );
+  });
   await save(client, (current) => ({
     usage: { ...current.usage, serverId: "another-device-host" },
   }));
@@ -1044,12 +1051,11 @@ describe("device-local settings scope", () => {
       client,
       model,
       localSave,
-      save: createSyncedAppSettingsSave(
+      save: createSyncedAppSettingsSave({
         model,
-        async () => client.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)!,
-        undefined,
-        localSave,
-      ),
+        loadSettings: async () => client.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)!,
+        saveLocalSettings: localSave,
+      }),
     };
   }
 
@@ -1147,14 +1153,13 @@ describe("device-local settings scope", () => {
     await device.model.load();
     await device.model.selectHost("A");
     await device.model.connect("A", remote.transport);
-    const save = createSyncedAppSettingsSave(
-      device.model,
-      async () => DEFAULT_CLIENT_SETTINGS,
-      undefined,
-      async () => {
+    const save = createSyncedAppSettingsSave({
+      model: device.model,
+      loadSettings: async () => DEFAULT_CLIENT_SETTINGS,
+      saveLocalSettings: async () => {
         throw new Error("device write failed");
       },
-    );
+    });
     await expect(save(device.client, { uiBaseFontSize: 17, theme: "light" })).rejects.toThrow(
       "device write failed",
     );

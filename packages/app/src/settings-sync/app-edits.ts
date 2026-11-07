@@ -10,13 +10,23 @@ import { deviceAppSettingsUpdate, type DeviceAppSettingsUpdate } from "./device-
 import { isSyncedSettingsPath } from "./scope";
 import type { SettingsSyncModel } from "./model";
 
+/** What the synced save needs: the model, a settings reader and the device-local writers. */
+export interface SyncedAppSettingsSaveInput {
+  model: SettingsSyncModel;
+  loadSettings: () => Promise<AppSettings>;
+  /** Persists the device-local Usage report host; required once a save changes it. */
+  saveLocalUsageHost?: (queryClient: QueryClient, serverId: string | null) => Promise<void>;
+  /** Persists device-local leaves; required once a save changes one. */
+  saveLocalSettings?: (queryClient: QueryClient, updates: DeviceAppSettingsUpdate) => Promise<void>;
+}
+
 /** Evaluate functional settings updates after prior durable edits, retaining their original host. */
-export function createSyncedAppSettingsSave(
-  model: SettingsSyncModel,
-  loadSettings: () => Promise<AppSettings>,
-  saveLocalUsageHost?: (queryClient: QueryClient, serverId: string | null) => Promise<void>,
-  saveLocalSettings?: (queryClient: QueryClient, updates: DeviceAppSettingsUpdate) => Promise<void>,
-) {
+export function createSyncedAppSettingsSave({
+  model,
+  loadSettings,
+  saveLocalUsageHost,
+  saveLocalSettings,
+}: SyncedAppSettingsSaveInput) {
   let queue: Promise<unknown> = Promise.resolve();
   return async (queryClient: QueryClient, updates: AppSettingsUpdate): Promise<boolean> => {
     // A save can arrive before the bootstrap loads sync state; load it first so a device with no
