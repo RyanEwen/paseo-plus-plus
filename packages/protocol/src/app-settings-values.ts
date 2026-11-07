@@ -1,5 +1,25 @@
 import type { AppSettingsPatch, AppSettingsSnapshot } from "./app-settings.js";
 
+/** The document of a host that has never stored settings. Clone it before mutating. */
+export const EMPTY_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
+  initialized: false,
+  revision: 0,
+  values: {},
+  fieldRevisions: {},
+};
+
+/** Keys that could reach an object prototype; never valid in a preference path. */
+export const FORBIDDEN_SETTINGS_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "prototype",
+  "constructor",
+]);
+
+/** True when one path equals or contains the other, so writing one changes the other. */
+export function settingsPathsOverlap(a: readonly string[], b: readonly string[]): boolean {
+  return a.slice(0, Math.min(a.length, b.length)).every((part, index) => part === b[index]);
+}
+
 /** JSON-encoded paths avoid collisions with preference keys containing punctuation. */
 export function settingsFieldKey(path: readonly string[]): string {
   return JSON.stringify(path);
@@ -13,12 +33,7 @@ export function settingsPathRevision(
   let revision = 0;
   for (const [key, value] of Object.entries(snapshot.fieldRevisions)) {
     const other: string[] = JSON.parse(key);
-    if (
-      other
-        .slice(0, Math.min(path.length, other.length))
-        .every((part, index) => part === path[index])
-    )
-      revision = Math.max(revision, value);
+    if (settingsPathsOverlap(other, path)) revision = Math.max(revision, value);
   }
   return revision;
 }
@@ -67,7 +82,7 @@ export function applySettingsPatches(
 ): Record<string, unknown> {
   const next = cloneSettingsJson(values);
   for (const patch of patches) {
-    if (patch.path.some((key) => ["__proto__", "prototype", "constructor"].includes(key)))
+    if (patch.path.some((key) => FORBIDDEN_SETTINGS_KEYS.has(key)))
       throw new Error("Unsafe preference path");
     let target = next;
     for (const key of patch.path.slice(0, -1)) {

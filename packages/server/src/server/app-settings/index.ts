@@ -1,6 +1,9 @@
 import {
+  EMPTY_APP_SETTINGS_SNAPSHOT,
+  FORBIDDEN_SETTINGS_KEYS,
   settingsFieldKey,
   settingsPathRevision,
+  settingsPathsOverlap,
   isSyncedSettingsPath,
 } from "@getpaseo/protocol/app-settings-values";
 import { promises as fs } from "node:fs";
@@ -12,14 +15,6 @@ import {
   type AppSettingsPatch,
 } from "@getpaseo/protocol/app-settings";
 import { writeJsonFileAtomic } from "../atomic-file.js";
-
-const EMPTY: AppSettingsSnapshot = {
-  initialized: false,
-  revision: 0,
-  values: {},
-  fieldRevisions: {},
-};
-const FORBIDDEN = new Set(["__proto__", "prototype", "constructor"]);
 
 /** File-backed host authority. Mutations serialize, and observers see only durable writes. */
 export class AppSettingsStore {
@@ -45,7 +40,7 @@ export class AppSettingsStore {
       return AppSettingsSnapshotSchema.parse(JSON.parse(await fs.readFile(this.file, "utf8")));
     } catch (error) {
       const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-      if (missing) return structuredClone(EMPTY);
+      if (missing) return structuredClone(EMPTY_APP_SETTINGS_SNAPSHOT);
       throw error;
     }
   }
@@ -128,7 +123,7 @@ function validatePatches(patches: AppSettingsPatch[]): void {
       allowed === null ||
       patch.path.length < 2 ||
       patch.path.length > 8 ||
-      patch.path.some((part) => FORBIDDEN.has(part))
+      patch.path.some((part) => FORBIDDEN_SETTINGS_KEYS.has(part))
     )
       throw new Error("Invalid app settings path");
     if (!allowed.includes(patch.path[1]!))
@@ -140,13 +135,7 @@ function validatePatches(patches: AppSettingsPatch[]): void {
     // Objects are patched through leaves. Arrays are ordered preference values, replaced whole.
     if (patch.value !== null && typeof patch.value === "object" && !Array.isArray(patch.value))
       throw new Error("Patch preference objects through their leaves");
-    if (
-      paths.some((path) =>
-        path
-          .slice(0, Math.min(path.length, patch.path.length))
-          .every((part, index) => part === patch.path[index]),
-      )
-    )
+    if (paths.some((path) => settingsPathsOverlap(path, patch.path)))
       throw new Error("Overlapping preference paths");
     paths.push(patch.path);
   }

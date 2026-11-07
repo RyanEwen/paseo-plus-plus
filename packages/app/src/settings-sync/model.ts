@@ -7,6 +7,7 @@ import {
   type AppSettingsSnapshot,
 } from "@getpaseo/protocol/app-settings";
 import {
+  EMPTY_APP_SETTINGS_SNAPSHOT,
   applySettingsPatches,
   cloneSettingsJson,
   settingsDiff,
@@ -25,12 +26,6 @@ const LocalStateSchema = z.object({
   hosts: z.record(z.string(), HostStateSchema),
 });
 type LocalState = z.infer<typeof LocalStateSchema>;
-const EMPTY: AppSettingsSnapshot = {
-  initialized: false,
-  revision: 0,
-  values: {},
-  fieldRevisions: {},
-};
 
 export type SyncStatus =
   | "loading"
@@ -295,7 +290,7 @@ export class SettingsSyncModel {
   }
 
   getSnapshot(): AppSettingsSnapshot {
-    return this.local.hosts[this.state.selectedHost ?? ""]?.snapshot ?? EMPTY;
+    return this.local.hosts[this.state.selectedHost ?? ""]?.snapshot ?? EMPTY_APP_SETTINGS_SNAPSHOT;
   }
 
   /** An empty host is initialized only through this explicit user command, using revision zero. */
@@ -307,7 +302,7 @@ export class SettingsSyncModel {
       throw new Error("Read an empty settings host before publishing");
     const values = await this.deps.getDeviceValues("publish");
     if (!this.current(host, generation)) return;
-    const patches = syncedSettingsPatches(settingsDiff({}, values, EMPTY));
+    const patches = syncedSettingsPatches(settingsDiff({}, values, EMPTY_APP_SETTINGS_SNAPSHOT));
     const result = await transport.patch(patches, true);
     if (!this.current(host, generation)) return;
     if (result.conflicts.length) {
