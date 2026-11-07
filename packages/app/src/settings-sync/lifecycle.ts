@@ -10,16 +10,8 @@ import {
   saveLocalUsageHost,
   settingsSync,
 } from "./runtime";
-import {
-  getSettingsEditingBlocked,
-  installSettingsSyncSaveHandler,
-  setSettingsEditingBlocked,
-  setSettingsHostSelected,
-  subscribeSettingsEditingBlocked,
-} from "./save-handler";
+import { settingsSyncGate, type SettingsSyncGateInstallation } from "./gate";
 import { SYNC_STATUS_POLICY } from "./status-policy";
-
-type InstalledSaveHandler = ReturnType<typeof installSettingsSyncSaveHandler>;
 
 /**
  * Start the app-wide settings sync owner: register the editing blocker and save handler, keep
@@ -29,10 +21,10 @@ type InstalledSaveHandler = ReturnType<typeof installSettingsSyncSaveHandler>;
 export function startSettingsSync(onHydrated: () => void): () => void {
   // Registered from the owner's start, not at module load, so Fast Refresh cannot register twice.
   const unregisterBlocker = registerSettingsEditingBlocker({
-    isBlocked: getSettingsEditingBlocked,
-    subscribe: subscribeSettingsEditingBlocked,
+    isBlocked: () => settingsSyncGate.getState().editingBlocked,
+    subscribe: settingsSyncGate.subscribe,
   });
-  const handler = installSettingsSyncSaveHandler(
+  const handler = settingsSyncGate.install(
     createSyncedAppSettingsSave({
       model: settingsSync,
       loadSettings: loadAppSettingsFromStorage,
@@ -72,7 +64,7 @@ export function startSettingsSync(onHydrated: () => void): () => void {
   return () => {
     progress.active = false;
     owner.abort();
-    handler();
+    handler.release();
     unregisterBlocker();
     stopGate();
     stopRetry();
@@ -80,16 +72,15 @@ export function startSettingsSync(onHydrated: () => void): () => void {
   };
 }
 
-/** Publish read availability, host selection and the editing gate for the current sync state. */
-function publishSyncGate(handler: InstalledSaveHandler, hydrated: boolean): void {
+/** Publish read availability and the editing gate for the current sync state. */
+function publishSyncGate(handler: SettingsSyncGateInstallation, hydrated: boolean): void {
   const state = settingsSync.getState();
   handler.updateReadAvailability({
     hydrated,
     generation: settingsSync.getGeneration(),
     status: state.status,
   });
-  setSettingsHostSelected(state.selectedHost !== null);
-  setSettingsEditingBlocked(
+  settingsSyncGate.setEditingBlocked(
     !hydrated || !state.canWrite || !SYNC_STATUS_POLICY[state.status].allowsEdits,
   );
 }
