@@ -5,6 +5,7 @@ import {
 } from "./index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import type {
+  AgentAttentionLink,
   AgentMessageAttention,
   AgentAttentionRequestQuery,
 } from "@getpaseo/protocol/agent-attention";
@@ -14,7 +15,7 @@ import { toAgentPayload } from "../agent-projections.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
 import { createTestAgentMessages } from "../../test-utils/agent-messages.js";
-import { expect, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -134,28 +135,11 @@ function setupFinishWait(params: FinishWaitFixture): () => void {
   };
 }
 
-it.each([
-  {
-    mode: "parented",
-    name: "keeps two exact routed request watches so later work cannot discard an earlier result",
-  },
-  {
-    mode: "independent",
-    name: "independent routed recipient returns exact outcomes despite parent mismatch",
-  },
-  {
-    mode: "legacy",
-    name: "independent routed recipient without correlation retains parent rejection and cannot dispatch",
-  },
-  {
-    mode: "invalid-token",
-    name: "independent routed recipient with invalid correlation cannot dispatch",
-  },
-  {
-    mode: "no-outcome",
-    name: "independent routed recipient without exact outcome evidence cannot dispatch",
-  },
-])("$name", async ({ mode }) => {
+/**
+ * A caller with two waiting human objectives, each delegated to the same routed child. Tests
+ * choose the correlation each watch claims and the outcome each child result carries.
+ */
+async function createRoutedRecipientScenario(input: { parented: boolean }) {
   const workdir = mkdtempSync(join(tmpdir(), "attention-watch-membership-"));
   const logger = createTestLogger();
   const retries: FinishRetry[] = [];
@@ -166,8 +150,9 @@ it.each([
     logger,
     clients: createTestAgentClients({
       onStartTurn: (prompt, config) => {
-        if (config.title === "Caller")
+        if (config.title === "Caller") {
           parentPrompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+        }
       },
     }),
   });
@@ -184,9 +169,13 @@ it.each([
   const callerId = randomUUID();
   const childId = randomUUID();
   const peer = { agentId: childId, serverId: "target" };
-  const links = ["human-A", "human-B"].map(
-    (objectiveId) => source.outgoing({ recipient: peer, objectiveId })?.requesterObjective,
-  );
+  const links = ["human-A", "human-B"].map((objectiveId) => {
+    const link = source.outgoing({ recipient: peer, objectiveId })?.requesterObjective;
+    if (!link) {
+      throw new Error("Expected exact request link");
+    }
+    return link;
+  });
   await manager.createAgent({ provider: "claude", cwd: workdir, title: "Caller" }, callerId, {
     workspaceId: undefined,
     attentionObjectives: source.snapshot(),
@@ -196,13 +185,9 @@ it.each([
     childId,
     {
       workspaceId: undefined,
-      labels:
-        mode === "parented"
-          ? {
-              "paseo.parent-agent-id": callerId,
-              "paseo.parent-server-id": "origin",
-            }
-          : undefined,
+      labels: input.parented
+        ? { "paseo.parent-agent-id": callerId, "paseo.parent-server-id": "origin" }
+        : undefined,
     },
   );
   const final = toAgentPayload(child, { title: "Child" });
@@ -211,41 +196,38 @@ it.each([
     agentStorage: storage,
     logger,
   });
-  const outcomes = [
-    Promise.withResolvers<WaitForFinishResult>(),
-    Promise.withResolvers<WaitForFinishResult>(),
-  ];
+  const outcomes = links.map(() => Promise.withResolvers<WaitForFinishResult>());
   const enqueue = vi.spyOn(delivery, "enqueue");
   const signals: AbortSignal[] = [];
   const acknowledgements: string[] = [];
   const stops: Array<() => void> = [];
 
-  async function stopRefusedWatches() {
-    // Exact refusals remain durable retry intents. Prove refusal and absence of
-    // delivery before retiring them, so teardown cannot hide an unintended callback.
-    await expect.poll(() => new Set(retries.map((retry) => retry.subscription.id)).size).toBe(2);
-    for (const { error } of retries) {
-      if (mode === "invalid-token") expect(error).toBeInstanceOf(AttentionObjectiveError);
-      else
-        expect(error).toMatchObject({
-          message: "Exact finish outcome is unavailable or mismatched",
-        });
-    }
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(acknowledgements).toEqual([]);
-    expect(parentPrompts).toEqual([]);
-    expect(
-      (await storage.get(callerId))?.attentionObjectives?.delegations.every(
-        (entry) => !entry.deliveries?.length,
-      ),
-    ).toBe(true);
-    for (const stop of stops) stop();
-  }
+  /** The idle result a watch reads after its first, test-controlled observation. */
+  const settledResult: WaitForFinishResult = {
+    status: "idle",
+    final,
+    error: null,
+    lastMessage: null,
+    attentionOutcome: null,
+  };
 
-  try {
+  /** Watch each delegated request, claiming the correlation `attentionFor` returns. */
+  function watchRequests(
+    attentionFor: (link: AgentAttentionLink) => AgentMessageAttention | undefined,
+  ) {
     for (const [index, link] of links.entries()) {
-      if (!link) throw new Error("Expected exact request link");
       let first = true;
+      const wait = async (signal: AbortSignal, query?: AgentAttentionRequestQuery) => {
+        if (query?.acknowledgeOutcomeId) {
+          acknowledgements.push(query.acknowledgeOutcomeId);
+        }
+        if (!first) {
+          return settledResult;
+        }
+        first = false;
+        signals.push(signal);
+        return outcomes[index]!.promise;
+      };
       stops.push(
         setupFinishWait({
           agentManager: manager,
@@ -255,96 +237,170 @@ it.each([
           childServerId: "target",
           childAgentId: childId,
           callerAgentId: callerId,
-          attention:
-            mode === "legacy"
-              ? undefined
-              : {
-                  continuation:
-                    mode === "invalid-token" ? { ...link, token: "invalid-token" } : link,
-                },
+          attention: attentionFor(link),
           logger,
-          wait: async (signal, query) => {
-            if (query?.acknowledgeOutcomeId) acknowledgements.push(query.acknowledgeOutcomeId);
-            if (first) {
-              first = false;
-              signals.push(signal);
-              return outcomes[index].promise;
-            }
-            return {
-              status: "idle",
-              final,
-              error: null,
-              lastMessage: null,
-              attentionOutcome: null,
-            };
-          },
+          wait,
           onRetry: (retry) => retries.push(retry),
           afterPermission: async () => {},
         }),
       );
     }
+  }
+
+  /** Resolve both child results, newest request first, with or without exact outcome evidence. */
+  function resolveResults(withOutcome: boolean) {
     for (const index of [1, 0]) {
-      const link = links[index];
-      if (!link) throw new Error("Expected request link");
-      outcomes[index].resolve({
+      const link = links[index]!;
+      outcomes[index]!.resolve({
         status: "idle",
         final,
         error: null,
         lastMessage: "Untrusted current message",
-        attentionOutcome:
-          mode === "no-outcome"
-            ? null
-            : {
-                id: randomUUID(),
-                requestId: link.requestId,
-                requester: { agentId: callerId, serverId: "origin" },
-                acceptedTurnId: `target-${index}`,
-                kind: "finished",
-                lastMessage: `EXACT_RESULT_${index}`,
-                error: null,
-              },
+        attentionOutcome: withOutcome
+          ? {
+              id: randomUUID(),
+              requestId: link.requestId,
+              requester: { agentId: callerId, serverId: "origin" },
+              acceptedTurnId: `target-${index}`,
+              kind: "finished",
+              lastMessage: `EXACT_RESULT_${index}`,
+              error: null,
+            }
+          : null,
       });
     }
-    if (mode === "invalid-token" || mode === "no-outcome") await stopRefusedWatches();
+  }
+
+  /** Wait until `count` watches ended, then for the dispatch receipts they produced. */
+  async function settleWatches(count: number) {
     await expect
-      .poll(
-        () =>
-          signals.length === (mode === "legacy" ? 1 : 2) &&
-          signals.every((signal) => signal.aborted),
-      )
+      .poll(() => signals.length === count && signals.every((signal) => signal.aborted))
       .toBe(true);
-    // Observe real public receipts only after both watch paths have settled, without wrapping dispatch.
-    const dispatched = enqueue.mock.results.flatMap((result) => {
-      if (result.type === "return") return [result.value.dispatched];
-      return [];
-    });
+    const dispatched = enqueue.mock.results.flatMap((result) =>
+      result.type === "return" ? [result.value.dispatched] : [],
+    );
     await Promise.allSettled(dispatched);
-    if (mode === "parented" || mode === "independent") {
-      expect(enqueue).toHaveBeenCalledTimes(2);
-      expect(acknowledgements).toHaveLength(2);
-      const stored = (await storage.get(callerId))?.attentionObjectives;
-      expect(
-        stored?.delegations.map((entry) => entry.deliveries?.map((item) => item.status)),
-      ).toEqual([["consumed"], ["consumed"]]);
-      expect(parentPrompts.join("\n")).toContain("EXACT_RESULT_0");
-      expect(parentPrompts.join("\n")).toContain("EXACT_RESULT_1");
-      expect(parentPrompts.join("\n")).not.toContain("Untrusted current message");
-    } else {
-      expect(parentPrompts).toEqual([]);
-      expect(enqueue).not.toHaveBeenCalled();
-      expect(acknowledgements).toEqual([]);
-      expect(
-        (await storage.get(callerId))?.attentionObjectives?.delegations.every(
-          (entry) => !entry.deliveries?.length,
-        ),
-      ).toBe(true);
+  }
+
+  async function storedDeliveries() {
+    return (await storage.get(callerId))?.attentionObjectives?.delegations.map(
+      (entry) => entry.deliveries ?? [],
+    );
+  }
+
+  async function cleanup() {
+    for (const stop of stops) {
+      stop();
     }
-  } finally {
-    for (const stop of stops) stop();
     await delivery.close();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flush();
     rmSync(workdir, { recursive: true, force: true });
+  }
+
+  return {
+    retries,
+    parentPrompts,
+    enqueue,
+    acknowledgements,
+    stops,
+    watchRequests,
+    resolveResults,
+    settleWatches,
+    storedDeliveries,
+    cleanup,
+  };
+}
+
+it.each([
+  {
+    parented: true,
+    name: "keeps two exact routed request watches so later work cannot discard an earlier result",
+  },
+  {
+    parented: false,
+    name: "independent routed recipient returns exact outcomes despite parent mismatch",
+  },
+])("$name", async ({ parented }) => {
+  const scenario = await createRoutedRecipientScenario({ parented });
+  try {
+    scenario.watchRequests((link) => ({ continuation: link }));
+    scenario.resolveResults(true);
+    await scenario.settleWatches(2);
+
+    expect(scenario.enqueue).toHaveBeenCalledTimes(2);
+    expect(scenario.acknowledgements).toHaveLength(2);
+    expect(
+      (await scenario.storedDeliveries())?.map((entries) => entries.map((item) => item.status)),
+    ).toEqual([["consumed"], ["consumed"]]);
+    const prompts = scenario.parentPrompts.join("\n");
+    expect(prompts).toContain("EXACT_RESULT_0");
+    expect(prompts).toContain("EXACT_RESULT_1");
+    expect(prompts).not.toContain("Untrusted current message");
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+it.each([
+  {
+    name: "independent routed recipient with invalid correlation cannot dispatch",
+    attentionFor: (link: AgentAttentionLink) => ({
+      continuation: { ...link, token: "invalid-token" },
+    }),
+    withOutcome: true,
+    retryError: expect.any(AttentionObjectiveError),
+  },
+  {
+    name: "independent routed recipient without exact outcome evidence cannot dispatch",
+    attentionFor: (link: AgentAttentionLink) => ({ continuation: link }),
+    withOutcome: false,
+    retryError: expect.objectContaining({
+      message: "Exact finish outcome is unavailable or mismatched",
+    }),
+  },
+])("$name", async ({ attentionFor, withOutcome, retryError }) => {
+  const scenario = await createRoutedRecipientScenario({ parented: false });
+  try {
+    scenario.watchRequests(attentionFor);
+    scenario.resolveResults(withOutcome);
+    // Exact refusals remain durable retry intents. Prove refusal and absence of
+    // delivery before retiring them, so teardown cannot hide an unintended callback.
+    await expect
+      .poll(() => new Set(scenario.retries.map((retry) => retry.subscription.id)).size)
+      .toBe(2);
+    expect(scenario.retries.map((retry) => retry.error)).toEqual(
+      scenario.retries.map(() => retryError),
+    );
+    expect(scenario.enqueue).not.toHaveBeenCalled();
+    expect(scenario.acknowledgements).toEqual([]);
+    expect(scenario.parentPrompts).toEqual([]);
+    expect(await scenario.storedDeliveries()).toEqual([[], []]);
+    for (const stop of scenario.stops) {
+      stop();
+    }
+    await scenario.settleWatches(2);
+
+    expect(scenario.enqueue).not.toHaveBeenCalled();
+    expect(scenario.parentPrompts).toEqual([]);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("independent routed recipient without correlation retains parent rejection and cannot dispatch", async () => {
+  const scenario = await createRoutedRecipientScenario({ parented: false });
+  try {
+    scenario.watchRequests(() => undefined);
+    scenario.resolveResults(true);
+    await scenario.settleWatches(1);
+
+    expect(scenario.parentPrompts).toEqual([]);
+    expect(scenario.enqueue).not.toHaveBeenCalled();
+    expect(scenario.acknowledgements).toEqual([]);
+    expect(await scenario.storedDeliveries()).toEqual([[], []]);
+  } finally {
+    await scenario.cleanup();
   }
 });
 
