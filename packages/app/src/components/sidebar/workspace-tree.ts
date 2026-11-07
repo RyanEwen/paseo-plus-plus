@@ -8,6 +8,27 @@ import { aggregateKnownSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 /** Only authoritative lifetime relationships participate in workspace ownership. */
 export type WorkspaceTreeAgent = Pick<Agent, "id" | "workspaceId" | "parentAgentId" | "archivedAt">;
 
+/**
+ * Whether two agent collections describe the same workspace ownership: the same agents, each in
+ * the same workspace, under the same parent and with the same archived state. Runtime activity is
+ * ignored, so status and timestamp updates never look like a relationship change.
+ */
+export function sameWorkspaceTreeAgents(
+  previous: ReadonlyMap<string, WorkspaceTreeAgent>,
+  next: ReadonlyMap<string, WorkspaceTreeAgent>,
+): boolean {
+  if (previous === next) return true;
+  if (previous.size !== next.size) return false;
+  for (const [id, agent] of previous) {
+    const other = next.get(id);
+    if (!other) return false;
+    if (agent.workspaceId !== other.workspaceId) return false;
+    if (agent.parentAgentId !== other.parentAgentId) return false;
+    if (Boolean(agent.archivedAt) !== Boolean(other.archivedAt)) return false;
+  }
+  return true;
+}
+
 export interface WorkspaceTreeSession {
   serverId: string;
   hasHydratedAgents: boolean;

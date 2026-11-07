@@ -1,6 +1,7 @@
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { sameWorkspaceTreeAgents } from "./workspace-tree";
 
 /**
  * Ignore activity-only agent updates while detecting authoritative topology and directory changes.
@@ -21,19 +22,7 @@ function sameFamilySession(
     previous.hasWorkspaceDirectorySnapshot !== next.hasWorkspaceDirectorySnapshot
   )
     return false;
-  if (previous.agents === next.agents) return true;
-  if (previous.agents.size !== next.agents.size) return false;
-  for (const [id, agent] of previous.agents) {
-    const other = next.agents.get(id);
-    if (
-      !other ||
-      agent.workspaceId !== other.workspaceId ||
-      agent.parentAgentId !== other.parentAgentId ||
-      Boolean(agent.archivedAt) !== Boolean(other.archivedAt)
-    )
-      return false;
-  }
-  return true;
+  return sameWorkspaceTreeAgents(previous.agents, next.agents);
 }
 
 /**

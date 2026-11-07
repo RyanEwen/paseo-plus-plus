@@ -2,7 +2,11 @@ import { useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import type { SidebarWorkspacePlacement } from "@/hooks/use-sidebar-workspaces-list";
-import { resolveWorkspaceParents, type WorkspaceTreeSession } from "./workspace-tree";
+import {
+  resolveWorkspaceParents,
+  sameWorkspaceTreeAgents,
+  type WorkspaceTreeSession,
+} from "./workspace-tree";
 
 const relationshipSnapshots = new WeakMap<
   ReadonlyMap<string, Agent>,
@@ -35,22 +39,10 @@ function sameRelationships(left: WorkspaceTreeSession[], right: WorkspaceTreeSes
     const next = right[index];
     if (
       session.serverId !== next.serverId ||
-      session.hasHydratedAgents !== next.hasHydratedAgents ||
-      session.agents.size !== next.agents.size
+      session.hasHydratedAgents !== next.hasHydratedAgents
     )
       return false;
-    if (session.agents === next.agents) return true;
-    for (const [id, agent] of session.agents) {
-      const other = next.agents.get(id);
-      if (
-        !other ||
-        agent.workspaceId !== other.workspaceId ||
-        agent.parentAgentId !== other.parentAgentId ||
-        Boolean(agent.archivedAt) !== Boolean(other.archivedAt)
-      )
-        return false;
-    }
-    return true;
+    return sameWorkspaceTreeAgents(session.agents, next.agents);
   });
 }
 
