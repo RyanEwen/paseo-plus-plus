@@ -1,4 +1,6 @@
+import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { resolve as resolvePath } from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -7,10 +9,27 @@ import type {
   BrowserAutomationDialogEvent,
   BrowserAutomationExecuteRequest,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { waitForActionableTarget } from "./actionability.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
-import type { BrowserRegistry, TabContents, TabImage } from "./service.js";
+import type { BrowserRegistry, TabContents, TabImage, DialogCaptureOperation } from "./service.js";
 import { executeAutomationCommand } from "./service.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
+
+/** Wrap a test body so it runs with fake timers, restoring real timers even when it fails.
+ * Returning the test function keeps the body at the test's own nesting depth.
+ */
+function fakeTimerTest<Args extends unknown[]>(
+  body: (...args: Args) => Promise<void>,
+): (...args: Args) => Promise<void> {
+  return async (...args) => {
+    vi.useFakeTimers();
+    try {
+      await body(...args);
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+}
 
 const BROWSER_A = "11111111-1111-4111-8111-111111111111";
 const BROWSER_B = "22222222-2222-4222-8222-222222222222";
@@ -33,8 +52,18 @@ class FakeImage implements TabImage {
 }
 
 class FakeTab implements TabContents {
-  public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
-    return capture();
+  private readonly inputQueue = new CdpSessionQueue();
+  public runInput<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return this.inputQueue.run(task, signal);
+  }
+  public frameProductionScopes = 0;
+  public async withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
+    this.frameProductionScopes++;
+    try {
+      return await capture();
+    } finally {
+      this.frameProductionScopes--;
+    }
   }
   public readonly loadedUrls: string[] = [];
   public readonly scripts: string[] = [];
@@ -85,7 +114,7 @@ class FakeTab implements TabContents {
   public queriedNodeId = 2;
   public canNavigateBack = true;
   public canNavigateForward = false;
-  public keypressTargetEditable = false;
+  public focusFixture: GuestFocusFixture | null = null;
 
   public constructor(
     public readonly id: number,
@@ -128,7 +157,7 @@ class FakeTab implements TabContents {
     if (code.includes("__PASEO_ARIA_SNAPSHOT__")) {
       return JSON.stringify(snapshotResult(this.snapshotNodes));
     }
-    if (code.includes("Timed out waiting") || code.includes("performance.now()")) {
+    if (code.includes("const requiresEditable =")) {
       if (this.rejectEditableActionability && code.includes("const requiresEditable = true")) {
         return { ok: false, reason: "timeout", detail: "not editable" };
       }
@@ -140,8 +169,9 @@ class FakeTab implements TabContents {
     if (code.includes("window.innerWidth") && code.includes("window.innerHeight")) {
       return { x: 640, y: 400 };
     }
-    if (code.includes("element.focus({ preventScroll: true })")) {
-      return { editable: this.keypressTargetEditable };
+    if (code.includes("editingHost.focus({ preventScroll: true })")) {
+      if (this.focusFixture) return this.focusFixture.execute(code);
+      return { focused: true };
     }
     if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
       if (this.evaluateScriptThrows) {
@@ -194,9 +224,9 @@ class FakeTab implements TabContents {
     return this.consoleMessages;
   }
 
-  public async captureDialogs<T>(
-    task: () => Promise<T>,
-  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
+  public async captureDialogs<T>({
+    task,
+  }: DialogCaptureOperation<T>): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
     return { result: await task(), dialogs: this.dialogsToCapture };
   }
 
@@ -206,6 +236,11 @@ class FakeTab implements TabContents {
   ): Promise<unknown> {
     this.actions.push(`debug:${command}`);
     this.debugCommands.push({ command, ...(params ? { params } : {}) });
+    if (command === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
+      if (this.focusFixture) {
+        this.focusFixture.document.activeElement = this.focusFixture.target;
+      }
+    }
     if (command === "Page.getLayoutMetrics") {
       return this.layoutMetrics;
     }
@@ -234,6 +269,7 @@ class FakeTab implements TabContents {
 
   public async insertText(text: string): Promise<void> {
     this.insertedText.push(text);
+    this.focusFixture?.insertText(text);
   }
 
   public waitForCaptureStart(count: number): Promise<void> {
@@ -261,6 +297,216 @@ class FakeTab implements TabContents {
     for (const waiter of this.captureStartWaiters.splice(0)) {
       waiter();
     }
+  }
+}
+
+interface GuestFocusRange {
+  startContainer: object | null;
+  startOffset: number;
+  endContainer: object | null;
+  endOffset: number;
+  selectNodeContents(node: object): void;
+  collapse(toStart: boolean): void;
+}
+
+interface GuestFocusSelection {
+  rangeCount: number;
+  anchorNode: object | null;
+  anchorOffset: number;
+  focusNode: object | null;
+  focusOffset: number;
+  setBaseAndExtent(anchor: object, anchorOffset: number, focus: object, focusOffset: number): void;
+  removeAllRanges(): void;
+  addRange(range: GuestFocusRange): void;
+}
+
+/** Execute the real ref-focus script against one guest document, preserving native-input selection. */
+class GuestFocusFixture {
+  public readonly document = {
+    activeElement: {},
+    getSelection: () => this.selection,
+    createRange: () => this.createRange(),
+  };
+  public readonly selection: GuestFocusSelection = {
+    rangeCount: 1,
+    anchorNode: {},
+    anchorOffset: 0,
+    focusNode: {},
+    focusOffset: 0,
+    setBaseAndExtent: (anchor, anchorOffset, focus, focusOffset) => {
+      Object.assign(this.selection, {
+        rangeCount: 1,
+        anchorNode: anchor,
+        anchorOffset,
+        focusNode: focus,
+        focusOffset,
+      });
+    },
+    removeAllRanges: () => {
+      Object.assign(this.selection, { rangeCount: 0, anchorNode: null, focusNode: null });
+    },
+    addRange: (range) => {
+      if (range.startContainer === null || range.endContainer === null) {
+        throw new Error("Fixture range has no containers");
+      }
+      this.selection.setBaseAndExtent(
+        range.startContainer,
+        range.startOffset,
+        range.endContainer,
+        range.endOffset,
+      );
+    },
+  };
+  private readonly targetChildren: object[] = [];
+  public readonly target = {
+    tagName: "INPUT",
+    isConnected: true,
+    isContentEditable: false,
+    readOnly: false,
+    disabled: false,
+    ownerDocument: this.document,
+    parentElement: null,
+    childNodes: this.targetChildren,
+    value: "seedTEXTtail",
+    selectionStart: 4,
+    selectionEnd: 8,
+    getAttribute: (_name: string) => null,
+    closest: (_selector: string) => null,
+    getRootNode: () => this.document,
+    contains: (node: unknown): boolean =>
+      node === this.target || this.targetChildren.some((child) => child === node),
+    focus: (options: { preventScroll: boolean }) => {
+      expect(options).toEqual({ preventScroll: true });
+      this.document.activeElement = this.target;
+      this.afterFocus?.();
+    },
+  };
+  public resolved: object | null = this.target;
+  public afterFocus: (() => void) | null = null;
+  public readonly resolutions: Array<{ ref: string; fingerprint: unknown }> = [];
+  public readonly childText = { data: "seedTEXTtail", parentElement: this.target };
+  public readonly editingHost = {
+    isContentEditable: true,
+    isConnected: true,
+    parentElement: null,
+    ownerDocument: this.document,
+    getRootNode: () => this.document,
+    focus: (options: { preventScroll: boolean }) => {
+      expect(options).toEqual({ preventScroll: true });
+      this.document.activeElement = this.editingHost;
+      this.selection.setBaseAndExtent(this.editingHost, 0, this.editingHost, 0);
+      this.afterFocus?.();
+    },
+  };
+  public readonly siblingText = { data: "parent-only", parentElement: this.editingHost };
+  public readonly nativeSelections: Array<{
+    anchorNode: object | null;
+    anchorOffset: number;
+    focusNode: object | null;
+    focusOffset: number;
+  }> = [];
+  private inheritedEditable = false;
+
+  /** A non-focusable SPAN inherits editability, while another input owns initial focus. */
+  public useInheritedEditable(selectionInside: boolean): void {
+    this.inheritedEditable = true;
+    this.target.tagName = "SPAN";
+    this.target.isContentEditable = true;
+    this.targetChildren.push(this.childText);
+    Object.defineProperty(this.target, "parentElement", {
+      value: this.editingHost,
+      configurable: true,
+    });
+    this.target.focus = () => {};
+    this.document.activeElement = { tagName: "INPUT", value: "other-input" };
+    if (selectionInside) {
+      // Preserve a backward range as well as its exact child text nodes.
+      this.selection.setBaseAndExtent(this.childText, 8, this.childText, 4);
+    } else {
+      this.selection.setBaseAndExtent(this.siblingText, 0, this.siblingText, 6);
+    }
+  }
+
+  /** Element-container offsets surround child content; text-container offsets index its data. */
+  private textOffset(node: object | null, offset: number): number {
+    if (node === this.childText) return offset;
+    return offset === 0 ? 0 : this.childText.data.length;
+  }
+
+  private createRange(): GuestFocusRange {
+    const range: GuestFocusRange = {
+      startContainer: null,
+      startOffset: 0,
+      endContainer: null,
+      endOffset: 0,
+      selectNodeContents: (node) => {
+        expect(node).toBe(this.target);
+        Object.assign(range, {
+          startContainer: node,
+          startOffset: 0,
+          endContainer: node,
+          endOffset: this.target.childNodes.length,
+        });
+      },
+      collapse: (toStart) => {
+        if (toStart) {
+          range.endContainer = range.startContainer;
+          range.endOffset = range.startOffset;
+        } else {
+          range.startContainer = range.endContainer;
+          range.startOffset = range.endOffset;
+        }
+      },
+    };
+    return range;
+  }
+
+  public execute(code: string): unknown {
+    return runInNewContext(code, {
+      document: this.document,
+      window: {
+        __PASEO_BROWSER_AUTOMATION__: {
+          resolve: (ref: string, fingerprint: unknown) => {
+            this.resolutions.push({ ref, fingerprint });
+            return { ok: true, element: this.resolved };
+          },
+        },
+      },
+    });
+  }
+
+  public insertText(text: string): void {
+    if (this.inheritedEditable) {
+      expect(this.document.activeElement).toBe(this.editingHost);
+      const selection = this.selection;
+      expect(this.target.contains(selection.anchorNode)).toBe(true);
+      expect(this.target.contains(selection.focusNode)).toBe(true);
+      this.nativeSelections.push({
+        anchorNode: selection.anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focusNode: selection.focusNode,
+        focusOffset: selection.focusOffset,
+      });
+      const anchor = this.textOffset(selection.anchorNode, selection.anchorOffset);
+      const focus = this.textOffset(selection.focusNode, selection.focusOffset);
+      const start = Math.min(anchor, focus);
+      const end = Math.max(anchor, focus);
+      this.childText.data =
+        this.childText.data.slice(0, start) + text + this.childText.data.slice(end);
+      this.selection.setBaseAndExtent(
+        this.childText,
+        start + text.length,
+        this.childText,
+        start + text.length,
+      );
+      return;
+    }
+    expect(this.document.activeElement).toBe(this.target);
+    const { target } = this;
+    target.value =
+      target.value.slice(0, target.selectionStart) + text + target.value.slice(target.selectionEnd);
+    target.selectionStart += text.length;
+    target.selectionEnd = target.selectionStart;
   }
 }
 
@@ -995,58 +1241,43 @@ describe("executeAutomationCommand", () => {
     });
   });
 
-  test("click returns a retryable browser timeout when the ref never becomes actionable", async () => {
-    const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotNodes = formElements();
-    browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
+  test(
+    "click returns a retryable browser timeout when the ref never becomes actionable",
+    fakeTimerTest(async () => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
 
-    requireSnapshotRefs(await browser.snapshot());
-    const click = await browser.execute({
-      command: "click",
-      args: { browserId: BROWSER_A, ref: "@e2" },
-    });
+      requireSnapshotRefs(await browser.snapshot());
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e2" },
+      });
 
-    expect(click).toEqual({
-      requestId: "req-click",
-      ok: false,
-      error: {
-        code: "browser_timeout",
-        message: "Timed out waiting for browser element @e2 to become actionable.",
-        retryable: true,
-      },
-    });
-    expect(browser.tab.debugCommands).toEqual([]);
-  });
+      await vi.advanceTimersByTimeAsync(5016);
+      const click = await pending;
+      expect(click).toEqual({
+        requestId: "req-click",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser element @e2 to become actionable.",
+          retryable: true,
+        },
+      });
+      expect(browser.tab.debugCommands).toEqual([]);
+    }),
+  );
 
-  test("command failures include dialogs handled before the failure", async () => {
-    const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotNodes = formElements();
-    browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
+  test(
+    "command failures include dialogs handled before the failure",
+    fakeTimerTest(async () => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
 
-    requireSnapshotRefs(await browser.snapshot());
-    browser.tab.dialogsToCapture = [
-      {
-        type: "prompt",
-        message: "Name?",
-        defaultValue: "Maya",
-        action: "dismissed",
-        timestamp: 124,
-      },
-    ];
-    const click = await browser.execute({
-      command: "click",
-      args: { browserId: BROWSER_A, ref: "@e2" },
-    });
-
-    expect(click).toEqual({
-      requestId: "req-click",
-      ok: false,
-      error: {
-        code: "browser_timeout",
-        message: "Timed out waiting for browser element @e2 to become actionable.",
-        retryable: true,
-      },
-      dialogs: [
+      requireSnapshotRefs(await browser.snapshot());
+      browser.tab.dialogsToCapture = [
         {
           type: "prompt",
           message: "Name?",
@@ -1054,9 +1285,34 @@ describe("executeAutomationCommand", () => {
           action: "dismissed",
           timestamp: 124,
         },
-      ],
-    });
-  });
+      ];
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e2" },
+      });
+
+      await vi.advanceTimersByTimeAsync(5016);
+      const click = await pending;
+      expect(click).toEqual({
+        requestId: "req-click",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser element @e2 to become actionable.",
+          retryable: true,
+        },
+        dialogs: [
+          {
+            type: "prompt",
+            message: "Name?",
+            defaultValue: "Maya",
+            action: "dismissed",
+            timestamp: 124,
+          },
+        ],
+      });
+    }),
+  );
 
   test("wait resolves when the explicit tab contains the requested text", async () => {
     const browser = new BrowserAutomationHarness();
@@ -1094,9 +1350,11 @@ describe("executeAutomationCommand", () => {
     });
   });
 
-  test("type writes trusted text into a ref", async () => {
+  test("type focuses the exact ref without pointer input and preserves its selected range", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
 
     requireSnapshotRefs(await browser.snapshot());
     const action = await browser.execute({
@@ -1110,11 +1368,15 @@ describe("executeAutomationCommand", () => {
       result: { command: "type", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
     expect(browser.tab.insertedText).toEqual(["Ada"]);
-    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-    ]);
+    expect(focus.target.value).toBe("seedAdatail");
+    expect([focus.target.selectionStart, focus.target.selectionEnd]).toEqual([7, 7]);
+    expect(browser.tab.debugCommands).toEqual([]);
+    expect(focus.resolutions).toHaveLength(2);
+    expect(focus.resolutions[0]).toMatchObject({
+      ref: "@e1",
+      fingerprint: { role: "textbox", tagName: "input" },
+    });
+    expect(focus.resolutions[1]).toEqual(focus.resolutions[0]);
   });
 
   test("type inserts text through the tab, not the window-wide debugger input", async () => {
@@ -1166,6 +1428,9 @@ describe("executeAutomationCommand", () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
     browser.tab.rejectEditableActionability = true;
+    const focus = new GuestFocusFixture();
+    focus.target.tagName = "BUTTON";
+    browser.tab.focusFixture = focus;
 
     requireSnapshotRefs(await browser.snapshot());
     const action = await browser.execute({
@@ -1178,7 +1443,8 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "keypress", browserId: BROWSER_A, key: "Enter", ref: "@e4", x: 40, y: 30 },
     });
-    expect(containsScript(browser.tab, "element.focus({ preventScroll: true })")).toBe(true);
+    expect(containsScript(browser.tab, "editingHost.focus({ preventScroll: true })")).toBe(true);
+    expect(focus.document.activeElement).toBe(focus.target);
     expect(browser.tab.inputEvents).toEqual([
       {
         type: "keyDown",
@@ -1194,10 +1460,11 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.debugCommands).toEqual([]);
   });
 
-  test("keypress reports unsupported when focusing an editable ref requires unavailable CDP", async () => {
+  test("keypress focuses an editable ref without pointer input or CDP", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
-    browser.tab.keypressTargetEditable = true;
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
 
     requireSnapshotRefs(await browser.snapshot());
     Object.defineProperty(browser.tab, "sendDebugCommand", { value: undefined });
@@ -1209,14 +1476,205 @@ describe("executeAutomationCommand", () => {
       }),
     ).resolves.toEqual({
       requestId: "req-keypress",
-      ok: false,
-      error: {
-        code: "browser_unsupported",
-        message: "browser_keypress requires trusted browser input",
-        retryable: false,
-      },
+      ok: true,
+      result: { command: "keypress", browserId: BROWSER_A, ref: "@e1", key: "Enter", x: 40, y: 30 },
     });
+    expect(focus.document.activeElement).toBe(focus.target);
+    expect([focus.target.selectionStart, focus.target.selectionEnd]).toEqual([4, 8]);
+    expect(browser.tab.debugCommands).toEqual([]);
+    expect(browser.tab.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+      { type: "keyUp", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+  });
+
+  test.each([
+    ["redirect", "browser_unsupported"],
+    ["remove", "browser_stale_ref"],
+    ["clone", "browser_stale_ref"],
+    ["document", "browser_stale_ref"],
+    ["root", "browser_stale_ref"],
+    ["disable", "browser_unsupported"],
+    ["readonly", "browser_unsupported"],
+  ])(
+    "type refuses input when a synchronous focus handler changes the target: %s",
+    async (change, expectedCode) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      const focus = new GuestFocusFixture();
+      browser.tab.focusFixture = focus;
+      focus.afterFocus = () => {
+        if (change === "redirect") focus.document.activeElement = {};
+        if (change === "remove") focus.target.isConnected = false;
+        if (change === "clone") focus.resolved = { ...focus.target };
+        if (change === "document") focus.target.ownerDocument = { ...focus.document };
+        if (change === "root") focus.target.getRootNode = () => ({ ...focus.document });
+        if (change === "disable") focus.target.disabled = true;
+        if (change === "readonly") focus.target.readOnly = true;
+      };
+      requireSnapshotRefs(await browser.snapshot());
+
+      const result = await browser.execute({
+        command: "type",
+        args: { browserId: BROWSER_A, ref: "@e1", text: "must not arrive" },
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: expectedCode },
+      });
+      expect(browser.tab.insertedText).toEqual([]);
+      expect(browser.tab.debugCommands).toEqual([]);
+      expect(focus.target.value).toBe("seedTEXTtail");
+      expect(browser.tab.frameProductionScopes).toBe(0);
+    },
+  );
+
+  test("keypress refuses a redirected editable target without sending a key", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
+    focus.afterFocus = () => {
+      focus.document.activeElement = {};
+    };
+    requireSnapshotRefs(await browser.snapshot());
+
+    await expect(
+      browser.execute({
+        command: "keypress",
+        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "browser_unsupported" } });
+
     expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test.each([true, false])(
+    "inherited contenteditable ref focuses its host and targets only the child (existing selection: %s)",
+    async (selectionInside) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = [
+        { role: "textbox", name: "Child editor", tagName: "span", ref: "@e1" },
+      ];
+      const focus = new GuestFocusFixture();
+      focus.useInheritedEditable(selectionInside);
+      browser.tab.focusFixture = focus;
+      await expect(browser.snapshot()).resolves.toMatchObject({
+        ok: true,
+        result: { snapshot: expect.stringContaining('textbox "Child editor" [ref=@e1]') },
+      });
+
+      await expect(
+        browser.execute({
+          command: "type",
+          args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+
+      expect(focus.childText.data).toBe(selectionInside ? "seedAdatail" : "seedTEXTtailAda");
+      expect(focus.siblingText.data).toBe("parent-only");
+      expect(browser.tab.debugCommands).toEqual([]);
+      expect(focus.nativeSelections).toEqual([
+        {
+          anchorNode: selectionInside ? focus.childText : focus.target,
+          anchorOffset: selectionInside ? 8 : 1,
+          focusNode: selectionInside ? focus.childText : focus.target,
+          focusOffset: selectionInside ? 4 : 1,
+        },
+      ]);
+    },
+  );
+
+  test.each(["removed host", "replaced host", "foreign host document"])(
+    "inherited contenteditable ref revalidates its original host after focus: %s",
+    async (change) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = [
+        { role: "textbox", name: "Child editor", tagName: "span", ref: "@e1" },
+      ];
+      const focus = new GuestFocusFixture();
+      focus.useInheritedEditable(false);
+      browser.tab.focusFixture = focus;
+      focus.afterFocus = () => {
+        if (change === "removed host") focus.editingHost.isConnected = false;
+        if (change === "replaced host") {
+          Object.defineProperty(focus.target, "parentElement", { value: { ...focus.editingHost } });
+        }
+        if (change === "foreign host document")
+          focus.editingHost.ownerDocument = { ...focus.document };
+      };
+      await browser.snapshot();
+
+      await expect(
+        browser.execute({
+          command: "type",
+          args: { browserId: BROWSER_A, ref: "@e1", text: "must not arrive" },
+        }),
+      ).resolves.toMatchObject({ ok: false, error: { code: "browser_stale_ref" } });
+
+      expect(browser.tab.insertedText).toEqual([]);
+      expect(browser.tab.debugCommands).toEqual([]);
+      expect(focus.childText.data).toBe("seedTEXTtail");
+    },
+  );
+
+  test("inherited contenteditable keypress focuses the host with a caret inside the exact child", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = [
+      { role: "textbox", name: "Child editor", tagName: "span", ref: "@e1" },
+    ];
+    const focus = new GuestFocusFixture();
+    focus.useInheritedEditable(false);
+    browser.tab.focusFixture = focus;
+    await browser.snapshot();
+
+    await expect(
+      browser.execute({
+        command: "keypress",
+        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(focus.document.activeElement).toBe(focus.editingHost);
+    expect(focus.selection.anchorNode).toBe(focus.target);
+    expect(focus.selection.focusNode).toBe(focus.target);
+    expect([focus.selection.anchorOffset, focus.selection.focusOffset]).toEqual([1, 1]);
+    expect(browser.tab.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+      { type: "keyUp", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test("a thrown focus handler preserves its failure and releases the input scope", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
+    const failure = new Error("fixture focus failure");
+    focus.afterFocus = () => {
+      throw failure;
+    };
+    requireSnapshotRefs(await browser.snapshot());
+
+    await expect(
+      browser.execute({
+        command: "type",
+        args: { browserId: BROWSER_A, ref: "@e1", text: "must not arrive" },
+      }),
+    ).rejects.toBe(failure);
+
+    expect(browser.tab.insertedText).toEqual([]);
+    expect(browser.tab.frameProductionScopes).toBe(0);
+    focus.afterFocus = null;
+    await expect(
+      browser.execute({
+        command: "type",
+        args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+      }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   test("navigate loads the requested HTTP URL in the explicit tab", async () => {
@@ -1974,4 +2432,302 @@ describe("executeAutomationCommand", () => {
       { command: "DOM.describeNode", params: { objectId: "object-1" } },
     ]);
   });
+});
+
+describe("background actionability sampling", () => {
+  test(
+    "resamples geometry on the main clock without a guest timer or animation frame",
+    fakeTimerTest(async () => {
+      const rect = { x: 10, y: 20, width: 30, height: 40 };
+      const target = { point: { x: 25, y: 40 }, rect };
+      const executeJavaScript = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, reason: "timeout", detail: "moving", rect })
+        .mockResolvedValueOnce({ ok: true, target });
+      const pending = waitForActionableTarget({
+        page: { getURL: () => "https://fixture.test", executeJavaScript },
+        elementExpression: "document.querySelector('button')",
+      });
+      await vi.advanceTimersByTimeAsync(16);
+      await expect(pending).resolves.toEqual({ ok: true, target });
+      expect(executeJavaScript).toHaveBeenCalledTimes(2);
+      expect(executeJavaScript.mock.calls[1][0]).toContain(
+        `const previousRect = ${JSON.stringify(rect)}`,
+      );
+      for (const [script] of executeJavaScript.mock.calls) {
+        // Guest timers and animation frames can be suspended in a hidden page.
+        expect(script).not.toMatch(/setTimeout|requestAnimationFrame/);
+      }
+    }),
+  );
+
+  test.each(["disabled", "covered", "not visible", "not editable"])(
+    "bounds %s polling and resets unstable geometry",
+    fakeTimerTest(async (detail: string) => {
+      const executeJavaScript = vi.fn().mockResolvedValue({ ok: false, reason: "timeout", detail });
+      const pending = waitForActionableTarget({
+        page: { getURL: () => "https://fixture.test", executeJavaScript },
+        elementExpression: "document.body",
+        timeoutMs: 32,
+      });
+      await vi.advanceTimersByTimeAsync(48);
+      await expect(pending).resolves.toEqual({ ok: false, reason: "timeout", detail });
+      expect(executeJavaScript).toHaveBeenCalledTimes(2);
+      expect(executeJavaScript.mock.calls[1][0]).toContain("const previousRect = null");
+    }),
+  );
+});
+
+describe("trusted input activity completion", () => {
+  /** Click through the harness with a delayed input paint, returning the response
+   * once the five-second paint budget (or the paint itself) has elapsed. */
+  async function clickWithPaintDelay(paintDelayMs: number) {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+    browser.tab.paintDelayMs = paintDelayMs;
+    const pending = browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e1" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(browser.tab.frameProductionScopes).toBe(1);
+    await vi.advanceTimersByTimeAsync(Math.min(paintDelayMs, 5000));
+    return { browser, response: await pending };
+  }
+
+  test(
+    "holds activity through a 1000 ms input paint and releases it",
+    fakeTimerTest(async () => {
+      const { browser, response } = await clickWithPaintDelay(1000);
+      expect(response.ok).toBe(true);
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+    }),
+  );
+
+  test(
+    "a 6000 ms input paint releases activity with a non-retryable timeout",
+    fakeTimerTest(async () => {
+      const { browser, response } = await clickWithPaintDelay(6000);
+      expect(response).toMatchObject({
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: expect.stringContaining("Input may already have been delivered"),
+          retryable: false,
+        },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(browser.tab.debugCommands).toHaveLength(3);
+    }),
+  );
+});
+
+describe("bounded trusted input lifetime", () => {
+  test(
+    "a stalled layout sample releases activity without dispatching late input",
+    fakeTimerTest(async () => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      let finishSample!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finishSample = resolve;
+      });
+      const execute = browser.tab.executeJavaScript.bind(browser.tab);
+      vi.spyOn(browser.tab, "executeJavaScript").mockImplementation((code) =>
+        code.includes("const requiresEditable =") ? stalled : execute(code),
+      );
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e1" },
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: "browser_timeout" },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      finishSample(browser.tab.actionabilityResult);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(browser.tab.debugCommands).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    }),
+  );
+
+  test.each(["mouseMoved", "mousePressed"])(
+    "a missing %s acknowledgment cannot pin activity or resume the gesture",
+    fakeTimerTest(async (blockedType: string) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      let finishInput!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finishInput = resolve;
+      });
+      const send = browser.tab.sendDebugCommand.bind(browser.tab);
+      vi.spyOn(browser.tab, "sendDebugCommand").mockImplementation((command, params) => {
+        if (params?.type !== blockedType) return send(command, params);
+        browser.tab.debugCommands.push({ command, params });
+        return stalled;
+      });
+      const pending = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e1" },
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+      await expect(pending).resolves.toMatchObject({
+        requestId: "req-click",
+        ok: false,
+        error: { code: "browser_timeout", retryable: false },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      const types = browser.tab.debugCommands.map(({ params }) => params?.type);
+      expect(types).toEqual(
+        blockedType === "mouseMoved"
+          ? ["mouseMoved"]
+          : ["mouseMoved", "mousePressed", "mouseReleased"],
+      );
+      finishInput({});
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(types);
+      expect(vi.getTimerCount()).toBe(0);
+    }),
+  );
+
+  test("concurrent clicks stay atomic and a waiting click does not wake rendering", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+    let finishMove!: (value: unknown) => void;
+    const stalled = new Promise<unknown>((resolve) => {
+      finishMove = resolve;
+    });
+    const send = browser.tab.sendDebugCommand.bind(browser.tab);
+    vi.spyOn(browser.tab, "sendDebugCommand")
+      .mockImplementationOnce((command, params) => {
+        browser.tab.debugCommands.push({ command, params });
+        return stalled;
+      })
+      .mockImplementation(send);
+    const first = browser.execute({ command: "click", args: { browserId: BROWSER_A, ref: "@e1" } });
+    const second = browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e2" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(browser.tab.frameProductionScopes).toBe(1);
+    expect(browser.tab.debugCommands).toHaveLength(1);
+    finishMove({});
+    await Promise.all([first, second]);
+    expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual([
+      "mouseMoved",
+      "mousePressed",
+      "mouseReleased",
+      "mouseMoved",
+      "mousePressed",
+      "mouseReleased",
+    ]);
+    expect(browser.tab.frameProductionScopes).toBe(0);
+  });
+
+  test(
+    "a waiter whose deadline expires with its predecessor never starts input",
+    fakeTimerTest(async () => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      let finishMove!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finishMove = resolve;
+      });
+      const send = browser.tab.sendDebugCommand.bind(browser.tab);
+      vi.spyOn(browser.tab, "sendDebugCommand")
+        .mockImplementationOnce((command, params) => {
+          browser.tab.debugCommands.push({ command, params });
+          return stalled;
+        })
+        .mockImplementation(send);
+      const first = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e1" },
+      });
+      const second = browser.execute({
+        command: "click",
+        args: { browserId: BROWSER_A, ref: "@e2" },
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+      // The first click sent its pointer move, so its outcome is unknown. The
+      // waiter never sent input and is safe to retry.
+      await expect(first).resolves.toMatchObject({
+        ok: false,
+        error: { code: "browser_timeout", retryable: false },
+      });
+      await expect(second).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Browser input timed out before it was sent. Retry the command.",
+          retryable: true,
+        },
+      });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+      finishMove({});
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(browser.tab.debugCommands.map(({ params }) => params?.type)).toEqual(["mouseMoved"]);
+      expect(vi.getTimerCount()).toBe(0);
+    }),
+  );
+
+  test("closure while waiting behind another gesture does not wake the closed guest", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+    let releaseQueue!: () => void;
+    const preceding = browser.tab.runInput(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseQueue = resolve;
+        }),
+    );
+    const pending = browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e1" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    browser.tab.destroyed = true;
+    releaseQueue();
+    await preceding;
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_tab_closed", retryable: false },
+    });
+    expect(browser.tab.frameProductionScopes).toBe(0);
+    expect(browser.tab.debugCommands).toHaveLength(0);
+  });
+
+  test.each(["navigation", "closure"])(
+    "preserves delivered input when %s interrupts its final paint",
+    async (change) => {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.snapshotNodes = formElements();
+      requireSnapshotRefs(await browser.snapshot());
+      const execute = browser.tab.executeJavaScript.bind(browser.tab);
+      vi.spyOn(browser.tab, "executeJavaScript").mockImplementation(async (code) => {
+        if (!code.includes("requestAnimationFrame")) return execute(code);
+        if (change === "navigation") browser.tab.loadedUrls.push("https://fixture.test/next");
+        else browser.tab.destroyed = true;
+        throw new Error("document was replaced during paint");
+      });
+      await expect(
+        browser.execute({ command: "click", args: { browserId: BROWSER_A, ref: "@e1" } }),
+      ).resolves.toMatchObject({ ok: true, result: { command: "click" } });
+      expect(browser.tab.frameProductionScopes).toBe(0);
+    },
+  );
 });
