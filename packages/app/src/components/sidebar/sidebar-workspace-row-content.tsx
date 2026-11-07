@@ -1,6 +1,8 @@
 import { resolveWorkspaceLeadingSlot, WorkspaceProjectPinGutter } from "./project-pin-gutter";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { HoverRevealActions } from "./hover-reveal-actions";
+import { workspaceKebabRevealWidth } from "./workspace-kebab-geometry";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -446,6 +448,7 @@ export function SidebarWorkspaceTrailingStatusActions({
   visible: boolean;
   children: ReactNode;
 }) {
+  const compact = useIsCompactFormFactor();
   return (
     <View style={styles.workspaceStatusActionsFrame}>
       <View style={styles.trailingContentRow}>
@@ -455,7 +458,7 @@ export function SidebarWorkspaceTrailingStatusActions({
         />
         <HoverRevealActions
           visible={visible}
-          width={18}
+          width={workspaceKebabRevealWidth({ compact })}
           height={20}
           testID={`sidebar-workspace-hover-actions-${workspace.workspaceKey}`}
         >
