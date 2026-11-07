@@ -1,6 +1,9 @@
-import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { forkCapabilities } from "./fork-capabilities.js";
 import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
+import {
+  attachAttentionPresentationConfig,
+  resolveRemoteAttentionRequester,
+} from "./agent/attention/host-wiring.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -771,18 +774,8 @@ export class VoiceAssistantWebSocketServer {
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
     this.agentManager.setAttentionHost({
       serverId,
-      resolveRemoteRequester: async (peer) => {
-        if (!peer.serverId) return "unknown";
-        try {
-          return await this.toolHosts().use(peer.serverId, async (client) => {
-            const result = await client.fetchAgent(peer.agentId);
-            return !result || result.agent.archivedAt ? "missing" : "available";
-          });
-        } catch {
-          // A transport or authority failure cannot prove that a requester is gone.
-          return "unknown";
-        }
-      },
+      resolveRemoteRequester: (peer) =>
+        resolveRemoteAttentionRequester(peer, () => this.toolHosts()),
     });
     this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
@@ -817,26 +810,14 @@ export class VoiceAssistantWebSocketServer {
       providerSnapshotManager: this.providerSnapshotManager,
       updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
     });
-    this.agentManager.setAttentionPresentationEnabled(
-      isAgentAwareAttentionEnabled(this.daemonConfigStore.get()),
-    );
-    const unsubscribeAttention = this.daemonConfigStore.onApply((config, previous) => {
-      this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(config));
-      return () =>
-        this.agentManager.setAttentionPresentationEnabled(isAgentAwareAttentionEnabled(previous));
-    });
-    let publishedAttentionMode = this.agentManager.agentAwareAttentionEnabled;
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
-      const nextMode = this.agentManager.agentAwareAttentionEnabled;
-      if (nextMode === publishedAttentionMode) return;
-      publishedAttentionMode = nextMode;
-      // Config ownership is committed. Reprojection never replays provider events or notifications.
-      const sessions = new Set([...this.sessions.values()].map((connection) => connection.session));
-      for (const session of sessions)
-        void session.refreshAttentionPresentation().catch((error) => {
-          this.logger.warn({ err: error }, "Failed to refresh attention presentation");
-        });
+    });
+    const unsubscribeAttention = attachAttentionPresentationConfig({
+      store: this.daemonConfigStore,
+      agentManager: this.agentManager,
+      sessions: () => [...this.sessions.values()].map((connection) => connection.session),
+      logger: this.logger,
     });
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();
