@@ -4,7 +4,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createPaseoApi, createPaseoClient } from "./index.js";
 import { DaemonClient } from "./daemon-client.js";
 import type { PaseoAgent, PaseoClient, PaseoWorkspace } from "./index.js";
-import { createHistoryMigrationPrompt } from "./provider-history-prompt.js";
+import {
+  createHistoryMigrationPrompt,
+  validateMigrationPromptInput,
+} from "./provider-history-prompt.js";
 
 test("migration prompt discovery context never invents inventory or copies extra fields", () => {
   const input = {
@@ -99,6 +102,23 @@ test("migration prompt rejects invalid context without echoing paths or provider
       createHistoryMigrationPrompt({ provider: "codex", destination: { home } }),
     ).toThrow("Migration guidance requires bounded absolute paths");
   }
+});
+
+test("migration prompt input validation applies the same refusals before any inventory", () => {
+  expect(() => validateMigrationPromptInput({ provider: "Codex" })).toThrow(
+    "Invalid migration guidance provider ID",
+  );
+  expect(() =>
+    validateMigrationPromptInput({ provider: "codex", source: { home: "relative-home" } }),
+  ).toThrow("Migration guidance requires bounded absolute paths");
+  expect(() =>
+    validateMigrationPromptInput({
+      provider: "codex",
+      paseoHome: "/paseo",
+      source: { home: "/source", sqliteHome: "/source-sqlite" },
+      destination: { home: "/destination" },
+    }),
+  ).not.toThrow();
 });
 
 type FakeWebSocketHandler = (...args: unknown[]) => void;
