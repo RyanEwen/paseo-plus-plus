@@ -96,12 +96,16 @@ function createWrapper(input: {
   const toast = input.toast ?? createToast();
   const preference = input.preference ?? { enabled: true };
   return function Wrapper({ children }: { children: ReactNode }) {
-    // Rebuilt on every render so a rerender after flipping the preference updates `enabled`.
-    const policy: WorkspaceLinkPolicy = {
-      enabled: preference.enabled,
-      isEnabled: () => preference.enabled,
-      reportError: (error) => toast.error(toErrorMessage(error)),
-    };
+    // Keyed on the current value so a rerender after flipping the preference updates `enabled`.
+    const enabled = preference.enabled;
+    const policy = useMemo<WorkspaceLinkPolicy>(
+      () => ({
+        enabled,
+        isEnabled: () => preference.enabled,
+        reportError: (error) => toast.error(toErrorMessage(error)),
+      }),
+      [enabled],
+    );
     const openWorkspaceFile = useCallback(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
         input.openedFiles.push({ target, disposition });
