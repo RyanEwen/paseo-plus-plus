@@ -1,46 +1,44 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
-import { View } from "react-native";
+import { useCallback, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { Combobox } from "@/components/ui/combobox";
-import type { WorktreeBranchPickerProps } from "../worktree-branch-picker";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { FieldTrigger, type FieldTriggerVariant } from "./field-trigger";
 import { branchIcon } from "./icons";
+import type { PickerControl } from "./index";
 
-/** Preserves branch-choice intents while using the form's compact and desktop field geometry. */
+/** The combined new-branch or existing-branch choice derived by the worktree options hook. */
+export interface WorktreeBranchChoice {
+  options: ComboboxOption[];
+  value: string;
+  label: string;
+  onSelect: (id: string) => void;
+  onSearchQueryChange: (query: string) => void;
+}
+
+/** Chooses a new or existing branch in the form's compact and desktop field geometry. */
 export function WorktreeBranchField({
   options,
   value,
   label,
   onSelect,
   onSearchQueryChange,
+  anchorRef,
+  open,
+  openState,
   onOpenChange,
   variant,
   disabled,
-}: WorktreeBranchPickerProps & {
-  variant: FieldTriggerVariant;
-  disabled: boolean;
-}): ReactElement {
+}: PickerControl &
+  WorktreeBranchChoice & {
+    variant: FieldTriggerVariant;
+    disabled: boolean;
+  }): ReactElement {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef<View>(null);
-
-  useEffect(() => () => onOpenChange(false), [onOpenChange]);
-
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      setOpen(nextOpen);
-      onOpenChange(nextOpen);
-      if (!nextOpen) onSearchQueryChange("");
-    },
-    [onSearchQueryChange, onOpenChange],
-  );
-  const openPicker = useCallback(() => handleOpenChange(true), [handleOpenChange]);
   const select = useCallback(
     (id: string) => {
       onSelect(id);
-      handleOpenChange(false);
+      onOpenChange(false);
     },
-    [onSelect, handleOpenChange],
+    [onSelect, onOpenChange],
   );
 
   return (
@@ -53,7 +51,7 @@ export function WorktreeBranchField({
         tooltip={`${t("newWorkspace.tooltips.branchChoice")}: ${label}`}
         icon={branchIcon}
         value={label}
-        onPress={openPicker}
+        onPress={open}
         disabled={disabled}
         testID="new-workspace-branch-picker-trigger"
       />
@@ -65,8 +63,8 @@ export function WorktreeBranchField({
         searchable
         searchPlaceholder="Search branches"
         title={t("newWorkspace.fields.branch")}
-        open={open}
-        onOpenChange={handleOpenChange}
+        open={openState}
+        onOpenChange={onOpenChange}
         desktopPlacement="bottom-start"
         anchorRef={anchorRef}
       />

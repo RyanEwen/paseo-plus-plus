@@ -18,14 +18,13 @@ import {
 } from "./field-trigger";
 import { branchIcon, folderIcon, ProjectIcon, pullRequestIcon } from "./icons";
 import { LaunchControl } from "./launch-control";
-import { WorktreeBranchField } from "./branch-field";
-import type { WorktreeBranchPickerProps } from "../worktree-branch-picker";
+import { WorktreeBranchField, type WorktreeBranchChoice } from "./branch-field";
 import { AddProjectOption, IsolationOption, ProjectOption, RefOption } from "./options";
 
 type Isolation = "local" | "worktree";
 type RenderOption = NonNullable<ComboboxProps["renderOption"]>;
 
-interface PickerControl {
+export interface PickerControl {
   anchorRef: RefObject<View | null>;
   open: () => void;
   openState: boolean;
@@ -79,7 +78,7 @@ export interface NewWorkspaceFormProps {
     refLabel: string | null;
     refPrefix: string | null;
   };
-  branchChoice: WorktreeBranchPickerProps | null;
+  branchChoice: (PickerControl & WorktreeBranchChoice) | null;
   launch: {
     serverId: string;
     target: LaunchTarget;

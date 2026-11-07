@@ -9,7 +9,8 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import { Button } from "@/components/ui/button";
 import { WorktreeFields } from "./worktree-fields";
-import type { WorktreeBranchPickerProps } from "./worktree-branch-picker";
+import type { WorktreeBranchChoice } from "./form/branch-field";
+import type { PickerControl } from "./form";
 import {
   openWorktreeForm,
   worktreeFormError,
@@ -240,16 +241,19 @@ export function worktreeBranchChoiceOptions(input: {
   };
 }
 
-/** Adapts combined branch choices into explicit mode and ref changes without resetting names. */
+/**
+ * Adapts combined branch choices into explicit mode and ref changes without resetting names.
+ * Returns null when the branch field does not apply; `control` is the screen-owned picker state.
+ */
 export function useWorktreeBranchChoice(input: {
   branchMode: { value: "branch-off" | "checkout"; onChange: WorktreeFormModel["setMode"] } | null;
   branchDetails: BranchPickerDetail[];
   baseItem: PickerItem | null;
   onSelectItem: (item: PickerItem) => void;
   onSearchQueryChange: (query: string) => void;
-  onOpenChange: (open: boolean) => void;
-}): WorktreeBranchPickerProps | null {
-  const { branchMode, branchDetails, baseItem, onSelectItem, onSearchQueryChange, onOpenChange } =
+  control: PickerControl;
+}): (PickerControl & WorktreeBranchChoice) | null {
+  const { branchMode, branchDetails, baseItem, onSelectItem, onSearchQueryChange, control } =
     input;
   const checkout = branchMode?.value === "checkout";
   const choices = useMemo(
@@ -279,7 +283,7 @@ export function useWorktreeBranchChoice(input: {
       "New branch",
     onSelect,
     onSearchQueryChange,
-    onOpenChange,
+    ...control,
   };
 }
 

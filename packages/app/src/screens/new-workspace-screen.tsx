@@ -938,7 +938,7 @@ export function NewWorkspaceScreen({
   >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [branchChoiceOpen, setBranchChoiceOpen] = useState(false);
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
@@ -947,6 +947,7 @@ export function NewWorkspaceScreen({
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
+  const branchPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
@@ -1077,7 +1078,7 @@ export function NewWorkspaceScreen({
     hasSelectedSourceDirectory,
   );
   const branchQueryEnabled = isPickerQueryEnabled(
-    pickerOpen || branchChoiceOpen,
+    pickerOpen || branchPickerOpen,
     clientReady,
     hasSelectedSourceDirectory,
   );
@@ -1203,13 +1204,27 @@ export function NewWorkspaceScreen({
     [itemById, selectPickerItem],
   );
 
+  const openBranchPicker = useCallback(() => {
+    setBranchPickerOpen(true);
+  }, []);
+  const handleBranchPickerOpenChange = useCallback((nextOpen: boolean) => {
+    setBranchPickerOpen(nextOpen);
+    if (!nextOpen) {
+      setPickerSearchQuery("");
+    }
+  }, []);
   const branchChoice = useWorktreeBranchChoice({
     branchMode: worktreeOptions.branchMode,
     branchDetails,
     baseItem: rawBaseItem,
     onSelectItem: selectPickerItem,
     onSearchQueryChange: setPickerSearchQuery,
-    onOpenChange: setBranchChoiceOpen,
+    control: {
+      anchorRef: branchPickerAnchorRef,
+      open: openBranchPicker,
+      openState: branchPickerOpen,
+      onOpenChange: handleBranchPickerOpenChange,
+    },
   });
 
   const clearPickerSelectionForTargetChange = useCallback(
