@@ -5,6 +5,7 @@ describe("getBuiltInLaunchOrder", () => {
   it("leads with creating work in a primary pane", () => {
     expect(getBuiltInLaunchOrder("primary")).toEqual([
       "agent",
+      "reopenClosedAgent",
       "terminal",
       "changes",
       "diff",
@@ -21,6 +22,7 @@ describe("getBuiltInLaunchOrder", () => {
       "diff",
       "files",
       "agent",
+      "reopenClosedAgent",
       "browser",
       "pullRequest",
     ]);

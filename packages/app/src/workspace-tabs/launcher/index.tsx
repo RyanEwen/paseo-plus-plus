@@ -147,7 +147,7 @@ const BUILT_IN_SELECTIONS = {
   files: { kind: "target", target: { kind: "files" } },
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
-} satisfies Record<BuiltInLaunchItemId, NewTabSelection>;
+} satisfies Record<Exclude<BuiltInLaunchItemId, "reopenClosedAgent">, NewTabSelection>;
 
 function getLaunchPresentation(kind: WorkspaceTabTarget["kind"]): PanelPresentation {
   const registration = getPanelRegistration(kind);
@@ -196,6 +196,17 @@ export function useWorkspaceTabLaunchCatalog(input: {
         disabled: false,
         panelKind: "draft",
         launch: launchSelection(BUILT_IN_SELECTIONS.agent),
+      },
+      reopenClosedAgent: {
+        id: "reopen-closed-agent",
+        label: t("sessions.previousTitle"),
+        Icon: History,
+        disabled: false,
+        panelKind: "agent",
+        // Not offered from the Explorer's + menu, which launches companion panels beside the
+        // workspace; the Explorer's empty pane and every workspace launcher still offer it.
+        hidden: !launcher.previousAgentsEnabled || isExplorerMenu,
+        launch: launcher.reopenClosedAgent,
       },
       terminal: {
         id: "terminal",
@@ -259,17 +270,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
       const item = builtIns[id];
       return item.hidden || !panelSupportsHost(item.panelKind, host) ? [] : [item];
     });
-
-    if (!isExplorerMenu && launcher.previousAgentsEnabled) {
-      tabItems.splice(1, 0, {
-        id: "reopen-closed-agent",
-        label: t("sessions.previousTitle"),
-        Icon: History,
-        disabled: false,
-        panelKind: "agent",
-        launch: launcher.reopenClosedAgent,
-      });
-    }
 
     const pluginItems: WorkspaceTabLaunchItem[] = [];
     for (const plugin of plugins) {
