@@ -29,6 +29,23 @@ export function resolveAgentLabel(title: string | null | undefined): string | nu
   return normalized;
 }
 
+/**
+ * The descriptor fields for one agent tab, with stable defaults while the agent is not loaded.
+ * `isTurnActive` comes from the session's turn presentation, not the agent record.
+ */
+function projectAgentDescriptorState(agent: Agent | null, isTurnActive: boolean) {
+  return {
+    provider: agent?.provider ?? "codex",
+    title: agent?.title ?? null,
+    status: agent?.status ?? null,
+    pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
+    requiresAttention: agent?.requiresAttention ?? false,
+    attentionReason: agent?.attentionReason ?? null,
+    attentionMessage: agent?.attentionMessage ?? null,
+    isTurnActive,
+  };
+}
+
 export function useAgentDescriptor(
   target: { kind: "agent"; agentId: string },
   context: { serverId: string },
@@ -38,16 +55,10 @@ export function useAgentDescriptor(
       const session = state.sessions[context.serverId];
       const agent =
         session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
-      return {
-        provider: agent?.provider ?? "codex",
-        title: agent?.title ?? null,
-        status: agent?.status ?? null,
-        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
-        requiresAttention: agent?.requiresAttention ?? false,
-        attentionReason: agent?.attentionReason ?? null,
-        attentionMessage: agent?.attentionMessage ?? null,
-        isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
-      };
+      return projectAgentDescriptorState(
+        agent,
+        selectAgentTurnPresentation(session, target.agentId).isActive,
+      );
     }),
   );
   const icon = useProviderIcon(descriptorState.provider, context.serverId);

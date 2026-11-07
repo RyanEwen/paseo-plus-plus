@@ -687,9 +687,7 @@ export function resolveReloadableConfig(
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
     notifications: {
-      agentAwareAttention: isAgentAwareAttentionEnabled({
-        notifications: persisted.daemon?.notifications,
-      }),
+      agentAwareAttention: resolveAgentAwareAttention(persisted),
     },
     idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
     ...resolveRestartRecoveryConfig(persisted.agents),
@@ -849,4 +847,9 @@ function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
     resumeOnStartup: agents?.resumeOnStartup ?? false,
     resumePrompt: agents?.resumePrompt ?? "Resume working.",
   };
+}
+
+/** The host-owned Agent-aware attention preference; absent means enabled. */
+function resolveAgentAwareAttention(persisted: PersistedConfig): boolean {
+  return isAgentAwareAttentionEnabled({ notifications: persisted.daemon?.notifications });
 }
