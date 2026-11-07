@@ -40,6 +40,10 @@ interface FinishWaitFixture {
   afterPermission(requestId: string, signal: AbortSignal): Promise<void>;
   /** Receives every retried delivery failure of the shared service (first fixture wins). */
   onRetry?: (retry: FinishRetry) => void;
+  /** Awaited between an exact reservation and its enqueue (first fixture wins). */
+  beforeCallbackEnqueue?: (input: { outcomeId: string }) => Promise<void>;
+  /** Replaces the service retry pause (first fixture wins). */
+  retryDelay?: (attempt: number, signal: AbortSignal) => Promise<void>;
 }
 interface FinishRetry {
   subscription: FinishSubscription;
@@ -69,6 +73,9 @@ function setupFinishWait(params: FinishWaitFixture): () => void {
       hosts: () => {
         throw new Error("Fixture uses the injected exact remote wait");
       },
+      beforeCallbackEnqueue: async (gate) => {
+        await params.beforeCallbackEnqueue?.(gate);
+      },
     });
     const service = createFinishSubscriptions({
       ...observation,
@@ -85,6 +92,7 @@ function setupFinishWait(params: FinishWaitFixture): () => void {
       logger: params.logger,
       retryDelayMs: 10,
       onRetry: (retry) => params.onRetry?.(retry),
+      retryDelay: params.retryDelay,
       messages: () => params.agentMessages,
       callerIsActive: async (id) => !(await params.agentStorage.get(id))?.archivedAt,
       open: async (record, signal) => ({
@@ -480,7 +488,19 @@ it.each([
     stops[0]();
     retiredDuringAwait.resolve();
   };
-  const queueWatcherRetirement = () => queueMicrotask(retireWatcherDuringAwait);
+  let beforeCallbackEnqueue: FinishWaitFixture["beforeCallbackEnqueue"];
+  let retryDelay: FinishWaitFixture["retryDelay"];
+  /** Run `hold` for the first reserved outcome only; later reservations pass straight through. */
+  function holdFirstReservation(hold: () => Promise<void>) {
+    let first = true;
+    return async () => {
+      if (!first) {
+        return;
+      }
+      first = false;
+      await hold();
+    };
+  }
   try {
     if (mode === "restored") await restoreReservedCaller();
     const delivery = createTestAgentMessages({
@@ -491,30 +511,24 @@ it.each([
     deliveries.push(delivery);
     const enqueue = vi.spyOn(delivery, "enqueue");
     const release = vi.spyOn(manager, "releaseAttentionCallback");
-    const reserve = manager.reserveAttentionCallback.bind(manager);
     if (mode === "failed-write") {
       storage.failNextReservationWrite = true;
-      let attempts = 0;
-      vi.spyOn(manager, "reserveAttentionCallback").mockImplementation(async (input) => {
-        if (++attempts > 1) await retryReservation.promise;
-        return reserve(input);
-      });
+      // Hold the retry after the failed reservation write until the refusal is asserted.
+      retryDelay = async () => {
+        await retryReservation.promise;
+      };
     }
     if (mode === "competing") {
-      vi.spyOn(manager, "reserveAttentionCallback").mockImplementationOnce(async (input) => {
-        const reservation = await reserve(input);
+      // The first watcher owns the reservation, held before enqueue, while a second arrives.
+      beforeCallbackEnqueue = holdFirstReservation(async () => {
         reservationEntered.resolve();
         await returnReservation.promise;
-        return reservation;
       });
     }
     if (mode === "await-retirement") {
-      vi.spyOn(manager, "reserveAttentionCallback").mockImplementationOnce(async (input) => {
-        const reservation = await reserve(input);
-        // The first microtask queues retirement behind the watcher's reservation continuation.
-        // That continuation starts awaiting false, then retirement runs before the await resumes.
-        queueMicrotask(queueWatcherRetirement);
-        return reservation;
+      // Retire the first watcher after it reserved and before it could enqueue.
+      beforeCallbackEnqueue = holdFirstReservation(async () => {
+        retireWatcherDuringAwait();
       });
     }
     const watch = () => {
@@ -538,6 +552,8 @@ it.each([
             return result;
           },
           onRetry: (retry) => retries.push(retry),
+          beforeCallbackEnqueue,
+          retryDelay,
           afterPermission: async () => {},
         }),
       );
