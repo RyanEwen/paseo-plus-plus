@@ -666,7 +666,7 @@ const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 function isUnbornHeadDiffError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    /--name-status(?: -z)? HEAD/.test(error.message) &&
+    error.message.includes("--name-status HEAD") &&
     error.message.includes("ambiguous argument 'HEAD'")
   );
 }
