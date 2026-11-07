@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Theme } from "./theme";
+import { baseColors, type Theme } from "./theme";
 
 export const ACCENT_OPTIONS = [
   "default",
@@ -12,6 +12,20 @@ export const ACCENT_OPTIONS = [
 ] as const;
 export const AccentColorSchema = z.enum(ACCENT_OPTIONS);
 export type AccentColor = z.infer<typeof AccentColorSchema>;
+
+/** The stored choice when none is saved or the saved value is invalid: the theme's own accent. */
+export const DEFAULT_ACCENT_COLOR = "default" satisfies AccentColor;
+
+/** The theme tokens an accent choice controls. */
+export type AccentTokens = Pick<
+  Theme["colors"],
+  | "accent"
+  | "accentBright"
+  | "accentForeground"
+  | "userMessageBackground"
+  | "userMessageForeground"
+  | "userMessageMutedForeground"
+>;
 
 interface AccentPair {
   light: string;
@@ -30,8 +44,8 @@ export const ACCENT_PALETTE: Record<Exclude<AccentColor, "default">, AccentPair>
 };
 
 /** Resolve from an authored theme so Default restores its original accent and message colors. */
-export function resolveAccentColors(base: Theme, choice: AccentColor) {
-  if (choice === "default") {
+export function resolveAccentColors(base: Theme, choice: AccentColor): AccentTokens {
+  if (choice === DEFAULT_ACCENT_COLOR) {
     return {
       accent: base.colors.accent,
       accentBright: base.colors.accentBright,
@@ -43,7 +57,7 @@ export function resolveAccentColors(base: Theme, choice: AccentColor) {
   }
 
   const accent = ACCENT_PALETTE[choice][base.colorScheme];
-  const foreground = base.colorScheme === "light" ? "#ffffff" : "#18181b";
+  const foreground = base.colorScheme === "light" ? baseColors.white : baseColors.zinc[900];
   return {
     accent,
     accentBright: accent,
