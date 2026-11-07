@@ -1,15 +1,18 @@
 import type { PromptJumpPlacement } from "./prompt-jump-placement";
 import { useNavigationActionVisibility } from "./use-navigation-action-visibility";
-import { useLayoutEffect, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useLayoutEffect,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
-import {
-  EMPTY_PROMPT_READING_SOURCE,
-  type PromptReadingSource,
-  type PromptReadingPosition,
-} from "./prompt-reading-position";
-import { useReadingPrompt } from "./use-reading-prompt";
-import { usePromptDiscovery } from "./use-prompt-discovery";
+import { EMPTY_PROMPT_READING_SOURCE, type PromptReadingSource } from "./prompt-reading-position";
+import { useReadingPrompt, type ReadingPromptRequest } from "./use-reading-prompt";
+import { isDiscoverySettled, usePromptDiscovery } from "./use-prompt-discovery";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutline } from "./chat-outline/use-chat-outline";
 import {
@@ -19,11 +22,6 @@ import {
   mergeCachedPromptTarget,
   resolveReadingPromptTarget,
   getMissingReadingPromptSeq,
-  isStickyPromptVisible,
-  resolveStickyReadingTarget,
-  resolveStickyPromptProgress,
-  resolvePromptOcclusionTop,
-  resolvePromptGeometry,
   shouldReadContext,
   resolveContextMessage,
   shouldDiscoverCachedPrompt,
@@ -33,11 +31,14 @@ import {
   findPromptTarget,
   isPromptNavigationBusy,
   isPreviousPromptDisabled,
+  INITIAL_STICKY_PROMPT_STATE,
+  reduceStickyPromptState,
   type PromptTarget,
+  type StickyPromptState,
   type UserPrompt,
 } from "./sticky-prompt-model";
 
-interface Input {
+export interface StickyPromptInput {
   enabled?: boolean;
   /** The timeline owner admits passive context as actual rows. */
   contextManaged?: boolean;
@@ -57,7 +58,7 @@ interface Input {
 }
 
 /** Own the sticky selection while the existing timeline owner loads and scrolls prompts. */
-export function useStickyPrompt(input: Input) {
+export function useStickyPrompt(input: StickyPromptInput) {
   const {
     enabled = true,
     items,
@@ -83,17 +84,9 @@ export function useStickyPrompt(input: Input) {
   );
   const ownerEpoch = useRef(epoch);
   const scopeChanged = ownerEpoch.current !== epoch;
-  const [storedSelected, setSelected] = useState<UserPrompt | null>(null);
-  const [storedPending, setPending] = useState<PromptTarget | "previous" | null>(null);
-  const [storedError, setError] = useState(false);
-  const [storedCancelled, setCancelled] = useState(false);
+  const [stored, dispatch] = useReducer(reduceStickyPromptState, INITIAL_STICKY_PROMPT_STATE);
   // Do not expose old prompt state during the first render of a new epoch.
-  const { selected, pending, error, cancelled } = resolveEpochPromptState(scopeChanged, {
-    selected: storedSelected,
-    pending: storedPending,
-    error: storedError,
-    cancelled: storedCancelled,
-  });
+  const { selected, pending, error, cancelled } = resolveEpochPromptState(scopeChanged, stored);
   const retryTarget = useRef<{
     target: PromptTarget;
     scroll: boolean;
@@ -132,13 +125,13 @@ export function useStickyPrompt(input: Input) {
     () => items.filter((item): item is UserPrompt => item.kind === "user_message"),
     [items],
   );
-  const contextRequested = shouldReadContext(
+  const contextRequested = shouldReadContext({
     enabled,
-    discoverReading,
+    missing: discoverReading,
     cancelled,
-    reading.navigating,
+    navigating: reading.navigating,
     pending,
-  );
+  });
   const contextSource = resolveContextSource(
     items,
     epoch,
@@ -149,24 +142,26 @@ export function useStickyPrompt(input: Input) {
   const readingContent = useReadingPrompt({
     knownPrompts,
     epoch,
-    seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
-    fetchPrompt: input.fetchPrompt,
-    source: contextSource,
-    fetchContext: input.fetchContext,
+    request: resolveReadingPromptRequest({
+      source: contextSource,
+      seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
+      fetchContext: input.fetchContext,
+      fetchPrompt: input.fetchPrompt,
+    }),
   });
   const targets = useMemo(
     () => mergeCachedPromptTarget(loadedTargets, readingContent.item, selected, epoch),
     [loadedTargets, readingContent.item, selected, epoch],
   );
   const readingItem = readingTarget?.item ?? readingContent.item;
-  const message = resolveContextMessage(
+  const message = resolveContextMessage({
     pending,
-    discoverReading,
-    selectedMessage,
-    readingContent.item,
-    missingReadingSeq,
-    input.fetchPrompt !== undefined,
-  );
+    missing: discoverReading,
+    selected: selectedMessage,
+    fetched: readingContent.item,
+    missingSeq: missingReadingSeq,
+    canFetch: input.fetchPrompt !== undefined,
+  });
   const position = message ? findPromptTarget(targets, message) : -1;
   useEffect(() => {
     if (
@@ -178,7 +173,10 @@ export function useStickyPrompt(input: Input) {
       !readingItem
     )
       return;
-    setSelected(readingTarget?.key === targets.at(-1)?.key ? null : readingItem);
+    dispatch({
+      type: "readingSelected",
+      selected: readingTarget?.key === targets.at(-1)?.key ? null : readingItem,
+    });
   }, [
     enabled,
     reading.manual,
@@ -197,15 +195,21 @@ export function useStickyPrompt(input: Input) {
     enabled:
       enabled &&
       (!input.contextManaged || pending !== null) &&
-      shouldDiscoverCachedPrompt(pending, indexed, message, cancelled, discoverReading),
-    reached: hasDiscoveredCachedPrompt(
+      shouldDiscoverCachedPrompt({
+        pending,
+        indexed,
+        message,
+        cancelled,
+        readingMissing: discoverReading,
+      }),
+    reached: hasDiscoveredCachedPrompt({
       pending,
-      loadedTargets,
+      loaded: loadedTargets,
       previous,
-      discoverReading,
+      readingMissing: discoverReading,
       readingTarget,
       message,
-    ),
+    }),
     hasOlder,
     loadingOlder,
     progressKey: progressKey ?? items[0]?.id ?? "empty",
@@ -215,11 +219,11 @@ export function useStickyPrompt(input: Input) {
   const selectTarget = useStableEvent(
     (
       target: PromptTarget,
-      scroll: boolean = true,
-      options?: { preserveSelection?: boolean; placement?: PromptJumpPlacement },
+      options?: { scroll?: boolean; preserveSelection?: boolean; placement?: PromptJumpPlacement },
     ) => {
       if (!enabled) return;
-      setError(false);
+      const scroll = options?.scroll ?? true;
+      dispatch({ type: "selectionStarted" });
       const placement = options?.placement ?? "pinned";
       retryTarget.current = {
         target,
@@ -228,18 +232,18 @@ export function useStickyPrompt(input: Input) {
         placement,
       };
       if (target.item && !target.cached) {
-        setSelected(
-          !options?.preserveSelection && target.key === targets.at(-1)?.key ? null : target.item,
-        );
-        setPending(null);
+        dispatch({
+          type: "targetShown",
+          selected:
+            !options?.preserveSelection && target.key === targets.at(-1)?.key ? null : target.item,
+        });
         if (scroll) jumpToLoaded(target.item.id, placement);
       } else if (target.seq !== undefined) {
         if (target.cached && !indexed && !canPageToContextTarget(target.seq, input)) {
-          setError(true);
-          setPending(null);
+          dispatch({ type: "targetUnreachable" });
           return;
         }
-        setPending(target);
+        dispatch({ type: "targetRequested", target });
         if (indexed)
           outline.jumpToPrompt(target.seq, {
             scroll: target.cached ? false : scroll,
@@ -258,8 +262,10 @@ export function useStickyPrompt(input: Input) {
     if (loaded?.item && !loaded.cached) {
       const preserveSelection =
         retryTarget.current?.target.key === loaded.key && retryTarget.current.preserveSelection;
-      setSelected(!preserveSelection && loaded.key === targets.at(-1)?.key ? null : loaded.item);
-      setPending(null);
+      dispatch({
+        type: "pendingLoaded",
+        selected: !preserveSelection && loaded.key === targets.at(-1)?.key ? null : loaded.item,
+      });
       if (pending.cached && retryTarget.current?.scroll)
         jumpToLoaded(loaded.item.id, retryTarget.current?.placement);
     } else if (
@@ -273,8 +279,7 @@ export function useStickyPrompt(input: Input) {
       })
     ) {
       cancelDiscovery();
-      setError(true);
-      setPending(null);
+      dispatch({ type: "pendingFailed" });
     }
   }, [
     enabled,
@@ -291,11 +296,7 @@ export function useStickyPrompt(input: Input) {
   ]);
 
   useEffect(() => {
-    if (
-      error ||
-      outline.jumpError ||
-      ["error", "limited", "exhausted", "cancelled"].includes(discovery.status)
-    ) {
+    if (error || outline.jumpError || isDiscoverySettled(discovery.status)) {
       clearNavigationActions();
     }
   }, [error, outline.jumpError, discovery.status, clearNavigationActions]);
@@ -308,8 +309,7 @@ export function useStickyPrompt(input: Input) {
     if (previous) {
       retargetNavigationActions(previous.key);
       selectTarget(previous);
-    } else if (["error", "limited", "exhausted", "cancelled"].includes(discovery.status))
-      setPending(null);
+    } else if (isDiscoverySettled(discovery.status)) dispatch({ type: "previousNotFound" });
   }, [
     enabled,
     discoveringPrevious,
@@ -323,14 +323,13 @@ export function useStickyPrompt(input: Input) {
     if (!enabled || !message) return;
     discovery.restart();
     retryTarget.current = null;
-    setCancelled(false);
     retryDirection.current = direction;
     // Freeze the current prompt before a remote jump replaces the loaded window.
-    setSelected(message);
+    dispatch({ type: "navigationStarted", selected: message });
     const target = targets[position + direction];
     showNavigationActions(target?.key ?? "discover-previous");
     if (target) selectTarget(target);
-    else if (direction === -1 && hasOlder) setPending("previous");
+    else if (direction === -1 && hasOlder) dispatch({ type: "previousRequested" });
   });
 
   const cancel = useStableEvent(() => {
@@ -340,9 +339,7 @@ export function useStickyPrompt(input: Input) {
     readingContent.cancel();
     retryTarget.current = null;
     discovery.cancel();
-    setPending(null);
-    setError(false);
-    setCancelled(true);
+    dispatch({ type: "cancelled" });
   });
   const reviewReading = useStableEvent(() => {
     clearNavigationActions();
@@ -351,14 +348,12 @@ export function useStickyPrompt(input: Input) {
     readingContent.cancel();
     discovery.restart();
     retryTarget.current = null;
-    setPending(null);
-    setError(false);
-    setCancelled(false);
+    dispatch({ type: "readingReviewed" });
   });
   const followLatest = useStableEvent(() => {
     if (!enabled) return;
     cancel();
-    setSelected(null);
+    dispatch({ type: "latestFollowed" });
   });
   const retry = useStableEvent(() => {
     if (!enabled) return;
@@ -366,8 +361,7 @@ export function useStickyPrompt(input: Input) {
       readingContent.retry();
       return;
     }
-    setCancelled(false);
-    setError(false);
+    dispatch({ type: "retried" });
     discovery.restart();
     if (outline.indexError) {
       outline.retryIndex();
@@ -377,7 +371,8 @@ export function useStickyPrompt(input: Input) {
     if (previousAttempt) {
       const target =
         targets.find((entry) => entry.key === previousAttempt.target.key) ?? previousAttempt.target;
-      selectTarget(target, previousAttempt.scroll, {
+      selectTarget(target, {
+        scroll: previousAttempt.scroll,
         preserveSelection: previousAttempt.preserveSelection,
         placement: previousAttempt.placement,
       });
@@ -396,14 +391,13 @@ export function useStickyPrompt(input: Input) {
     const current = targets.findIndex((target) => target.item?.id === id);
     const item = targets[current]?.item;
     if (!item) return;
-    setSelected(item);
+    dispatch({ type: "navigationStarted", selected: item });
     discovery.restart();
-    setCancelled(false);
     retryDirection.current = direction;
     const target = targets[current + direction];
     showNavigationActions(target?.key ?? "discover-previous");
     if (target) selectTarget(target);
-    else if (direction === -1 && hasOlder) setPending("previous");
+    else if (direction === -1 && hasOlder) dispatch({ type: "previousRequested" });
   });
   const cancelStickyJump = outline.cancelStickyJump;
   const cancelReading = readingContent.cancel;
@@ -414,17 +408,14 @@ export function useStickyPrompt(input: Input) {
   useLayoutEffect(() => {
     if (enabled) {
       restartDiscovery();
-      setCancelled(false);
+      dispatch({ type: "enabled" });
       return;
     }
     cancelStickyJump();
     cancelReading();
     cancelDiscovery();
     retryTarget.current = null;
-    setPending(null);
-    setSelected(null);
-    setError(false);
-    setCancelled(true);
+    dispatch({ type: "disabled" });
   }, [enabled, cancelStickyJump, cancelReading, cancelDiscovery, restartDiscovery]);
   // Epoch replacement resets only prompt ownership. The surrounding viewport keeps
   // its manual/following state, DOM ref and reading anchor across authoritative hydration.
@@ -436,15 +427,10 @@ export function useStickyPrompt(input: Input) {
     if (enabled) restartDiscovery();
     retryTarget.current = null;
     retryDirection.current = -1;
-    setPending(null);
-    setSelected(null);
-    setError(false);
-    setCancelled(!enabled);
+    dispatch({ type: "epochReplaced", enabled });
     // The reading-content owner independently cancels old epoch completions without
     // suppressing the new epoch's same-sequence request.
   }, [epoch, enabled, cancelStickyJump, cancelDiscovery, restartDiscovery]);
-  const { geometry, sourceMounted } = usePromptGeometry(message?.id, reading, epoch);
-  const stickyProgress = resolveStickyPromptProgress(message, reading);
   const busy = isPromptNavigationBusy({
     pending: pending !== null || readingContent.loading,
     jumping: outline.isJumping,
@@ -466,28 +452,16 @@ export function useStickyPrompt(input: Input) {
       : targets[position];
     if (target) {
       // Retain the selected prompt while the owner loads its original row.
-      setSelected(target.item ?? message ?? null);
-      selectTarget(target, true, { preserveSelection: true, placement: "original" });
+      dispatch({ type: "revealStarted", selected: target.item ?? message ?? null });
+      selectTarget(target, { scroll: true, preserveSelection: true, placement: "original" });
     }
   });
   return {
     actionVisibleMessageId: resolveActionVisibleMessageId(targets, actionVisibilityKey),
     message,
-    stickyProgress,
-    geometry,
-    sourceMounted,
-    occlusionTop: resolvePromptOcclusionTop(targets, position, reading),
     targets,
     previousKnownBoundary: indexed ? outline.indexReady : !hasOlder,
     activate,
-    stickyVisible:
-      enabled &&
-      isStickyPromptVisible(
-        message,
-        resolveStickyReadingTarget(readingTarget, targets, position),
-        reading.rowId,
-        stickyProgress,
-      ),
     discoveryStatus: discovery.status,
     cancelled,
     busy,
@@ -551,44 +525,12 @@ function isFailedPromptMaterialization(input: PromptMaterializationStatus): bool
   );
 }
 
-/** Retain measured bubble geometry through virtualization, but discard it after a pane resize. */
-function usePromptGeometry(
-  messageId: string | undefined,
-  reading: PromptReadingPosition,
-  epoch: string | null,
-) {
-  const currentGeometry = resolvePromptGeometry(
-    reading.userHandoffs?.find((frame) => frame.id === messageId),
-    reading.viewportWidth,
-  );
-  const lastGeometry = useRef<{
-    epoch: string | null;
-    geometry: ReturnType<typeof resolvePromptGeometry>;
-  } | null>(null);
-  useLayoutEffect(() => {
-    if (currentGeometry) lastGeometry.current = { epoch, geometry: currentGeometry };
-  }, [currentGeometry, epoch]);
-  const cachedGeometry =
-    lastGeometry.current?.epoch === epoch ? lastGeometry.current.geometry : undefined;
-  const geometry =
-    currentGeometry ??
-    (cachedGeometry?.id === messageId && cachedGeometry?.viewportWidth === reading.viewportWidth
-      ? cachedGeometry
-      : undefined);
-  return { geometry, sourceMounted: currentGeometry !== undefined };
-}
-
 /** Hide previous-epoch bookkeeping before the layout effect clears its stored values. */
 function resolveEpochPromptState(
   scopeChanged: boolean,
-  state: {
-    selected: UserPrompt | null;
-    pending: PromptTarget | "previous" | null;
-    error: boolean;
-    cancelled: boolean;
-  },
-) {
-  if (scopeChanged) return { selected: null, pending: null, error: false, cancelled: false };
+  state: StickyPromptState,
+): StickyPromptState {
+  if (scopeChanged) return INITIAL_STICKY_PROMPT_STATE;
   return state;
 }
 
@@ -598,7 +540,7 @@ function resolveActionVisibleMessageId(targets: PromptTarget[], key: string | nu
 }
 
 /** Backward pagination can materialize only targets preceding the ordinary window. */
-function canPageToContextTarget(seq: number, input: Input): boolean {
+function canPageToContextTarget(seq: number, input: StickyPromptInput): boolean {
   if (!input.hasOlder && !input.loadingOlder) return false;
   let firstOrdinarySeq = Infinity;
   for (const item of input.items) {
@@ -609,3 +551,20 @@ function canPageToContextTarget(seq: number, input: Input): boolean {
   }
   return Number.isFinite(firstOrdinarySeq) && seq < firstOrdinarySeq;
 }
+
+/** A response source reads its own context; otherwise an indexed sequence reads its prompt. */
+function resolveReadingPromptRequest(input: {
+  source: StreamItem | undefined;
+  seq: number | undefined;
+  fetchContext: StickyPromptInput["fetchContext"];
+  fetchPrompt: StickyPromptInput["fetchPrompt"];
+}): ReadingPromptRequest | undefined {
+  if (input.source)
+    return { kind: "context", source: input.source, fetchContext: input.fetchContext };
+  if (input.seq !== undefined)
+    return { kind: "prompt", seq: input.seq, fetchPrompt: input.fetchPrompt };
+  return undefined;
+}
+
+/** Navigation state and actions the sticky prompt host and its controls render. */
+export type StickyPromptNavigation = ReturnType<typeof useStickyPrompt>;

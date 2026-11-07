@@ -178,24 +178,15 @@ export function getMissingReadingPromptSeq(input: {
   return input.target?.seq;
 }
 
-/** Paint the pinned prefix only after its original bubble reaches the viewport edge. */
-export function isStickyPromptVisible(
-  message: UserPrompt | undefined,
-  target: PromptTarget | undefined,
-  rowId: string | null,
-  progress: number,
-): boolean {
-  return rowId !== null && !!message && !!target && progress > 0;
-}
-
 /** Discovery may also begin before the first loaded user message exists. */
-export function shouldDiscoverPrompt(
-  previous: boolean,
-  indexed: boolean,
-  message: UserPrompt | undefined,
-  cancelled: boolean,
-  readingMissing: boolean,
-): boolean {
+export function shouldDiscoverPrompt(input: {
+  previous: boolean;
+  indexed: boolean;
+  message: UserPrompt | undefined;
+  cancelled: boolean;
+  readingMissing: boolean;
+}): boolean {
+  const { previous, indexed, message, cancelled, readingMissing } = input;
   return previous || (!indexed && !cancelled && (!message || readingMissing));
 }
 
@@ -219,81 +210,31 @@ export function needsReadingPromptDiscovery(
 }
 
 /** Keep discovery aimed at its original reading turn while older pages are prepended. */
-export function hasDiscoveredPrompt(
-  previousMode: boolean,
-  previous: PromptTarget | undefined,
-  readingMode: boolean,
-  target: PromptTarget | undefined,
-  message: UserPrompt | undefined,
-): boolean {
+export function hasDiscoveredPrompt(input: {
+  previousMode: boolean;
+  previous: PromptTarget | undefined;
+  readingMode: boolean;
+  target: PromptTarget | undefined;
+  message: UserPrompt | undefined;
+}): boolean {
+  const { previousMode, previous, readingMode, target, message } = input;
   if (previousMode) return previous !== undefined;
   if (readingMode) return target !== undefined;
   return message !== undefined;
 }
 
 /** A missing active prompt gets discovery feedback instead of an unrelated loaded prompt. */
-export function resolveStickyPromptMessage(
-  selected: UserPrompt | undefined,
-  fetched: UserPrompt | undefined,
-  readingMissing: boolean,
-  missingSeq: number | undefined,
-  canFetch: boolean,
-): UserPrompt | undefined {
+export function resolveStickyPromptMessage(input: {
+  selected: UserPrompt | undefined;
+  fetched: UserPrompt | undefined;
+  readingMissing: boolean;
+  missingSeq: number | undefined;
+  canFetch: boolean;
+}): UserPrompt | undefined {
+  const { selected, fetched, readingMissing, missingSeq, canFetch } = input;
   if (readingMissing) return undefined;
   if (missingSeq !== undefined && canFetch) return fetched;
   return selected;
-}
-
-/** The compact copy owns the leading pixels once the original bubble reaches the top. */
-export function resolveStickyPromptProgress(
-  message: UserPrompt | undefined,
-  reading: PromptReadingPosition,
-): number {
-  if (!message || reading.rowId === null) return 0;
-  const handoff = reading.userHandoffs?.find((value) => value.id === message.id);
-  if (handoff) return handoff.progress;
-  return reading.visibleUserIds.includes(message.id) ? 0 : 1;
-}
-
-/** Clip the older overlay where the next original prompt enters. This gives the newer
- * bubble precedence on every platform without changing virtualized row stacking contexts.
- */
-export function resolvePromptOcclusionTop(
-  targets: readonly PromptTarget[],
-  position: number,
-  reading: PromptReadingPosition,
-): number | undefined {
-  const laterIds = new Set(
-    targets.slice(position + 1).flatMap((target) => (target.item ? [target.item.id] : [])),
-  );
-  const tops = (reading.userHandoffs ?? [])
-    .filter((value) => laterIds.has(value.id) && value.top !== undefined && value.top >= 0)
-    .map((value) => value.top!);
-  return tops.length ? Math.min(...tops) : undefined;
-}
-
-/** Accept only real source-bubble measurements; unknown/index-only prompts retain the rail. */
-export function resolvePromptGeometry(
-  frame: import("./prompt-handoff").PromptHandoff | undefined,
-  viewportWidth?: number | null,
-) {
-  if (
-    frame?.left === undefined ||
-    frame.width === undefined ||
-    frame.viewportWidth === undefined ||
-    frame.width <= 0 ||
-    frame.viewportWidth <= 0
-  )
-    return undefined;
-  if (viewportWidth && frame.viewportWidth !== viewportWidth) return undefined;
-  return {
-    id: frame.id,
-    left: frame.left,
-    width: frame.width,
-    viewportWidth: frame.viewportWidth,
-    prefixHeightOne: frame.prefixHeightOne,
-    prefixHeightTwo: frame.prefixHeightTwo,
-  };
 }
 
 /** Published reading geometry owns physical context even while following output.
@@ -357,65 +298,79 @@ export function mergeCachedPromptTarget(
 }
 
 /** Only manual missing context uses the passive reader; explicit jumps keep their selection. */
-export function shouldReadContext(
-  enabled: boolean,
-  missing: boolean,
-  cancelled: boolean,
-  navigating: boolean,
-  pending: PromptTarget | "previous" | null,
-): boolean {
+export function shouldReadContext(input: {
+  enabled: boolean;
+  missing: boolean;
+  cancelled: boolean;
+  navigating: boolean;
+  pending: PromptTarget | "previous" | null;
+}): boolean {
+  const { enabled, missing, cancelled, navigating, pending } = input;
   return enabled && missing && !cancelled && !navigating && pending === null;
 }
 
 /** Freeze explicit selection while its original loads; otherwise use the active reading cache. */
-export function resolveContextMessage(
-  pending: PromptTarget | "previous" | null,
-  missing: boolean,
-  selected: UserPrompt | undefined,
-  fetched: UserPrompt | undefined,
-  missingSeq: number | undefined,
-  canFetch: boolean,
-): UserPrompt | undefined {
+export function resolveContextMessage(input: {
+  pending: PromptTarget | "previous" | null;
+  missing: boolean;
+  selected: UserPrompt | undefined;
+  fetched: UserPrompt | undefined;
+  missingSeq: number | undefined;
+  canFetch: boolean;
+}): UserPrompt | undefined {
+  const { pending, missing, selected, fetched, missingSeq, canFetch } = input;
   if (pending) return selected;
   if (missing) return fetched;
-  return resolveStickyPromptMessage(selected, fetched, false, missingSeq, canFetch);
+  return resolveStickyPromptMessage({
+    selected,
+    fetched,
+    readingMissing: false,
+    missingSeq,
+    canFetch,
+  });
 }
 
 /** Explicit cached-row revelation loads history; passive context never does. */
-export function shouldDiscoverCachedPrompt(
-  pending: PromptTarget | "previous" | null,
-  indexed: boolean,
-  message: UserPrompt | undefined,
-  cancelled: boolean,
-  readingMissing: boolean,
-): boolean {
+export function shouldDiscoverCachedPrompt(input: {
+  pending: PromptTarget | "previous" | null;
+  indexed: boolean;
+  message: UserPrompt | undefined;
+  cancelled: boolean;
+  readingMissing: boolean;
+}): boolean {
+  const { pending, indexed, message, cancelled, readingMissing } = input;
   if (pending !== null && pending !== "previous" && pending.cached) return !indexed;
-  return (
-    !readingMissing &&
-    shouldDiscoverPrompt(pending === "previous", indexed, message, cancelled, false)
-  );
+  if (readingMissing) return false;
+  return shouldDiscoverPrompt({
+    previous: pending === "previous",
+    indexed,
+    message,
+    cancelled,
+    readingMissing: false,
+  });
 }
 
 /** Stop pagination only when the actual original row is loaded, not its cache copy. */
-export function hasDiscoveredCachedPrompt(
-  pending: PromptTarget | "previous" | null,
-  loaded: PromptTarget[],
-  previous: PromptTarget | undefined,
-  readingMissing: boolean,
-  readingTarget: PromptTarget | undefined,
-  message: UserPrompt | undefined,
-): boolean {
+export function hasDiscoveredCachedPrompt(input: {
+  pending: PromptTarget | "previous" | null;
+  loaded: PromptTarget[];
+  previous: PromptTarget | undefined;
+  readingMissing: boolean;
+  readingTarget: PromptTarget | undefined;
+  message: UserPrompt | undefined;
+}): boolean {
+  const { pending, loaded, previous, readingMissing, readingTarget, message } = input;
   if (pending !== null && pending !== "previous" && pending.cached)
     return loaded.some(
       (target) => target.key === pending.key && target.item !== undefined && !target.cached,
     );
-  return hasDiscoveredPrompt(
-    pending === "previous",
+  return hasDiscoveredPrompt({
+    previousMode: pending === "previous",
     previous,
-    readingMissing,
-    readingTarget,
+    readingMode: readingMissing,
+    target: readingTarget,
     message,
-  );
+  });
 }
 
 /** Missing canonical identity is an actionable error, never a guessed source cursor. */
@@ -423,11 +378,111 @@ export function isContextSourceMissing(requested: boolean, source: StreamItem | 
   return requested && !source;
 }
 
-/** A cache-resolved reading prompt can be pinned while its original is outside the loaded window. */
-export function resolveStickyReadingTarget(
-  target: PromptTarget | undefined,
-  targets: readonly PromptTarget[],
-  position: number,
-) {
-  return target ?? targets[position];
+/** The sticky prompt's own selection and navigation outcome. */
+export interface StickyPromptState {
+  /** An explicitly held prompt; null shows the reading or latest prompt. */
+  selected: UserPrompt | null;
+  /** A target whose original row is loading, or a search for the previous prompt. */
+  pending: PromptTarget | "previous" | null;
+  error: boolean;
+  cancelled: boolean;
+}
+
+export const INITIAL_STICKY_PROMPT_STATE: StickyPromptState = {
+  selected: null,
+  pending: null,
+  error: false,
+  cancelled: false,
+};
+
+/** Everything that changes the sticky prompt state, named for what happened. */
+export type StickyPromptEvent =
+  /** Manual reading or following output chose the prompt to hold (null for the latest). */
+  | { type: "readingSelected"; selected: UserPrompt | null }
+  /** A navigation or reveal starts; a previous failure no longer applies. */
+  | { type: "selectionStarted" }
+  /** A loaded target is shown at once (null when it is the latest prompt). */
+  | { type: "targetShown"; selected: UserPrompt | null }
+  /** A target's original row must load first. */
+  | { type: "targetRequested"; target: PromptTarget }
+  /** A cached target cannot be paged to without an index. */
+  | { type: "targetUnreachable" }
+  /** The pending target's original row arrived. */
+  | { type: "pendingLoaded"; selected: UserPrompt | null }
+  /** The pending target failed to materialize. */
+  | { type: "pendingFailed" }
+  /** Discovery for the previous prompt settled without finding one. */
+  | { type: "previousNotFound" }
+  /** Arrow or activated navigation holds the current prompt while it moves. */
+  | { type: "navigationStarted"; selected: UserPrompt }
+  /** No previous prompt is loaded yet; search older history for one. */
+  | { type: "previousRequested" }
+  /** Hold a prompt while its original row is revealed. */
+  | { type: "revealStarted"; selected: UserPrompt | null }
+  | { type: "cancelled" }
+  /** Manual reading takes over from navigation without cancelling discovery. */
+  | { type: "readingReviewed" }
+  | { type: "latestFollowed" }
+  | { type: "retried" }
+  | { type: "enabled" }
+  | { type: "disabled" }
+  /** A new authoritative epoch resets prompt ownership; disabled panes stay cancelled. */
+  | { type: "epochReplaced"; enabled: boolean };
+
+/** Pure transition for the sticky prompt state. An event that changes nothing returns the
+ * same state, so React skips the render exactly as it did for the equivalent setters. */
+export function reduceStickyPromptState(
+  state: StickyPromptState,
+  event: StickyPromptEvent,
+): StickyPromptState {
+  const next = transitionStickyPromptState(state, event);
+  const unchanged =
+    next.selected === state.selected &&
+    next.pending === state.pending &&
+    next.error === state.error &&
+    next.cancelled === state.cancelled;
+  return unchanged ? state : next;
+}
+
+function transitionStickyPromptState(
+  state: StickyPromptState,
+  event: StickyPromptEvent,
+): StickyPromptState {
+  switch (event.type) {
+    case "readingSelected":
+      return { ...state, selected: event.selected };
+    case "selectionStarted":
+      return { ...state, error: false };
+    case "targetShown":
+      return { ...state, selected: event.selected, pending: null };
+    case "targetRequested":
+      return { ...state, pending: event.target };
+    case "targetUnreachable":
+    case "pendingFailed":
+      return { ...state, error: true, pending: null };
+    case "pendingLoaded":
+      return { ...state, selected: event.selected, pending: null };
+    case "previousNotFound":
+      return { ...state, pending: null };
+    case "navigationStarted":
+      return { ...state, selected: event.selected, cancelled: false };
+    case "previousRequested":
+      return { ...state, pending: "previous" };
+    case "revealStarted":
+      return { ...state, selected: event.selected };
+    case "cancelled":
+      return { ...state, pending: null, error: false, cancelled: true };
+    case "readingReviewed":
+      return { ...state, pending: null, error: false, cancelled: false };
+    case "latestFollowed":
+      return { ...state, selected: null };
+    case "retried":
+      return { ...state, error: false, cancelled: false };
+    case "enabled":
+      return { ...state, cancelled: false };
+    case "disabled":
+      return { selected: null, pending: null, error: false, cancelled: true };
+    case "epochReplaced":
+      return { selected: null, pending: null, error: false, cancelled: !event.enabled };
+  }
 }

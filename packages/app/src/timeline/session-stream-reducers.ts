@@ -473,9 +473,7 @@ function mergeTimelineWindow(args: {
     older,
     sideEffects: [],
     acknowledgedClientMessageIds: reconciled.acknowledgedClientMessageIds,
-    acceptedSourceEntries: timelineUnits.flatMap((unit) =>
-      unit.sourceEntry ? [unit.sourceEntry] : [],
-    ),
+    acceptedSourceEntries: acceptedSourceEntries(timelineUnits),
   };
 }
 
@@ -562,9 +560,7 @@ function applyTimelineReplacePath(args: {
     older: payload.hasOlder ? "available" : "none",
     sideEffects,
     acknowledgedClientMessageIds,
-    acceptedSourceEntries: timelineUnits.flatMap((unit) =>
-      unit.sourceEntry ? [unit.sourceEntry] : [],
-    ),
+    acceptedSourceEntries: acceptedSourceEntries(timelineUnits),
   };
 }
 interface IncrementalAcceptResult {
@@ -1240,34 +1236,24 @@ function applyTimelineIncrementalPath(args: {
     older: resolveOlderTimelineAvailability({ payload, cursor, currentCursor }),
     sideEffects,
     acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds,
-    acceptedSourceEntries: acceptedUnits.flatMap((unit) =>
-      unit.sourceEntry ? [unit.sourceEntry] : [],
-    ),
+    acceptedSourceEntries: acceptedSourceEntries(acceptedUnits),
   };
 }
 
-function resolveTimelineResponseInitialization(
-  input: Pick<
-    ProcessTimelineResponseInput,
-    "payload" | "isInitializing" | "hasActiveInitDeferred" | "initRequestDirection"
-  >,
-) {
-  const { payload, isInitializing, hasActiveInitDeferred, initRequestDirection } = input;
-  const shouldResolveDeferredInit = shouldResolveTimelineInit({
-    hasActiveInitDeferred,
-    hasNewer: payload.hasNewer,
-    isInitializing,
-    initRequestDirection,
-    responseDirection: payload.direction,
-    reset: payload.reset,
-  });
-  const timelineResponseComplete = payload.direction !== "after" || !payload.hasNewer;
-  const clearInitializing =
-    (shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred)) &&
-    timelineResponseComplete;
+/** Source entries of the units a page or stream event accepted, in unit order. */
+function acceptedSourceEntries(
+  units: readonly { sourceEntry?: TimelineResponseEntry }[],
+): TimelineResponseEntry[] {
+  return units.flatMap((unit) => (unit.sourceEntry ? [unit.sourceEntry] : []));
+}
 
-  const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
-  return { initResolution, clearInitializing };
+/** Report the canonical source entries an applied page accepted, for prompt context coverage. */
+function reportAcceptedSources(
+  input: ProcessTimelineResponseInput,
+  accepted: { discard: boolean; sources: AcceptedCanonicalSources },
+): void {
+  if (accepted.discard) return;
+  input.onAcceptedSources?.(accepted.sources);
 }
 
 export function processTimelineResponse(
@@ -1432,22 +1418,32 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Init resolution
   // ------------------------------------------------------------------
-  const { initResolution, clearInitializing } = resolveTimelineResponseInitialization({
-    payload,
-    isInitializing,
+  const shouldResolveDeferredInit = shouldResolveTimelineInit({
     hasActiveInitDeferred,
+    hasNewer: payload.hasNewer,
+    isInitializing,
     initRequestDirection,
+    responseDirection: payload.direction,
+    reset: payload.reset,
   });
+  const timelineResponseComplete = payload.direction !== "after" || !payload.hasNewer;
+  const clearInitializing =
+    (shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred)) &&
+    timelineResponseComplete;
+
+  const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
   const commit = discard ? "discard" : "apply";
-  if (!discard)
-    input.onAcceptedSources?.({
+  reportAcceptedSources(input, {
+    discard,
+    sources: {
       projection: payload.projection,
       epoch: payload.epoch,
       entries: timelineResult.acceptedSourceEntries ?? [],
       tail: nextTail,
       head: nextHead,
       cursor: nextCursor,
-    });
+    },
+  });
 
   return {
     commit,

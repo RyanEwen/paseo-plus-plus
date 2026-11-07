@@ -92,11 +92,7 @@ Upward input that asks a scrollable chat viewport to move takes effect at input 
 
 ## Prompt navigation
 
-The Chat outline and sticky user-message surface share the viewed timeline's prompt index and
-window loading. Keep scrolling inside that owner: an indexed prompt may sit outside the loaded
-window, and a loaded row may sit outside the mounted presentation window. Resolve presentation
-rows to authoritative timeline positions before selecting prompts; Markdown blocks and plugin
-cards do not share the canonical row IDs. Child transcripts use their own history pagination.
+The Chat outline and the sticky prompt share the viewed timeline's prompt index and page loading. Keep scrolling inside that owner: an indexed prompt can sit outside the loaded window, and a loaded row outside the mounted presentation window. Resolve presentation rows to authoritative timeline positions before selecting prompts, because Markdown blocks and plugin cards do not share canonical row IDs. Child transcripts use their own history pagination.
 
 For message display and disclosure behavior, see [Keep user prompts in view](fork-features/keep-user-prompts-in-view.md). Pinning keeps the same message identity and component ancestry; disclosure changes only the pinned presentation. Virtualization retains the preceding user row, and compact previews yield to the next user row. Disclosure state is scoped to canonical identity and epoch. Expanded sticky bodies stay in one bounded scrollable body, with disclosure and navigation outside that body.
 
@@ -104,21 +100,13 @@ Native sticky rows retain their full ordinary transcript height even while their
 
 Android uses one UI-owned presentation for the full-row exit boundary, motion, clipping, disclosure and hidden-control access. React's reading selection cannot compact the body. A reverse handoff resets the held inner More viewport before restoring ordinary paint; a queued disclosure request must still own its binding and handoff token. The iOS keyboard/sticky owner remains separate and retains its existing trigger. Do not substitute an independently timed keyboard value or broaden this Android contract to iOS without migrating its actual physical owner.
 
-The viewport owns original row measurements, pinning, reading anchors and explicit prompt landings. It must not use a translated bubble as its original scroll target. Manual scrolling selects the prompt for the response at the reading edge. Arrow navigation retains its selected prompt through the smooth scroll, including landings clamped by the end of the conversation. Bottom-following intent keeps latest-prompt navigation and resumes when you send or use Jump to bottom. The published reading edge still owns physical prompt context, including on initial opening; latest context is only the fallback before that edge is available. Incoming messages do not move an older reading selection. Retained panes keep their own selection; session and epoch changes isolate it.
+On web, the viewport owns original row measurements and pinning, and must not use a translated bubble as its original scroll target. Recovered context must not add ordinary rows, inline space, virtual size or reading-anchor candidates; its paint has no invented original position and keeps its certified context authority. An ordinary web row hands off only when its natural bottom reaches the reading edge plus its independently prepared compact paint height. More must not change that threshold, and no trailing space is added to make it reachable. Keep one actual body through materialization and preserve its full ordinary allocation through More/Less. Retained leases support reuse, but only the context certified for the current reading source may own sticky paint.
 
-An assistant-only tail may need a separate canonical context read to recover its preceding user row. Cached history may paint before synchronization finishes. Keep its locally proven prompt visible, and admit remote prompt lookup only after authoritative history acceptance. Keep that isolated coverage separate from the viewed window, and pass the row through the same presentation as ordinary history. A retained context row does not prove that the gap before it is loaded, even when its canonical revision is cached but remains outside the current local presentation window. On web, recovered context must not add ordinary rows, inline space, virtual size or reading-anchor candidates. An ordinary web row hands off only when its natural bottom reaches the reading edge plus its independently prepared compact paint height. More must not change that threshold, and no trailing space is added to make it reachable. Recovered paint has no invented original position and keeps its certified context authority. Keep one actual body through materialization and preserve its full ordinary allocation through More/Less. Retained leases support reuse, but only the context certified for the current reading source may own sticky paint. Original reveal and arrow navigation must materialize the target through the ordinary history owner before claiming a landing.
+Retained prompt context is isolated coverage. A context row never joins the viewed window and does not prove that the gap before it is loaded. Admit a remote prompt lookup only after authoritative history acceptance; until then, show only a locally proven prompt.
 
-Index-free discovery checks projected display-anchor progress and stops with usable feedback on exhaustion, failure, cancellation, or its work budget. A projected row can have later updates beyond the backward cursor; its first source position owns pagination. Passive context reads keep an available prompt visible. A validated USER boundary with no ordinary rendered body stays neutral; do not report a load failure, claim the whole conversation is prompt-free, or cross it to display an older prompt. When no prompt is available, the sticky rail shows a muted system placeholder and owns any actionable retry. Explicit navigation failures retain their own feedback and retry. An explicit retry can continue past the
-budget; streamed cursor advances cannot restart that budget. A transcript change during an
-isolated read can also require an explicit retry. Scrolling through already proven context
-reuses its user row. Split panes retain their own reading context, including while hidden or
-with pinning disabled.
+Arrow navigation and original reveal load the target through the ordinary history owner before claiming a landing. Cancel obsolete navigation at both the page-acceptance and scroll boundaries: returning to the bottom, sending, or starting manual reading invalidates delayed page application, errors and animation callbacks without cancelling unrelated shared reads.
 
-Cancel obsolete navigation at the window-acceptance boundary as well as the scroll boundary.
-Returning to bottom, sending, or starting manual reading must invalidate delayed page application,
-errors, and animation callbacks without cancelling unrelated shared reads or weakening epoch and
-request fences. Native index recovery must include the measured live-header extent in its estimate
-and retain a bounded progress budget across retries.
+Index-free discovery stops with usable feedback on exhaustion, failure, cancellation or its work budget. Streamed cursor advances cannot restart that budget. An explicit Retry can continue past it and restarts every failed owner. A validated user boundary with no rendered body stays neutral: it is not a load failure, and discovery does not cross it. Split panes keep their own reading context, including while hidden or with the feature turned off.
 
 ## Durable item anchors
 

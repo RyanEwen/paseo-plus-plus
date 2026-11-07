@@ -865,8 +865,6 @@ function NativeActualViewport(props: StreamRenderInput & { strategy: StreamStrat
         setPinnedId(readingPinnedId);
         props.onReadingPositionChange?.({
           ...position,
-          viewportWidth: m.viewportWidth,
-          userHandoffs: [],
           navigating: navigatingPromptRef.current,
           following: bottomAnchorController.mode === "sticky-bottom",
           manual: isUserScrollActiveRef.current,

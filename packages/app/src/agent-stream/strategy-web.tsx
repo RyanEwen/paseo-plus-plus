@@ -7,12 +7,10 @@ import {
 } from "./actual-prompt-rows";
 import type { NaturalMessageGeometry } from "@/components/user-message-flow-model";
 import {
-  getOriginalPromptTop,
   getNaturalPromptRowHeight,
   syncActualPromptPin,
   reconcilePromptFlow,
 } from "./actual-prompt-pin.web";
-import { resolvePromptHandoffProgress, type PromptHandoff } from "./prompt-handoff";
 import React, {
   type CSSProperties,
   useCallback,
@@ -185,6 +183,11 @@ function isViewportUpwardKeyPress(event: KeyboardEvent, scrollContainer: HTMLEle
     return false;
   }
   return event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home";
+}
+
+/** Whether the viewport sits at its start edge, where upward input releases a pager latch. */
+function isAtHistoryStartEdge(scrollContainer: HTMLElement): boolean {
+  return scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON;
 }
 
 function canNestedScrollerConsumeInput(
@@ -1143,7 +1146,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!scrollContainer || !contentNode) {
       onReadingPositionChange({
         rowId: null,
-        visibleUserIds: [],
         navigating: false,
         following: followOutputRef.current,
         manual: manualReadingRef.current,
@@ -1152,46 +1154,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
     const viewport = scrollContainer.getBoundingClientRect();
     if (viewport.width <= 0 || viewport.height <= 0) return;
-    const visibleUsers: string[] = [];
-    const userHandoffs: PromptHandoff[] = [];
-    for (const bubble of props.trackPromptHandoff === false
-      ? []
-      : contentNode.querySelectorAll<HTMLElement>('[data-testid="user-message"]')) {
-      if (bubble.closest("[data-retained-prompt-row]")) continue;
-      const body = bubble.querySelector<HTMLElement>('[data-testid="user-message-bubble"]');
-      const renderedBounds = (body ?? bubble).getBoundingClientRect();
-      const originalTop = getOriginalPromptTop(body ?? bubble);
-      const bounds = {
-        ...renderedBounds,
-        top: originalTop,
-        bottom: originalTop + renderedBounds.height,
-        width: renderedBounds.width,
-        height: renderedBounds.height,
-        left: renderedBounds.left,
-      };
-      const id = bubble.closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
-      if (id && bounds.width > 0 && bounds.height > 0) {
-        if (bounds.bottom > viewport.top && bounds.top < viewport.bottom) visibleUsers.push(id);
-        const progress = resolvePromptHandoffProgress(bounds.top - viewport.top);
-        const { prefixHeightOne, prefixHeightTwo } = measurePromptTextPrefix(bubble);
-        userHandoffs.push({
-          id,
-          progress,
-          top: bounds.top - viewport.top,
-          left: bounds.left - viewport.left,
-          width: bounds.width,
-          height: bounds.height,
-          viewportWidth: viewport.width,
-          prefixHeightOne,
-          prefixHeightTwo,
-        });
-      }
-    }
     onReadingPositionChange({
-      viewportWidth: viewport.width,
       rowId: readingAnchor.getReadingRowId(scrollContainer.scrollTop),
-      visibleUserIds: visibleUsers,
-      userHandoffs,
       navigating: isJumpSettling(),
       following: followOutputRef.current,
       manual: manualReadingRef.current,
@@ -1328,8 +1292,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (followOutputRef.current) {
       setFollowOutput(false);
     }
-    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
-    rearmHistoryStartFromUserIntent(scrollTop <= USER_SCROLL_DELTA_EPSILON);
+    const scrollContainer = scrollContainerRef.current;
+    rearmHistoryStartFromUserIntent(!scrollContainer || isAtHistoryStartEdge(scrollContainer));
   });
 
   /** Upward input can only move this viewport when it scrolls and has a range to move through. */
@@ -1588,11 +1552,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
      * thumb drag does. The browser publishes the resulting scroll asynchronously, so waiting for
      * it would leave a late scroll looking like geometry, keep following on, and block paging.
      */
-    const markUpwardViewportInput = (asksViewportToMove: boolean) => {
+    const markUpwardViewportInput = ({ asksViewportToMove }: { asksViewportToMove: boolean }) => {
       markUpwardInputEvidence();
       if (asksViewportToMove && canUserMoveViewport()) {
         stopFollowingOutputFromUserIntent();
-      } else if (scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON) {
+      } else if (isAtHistoryStartEdge(scrollContainer)) {
         rearmHistoryStartFromUserIntent();
       }
     };
@@ -1609,7 +1573,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         return;
       // Descendants ran first, so their cancellation is visible here. Ancestors run later and this
       // cannot see them, but the app's own wheel listeners above this viewport are all passive.
-      if (event.deltaY < 0) markUpwardViewportInput(isVerticalUpwardWheel(event));
+      if (event.deltaY < 0)
+        markUpwardViewportInput({ asksViewportToMove: isVerticalUpwardWheel(event) });
       markManualReading();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1618,7 +1583,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const downward = ["ArrowDown", "PageDown", "End", " "].includes(event.key);
       if (!upward && !downward) return;
       if (canNestedScrollerConsumeInput(event.target, scrollContainer, upward ? -1 : 1)) return;
-      if (upward) markUpwardViewportInput(isViewportUpwardKeyPress(event, scrollContainer));
+      if (upward)
+        markUpwardViewportInput({
+          asksViewportToMove: isViewportUpwardKeyPress(event, scrollContainer),
+        });
       markManualReading();
     };
     const handlePointerDown = (event: PointerEvent) => {
@@ -1696,8 +1664,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         !canNestedScrollerConsumeInput(event.target, scrollContainer, delta)
       ) {
         // A canceled move does not scroll, and a second finger is a pinch, which zooms instead.
-        if (delta < 0)
-          markUpwardViewportInput(event.touches.length === 1 && !event.defaultPrevented);
+        if (delta < 0) {
+          const singleFingerScroll = event.touches.length === 1 && !event.defaultPrevented;
+          markUpwardViewportInput({ asksViewportToMove: singleFingerScroll });
+        }
         markManualReading();
       }
       lastTouchClientYRef.current = touch.clientY;
@@ -2047,16 +2017,4 @@ export function createWebStreamStrategy(input: CreateWebStreamStrategyInput): St
     },
     getBottomOffset: (metrics) => Math.max(0, metrics.contentHeight - metrics.viewportHeight),
   });
-}
-
-/** Read actual source line boxes without estimating wrapping from message length. */
-function measurePromptTextPrefix(bubble: HTMLElement) {
-  const text = bubble.querySelector<HTMLElement>('[data-testid="user-message-text"]');
-  // The renderer supplies an explicit line-height. This is the actual CSS line box,
-  // not a character-count or wrapping estimate; the source text remains unbounded.
-  const lineHeight = text ? Number.parseFloat(window.getComputedStyle(text).lineHeight) : 0;
-  const textHeight = text?.clientHeight ?? 0;
-  const prefixHeightOne = Number.isFinite(lineHeight) ? Math.min(textHeight, lineHeight) : 0;
-  const prefixHeightTwo = Number.isFinite(lineHeight) ? Math.min(textHeight, lineHeight * 2) : 0;
-  return { prefixHeightOne, prefixHeightTwo };
 }

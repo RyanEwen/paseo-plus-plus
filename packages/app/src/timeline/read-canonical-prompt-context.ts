@@ -12,6 +12,31 @@ import {
 import type { StreamItem } from "@/types/stream";
 import { decodePromptEntry } from "./hydrate-prompt-entry";
 import { TIMELINE_FETCH_PAGE_SIZE, PROMPT_DISCOVERY_PAGE_BUDGET } from "./timeline-fetch-policy";
+
+/** Why a reading context read failed. Messages are user-facing feedback copy. */
+const READING_CONTEXT_FAILURES = {
+  "no-position": "Reading source has no canonical position",
+  cancelled: "Reading context was cancelled",
+  "page-unavailable": "Reading context changed or is unavailable",
+  "no-progress": "Reading context made no progress",
+  "index-unavailable": "Reading prompt index changed or is unavailable",
+  "index-ambiguous": "Reading prompt index is ambiguous",
+  "indexed-content-unavailable": "Indexed prompt content changed or is unavailable",
+  "source-changed": "Reading context source changed",
+  "occurrence-ambiguous": "Reading source occurrence is ambiguous",
+  "occurrence-unavailable": "Reading source occurrence is unavailable",
+  "not-backward": "Reading context did not move backward",
+  "invalid-continuation": "Reading context continuation is invalid",
+  "invalid-ranges": "Reading context has invalid canonical ranges",
+} as const;
+export type ReadingContextFailure = keyof typeof READING_CONTEXT_FAILURES;
+
+/** A reading context read that failed; branch on `reason`, not the message. */
+export class ReadingContextError extends Error {
+  constructor(readonly reason: ReadingContextFailure) {
+    super(READING_CONTEXT_FAILURES[reason]);
+  }
+}
 type UserPrompt = Extract<StreamItem, { kind: "user_message" }>;
 
 export type ContextPage = Pick<
@@ -62,29 +87,48 @@ export async function fetchReadingPromptContext(
   signal: AbortSignal,
   backwardProjection: "projected" | "canonical" = "canonical",
 ): Promise<UserPrompt | undefined> {
-  return (await fetchCanonicalPromptContext(reader, source, signal, backwardProjection))?.prompt;
+  return (await fetchCanonicalPromptContext({ reader, source, signal, backwardProjection }))
+    ?.prompt;
+}
+
+/** Inputs for one canonical prompt context read. */
+export interface CanonicalPromptContextRead {
+  reader: ContextPageReader;
+  source: StreamItem;
+  signal: AbortSignal;
+  backwardProjection?: "projected" | "canonical";
+  /** Continue a budget-limited read instead of probing the source again. */
+  progress?: CanonicalPromptContextProgress;
+  /** Return a prompt already proven in ordinary rows, ending the read early. */
+  resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined;
+  /** Called once the source start has passed validation. */
+  observeSourceStart?: (sourceStart: number) => void;
+  indexedLookup?: ContextPromptIndexLookup;
 }
 
 export async function fetchCanonicalPromptContext(
-  reader: ContextPageReader,
-  source: StreamItem,
-  signal: AbortSignal,
-  backwardProjection: "projected" | "canonical" = "canonical",
-  progress?: CanonicalPromptContextProgress,
-  resolveOrdinary?: (sourceStart: number) => UserPrompt | undefined,
-  observeSourceStart?: (sourceStart: number) => void,
-  indexedLookup?: ContextPromptIndexLookup,
+  input: CanonicalPromptContextRead,
 ): Promise<CanonicalPromptContext | null | undefined> {
+  const {
+    reader,
+    source,
+    signal,
+    backwardProjection = "canonical",
+    progress,
+    resolveOrdinary,
+    observeSourceStart,
+    indexedLookup,
+  } = input;
   const position = source.timelineCursor;
-  if (!position) throw new Error("Reading source has no canonical position");
+  if (!position) throw new ReadingContextError("no-position");
   const read = async (cursor: number, limit: number, projection: "projected" | "canonical") => {
-    if (signal.aborted) throw new Error("Reading context was cancelled");
+    if (signal.aborted) throw new ReadingContextError("cancelled");
     indexedLookup?.assertCurrent();
     const page = await reader({ epoch: position.epoch, cursor, limit, projection }, signal);
     indexedLookup?.assertCurrent();
-    if (signal.aborted) throw new Error("Reading context was cancelled");
+    if (signal.aborted) throw new ReadingContextError("cancelled");
     if (page.epoch !== position.epoch || page.error || page.reset || page.staleCursor || page.gap)
-      throw new Error("Reading context changed or is unavailable");
+      throw new ReadingContextError("page-unavailable");
     for (const entry of page.entries) validateContextRange(entry);
     return page;
   };
@@ -129,7 +173,7 @@ export async function fetchCanonicalPromptContext(
     if (prompt) return decodeContext(prompt, sourceKey, sourceStart, position);
     if (!page.hasOlder) return undefined;
     const next = entries.length ? Math.min(...entries.map((entry) => entry.seqStart)) : cursor;
-    if (next >= cursor) throw new Error("Reading context made no progress");
+    if (next >= cursor) throw new ReadingContextError("no-progress");
     cursor = next;
   }
   throw new CanonicalPromptContextBudgetError({
@@ -174,11 +218,11 @@ function indexedPredecessor(
     parsed.data.epoch !== request.epoch ||
     parsed.data.error !== null
   )
-    throw new Error("Reading prompt index changed or is unavailable");
+    throw new ReadingContextError("index-unavailable");
   const seen = new Set<number>();
   let preceding: number | undefined;
   for (const prompt of parsed.data.prompts) {
-    if (seen.has(prompt.seq)) throw new Error("Reading prompt index is ambiguous");
+    if (seen.has(prompt.seq)) throw new ReadingContextError("index-ambiguous");
     seen.add(prompt.seq);
     if (prompt.seq < request.sourceStart && (preceding === undefined || prompt.seq > preceding))
       preceding = prompt.seq;
@@ -211,7 +255,7 @@ async function readIndexedPredecessor({
     prompt.seqStart !== seq ||
     prompt.seqEnd !== seq
   )
-    throw new Error("Indexed prompt content changed or is unavailable");
+    throw new ReadingContextError("indexed-content-unavailable");
   return prompt;
 }
 
@@ -231,7 +275,7 @@ async function acquireContextSource(
   const probe = progress && !indexed ? undefined : await probeContextSource(source, read);
   const sourceStart = probe?.entry.seqStart ?? progress!.sourceStart;
   if (progress && probe && progress.sourceStart !== sourceStart)
-    throw new Error("Reading context source changed");
+    throw new ReadingContextError("source-changed");
   return { probe, sourceStart, used: probe?.used ?? 0 };
 }
 
@@ -261,7 +305,7 @@ async function probeContextSource(
     const probe = await read(cursor, limit, "projected");
     validateBackwardEntries(probe.entries, cursor);
     const matches = probe.entries.filter((entry) => matchesContextSource(entry, source));
-    if (matches.length > 1) throw new Error("Reading source occurrence is ambiguous");
+    if (matches.length > 1) throw new ReadingContextError("occurrence-ambiguous");
     const entry = matches[0];
     if (entry)
       return {
@@ -272,7 +316,7 @@ async function probeContextSource(
     if (!probe.hasOlder || !probe.entries.length) break;
     cursor = Math.min(...probe.entries.map((candidate) => candidate.seqStart));
   }
-  throw new Error("Reading source occurrence is unavailable");
+  throw new ReadingContextError("occurrence-unavailable");
 }
 
 /** Expanded payloads may extend past the cursor. Their display anchors must
@@ -280,7 +324,7 @@ async function probeContextSource(
  */
 function validateBackwardEntries(entries: readonly ContextEntry[], cursor: number): void {
   if (entries.some((entry) => entry.seqStart >= cursor))
-    throw new Error("Reading context did not move backward");
+    throw new ReadingContextError("not-backward");
 }
 
 function nearestPrecedingPrompt(
@@ -308,7 +352,7 @@ function validateContextContinuation(
       progress.cursor < 0 ||
       progress.cursor > progress.sourceStart)
   )
-    throw new Error("Reading context continuation is invalid");
+    throw new ReadingContextError("invalid-continuation");
 }
 
 /** Validate real ranges instead of treating a legacy seqEnd as the source start. */
@@ -330,7 +374,7 @@ export function validateContextRange(entry: ContextEntry): void {
     Math.min(...entry.sourceSeqRanges.map((range) => range.startSeq)) !== entry.seqStart ||
     Math.max(...entry.sourceSeqRanges.map((range) => range.endSeq)) !== entry.seqEnd
   )
-    throw new Error("Reading context has invalid canonical ranges");
+    throw new ReadingContextError("invalid-ranges");
 }
 
 /** Match the exact visible canonical occurrence, including turn and provider identity. */

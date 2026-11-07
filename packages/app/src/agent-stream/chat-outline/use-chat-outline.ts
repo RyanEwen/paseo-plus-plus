@@ -1,5 +1,5 @@
 import type { PromptJumpPlacement } from "../prompt-jump-placement";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { AgentTimelinePromptIndexPayload } from "@getpaseo/client/internal/daemon-client";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -257,7 +257,7 @@ export function useChatOutline({
     mountedHistoryMessageIds,
   ]);
 
-  const jumpToPrompt = useCallback(
+  const jumpToPrompt = useStableEvent(
     (
       seq: number,
       options?: {
@@ -325,18 +325,6 @@ export function useChatOutline({
           });
         });
     },
-    [
-      agentId,
-      cancelJump,
-      index,
-      loadedTail,
-      loadedHead,
-      onJumpError,
-      ownerKey,
-      revealLoadedMessage,
-      serverId,
-      viewportRef,
-    ],
   );
 
   /** Local submissions and child transcript rows do not require a root prompt index. */

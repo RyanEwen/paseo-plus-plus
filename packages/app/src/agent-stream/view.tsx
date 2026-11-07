@@ -1,17 +1,12 @@
-import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
-import { useSyncExternalStore } from "react";
-import { resolveRetainedContextSource } from "./sticky-prompt-model";
-import { useCanonicalPromptContext } from "@/timeline/use-canonical-prompt-context";
 import {
-  normalContextPageReader,
-  normalContextPromptIndexReader,
-} from "./fetch-reading-prompt-context";
-import {
-  mergeRetainedPrompts,
-  retainedCanonicalPositions,
-} from "@/timeline/canonical-prompt-context";
+  historyContextPropsEqual,
+  resolveContextPageReader,
+  resolveHistoryPagination,
+  useRetainedCanonicalTranscript,
+  useTranscriptCursor,
+  type TranscriptHistoryPagination,
+} from "./use-retained-canonical-transcript";
 import { shouldIndexUserPrompts } from "./chat-outline/model";
-import { useAppSettings } from "@/hooks/use-settings";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -55,7 +50,6 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
-import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
@@ -66,7 +60,7 @@ import type {
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore, type AgentTimelineCursorState } from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
@@ -311,18 +305,7 @@ export interface AgentStreamViewProps {
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
-  historyPagination?: {
-    /** Authoritative epoch for a transcript with its own history owner. */
-    epoch?: string | null;
-    hasOlder: boolean;
-    isLoadingOlder: boolean;
-    progressKey: string | null;
-    readPromptContext?: import("./fetch-reading-prompt-context").ContextPageReader;
-    promptContexts?: import("@/timeline/canonical-prompt-context").CanonicalPromptContexts;
-    coverage?: readonly import("@/timeline/canonical-prompt-context").CanonicalTimelineCoverage[];
-    sourceMetadata?: readonly import("@/timeline/canonical-source-metadata").CanonicalSourceMetadata[];
-    onLoadOlder: (acceptance?: TimelinePageAcceptance) => boolean | Promise<boolean>;
-  };
+  historyPagination?: TranscriptHistoryPagination;
 }
 
 const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
@@ -353,134 +336,6 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
   return Math.max(16, clearance ?? 0);
 }
 
-function useTranscriptCursor(input: {
-  serverId: string;
-  agentId: string;
-  historyPagination: AgentStreamViewProps["historyPagination"];
-}) {
-  const rootTimelineCursor = useSessionStore((state) =>
-    state.sessions[input.serverId]?.agentTimelineCursor.get(input.agentId),
-  );
-  const rootTimelineEpoch = rootTimelineCursor?.epoch ?? null;
-  const timelineEpoch = resolveTranscriptEpoch(input.historyPagination, rootTimelineEpoch);
-  return { rootTimelineCursor, timelineEpoch };
-}
-
-interface RetainedCanonicalTranscriptInput {
-  resolvedServerId: string;
-  agentId: string;
-  timelineEpoch: string | null;
-  historyPagination: AgentStreamViewProps["historyPagination"];
-  rootTimelineCursor: AgentTimelineCursorState | undefined;
-  client: DaemonClient | null;
-  promptReading: ReturnType<typeof createPromptReadingPublisher>;
-  effectiveStreamItems: StreamItem[];
-  effectiveStreamHead: StreamItem[] | undefined;
-  stickyEnabled: boolean;
-  canIndexPrompts: boolean;
-  isActive: boolean;
-  isAuthoritativeHistoryReady: boolean;
-}
-
-/** Admit canonical sources before the single presentation pass, without extending window coverage. */
-function useRetainedCanonicalTranscript({
-  resolvedServerId,
-  agentId,
-  timelineEpoch,
-  historyPagination,
-  rootTimelineCursor,
-  client,
-  promptReading,
-  effectiveStreamItems,
-  effectiveStreamHead,
-  stickyEnabled,
-  canIndexPrompts,
-  isActive,
-  isAuthoritativeHistoryReady,
-}: RetainedCanonicalTranscriptInput) {
-  const timelineOwner = useSessionStore(
-    (state) => state.sessions[resolvedServerId]?.viewedTimelineSync ?? null,
-  );
-  const rootContextOwner = timelineOwner?.promptContexts ?? null;
-  const contextOwner = historyPagination
-    ? (historyPagination.promptContexts ?? null)
-    : rootContextOwner;
-  const childTranscript = historyPagination !== undefined;
-  const suppliedCoverage = historyPagination?.coverage;
-  const contextCoverage = useMemo(() => {
-    if (childTranscript) return suppliedCoverage ?? [];
-    return canonicalCoverageForCursor(rootTimelineCursor);
-  }, [childTranscript, suppliedCoverage, rootTimelineCursor]);
-  const sourceItems = useMemo(
-    () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
-    [effectiveStreamItems, effectiveStreamHead],
-  );
-  const readSource = useCallback(() => {
-    return resolveRetainedContextSource(
-      sourceItems,
-      timelineEpoch,
-      promptReading.getSnapshot(),
-      contextCoverage,
-    );
-  }, [promptReading, sourceItems, timelineEpoch, contextCoverage]);
-  const contextSource = useSyncExternalStore(promptReading.subscribe, readSource, readSource);
-  const suppliedContextReader = historyPagination?.readPromptContext;
-  const contextReader = useMemo(() => {
-    if (childTranscript) return suppliedContextReader;
-    if (client) return normalContextPageReader(client, agentId);
-    return undefined;
-  }, [childTranscript, suppliedContextReader, client, agentId]);
-  const contextLookup = useMemo(
-    () =>
-      contextReader
-        ? {
-            agentId,
-            readPage: contextReader,
-            readPromptIndex:
-              !childTranscript && canIndexPrompts && client
-                ? normalContextPromptIndexReader(client, agentId)
-                : undefined,
-            projection: childTranscript ? ("projected" as const) : ("canonical" as const),
-          }
-        : undefined,
-    [contextReader, childTranscript, agentId, canIndexPrompts, client],
-  );
-  const retainedContext = useCanonicalPromptContext({
-    owner: contextOwner,
-    agentId,
-    epoch: timelineEpoch,
-    source: contextSource,
-    ordinaryItems: sourceItems,
-    coverage: contextCoverage,
-    sourceMetadata: historyPagination?.sourceMetadata,
-    enabled: stickyEnabled && isActive,
-    lookupReady: isAuthoritativeHistoryReady,
-    lookup: contextLookup,
-  });
-  const canonicalTail = useMemo(
-    () =>
-      mergeRetainedPrompts(
-        effectiveStreamItems,
-        retainedContext.contexts,
-        effectiveStreamHead ?? [],
-      ),
-    [effectiveStreamItems, effectiveStreamHead, retainedContext.contexts],
-  );
-  const retainedPositions = useMemo(
-    () => retainedCanonicalPositions(canonicalTail, retainedContext.contexts),
-    [canonicalTail, retainedContext.contexts],
-  );
-  const contextOnlyIds = useMemo(
-    () =>
-      new Set(
-        mergeRetainedPrompts([], retainedContext.contexts, sourceItems).map((item) => item.id),
-      ),
-    [retainedContext.contexts, sourceItems],
-  );
-
-  return { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds };
-}
-
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -507,8 +362,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
-    const { settings: appSettings } = useAppSettings();
-    const stickyEnabled = appSettings.paseoPlusPlus.stickyUserPrompts;
+    const stickyEnabled = useSettings((settings) => settings.paseoPlusPlus.stickyUserPrompts);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -1348,8 +1202,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [streamLayout.liveHead]);
 
     const handleReadingPositionChange = useStableEvent((position: PromptReadingPosition) => {
-      const { rowId, visibleUserIds, navigating, following, manual, userHandoffs, viewportWidth } =
-        position;
+      const { rowId, navigating, following, manual } = position;
       const row =
         rowId === null
           ? undefined
@@ -1358,16 +1211,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       const wasManual = promptReading.getSnapshot().manual;
       // Presentation rows can be Markdown blocks or plugin cards. Resolve their
       // authoritative position before publishing to surfaces that hold canonical prompts.
-      promptReading.publish(
+      promptReading.publish({
         rowId,
-        visibleUserIds,
         navigating,
         following,
         manual,
         seq,
-        userHandoffs,
-        viewportWidth,
-      );
+      });
       if (manual && !wasManual) stickyPromptRef.current?.reviewReading();
       chatOutline.reportReadingPosition(seq);
     });
@@ -1515,7 +1365,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     isAuthoritativeHistoryReady,
                     onNearBottomChange: setIsNearBottom,
                     onMessageNavigationError: chatOutline.reportJumpError,
-                    trackPromptHandoff: stickyEnabled,
                     onReadingPositionChange: handleReadingPositionChange,
                     onNearHistoryStart: loadOlder,
                     isLoadingOlderHistory: isLoadingOlder,
@@ -1661,18 +1510,6 @@ function historyPaginationPropsEqual(
     left?.progressKey === right?.progressKey &&
     left?.onLoadOlder === right?.onLoadOlder &&
     historyContextPropsEqual(left, right)
-  );
-}
-
-function historyContextPropsEqual(
-  left: AgentStreamViewProps["historyPagination"],
-  right: AgentStreamViewProps["historyPagination"],
-): boolean {
-  return (
-    left?.readPromptContext === right?.readPromptContext &&
-    left?.promptContexts === right?.promptContexts &&
-    left?.coverage === right?.coverage &&
-    left?.sourceMetadata === right?.sourceMetadata
   );
 }
 
@@ -2265,33 +2102,4 @@ function StreamItemWrapper({ gapBelow, turnIndent, children }: StreamItemWrapper
         </View>
       );
   }
-}
-
-/** Child transcripts supply their own page owner; root chats use the viewed timeline. */
-function resolveHistoryPagination(
-  provided: AgentStreamViewProps["historyPagination"],
-  root: ReturnType<typeof useLoadOlderAgentHistory>,
-): ReturnType<typeof useLoadOlderAgentHistory> {
-  if (!provided) return root;
-  return {
-    isLoadingOlder: provided.isLoadingOlder,
-    hasOlder: provided.hasOlder,
-    progressKey: provided.progressKey,
-    loadOlder: async (acceptance) => provided.onLoadOlder(acceptance),
-  };
-}
-
-/** A child epoch must not inherit the parent conversation's identity. */
-function resolveTranscriptEpoch(
-  provided: AgentStreamViewProps["historyPagination"],
-  rootEpoch: string | null,
-): string | null {
-  if (provided) return provided.epoch ?? null;
-  return rootEpoch;
-}
-
-/** An unavailable child cache reader must never fall through to the synthetic parent journal. */
-function resolveContextPageReader(provided: AgentStreamViewProps["historyPagination"]) {
-  if (!provided) return undefined;
-  return provided.readPromptContext ?? null;
 }

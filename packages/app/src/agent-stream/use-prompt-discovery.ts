@@ -3,7 +3,6 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 
 import { PROMPT_DISCOVERY_PAGE_BUDGET } from "@/timeline/timeline-fetch-policy";
-export { PROMPT_DISCOVERY_PAGE_BUDGET } from "@/timeline/timeline-fetch-policy";
 export type PromptDiscoveryStatus =
   | "idle"
   | "loading"
@@ -12,6 +11,13 @@ export type PromptDiscoveryStatus =
   | "error"
   | "limited"
   | "cancelled";
+
+/** Discovery stopped without reaching its target: failed, limited, exhausted or cancelled. */
+export function isDiscoverySettled(status: PromptDiscoveryStatus): boolean {
+  return (
+    status === "error" || status === "limited" || status === "exhausted" || status === "cancelled"
+  );
+}
 
 function createOperation(stopped = false) {
   return {

@@ -54,6 +54,7 @@ import {
 } from "../support/helpers/archive-tab";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
+  ORIGINAL_USER_MESSAGE_SELECTOR,
   originalUserMessages,
   expectUserMessageImageVisible,
   originalTimelineRows,
@@ -175,7 +176,7 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
   await composer.fill(prompt);
   await composer.press("Enter");
   const nextFrame = await composer.evaluate(
-    (composerElement, submittedPrompt) =>
+    (composerElement, { submittedPrompt, userMessageSelector }) =>
       new Promise<{
         rowPresent: boolean;
         workingPresent: boolean;
@@ -183,11 +184,7 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
         attachmentPresent: boolean;
       }>((resolve) => {
         requestAnimationFrame(() => {
-          const rows = Array.from(
-            document.querySelectorAll(
-              '[data-testid="agent-chat-scroll"] [data-history-row-id] [data-testid="user-message"]',
-            ),
-          );
+          const rows = Array.from(document.querySelectorAll(userMessageSelector));
           const composerInput = composerElement as HTMLInputElement | HTMLTextAreaElement;
           resolve({
             rowPresent: rows.some((row) => row.textContent?.includes(submittedPrompt)),
@@ -201,7 +198,7 @@ async function submitMessageWithImage(page: Page, prompt: string): Promise<Locat
           });
         });
       }),
-    prompt,
+    { submittedPrompt: prompt, userMessageSelector: ORIGINAL_USER_MESSAGE_SELECTOR },
   );
   expect(nextFrame).toEqual({
     rowPresent: true,
@@ -356,6 +353,34 @@ async function selectSendBehaviorInSettings(
       return raw ? (JSON.parse(raw) as { sendBehavior?: unknown }).sendBehavior : null;
     })
     .toBe(stored);
+}
+
+/** Full chat exposes each operation; require the submitted turn's first completed Read and
+ * the search that follows it, matched through the Read row's canonical identity. */
+async function expectFirstCompletedReadAndSearch(page: Page): Promise<void> {
+  const readRow = page
+    .getByTestId("agent-chat-scroll")
+    .filter({ visible: true })
+    .locator('[data-history-row-id^="agent_tool_turn:"][data-history-row-id$="%3Aread%3A1"]');
+  await expect(readRow).toHaveCount(1, { timeout: 30_000 });
+  const readId = await readRow.getAttribute("data-history-row-id");
+  if (!readId) throw new Error("Completed Read row has no canonical identity");
+  const read = readRow.getByTestId("tool-call-badge");
+  await expect(read).toHaveCount(1);
+  await expect(read.getByText("Read", { exact: true })).toBeVisible();
+  await expect(
+    read.getByText("packages/app/src/components/conversation-list.tsx", { exact: true }),
+  ).toBeVisible();
+  const searchId = readId.replace(/%3Aread%3A1$/, "%3Agrep%3A1");
+  const searchRow = page
+    .getByTestId("agent-chat-scroll")
+    .filter({ visible: true })
+    .locator(`[data-history-row-id="${searchId}"]`);
+  await expect(searchRow).toHaveCount(1);
+  const search = searchRow.getByTestId("tool-call-badge");
+  await expect(search).toHaveCount(1);
+  await expect(search.getByText("Searched", { exact: true })).toBeVisible();
+  await expect(search.getByText("scrollToEnd", { exact: true })).toBeVisible();
 }
 
 /** These streaming races exercise detailed tool cards, independently of the fork default. */
@@ -817,15 +842,13 @@ async function expectOldHostSubmissionBehavior(
     await composer.fill(prompt);
     await composer.press("Enter");
     const nextFrame = await composer.evaluate(
-      (_, submittedPrompt) =>
+      (_, { submittedPrompt, userMessageSelector }) =>
         new Promise<{ rowPresent: boolean; ariaBusy: string | null; workingPresent: boolean }>(
           (resolve) => {
             requestAnimationFrame(() => {
-              const row = Array.from(
-                document.querySelectorAll(
-                  '[data-testid="agent-chat-scroll"] [data-history-row-id] [data-testid="user-message"]',
-                ),
-              ).find((candidate) => candidate.textContent?.includes(submittedPrompt));
+              const row = Array.from(document.querySelectorAll(userMessageSelector)).find(
+                (candidate) => candidate.textContent?.includes(submittedPrompt),
+              );
               resolve({
                 rowPresent: Boolean(row),
                 ariaBusy: row?.getAttribute("aria-busy") ?? null,
@@ -836,7 +859,7 @@ async function expectOldHostSubmissionBehavior(
             });
           },
         ),
-      prompt,
+      { submittedPrompt: prompt, userMessageSelector: ORIGINAL_USER_MESSAGE_SELECTOR },
     );
     expect(nextFrame).toEqual({ rowPresent: true, ariaBusy: "false", workingPresent: false });
 
@@ -1190,30 +1213,7 @@ test.describe("Agent message submission", () => {
         hasText: "I'll take a look at the scroll anchor behavior you described.",
       }),
     ).toBeVisible();
-    // Full chat exposes each operation; require the submitted turn's first completed pair.
-    const readRow = page
-      .getByTestId("agent-chat-scroll")
-      .filter({ visible: true })
-      .locator('[data-history-row-id^="agent_tool_turn:"][data-history-row-id$="%3Aread%3A1"]');
-    await expect(readRow).toHaveCount(1, { timeout: 30_000 });
-    const readId = await readRow.getAttribute("data-history-row-id");
-    if (!readId) throw new Error("Completed Read row has no canonical identity");
-    const read = readRow.getByTestId("tool-call-badge");
-    await expect(read).toHaveCount(1);
-    await expect(read.getByText("Read", { exact: true })).toBeVisible();
-    await expect(
-      read.getByText("packages/app/src/components/conversation-list.tsx", { exact: true }),
-    ).toBeVisible();
-    const searchId = readId.replace(/%3Aread%3A1$/, "%3Agrep%3A1");
-    const searchRow = page
-      .getByTestId("agent-chat-scroll")
-      .filter({ visible: true })
-      .locator(`[data-history-row-id="${searchId}"]`);
-    await expect(searchRow).toHaveCount(1);
-    const search = searchRow.getByTestId("tool-call-badge");
-    await expect(search).toHaveCount(1);
-    await expect(search.getByText("Searched", { exact: true })).toBeVisible();
-    await expect(search.getByText("scrollToEnd", { exact: true })).toBeVisible();
+    await expectFirstCompletedReadAndSearch(page);
     await finishTimelineRowStabilityCheck();
   });
 

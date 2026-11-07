@@ -1,8 +1,6 @@
 import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
-import type { useStickyPrompt } from "./use-sticky-prompt";
-
-type PromptNavigation = ReturnType<typeof useStickyPrompt>;
+import type { StickyPromptNavigation as PromptNavigation } from "./use-sticky-prompt";
 export interface PromptNavigationControls {
   targetIds: readonly (string | undefined)[];
   busy: boolean;

@@ -46,7 +46,7 @@ export async function capturePreviousAgentsExample(page: Page, directory: string
       id: "previous-agents-menu",
       directory,
       regions: [page.getByTestId("workspace-new-tab-button"), reopen],
-      description: "The plus-button menu offers Previous agents beside the workspace tabs.",
+      description: "The plus-button menu offers Reopen closed agent beside the workspace tabs.",
     });
     await reopen.click();
     const content = page.getByTestId("reopen-closed-agent-dialog-content");

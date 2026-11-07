@@ -25,6 +25,10 @@ export function originalTimelineRows(scope: Page | Locator, includeHidden = fals
   return owner.locator("[data-history-row-id]");
 }
 
+/** CSS for original prompt bodies, for checks that run inside the page. */
+export const ORIGINAL_USER_MESSAGE_SELECTOR =
+  '[data-testid="agent-chat-scroll"] [data-history-row-id] [data-testid="user-message"]';
+
 /** Select original prompt bodies while preserving exact-count and busy-state assertions. */
 export function originalUserMessages(scope: Page | Locator): Locator {
   return originalTimelineRows(scope).getByTestId("user-message");

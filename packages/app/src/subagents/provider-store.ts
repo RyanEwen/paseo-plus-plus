@@ -1,5 +1,3 @@
-import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
-import { createCanonicalPromptContexts } from "@/timeline/canonical-prompt-context";
 import {
   reconcileCanonicalSourceMetadata,
   EMPTY_SOURCE_METADATA,
@@ -17,7 +15,6 @@ import {
   processTimelineResponse,
   processAgentStreamEvent,
   type TimelineCursor,
-  type ProcessTimelineResponseInput,
 } from "@/timeline/session-stream-reducers";
 import type { StreamItem } from "@/types/stream";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
@@ -177,24 +174,13 @@ function settleTimeline(
   };
 }
 
-type ProviderTimelineResponse = Parameters<ProviderSubagentState["replaceTimeline"]>[1];
-
-function normalizeProviderTimelineResponse(
-  payload: ProviderTimelineResponse,
-  entries: ProcessTimelineResponseInput["payload"]["entries"],
-): ProcessTimelineResponseInput["payload"] {
-  return {
-    ...payload,
-    agentId: payload.subagentId,
-    projection: "projected",
-    startCursor:
-      payload.startCursor ??
-      (entries.length ? { seq: Math.min(...entries.map((entry) => entry.seqStart)) } : null),
-    endCursor:
-      payload.endCursor ??
-      (entries.length ? { seq: Math.max(...entries.map((entry) => entry.seqEnd)) } : null),
-    entries,
-  };
+/** A rejected, failed or other-epoch response must not replace the child timeline. */
+function isAppliedProviderTimeline(
+  result: ReturnType<typeof processTimelineResponse>,
+  epoch: string,
+): boolean {
+  if (result.commit !== "apply" || result.error) return false;
+  return !result.cursor || result.cursor.epoch === epoch;
 }
 
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
@@ -351,7 +337,18 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         onAcceptedSources: (sources) => {
           sourceMetadata = reconcileCanonicalSourceMetadata(sourceMetadata, sources);
         },
-        payload: normalizeProviderTimelineResponse(payload, entries),
+        payload: {
+          ...payload,
+          agentId: payload.subagentId,
+          projection: "projected",
+          startCursor:
+            payload.startCursor ??
+            (entries.length ? { seq: Math.min(...entries.map((entry) => entry.seqStart)) } : null),
+          endCursor:
+            payload.endCursor ??
+            (entries.length ? { seq: Math.max(...entries.map((entry) => entry.seqEnd)) } : null),
+          entries,
+        },
         currentTail: current.tail,
         currentHead: current.head,
         currentCursor: current.cursor,
@@ -360,12 +357,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         initRequestDirection: "tail",
         sendingClientMessageIds: [],
       });
-      if (
-        result.commit !== "apply" ||
-        result.error ||
-        (result.cursor && result.cursor.epoch !== payload.epoch)
-      )
-        return state;
+      if (!isAppliedProviderTimeline(result, payload.epoch)) return state;
       const timelines = new Map(state.timelines);
       timelines.set(
         key,
@@ -393,43 +385,6 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
     });
   },
 }));
-
-interface ProviderPromptContextScope {
-  serverId: string;
-  parentAgentId: string;
-  subagentId: string;
-  agentId: string;
-  epoch: string | null;
-}
-
-/** Read the compound-keyed ordinary store at admission, not a captured pane
- * render. A held result must see later child USERs before becoming a certificate. */
-export function createProviderSubagentPromptContexts(scope: ProviderPromptContextScope) {
-  const key = providerSubagentKey(scope.serverId, scope.parentAgentId, scope.subagentId);
-  const current = () => useProviderSubagentStore.getState().timelines.get(key);
-  return createCanonicalPromptContexts(
-    (agentId, epoch) =>
-      agentId === scope.agentId && epoch === scope.epoch && current()?.epoch === epoch,
-    () => {
-      const timeline = current();
-      return {
-        items: [...(timeline?.tail ?? []), ...(timeline?.head ?? [])],
-        metadata: timeline?.sourceMetadata ?? EMPTY_SOURCE_METADATA,
-        coverage: canonicalCoverageForCursor(timeline?.cursor),
-      };
-    },
-    (observe) =>
-      useProviderSubagentStore.subscribe((state, previous) => {
-        const timeline = state.timelines.get(key);
-        if (timeline === previous.timelines.get(key)) return;
-        observe({
-          agentId: scope.agentId,
-          epoch: timeline?.epoch ?? null,
-          items: [...(timeline?.tail ?? []), ...(timeline?.head ?? [])],
-        });
-      }),
-  );
-}
 
 /** Owns child history bootstrap and recovery while a pane observes the child. */
 export function observeProviderSubagentTimeline({
