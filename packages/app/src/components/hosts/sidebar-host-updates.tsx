@@ -6,11 +6,13 @@ import { useShallow } from "zustand/react/shallow";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useDaemonUpdate } from "@/hooks/use-daemon-update";
 import type { DaemonUpdateOutcome, DaemonUpdateState } from "@/hosts/daemon-update";
 import { useSessionStore } from "@/stores/session-store";
 import type { HostProfile } from "@/types/host-connection";
+import { resolveAppVersion } from "@/utils/app-version";
 import { HostUpdateAction } from "./host-update-action";
 import { resolveHostUpdateSupport } from "./host-update-eligibility";
 import { createHostServerInfoSelector } from "./host-server-info-selector";
@@ -87,10 +89,13 @@ export function useSidebarHostUpdates({
       const host = hostsById.get(serverId);
       if (!host) return null;
       const info = hostInfo[serverId];
+      const updateSupport = resolveHostUpdateSupport(info, {
+        versionDiffersFromApp: isVersionMismatch(resolveAppVersion(), info?.version),
+      });
       return (
         <HostUpdateAction
           host={host}
-          updateSupport={resolveHostUpdateSupport(info)}
+          updateSupport={updateSupport}
           daemonVersion={info?.version ?? null}
           enabled={isOpen}
           busy={presentation.busy}

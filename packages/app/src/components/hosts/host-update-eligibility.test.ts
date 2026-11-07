@@ -20,22 +20,44 @@ const openRow: HostUpdateRowState = {
 const confirmedRelease = { settled: true, version: "0.11.1-preview.13" };
 
 describe("resolveHostUpdateSupport", () => {
+  const differs = { versionDiffersFromApp: true };
+
   test("a host that answers availability checks is checked", () => {
-    expect(resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: true }))).toBe(
-      "checked",
+    expect(
+      resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: true }), differs),
+    ).toBe("checked");
+  });
+
+  test("an older self-updating host on a different version gets the manual update", () => {
+    expect(resolveHostUpdateSupport(serverInfo({ daemonSelfUpdate: true }), differs)).toBe(
+      "manual",
     );
   });
 
-  test("a host without the availability flag gets the manual update", () => {
-    expect(resolveHostUpdateSupport(serverInfo({}))).toBe("manual");
+  test.each<[string, DaemonServerInfo, { versionDiffersFromApp: boolean }]>([
+    [
+      "is managed by Paseo Desktop",
+      { ...serverInfo({ daemonSelfUpdate: false }), desktopManaged: true },
+      differs,
+    ],
+    ["cannot update itself", serverInfo({}), differs],
+    [
+      "already runs this app's version",
+      serverInfo({ daemonSelfUpdate: true }),
+      { versionDiffersFromApp: false },
+    ],
+  ])("an older host that %s is offered nothing", (_case, info, versions) => {
+    expect(resolveHostUpdateSupport(info, versions)).toBe("none");
   });
 
   test("a host that reports no availability check is offered nothing", () => {
-    expect(resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: false }))).toBe("none");
+    expect(
+      resolveHostUpdateSupport(serverInfo({ daemonUpdateAvailability: false }), differs),
+    ).toBe("none");
   });
 
   test.each([null, undefined])("a host with no server info yet (%s) is offered nothing", (info) => {
-    expect(resolveHostUpdateSupport(info)).toBe("none");
+    expect(resolveHostUpdateSupport(info, differs)).toBe("none");
   });
 });
 
