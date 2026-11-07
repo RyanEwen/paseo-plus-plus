@@ -41,10 +41,17 @@ export const AppSettingsPatchResponseSchema = z.object({
     conflicts: z.array(z.array(z.string())),
   }),
 });
+/** Leaves to write. initialize also creates the document on a host that has none. */
+export interface AppSettingsPatchInput {
+  patches: AppSettingsPatch[];
+  initialize?: boolean;
+}
+/** The document after a write, plus any same-leaf conflicts that blocked it. */
+export type AppSettingsPatchResult = Pick<
+  z.infer<typeof AppSettingsPatchResponseSchema>["payload"],
+  "snapshot" | "conflicts"
+>;
 export const AppSettingsChangedSchema = z.object({
   type: z.literal("app.settings.changed"),
   payload: z.object({ subscriptionId: z.string().optional(), snapshot: AppSettingsSnapshotSchema }),
 });
-
-// Synced key lists live in the fork-base registry so every layer shares one source.
-export * from "./app-settings-keys.js";

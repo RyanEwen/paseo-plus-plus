@@ -81,10 +81,11 @@ test("project and workspace kebabs open action sheets on compact layouts", async
       "Unpin in project",
     );
     const projectPinItem = page.getByTestId(`sidebar-workspace-menu-project-pin-${key}`);
+    const viewportHeight = page.viewportSize()!.height;
     await expect
       .poll(async () => {
         const bounds = await projectPinItem.boundingBox();
-        return bounds !== null && bounds.y >= 0 && bounds.y + bounds.height < 844;
+        return bounds !== null && bounds.y >= 0 && bounds.y + bounds.height < viewportHeight;
       })
       .toBe(true);
     await page.screenshot({ path: testInfo.outputPath("project-pin-compact-menu.png") });

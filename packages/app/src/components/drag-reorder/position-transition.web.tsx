@@ -12,6 +12,29 @@ function layoutTop(node: HTMLElement): number {
   return top;
 }
 
+/**
+ * The starting translateY for a cell's position transition, or null when it should not move.
+ *
+ * @param previous the cell's last painted layout top, relative to its animated ancestor.
+ * @param top the cell's new layout top in the same coordinates.
+ * @param interruptedOffset the translateY a still-running transition paints right now; a newer
+ *   move starts from that painted position rather than from the older target.
+ */
+export function transitionOffset({
+  previous,
+  top,
+  interruptedOffset,
+}: {
+  previous: number;
+  top: number;
+  interruptedOffset: number;
+}): number | null {
+  // A changed grouping can leave the layout target unchanged while the old
+  // transition still paints an offset. Settle that offset instead of retaining it.
+  if (previous === top && interruptedOffset === 0) return null;
+  return previous - top + interruptedOffset;
+}
+
 const POSITION_BOUNDARY_STYLE = { position: "relative" as const };
 
 /** Move the existing DOM subtree from its last painted position to its new layout position. */
@@ -48,13 +71,10 @@ export function PositionTransition({
     }
     if (previous === null) return;
 
-    // A newer sort starts at the currently painted position, not the older target.
     const transform = getComputedStyle(node).transform;
     const interruptedOffset = transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m42;
-    // A changed grouping can leave the layout target unchanged while the old
-    // transition still paints an offset. Settle that offset instead of retaining it.
-    if (previous === top && interruptedOffset === 0) return;
-    const offset = previous - top + interruptedOffset;
+    const offset = transitionOffset({ previous, top, interruptedOffset });
+    if (offset === null) return;
     animation.current?.cancel();
     animation.current = node.animate(
       [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }],

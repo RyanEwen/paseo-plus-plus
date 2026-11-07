@@ -27,10 +27,11 @@ export function togglePinnedCollapsed(state: CollapsedProjectsState): CollapsedP
 }
 
 export interface ProjectCollapseOptions {
-  mode: "project" | "status";
-  oneProjectAtATime: boolean;
-  /** All known host-qualified project keys, without fetching hidden host directories. */
-  projectKeys: readonly string[];
+  /**
+   * Project keys to collapse when this project expands. The caller owns the policy (for example
+   * one project at a time) and passes an empty list when nothing else should close.
+   */
+  collapseOthers: readonly string[];
 }
 
 export function toggleProjectCollapsed(
@@ -66,8 +67,8 @@ export function setProjectCollapsed(
   options?: ProjectCollapseOptions,
 ): CollapsedProjectsState {
   const next = new Set(state.collapsedProjectKeys);
-  if (!collapsed && options?.mode === "project" && options.oneProjectAtATime) {
-    for (const key of options.projectKeys) next.add(key);
+  if (!collapsed && options) {
+    for (const key of options.collapseOthers) next.add(key);
   }
   if (collapsed) {
     next.add(projectKey);
