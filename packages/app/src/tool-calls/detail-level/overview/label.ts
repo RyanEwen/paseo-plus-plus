@@ -1,6 +1,16 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useReadableToolActivity } from "@/tool-calls/use-readable-tool-activity";
 import type { OverviewSummary } from "./model";
+
+/** Readable tool activity words counts as operations rather than claims of success. */
+const READABLE_COUNT_KEYS = {
+  "toolCallGroup.editedFiles": "toolActivity.counts.editedFiles",
+  "toolCallGroup.commands": "toolActivity.counts.commands",
+  "toolCallGroup.readFiles": "toolActivity.counts.readFiles",
+  "toolCallGroup.searches": "toolActivity.counts.searches",
+  "toolCallGroup.otherTools": "toolActivity.counts.otherTools",
+} as const;
 
 function joinSummaryParts(parts: string[], conjunction: string): string {
   if (parts.length === 0) {
@@ -23,9 +33,10 @@ function joinSummaryParts(parts: string[], conjunction: string): string {
 export function useOverviewSummaryLabel(
   summary: OverviewSummary,
   leadingParts: readonly string[] = [],
-  descriptive = false,
 ): string {
   const { t } = useTranslation();
+  // Counts come from the stream projection, which applies the same preference.
+  const readable = useReadableToolActivity();
   return useMemo(() => {
     const parts = [...leadingParts];
     const entries = [
@@ -37,13 +48,8 @@ export function useOverviewSummaryLabel(
     ] as const;
     for (const [count, key] of entries) {
       if (count > 0) {
-        parts.push(
-          descriptive
-            ? t(`toolActivity.counts.${key.split(".")[1]}.${count === 1 ? "one" : "other"}`, {
-                count,
-              })
-            : t(`${key}.${count === 1 ? "one" : "other"}`, { count }),
-        );
+        const countKey = readable ? READABLE_COUNT_KEYS[key] : key;
+        parts.push(t(`${countKey}.${count === 1 ? "one" : "other"}`, { count }));
       }
     }
     for (const [action, count] of Object.entries(summary.paseoActions)) {
@@ -55,5 +61,5 @@ export function useOverviewSummaryLabel(
     // Keep a label for a group containing only reasoning.
     if (parts.length === 0 && summary.thoughtCount > 0) return t("toolCallGroup.thought");
     return joinSummaryParts(parts, t("toolCallGroup.and"));
-  }, [leadingParts, summary, descriptive, t]);
+  }, [leadingParts, summary, readable, t]);
 }

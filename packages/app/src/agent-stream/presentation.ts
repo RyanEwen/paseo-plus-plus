@@ -19,6 +19,8 @@ interface PresentationInput {
   transform: TimelineItemTransform | undefined;
   display: ChatDisplay;
   autoExpandReasoning?: boolean;
+  /** The Readable tool activity preference; groups and collapsed turns count operations. */
+  readableToolActivity?: boolean;
   /** User messages whose collapsed turn the reader opened. */
   expandedTurnHostIds: ReadonlySet<string>;
   isTurnActive: boolean;
@@ -76,12 +78,14 @@ export function createStreamPresentation() {
   let historyRows: StreamItem[] = [];
   let preparedTail: StreamItem[] | undefined;
   let preparedAutoExpandReasoning: boolean | undefined;
+  let preparedReadable: boolean | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
   let preparedHistory: PreparedToolCallHistory | null = null;
   let historyGroupHosts: ReadonlyMap<string, string> = new Map();
   let collapsedSource: StreamItem[] | undefined;
   let collapsedIsLatestTurnOpen = false;
   let collapsedExpandedHostIds: ReadonlySet<string> | undefined;
+  let collapsedReadable: boolean | undefined;
   let collapsed: TurnCollapse | undefined;
 
   function presentRows(item: StreamItem): StreamItem[] {
@@ -127,17 +131,20 @@ export function createStreamPresentation() {
       !collapsed ||
       collapsedSource !== projection.tail ||
       collapsedIsLatestTurnOpen !== isLatestTurnOpen ||
-      collapsedExpandedHostIds !== input.expandedTurnHostIds
+      collapsedExpandedHostIds !== input.expandedTurnHostIds ||
+      collapsedReadable !== input.readableToolActivity
     ) {
       collapsed = collapseTurns({
         tail: projection.tail,
         isLatestTurnOpen,
         expandedHostIds: input.expandedTurnHostIds,
         getGroupedCalls: (itemId) => projection.groupsByHostId.get(itemId)?.run.calls,
+        summaryOptions: { readable: input.readableToolActivity },
       });
       collapsedSource = projection.tail;
       collapsedIsLatestTurnOpen = isLatestTurnOpen;
       collapsedExpandedHostIds = input.expandedTurnHostIds;
+      collapsedReadable = input.readableToolActivity;
     }
     const { tail, ...turns } = collapsed;
     if (turns.nestedItemIds.size === 0) return { ...projection, tail, turns };
@@ -174,15 +181,19 @@ export function createStreamPresentation() {
     if (
       preparedTail !== historyRows ||
       preparedLevel !== level ||
-      preparedAutoExpandReasoning !== input.autoExpandReasoning
+      preparedAutoExpandReasoning !== input.autoExpandReasoning ||
+      preparedReadable !== input.readableToolActivity
     ) {
-      preparedHistory = prepareToolCallHistory(level, historyRows, input.autoExpandReasoning);
+      preparedHistory = prepareToolCallHistory(level, historyRows, input.autoExpandReasoning, {
+        readable: input.readableToolActivity,
+      });
       historyGroupHosts = preparedHistory
         ? groupedRowHosts(preparedHistory.grouped.tail, preparedHistory.grouped.groupsByHostId)
         : new Map();
       preparedTail = historyRows;
       preparedLevel = level;
       preparedAutoExpandReasoning = input.autoExpandReasoning;
+      preparedReadable = input.readableToolActivity;
     }
     const projection = projectToolCallDetailLevel({
       level,

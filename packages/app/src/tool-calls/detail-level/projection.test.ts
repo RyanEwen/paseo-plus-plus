@@ -1,7 +1,7 @@
-import { buildOverviewGroup } from "./overview/model";
 import { describe, expect, it } from "vitest";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
+import { buildOverviewGroup } from "./overview/model";
 import {
   prepareToolCallHistory,
   projectToolCallDetailLevel,
@@ -475,7 +475,7 @@ describe("tool call detail-level projection", () => {
   });
 });
 
-describe("descriptive overview counts", () => {
+describe("readable overview counts", () => {
   it("counts every proven read/search and file change while preserving classic counts", () => {
     const command = toolCall("1", { type: "shell", command: "cat a.ts; rg needle; custom" });
     const patch = toolCall(
@@ -500,7 +500,7 @@ describe("descriptive overview counts", () => {
       ],
     };
     const run = { id: command.id, calls: [command, patch], latest: patch, isSealed: true };
-    expect(buildOverviewGroup(run, { descriptive: true }).summary).toMatchObject({
+    expect(buildOverviewGroup(run, { readable: true }).summary).toMatchObject({
       readFileCount: 1,
       searchCount: 1,
       commandCount: 1,

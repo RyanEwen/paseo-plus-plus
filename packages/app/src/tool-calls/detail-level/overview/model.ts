@@ -23,6 +23,15 @@ export interface OverviewToolCallGroup {
   isLoading: boolean;
 }
 
+/**
+ * How tool calls are counted. Readable counting (the Readable tool activity preference) also
+ * trusts structured provider metadata, so a shell read counts as a read and every file in a
+ * patch batch counts as a file operation.
+ */
+export interface OverviewSummaryOptions {
+  readable?: boolean;
+}
+
 function isSearchCall(name: string): boolean {
   return DIRECT_SEARCH_TOOL_SUFFIX_PATTERN.test(name);
 }
@@ -30,7 +39,7 @@ function isSearchCall(name: string): boolean {
 /** Counts tool calls by what they did, for any summary of a stretch of agent work. */
 export function summarizeToolCalls(
   calls: readonly GroupableItem[],
-  options: { descriptive?: boolean } = {},
+  options: OverviewSummaryOptions = {},
 ): OverviewSummary {
   const editedFiles = new Set<string>();
   const readFiles = new Set<string>();
@@ -55,7 +64,7 @@ export function summarizeToolCalls(
     }
     const activities = describeToolActivity({
       detail: descriptor.detail,
-      metadata: options.descriptive ? descriptor.metadata : undefined,
+      metadata: options.readable ? descriptor.metadata : undefined,
     });
     if (activities.length === 0) {
       if (isSearchCall(normalizedName)) searchCount += 1;
@@ -81,7 +90,7 @@ export function summarizeToolCalls(
 
 export function buildOverviewGroup(
   run: ToolCallRun,
-  options: { descriptive?: boolean } = {},
+  options: OverviewSummaryOptions = {},
 ): OverviewToolCallGroup {
   const isLoading = run.calls.some((call) => {
     if (call.kind === "thought") return call.status !== "ready";
