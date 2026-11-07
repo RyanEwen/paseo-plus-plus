@@ -1,4 +1,5 @@
 import { PressHighlight } from "@/components/ui/press-highlight";
+import { useMenuRowProps } from "@/components/ui/menu";
 import { useCallback, useMemo } from "react";
 import { View, Text, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -161,10 +162,7 @@ function SplitRegion({
       onSelect(side, fraction);
     }
   }, [disabled, onSelect, side, fraction]);
-  const dataSet = useMemo(
-    () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
-    [disabled],
-  );
+  const rowProps = useMenuRowProps({ disabled });
   const accessibilityState = useMemo(() => ({ disabled }), [disabled]);
   const regionStyle = useCallback(
     ({
@@ -190,11 +188,9 @@ function SplitRegion({
       style={regionStyle}
       disabled={disabled}
       onPress={select}
-      accessibilityRole="menuitem"
+      {...rowProps}
       accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
-      dataSet={dataSet}
-      tabIndex={-1}
       testID={`${testIDPrefix}-${side}-${presetId}`}
     />
   );
