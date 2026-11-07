@@ -3692,6 +3692,7 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        // COMPAT(durableAttachments): added in v0.11.2, remove gate after 2027-10-16.
         durableAttachments: z.boolean().optional(),
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
@@ -3708,6 +3709,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(agentAudienceAttention): added in v0.12.0, remove the client gate after
         // 2027-04-22 once supported hosts implement objective-aware human attention.
         agentAudienceAttention: z.boolean().optional(),
+        // COMPAT(agentAudienceAttentionSettings): added in v0.12.0, remove gate after 2027-04-22.
         agentAudienceAttentionSettings: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
@@ -3803,11 +3805,13 @@ export const ServerInfoStatusPayloadSchema = z
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: z.boolean().optional(),
+        // COMPAT(workspaceAgentHistory): added in v0.11.2, remove gate after 2027-10-11.
         workspaceAgentHistory: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(workspaceWorktreeOptions): added in v0.11.0-beta.5, remove gate after 2027-10-06.
         workspaceWorktreeOptions: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
@@ -3817,8 +3821,10 @@ export const ServerInfoStatusPayloadSchema = z
         worktreeRestore: z.boolean().optional(),
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: z.boolean().optional(),
+        // COMPAT(workspaceArchiveComplete): added in v0.12.0-beta.3, remove gate after 2027-10-21.
         // Single-workspace archive retains its record when required contents teardown fails.
         workspaceArchiveComplete: z.boolean().optional(),
+        // COMPAT(projectArchivedWorkspaces): added in v0.12.0-beta.3, remove gate after 2027-10-21.
         projectArchivedWorkspaces: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),

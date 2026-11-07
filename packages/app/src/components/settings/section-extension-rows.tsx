@@ -1,4 +1,6 @@
-import { useCallback, useSyncExternalStore, type ComponentType } from "react";
+import { useCallback, type ComponentType } from "react";
+import { useStore } from "zustand";
+import { createStore } from "zustand/vanilla";
 
 /** A row that one feature contributes to a settings section owned by another feature. */
 export interface SettingsSectionExtensionRow {
@@ -9,8 +11,17 @@ export interface SettingsSectionExtensionRow {
 }
 
 const EMPTY: readonly SettingsSectionExtensionRow[] = [];
-const rowsBySection = new Map<string, readonly SettingsSectionExtensionRow[]>();
-const listeners = new Set<() => void>();
+/** Rows per section id. Each change replaces the map so selectors see a new value. */
+const registry = createStore<{
+  rowsBySection: ReadonlyMap<string, readonly SettingsSectionExtensionRow[]>;
+}>(() => ({ rowsBySection: new Map() }));
+
+/** Replace one section's rows. */
+function setSectionRows(sectionId: string, rows: readonly SettingsSectionExtensionRow[]): void {
+  const rowsBySection = new Map(registry.getState().rowsBySection);
+  rowsBySection.set(sectionId, rows);
+  registry.setState({ rowsBySection });
+}
 
 /**
  * Add a row to the settings section identified by `sectionId`.
@@ -22,37 +33,30 @@ export function registerSettingsSectionRow(
   sectionId: string,
   row: SettingsSectionExtensionRow,
 ): () => void {
-  const current = rowsBySection.get(sectionId) ?? EMPTY;
+  const current = listSettingsSectionRows(sectionId);
   if (current.some((existing) => existing.id === row.id)) {
     throw new Error(`Settings section ${sectionId} already has a row ${row.id}`);
   }
-  rowsBySection.set(sectionId, [...current, row]);
-  notify();
+  setSectionRows(sectionId, [...current, row]);
   return () => {
-    const remaining = (rowsBySection.get(sectionId) ?? EMPTY).filter((entry) => entry !== row);
-    rowsBySection.set(sectionId, remaining);
-    notify();
+    const remaining = listSettingsSectionRows(sectionId).filter((entry) => entry !== row);
+    setSectionRows(sectionId, remaining);
   };
 }
 
 /** Rows registered for a section, in registration order. The array is replaced on change. */
 export function listSettingsSectionRows(sectionId: string): readonly SettingsSectionExtensionRow[] {
-  return rowsBySection.get(sectionId) ?? EMPTY;
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-function notify(): void {
-  for (const listener of listeners) listener();
+  return registry.getState().rowsBySection.get(sectionId) ?? EMPTY;
 }
 
 /** Render the rows other features registered for `sectionId`; renders nothing when none exist. */
 export function SettingsSectionExtensionRows({ sectionId }: { sectionId: string }) {
-  const read = useCallback(() => listSettingsSectionRows(sectionId), [sectionId]);
-  const rows = useSyncExternalStore(subscribe, read, read);
+  const select = useCallback(
+    (state: { rowsBySection: ReadonlyMap<string, readonly SettingsSectionExtensionRow[]> }) =>
+      state.rowsBySection.get(sectionId) ?? EMPTY,
+    [sectionId],
+  );
+  const rows = useStore(registry, select);
   return (
     <>
       {rows.map(({ id, Row }) => (
