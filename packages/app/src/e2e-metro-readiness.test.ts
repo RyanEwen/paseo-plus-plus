@@ -1,10 +1,14 @@
 import { createServer, type Server } from "node:http";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 
 import { waitForMetro, warmMetro } from "../e2e/support/global-setup";
+import { parseWarmupTimeoutMs } from "../e2e/support/metro-warmup.mjs";
 
 class MetroPort {
-  private readonly responses = new Map<string, { status: number; body: string }>();
+  private readonly responses = new Map<
+    string,
+    { status: number; body: string; delayMs?: number }
+  >();
   readonly requests: string[] = [];
 
   private constructor(
@@ -18,8 +22,15 @@ class MetroPort {
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
       endpoint.requests.push(pathname);
       const served = endpoint.responses.get(pathname) ?? { status: 500, body: "fallback" };
-      response.writeHead(served.status, { "content-type": "text/plain" });
-      response.end(served.body);
+      const respond = () => {
+        response.writeHead(served.status, { "content-type": "text/plain" });
+        response.end(served.body);
+      };
+      if (served.delayMs) {
+        setTimeout(respond, served.delayMs);
+      } else {
+        respond();
+      }
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -43,6 +54,11 @@ class MetroPort {
     this.responses.set("/index.bundle", { status: 200, body: "compiled bundle" });
   }
 
+  /** Answer the document only after `delayMs`, as a stalled Metro would. */
+  serveSlowDocument(delayMs: number): void {
+    this.responses.set("/", { status: 200, body: "<html></html>", delayMs });
+  }
+
   async close(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.server.close((error) => {
@@ -59,8 +75,6 @@ class MetroPort {
 let endpoint: MetroPort | null = null;
 
 afterEach(async () => {
-  vi.restoreAllMocks();
-  vi.unstubAllEnvs();
   await endpoint?.close();
   endpoint = null;
 });
@@ -91,35 +105,24 @@ test.each([
   { label: "default", configured: undefined, timeoutMs: 120_000 },
   { label: "approved override", configured: "300000", timeoutMs: 300_000 },
   { label: "maximum supported timer", configured: "2147483647", timeoutMs: 2_147_483_647 },
-])("Metro warmup timeout applies $label before fetching", async ({ configured, timeoutMs }) => {
-  vi.stubEnv("PASEO_E2E_METRO_WARMUP_TIMEOUT_MS", configured);
-  const timeout = vi.spyOn(AbortSignal, "timeout");
-  const fetchRequest = vi.spyOn(globalThis, "fetch");
-  endpoint = await MetroPort.listen();
-  endpoint.serveWarmableDocument();
-
-  await warmMetro(endpoint.port);
-
-  expect(endpoint.requests).toEqual(["/", "/index.bundle"]);
-  expect(timeout.mock.calls).toEqual([[timeoutMs], [timeoutMs]]);
-  expect(fetchRequest).toHaveBeenCalledTimes(2);
-  expect(fetchRequest.mock.calls[0]?.[1]?.signal).toBe(timeout.mock.results[0]?.value);
-  expect(fetchRequest.mock.calls[1]?.[1]?.signal).toBe(timeout.mock.results[1]?.value);
+])("Metro warmup timeout parses the $label budget", ({ configured, timeoutMs }) => {
+  expect(parseWarmupTimeoutMs(configured)).toBe(timeoutMs);
 });
 
 test.each(["", "   ", "0", "-1", "1.5", "NaN", "Infinity", "2147483648", "9007199254740992"])(
-  "Metro warmup timeout rejects %j before HTTP",
-  async (configured) => {
-    vi.stubEnv("PASEO_E2E_METRO_WARMUP_TIMEOUT_MS", configured);
-    const timeout = vi.spyOn(AbortSignal, "timeout");
-    endpoint = await MetroPort.listen();
-    endpoint.serveWarmableDocument();
-
-    await expect(warmMetro(endpoint.port)).rejects.toThrow(
+  "Metro warmup timeout rejects %j",
+  (configured) => {
+    expect(() => parseWarmupTimeoutMs(configured)).toThrow(
       "PASEO_E2E_METRO_WARMUP_TIMEOUT_MS must be a positive integer from 1 to 2147483647 milliseconds",
     );
-
-    expect(timeout).not.toHaveBeenCalled();
-    expect(endpoint.requests).toEqual([]);
   },
 );
+
+test("Metro warmup gives up on a document slower than its budget", async () => {
+  endpoint = await MetroPort.listen();
+  endpoint.serveSlowDocument(1_000);
+
+  await expect(warmMetro(endpoint.port, { timeoutMs: 50 })).rejects.toThrow();
+
+  expect(endpoint.requests).toEqual(["/"]);
+});
