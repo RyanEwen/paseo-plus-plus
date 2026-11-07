@@ -1,3 +1,9 @@
+import { registerForkCapability } from "./fork-capabilities.js";
+
+// Hosts that load this module answer workspace-scoped history requests.
+// COMPAT(workspaceAgentHistory): added in v0.11.2, remove gate after 2027-10-11.
+registerForkCapability("workspaceAgentHistory");
+
 /**
  * Keep only the agents that belong to one workspace.
  *
