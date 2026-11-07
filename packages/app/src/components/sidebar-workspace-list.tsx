@@ -1,6 +1,6 @@
 import {
   ProjectExpansionAnchorContext,
-  useProjectExpansionAnchor,
+  useAnchoredProjectToggle,
 } from "./sidebar/project-expansion-anchor";
 import { useProjectExpansionScroll } from "./sidebar/use-project-expansion-scroll";
 import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
@@ -1791,21 +1791,13 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, displayName, t, toast, project.hosts]);
 
-  const { ref: projectAnchorRef, anchor: anchorExpansion } = useProjectExpansionAnchor();
   const handleToggleCollapsed = useCallback(() => {
-    const toggle = () => onToggleCollapsed(project.viewKey);
-    const view = useSidebarViewStore.getState();
-    if (
-      collapsed &&
-      view.groupMode === "project" &&
-      view.oneProjectAtATime &&
-      projectAnchorRef.current
-    ) {
-      anchorExpansion(projectAnchorRef.current, toggle);
-    } else {
-      toggle();
-    }
-  }, [anchorExpansion, collapsed, onToggleCollapsed, project.viewKey, projectAnchorRef]);
+    onToggleCollapsed(project.viewKey);
+  }, [onToggleCollapsed, project.viewKey]);
+  const { ref: projectAnchorRef, onToggle: handleAnchoredToggle } = useAnchoredProjectToggle({
+    collapsed,
+    toggle: handleToggleCollapsed,
+  });
 
   let projectChildren = null;
   if (!collapsed) {
@@ -1865,7 +1857,7 @@ function ProjectBlock({
         statusBucket={aggregateStatusBucket}
         selected={false}
         chevron={rowModel.chevron}
-        onPress={handleToggleCollapsed}
+        onPress={handleAnchoredToggle}
         worktreeTarget={
           rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
         }
