@@ -1,4 +1,6 @@
 import { forkCapabilities } from "./fork-capabilities.js";
+// Registers the accent capability at module load; the accent layer has no handlers of its own.
+import "./accent-color-capability.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
