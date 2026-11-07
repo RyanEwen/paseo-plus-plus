@@ -136,36 +136,38 @@ it("rejects Usage host selection and parent replacement while preserving histori
 
 it("stores independent sidebar profile leaves atomically without removing legacy client fields", async () => {
   const { home, store } = await createStore();
-  await store.patch(
-    [
+  await store.patch({
+    patches: [
       { path: ["sidebar", "sortMode"], value: "custom", expectedRevision: 0 },
       { path: ["sidebar", "groupMode"], value: "project", expectedRevision: 0 },
     ],
-    true,
-  );
-  const result = await store.patch([
-    {
-      path: ["sidebar", "modeProfiles", "project", "initialWorkspaceCount"],
-      value: 37,
-      expectedRevision: 0,
-    },
-    {
-      path: ["sidebar", "modeProfiles", "status", "initialWorkspaceCount"],
-      value: null,
-      expectedRevision: 0,
-    },
-    {
-      path: ["sidebar", "modeProfiles", "status", "workspaceUpdatedWithinDays"],
-      value: 3,
-      expectedRevision: 0,
-    },
-    {
-      path: ["sidebar", "modeProfiles", "status", "sidebarRowItems", "host"],
-      value: false,
-      expectedRevision: 0,
-    },
-    { path: ["sidebar", "groupMode"], value: "status", expectedRevision: 1 },
-  ]);
+    initialize: true,
+  });
+  const result = await store.patch({
+    patches: [
+      {
+        path: ["sidebar", "modeProfiles", "project", "initialWorkspaceCount"],
+        value: 37,
+        expectedRevision: 0,
+      },
+      {
+        path: ["sidebar", "modeProfiles", "status", "initialWorkspaceCount"],
+        value: null,
+        expectedRevision: 0,
+      },
+      {
+        path: ["sidebar", "modeProfiles", "status", "workspaceUpdatedWithinDays"],
+        value: 3,
+        expectedRevision: 0,
+      },
+      {
+        path: ["sidebar", "modeProfiles", "status", "sidebarRowItems", "host"],
+        value: false,
+        expectedRevision: 0,
+      },
+      { path: ["sidebar", "groupMode"], value: "status", expectedRevision: 1 },
+    ],
+  });
   expect(result.conflicts).toEqual([]);
   expect((await new AppSettingsStore(home).read()).values).toEqual({
     sidebar: {
