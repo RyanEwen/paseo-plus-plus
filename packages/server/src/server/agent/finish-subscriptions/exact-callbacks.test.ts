@@ -10,7 +10,8 @@ import type {
   AgentAttentionRequestQuery,
 } from "@getpaseo/protocol/agent-attention";
 import type { Logger } from "pino";
-import { AgentAttentionObjectives, AttentionObjectiveError } from "../attention/objectives.js";
+import { AgentAttentionObjectives } from "../attention/objectives.js";
+import { AttentionObjectiveError } from "../attention/errors.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
@@ -543,10 +544,10 @@ async function createCallbackRecoveryScenario() {
           },
         },
       ]),
-    ).toThrow("Objective");
+    ).toThrow(AttentionObjectiveError);
     await expect(
       restored.reserveAttentionCallback({ ...claim, deliveryId: "other-message" }),
-    ).rejects.toThrow("Objective");
+    ).rejects.toThrow(AttentionObjectiveError);
   }
 
   /** Message delivery for the current manager, with enqueue and release observed. */

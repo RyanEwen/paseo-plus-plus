@@ -25,10 +25,10 @@ import type {
 import type { AgentSnapshotOptions, AgentStorage, StoredAgentRecord } from "../agent-storage.js";
 import {
   AgentAttentionObjectives,
-  AttentionObjectiveError,
   type AttentionAdmission,
   type StoredAttentionObjectives,
 } from "./objectives.js";
+import { AttentionObjectiveError } from "./errors.js";
 import { AttentionPermissionCompletion } from "./permission-completion.js";
 import { isRemotePeer } from "./peers.js";
 import { AttentionPresentation } from "./presentation.js";
@@ -140,7 +140,7 @@ export class AgentAttentionCoordinator {
       const agent = this.host.requirePublicAgent(input.agentId);
       const ledger = agent.attentionObjectives;
       if (!ledger) {
-        throw new AttentionObjectiveError(input.link.objectiveId);
+        throw new AttentionObjectiveError("objective-not-in-turn", input.link.objectiveId);
       }
       const reservation = { ...input, requester: this.attentionRequester(input.agentId) };
       const result = ledger.reserveCallback(reservation);
@@ -148,7 +148,7 @@ export class AgentAttentionCoordinator {
         await this.host.persistSnapshot(agent);
         // Terminal events can close an objective while a storage write is pending.
         if (agent.attentionObjectives !== ledger)
-          throw new AttentionObjectiveError(input.link.objectiveId);
+          throw new AttentionObjectiveError("objective-not-in-turn", input.link.objectiveId);
         if (result.status === "reserved")
           ledger.assertCallbackReservation({
             ...input,
@@ -350,7 +350,7 @@ export class AgentAttentionCoordinator {
   }
 
   createAttentionObjectives(stored?: StoredAttentionObjectives): AgentAttentionObjectives {
-    return this.presentation.attach(new AgentAttentionObjectives(stored, this.serverId));
+    return new AgentAttentionObjectives(stored, this.serverId, this.presentation);
   }
 
   /** Approval continues its original objective rather than creating a human-owned request. */
@@ -370,7 +370,7 @@ export class AgentAttentionCoordinator {
           (input.kind === "agent" && input.attention?.continuation),
       )
     ) {
-      throw new AttentionObjectiveError("unknown continuation");
+      throw new AttentionObjectiveError("unknown-continuation");
     }
   }
 
@@ -387,7 +387,7 @@ export class AgentAttentionCoordinator {
       input.expectedTurnId === undefined ? agent.activeTurnId : input.expectedTurnId;
     return this.host.runForegroundMutation(agent.id, async () => {
       if (agent.activeTurnId !== expectedTurnId) {
-        throw new AttentionObjectiveError("outgoing request from a retired turn");
+        throw new AttentionObjectiveError("retired-turn");
       }
       const attention = agent.attentionObjectives?.outgoing({
         recipient: input.recipient,
@@ -411,7 +411,7 @@ export class AgentAttentionCoordinator {
     const expectedTurnId = agent.activeTurnId;
     return this.host.runForegroundMutation(agent.id, async () => {
       if (!expectedTurnId || agent.activeTurnId !== expectedTurnId || !agent.attentionObjectives) {
-        throw new AttentionObjectiveError(input.objectiveId);
+        throw new AttentionObjectiveError("objective-not-in-turn", input.objectiveId);
       }
       agent.attentionObjectives.declare(input.objectiveId, input.disposition);
       await this.host.persistSnapshot(agent);
@@ -430,7 +430,7 @@ export class AgentAttentionCoordinator {
     const expectedTurnId = agent.activeTurnId;
     return this.host.runForegroundMutation(agent.id, async () => {
       if (!expectedTurnId || agent.activeTurnId !== expectedTurnId || !agent.attentionObjectives) {
-        throw new AttentionObjectiveError(input.objectiveId);
+        throw new AttentionObjectiveError("objective-not-in-turn", input.objectiveId);
       }
       return {
         notified: await this.raiseHumanAttention({
@@ -464,7 +464,7 @@ export class AgentAttentionCoordinator {
     }
     claim.objectives.releaseHumanAttention(claim.lease);
     await this.repairRetiredHumanAttention(claim.agent.id);
-    throw new AttentionObjectiveError(input.objectiveId);
+    throw new AttentionObjectiveError("objective-not-in-turn", input.objectiveId);
   }
 
   /**

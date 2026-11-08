@@ -7,7 +7,7 @@ import {
 } from "./notification.js";
 import type { Logger } from "pino";
 import type { AgentManager } from "../../agent-manager.js";
-import type { AgentStorage } from "../../agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "../../agent-storage.js";
 import type { AgentMessageDelivery } from "../../agent-messages/index.js";
 import { buildStoredAgentPayload, toAgentPayload } from "../../agent-projections.js";
 import { serializeSnapshotWithMetadata } from "../../mcp-shared.js";
@@ -33,11 +33,16 @@ export function createFinishObservation(input: {
   beforeCallbackEnqueue?(input: { record: FinishSubscription; outcomeId: string }): Promise<void>;
 }): FinishObservation {
   const { agentManager, agentStorage } = input;
+  function projectStored(stored: StoredAgentRecord) {
+    return buildStoredAgentPayload(stored, [stored.provider], {
+      agentAwareAttention: agentManager.agentAwareAttentionEnabled,
+    });
+  }
   async function exactSnapshot(agentId: string) {
     const live = agentManager.getAgent(agentId);
     if (live) return serializeSnapshotWithMetadata(agentStorage, live, input.logger);
     const stored = await agentStorage.get(agentId);
-    return stored ? buildStoredAgentPayload(stored, [stored.provider]) : null;
+    return stored ? projectStored(stored) : null;
   }
   async function waitExact(
     agentId: string,
@@ -77,7 +82,7 @@ export function createFinishObservation(input: {
           const stored = await agentStorage.get(agentId);
           return {
             status: stored?.lastStatus === "error" ? "error" : "idle",
-            final: stored ? buildStoredAgentPayload(stored, [stored.provider]) : null,
+            final: stored ? projectStored(stored) : null,
             lastMessage: await agentManager.getLastAssistantMessage(agentId),
             error: stored?.lastError ?? null,
           };
@@ -136,7 +141,7 @@ export function createFinishObservation(input: {
             type: "turn_started",
             provider: current.provider,
           });
-        else publish(stored ? buildStoredAgentPayload(stored, [stored.provider]) : null);
+        else publish(stored ? projectStored(stored) : null);
         const stop = () => unsubscribe();
         signal.addEventListener("abort", stop, { once: true });
         return async () => {

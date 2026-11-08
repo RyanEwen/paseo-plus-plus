@@ -1,5 +1,4 @@
 import type { ManagedAgent } from "../agent-manager.js";
-import type { AgentAttentionObjectives } from "./objectives.js";
 import { registerForkCapability } from "../../fork-capabilities.js";
 
 // The agent manager always loads this policy, so a daemon built with this layer advertises
@@ -21,7 +20,6 @@ interface RoutineNotificationInput {
 
 /** One daemon's presentation choice. Recipient/acceptance evidence is never changed by this policy. */
 export class AttentionPresentation {
-  private static readonly owners = new WeakMap<AgentAttentionObjectives, AttentionPresentation>();
   private enabled = true;
 
   get agentAware(): boolean {
@@ -31,12 +29,6 @@ export class AttentionPresentation {
   /** Config apply/rollback only. Refresh belongs to committed config observers, never this setter. */
   setAgentAware(enabled: boolean): void {
     this.enabled = enabled;
-  }
-
-  /** Live shallow snapshots retain the ledger identity, so projections share their daemon's policy. */
-  attach(objectives: AgentAttentionObjectives): AgentAttentionObjectives {
-    AttentionPresentation.owners.set(objectives, this);
-    return objectives;
   }
 
   /** Intervention reasons stay visible even when legacy routine presentation is selected. */
@@ -50,7 +42,7 @@ export class AttentionPresentation {
   /** Read presentation separately from the persisted recipient and immutable request ledger. */
   static forAgent(agent: ManagedAgent): boolean | undefined {
     const ledger = agent.attentionObjectives;
-    const enabled = ledger ? (AttentionPresentation.owners.get(ledger)?.agentAware ?? true) : true;
+    const enabled = ledger?.agentAwarePresentation ?? true;
     return AttentionPresentation.project({
       enabled,
       humanAttentionRequired: ledger?.requiresHumanAttention({

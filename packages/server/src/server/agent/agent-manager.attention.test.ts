@@ -26,7 +26,8 @@ import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { deriveAgentStateBucket } from "@getpaseo/protocol/agent-state-bucket";
 import type { AgentAttentionPeer } from "@getpaseo/protocol/agent-attention";
 import { respondToAgentPermission } from "./permission-response.js";
-import { AgentAttentionObjectives, AttentionObjectiveError } from "./attention/objectives.js";
+import { AgentAttentionObjectives } from "./attention/objectives.js";
+import { AttentionObjectiveError } from "./attention/errors.js";
 import {
   CodexAsyncQuestions,
   codexAsyncQuestionToTimeline,
