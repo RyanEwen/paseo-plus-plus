@@ -146,8 +146,8 @@ export function resolveReadingPromptTarget(
   rowId: string | null,
   readingSeq?: number | null,
 ): PromptTarget | undefined {
-  const row = items.find((item) => item.id === rowId);
-  const seq = readingSeq ?? row?.timelineCursor?.seq;
+  // A published sequence needs no row scan; this runs on every streamed delta.
+  const seq = readingSeq ?? items.find((item) => item.id === rowId)?.timelineCursor?.seq;
   if (seq !== undefined)
     return targets.findLast((target) => target.seq !== undefined && target.seq <= seq);
   const index = items.findIndex((item) => item.id === rowId);
@@ -280,6 +280,64 @@ export function resolveContextSource(
   );
   return candidates.length === 1 ? candidates[0] : undefined;
 }
+
+/** Tail rows by canonical position and id, built once per tail instead of once per delta. */
+export interface ContextSourceIndex {
+  bySeq: ReadonlyMap<number, readonly StreamItem[]>;
+  byId: ReadonlyMap<string, readonly StreamItem[]>;
+}
+
+function appendIndexed<K>(index: Map<K, StreamItem[]>, key: K, item: StreamItem): void {
+  const rows = index.get(key);
+  if (rows) rows.push(item);
+  else index.set(key, [item]);
+}
+
+export function indexContextSources(
+  tail: readonly StreamItem[],
+  epoch: string | null,
+): ContextSourceIndex {
+  const bySeq = new Map<number, StreamItem[]>();
+  const byId = new Map<string, StreamItem[]>();
+  for (const item of tail) {
+    if (item.timelineCursor?.epoch !== epoch) continue;
+    appendIndexed(bySeq, item.timelineCursor.seq, item);
+    appendIndexed(byId, item.id, item);
+  }
+  return { bySeq, byId };
+}
+
+/** resolveRetainedContextSource for a stable tail: only the streaming head is scanned per delta. */
+export function resolveIndexedContextSource(input: {
+  index: ContextSourceIndex;
+  items: readonly StreamItem[];
+  head: readonly StreamItem[];
+  epoch: string | null;
+  reading: Pick<PromptReadingPosition, "navigating" | "following" | "rowId" | "seq">;
+  coverage: readonly CanonicalTimelineCoverage[];
+}): StreamItem | undefined {
+  const { index, items, head, epoch, reading, coverage } = input;
+  // Before the viewport publishes an edge the scan stops at the newest user row.
+  if (reading.navigating || reading.rowId === null)
+    return resolveRetainedContextSource(items, epoch, reading, coverage);
+  const { rowId, seq } = reading;
+  const indexed = seq != null ? index.bySeq.get(seq) : index.byId.get(rowId);
+  const inHead = head.filter(
+    (item) =>
+      item.timelineCursor?.epoch === epoch &&
+      (seq != null ? item.timelineCursor.seq === seq : item.id === rowId),
+  );
+  const candidates = [...(indexed ?? []), ...inHead];
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/** The streaming head only matters to prompt work when it holds a user row. Returns one
+ * stable empty list otherwise, so tail-derived prompt work survives stream ticks. */
+export function selectPromptHead(head: readonly StreamItem[]): readonly StreamItem[] {
+  return head.some((item) => item.kind === "user_message") ? head : NO_PROMPT_ROWS;
+}
+
+export const NO_PROMPT_ROWS: readonly StreamItem[] = Object.freeze([]);
 
 /** Add cached content to navigation order without claiming the original row is loaded. */
 export function mergeCachedPromptTarget(

@@ -690,3 +690,23 @@ describe("prompt ownership across authoritative epochs", () => {
     expect(input.jumpToLoaded).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("prompt work across stream ticks", () => {
+  it("keeps prompt targets when only the streaming head changes", () => {
+    const user = stickyUser("one", 1);
+    const promptRows = [user];
+    const input = { ...stickyInput([user], stickyOutline([1])), promptRows };
+    const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
+    const initial = result.current.targets;
+    const streamed: StreamItem = {
+      kind: "assistant_message",
+      id: "live",
+      text: "token",
+      timestamp: new Date(0),
+    };
+
+    rerender({ ...input, items: [user, streamed] });
+
+    expect(result.current.targets).toBe(initial);
+  });
+});

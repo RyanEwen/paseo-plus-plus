@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { StreamItem } from "@/types/stream";
 import {
   INITIAL_STICKY_PROMPT_STATE,
+  NO_PROMPT_ROWS,
+  indexContextSources,
   reduceStickyPromptState,
+  resolveIndexedContextSource,
+  selectPromptHead,
   type StickyPromptState,
   hasDiscoveredCachedPrompt,
   hasDiscoveredPrompt,
@@ -319,5 +324,68 @@ describe("reduceStickyPromptState", () => {
     expect(
       reduceStickyPromptState(failed, { type: "epochReplaced", enabled: false }).cancelled,
     ).toBe(true);
+  });
+});
+
+describe("tail-indexed context source", () => {
+  const reading = { navigating: false, following: false, rowId: "answer", seq: 5 };
+  const answer: StreamItem = {
+    kind: "assistant_message",
+    id: "answer",
+    text: "answer",
+    timestamp: new Date(0),
+    timelineCursor: { epoch: "e", seq: 5 },
+  };
+
+  function resolve(tail: StreamItem[], head: StreamItem[]) {
+    return resolveIndexedContextSource({
+      index: indexContextSources(tail, "e"),
+      items: [...tail, ...head],
+      head,
+      epoch: "e",
+      reading,
+      coverage: [],
+    });
+  }
+
+  it("finds a unique source in the tail or the streaming head", () => {
+    expect(resolve([answer], [])).toBe(answer);
+    expect(resolve([], [answer])).toBe(answer);
+  });
+
+  it("rejects a source repeated across the tail and head", () => {
+    expect(resolve([answer], [answer])).toBeUndefined();
+  });
+
+  it("matches the row id when no sequence is published", () => {
+    const result = resolveIndexedContextSource({
+      index: indexContextSources([answer], "e"),
+      items: [answer],
+      head: [],
+      epoch: "e",
+      reading: { ...reading, seq: null },
+      coverage: [],
+    });
+
+    expect(result).toBe(answer);
+  });
+});
+
+describe("selectPromptHead", () => {
+  it("shares one empty list for a head without user rows", () => {
+    const streaming: StreamItem = {
+      kind: "assistant_message",
+      id: "live",
+      text: "token",
+      timestamp: new Date(0),
+    };
+
+    expect(selectPromptHead([streaming])).toBe(NO_PROMPT_ROWS);
+  });
+
+  it("keeps a head that holds a user row", () => {
+    const head = [prompt("u1", 1)];
+
+    expect(selectPromptHead(head)).toBe(head);
   });
 });
