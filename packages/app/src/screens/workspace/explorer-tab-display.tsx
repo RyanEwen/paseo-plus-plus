@@ -56,7 +56,7 @@ export function ExplorerIconOnlyMenuItem({
       showSelectedCheck
       disabled={control.disabled}
       status={control.pending ? "pending" : "idle"}
-      tooltip={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
+      description={control.failed ? t("paseoPlusPlus.saveFailed") : undefined}
       closeOnSelect={false}
       onSelect={control.toggle}
       testID="explorer-icon-only-tabs-menu-item"

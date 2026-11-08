@@ -129,31 +129,10 @@ export function computeWorkspaceTabLayout(
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
-  const minimumTotalWidth = input.metrics.minTabWidth * tabCount;
-  // A row that scrolls has no reason to truncate: the tabs keep their natural widths and the
-  // viewport pans over them. Pointer layouts first shrink toward the clickable minimum and scroll
-  // only once even that does not fit; compact layouts skip the shrink.
-  const requiresHorizontalScrollFallback = input.compact
-    ? naturalTotalWidth > availableTabsWidth
-    : availableTabsWidth < minimumTotalWidth;
-
-  let resolvedWidths = naturalWidths;
-  if (
-    !requiresHorizontalScrollFallback &&
-    !input.compact &&
-    naturalTotalWidth > availableTabsWidth
-  ) {
-    const widthToRemove = naturalTotalWidth - availableTabsWidth;
-    const shrinkCapacity = naturalTotalWidth - minimumTotalWidth;
-    const shrinkRatio = widthToRemove / shrinkCapacity;
-    resolvedWidths = naturalWidths.map(
-      (width) => width - (width - input.metrics.minTabWidth) * shrinkRatio,
-    );
-  }
-
-  const roundedWidths = resolvedWidths.map((width) =>
-    Math.round(clamp(width, input.metrics.minTabWidth, maximumWidth)),
-  );
+  // Tabs always keep their natural widths, so a title is never squeezed; the strip scrolls as soon
+  // as those widths do not fit. The minimum only floors short names.
+  const requiresHorizontalScrollFallback = naturalTotalWidth > availableTabsWidth;
+  const roundedWidths = naturalWidths.map((width) => Math.round(width));
 
   return {
     items: roundedWidths.map((width) => ({

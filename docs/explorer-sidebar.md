@@ -96,8 +96,8 @@ the upstream 64 px minimum and can hide their labels; see
 hide their close buttons through the panel manifest; close them from the tab context menu.
 Other tabs reveal the close control on hover. Compact layouts show no inline close on any tab,
 since a narrow X beside the label is easy to hit by accident; the long-press menu closes it.
-Compact tabs also keep their natural width and the rail scrolls as soon as they overflow, while
-pointer layouts shrink tabs toward the clickable minimum first. A rail that scrolls never truncates.
+Tabs keep their natural width and the rail scrolls as soon as they overflow, so a title is never
+squeezed to fit.
 The + menu opens compatible panels in the dock, including Agent and terminal profiles. Compact
 layouts omit Diff from it because compact Changes shows each file's diff inline.
 Web also supports dragging agents and terminals into Explorer.
