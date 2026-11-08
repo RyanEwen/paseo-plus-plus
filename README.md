@@ -4,7 +4,7 @@
 
 Paseo++ is [RyanEwen/paseo-plus-plus](https://github.com/RyanEwen/paseo-plus-plus), an experimental fork of [Paseo](https://github.com/getpaseo/paseo). It includes upstream improvements alongside the features and fixes below.
 
-For fork development and integration, follow the [worktree guide](docs/worktree-development.md#fork-branches-and-ownership). Published builds follow the [fork release process](docs/release.md#fork-preview-distribution).
+For fork development and integration, follow the [fork branches guide](docs/fork-branches.md). Published builds follow the [fork release process](docs/release.md#fork-preview-distribution).
 
 [Install Paseo++](docs/fork-installation.md) · [Feature settings](docs/fork-features/settings.md)
 
