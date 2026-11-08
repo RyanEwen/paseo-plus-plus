@@ -33,25 +33,12 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-export interface CompactTabStripLayout {
-  /** Compact main tabs divide the measured scroll track equally. */
-  fillAvailableWidth: boolean;
-  /** Render plain slots instead of the sortable list. */
-  rendersSlots: boolean;
-}
-
 /**
- * Choose how a compact strip lays out its tabs. Only compact web Explorer keeps its sortable
- * owner; main, sheet and native compact strips leave long press to the tab's actions menu.
+ * Whether compact tabs render as plain slots instead of the sortable list. Only compact web
+ * Explorer keeps its sortable owner; other compact strips leave long press to the tab's actions.
  */
-export function compactTabStripLayout(input: {
-  host: PaneHost;
-  compact: boolean;
-}): CompactTabStripLayout {
-  return {
-    fillAvailableWidth: input.compact && input.host === "main",
-    rendersSlots: input.compact && !(isWeb && input.host === "explorer"),
-  };
+export function usesCompactTabSlots(input: { host: PaneHost; compact: boolean }): boolean {
+  return input.compact && !(isWeb && input.host === "explorer");
 }
 
 /** Key of the selected tab, or undefined when none is selected. */
@@ -59,15 +46,6 @@ export function selectedTabKey(
   tabs: ReadonlyArray<{ isActive: boolean; tab: { key: string } }>,
 ): string | undefined {
   return tabs.find((item) => item.isActive)?.tab.key;
-}
-
-/** Filling strips size tabs from the scroll track, which already excludes the toolbar. */
-export function measuredTabTrackWidth(input: {
-  fillAvailableWidth: boolean;
-  scrollWidth: number;
-  containerWidth: number;
-}): number {
-  return input.fillAvailableWidth ? input.scrollWidth : input.containerWidth;
 }
 
 /** Compact strips always scroll; wide strips scroll only when tabs cannot fit. */

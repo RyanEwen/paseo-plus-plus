@@ -353,6 +353,29 @@ test.describe("Workspace session rename (compact tabs)", () => {
   });
 });
 
+test("compact tabs keep their natural width instead of sharing the strip", async ({ page }) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "compact-tab-natural-width-",
+    title: "Existing chat",
+  });
+  try {
+    await openAgentRoute(page, session);
+    const row = mainWorkspaceTabRow({ page, agentId: session.agentId });
+    const strip = row.getByTestId("workspace-tabs-scroll");
+    await row.getByTestId("workspace-new-tab-button").click();
+    await page.getByTestId("workspace-new-tab-menu-agent").filter({ visible: true }).click();
+    const tabs = strip.getByRole("tab");
+    await expect(tabs).toHaveCount(2);
+
+    const stripBox = await strip.boundingBox();
+    const tabBox = await tabs.first().boundingBox();
+    if (!stripBox || !tabBox) throw new Error("Expected the compact strip to be laid out");
+    expect(tabBox.width).toBeLessThan(stripBox.width / 2 - 8);
+  } finally {
+    await session.cleanup();
+  }
+});
+
 test("compact tab bar creates tabs and returns to the existing chat", async ({
   page,
 }, testInfo) => {
