@@ -98,6 +98,7 @@ describe("fork Android update selection", () => {
       readApkChecksum(`${digest}  paseo.apk\n${digest}  paseo.apk`, "paseo.apk"),
     ).toThrow();
     expect(() => readApkChecksum("bad  paseo.apk", "paseo.apk")).toThrow();
+    expect(() => readApkChecksum(`${digest} extra  paseo.apk`, "paseo.apk")).toThrow();
     expect(() => readApkChecksum(`${digest}  other.apk`, "paseo.apk")).toThrow();
   });
 });

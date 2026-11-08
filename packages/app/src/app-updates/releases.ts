@@ -1,34 +1,18 @@
-import { z } from "zod";
+import {
+  FORK_RELEASE_MAX_PAGES,
+  FORK_RELEASES_PER_PAGE,
+  ForkReleasesSchema,
+  buildForkReleasesPageUrl,
+  isCanonicalForkAssetUrl,
+  parseForkPreviewBuild,
+  readForkChecksum,
+  type ForkRelease,
+  type ForkReleaseAsset,
+} from "@getpaseo/protocol/fork-release";
 
-// The daemon's fork-preview.ts (server package) applies the same tag, build-number, repository and
-// canonical-URL rules to host updates. The app cannot import it (Node-only module), so keep both in
-// step until the rules move to a module both packages share.
-
-// Discover through the current repository; retain canonical legacy asset URL compatibility.
-const repository = "RyanEwen/paseo-plus-plus";
-const releaseRepositories = [repository, "RyanEwen/paseo"];
-const previewTagPattern = /^v\d+\.\d+\.\d+-preview\.(\d+)$/;
 const safeAssetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** Preview Android version codes are this offset plus the workflow build number. */
 const previewVersionCodeOffset = 1_000_000_000;
-/** Keeps preview version codes within Google Play's 2_100_000_000 maximum. */
-const maxPreviewBuild = 1_100_000_000;
-const releasesPerPage = 100;
-/** GitHub lists at most 1000 releases, so later pages are never needed. */
-const maxReleasePages = 10;
-
-const assetSchema = z.object({ name: z.string(), browser_download_url: z.url() });
-const releaseSchema = z.object({
-  tag_name: z.string(),
-  draft: z.boolean(),
-  prerelease: z.boolean(),
-  assets: z.array(assetSchema),
-});
-export const releasesSchema = z.array(releaseSchema);
-
-/** One GitHub release, as validated at the API boundary. */
-export type ForkRelease = z.infer<typeof releaseSchema>;
-type ForkReleaseAsset = z.infer<typeof assetSchema>;
 
 export interface AndroidUpdate {
   version: string;
@@ -55,13 +39,10 @@ interface PreviewBuild {
  */
 function listPreviewBuilds(releases: ForkRelease[]): PreviewBuild[] {
   const previews = releases.flatMap((release) => {
-    const match = previewTagPattern.exec(release.tag_name);
     // The final prerelease bridges older installs to normal GitHub releases with the same tags.
-    if (release.draft || !match) return [];
-    const build = Number(match[1]);
-    if (!Number.isSafeInteger(build) || build < 1 || build > maxPreviewBuild) {
-      throw new Error("Invalid preview build number");
-    }
+    if (release.draft) return [];
+    const build = parseForkPreviewBuild(release.tag_name);
+    if (build === null) return [];
     return [{ release, versionCode: previewVersionCodeOffset + build }];
   });
   return previews.sort((a, b) => b.versionCode - a.versionCode);
@@ -70,11 +51,7 @@ function listPreviewBuilds(releases: ForkRelease[]): PreviewBuild[] {
 /** Refuse an asset whose name is unsafe or whose URL is not a canonical fork download. */
 function assertCanonicalAsset(asset: ForkReleaseAsset, tag: string): void {
   const safeName = safeAssetNamePattern.test(asset.name) && !asset.name.includes("..");
-  const canonicalAssetUrl = releaseRepositories.some((candidate) => {
-    const expected = `https://github.com/${candidate}/releases/download/${tag}/${asset.name}`;
-    return asset.browser_download_url === expected;
-  });
-  if (!safeName || !canonicalAssetUrl) {
+  if (!safeName || !isCanonicalForkAssetUrl({ asset, tagName: tag })) {
     throw new Error("Unexpected fork release asset URL");
   }
 }
@@ -116,11 +93,9 @@ export function selectAndroidUpdate(
 
 /** Reject absent or ambiguous checksums before asking native code to download an APK. */
 export function readApkChecksum(text: string, filename: string): string {
-  const entries = text.split("\n").filter((line) => line.endsWith(`  ${filename}`));
-  if (entries.length !== 1 || !/^[a-f0-9]{64}  /.test(entries[0])) {
-    throw new Error("Invalid APK checksum inventory");
-  }
-  return entries[0].slice(0, 64);
+  const digest = readForkChecksum({ checksums: text, filename });
+  if (digest === null) throw new Error("Invalid APK checksum inventory");
+  return digest;
 }
 
 /** GitHub refused the request because this network used up its unauthenticated API allowance. */
@@ -164,15 +139,12 @@ export async function findAndroidUpdate(
   options: { fetch?: UpdateFetch } = {},
 ): Promise<AndroidUpdate | null> {
   const releases: ForkRelease[] = [];
-  for (let page = 1; page <= maxReleasePages; page += 1) {
-    const response = await requestUpdateResource(
-      `https://api.github.com/repos/${repository}/releases?per_page=${releasesPerPage}&page=${page}`,
-      options,
-    );
+  for (let page = 1; page <= FORK_RELEASE_MAX_PAGES; page += 1) {
+    const response = await requestUpdateResource(buildForkReleasesPageUrl(page), options);
     // Validate at the API boundary; selection below trusts the parsed type.
-    const batch = releasesSchema.parse(JSON.parse(response));
+    const batch = ForkReleasesSchema.parse(JSON.parse(response));
     releases.push(...batch);
-    if (batch.length < releasesPerPage) break;
+    if (batch.length < FORK_RELEASES_PER_PAGE) break;
   }
   return selectAndroidUpdate(releases, installedCode);
 }
