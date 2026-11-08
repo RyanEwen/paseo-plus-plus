@@ -6210,6 +6210,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.completePendingRootCompactions();
     if (parsed.status === "failed") {
+      // Async questions stay pending here too; see the interrupted branch below.
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
@@ -6217,7 +6218,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     } else if (parsed.status === "interrupted") {
       // Unlike turn-scoped approvals, async questions stay pending after an interruption; see
-      // CodexAsyncQuestions, and survivesTurnCancellation for the manager's matching rule.
+      // CodexAsyncQuestions, and survivesTurnEnd for the manager's matching rule.
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
