@@ -13,6 +13,11 @@ import { buildAgentRoute } from "../support/helpers/mock-agent";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import {
+  closeCompactWorkspaceMenu,
+  menuRow,
+  openCompactWorkspaceMenu,
+} from "../support/helpers/compact-workspace-scripts";
 import { expectMobileAgentSidebarHidden } from "../support/helpers/sidebar";
 import {
   switchWorkspaceViaSidebar,
@@ -473,6 +478,12 @@ test.describe("plugin workspace panels and Command Center", () => {
         ).toBeVisible();
         await expect(page.getByText(`Host ${getServerId()}`, { exact: true })).toBeVisible();
         await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
+      });
+
+      await test.step("the compact workspace menu lists plugin panels", async () => {
+        await openCompactWorkspaceMenu(page);
+        await expect(menuRow(page, "Workspace inspector")).toBeVisible();
+        await closeCompactWorkspaceMenu(page);
       });
 
       await test.step("removing the active plugin renders the panel unavailable", async () => {
