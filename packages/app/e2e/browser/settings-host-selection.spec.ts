@@ -334,6 +334,11 @@ test("explicit settings host sync shares preferences across independent clients 
             "@paseo:app-settings",
             JSON.stringify({ paseoPlusPlus: { previousAgents: true } }),
           );
+          // This context bypasses the page fixture, which is what normally skips first-run setup.
+          localStorage.setItem(
+            "@paseo:onboarding",
+            JSON.stringify({ completedAt: new Date(0).toISOString() }),
+          );
         },
         { savedRegistry: registry },
       );
