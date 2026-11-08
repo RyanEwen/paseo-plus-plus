@@ -164,7 +164,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.closeButtonPolicy).toBe("none");
   });
 
-  it("still compresses wider desktop tabs to fit the available pane", () => {
+  it("scrolls wider desktop tabs at their natural widths when they do not fit the pane", () => {
     const result = computeWorkspaceTabLayout({
       compact: false,
       viewportWidth: 400,
@@ -172,8 +172,8 @@ describe("computeWorkspaceTabLayout", () => {
       metrics,
       widerTabs: true,
     });
-    expect(result.items.map((item) => item.width)).toEqual([130, 130]);
-    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(result.items.map((item) => item.width)).toEqual([240, 240]);
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
   });
 
   it("restores the earlier ceiling when the preference is disabled", () => {
@@ -224,7 +224,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.items.map((item) => item.width)).toEqual([139]);
   });
 
-  it("shrinks natural widths proportionally without crossing the clickable minimum", () => {
+  it("scrolls at natural widths instead of shrinking desktop tabs to fit", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 460,
       tabLabelWidths: [168, 84, 56],
@@ -233,8 +233,8 @@ describe("computeWorkspaceTabLayout", () => {
     });
 
     expect(result.closeButtonPolicy).toBe("all");
-    expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([132, 102, 82]);
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+    expect(result.items.map((item) => item.width)).toEqual([160, 118, 90]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
@@ -256,9 +256,9 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.items.map((item) => item.width)).toEqual([160, 160, 160, 160]);
   });
 
-  it("keeps every tab at the clickable minimum at the exact fit boundary", () => {
+  it("does not scroll when natural widths exactly fit", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 404,
+      viewportWidth: 676,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
       compact: false,
@@ -266,13 +266,13 @@ describe("computeWorkspaceTabLayout", () => {
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([64, 64, 64, 64]);
+    expect(result.items.map((item) => item.width)).toEqual([132, 132, 132, 132]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
-  it("scrolls at natural widths rather than shrinking below the clickable minimum", () => {
+  it("scrolls as soon as natural widths exceed the available width", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 403,
+      viewportWidth: 675,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
       compact: false,
