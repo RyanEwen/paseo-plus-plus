@@ -7,7 +7,8 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useToast } from "@/contexts/toast-context";
+// Not toast-context: that module loads the toast UI, which this widely imported module must not.
+import { useToast } from "@/contexts/toast-api-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { toErrorMessage } from "@/utils/error-messages";
 import { openExternalUrl } from "@/utils/open-external-url";
