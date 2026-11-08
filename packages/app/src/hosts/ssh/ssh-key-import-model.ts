@@ -1,8 +1,23 @@
+import { i18n } from "@/i18n/i18next";
 import { sshCredentialId, type SshDestination } from "./ssh-destination";
 
 export interface ImportedPrivateKey {
   name: string;
   text: string;
+}
+
+/**
+ * Reject a picked file that is not an OpenSSH or PEM private key. A public key gets its own
+ * message because picking `id_ed25519.pub` by mistake is the common case.
+ * @throws Error with displayable copy.
+ */
+export function assertImportablePrivateKey(text: string): void {
+  if (text.includes("PRIVATE KEY")) return;
+
+  const isPublicKey = text.includes("PUBLIC KEY") || /^\s*(ssh|ecdsa|sk)-/u.test(text);
+  if (isPublicKey) throw new Error("Choose a private key, not a public key.");
+
+  throw new Error(i18n.t("sshErrors.keyFormatUnsupported"));
 }
 
 export interface SshKeyImportBridge {
