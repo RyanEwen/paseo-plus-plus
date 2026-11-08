@@ -237,7 +237,10 @@ describe("AgentStorage", () => {
       });
       expect(loaded.humanAttentionRequired).toBe(expected);
       expect(loaded.attentionObjectives).toEqual(original.attentionObjectives);
-      expect(buildStoredAgentPayload(loaded, ["codex"]).humanAttentionRequired).toBe(expected);
+      expect(
+        buildStoredAgentPayload(loaded, ["codex"], { agentAwareAttention: true })
+          .humanAttentionRequired,
+      ).toBe(expected);
     },
   );
 
@@ -339,7 +342,7 @@ describe("AgentStorage", () => {
     const cleared: string[] = [];
     const pending = attention.clear({
       workspace,
-      agents: [buildStoredAgentPayload(capturedRecord, ["codex"])],
+      agents: [buildStoredAgentPayload(capturedRecord, ["codex"], { agentAwareAttention: true })],
       onCleared: (id) => {
         cleared.push(id);
       },
@@ -369,11 +372,17 @@ describe("AgentStorage", () => {
       const committed = await storage.get("legacy-read");
       if (!committed || !loaded) throw new Error("Committed legacy-read fixture is missing");
       expect(published).toEqual([committed]);
-      const reloadedPayload = buildStoredAgentPayload(loaded, ["codex"]);
-      expect(buildStoredAgentPayload(committed, ["codex"])).toEqual(reloadedPayload);
-      expect(published.map((record) => buildStoredAgentPayload(record, ["codex"]))).toEqual([
+      const reloadedPayload = buildStoredAgentPayload(loaded, ["codex"], {
+        agentAwareAttention: true,
+      });
+      expect(buildStoredAgentPayload(committed, ["codex"], { agentAwareAttention: true })).toEqual(
         reloadedPayload,
-      ]);
+      );
+      expect(
+        published.map((record) =>
+          buildStoredAgentPayload(record, ["codex"], { agentAwareAttention: true }),
+        ),
+      ).toEqual([reloadedPayload]);
     } finally {
       continueRead();
     }
@@ -589,9 +598,10 @@ describe("AgentStorage", () => {
     expect(record?.archivedAt).toBe("2026-01-01T00:00:00Z");
     expect(record?.persistence?.provider).toBe("codex-work");
     if (!record) throw new Error("Expected persisted fixture record");
-    expect(buildStoredAgentPayload(record, ["codex-work"]).persistence?.sessionId).toBe(
-      "native-selected",
-    );
+    expect(
+      buildStoredAgentPayload(record, ["codex-work"], { agentAwareAttention: true }).persistence
+        ?.sessionId,
+    ).toBe("native-selected");
   });
 
   test("an intent reservation cannot overwrite an existing agent or another request", async () => {
@@ -1019,9 +1029,10 @@ describe("AgentStorage", () => {
       expect(reloaded?.persistence).toEqual(handle);
       expect(reloaded?.providerHistory).toEqual(binding);
       if (!reloaded) throw new Error("Expected resumable record after reload");
-      expect(buildStoredAgentPayload(reloaded, ["codex-work"]).persistence?.sessionId).toBe(
-        "native-resumable",
-      );
+      expect(
+        buildStoredAgentPayload(reloaded, ["codex-work"], { agentAwareAttention: true }).persistence
+          ?.sessionId,
+      ).toBe("native-resumable");
       expect(await restarted.listByProviderSession("codex-work", "native-resumable")).toMatchObject(
         [{ id: agent.id, workspaceId: "original-workspace", persistence: handle }],
       );

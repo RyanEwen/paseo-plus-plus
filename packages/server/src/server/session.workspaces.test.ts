@@ -10241,7 +10241,9 @@ test.each(["legacy", "receipt"] as const)(
           session.forwardStoredAgentAttentionCleared(record, workspaceId),
       });
       session.listAgentPayloads = async () =>
-        (await storage.list()).map((record) => buildStoredAgentPayload(record, ["codex"]));
+        (await storage.list()).map((record) =>
+          buildStoredAgentPayload(record, ["codex"], { agentAwareAttention: true }),
+        );
       await activateAgentUpdatesSubscription(session, "t59-clear", {});
       await session.handleMessage({
         type: "workspace.clear_attention.request",
@@ -10342,7 +10344,9 @@ test("T59 sequential bounded receipt chunks preserve intervening newer attention
       },
     });
     session.listAgentPayloads = async () =>
-      (await storage.list()).map((record) => buildStoredAgentPayload(record, ["codex"]));
+      (await storage.list()).map((record) =>
+        buildStoredAgentPayload(record, ["codex"], { agentAwareAttention: true }),
+      );
     const attention = Array.from({ length: 257 }, (_, index) => ({
       agentId: `captured-${index}`,
       timestamp,
