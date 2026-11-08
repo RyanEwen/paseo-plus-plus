@@ -157,11 +157,11 @@ export const zhCN: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "移动端工作区标签页",
-        hint: "在紧凑屏幕上显示等宽标签页，仅在放不下时滚动。关闭后使用标签选择器，并保留当前选中的标签。",
+        hint: "在紧凑屏幕上按自然宽度显示标签页，放不下时滚动。关闭后使用标签选择器，并保留当前选中的标签。",
       },
       widerWorkspaceTabs: {
         label: "更宽的工作区标签页",
-        hint: "将长标题标签页的最大宽度增加 50%。手机上的工作区标签页始终均分可用宽度。",
+        hint: "将长标题标签页的最大宽度增加 50%，手机上同样适用。",
       },
 
       descriptiveToolCalls: {
