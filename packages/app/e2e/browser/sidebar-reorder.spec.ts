@@ -129,12 +129,14 @@ test("projects, workspaces, and pinned chats reorder with an immediate mouse dra
     await firstProject.client.setWorkspacePinned(firstProject.workspaceId, true);
     await secondProject.client.setWorkspacePinned(secondProject.workspaceId, true);
     const secondProjectWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondProject.workspaceId}`;
-    await quickDragFirstRowAfterSecond(
-      page.locator(
+    // Name sorting disables ordinary rows, so the drag must start after both pins have landed.
+    const pinnedRows = page
+      .getByTestId("sidebar-pinned-section")
+      .locator(
         `[data-testid="${firstWorkspaceTestId}"], [data-testid="${secondProjectWorkspaceTestId}"]`,
-      ),
-      pressWorkspaceRow,
-    );
+      );
+    await expect(pinnedRows).toHaveCount(2);
+    await quickDragFirstRowAfterSecond(pinnedRows, pressWorkspaceRow);
   } finally {
     await firstProject.cleanup();
     await secondProject.cleanup();

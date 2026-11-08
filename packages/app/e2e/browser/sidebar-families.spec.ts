@@ -216,7 +216,8 @@ test.describe("Sidebar workspace families", () => {
     await openProjectViewWithCustomSort(page);
     const roots = rowsOf(page, [scene.parent, scene.independent]);
     if ((await sidebarRowTestIds(roots))[0] !== `sidebar-workspace-row-${key(scene.parent)}`) {
-      await quickDragFirstSidebarRowAfterSecond(roots, pressSidebarWorkspaceRow);
+      const family = page.getByTestId(`sidebar-workspace-family-${key(scene.parent)}`);
+      await quickDragFirstSidebarRowAfterSecond(roots, pressSidebarWorkspaceRow, family);
     }
     await quickDragFirstSidebarRowAfterSecond(roots, pressSidebarWorkspaceRow);
 
