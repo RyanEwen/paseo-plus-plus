@@ -2,7 +2,7 @@
 
 Routine results addressed to another agent do not notify you or make a workspace Ready to review. This applies to independent agents and subagents in the same workspace or another workspace. Human tasks keep their final-result obligation when workers and callbacks continue the work.
 
-Agents coordinating delegated human work use `get_attention_context` and `report_objective_status`: declare an objective `waiting` before ending an interim reply, then `final` when its result is ready. Ordinary direct replies still finish automatically. Separate requests keep separate recipients; approving permission alone does not redirect a result to you.
+Agents coordinating delegated human work use `get_attention_context` and `report_objective_status`: declare an objective `waiting` before ending an interim reply, then `final` when its result is ready. Ordinary direct replies still finish automatically. Agents delegated under a `final` objective keep reporting to the requesting agent; those late results do not reopen the objective or notify you. Separate requests keep separate recipients; approving permission alone does not redirect a result to you.
 
 Failed and Needs input stay visible even when the requesting agent owns the problem. The requester receives its existing callbacks. An agent can explicitly request your attention with a reason; if a blocker has a verified missing or archived requester, Paseo also brings it to you. A disconnected host or a closed, resumable chat does not prove the requester is gone. The notification opens the chat that needs your intervention, including a subagent's own workspace and chat.
 

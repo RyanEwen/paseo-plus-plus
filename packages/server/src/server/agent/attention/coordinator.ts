@@ -146,7 +146,7 @@ export class AgentAttentionCoordinator {
       const result = ledger.reserveCallback(reservation);
       try {
         await this.host.persistSnapshot(agent);
-        // Terminal events can close an objective while a storage write is pending.
+        // A ledger replaced during the storage write no longer owns this reservation.
         if (agent.attentionObjectives !== ledger)
           throw new AttentionObjectiveError("objective-not-in-turn", input.link.objectiveId);
         if (result.status === "reserved")

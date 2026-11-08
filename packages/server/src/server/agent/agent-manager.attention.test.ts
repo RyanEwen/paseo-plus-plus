@@ -256,7 +256,7 @@ test.each(["closed", "wrong-peer", "wrong-token"])(
   },
 );
 
-test("objective closure during callback reservation persistence prevents forwarding the outcome", async () => {
+test("objective closure during callback reservation persistence keeps the outcome deliverable", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "attention-reservation-fence-"));
   class BlockingStorage extends AgentStorage {
     blockNext = false;
@@ -322,12 +322,11 @@ test("objective closure during callback reservation persistence prevents forward
       error: null,
     },
   });
-  const rejected = expect(reserving).rejects.toBeInstanceOf(AttentionObjectiveError);
   await storage.entered.promise;
   session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "human-turn" });
   await vi.waitFor(() => expect(manager.getAttentionObjectives(agent.id).objectives).toEqual([]));
   storage.release.resolve();
-  await rejected;
+  await expect(reserving).resolves.toMatchObject({ status: "reserved" });
   await running;
 });
 

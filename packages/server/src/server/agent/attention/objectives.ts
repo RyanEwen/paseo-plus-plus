@@ -43,6 +43,8 @@ const delegationSchema = z.object({
   requestId: z.string(),
   acceptedMessageIds: z.array(z.string()).optional(),
   deliveries: z.array(callbackDeliverySchema).optional(),
+  /** The objective closed, but this delegate may still report back to the requesting agent. */
+  objectiveFinished: z.boolean().optional(),
   recipient: AgentAttentionPeerSchema,
 });
 
@@ -295,9 +297,12 @@ export class AgentAttentionObjectives {
       active.filter((objective) => objective.disposition !== "waiting").map(({ id }) => id),
     );
     this.state.objectives = this.state.objectives.filter(({ id }) => !completed.has(id));
-    this.state.delegations = this.state.delegations.filter(
-      ({ objectiveId }) => !completed.has(objectiveId),
-    );
+    // Delegates outlive the request they served. Their later results still reach this agent.
+    for (const delegation of this.state.delegations) {
+      if (completed.has(delegation.objectiveId)) {
+        delegation.objectiveFinished = true;
+      }
+    }
     this.state.activeObjectiveIds = this.state.activeObjectiveIds.filter(
       (id) => !completed.has(id),
     );
@@ -461,7 +466,8 @@ export class AgentAttentionObjectives {
         entry.requestId === link.requestId &&
         samePeer({ left: entry.recipient, right: peer, localServerId: this.localServerId }),
     );
-    if (!delegation || !this.state.objectives.some((entry) => entry.id === link.objectiveId)) {
+    const objectiveOpen = this.state.objectives.some((entry) => entry.id === link.objectiveId);
+    if (!delegation || !(delegation.objectiveFinished || objectiveOpen)) {
       throw new AttentionObjectiveError("objective-not-in-turn", link.objectiveId);
     }
     return delegation;
@@ -509,7 +515,8 @@ export class AgentAttentionObjectives {
       return input.objectiveIds.filter((id) => known.has(id));
     }
     if (input.kind === "agent" && input.attention?.continuation) {
-      return [this.resolveAgentContinuation(input).id];
+      const objective = this.resolveAgentContinuation(input);
+      return objective ? [objective.id] : [];
     }
     const existing = this.state.objectives.find(({ id }) => id === input.requestId);
     if (existing) {
@@ -532,10 +539,16 @@ export class AgentAttentionObjectives {
     return [input.requestId];
   }
 
-  /** An invalid claim is rejected, never reclassified as a fresh ordinary agent request. */
+  /**
+   * An invalid claim is rejected, never reclassified as a fresh ordinary agent request.
+   *
+   * @returns The objective the callback continues, or null for a valid callback whose objective
+   * already finished. A null callback reaches the agent without reopening that request, even
+   * when a later objective reuses its ID.
+   */
   private resolveAgentContinuation(
     input: Extract<AttentionAdmission, { kind: "agent" }>,
-  ): AttentionObjective {
+  ): AttentionObjective | null {
     const link = input.attention?.continuation;
     if (!link) {
       throw new AttentionObjectiveError("missing-continuation");
@@ -558,6 +571,9 @@ export class AgentAttentionObjectives {
       ) {
         throw new AttentionObjectiveError("unreserved-delivery");
       }
+    }
+    if (delegation.objectiveFinished) {
+      return null;
     }
     const objective = this.state.objectives.find(({ id }) => id === link.objectiveId);
     if (!objective) {
