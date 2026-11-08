@@ -1,6 +1,7 @@
 import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
-import type { ImportedPrivateKey } from "./ssh-key-import-model";
+import { i18n } from "@/i18n/i18next";
+import { assertImportablePrivateKey, type ImportedPrivateKey } from "./ssh-key-import-model";
 
 /** Read one bounded private-key file and erase the picker's temporary cache copy immediately. */
 export async function importPrivateKey(): Promise<ImportedPrivateKey | null> {
@@ -13,9 +14,9 @@ export async function importPrivateKey(): Promise<ImportedPrivateKey | null> {
   const asset = result.assets[0];
   const file = new File(asset.uri);
   try {
-    if (file.size > 65536) throw new Error("Choose a private key smaller than 64 KiB.");
+    if (file.size > 65536) throw new Error(i18n.t("sshErrors.keyTooLarge"));
     const text = await file.text();
-    if (!text.includes("PRIVATE KEY")) throw new Error("Choose a private key, not a public key.");
+    assertImportablePrivateKey(text);
     return { name: asset.name, text };
   } finally {
     file.delete();

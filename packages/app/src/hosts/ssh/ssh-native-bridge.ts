@@ -1,4 +1,5 @@
 import type { EventSubscription } from "expo-modules-core";
+import { i18n } from "@/i18n/i18next";
 import type { BridgeDaemonTransportEvent } from "@/hosts/transport-bridge/types";
 import type { SshDestination } from "./ssh-destination";
 import type { SshKeyImportBridge } from "./ssh-key-import-model";
@@ -16,38 +17,36 @@ export interface SshNativeModule extends SshKeyImportBridge {
 }
 
 /**
- * User-facing copy for the codes thrown by `SshException.kt`. Keep the two lists in sync.
+ * Translation keys for the codes thrown by `SshException.kt`. Keep the two lists in sync.
  * The native message is not used: Expo prefixes it with the module and function name.
  */
-const SSH_ERROR_MESSAGES = {
-  ERR_SSH_INVALID_TARGET: "Enter ssh://user@hostname with an explicit username.",
-  ERR_SSH_KEY_TOO_LARGE: "Choose a private key smaller than 64 KiB.",
-  ERR_SSH_KEY_UNREADABLE: "Unable to read the private key. Check its format and passphrase.",
-  ERR_SSH_UNREACHABLE: "Unable to reach the SSH server. Check the hostname and port.",
-  ERR_SSH_INVALID_CREDENTIALS: "Invalid SSH credentials.",
-  ERR_SSH_IMPORT_EXPIRED: "SSH key import expired. Import the key again.",
-  ERR_SSH_KEY_MISSING: "Import a private key for this SSH host on this device.",
-  ERR_SSH_SESSION_CLOSED: "SSH session is closed.",
+const SSH_ERROR_TRANSLATION_KEYS = {
+  ERR_SSH_INVALID_TARGET: "sshErrors.invalidTarget",
+  ERR_SSH_KEY_TOO_LARGE: "sshErrors.keyTooLarge",
+  ERR_SSH_KEY_UNREADABLE: "sshErrors.keyUnreadable",
+  ERR_SSH_UNREACHABLE: "sshErrors.unreachable",
+  ERR_SSH_INVALID_CREDENTIALS: "sshErrors.invalidCredentials",
+  ERR_SSH_IMPORT_EXPIRED: "sshErrors.importExpired",
+  ERR_SSH_KEY_MISSING: "sshErrors.keyMissing",
+  ERR_SSH_SESSION_CLOSED: "sshErrors.sessionClosed",
 } as const;
 
-export type SshBridgeErrorCode = keyof typeof SSH_ERROR_MESSAGES;
-
-/** Shown for any native failure without a known code, so Java class names never reach the UI. */
-const UNEXPECTED_SSH_ERROR_MESSAGE = "The SSH bridge failed unexpectedly. Try again.";
+export type SshBridgeErrorCode = keyof typeof SSH_ERROR_TRANSLATION_KEYS;
 
 /** A native SSH failure with user-facing copy. `code` is null for unexpected failures. */
 export class SshBridgeError extends Error {
   readonly code: SshBridgeErrorCode | null;
 
   constructor(code: SshBridgeErrorCode | null) {
-    super(code === null ? UNEXPECTED_SSH_ERROR_MESSAGE : SSH_ERROR_MESSAGES[code]);
+    // Failures without a known code get generic copy, so Java class names never reach the UI.
+    super(i18n.t(code === null ? "sshErrors.unexpected" : SSH_ERROR_TRANSLATION_KEYS[code]));
     this.name = "SshBridgeError";
     this.code = code;
   }
 }
 
 function isSshBridgeErrorCode(code: unknown): code is SshBridgeErrorCode {
-  return typeof code === "string" && Object.hasOwn(SSH_ERROR_MESSAGES, code);
+  return typeof code === "string" && Object.hasOwn(SSH_ERROR_TRANSLATION_KEYS, code);
 }
 
 /** Translate one rejection from the native module. This is the only reader of Expo's envelope. */
