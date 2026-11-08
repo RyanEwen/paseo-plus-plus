@@ -13,11 +13,16 @@ import {
   collectAllPanes,
   findPaneContainingTab,
   type SplitNode,
+  type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
-import type { SplitSide } from "@/stores/workspace-layout-splits";
+import { resolveBlockedSplitDirections } from "@/stores/workspace-layout-split-depth";
+import type { SplitDirection, SplitSide } from "@/stores/workspace-layout-splits";
+import { MAX_TREE_DEPTH } from "@/stores/workspace-layout-store";
 
 interface SplitMenuOwner {
   root: SplitNode | null;
+  /** Whole persisted layout, including the Explorer shell that counts toward split depth. */
+  layout: WorkspaceLayout;
   enabled: boolean;
   onMove: (tabId: string, paneId: string) => void;
   onSplit: (input: {
@@ -35,6 +40,7 @@ export interface WorkspaceTabSplitMenu {
   pages: MenuPageDefinition[];
 }
 const EMPTY_SPLIT_MENU: WorkspaceTabSplitMenu = { trigger: null, pages: [] };
+const NO_BLOCKED_DIRECTIONS: ReadonlySet<SplitDirection> = new Set();
 
 /**
  * Keep tab movement bound to the pane tree that owns the menu, including portalled menus.
@@ -45,6 +51,7 @@ const EMPTY_SPLIT_MENU: WorkspaceTabSplitMenu = { trigger: null, pages: [] };
 export function WorkspaceSplitMenuScope({
   children,
   root,
+  layout,
   enabled,
   onMove,
   onSplit,
@@ -53,13 +60,40 @@ export function WorkspaceSplitMenuScope({
   const value = useMemo(
     () => ({
       root,
+      layout,
       onMove,
       onSplit,
       enabled: enabled && controlsEnabled,
     }),
-    [root, onMove, onSplit, enabled, controlsEnabled],
+    [root, layout, onMove, onSplit, enabled, controlsEnabled],
   );
   return <SplitMenuContext.Provider value={value}>{children}</SplitMenuContext.Provider>;
+}
+
+/**
+ * Split directions a picker must grey out because they would exceed the depth limit.
+ *
+ * @param input.paneId Pane being split; omitted means the focused pane, as launches resolve it.
+ * @param input.tabId Tab being moved; omitted when the split creates a new tab.
+ */
+export function useBlockedSplitDirections(input: {
+  paneId?: string;
+  tabId?: string;
+}): ReadonlySet<SplitDirection> {
+  const layout = useContext(SplitMenuContext)?.layout;
+  const { paneId, tabId } = input;
+  return useMemo(() => {
+    const targetPaneId = paneId ?? layout?.focusedPaneId;
+    if (!layout || !targetPaneId) {
+      return NO_BLOCKED_DIRECTIONS;
+    }
+    return resolveBlockedSplitDirections({
+      layout,
+      targetPaneId,
+      tabId,
+      maxTreeDepth: MAX_TREE_DEPTH,
+    });
+  }, [layout, paneId, tabId]);
 }
 
 /** The visible pane holding this tab when the owning scope allows moving it, otherwise null. */
@@ -157,6 +191,7 @@ function MoveSplitPicker({
 }) {
   const menu = useMenuContext("MoveSplitPicker");
   const compact = useIsCompactFormFactor();
+  const blockedDirections = useBlockedSplitDirections({ paneId: targetPaneId, tabId });
   const select = useCallback(
     (position: SplitSide, firstPaneFraction: number) =>
       menu.selectItem(
@@ -170,6 +205,7 @@ function MoveSplitPicker({
       intent={MOVE_INTENT}
       onSelect={select}
       compact={compact}
+      blockedDirections={blockedDirections}
       testIDPrefix={menuId}
     />
   );

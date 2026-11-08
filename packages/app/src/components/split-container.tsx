@@ -245,6 +245,7 @@ export function SplitContainer({
   return (
     <WorkspaceSplitMenuScope
       root={moveMenuRoot}
+      layout={layout}
       enabled={!focusModeEnabled}
       onSplit={onSplitPane}
       onMove={onMoveTabToPane}

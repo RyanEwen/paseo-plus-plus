@@ -757,6 +757,7 @@ export const ru: TranslationResources = {
       columns: "Слева / справа",
       rows: "Сверху / снизу",
       pane: "Панель {{index}}",
+      maxDepthReached: "Достигнута максимальная глубина разделения",
     },
 
     route: {

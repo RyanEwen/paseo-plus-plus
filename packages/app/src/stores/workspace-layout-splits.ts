@@ -1,6 +1,9 @@
 /** Edge of the target pane where a new split pane is placed. */
 export type SplitSide = "left" | "right" | "top" | "bottom";
 
+/** Axis along which a split divides its panes: side by side, or stacked. */
+export type SplitDirection = "horizontal" | "vertical";
+
 /** Share of the left or top pane in a two-pane split, strictly between 0 and 1. */
 export function isSplitFraction(fraction: number): boolean {
   return Number.isFinite(fraction) && fraction > 0 && fraction < 1;

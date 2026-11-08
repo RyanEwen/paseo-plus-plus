@@ -151,3 +151,52 @@ it.each([1, 2])(
     expect(visible).toEqual(["agent-a"]);
   },
 );
+
+it("restores split sizes saved with the Explorer share in the rendered-children shape", async () => {
+  const values = new Map<string, string>();
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const store = createWorkspaceLayoutStore(undefined, storage);
+  await store.persist.rehydrate();
+  const workspaceKey = "server:workspace";
+  store.getState().openTab({
+    workspaceKey,
+    target: { kind: "agent", agentId: "agent-1" },
+    intent: "reveal",
+  });
+  const moved = store.getState().openTab({
+    workspaceKey,
+    target: { kind: "agent", agentId: "agent-2" },
+    intent: "reveal",
+  });
+  const layout = store.getState().layoutByWorkspace[workspaceKey];
+  store.getState().splitPane(workspaceKey, {
+    tabId: moved ?? "",
+    targetPaneId: layout.focusedPaneId ?? "",
+    position: "right",
+  });
+  const root = store.getState().layoutByWorkspace[workspaceKey].root;
+  if (root.kind !== "group") {
+    throw new Error("Expected a split group");
+  }
+
+  const [storageKey, raw] = [...values.entries()][0];
+  const persisted = JSON.parse(raw);
+  persisted.state.splitSizesByWorkspace[workspaceKey][root.group.id] = [0.6, 0.2, 0.2];
+  values.set(storageKey, JSON.stringify(persisted));
+
+  const restored = createWorkspaceLayoutStore(undefined, storage);
+  await restored.persist.rehydrate();
+
+  const sizes = restored.getState().splitSizesByWorkspace[workspaceKey][root.group.id];
+  expect(sizes).toHaveLength(2);
+  expect(sizes[0]).toBeCloseTo(0.75);
+  expect(sizes[1]).toBeCloseTo(0.25);
+});

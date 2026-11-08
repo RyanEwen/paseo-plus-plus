@@ -2,9 +2,10 @@ import { PressHighlight } from "@/components/ui/press-highlight";
 import { useMenuRowProps } from "@/components/ui/menu";
 import { useCallback, useMemo } from "react";
 import { View, Text, type PressableStateCallbackType } from "react-native";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import type { SplitSide } from "@/stores/workspace-layout-splits";
+import type { SplitDirection, SplitSide } from "@/stores/workspace-layout-splits";
 import { SPLIT_LAYOUT_PRESETS } from "./split-layout-presets";
 
 /** Width of the picker grid; menus that host it use it as their minimum width. */
@@ -33,11 +34,16 @@ interface SplitLayoutPickerProps {
  * Select the actual new-pane region; fractions always describe the left/top pane.
  *
  * @param props.compact Use touch-sized diagrams, from the caller's form factor.
+ * @param props.blockedDirections Split directions greyed out at the depth limit.
  */
 export function SplitLayoutPicker({
   compact,
+  blockedDirections,
   ...props
-}: SplitLayoutPickerProps & { compact: boolean }) {
+}: SplitLayoutPickerProps & {
+  compact: boolean;
+  blockedDirections?: ReadonlySet<SplitDirection>;
+}) {
   const { t } = useTranslation();
   return (
     <View style={styles.grid}>
@@ -53,6 +59,7 @@ export function SplitLayoutPicker({
                 {...props}
                 direction={direction}
                 compact={compact}
+                blocked={blockedDirections?.has(direction) ?? false}
                 fraction={preset.fraction}
                 label={preset.label}
                 presetId={preset.id}
@@ -91,8 +98,9 @@ function SplitDiagram({
   presetId,
   ...props
 }: SplitLayoutPickerProps & {
-  direction: "horizontal" | "vertical";
+  direction: SplitDirection;
   compact: boolean;
+  blocked: boolean;
   fraction: number;
   label: string;
   presetId: string;
@@ -146,8 +154,10 @@ function SplitRegion({
   intent,
   onSelect,
   disabled = false,
+  blocked,
   testIDPrefix,
 }: SplitLayoutPickerProps & {
+  blocked: boolean;
   side: SplitSide;
   fraction: number;
   percent: number;
@@ -157,13 +167,15 @@ function SplitRegion({
 }) {
   const { t } = useTranslation();
   // Menu callers own selectItem so closing and the iOS teardown grace run once.
+  // A blocked region stays pressable to the platform so hover and tap can explain it.
+  const inert = disabled || blocked;
   const select = useCallback(() => {
-    if (!disabled) {
+    if (!inert) {
       onSelect(side, fraction);
     }
-  }, [disabled, onSelect, side, fraction]);
-  const rowProps = useMenuRowProps({ disabled });
-  const accessibilityState = useMemo(() => ({ disabled }), [disabled]);
+  }, [inert, onSelect, side, fraction]);
+  const rowProps = useMenuRowProps({ disabled: inert });
+  const accessibilityState = useMemo(() => ({ disabled: inert }), [inert]);
   const regionStyle = useCallback(
     ({
       pressed,
@@ -172,17 +184,19 @@ function SplitRegion({
     }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.region,
       { width, height },
-      !disabled && (pressed || hovered || focused) ? styles.highlighted : null,
-      disabled ? styles.disabled : null,
+      !inert && (pressed || hovered || focused) ? styles.highlighted : null,
+      inert ? styles.disabled : null,
     ],
-    [disabled, width, height],
+    [inert, width, height],
   );
   const sideLabel = t(`workspace.splits.${side}`);
-  const accessibilityLabel =
+  const regionLabel =
     intent.kind === "open"
       ? t("workspace.splits.openRegion", { item: intent.item, side: sideLabel, percent })
       : t("workspace.splits.moveRegion", { side: sideLabel, percent });
-  return (
+  const blockedReason = blocked ? t("workspace.splits.maxDepthReached") : null;
+  const accessibilityLabel = blockedReason ? `${regionLabel}. ${blockedReason}` : regionLabel;
+  const region = (
     <PressHighlight
       highlightStyle={styles.highlighted}
       style={regionStyle}
@@ -193,6 +207,17 @@ function SplitRegion({
       accessibilityState={accessibilityState}
       testID={`${testIDPrefix}-${side}-${presetId}`}
     />
+  );
+  if (!blockedReason) {
+    return region;
+  }
+  return (
+    <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile>
+      <TooltipTrigger asChild>{region}</TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={6}>
+        <Text style={styles.tooltipText}>{blockedReason}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -213,5 +238,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   highlighted: { backgroundColor: theme.colors.surface3, borderColor: theme.colors.accent },
   disabled: { opacity: theme.opacity[50] },
+  tooltipText: { fontSize: theme.fontSize.base, color: theme.colors.foreground },
   ratio: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted, direction: "ltr" },
 }));
