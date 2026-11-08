@@ -1,7 +1,33 @@
-import { useSessionStore, type SessionState } from "@/stores/session-store";
+import {
+  useSessionStore,
+  type SessionState,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { sameWorkspaceTreeAgents } from "./workspace-tree";
+
+/**
+ * Whether a workspace update can change a family's rows: which workspaces exist, the project that
+ * bounds a family, background visibility and the pin partitions. Status, names, diff stats and
+ * other record updates arrive constantly and leave a queued sibling drop valid.
+ */
+function sameFamilyWorkspaces(
+  previous: ReadonlyMap<string, WorkspaceDescriptor>,
+  next: ReadonlyMap<string, WorkspaceDescriptor>,
+): boolean {
+  if (previous === next) return true;
+  if (previous.size !== next.size) return false;
+  for (const [id, workspace] of previous) {
+    const other = next.get(id);
+    if (!other) return false;
+    if (workspace.projectId !== other.projectId) return false;
+    if (Boolean(workspace.background) !== Boolean(other.background)) return false;
+    if (workspace.pinnedAt !== other.pinnedAt) return false;
+    if (workspace.projectPinnedAt !== other.projectPinnedAt) return false;
+  }
+  return true;
+}
 
 /**
  * Ignore activity-only agent updates while detecting authoritative topology and directory changes.
@@ -15,7 +41,7 @@ function sameFamilySession(
   if (previous === next) return true;
   if (!previous || !next) return false;
   if (
-    previous.workspaces !== next.workspaces ||
+    !sameFamilyWorkspaces(previous.workspaces, next.workspaces) ||
     previous.projects !== next.projects ||
     previous.hasHydratedAgents !== next.hasHydratedAgents ||
     previous.hasHydratedWorkspaces !== next.hasHydratedWorkspaces ||
@@ -31,7 +57,7 @@ function sameFamilySession(
  * before the subscription's turn in the store's notification list.
  *
  * @param serverIds the hosts whose sessions own the rendered families.
- * @returns `getSnapshot`, the current generation (it advances when relationships, workspaces,
+ * @returns `getSnapshot`, the current generation (it advances when relationships, family placement,
  *   collapse or saved order change), and `subscribe` for `useSyncExternalStore`. Unsubscribing
  *   advances the generation so a drop held by an unmounted collection cannot commit.
  */
