@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { createFamilyDragTracker } from "./workspace-family-drag-tracker";
@@ -46,6 +46,34 @@ function replaceAgent(next: Agent): void {
   useSessionStore.getState().setAgents(SERVER_ID, agents);
 }
 
+/** A workspace record; only the fields under test differ between updates. */
+function workspaceRecord(id: string): WorkspaceDescriptor {
+  return {
+    createdAt: null,
+    lastUserMessageAt: null,
+    id,
+    projectId: "project",
+    projectDisplayName: "Project",
+    projectRootPath: "/repo",
+    workspaceDirectory: `/repo/${id}`,
+    projectKind: "git",
+    workspaceKind: "worktree",
+    name: id,
+    status: "done",
+    statusEnteredAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+  };
+}
+
+/** Replace one workspace record through the session store, as a daemon update does. */
+function patchChildWorkspace(patch: Partial<WorkspaceDescriptor>): void {
+  const workspaces = new Map(useSessionStore.getState().sessions[SERVER_ID]!.workspaces);
+  workspaces.set("child", Object.assign(workspaceRecord("child"), patch));
+  useSessionStore.getState().setWorkspaces(SERVER_ID, workspaces);
+}
+
 describe("workspace family drag tracker", () => {
   beforeEach(() => {
     const store = useSessionStore.getState();
@@ -55,6 +83,13 @@ describe("workspace family drag tracker", () => {
       new Map([
         ["parent", agent("parent", null)],
         ["child", agent("child", "parent")],
+      ]),
+    );
+    store.setWorkspaces(
+      SERVER_ID,
+      new Map([
+        ["parent", workspaceRecord("parent")],
+        ["child", workspaceRecord("child")],
       ]),
     );
   });
@@ -84,6 +119,39 @@ describe("workspace family drag tracker", () => {
       activity,
     );
     expect(tracker.getSnapshot()).toBe(before);
+  });
+
+  it.each<[string, Partial<WorkspaceDescriptor>]>([
+    ["status", { status: "running", statusEnteredAt: new Date(1) }],
+    ["name", { name: "Renamed", title: "Renamed" }],
+    ["diff stat", { diffStat: { additions: 1, deletions: 0 } }],
+    ["labels", { labels: ["triage"] }],
+  ])("keeps its generation when a workspace's %s changes", (_field, patch) => {
+    const tracker = createFamilyDragTracker([SERVER_ID]);
+    const before = tracker.getSnapshot();
+    patchChildWorkspace(patch);
+    expect(tracker.getSnapshot()).toBe(before);
+  });
+
+  it.each<[string, Partial<WorkspaceDescriptor>]>([
+    ["project", { projectId: "other-project" }],
+    ["background visibility", { background: true }],
+    ["global pin", { pinnedAt: "2026-11-08T12:00:00.000Z" }],
+    ["project pin", { projectPinnedAt: "2026-11-08T12:00:00.000Z" }],
+  ])("advances when a workspace's %s changes", (_field, patch) => {
+    const tracker = createFamilyDragTracker([SERVER_ID]);
+    const before = tracker.getSnapshot();
+    patchChildWorkspace(patch);
+    expect(tracker.getSnapshot()).toBe(before + 1);
+  });
+
+  it("advances when a workspace appears or disappears", () => {
+    const tracker = createFamilyDragTracker([SERVER_ID]);
+    const before = tracker.getSnapshot();
+    useSessionStore
+      .getState()
+      .setWorkspaces(SERVER_ID, new Map([["parent", workspaceRecord("parent")]]));
+    expect(tracker.getSnapshot()).toBe(before + 1);
   });
 
   it("advances when an agent's parent changes", () => {
