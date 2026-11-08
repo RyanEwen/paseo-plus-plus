@@ -4,6 +4,7 @@ import {
   WorkspaceUpdatedWithinPage,
 } from "./workspace-list";
 import { SidebarBulkCollapseMenuItems } from "../bulk-collapse-controls";
+import { useSidebarBulkCollapse } from "../use-sidebar-bulk-collapse";
 import { WORKSPACE_LIMIT_PAGES } from "./workspace-limit-pages";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -220,6 +221,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
   const { projects, workspaceSortSupported } = useSidebarModel();
+  const bulkCollapse = useSidebarBulkCollapse();
   const isCompact = useIsCompactFormFactor();
   const { labels } = useWorkspaceLabelProjection();
   const [managerOpen, setManagerOpen] = useState(false);
@@ -399,7 +401,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             sheetTitle={`${t(`sidebar.display.grouping.${preferences.grouping}`)}: ${t("sidebar.display.heading")}`}
             testID="sidebar-display-preferences-content"
           >
-            <SidebarBulkCollapseMenuItems />
+            <SidebarBulkCollapseMenuItems actions={bulkCollapse} />
             {preferences.preferencesDisabledReason ? (
               <MenuHint>{preferences.preferencesDisabledReason}</MenuHint>
             ) : null}

@@ -6,7 +6,10 @@ import { ChevronsUpDown, ChevronsDownUp } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { mutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { SidebarHeaderIconButton } from "./header-icon-button";
-import { useSidebarBulkCollapse } from "./use-sidebar-bulk-collapse";
+import {
+  useSidebarBulkCollapse,
+  type SidebarBulkCollapseActions,
+} from "./use-sidebar-bulk-collapse";
 
 const ExpandIcon = withUnistyles(ChevronsUpDown);
 const CollapseIcon = withUnistyles(ChevronsDownUp);
@@ -57,11 +60,14 @@ export function SidebarBulkCollapseControls() {
 /**
  * Expand all and Collapse all at the top of the compact Display menu, followed by a separator.
  * Desktop layouts show SidebarBulkCollapseControls in the header instead.
+ *
+ * Takes the actions as a prop because compact menu content mounts inside a bottom sheet, which
+ * renders outside SidebarModelProvider: calling useSidebarBulkCollapse here would crash the app.
  */
-export function SidebarBulkCollapseMenuItems() {
+export function SidebarBulkCollapseMenuItems({ actions }: { actions: SidebarBulkCollapseActions }) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const { enabled, expandAll, collapseAll } = useSidebarBulkCollapse();
+  const { enabled, expandAll, collapseAll } = actions;
   if (!enabled || !isCompact) return null;
   return (
     <>
