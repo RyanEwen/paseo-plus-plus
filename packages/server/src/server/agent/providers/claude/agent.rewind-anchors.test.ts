@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, appendFile, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, appendFile, readFile, rm, symlink } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { AgentManager } from "../../agent-manager.js";
@@ -12,6 +12,7 @@ import {
 } from "../../provider-history/claude-identity.js";
 import { ensureAgentLoaded } from "../../agent-loading.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import { seedOversizedClaudeHome } from "./test-oversized-history.js";
 import type { ClaudeQueryInput } from "./query.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
@@ -335,13 +336,6 @@ function interceptingIdentityStore(inner: ClaudeIdentityStore) {
       return rewind.add(run, false);
     },
   } satisfies ClaudeIdentityStore;
-}
-
-/** Fill a profile's todos directory past the launch audit's entry bound. */
-async function seedOversizedHome(home: string): Promise<void> {
-  await mkdir(path.join(home, "todos"));
-  const names = Array.from({ length: 10_001 }, (_, index) => `${index}.json`);
-  await Promise.all(names.map((name) => writeFile(path.join(home, "todos", name), "")));
 }
 
 async function configuredRewindFixture(
@@ -1374,7 +1368,7 @@ describe("configured Claude launch audit", () => {
   test("a home past the entry bound still runs turns and warns once", async () => {
     const f = await configuredRewindFixture(
       [{ assistantMessageId: "a1" }, { assistantMessageId: "a2" }],
-      { seedHome: seedOversizedHome },
+      { seedHome: seedOversizedClaudeHome },
     );
     const warnings: string[] = [];
     f.session.subscribe((event) => {
