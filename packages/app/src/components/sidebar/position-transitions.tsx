@@ -2,12 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { AccessibilityInfo } from "react-native";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-
-/**
- * How long a sidebar row takes to slide to its new position: quick enough to read as the same row
- * moving, not as a new row appearing.
- */
-export const SIDEBAR_POSITION_TRANSITION_MS = 100;
+import { SIDEBAR_POSITION_TRANSITION_MS } from "./position-transition-timing";
 
 const PositionTransitionDurationContext = createContext(0);
 
