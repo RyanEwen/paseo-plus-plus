@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";
+import { statusGroupHeaderSelector } from "./status-group-header-anchor";
 import type { StatusGroupCellProps } from "./status-group-cell.types";
 
 /** A header can be inside the window while fixed sidebar controls clip it out of the scrollport. */
@@ -47,9 +48,7 @@ export function StatusGroupCell({
         if (node.isConnected) return;
         const key = resolveDestinationGroupKey(workspaceKey);
         if (!key) return;
-        const header = document.querySelector(
-          `[data-testid="sidebar-status-group-${CSS.escape(key)}"]`,
-        );
+        const header = document.querySelector(statusGroupHeaderSelector(key));
         if (!(header instanceof HTMLElement) || header.tabIndex < 0) return;
         if (!hasPaintedIntersection(header) || header.closest('[aria-hidden="true"]')) return;
         const focus = document.activeElement;

@@ -388,7 +388,9 @@ test("project pin rejection leaves the action retryable without changing global 
   }
 });
 
-test("project pin asks for a host update when its capability is absent", async ({ page }) => {
+test("project pin is disabled with an update reason when its capability is absent", async ({
+  page,
+}) => {
   const workspace = await seedWorkspace({ repoPrefix: "project-pin-old-host-" });
   try {
     const gate = await installPinRpcGate(page, { projectPinsUnsupported: true });
@@ -396,11 +398,11 @@ test("project pin asks for a host update when its capability is absent", async (
     await openWorkspace(page, workspace.workspaceId);
     const key = `${getServerId()}:${workspace.workspaceId}`;
     await openWorkspaceContextMenu(page, workspace.workspaceId);
-    await page.getByTestId(`sidebar-workspace-menu-project-pin-${key}`).click();
-    await expect(page.getByTestId("app-toast-message")).toContainText(
-      "Update this host to pin workspaces in a project.",
-    );
+    const projectPinItem = page.getByTestId(`sidebar-workspace-menu-project-pin-${key}`);
+    await expect(projectPinItem).toBeDisabled();
+    await expect(projectPinItem).toContainText("Update this host to pin workspaces in a project.");
     expect(gate.sentCount()).toBe(0);
+    await page.keyboard.press("Escape");
     await page.keyboard.press(PIN_SHORTCUT);
     await expect(pinnedSection(page)).toBeVisible();
     expect(gate.sentCount()).toBe(1);
