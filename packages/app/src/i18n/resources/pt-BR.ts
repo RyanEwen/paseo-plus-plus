@@ -167,11 +167,11 @@ export const ptBR: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Abas de espaços no celular",
-        hint: "Mostrar abas com a mesma largura em telas compactas, com rolagem apenas quando necessário. Desative para usar o seletor de abas sem mudar a aba selecionada.",
+        hint: "Mostrar as abas com a largura natural em telas compactas, com rolagem quando não couberem. Desative para usar o seletor de abas sem mudar a aba selecionada.",
       },
       widerWorkspaceTabs: {
         label: "Abas do espaço de trabalho mais largas",
-        hint: "Permita até 50% mais largura para títulos longos. No celular, as abas do espaço de trabalho sempre dividem igualmente a largura disponível.",
+        hint: "Permita até 50% mais largura para títulos longos, inclusive no celular.",
       },
 
       descriptiveToolCalls: {
