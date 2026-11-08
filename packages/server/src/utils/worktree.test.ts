@@ -481,7 +481,8 @@ describe("paseo worktree manager", () => {
       execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
     writeFileSync(
       join(repoDir, "paseo.json"),
-      JSON.stringify({ worktree: { setup: ["node -e process.exit(1)"] } }),
+      // Quoted because PowerShell, the Windows setup shell, splits an unquoted process.exit(1).
+      JSON.stringify({ worktree: { setup: ['node -e "process.exit(1)"'] } }),
     );
     git("add", "paseo.json");
     git("-c", "commit.gpgsign=false", "commit", "-m", "failing setup fixture");
