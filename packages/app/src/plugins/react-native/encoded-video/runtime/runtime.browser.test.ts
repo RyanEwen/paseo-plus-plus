@@ -82,6 +82,11 @@ async function waitForMessage(
   );
 }
 
+/** The document posts to this page asynchronously, so a failure lands after send() returns. */
+function waitForError(canvas: MountedCanvas, text: string): Promise<CanvasToHostMessage> {
+  return waitForMessage(canvas, (message) => message.type === "error" && message.message === text);
+}
+
 async function waitForFrame(canvas: MountedCanvas, timestamp: number) {
   const message = await waitForMessage(
     canvas,
@@ -248,10 +253,7 @@ describe("Android video canvas document", () => {
     expect(messagesOfType(canvas, "presented")).toEqual([]);
 
     send(canvas, { type: "present", generation: 2, frameId: 1, requestId: 2 });
-    expect(canvas.messages.at(-1)).toMatchObject({
-      type: "error",
-      message: "Video frame was released",
-    });
+    await waitForError(canvas, "Video frame was released");
   });
 
   it("settles presentation failure when its retained frame is released before paint", async () => {
@@ -264,11 +266,8 @@ describe("Android video canvas document", () => {
     await nextPaint(canvas);
 
     expect(messagesOfType(canvas, "presented")).toEqual([]);
-    expect(canvas.messages.at(-1)).toMatchObject({
-      type: "error",
-      generation: 1,
-      message: "Video frame was released before presentation",
-    });
+    const failure = await waitForError(canvas, "Video frame was released before presentation");
+    expect(failure).toMatchObject({ generation: 1 });
   });
 
   it("decodes and presents a supported codec after configuration fails", async () => {
@@ -306,10 +305,7 @@ describe("Android video canvas document", () => {
       generation: 1,
       chunk: { type: "key", timestamp: 1000, dataBase64 },
     });
-    expect(canvas.messages.at(-1)).toMatchObject({
-      type: "error",
-      message: "Video decoder is not configured",
-    });
+    await waitForError(canvas, "Video decoder is not configured");
   });
 
   it("blocks network requests from the private decoder document", async () => {
