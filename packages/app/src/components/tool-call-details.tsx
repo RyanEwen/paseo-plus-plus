@@ -23,6 +23,8 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
+import { AdditionalFilesSection } from "./additional-files-section";
+import type { AdditionalFilesControl } from "@/tool-calls/additional-files";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
 
@@ -37,6 +39,7 @@ interface ToolCallDetailsContentProps {
   maxHeight?: number;
   fillAvailableHeight?: boolean;
   showLoadingSkeleton?: boolean;
+  additionalFiles?: AdditionalFilesControl;
 }
 
 interface DetailStyles {
@@ -545,6 +548,7 @@ export function ToolCallDetailsContent({
   maxHeight,
   fillAvailableHeight = false,
   showLoadingSkeleton = false,
+  additionalFiles,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
@@ -552,6 +556,10 @@ export function ToolCallDetailsContent({
   const diffLines = useDiffLines(detail);
 
   const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
+
+  if (additionalFiles) {
+    sections.push(<AdditionalFilesSection key="additional-files" control={additionalFiles} />);
+  }
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);

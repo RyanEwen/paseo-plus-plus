@@ -37,7 +37,7 @@ describe("mock readable tool activity scene", () => {
       fileChanges: [
         { kind: "add", diff: "+created-file-exact-diff" },
         { kind: "update", diff: "-before\n+updated-file-exact-diff" },
-        { kind: "delete", diff: "-deleted-file-exact-diff" },
+        { kind: "delete", diff: "deleted-file-exact-diff" },
       ],
     });
   });

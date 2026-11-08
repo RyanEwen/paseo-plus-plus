@@ -2508,6 +2508,7 @@ export const ptBR: TranslationResources = {
     output: "Saída",
   },
   toolActivity: {
+    additionalFiles: "Arquivos adicionais",
     files: {
       intent: "Alterar arquivos",
       running: "Alterando arquivos",

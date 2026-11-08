@@ -3,7 +3,6 @@ import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { stripCwdPrefix } from "@getpaseo/protocol/path-utils";
 import {
   describeToolActivity,
-  parseFileChanges,
   type ToolActivity,
   type ToolActivityKind,
 } from "@getpaseo/protocol/tool-call-activity";
@@ -134,23 +133,4 @@ export function activityIconDetail(
   kind: ActivityDisplayKind | undefined,
 ): ToolCallDetail | undefined {
   return (kind && ACTIVITY_ICON_DETAILS[kind]) ?? source;
-}
-
-/**
- * The detail to expand for a call: a Codex patch batch of two or more files is listed in full,
- * so files after the first canonical edit stay inspectable. Applies in both label modes, and
- * never to Paseo messages.
- */
-export function detailWithFileBatch(
-  source: ToolCallDetail | undefined,
-  input: { agentMessage?: unknown; metadata?: Record<string, unknown> },
-): ToolCallDetail | undefined {
-  if (input.agentMessage) return source;
-  const files = parseFileChanges(input.metadata?.fileChanges);
-  if (!files || files.length < 2) return source;
-  return {
-    type: "unknown",
-    input: { files: files.map(({ path, kind }) => ({ path, kind })) },
-    output: { files },
-  };
 }

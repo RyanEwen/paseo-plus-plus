@@ -93,7 +93,7 @@ export function buildToolActivityScene(cwd: string): ToolCallTimelineItem[] {
               kind: { type: "update" },
               diff: "-before\n+updated-file-exact-diff",
             },
-            { path: "src/deleted.ts", kind: { type: "delete" }, diff: "-deleted-file-exact-diff" },
+            { path: "src/deleted.ts", kind: { type: "delete" }, diff: "deleted-file-exact-diff" },
           ],
         },
         { cwd },

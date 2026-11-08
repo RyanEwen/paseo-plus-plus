@@ -21,6 +21,7 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { useReadableActivityTranslation } from "@/tool-calls/use-readable-tool-activity";
+import { useAdditionalFilesControl } from "@/tool-calls/use-additional-files";
 import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
@@ -2323,6 +2324,7 @@ export const ToolCall = memo(function ToolCall({
       activityTranslation,
     ],
   );
+  const additionalFiles = useAdditionalFilesControl(presentation.additionalFiles, onOpenFilePath);
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
     if (!openFilePath || !onOpenFilePath) {
@@ -2341,6 +2343,7 @@ export const ToolCall = memo(function ToolCall({
         errorText: presentation.errorText,
         icon: presentation.icon,
         showLoadingSkeleton: presentation.isLoadingDetails,
+        additionalFiles,
       });
     } else {
       toggleExpanded();
@@ -2356,6 +2359,7 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.icon,
     presentation.isLoadingDetails,
+    additionalFiles,
   ]);
 
   useEffect(() => {
@@ -2395,6 +2399,7 @@ export const ToolCall = memo(function ToolCall({
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
+        additionalFiles={additionalFiles}
       />
     );
   }, [
@@ -2404,6 +2409,7 @@ export const ToolCall = memo(function ToolCall({
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+    additionalFiles,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
