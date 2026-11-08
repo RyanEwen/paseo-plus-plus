@@ -7,7 +7,8 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useToast } from "@/contexts/toast-context";
+// Not toast-context: that module loads the toast UI, which this widely imported module must not.
+import { useToast } from "@/contexts/toast-api-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { toErrorMessage } from "@/utils/error-messages";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -82,6 +83,25 @@ export interface WorkspaceLinkOpening {
   reportError: (error: unknown) => void;
   /** Where a primary click goes right now, for menus that offer the other destination. */
   defaultDestination: BrowserLinkDestination;
+}
+
+/**
+ * The opener as a fire-and-forget callback for callers that ignore its result, such as the upstream
+ * Service URLs path. Failures are reported like any other link failure; without an opener it does nothing.
+ */
+export function useReportedBrowserOpener(
+  openInPaseo: OpenWorkspaceBrowserUrl | undefined,
+): (url: string) => void {
+  const { reportError } = useContext(WorkspaceLinkPolicyContext);
+  return useCallback(
+    (url: string) => {
+      const open = async () => {
+        await openInPaseo?.(url);
+      };
+      open().catch(reportError);
+    },
+    [openInPaseo, reportError],
+  );
 }
 
 /** Primary activation always belongs to the nearest opener scope, never the globally selected workspace. */

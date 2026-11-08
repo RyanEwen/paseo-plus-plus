@@ -70,17 +70,28 @@ function BrowserLinkMenu({
 /**
  * Browser destination rows for an existing dropdown whose own row already performs the primary
  * action. Renders nothing without a workspace browser (native, plain web, no workspace), and
- * otherwise only the destination the primary action does not use.
+ * otherwise only the destination the primary action does not use. Pass
+ * `primaryFollowsWorkspaceLinks={false}` when that action obeys another setting, such as Service
+ * URLs: where it goes is then unknown here, so both destinations are offered.
  */
-export function WorkspaceBrowserDestinationItems({ url }: { url: string | null | undefined }) {
+export function WorkspaceBrowserDestinationItems({
+  url,
+  primaryFollowsWorkspaceLinks = true,
+}: {
+  url: string | null | undefined;
+  primaryFollowsWorkspaceLinks?: boolean;
+}) {
   const { openInPaseo, defaultDestination } = useWorkspaceLinkOpening();
   if (!isWeb || !url) {
     return null;
   }
-  const destinations = workspaceBrowserAlternateDestinations({
+  const resolveDestinations = primaryFollowsWorkspaceLinks
+    ? workspaceBrowserAlternateDestinations
+    : workspaceBrowserLinkDestinations;
+  const destinations = resolveDestinations({
     url,
     hasWorkspaceBrowser: Boolean(openInPaseo),
-    defaultDestination,
+    defaultDestination: primaryFollowsWorkspaceLinks ? defaultDestination : "external",
   });
   return destinations.map((destination) => (
     <BrowserDestinationMenuItem key={destination} url={url} destination={destination} />

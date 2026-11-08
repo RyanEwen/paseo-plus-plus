@@ -1,7 +1,10 @@
 import { resolveWorkspaceTabLaunchDestination } from "@/workspace-tabs/launcher/internal/destination";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
-import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
+import {
+  WorkspaceBrowserOpenerProvider,
+  useReportedBrowserOpener,
+} from "@/workspace/browser/context";
 import { useWorkspaceNotificationAcknowledgement } from "@/notifications/use-workspace-notification-acknowledgement";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
@@ -1907,14 +1910,7 @@ function WorkspaceScreenContent({
   );
 
   const openOwnedBrowser = useWorkspaceBrowserOpening(normalizedServerId, normalizedWorkspaceId);
-  const handleOpenUrlInBrowserTab = useCallback(
-    (url: string) => {
-      if (openOwnedBrowser) {
-        return openOwnedBrowser(url);
-      }
-    },
-    [openOwnedBrowser],
-  );
+  const handleOpenUrlInBrowserTab = useReportedBrowserOpener(openOwnedBrowser);
 
   useDesktopBrowserNewTabRequests({
     enabled: Boolean(persistenceKey),

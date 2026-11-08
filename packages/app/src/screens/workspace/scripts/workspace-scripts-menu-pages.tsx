@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
-import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import { openServiceUrl } from "@/utils/open-service-url";
 import type {
   WorkspaceScriptLinkKind,
   WorkspaceScriptLinkTarget,
@@ -90,10 +90,9 @@ export function useWorkspaceScriptsMenuPages({
   liveTerminalIds,
   onScriptTerminalStarted,
   onViewTerminal,
+  onOpenUrlInBrowserTab,
 }: UseWorkspaceScriptsMenuPagesInput): WorkspaceScriptsMenuPages {
   const { t } = useTranslation();
-  // Capture workspace ownership before the native sheet portal leaves this provider tree.
-  const { openPrimary } = useWorkspaceLinkOpening();
   const actions = useWorkspaceScriptActions({
     serverId,
     workspaceId,
@@ -129,12 +128,12 @@ export function useWorkspaceScriptsMenuPages({
                 : null
             }
             onViewTerminal={onViewTerminal}
-            onOpenService={openPrimary}
+            onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
           />
         ),
       })),
     ];
-  }, [actions, liveTerminalIds, onViewTerminal, openPrimary, scripts, t]);
+  }, [actions, liveTerminalIds, onOpenUrlInBrowserTab, onViewTerminal, scripts, t]);
 
   return { trigger, pages, needsAttention: summary.tone === "unhealthy" };
 }
@@ -247,7 +246,7 @@ interface ScriptPageProps {
   actions: WorkspaceScriptActions;
   liveTerminalId: string | null;
   onViewTerminal: (terminalId: string) => void;
-  onOpenService: (url: string) => Promise<void>;
+  onOpenUrlInBrowserTab: (url: string) => void;
 }
 
 function ScriptPage(props: ScriptPageProps): ReactElement {
@@ -267,7 +266,7 @@ function RunningScriptPage({
   actions,
   liveTerminalId,
   onViewTerminal,
-  onOpenService,
+  onOpenUrlInBrowserTab,
 }: ScriptPageProps): ReactElement {
   const { t } = useTranslation();
   const { scriptName } = script;
@@ -276,8 +275,8 @@ function RunningScriptPage({
 
   const handleOpenService = useCallback(() => {
     if (!selected) return;
-    void onOpenService(selected.url);
-  }, [selected, onOpenService]);
+    void openServiceUrl(selected.url, { openInApp: onOpenUrlInBrowserTab });
+  }, [selected, onOpenUrlInBrowserTab]);
   const handleViewTerminal = useCallback(() => {
     if (liveTerminalId) onViewTerminal(liveTerminalId);
   }, [liveTerminalId, onViewTerminal]);
