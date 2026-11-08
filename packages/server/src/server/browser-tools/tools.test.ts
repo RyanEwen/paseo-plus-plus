@@ -1117,7 +1117,11 @@ test("a canceled owned screenshot reports cancellation, not a storage failure", 
   expect(result.isError).toBe(true);
   expect(result.structuredContent).toMatchObject({
     ok: false,
-    error: { code: "browser_timeout", message: "Screenshot canceled.", retryable: true },
+    error: {
+      code: "browser_timeout",
+      message: "Screenshot canceled before it finished.",
+      retryable: true,
+    },
   });
   expect(harness.storage.commits).toBe(0);
   expect(harness.storage.releases).toBe(1);

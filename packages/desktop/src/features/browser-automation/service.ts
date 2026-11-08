@@ -26,6 +26,7 @@ import {
   assertCaptureGeometry,
   CaptureAdmission,
   CaptureAdmissionError,
+  captureQueueTimeoutError,
   CAPTURE_MAX_BASE64_LENGTH,
   CAPTURE_MAX_BYTES,
   CAPTURE_TIMEOUT_MS,
@@ -1308,14 +1309,18 @@ async function executeScreenshot(
   const signal = callerSignal
     ? AbortSignal.any([controller.signal, callerSignal])
     : controller.signal;
+  // A request that never left the queue has no frame to blame; tell the agent the queue was busy.
+  let admitted = false;
   const timeout = setTimeout(
-    () => controller.abort(new ScreenshotNoFrameError()),
+    () => controller.abort(admitted ? new ScreenshotNoFrameError() : captureQueueTimeoutError()),
     CAPTURE_TIMEOUT_MS,
   );
   try {
     return await settleUnlessAborted(signal, () =>
       captureAdmission.run(async () => {
-        assertCaptureActive(signal, deadline);
+        if (Date.now() >= deadline) throw captureQueueTimeoutError();
+        admitted = true;
+        signal.throwIfAborted();
         if (fullPage) {
           return executeFullPageScreenshot(
             requestId,
@@ -1345,7 +1350,10 @@ async function executeScreenshot(
     if (error instanceof BrowserTabClosedError) {
       return fail(requestId, "browser_tab_closed", `Browser tab ${browserId} has been closed`);
     }
-    if (signal.aborted) return fail(requestId, "browser_timeout", "Screenshot canceled.", true);
+    // The protocol has no cancellation code; browser_timeout is its retryable stop.
+    if (signal.aborted) {
+      return fail(requestId, "browser_timeout", "Screenshot canceled before it finished.", true);
+    }
     throw error;
   } finally {
     clearTimeout(timeout);

@@ -22,6 +22,14 @@ export class CaptureAdmissionError extends Error {
   }
 }
 
+/** A capture that used up its request deadline waiting behind other captures. */
+export function captureQueueTimeoutError(): CaptureAdmissionError {
+  return new CaptureAdmissionError(
+    "Screenshot queue timed out. Retry after the current captures finish.",
+    true,
+  );
+}
+
 export function assertCaptureGeometry(width: number, height: number, scale: number): void {
   const dimensions = [width, height, scale];
   if (!dimensions.every((value) => Number.isFinite(value) && value > 0)) {
