@@ -6,7 +6,11 @@ import { Text, View } from "react-native";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
-import { getDesktopHost, type DesktopBrowserExtension } from "@/desktop/host";
+import {
+  getDesktopHost,
+  type DesktopBrowserExtension,
+  type DesktopBrowserExtensionsBridge,
+} from "@/desktop/host";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
@@ -18,10 +22,14 @@ type ExtensionAction =
   | { kind: "remove"; id: string; name: string };
 
 /** Browser settings manage the desktop-owned profile, independent of the selected daemon. */
-export function BrowserExtensionsSection() {
+export function BrowserExtensionsSection({
+  bridge = getDesktopHost()?.browser?.extensions,
+}: {
+  /** The desktop extension bridge; defaults to the preload's. Tests pass a fake. */
+  bridge?: DesktopBrowserExtensionsBridge;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const bridge = getDesktopHost()?.browser?.extensions;
   const extensions = useFetchQuery({
     queryKey: EXTENSIONS_QUERY_KEY,
     dataShape: "list",
@@ -116,7 +124,6 @@ export function BrowserExtensionsSection() {
           </View>
           <Button
             variant="outline"
-            size="sm"
             disabled={busy || !bridge}
             loading={busy && action.variables?.kind === "store"}
             onPress={openStore}
@@ -139,7 +146,6 @@ export function BrowserExtensionsSection() {
           </View>
           <Button
             variant="outline"
-            size="sm"
             disabled={busy || !bridge}
             loading={busy && action.variables?.kind === "unpacked"}
             onPress={loadUnpacked}
@@ -190,7 +196,6 @@ function ExtensionRow({ extension, busy, pending, dispatch }: ExtensionRowProps)
       </View>
       <Button
         variant="outline"
-        size="sm"
         disabled={busy}
         loading={pending?.kind === "enable" && pending.id === extension.id}
         onPress={toggle}
@@ -199,7 +204,6 @@ function ExtensionRow({ extension, busy, pending, dispatch }: ExtensionRowProps)
       </Button>
       <Button
         variant="ghost"
-        size="sm"
         disabled={busy}
         loading={pending?.kind === "remove" && pending.id === extension.id}
         onPress={remove}
