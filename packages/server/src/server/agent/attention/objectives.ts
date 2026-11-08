@@ -542,9 +542,9 @@ export class AgentAttentionObjectives {
   /**
    * An invalid claim is rejected, never reclassified as a fresh ordinary agent request.
    *
-   * @returns The objective the callback continues, or null for a valid callback whose objective
-   * already finished. A null callback reaches the agent without reopening that request, even
-   * when a later objective reuses its ID.
+   * @returns The objective the callback continues, or null for a reserved completion whose
+   * objective already finished. That completion reaches the agent without reopening the request,
+   * even when a later objective reuses its ID.
    */
   private resolveAgentContinuation(
     input: Extract<AttentionAdmission, { kind: "agent" }>,
@@ -573,6 +573,10 @@ export class AgentAttentionObjectives {
       }
     }
     if (delegation.objectiveFinished) {
+      // Only a reserved completion outlives the objective. A bare claim could reopen closed work.
+      if (!deliveryClaim) {
+        throw new AttentionObjectiveError("objective-not-in-turn", link.objectiveId);
+      }
       return null;
     }
     const objective = this.state.objectives.find(({ id }) => id === link.objectiveId);

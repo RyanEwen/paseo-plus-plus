@@ -62,19 +62,20 @@ test("waiting human objectives survive serialization, unrelated work, and authen
   expect(objectives.finish()).toBe(false);
   objectives.declare("human-job", "final");
   expect(objectives.finish()).toBe(true);
-  objectives.admit({
-    inputs: [
-      {
-        kind: "agent",
-        requestId: "late-reply",
-        requester: { agentId: "worker", serverId: "remote" },
-        attention: { continuation: reply?.requesterObjective },
-      },
-    ],
-    steering: false,
-  });
+  expect(() =>
+    objectives.admit({
+      inputs: [
+        {
+          kind: "agent",
+          requestId: "late-reply",
+          requester: { agentId: "worker", serverId: "remote" },
+          attention: { continuation: reply?.requesterObjective },
+        },
+      ],
+      steering: false,
+    }),
+  ).toThrow(AttentionObjectiveError);
   expect(objectives.hasHumanAudience()).toBe(false);
-  expect(objectives.finish()).toBe(false);
 });
 
 test("steering joins human obligations while unrelated replacement keeps objectives separate", () => {
