@@ -380,7 +380,7 @@ test.describe("Sidebar workspace list", () => {
       const doneCount = page.getByTestId("sidebar-status-group-count-done");
       await expect(doneCount).toHaveText("16");
       const doneHeader = page.getByTestId("sidebar-status-group-done");
-      await expect(doneHeader).toHaveAccessibleName("Done (16) group");
+      await expect(doneHeader).toHaveAccessibleName("Done (16 workspaces) group");
       await doneHeader.click();
       await expect(page.locator(rowSelector)).toHaveCount(7);
       await expect(doneCount).toHaveText("16");
