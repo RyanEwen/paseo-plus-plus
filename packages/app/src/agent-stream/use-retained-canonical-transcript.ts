@@ -19,7 +19,14 @@ import {
   normalContextPromptIndexReader,
 } from "./fetch-reading-prompt-context";
 import type { createPromptReadingPublisher } from "./prompt-reading-position";
-import { resolveRetainedContextSource } from "./sticky-prompt-model";
+import {
+  indexContextSources,
+  NO_PROMPT_ROWS,
+  resolveIndexedContextSource,
+  selectPromptHead,
+} from "./sticky-prompt-model";
+
+const EMPTY_NAVIGATION_ITEMS: StreamItem[] = [];
 
 /** History a child transcript supplies instead of the root chat's viewed timeline. The
  * prompt-context fields keep retained prompts inside that child's own history owner. */
@@ -98,14 +105,25 @@ export function useRetainedCanonicalTranscript({
     () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
     [effectiveStreamItems, effectiveStreamHead],
   );
+  // Only the head changes per streamed delta, so everything derived from the tail is
+  // memoized on it, and nothing is derived at all while the feature is off.
+  const head = effectiveStreamHead ?? NO_PROMPT_ROWS;
+  const promptHead = useMemo(() => selectPromptHead(head), [head]);
+  const sourceIndex = useMemo(
+    () => (stickyEnabled ? indexContextSources(effectiveStreamItems, timelineEpoch) : null),
+    [stickyEnabled, effectiveStreamItems, timelineEpoch],
+  );
   const readSource = useCallback(() => {
-    return resolveRetainedContextSource(
-      sourceItems,
-      timelineEpoch,
-      promptReading.getSnapshot(),
-      contextCoverage,
-    );
-  }, [promptReading, sourceItems, timelineEpoch, contextCoverage]);
+    if (!sourceIndex) return undefined;
+    return resolveIndexedContextSource({
+      index: sourceIndex,
+      items: sourceItems,
+      head,
+      epoch: timelineEpoch,
+      reading: promptReading.getSnapshot(),
+      coverage: contextCoverage,
+    });
+  }, [promptReading, sourceIndex, sourceItems, head, timelineEpoch, contextCoverage]);
   const contextSource = useSyncExternalStore(promptReading.subscribe, readSource, readSource);
   const suppliedContextReader = historyPagination?.readPromptContext;
   const contextReader = useMemo(() => {
@@ -141,13 +159,8 @@ export function useRetainedCanonicalTranscript({
     lookup: contextLookup,
   });
   const canonicalTail = useMemo(
-    () =>
-      mergeRetainedPrompts(
-        effectiveStreamItems,
-        retainedContext.contexts,
-        effectiveStreamHead ?? [],
-      ),
-    [effectiveStreamItems, effectiveStreamHead, retainedContext.contexts],
+    () => mergeRetainedPrompts(effectiveStreamItems, retainedContext.contexts, promptHead),
+    [effectiveStreamItems, promptHead, retainedContext.contexts],
   );
   const retainedPositions = useMemo(
     () => retainedCanonicalPositions(canonicalTail, retainedContext.contexts),
@@ -156,12 +169,32 @@ export function useRetainedCanonicalTranscript({
   const contextOnlyIds = useMemo(
     () =>
       new Set(
-        mergeRetainedPrompts([], retainedContext.contexts, sourceItems).map((item) => item.id),
+        mergeRetainedPrompts(
+          [],
+          retainedContext.contexts,
+          effectiveStreamItems.concat(promptHead),
+        ).map((item) => item.id),
       ),
-    [retainedContext.contexts, sourceItems],
+    [retainedContext.contexts, effectiveStreamItems, promptHead],
+  );
+  const navigationItems = useMemo(
+    () => (stickyEnabled ? canonicalTail.concat(head) : EMPTY_NAVIGATION_ITEMS),
+    [stickyEnabled, canonicalTail, head],
+  );
+  const promptRows = useMemo(
+    () => (stickyEnabled ? canonicalTail.concat(promptHead) : EMPTY_NAVIGATION_ITEMS),
+    [stickyEnabled, canonicalTail, promptHead],
   );
 
-  return { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds };
+  return {
+    sourceItems,
+    retainedContext,
+    canonicalTail,
+    retainedPositions,
+    contextOnlyIds,
+    navigationItems,
+    promptRows,
+  };
 }
 
 /** Child transcripts supply their own page owner; root chats use the viewed timeline. */

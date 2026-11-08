@@ -548,22 +548,29 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       timelineEpoch,
     ]);
-    const { sourceItems, retainedContext, canonicalTail, retainedPositions, contextOnlyIds } =
-      useRetainedCanonicalTranscript({
-        resolvedServerId,
-        agentId,
-        timelineEpoch,
-        historyPagination,
-        rootTimelineCursor,
-        client,
-        promptReading,
-        effectiveStreamItems,
-        effectiveStreamHead,
-        stickyEnabled,
-        canIndexPrompts,
-        isActive,
-        isAuthoritativeHistoryReady,
-      });
+    const {
+      sourceItems,
+      retainedContext,
+      canonicalTail,
+      retainedPositions,
+      contextOnlyIds,
+      navigationItems,
+      promptRows,
+    } = useRetainedCanonicalTranscript({
+      resolvedServerId,
+      agentId,
+      timelineEpoch,
+      historyPagination,
+      rootTimelineCursor,
+      client,
+      promptReading,
+      effectiveStreamItems,
+      effectiveStreamHead,
+      stickyEnabled,
+      canIndexPrompts,
+      isActive,
+      isAuthoritativeHistoryReady,
+    });
     const retainedWebSource = useMemo(
       () => (isWeb ? mergeRetainedPrompts([], retainedContext.contexts, sourceItems) : []),
       [retainedContext.contexts, sourceItems],
@@ -1318,10 +1325,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const navigationItems = useMemo(
-      () => canonicalTail.concat(effectiveStreamHead ?? []),
-      [canonicalTail, effectiveStreamHead],
-    );
     return (
       <ChatFind
         agentId={agentId}
@@ -1338,6 +1341,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               key={`${resolvedServerId}:${agentId}`}
               enabled={stickyEnabled}
               items={navigationItems}
+              promptRows={promptRows}
               contextOnlyIds={contextOnlyIds}
               epoch={timelineEpoch}
               outline={chatOutline}
