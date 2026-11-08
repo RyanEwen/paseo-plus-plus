@@ -31,8 +31,8 @@ import {
   reloadWorkspace,
 } from "../support/helpers/archive-tab";
 import {
-  countTabsOfKind,
   expectAgentTabActive,
+  getActiveTabTestId,
   openNewTabMenuWithShortcut,
 } from "../support/helpers/launcher";
 
@@ -228,8 +228,12 @@ test.describe("Archive tab reconciliation", () => {
     await closeWorkspaceAgentTab(page, closed.id);
 
     await openNewTabMenuWithShortcut(page);
-    const launcherTabs = await countTabsOfKind(page, "new_tab");
-    expect(launcherTabs).toBeGreaterThan(0);
+    // A launcher tab's test id is its random tab id, so identify it as the newly active tab.
+    await expect(
+      page.getByTestId(`workspace-tab-agent_${open.id}`).filter({ visible: true }),
+    ).toHaveAttribute("aria-selected", "false");
+    const launcherTab = await getActiveTabTestId(page);
+    expect(launcherTab).not.toBeNull();
     await page
       .getByTestId("workspace-new-tab-panel")
       .filter({ visible: true })
@@ -239,7 +243,7 @@ test.describe("Archive tab reconciliation", () => {
 
     await expect(page.getByTestId("reopen-closed-agent-dialog-content")).toHaveCount(0);
     await expectAgentTabActive(page, closed.id);
-    await expect.poll(() => countTabsOfKind(page, "new_tab")).toBe(launcherTabs - 1);
+    await expect(page.getByTestId(launcherTab!)).toHaveCount(0);
   });
 
   test("Reopen closed agent opens a hidden live subagent without creating or archiving a session", async ({
