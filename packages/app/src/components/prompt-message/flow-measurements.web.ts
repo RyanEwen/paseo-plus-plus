@@ -6,7 +6,7 @@ import type { MessageFlowContext, UserMessageFlowProps } from "./flow";
 import { sameFrame, type MessageFlowFrame, type MessageFlowMeasurements } from "./flow-model";
 
 type FrameName = Parameters<MessageFlowContext["register"]>[0];
-interface WebMessageMeasurement {
+export interface WebMessageMeasurement {
   binding: object;
   font: string;
   textHeight: number;

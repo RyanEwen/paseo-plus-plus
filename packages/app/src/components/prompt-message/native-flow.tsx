@@ -41,6 +41,7 @@ import {
   nativeMessageRoleVisible,
   nativeMessageViewportGeometry,
   resolveMessageFlow,
+  type ResolvedMessageFlow,
   bindNativeMessagePreparation,
   type NativeMessagePreparation,
   type NativeMessagePreparationBinding,
@@ -292,7 +293,7 @@ function useNativeMessageViewport(
  */
 function usePreparedNativeMessage(
   m: NaturalMeasurements,
-  flow: ReturnType<typeof resolveMessageFlow>,
+  flow: ResolvedMessageFlow,
   requiresControls: boolean,
 ) {
   const { key, metrics, currentKey } = m;

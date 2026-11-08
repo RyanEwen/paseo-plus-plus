@@ -23,7 +23,7 @@ import {
   type UserMessageFlowProps,
 } from "./flow";
 import { resolveMessageFlow } from "./flow-model";
-import { useWebMessageMeasurements } from "./flow-measurements.web";
+import { useWebMessageMeasurements, type WebMessageMeasurement } from "./flow-measurements.web";
 
 // A semantic paint marker, separate from the rectangular compact ink occlusion regions.
 const bodyBackdropDataSet = { userMessagePaintBackdrop: "body" };
@@ -66,7 +66,7 @@ interface WebMessageGeometry {
  * preparation falls back to ordinary layout until its real nodes measure again.
  */
 function webMessageGeometry(
-  sample: ReturnType<typeof useWebMessageMeasurements>["measurement"],
+  sample: WebMessageMeasurement | null,
   hasText: boolean,
 ): WebMessageGeometry {
   if (!sample)

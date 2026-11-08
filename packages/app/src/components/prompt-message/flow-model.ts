@@ -114,6 +114,9 @@ interface MessageFlowInput {
  * The viewport can collapse without changing the natural content or its width.
  * Missing measurements keep ordinary flow; zero is valid for an absent action row.
  */
+/** The resolved natural layout, or null until its measurements are ready. */
+export type ResolvedMessageFlow = ReturnType<typeof resolveMessageFlow>;
+
 export function resolveMessageFlow({ measurements: m, hasText }: MessageFlowInput) {
   const bodyHeight = m.bodyHeight;
   const trailingHeight = m.trailingHeight;
@@ -202,7 +205,7 @@ export interface NativeMessagePresentation {
 
 interface NativeMessagePreparationInput {
   measurements: MessageFlowMeasurements;
-  flow: ReturnType<typeof resolveMessageFlow>;
+  flow: ResolvedMessageFlow;
   revision: number;
   requiresControls?: boolean;
 }
