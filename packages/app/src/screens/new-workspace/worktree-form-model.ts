@@ -26,9 +26,15 @@ export function findExistingWorktreeByOptionId(
   );
 }
 
-/** Branch and absolute path distinguish checkout rows, including detached worktrees. */
-export function existingWorktreeLabel(entry: ExistingWorktree): string {
-  const branch = entry.branchName ?? `Detached ${entry.head?.slice(0, 8) ?? "HEAD"}`;
+/**
+ * Branch and absolute path distinguish checkout rows, including detached worktrees.
+ * `formatDetached` supplies the translated label for a detached short head.
+ */
+export function existingWorktreeLabel(
+  entry: ExistingWorktree,
+  formatDetached: (head: string) => string,
+): string {
+  const branch = entry.branchName ?? formatDetached(entry.head?.slice(0, 8) ?? "HEAD");
   return `${branch} · ${entry.worktreePath}`;
 }
 
@@ -115,20 +121,30 @@ export function openWorktreeForm(initialBranch: string) {
 
 export type WorktreeFormModel = ReturnType<typeof openWorktreeForm>;
 
+/** A validation failure as a translation key, so this model stays free of React and i18n. */
+export type WorktreeFormError =
+  | { key: "worktreeOptions.enterNewBranchName" }
+  | { key: "worktreeOptions.invalidWorktreeName" }
+  | { key: "worktreeOptions.chooseExistingBranch" }
+  | { key: "worktreeOptions.branchCheckedOut"; params: { path: string } };
+
 /** Validates exact names and branch occupancy before submission; the host repeats Git checks. */
 export function worktreeFormError(
   state: ReturnType<WorktreeFormModel["getState"]>,
   worktrees: readonly ExistingWorktree[],
-): string | null {
-  if (state.mode === "branch-off" && !state.branchName.trim()) return "Enter a new branch name.";
+): WorktreeFormError | null {
+  if (state.mode === "branch-off" && !state.branchName.trim()) {
+    return { key: "worktreeOptions.enterNewBranchName" };
+  }
   if (!isValidWorktreeName(state.worktreeName)) {
-    return "Worktree name must use lowercase letters, numbers and single hyphens (max 50 characters).";
+    return { key: "worktreeOptions.invalidWorktreeName" };
   }
   if (state.mode === "checkout") {
-    if (!state.checkoutBranch) return "Choose an existing branch.";
+    if (!state.checkoutBranch) return { key: "worktreeOptions.chooseExistingBranch" };
     const occupied = worktrees.find((entry) => entry.branchName === state.checkoutBranch);
-    if (occupied)
-      return `Branch already checked out at ${occupied.worktreePath}. Select its existing worktree instead.`;
+    if (occupied) {
+      return { key: "worktreeOptions.branchCheckedOut", params: { path: occupied.worktreePath } };
+    }
   }
   return null;
 }

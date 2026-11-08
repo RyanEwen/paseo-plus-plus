@@ -43,7 +43,9 @@ describe("worktree form", () => {
     const form = openWorktreeForm("fresh-branch");
     form.setWorktreeName("feature/slash");
     expect(form.getState().branchName).toBe("feature/slash");
-    expect(worktreeFormError(form.getState(), [])).toContain("Worktree name must");
+    expect(worktreeFormError(form.getState(), [])).toEqual({
+      key: "worktreeOptions.invalidWorktreeName",
+    });
   });
 
   it("defaults names from the checked out branch and retains manual edits across ref and mode changes", () => {
@@ -97,7 +99,9 @@ describe("worktree form", () => {
       const form = openWorktreeForm("feature");
       form.setSeparateNames(true);
       form.setWorktreeName(name);
-      expect(worktreeFormError(form.getState(), [])).toContain("Worktree name must");
+      expect(worktreeFormError(form.getState(), [])).toEqual({
+        key: "worktreeOptions.invalidWorktreeName",
+      });
     },
   );
   it("keeps explicit intent identifiable when moving to an older host", () => {
@@ -136,14 +140,18 @@ describe("worktree form", () => {
   it("requires a branch and identifies the existing checkout when occupied", () => {
     const form = openWorktreeForm("feature");
     form.setBranchName("");
-    expect(worktreeFormError(form.getState(), [])).toBe("Enter a new branch name.");
+    expect(worktreeFormError(form.getState(), [])).toEqual({
+      key: "worktreeOptions.enterNewBranchName",
+    });
     form.setMode("checkout");
     form.setWorktreeName("checkout");
-    expect(worktreeFormError(form.getState(), [])).toBe("Choose an existing branch.");
+    expect(worktreeFormError(form.getState(), [])).toEqual({
+      key: "worktreeOptions.chooseExistingBranch",
+    });
     form.applyRef(branch("refs/heads/main"));
     expect(
       worktreeFormError(form.getState(), [{ worktreePath: "/repo", branchName: "main" }]),
-    ).toContain("Select its existing worktree");
+    ).toEqual({ key: "worktreeOptions.branchCheckedOut", params: { path: "/repo" } });
     expect(worktreeFormError(form.getState(), [])).toBeNull();
   });
 });
@@ -163,8 +171,13 @@ describe("existing worktree options", () => {
   });
 
   it("labels a checkout by branch and path, and a detached one by its short head", () => {
-    expect(existingWorktreeLabel(entries[0]!)).toBe("feature/a · /worktrees/feature");
-    expect(existingWorktreeLabel(entries[1]!)).toBe("Detached 01234567 · /worktrees/detached");
+    const formatDetached = (head: string) => `Detached ${head}`;
+    expect(existingWorktreeLabel(entries[0]!, formatDetached)).toBe(
+      "feature/a · /worktrees/feature",
+    );
+    expect(existingWorktreeLabel(entries[1]!, formatDetached)).toBe(
+      "Detached 01234567 · /worktrees/detached",
+    );
   });
 
   it.each([

@@ -47,7 +47,7 @@ export function WorktreeBranchField({
         ref={anchorRef}
         variant={variant}
         label={t("newWorkspace.fields.branch")}
-        accessibilityLabel="Branch"
+        accessibilityLabel={t("worktreeOptions.branch")}
         tooltip={`${t("newWorkspace.tooltips.branchChoice")}: ${label}`}
         icon={branchIcon}
         value={label}
@@ -61,7 +61,7 @@ export function WorktreeBranchField({
         onSelect={select}
         onSearchQueryChange={onSearchQueryChange}
         searchable
-        searchPlaceholder="Search branches"
+        searchPlaceholder={t("worktreeOptions.searchBranches")}
         title={t("newWorkspace.fields.branch")}
         open={openState}
         onOpenChange={onOpenChange}

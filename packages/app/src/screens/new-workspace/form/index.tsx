@@ -340,7 +340,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
         anchorRef={isolation.anchorRef}
         renderOption={isolationPicker.renderOption}
         searchable
-        searchPlaceholder="Search worktrees"
+        searchPlaceholder={t("worktreeOptions.searchWorktrees")}
         emptyText={isolation.emptyText}
         footer={isolation.footer}
       />
