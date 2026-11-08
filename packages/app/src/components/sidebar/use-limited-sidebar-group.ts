@@ -5,6 +5,17 @@ import { limitSidebarWorkspaces } from "./workspace-limit";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
 /**
+ * The active mode's count and age limits, with the recency clock they are measured against.
+ * `days` is null when the age limit is off.
+ */
+export function useSidebarLimitInputs() {
+  const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
+  const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
+  const now = useSidebarRecencyClock();
+  return { initialCount, days, now };
+}
+
+/**
  * Limit a sidebar group by the active mode's count and age windows, with a per-mode Show more.
  *
  * @param keep optional stable predicate for rows that stay visible outside both windows (the
@@ -18,9 +29,7 @@ export function useLimitedSidebarGroup<T>(
   const mode = useSidebarViewStore((state) => state.groupMode);
   const [expandedModes, setExpandedModes] = useState({ project: false, status: false });
   const expanded = expandedModes[mode];
-  const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
-  const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
-  const now = useSidebarRecencyClock();
+  const { initialCount, days, now } = useSidebarLimitInputs();
   const { visibleItems, canToggle } = useMemo(
     () =>
       limitSidebarWorkspaces({
