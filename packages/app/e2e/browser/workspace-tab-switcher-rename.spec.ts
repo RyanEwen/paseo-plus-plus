@@ -17,6 +17,7 @@ import {
   seedLegacyCompactTabSwitcher,
 } from "../support/helpers/workspace-tabs";
 import { composerLocator } from "../support/helpers/composer";
+import { openCompactWorkspaceMenu } from "../support/helpers/compact-workspace-scripts";
 import { clickSessionRow, expectSessionRowVisible } from "../support/helpers/archive-tab";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -305,7 +306,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
     try {
       const switcher = await openWithLegacyChooser(page, session);
       const tabId = await readAgentTabId(page, session);
-      await page.getByTestId("workspace-header-menu-trigger").click();
+      await openCompactWorkspaceMenu(page);
       await page.getByTestId("workspace-header-new-agent").click();
       await expect(switcher).toHaveAccessibleName("Switch tabs (2 open)");
       const draftTabId = await readFocusedWorkspaceTabId(page, session.workspaceId);
@@ -320,7 +321,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       await chooserTabLabel(page, draftTabId, "New Agent").click();
       await expectCompactOverlaysClosed(page);
 
-      await page.getByTestId("workspace-header-menu-trigger").click();
+      await openCompactWorkspaceMenu(page);
       await page.getByTestId("workspace-new-tab-menu-reopen-closed-agent").click();
       await expectSessionRowVisible(page, "Release checklist");
       await clickSessionRow(page, "Release checklist");
@@ -342,7 +343,7 @@ test.describe("Workspace session rename (compact tabs)", () => {
       const switcher = await openWithLegacyChooser(page, session);
       await setWorkspaceFeature(page, "previousAgents", { enabled: false });
       await expect(switcher).toBeVisible();
-      await page.getByTestId("workspace-header-menu-trigger").click();
+      await openCompactWorkspaceMenu(page);
       await expect(page.getByTestId("workspace-new-tab-menu-reopen-closed-agent")).toHaveCount(0);
       await expect(page.getByTestId("workspace-header-new-agent")).toBeVisible();
       await expect(page.getByText("Terminal profiles", { exact: true })).toBeVisible();
