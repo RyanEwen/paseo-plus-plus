@@ -1,6 +1,6 @@
 # Split layout controls
 
-Use the split icon beside a creation item in the workspace **+** menu, then click the region where the new view belongs. One set of diagrams splits left/right and another splits top/bottom. In a 60/40 diagram, clicking left or top gives the new pane 60%; clicking right or bottom gives it 40%. Clicking the creation item itself keeps its normal behavior.
+Use the split icon beside a creation item in the workspace **+** menu, then click the region where the new view belongs. One set of diagrams splits left/right and another splits top/bottom. In a 60/40 diagram, clicking left or top gives the new pane 60%; clicking right or bottom gives it 40%. Clicking the creation item itself keeps its normal behavior. Regions that would nest splits too deeply are greyed out and explain "Maximum split depth reached".
 
 Right-click a tab and choose **Move tab** to move that same tab to an existing pane or a region in a split diagram. Compact diagrams use larger touch regions and wrap within the scrolling menu. Keyboard users can move through the region choices with Up/Down, Home/End, then Enter or Space.
 

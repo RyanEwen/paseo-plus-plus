@@ -685,6 +685,7 @@ export const en = {
       columns: "Left / right",
       rows: "Top / bottom",
       pane: "Pane {{index}}",
+      maxDepthReached: "Maximum split depth reached",
     },
 
     route: {

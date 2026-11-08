@@ -13,7 +13,7 @@ import { I18nextProvider } from "react-i18next";
 import { en } from "@/i18n/resources/en";
 import { SplitLayoutPicker } from "@/components/split-layout-picker";
 import { SPLIT_LAYOUT_PRESETS } from "@/components/split-layout-presets";
-import type { SplitSide } from "@/stores/workspace-layout-splits";
+import type { SplitDirection, SplitSide } from "@/stores/workspace-layout-splits";
 
 const pickerI18n = createInstance();
 beforeAll(async () => {
@@ -89,10 +89,12 @@ function PickerInMenu({
   onSelect,
   disabled = false,
   move = false,
+  blockedDirections,
 }: {
   onSelect: (side: SplitSide, fraction: number) => void;
   disabled?: boolean;
   move?: boolean;
+  blockedDirections?: ReadonlySet<SplitDirection>;
 }) {
   const menu = useMenuContext("PickerInMenu");
   const select = useCallback(
@@ -114,6 +116,7 @@ function PickerInMenu({
       disabled={disabled}
       intent={intent}
       compact={false}
+      blockedDirections={blockedDirections}
       testIDPrefix="region"
     />
   );
@@ -121,7 +124,11 @@ function PickerInMenu({
 
 function renderPicker(
   onSelect: (side: SplitSide, fraction: number) => void,
-  options: { disabled?: boolean; move?: boolean } = {},
+  options: {
+    disabled?: boolean;
+    move?: boolean;
+    blockedDirections?: ReadonlySet<SplitDirection>;
+  } = {},
 ) {
   return render(
     <I18nextProvider i18n={pickerI18n}>
@@ -193,6 +200,22 @@ describe("literal split regions", () => {
     }
     expect(select).not.toHaveBeenCalled();
     expect(view.getByText("open")).toBeTruthy();
+  });
+
+  it("greys and explains regions at the depth limit without affecting the other direction", () => {
+    const select = vi.fn();
+    const view = renderPicker(select, { blockedDirections: new Set(["vertical"]) });
+    const blocked = view.getByTestId("region-top-60-40");
+    expect(blocked.getAttribute("aria-label")).toContain("Maximum split depth reached");
+    expect(blocked.getAttribute("data-menu-disabled")).toBe("true");
+    fireEvent.click(blocked);
+    expect(select).not.toHaveBeenCalled();
+    expect(view.getByText("open")).toBeTruthy();
+
+    const allowed = view.getByTestId("region-left-60-40");
+    expect(allowed.getAttribute("aria-label")).not.toContain("Maximum split depth reached");
+    fireEvent.click(allowed);
+    expect(select).toHaveBeenCalledExactlyOnceWith("left", 0.6);
   });
 
   it("uses the same region contract and action-specific label when moving", () => {

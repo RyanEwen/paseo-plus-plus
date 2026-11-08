@@ -696,6 +696,7 @@ export const ptBR: TranslationResources = {
       columns: "Esquerda / direita",
       rows: "Acima / abaixo",
       pane: "Painel {{index}}",
+      maxDepthReached: "Profundidade máxima de divisão atingida",
     },
 
     route: {

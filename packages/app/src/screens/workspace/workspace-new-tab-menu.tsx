@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/menu";
 import { SPLIT_LAYOUT_PICKER_WIDTH, SplitLayoutPicker } from "@/components/split-layout-picker";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useBlockedSplitDirections } from "@/screens/workspace/workspace-tab-split-menu";
 import { useSplitLayoutControlsEnabled } from "@/paseo-plus-plus/split-layout-controls";
 import type { SplitSide } from "@/stores/workspace-layout-splits";
 import { useCallback, useMemo, type ComponentType, type ReactElement } from "react";
@@ -209,6 +210,7 @@ function launchSplitPageId(item: WorkspaceTabLaunchItem): string {
 function LaunchSplitPicker({ item, paneId }: { item: WorkspaceTabLaunchItem; paneId?: string }) {
   const menu = useMenuContext("LaunchSplitPicker");
   const compact = useIsCompactFormFactor();
+  const blockedDirections = useBlockedSplitDirections({ paneId });
   const intent = useMemo(() => ({ kind: "open" as const, item: item.label }), [item.label]);
   const select = useCallback(
     (position: SplitSide, firstPaneFraction: number) => {
@@ -225,6 +227,7 @@ function LaunchSplitPicker({ item, paneId }: { item: WorkspaceTabLaunchItem; pan
       onSelect={select}
       disabled={item.disabled}
       compact={compact}
+      blockedDirections={blockedDirections}
       testIDPrefix={`workspace-new-tab-layout-${item.id}`}
     />
   );

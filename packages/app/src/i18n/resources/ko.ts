@@ -689,6 +689,7 @@ export const ko: TranslationResources = {
       columns: "왼쪽 / 오른쪽",
       rows: "위 / 아래",
       pane: "창 {{index}}",
+      maxDepthReached: "최대 분할 깊이에 도달했습니다",
     },
 
     route: {
