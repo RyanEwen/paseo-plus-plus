@@ -8,6 +8,7 @@ import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./a
 import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
+import { openSettingsSection } from "./settings";
 
 /** Points a fresh browser profile at one host, with no first-run record and no app settings. */
 export async function openAppAsNewUser(
@@ -119,6 +120,8 @@ export async function addProjectFromSetup(page: Page, projectPath: string): Prom
 
 export async function showSetupAgainFromSettings(page: Page): Promise<void> {
   await page.locator('[data-testid="sidebar-settings"]:visible').first().click();
+  // Settings opens on Paseo++; the setup row lives under General.
+  await openSettingsSection(page, "general");
   await page.getByRole("button", { name: "Show setup again", exact: true }).click();
 }
 
