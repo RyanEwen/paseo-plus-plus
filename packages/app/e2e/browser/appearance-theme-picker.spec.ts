@@ -142,8 +142,7 @@ test("previews and retains accent colors independently of light and dark themes"
   await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
 
   await openSettingsSection(page, "appearance");
-  await page.getByLabel("Theme: Light", { exact: true }).click();
-  await page.getByText("Dark", { exact: true }).click();
+  await page.getByRole("radio", { name: "Dark", exact: true }).click();
   await openSettingsSection(page, "paseo-plus-plus");
   await expect(blue).toBeChecked();
   await expect(bubble).toHaveCSS("background-color", "rgb(155, 175, 197)");
