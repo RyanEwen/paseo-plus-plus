@@ -8,7 +8,12 @@ import {
   type HostObservation,
 } from "../../host-operations/index.js";
 import { buildStoredAgentPayload } from "../../agent-projections.js";
+import { createFinishObservation } from "./observation.js";
 import { openFinishObservation } from "./observation-stream.js";
+import type { AgentManager } from "../../agent-manager.js";
+import type { AgentStorage, StoredAgentRecord } from "../../agent-storage.js";
+import type { FinishSubscription } from "../index.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
 
 class Host implements HostObservation {
   handler?: Parameters<HostObservation["observe"]>[1];
@@ -43,6 +48,7 @@ class Host implements HostObservation {
           updatedAt: "2026-01-01",
         },
         ["codex"],
+        { agentAwareAttention: true },
       ),
       event,
       "Last response",
@@ -133,6 +139,7 @@ test("late initial permission snapshot cannot resurrect an already resolved requ
         updatedAt: "2026-01-01",
       },
       ["codex"],
+      { agentAwareAttention: true },
     );
     if (requestEvent.type !== "permission_requested") throw new Error("Expected permission");
     final.pendingPermissions = [requestEvent.request];
@@ -213,5 +220,53 @@ test.each([
     const error = await resolver.use("remote", async () => {}).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(HostObservationError);
     expect(error).toMatchObject({ reason });
+  },
+);
+
+test.each([
+  { enabled: false, expected: undefined },
+  { enabled: true, expected: false },
+])(
+  "a stored child read for a finish wait follows agent-aware attention $enabled",
+  async ({ enabled, expected }) => {
+    const stored = {
+      id: "child",
+      cwd: "/tmp",
+      provider: "codex",
+      labels: {},
+      lastStatus: "idle",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      humanAttentionRequired: false,
+    } as StoredAgentRecord;
+    const observation = createFinishObservation({
+      agentManager: {
+        agentAwareAttentionEnabled: enabled,
+        getAgent: () => null,
+        waitForAttentionOutcome: async () => null,
+      } as unknown as AgentManager,
+      agentStorage: { get: async () => stored } as unknown as AgentStorage,
+      waitForResume: async () => {},
+      messages: () => {
+        throw new Error("An acknowledgement read does not wait for dispatch");
+      },
+      hosts: () => {
+        throw new Error("The child is local");
+      },
+      serverId: "self",
+      logger: createTestLogger(),
+    });
+
+    const session = await observation.open(
+      {
+        childAgentId: "child",
+        serverId: "self",
+        attention: { acknowledgeOutcomeId: "outcome" },
+      } as unknown as FinishSubscription,
+      new AbortController().signal,
+    );
+
+    const result = await session.next();
+    expect(result.final?.humanAttentionRequired).toBe(expected);
   },
 );
