@@ -75,12 +75,16 @@ test("prompt discovery with no prompt loaded offers Cancel while its index loads
     title: "Prompt navigation discovery",
   });
   const gate = await installDaemonWebSocketGate(page);
+  // Whole-turn pages would load the user row with the tail, leaving nothing to discover.
+  gate.stripWholeTurnTimeline();
   try {
     await agent.client.sendAgentMessage(
       agent.agentId,
       "emit 85 assistant messages before synthetic user message",
     );
     await agent.client.waitForFinish(agent.agentId, 15_000);
+    // The retained-context lookup also reads the index; it must not supply the prompt.
+    gate.failPromptIndexResponses(agent.agentId);
     gate.holdNextServerMessage("agent.timeline.list_prompts.response");
     await openAgentTimeline(page, agent);
     await gate.waitForHeldServerMessage("agent.timeline.list_prompts.response");
