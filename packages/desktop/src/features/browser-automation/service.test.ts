@@ -1545,7 +1545,39 @@ describe("executeAutomationCommand", () => {
         command: "keypress",
         args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
       }),
-    ).resolves.toMatchObject({ ok: false, error: { code: "browser_unsupported" } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: "Browser input target did not retain focus.",
+      },
+    });
+
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test("keypress explains that a non-focusable target cannot receive the key", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    const focus = new GuestFocusFixture();
+    browser.tab.focusFixture = focus;
+    focus.target.focus = () => {};
+    requireSnapshotRefs(await browser.snapshot());
+
+    await expect(
+      browser.execute({
+        command: "keypress",
+        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: expect.stringContaining("cannot receive keyboard focus"),
+        retryable: false,
+      },
+    });
 
     expect(browser.tab.inputEvents).toEqual([]);
     expect(browser.tab.debugCommands).toEqual([]);
