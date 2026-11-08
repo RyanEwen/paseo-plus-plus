@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
+import { fr } from "@/i18n/resources/fr";
 import { createSshNativeBridge, SshBridgeError, type SshNativeModule } from "./ssh-native-bridge";
 
 /**
@@ -31,6 +33,21 @@ function rejectingNative(failure: Error): SshNativeModule {
 }
 
 describe("createSshNativeBridge", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("shows bridge errors in the app's language", async () => {
+    await i18n.changeLanguage("fr");
+    const bridge = createSshNativeBridge(
+      rejectingNative(expoRejection("commit", "ERR_SSH_IMPORT_EXPIRED", "expired")),
+    );
+
+    await expect(bridge.commit("ssh:deploy@example.com")).rejects.toThrow(
+      fr.sshErrors.importExpired,
+    );
+  });
+
   it("replaces Expo's call envelope with the copy for a known SSH error code", async () => {
     const bridge = createSshNativeBridge(
       rejectingNative(
