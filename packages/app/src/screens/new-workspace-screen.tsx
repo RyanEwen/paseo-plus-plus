@@ -1318,7 +1318,7 @@ export function NewWorkspaceScreen({
       const connectedClient = withConnectedClient();
       const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
       if (!hostProjectId) {
-        throw new Error("Project is not available on the selected host");
+        throw new Error(t("worktreeOptions.projectUnavailable"));
       }
       const createsWorktree =
         !existingWorktree && (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");

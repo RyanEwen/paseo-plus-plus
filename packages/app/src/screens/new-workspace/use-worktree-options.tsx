@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Text } from "react-native";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { useFetchQuery } from "@/data/query";
 import { createNameId } from "mnemonic-id";
@@ -47,6 +49,7 @@ export function useWorktreeOptions(input: {
   compact: boolean;
   pending: boolean;
 }) {
+  const { t } = useTranslation();
   const [model] = useState(() => openWorktreeForm(createNameId()));
   const state = useSyncExternalStore(model.subscribe, model.getState);
   const scope = `${input.serverId}:${input.cwd ?? ""}`;
@@ -71,7 +74,7 @@ export function useWorktreeOptions(input: {
   const query = useFetchQuery({
     queryKey: ["new-workspace-worktrees", input.serverId, input.cwd],
     queryFn: async () => {
-      if (!input.cwd) throw new Error("Choose a project");
+      if (!input.cwd) throw new Error(t("worktreeOptions.chooseProject"));
       const result = await input
         .withClient()
         .getPaseoWorktreeList({ cwd: input.cwd, includeAll: true });
@@ -112,7 +115,7 @@ export function useWorktreeOptions(input: {
       if (!request.createsWorktree && !existing) return undefined;
       if (!supported) {
         if (model.requiresCapability()) {
-          throw new Error("Update this host to use the selected worktree options.");
+          throw new Error(t("worktreeOptions.updateHost"));
         }
         return undefined;
       }
@@ -121,14 +124,14 @@ export function useWorktreeOptions(input: {
       const result = await refetch();
       if (result.error) throw result.error;
       if (existing && !result.data?.some((entry) => entry.worktreePath === existing.worktreePath)) {
-        throw new Error("The selected worktree no longer exists. Choose another worktree.");
+        throw new Error(t("worktreeOptions.worktreeMissing"));
       }
       // applyRef is idempotent. Applying it here makes validation read the submitted ref even
       // when the render effect that normally applies it has not run yet.
       model.applyRef(baseItem);
       if (!existing) {
         const error = worktreeFormError(model.getState(), result.data ?? []);
-        if (error) throw new Error(error);
+        if (error) throw new Error(t(error.key, "params" in error ? error.params : undefined));
       }
       return worktreeFormSource(
         { ...model.getState(), existing },
@@ -139,7 +142,7 @@ export function useWorktreeOptions(input: {
         },
       );
     },
-    [supported, existing, baseItem, model, refetch],
+    [supported, existing, baseItem, model, refetch, t],
   );
   const showFields =
     supported && input.isolation === "worktree" && !existing && baseItem?.kind !== "github-pr";
@@ -149,12 +152,17 @@ export function useWorktreeOptions(input: {
     selectIsolation,
     prepareSource,
     checkoutMode,
-    ...worktreePickerPresentation(state.mode, showFields, model.setMode),
+    ...worktreePickerPresentation({
+      mode: state.mode,
+      visible: showFields,
+      onChange: model.setMode,
+      t,
+    }),
     showRefPicker: input.showRefPicker && !existing && !checkoutMode,
     isolationProps: {
       selectedId: existing ? existingWorktreeOptionId(existing.worktreePath) : input.isolation,
-      selectedLabel: existing ? existingWorktreeLabel(existing) : input.isolationLabel,
-      emptyText: query.isFetching ? "Loading worktrees…" : undefined,
+      selectedLabel: existing ? labelExistingWorktree(existing, t) : input.isolationLabel,
+      emptyText: query.isFetching ? t("worktreeOptions.loadingWorktrees") : undefined,
       footer: (
         <WorktreeListStatus
           supported={listAvailability.visible}
@@ -164,7 +172,7 @@ export function useWorktreeOptions(input: {
         />
       ),
     },
-    options: existingWorktreeOptions(query.data),
+    options: existingWorktreeOptions(query.data, t),
     fields: (
       <WorktreeFields
         visible={showFields}
@@ -212,15 +220,21 @@ function worktreeListAvailability(
 }
 
 /** Keeps branch intent, visible prefix and accessible base-ref label consistent. */
-function worktreePickerPresentation(
-  mode: "branch-off" | "checkout",
-  visible: boolean,
-  onChange: WorktreeFormModel["setMode"],
-) {
+function worktreePickerPresentation({
+  mode,
+  visible,
+  onChange,
+  t,
+}: {
+  mode: "branch-off" | "checkout";
+  visible: boolean;
+  onChange: WorktreeFormModel["setMode"];
+  t: TFunction;
+}) {
   if (!visible) return { branchMode: null, refLabel: null, refPrefix: null };
   return {
     branchMode: { value: mode, onChange },
-    refLabel: "Base branch",
+    refLabel: t("worktreeOptions.baseBranch"),
     refPrefix: "from",
   };
 }
@@ -255,6 +269,7 @@ export function worktreeBranchChoiceOptions(input: {
   branchDetails: BranchPickerDetail[];
   baseItem: PickerItem | null;
   checkout: boolean;
+  newBranchLabel: string;
 }) {
   const data = worktreePickerOptions({
     ...input,
@@ -265,7 +280,7 @@ export function worktreeBranchChoiceOptions(input: {
   });
   return {
     ...data,
-    options: [{ id: NEW_BRANCH_OPTION_ID, label: "New branch" }, ...data.options],
+    options: [{ id: NEW_BRANCH_OPTION_ID, label: input.newBranchLabel }, ...data.options],
     selectedOptionId: input.checkout ? data.selectedOptionId : NEW_BRANCH_OPTION_ID,
   };
 }
@@ -283,10 +298,12 @@ export function useWorktreeBranchChoice(input: {
   control: PickerControl;
 }): (PickerControl & WorktreeBranchChoice) | null {
   const { branchMode, branchDetails, baseItem, onSelectItem, onSearchQueryChange, control } = input;
+  const { t } = useTranslation();
   const checkout = branchMode?.value === "checkout";
+  const newBranchLabel = t("worktreeOptions.newBranch");
   const choices = useMemo(
-    () => worktreeBranchChoiceOptions({ branchDetails, baseItem, checkout }),
-    [branchDetails, baseItem, checkout],
+    () => worktreeBranchChoiceOptions({ branchDetails, baseItem, checkout, newBranchLabel }),
+    [branchDetails, baseItem, checkout, newBranchLabel],
   );
   const onSelect = useCallback(
     (id: string) => {
@@ -308,17 +325,21 @@ export function useWorktreeBranchChoice(input: {
     value: choices.selectedOptionId,
     label:
       choices.options.find((option) => option.id === choices.selectedOptionId)?.label ??
-      "New branch",
+      newBranchLabel,
     onSelect,
     onSearchQueryChange,
     ...control,
   };
 }
 
-function existingWorktreeOptions(entries: readonly ExistingWorktree[] = []) {
-  return entries.map((entry) => ({
+function labelExistingWorktree(entry: ExistingWorktree, t: TFunction): string {
+  return existingWorktreeLabel(entry, (head) => t("worktreeOptions.detached", { head }));
+}
+
+function existingWorktreeOptions(entries: readonly ExistingWorktree[] | undefined, t: TFunction) {
+  return (entries ?? []).map((entry) => ({
     id: existingWorktreeOptionId(entry.worktreePath),
-    label: existingWorktreeLabel(entry),
+    label: labelExistingWorktree(entry, t),
   }));
 }
 
@@ -351,8 +372,9 @@ function WorktreeListStatus({
   error: Error | null;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   if (!supported) return null;
-  if (loading) return <Text style={styles.status}>Loading worktrees…</Text>;
+  if (loading) return <Text style={styles.status}>{t("worktreeOptions.loadingWorktrees")}</Text>;
   if (error)
     return (
       <Button variant="ghost" onPress={onRetry}>

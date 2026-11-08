@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { View } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
@@ -18,7 +19,10 @@ export function WorktreeFields({
   disabled: boolean;
   visible: boolean;
 }) {
+  const { t } = useTranslation();
   const state = useSyncExternalStore(model.subscribe, model.getState);
+  const differentBranchLabel = t("worktreeOptions.useDifferentBranchName");
+  const newBranchNameLabel = t("worktreeOptions.newBranchName");
   const nameInput = useRef<EditingTextInputHandle>(null);
   useEffect(() => {
     // User edits already live in the editor; only replace reactive defaults.
@@ -33,17 +37,19 @@ export function WorktreeFields({
         value={state.separateNames}
         onValueChange={model.setSeparateNames}
         disabled={disabled}
-        accessibilityLabel="Use a different branch name"
+        accessibilityLabel={differentBranchLabel}
         testID="new-workspace-separate-names"
       />
     ),
-    [state.separateNames, model, disabled],
+    [state.separateNames, model, disabled, differentBranchLabel],
   );
   if (!visible) return null;
   const size = compact ? "md" : "sm";
   const newBranch = state.mode === "branch-off";
   const nameLabel =
-    newBranch && !state.separateNames ? "Worktree and branch name" : "Worktree name";
+    newBranch && !state.separateNames
+      ? t("worktreeOptions.worktreeAndBranchName")
+      : t("worktreeOptions.worktreeName");
   return (
     <View style={styles.fields}>
       <View style={styles.nameRow}>
@@ -63,7 +69,7 @@ export function WorktreeFields({
         </View>
         {newBranch && state.separateNames ? (
           <View style={styles.nameField}>
-            <Field label="New branch name">
+            <Field label={newBranchNameLabel}>
               <FormTextInput
                 key="separate-branch"
                 initialValue={state.branchName}
@@ -71,7 +77,7 @@ export function WorktreeFields({
                 size={size}
                 editable={!disabled}
                 autoCapitalize="none"
-                accessibilityLabel="New branch name"
+                accessibilityLabel={newBranchNameLabel}
                 testID="new-workspace-branch-name"
               />
             </Field>
@@ -79,7 +85,7 @@ export function WorktreeFields({
         ) : null}
       </View>
       {newBranch ? (
-        <Field label="Use a different branch name" trailing={separateNamesSwitch}>
+        <Field label={differentBranchLabel} trailing={separateNamesSwitch}>
           {null}
         </Field>
       ) : null}
