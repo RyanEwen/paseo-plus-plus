@@ -7,6 +7,7 @@ import {
   resolveConfiguredClaudeHistory,
 } from "./history.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import { seedOversizedClaudeHome } from "./test-oversized-history.js";
 import { once } from "node:events";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -339,12 +340,7 @@ describe("configured Claude admission", () => {
   });
 
   test("reports a home past the entry bound as an incomplete audit instead of refusing it", async () => {
-    await mkdir(path.join(home, "todos"));
-    await Promise.all(
-      Array.from({ length: 10_001 }, (_, index) =>
-        writeFile(path.join(home, "todos", `${index}.json`), ""),
-      ),
-    );
+    await seedOversizedClaudeHome(home);
     await expect(
       admitRoute({
         policy: { mode: "configured" },
