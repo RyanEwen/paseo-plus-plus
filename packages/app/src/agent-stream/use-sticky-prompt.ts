@@ -47,6 +47,8 @@ export interface StickyPromptInput {
   fetchPrompt?: (seq: number) => Promise<UserPrompt>;
   fetchContext?: (source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>;
   items: StreamItem[];
+  /** The rows that can hold user prompts, stable across stream ticks. Defaults to `items`. */
+  promptRows?: readonly StreamItem[];
   epoch: string | null;
   outline: ChatOutline;
   indexed: boolean;
@@ -78,9 +80,10 @@ export function useStickyPrompt(input: StickyPromptInput) {
     clear: clearNavigationActions,
   } = useNavigationActionVisibility(enabled, epoch);
   const reading = usePromptReading(enabled, input.reading);
+  const promptRows = input.promptRows ?? items;
   const loadedTargets = useMemo(
-    () => buildPromptTargets(items, outline.prompts, epoch, input.contextOnlyIds),
-    [items, outline.prompts, epoch, input.contextOnlyIds],
+    () => buildPromptTargets(promptRows, outline.prompts, epoch, input.contextOnlyIds),
+    [promptRows, outline.prompts, epoch, input.contextOnlyIds],
   );
   const ownerEpoch = useRef(epoch);
   const scopeChanged = ownerEpoch.current !== epoch;
@@ -122,8 +125,8 @@ export function useStickyPrompt(input: StickyPromptInput) {
     selected: selectedMessage,
   });
   const knownPrompts = useMemo(
-    () => items.filter((item): item is UserPrompt => item.kind === "user_message"),
-    [items],
+    () => promptRows.filter((item): item is UserPrompt => item.kind === "user_message"),
+    [promptRows],
   );
   const contextRequested = shouldReadContext({
     enabled,
