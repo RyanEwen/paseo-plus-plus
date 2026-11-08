@@ -2554,6 +2554,7 @@ export const ja: TranslationResources = {
     output: "出力",
   },
   toolActivity: {
+    additionalFiles: "その他のファイル",
     files: {
       intent: "ファイルを変更",
       running: "ファイルを変更中",

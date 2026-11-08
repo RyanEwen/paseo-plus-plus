@@ -2537,6 +2537,7 @@ export const ko: TranslationResources = {
     output: "출력",
   },
   toolActivity: {
+    additionalFiles: "추가 파일",
     files: { intent: "파일 변경", running: "파일 변경 중", completed: "파일 변경함" },
     read: {
       intent: "파일 읽기",

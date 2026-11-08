@@ -2489,6 +2489,7 @@ export const zhCN: TranslationResources = {
     output: "输出",
   },
   toolActivity: {
+    additionalFiles: "其他文件",
     files: { intent: "更改文件", running: "正在更改文件", completed: "已更改文件" },
     read: {
       intent: "读取文件",

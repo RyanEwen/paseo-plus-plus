@@ -2583,6 +2583,7 @@ export const es: TranslationResources = {
     output: "Producción",
   },
   toolActivity: {
+    additionalFiles: "Archivos adicionales",
     files: {
       intent: "Cambiar archivos",
       running: "Cambiando archivos",

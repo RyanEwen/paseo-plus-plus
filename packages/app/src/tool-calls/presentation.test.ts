@@ -145,18 +145,38 @@ describe("tool-call presentation", () => {
       },
     });
     expect(classicBatch.displayName).toBe("Write");
-    expect(classicBatch.detail).toEqual(mixed.detail);
-    expect(mixed.detail).toMatchObject({
-      type: "unknown",
-      output: {
-        files: [
-          { path: "/work/a.ts", kind: "add", diff: "+a" },
-          { path: "/work/b.ts", kind: "update", diff: "-b\n+c" },
-          { path: "/work/c.ts", kind: "delete", diff: "-c" },
+    expect(classicBatch.detail).toBe(detail);
+    expect(classicBatch.additionalFiles).toEqual([]);
+    expect(classicBatch.openFilePath).toBe("/work/a.ts");
+    expect(mixed.detail).toBe(detail);
+    expect(mixed.openFilePath).toBe("/work/a.ts");
+    expect(mixed.additionalFiles).toEqual([
+      { path: "/work/b.ts", displayPath: "b.ts", kind: "update", diff: "-b\n+c" },
+      { path: "/work/c.ts", displayPath: "c.ts", kind: "delete", diff: "-c" },
+    ]);
+  });
+
+  it("lists every file instead of raw data when the batch has no canonical file", () => {
+    const result = buildToolCallPresentation({
+      toolName: "apply_patch",
+      status: "completed",
+      error: null,
+      detail: { type: "unknown", input: { files: [] }, output: null },
+      cwd: "/work",
+      metadata: {
+        fileChanges: [
+          { path: "/work/a.ts", kind: "update", diff: "-a\n+b" },
+          { path: "/work/b.ts", kind: "add", diff: "b" },
         ],
       },
+      activityTranslation: translation.t,
+      resolveIcon: fakeResolveIcon,
     });
+    expect(result.detail).toBeUndefined();
+    expect(result.additionalFiles.map((file) => file.displayPath)).toEqual(["a.ts", "b.ts"]);
+    expect(result.canOpenDetails).toBe(true);
   });
+
   it("resolves readable activity icons through the canonical detail type they represent", () => {
     const resolvedTypes: (string | undefined)[] = [];
     const recordIcon: typeof fakeResolveIcon = (toolName, detail, agentMessage) => {

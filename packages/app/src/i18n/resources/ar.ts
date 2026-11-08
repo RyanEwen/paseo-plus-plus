@@ -2519,6 +2519,7 @@ export const ar: TranslationResources = {
     output: "الإخراج",
   },
   toolActivity: {
+    additionalFiles: "ملفات إضافية",
     files: { intent: "تغيير الملفات", running: "جارٍ تغيير الملفات", completed: "تم تغيير الملفات" },
     read: {
       intent: "قراءة الملفات",

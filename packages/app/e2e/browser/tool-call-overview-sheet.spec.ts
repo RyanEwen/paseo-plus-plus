@@ -8,7 +8,6 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { seedAppSettings } from "../support/helpers/app-settings";
 import {
   ACTIVITY_OPAQUE_COMMAND,
-  ACTIVITY_PATCH_DIFFS,
   ACTIVITY_READ_COMMAND,
   ACTIVITY_READ_OUTPUT,
   ACTIVITY_SCENE_LABELS,
@@ -420,7 +419,7 @@ for (const compact of [false, true]) {
       hasTouch: compact,
     });
     for (const mode of ["readable", "classic"] as const) {
-      test(`labels daemon-delivered provider activity in ${mode} mode and keeps every detail`, async ({
+      test(`labels daemon-delivered provider activity in ${mode} mode and keeps its details`, async ({
         page,
       }, testInfo) => {
         test.setTimeout(120_000);
@@ -463,15 +462,18 @@ for (const compact of [false, true]) {
             contentType: "image/png",
           });
 
-          // Details keep the exact command, output and every file of the patch in both modes.
+          // Details keep the exact command and output; readable mode adds every other patch file.
           const read = await openActivityDetails(page, badges.nth(0), compact);
           await expect(read.surface).toContainText(ACTIVITY_READ_COMMAND);
           await expect(read.surface).toContainText(ACTIVITY_READ_OUTPUT);
           await read.close();
 
           const patch = await openActivityDetails(page, badges.nth(4), compact);
-          for (const diff of ACTIVITY_PATCH_DIFFS) {
+          for (const diff of labels.shownPatchDiffs) {
             await expect(patch.surface).toContainText(diff);
+          }
+          for (const diff of labels.hiddenPatchDiffs) {
+            await expect(patch.surface).not.toContainText(diff);
           }
           await testInfo.attach("readable-activity-multi-file-details", {
             body: await page.screenshot(),

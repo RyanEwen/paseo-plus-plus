@@ -2567,6 +2567,7 @@ export const ru: TranslationResources = {
     output: "Выходные данные",
   },
   toolActivity: {
+    additionalFiles: "Дополнительные файлы",
     files: { intent: "Изменить файлы", running: "Изменение файлов", completed: "Файлы изменены" },
     read: {
       intent: "Прочитать файлы",

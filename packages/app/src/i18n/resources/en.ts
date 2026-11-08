@@ -2552,6 +2552,7 @@ export const en = {
     output: "Output",
   },
   toolActivity: {
+    additionalFiles: "Additional files",
     files: { intent: "Change files", running: "Changing files", completed: "Changed files" },
     read: {
       intent: "Read",
