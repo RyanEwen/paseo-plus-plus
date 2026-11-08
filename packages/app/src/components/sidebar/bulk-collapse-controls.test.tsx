@@ -4,7 +4,10 @@
 import React, { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SidebarBulkCollapseControls } from "./bulk-collapse-controls";
+import {
+  SidebarBulkCollapseControls,
+  SidebarBulkCollapseMenuItems,
+} from "./bulk-collapse-controls";
 import { SIDEBAR_HEADER_TOUCH_TARGET } from "./header-icon-button";
 
 type StyleValue = Record<string, unknown> | false | null | undefined | StyleValue[];
@@ -14,6 +17,8 @@ interface TriggerProps {
   style: (state: { pressed: boolean; hovered: boolean }) => StyleValue;
   children: ReactNode;
 }
+
+const layout = vi.hoisted(() => ({ compact: false }));
 
 // Hoisted so the tooltip mock factory can use it before the module body runs.
 const { flattenStyle } = vi.hoisted(() => {
@@ -27,12 +32,21 @@ const { flattenStyle } = vi.hoisted(() => {
 });
 
 vi.mock("@/constants/platform", () => ({ isNative: true, isWeb: false }));
-vi.mock("@/constants/layout", () => ({ useIsCompactFormFactor: () => false }));
-// The compact menu items are not under test here; keep the menu engine out of the module graph.
-vi.mock("@/components/ui/menu", () => ({ MenuItem: () => null, MenuSeparator: () => null }));
+vi.mock("@/constants/layout", () => ({ useIsCompactFormFactor: () => layout.compact }));
+// Keep the menu engine out of the module graph; a plain row is enough to see what renders.
+vi.mock("@/components/ui/menu", () => ({
+  MenuItem: ({ testID, children }: { testID: string; children: ReactNode }) => (
+    <div data-testid={testID}>{children}</div>
+  ),
+  MenuSeparator: () => null,
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("./use-sidebar-bulk-collapse", () => ({
-  useSidebarBulkCollapse: () => ({ enabled: true, expandAll: vi.fn(), collapseAll: vi.fn() }),
+  useSidebarBulkCollapse: () => {
+    // Compact menu content mounts in a bottom sheet, outside SidebarModelProvider.
+    if (layout.compact) throw new Error("SidebarModelProvider is required");
+    return { enabled: true, expandAll: vi.fn(), collapseAll: vi.fn() };
+  },
 }));
 // Render the trigger as a plain element that records its resting style for the assertions.
 vi.mock("@/components/ui/tooltip", () => ({
@@ -57,6 +71,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  layout.compact = false;
 });
 
 afterEach(() => {
@@ -70,6 +85,16 @@ function restingStyle(testID: string): Record<string, unknown> {
   const element = container!.querySelector(`[data-testid="${testID}"]`);
   return JSON.parse(element?.getAttribute("data-style") ?? "{}");
 }
+
+describe("sidebar bulk collapse compact menu items", () => {
+  it("render from the actions they are given, without the sidebar model inside the sheet", async () => {
+    layout.compact = true;
+    const actions = { enabled: true, expandAll: vi.fn(), collapseAll: vi.fn() };
+    await act(() => root?.render(<SidebarBulkCollapseMenuItems actions={actions} />));
+    expect(container!.querySelector('[data-testid="sidebar-expand-all"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="sidebar-collapse-all"]')).not.toBeNull();
+  });
+});
 
 describe("sidebar bulk collapse header buttons", () => {
   it("give both buttons the 44 px header touch target on native wide layouts", async () => {

@@ -4,13 +4,20 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 
+/** The Expand and collapse all preference and its two actions. */
+export interface SidebarBulkCollapseActions {
+  enabled: boolean;
+  expandAll: () => void;
+  collapseAll: () => void;
+}
+
 /**
  * Expand all and Collapse all for the desktop header buttons and the compact Display menu.
  * `enabled` is the Expand and collapse all preference, so both surfaces share one gate. Each
  * action resolves the sections the current filters render and applies them in one persisted
- * store transition.
+ * store transition. Requires SidebarModelProvider, so call it outside any bottom sheet content.
  */
-export function useSidebarBulkCollapse() {
+export function useSidebarBulkCollapse(): SidebarBulkCollapseActions {
   const { settings } = useAppSettings();
   const { projects, workspaceGroups, pinnedGroups, groupMode, workspaceTree } = useSidebarModel();
   const groupEmptyProjects = useSidebarViewStore((state) => state.groupEmptyProjects);
