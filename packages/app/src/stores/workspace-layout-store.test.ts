@@ -36,6 +36,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
 });
 
 import { queryClient } from "@/data/query-client";
+import { createInMemoryKeyValueStorage } from "@/hooks/use-settings/fakes";
 import { APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -292,6 +293,16 @@ function expectGroup(node: SplitNode): Extract<SplitNode, { kind: "group" }> {
   return node as Extract<SplitNode, { kind: "group" }>;
 }
 
+const AUTO_OPEN_SETTINGS = { ...DEFAULT_CLIENT_SETTINGS, autoOpenExplorerSidebar: true };
+const SETTLED_TAB_SNAPSHOT = {
+  agentsHydrated: true,
+  terminalsHydrated: true,
+  activeAgentIds: [],
+  autoOpenAgentIds: [],
+  knownTerminalIds: [],
+  standaloneTerminalIds: [],
+};
+
 describe("workspace-layout-store helpers", () => {
   it("applies automatic Explorer visibility only to new workspace layouts", () => {
     const store = createWorkspaceLayoutStore(workspaceLayoutIds);
@@ -338,6 +349,50 @@ describe("workspace-layout-store helpers", () => {
         intent: "reveal",
       });
       expect(selectIsExplorerSidebarVisible(store.getState(), "closed")).toBe(true);
+    } finally {
+      queryClient.removeQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
+    }
+  });
+
+  it("applies automatic Explorer opening to a layout created before settings loaded", async () => {
+    queryClient.removeQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
+    const store = createWorkspaceLayoutStore(workspaceLayoutIds, createInMemoryKeyValueStorage());
+    await store.persist.rehydrate();
+    try {
+      store.getState().openTab({
+        workspaceKey: "early",
+        target: { kind: "file", path: "first.ts" },
+        intent: "reveal",
+      });
+      expect(selectIsExplorerSidebarVisible(store.getState(), "early")).toBe(false);
+
+      queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, AUTO_OPEN_SETTINGS);
+      store.getState().reconcileTabs("early", SETTLED_TAB_SNAPSHOT);
+      expect(selectIsExplorerSidebarVisible(store.getState(), "early")).toBe(true);
+
+      // The default applies once, so a later choice to close Explorer is kept.
+      store.getState().hideExplorerSidebar("early");
+      store.getState().reconcileTabs("early", SETTLED_TAB_SNAPSHOT);
+      expect(selectIsExplorerSidebarVisible(store.getState(), "early")).toBe(false);
+    } finally {
+      queryClient.removeQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
+    }
+  });
+
+  it("leaves a saved closed Explorer alone when settings load after the layout", async () => {
+    const storage = createInMemoryKeyValueStorage();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+    const saved = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
+    await saved.persist.rehydrate();
+    saved.getState().reconcileTabs("saved", SETTLED_TAB_SNAPSHOT);
+
+    queryClient.removeQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
+    const restored = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
+    await restored.persist.rehydrate();
+    try {
+      queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, AUTO_OPEN_SETTINGS);
+      restored.getState().reconcileTabs("saved", SETTLED_TAB_SNAPSHOT);
+      expect(selectIsExplorerSidebarVisible(restored.getState(), "saved")).toBe(false);
     } finally {
       queryClient.removeQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
     }

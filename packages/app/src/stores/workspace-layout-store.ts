@@ -1,5 +1,6 @@
 import { queryClient } from "@/data/query-client";
 import { readAppSettingsSnapshot } from "@/hooks/use-settings/snapshot";
+import { createPendingExplorerDefaults } from "@/stores/explorer-default-pending";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
@@ -1052,7 +1053,8 @@ export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
   storage: StateStorage = AsyncStorage,
 ) {
-  return create<WorkspaceLayoutStore>()(
+  const pendingExplorerDefaults = createPendingExplorerDefaults();
+  const store = create<WorkspaceLayoutStore>()(
     persist(
       (set, get) => ({
         autoOpenPullRequestTab: (workspaceKey, resolvePlacement) => {
@@ -1719,11 +1721,16 @@ export function createWorkspaceLayoutStore(
               },
               snapshot,
             );
-            const nextLayout = keepWorkspaceFocusOutOfExplorerSidebar(
-              nextState.layout,
-              explorerSidebarPaneId,
-              currentLayout.focusedPaneId,
-            );
+            // Callers reconcile only after app settings load, so a pending default resolves here.
+            const nextLayout = pendingExplorerDefaults.resolve({
+              workspaceKey: normalizedWorkspaceKey,
+              explorerPaneId: explorerSidebarPaneId,
+              layout: keepWorkspaceFocusOutOfExplorerSidebar(
+                nextState.layout,
+                explorerSidebarPaneId,
+                currentLayout.focusedPaneId,
+              ),
+            });
             let pinnedAgentIdsByWorkspace = state.pinnedAgentIdsByWorkspace;
             for (const agentId of state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? []) {
               if (!nextState.pinnedAgentIds?.has(agentId)) {
@@ -2407,6 +2414,14 @@ export function createWorkspaceLayoutStore(
       },
     ),
   );
+  store.subscribe((state, previous) => {
+    pendingExplorerDefaults.recordNewLayouts({
+      next: state.layoutByWorkspace,
+      previous: previous.layoutByWorkspace,
+      hydrated: store.persist.hasHydrated(),
+    });
+  });
+  return store;
 }
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();

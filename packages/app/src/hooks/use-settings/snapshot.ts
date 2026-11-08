@@ -10,3 +10,8 @@ import { APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS, type AppSettings } fro
 export function readAppSettingsSnapshot(client: QueryClient): AppSettings {
   return client.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS;
 }
+
+/** The app settings held by `client`, or undefined until they have loaded from storage. */
+export function readLoadedAppSettings(client: QueryClient): AppSettings | undefined {
+  return client.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY);
+}
