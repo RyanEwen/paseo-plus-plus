@@ -17,7 +17,6 @@ import { Text as NativeText, View, type ViewStyle } from "react-native";
 import { QuestionFormCard } from "@/components/question-form-card";
 import { deleteAttachments, persistAttachmentFromDataUrl } from "@/attachments/service";
 import {
-  viewport,
   getActualRoot,
   setActualRoot,
   actualPrompt,
