@@ -35,8 +35,7 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
-import { openReopenedAgentTab } from "./internal/reopen-closed-agent";
-import { resolveWorkspaceTabLaunchDestination } from "./internal/destination";
+import { openReopenedAgentAtDestination } from "./internal/reopen-closed-agent";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
 
@@ -135,17 +134,9 @@ export function NewTabLauncherProvider({
     if (!reopenRequest) return;
     const workspaceKey = buildWorkspaceTabPersistenceKey(reopenRequest);
     if (!workspaceKey) return;
-    // A split launch creates its empty pane only now, after the pick, so a cancelled dialog
-    // leaves the layout unchanged.
-    const destination = resolveWorkspaceTabLaunchDestination(
-      workspaceKey,
-      reopenRequest.destination,
+    openReopenedAgentAtDestination(
+      { workspaceKey, agentId, destination: reopenRequest.destination },
       useWorkspaceLayoutStore,
-    );
-    if (!destination) return;
-    openReopenedAgentTab(
-      { workspaceKey, agentId, destination },
-      useWorkspaceLayoutStore.getState(),
     );
   });
   const context = useMemo(
