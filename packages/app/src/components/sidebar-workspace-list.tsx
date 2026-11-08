@@ -26,7 +26,7 @@ import {
   PROJECT_KEBAB_COMPACT_SIZE,
   projectTrailingActionsWidth,
 } from "./sidebar/project-trailing-actions";
-import { useSidebarProjectActivity } from "./sidebar/use-sidebar-project-activity";
+import { useSidebarModel } from "./sidebar/sidebar-model";
 import { HoverRevealActions } from "@/components/sidebar/hover-reveal-actions";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
@@ -1048,7 +1048,7 @@ function ProjectHeaderRow({
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
-          hiddenFromAccessibility={headerActivity.leadingHiddenFromAccessibility}
+          statusHiddenFromAccessibility={headerActivity.leadingStatusHiddenFromAccessibility}
         />
 
         <View style={styles.projectTitleGroup}>
@@ -2450,7 +2450,7 @@ function ProjectModeList({
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
-  const projectActivity = useSidebarProjectActivity(projects, workspaceEntriesByKey);
+  const { projectActivity } = useSidebarModel();
   const projectPinningEnabled = useProjectPinningEnabled();
   const { t } = useTranslation();
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());

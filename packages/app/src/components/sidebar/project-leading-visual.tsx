@@ -67,7 +67,7 @@ export function ProjectLeadingVisual({
   chevron = null,
   showChevron = false,
   isArchiving = false,
-  hiddenFromAccessibility = false,
+  statusHiddenFromAccessibility = false,
 }: {
   displayName: string;
   iconDataUri: string | null;
@@ -79,11 +79,8 @@ export function ProjectLeadingVisual({
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
-  /**
-   * Hide the whole leading slot, project icon and status glyph, from assistive technology. The
-   * project title and the activity chip already announce both.
-   */
-  hiddenFromAccessibility?: boolean;
+  /** Hide the status badge from assistive technology when an activity chip announces it. */
+  statusHiddenFromAccessibility?: boolean;
 }) {
   if (showChevron && chevron !== null) {
     return (
@@ -108,7 +105,7 @@ export function ProjectLeadingVisual({
       projectViewKey={projectViewKey}
       statusBucket={statusBucket}
       backdrop={backdrop}
-      hiddenFromAccessibility={hiddenFromAccessibility}
+      statusHiddenFromAccessibility={statusHiddenFromAccessibility}
     />
   );
 }
@@ -125,7 +122,7 @@ export function ProjectStatusIndicator({
   statusBucket,
   backdrop,
   loading = false,
-  hiddenFromAccessibility = false,
+  statusHiddenFromAccessibility = false,
   testID,
 }: {
   iconDataUri: string | null;
@@ -135,8 +132,8 @@ export function ProjectStatusIndicator({
   /** The row's current background, so the status badge can knock out of it. */
   backdrop: SidebarSurfaceBackdrop;
   loading?: boolean;
-  /** Hide the icon and status glyph from assistive technology; see ProjectLeadingVisual. */
-  hiddenFromAccessibility?: boolean;
+  /** Hide the status badge from assistive technology; the project icon stays announced. */
+  statusHiddenFromAccessibility?: boolean;
   testID?: string;
 }) {
   const placeholderInitial = projectIconPlaceholderLabelFromDisplayName(displayName)
@@ -151,7 +148,6 @@ export function ProjectStatusIndicator({
   return (
     <View
       style={styles.projectLeadingVisualSlot}
-      {...hiddenFromAccessibilityProps(hiddenFromAccessibility)}
       testID={
         testID ??
         (statusBucket && statusBucket !== "done"
@@ -170,6 +166,7 @@ export function ProjectStatusIndicator({
             content={badgeContent}
             statusBucket={badgeBucket}
             backdrop={backdrop}
+            hiddenFromAccessibility={statusHiddenFromAccessibility}
           />
         )}
       </View>
@@ -181,10 +178,12 @@ function ProjectStatusBadge({
   content,
   statusBucket,
   backdrop,
+  hiddenFromAccessibility,
 }: {
   content: ProjectStatusBadgeContent;
   statusBucket: SidebarStateBucket;
   backdrop: SidebarSurfaceBackdrop;
+  hiddenFromAccessibility: boolean;
 }) {
   const { t } = useTranslation();
   // Running skips the shell. The ring is wider than the 12pt shell and carries its own knockout,
@@ -195,6 +194,7 @@ function ProjectStatusBadge({
       <View
         role="status"
         accessibilityLabel={getStatusBucketLabel(statusBucket, t)}
+        {...hiddenFromAccessibilityProps(hiddenFromAccessibility)}
         style={styles.statusRingAnchor}
         testID="project-status-badge"
       >
@@ -206,6 +206,7 @@ function ProjectStatusBadge({
     <View
       role="status"
       accessibilityLabel={getStatusBucketLabel(statusBucket, t)}
+      {...hiddenFromAccessibilityProps(hiddenFromAccessibility)}
       style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
       testID="project-status-badge"
     >
