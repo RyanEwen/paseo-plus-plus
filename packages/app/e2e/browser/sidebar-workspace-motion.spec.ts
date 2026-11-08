@@ -1,5 +1,5 @@
 import type { Locator, Page, TestInfo } from "@playwright/test";
-import { SIDEBAR_POSITION_TRANSITION_MS } from "../../src/components/sidebar/position-transitions";
+import { SIDEBAR_POSITION_TRANSITION_MS } from "../../src/components/sidebar/position-transition-timing";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
