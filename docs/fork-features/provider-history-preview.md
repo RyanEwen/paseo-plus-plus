@@ -46,6 +46,8 @@ Opt in on the exact provider entry in `$PASEO_HOME/config.json`:
 
 - The home must already be a working Claude profile. Paseo keeps the exact `CLAUDE_CONFIG_DIR` spelling and any secure-storage selector; it does not create the home, touch credentials or Keychain entries, sign in, or sync settings, plugins or MCP resources.
 - Replace wrappers, appended command arguments, nonempty `extraArgs` and a project-namespace override fail before the SDK starts.
+- Paseo audits the home once each time it opens a session: native default roots, the project namespace, and links in history and checkpoint files. Before each prompt and query it checks only that `CLAUDE_CONFIG_DIR` still selects the bound home, so a link added after launch is not caught until the next launch. A rewind also checks that its new transcript is an ordinary file inside the home.
+- A home with more than 10,000 history entries still runs. Paseo checks the first 10,000, skips the rest, and shows a warning in the chat.
 - Use Paseo's rewind controls to rewind conversation, files or both. `/clear`, `/new`, `/fork`, `/resume` and `/rewind` typed as text are refused in a bound chat, because they would switch sessions outside the binding.
 - Rewinding to the beginning clears the view and keeps the old conversation as the recovery handle until your next prompt starts the new one. A combined rewind rewinds files first, so a later conversation failure can leave files rewound.
 
@@ -94,7 +96,7 @@ New creation and import requests record their intent in the agent record before 
 
 ## Limits
 
-- Path checks are bounded and do not lock writers; a later filesystem change can invalidate them. Past the bound (10,000 entries, or a deeper tree than the check walks) the configured route is refused.
+- Path checks are bounded and do not lock writers; a later filesystem change can invalidate them. For Codex, a home past the bound (10,000 entries, or a deeper tree than the check walks) is refused. For Claude, only a tree deeper than the check walks is refused.
 - Native clients pointed at the same configured home can still list its chats. Native app visibility, end-to-end provider resume and native list refresh are not qualified.
 - The preview does not exclude live writers. It copies SQLite files before reading them, needs `node:sqlite` (Node 22.13+ or 24), and reports a changed snapshot instead of retrying. Malformed metadata, scan limits, files over 128 MiB and unsupported schemas appear as issue codes; an incomplete inventory is not an empty one.
 - Claude inventory needs a recognized `sessionId` in each transcript's first record.

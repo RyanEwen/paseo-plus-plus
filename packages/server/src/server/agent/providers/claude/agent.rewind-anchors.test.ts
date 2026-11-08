@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, appendFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, appendFile, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { AgentManager } from "../../agent-manager.js";
@@ -337,9 +337,20 @@ function interceptingIdentityStore(inner: ClaudeIdentityStore) {
   } satisfies ClaudeIdentityStore;
 }
 
+/** Fill a profile's todos directory past the launch audit's entry bound. */
+async function seedOversizedHome(home: string): Promise<void> {
+  await mkdir(path.join(home, "todos"));
+  const names = Array.from({ length: 10_001 }, (_, index) => `${index}.json`);
+  await Promise.all(names.map((name) => writeFile(path.join(home, "todos", name), "")));
+}
+
 async function configuredRewindFixture(
   outcomes: TurnOutcome[],
-  fixtureOptions: { env?: Record<string, string>; pluginLifecycle?: PluginLifecycle } = {},
+  fixtureOptions: {
+    env?: Record<string, string>;
+    pluginLifecycle?: PluginLifecycle;
+    seedHome?: (home: string) => Promise<void>;
+  } = {},
 ) {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-configured-rewind-"));
   vi.stubEnv("HOME", root);
@@ -347,6 +358,7 @@ async function configuredRewindFixture(
   await mkdir(home);
   const project = claudeProjectDirSync(root, { configDir: home });
   await mkdir(project, { recursive: true });
+  await fixtureOptions.seedHome?.(home);
   const conversation = createConversation(outcomes);
   let queryCount = 0;
   let unexpectedId: string | undefined;
@@ -1355,5 +1367,37 @@ describe("Claude rewind to a message steered into a running turn", () => {
     }
 
     expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "tool-result-1" }]);
+  });
+});
+
+describe("configured Claude launch audit", () => {
+  test("a home past the entry bound still runs turns and warns once", async () => {
+    const f = await configuredRewindFixture(
+      [{ assistantMessageId: "a1" }, { assistantMessageId: "a2" }],
+      { seedHome: seedOversizedHome },
+    );
+    const warnings: string[] = [];
+    f.session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "notification")
+        warnings.push(event.item.message);
+    });
+    try {
+      await runTurns(f.session, 2);
+      expect(f.failures).toEqual([]);
+      expect(warnings).toEqual([expect.stringContaining("more than 10,000 history entries")]);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a link added after launch is not re-audited before a prompt", async () => {
+    const f = await configuredRewindFixture([{ assistantMessageId: "a1" }]);
+    try {
+      await symlink(f.root, path.join(f.home, "todos"));
+      await runTurns(f.session, 1);
+      expect(f.failures).toEqual([]);
+    } finally {
+      await f.cleanup();
+    }
   });
 });

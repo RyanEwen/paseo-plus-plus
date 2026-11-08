@@ -8,7 +8,7 @@ import {
 import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import type { ConfiguredClaudeHistoryStorage } from "../../provider-history/binding.js";
-import { checkClaudeHistoryRoute } from "./history.js";
+import { checkClaudeHomeVariable } from "./history.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -80,7 +80,7 @@ function applyRuntimeSettingsToClaudeOptions(
       // SDK/parent identities cleared while honoring this launch-only contribution.
       providerEnvSpec.envOverlay.CLAUDE_CODE_ENTRYPOINT = launchEnv?.CLAUDE_CODE_ENTRYPOINT;
       const providerEnv = createExternalProcessEnv(spawnOptions.env, providerEnvSpec.envOverlay);
-      if (context.historyStorage) checkClaudeHistoryRoute(context.historyStorage, providerEnv);
+      if (context.historyStorage) checkClaudeHomeVariable(context.historyStorage, providerEnv);
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)
         : null;
@@ -114,7 +114,7 @@ function applyRuntimeSettingsToClaudeOptions(
 
 export function claudeQuery(input: ClaudeQueryInput, context: ClaudeQueryContext = {}): Query {
   if (context.historyStorage)
-    checkClaudeHistoryRoute(context.historyStorage, input.options.env ?? {});
+    checkClaudeHomeVariable(context.historyStorage, input.options.env ?? {});
   const launchQuery = context.queryFactory ?? query;
   return launchQuery({
     ...input,

@@ -1,7 +1,11 @@
 import { mkdtemp, mkdir, writeFile, symlink, link, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { resolveConfiguredClaudeHistory } from "./history.js";
+import {
+  auditClaudeHistoryRoute,
+  checkClaudeHomeVariable,
+  resolveConfiguredClaudeHistory,
+} from "./history.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { once } from "node:events";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
@@ -313,18 +317,52 @@ describe("configured Claude admission", () => {
       c.resumeSession(handle, undefined, { historyStorage: { ...storage, home: root } }),
     ).rejects.toThrow("bound-storage-changed");
   });
+  /** Resolve a configured route and run its launch audit, as a launch does. */
+  async function admitRoute(input: Parameters<typeof resolveConfiguredClaudeHistory>[0]) {
+    const storage = resolveConfiguredClaudeHistory(input);
+    return storage ? auditClaudeHistoryRoute(storage, input.env) : undefined;
+  }
+
   test("refuses a history tree deeper than the bounded path check", async () => {
     await mkdir(path.join(home, "projects", "1", "2", "3", "4", "5", "6", "7", "8", "9"), {
       recursive: true,
     });
-    expect(() =>
-      resolveConfiguredClaudeHistory({
+    await expect(
+      admitRoute({
         policy: { mode: "configured" },
         runtimeSettings: { env: { CLAUDE_CONFIG_DIR: home } },
         env: { HOME: root, CLAUDE_CONFIG_DIR: home },
       }),
-    ).toThrow("Configured provider history cannot use this route: history-path-check-limit");
+    ).rejects.toThrow(
+      "Configured provider history cannot use this route: history-path-check-limit",
+    );
   });
+
+  test("reports a home past the entry bound as an incomplete audit instead of refusing it", async () => {
+    await mkdir(path.join(home, "todos"));
+    await Promise.all(
+      Array.from({ length: 10_001 }, (_, index) =>
+        writeFile(path.join(home, "todos", `${index}.json`), ""),
+      ),
+    );
+    await expect(
+      admitRoute({
+        policy: { mode: "configured" },
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: home } },
+        env: { HOME: root, CLAUDE_CONFIG_DIR: home },
+      }),
+    ).resolves.toEqual({ truncated: true });
+  });
+
+  test("the per-prompt check compares only the home variable", async () => {
+    const storage = { kind: "configured-home" as const, provider: "claude" as const, home };
+    await symlink(root, path.join(home, "projects"));
+    expect(() => checkClaudeHomeVariable(storage, { CLAUDE_CONFIG_DIR: home })).not.toThrow();
+    expect(() => checkClaudeHomeVariable(storage, { CLAUDE_CONFIG_DIR: root })).toThrow(
+      "Configured provider history cannot use this route: launch-home-conflict",
+    );
+  });
+
   test.each([
     { kind: "symlink", reason: "history-symlink" },
     { kind: "hardlink", reason: "history-hardlink" },
@@ -342,8 +380,8 @@ describe("configured Claude admission", () => {
     }
     if (kind === "native") selected = path.join(root, ".claude");
     if (kind === "missing") selected = path.join(root, "missing");
-    expect(() =>
-      resolveConfiguredClaudeHistory({
+    await expect(
+      admitRoute({
         policy: { mode: "configured" },
         runtimeSettings: {
           env: { CLAUDE_CONFIG_DIR: selected },
@@ -358,6 +396,6 @@ describe("configured Claude admission", () => {
         },
         ...(kind === "extraArgs" ? { extraArgs: { resume: "other" } } : {}),
       }),
-    ).toThrow(`Configured provider history cannot use this route: ${reason}`);
+    ).rejects.toThrow(`Configured provider history cannot use this route: ${reason}`);
   });
 });

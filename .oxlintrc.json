@@ -94,13 +94,6 @@
           "error",
           {
             "allow": {
-              // TODO: migrate configured-history admission with the SDK's synchronous spawn callback.
-              // These pre-spawn identity guards retain their 10,000-path/depth-8 bounds.
-              "server/agent/providers/claude/history.ts": [
-                "lstatSync",
-                "readdirSync",
-                "realpathSync"
-              ],
               // TODO: literal executableExists is a synchronous public capability; move its callers and Windows existence predicates to async together.
               "executable-resolution/executable-resolution.ts": ["existsSync"],
               // TODO: winget enumeration shares synchronous existence predicates with literal lookup; convert the executable-resolution boundary together.

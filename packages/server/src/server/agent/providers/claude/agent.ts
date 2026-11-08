@@ -10,7 +10,8 @@ import type {
 } from "../../provider-history/claude-identity-types.js";
 import { ClaudeHistoryIdentity, type ClaudeHistoryIdentityHost } from "./history-identity.js";
 import {
-  checkClaudeHistoryRoute,
+  auditClaudeHistoryRoute,
+  checkClaudeHomeVariable,
   checkClaudeRewindHandle,
   claudeHistoryHome,
   resolveConfiguredClaudeHistory,
@@ -497,6 +498,7 @@ type ClaudeImportDescriptorResult =
 
 interface ClaudeAgentSessionOptions {
   historyStorage?: ProviderHistoryStorage;
+  historyAuditTruncated?: boolean;
   claudeFreshRewind?: ClaudeFreshRewindContext;
   claudeInitialHistory?: ClaudeInitialHistoryContext;
   defaults?: { agents?: Record<string, AgentDefinition> };
@@ -1621,6 +1623,7 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
 
 export class ClaudeAgentClient implements AgentClient {
   private readonly historyPolicy?: ProviderHistoryPolicy;
+  private readonly truncatedAuditHomes = new Set<string>();
   private readonly discoverModels: typeof discoverClaudeModels;
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1663,12 +1666,44 @@ export class ClaudeAgentClient implements AgentClient {
   async resolveHistoryStorage(
     input: ResolveHistoryStorageInput,
   ): Promise<ProviderHistoryStorage | undefined> {
-    return this.selectedHistory({
+    const storage = this.selectedHistory({
       env: input.env,
       previous: input.previous?.storage,
       existingSession: input.operation === "resume" || input.operation === "reload",
       extraArgs: this.assertConfig(input.config).providerOptions?.extraArgs,
     });
+    await this.auditLaunchRoute(storage, input.env);
+    return storage;
+  }
+
+  /**
+   * The one on-disk audit of a launch. Reaching its entry bound is logged and remembered, so the
+   * session this launch opens can warn in its timeline instead of refusing the route.
+   */
+  private async auditLaunchRoute(
+    storage: ConfiguredClaudeHistoryStorage | undefined,
+    env: Record<string, string> | undefined,
+  ): Promise<void> {
+    if (!storage) return;
+    const audit = await auditClaudeHistoryRoute(storage, this.buildProviderEnv(env));
+    if (!audit.truncated) {
+      this.truncatedAuditHomes.delete(storage.home);
+      return;
+    }
+    this.truncatedAuditHomes.add(storage.home);
+    this.logger.warn({ home: storage.home }, "Claude history audit stopped at its entry bound");
+  }
+
+  private isAuditTruncated(storage: ConfiguredClaudeHistoryStorage | undefined): boolean {
+    return storage !== undefined && this.truncatedAuditHomes.has(storage.home);
+  }
+
+  /** Audit a session opened without a manager launch, whose route nothing has audited yet. */
+  private async auditDirectLaunch(
+    storage: ConfiguredClaudeHistoryStorage | undefined,
+    launchContext: AgentLaunchContext | undefined,
+  ): Promise<void> {
+    if (!launchContext?.historyStorage) await this.auditLaunchRoute(storage, launchContext?.env);
   }
 
   /**
@@ -1710,8 +1745,10 @@ export class ClaudeAgentClient implements AgentClient {
       previous: launchContext?.historyStorage,
       extraArgs: claudeConfig.providerOptions?.extraArgs,
     });
+    await this.auditDirectLaunch(historyStorage, launchContext);
     return new ClaudeAgentSession(claudeConfig, {
       historyStorage,
+      historyAuditTruncated: this.isAuditTruncated(historyStorage),
       claudeFreshRewind: launchContext?.claudeFreshRewind,
       claudeInitialHistory: launchContext?.claudeInitialHistory,
       defaults: this.defaults,
@@ -1748,8 +1785,10 @@ export class ClaudeAgentClient implements AgentClient {
       existingSession: true,
       extraArgs: claudeConfig.providerOptions?.extraArgs,
     });
+    await this.auditDirectLaunch(historyStorage, launchContext);
     const session = new ClaudeAgentSession(claudeConfig, {
       historyStorage,
+      historyAuditTruncated: this.isAuditTruncated(historyStorage),
       claudeFreshRewind: launchContext?.claudeFreshRewind,
       claudeInitialHistory: launchContext?.claudeInitialHistory,
       defaults: this.defaults,
@@ -2512,6 +2551,7 @@ class ClaudeAgentSession implements AgentSession {
       storage: options.historyStorage,
       freshRewind: options.claudeFreshRewind,
       initialHistory: options.claudeInitialHistory,
+      auditTruncated: options.historyAuditTruncated,
     });
     this.assertHistoryRoute();
     this.persistSession = options.persistSession;
@@ -2611,6 +2651,17 @@ class ClaudeAgentSession implements AgentSession {
     this.identity.assertPrompt(prompt);
   }
 
+  /** Show an incomplete launch audit once, when the first turn gives the warning a timeline. */
+  private publishHistoryAuditWarning(): void {
+    const message = this.identity.takeAuditWarning();
+    if (!message) return;
+    this.pushEvent({
+      type: "timeline",
+      provider: "claude",
+      item: { type: "notification", level: "warning", message },
+    });
+  }
+
   /** What the history identity collaborator may read from, and adopt into, this session. */
   private historyIdentityHost(): ClaudeHistoryIdentityHost {
     return {
@@ -2639,6 +2690,7 @@ class ClaudeAgentSession implements AgentSession {
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     this.assertHistoryPrompt(prompt);
+    this.publishHistoryAuditWarning();
     await this.ensureHistoryReady();
     if (this.closed) {
       throw new Error("Claude session is closed");
@@ -3331,7 +3383,7 @@ class ClaudeAgentSession implements AgentSession {
     const { sessionId, previous, storage } = input;
     const file = await this.resolveHistoryPath(sessionId);
     if (!file) throw new HistoryStorageConflictError("rewind-transcript-missing");
-    checkClaudeRewindHandle(storage, this.harnessEnvironment, file);
+    await checkClaudeRewindHandle(storage, this.harnessEnvironment, file);
     const next = { ...previous, sessionId, nativeHandle: sessionId };
     const assertOpen = () => {
       if (this.closed) throw new HistoryStorageConflictError("retired-rewind-session");
@@ -3939,7 +3991,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private assertHistoryRoute(): void {
     if (this.identity.boundHistory)
-      checkClaudeHistoryRoute(this.identity.boundHistory, this.harnessEnvironment);
+      checkClaudeHomeVariable(this.identity.boundHistory, this.harnessEnvironment);
   }
 
   get historyStorage(): ProviderHistoryStorage {
