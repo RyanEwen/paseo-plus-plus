@@ -1,9 +1,16 @@
 import { SplitLayoutGlyph } from "./split-layout-glyph";
-import { useMemo, type ReactNode } from "react";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from "react";
+import {
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { Button } from "@/components/ui/button";
+import { createControlGeometry } from "@/components/ui/control-geometry";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { useSplitLayoutControlsEnabled } from "@/paseo-plus-plus/split-layout-controls";
 import {
@@ -11,6 +18,15 @@ import {
   canApplySplitLayoutPreset,
   SPLIT_LAYOUT_PRESETS,
 } from "./split-layout-presets";
+
+interface RatioPresetChoice {
+  id: string;
+  label: string;
+  icon: ReactElement;
+  available: boolean;
+  isCurrent: boolean;
+  select: () => void;
+}
 
 /** Share difference within which a preset is shown as the divider's current ratio. */
 const CURRENT_PRESET_TOLERANCE = 0.001;
@@ -81,20 +97,7 @@ export function SplitResizePresets({
       >
         <View style={styles.presets}>
           {choices.map((preset) => (
-            <Button
-              key={preset.id}
-              variant={preset.isCurrent ? "secondary" : "ghost"}
-              size="md"
-              style={styles.choice}
-              textStyle={styles.ratio}
-              leftIcon={preset.icon}
-              disabled={!preset.available}
-              accessibilityLabel={t("workspace.splits.ratio", { ratio: preset.label })}
-              testID={`workspace-split-preset-${preset.id}`}
-              onPress={preset.select}
-            >
-              {preset.label}
-            </Button>
+            <RatioPresetTile key={preset.id} preset={preset} />
           ))}
         </View>
       </HoverCardContent>
@@ -102,14 +105,75 @@ export function SplitResizePresets({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  choice: {
-    width: 52,
-    minHeight: 58,
-    flexDirection: "column",
-    gap: theme.spacing[0.5],
-    paddingHorizontal: theme.spacing[0.5],
-  },
-  ratio: { fontSize: theme.fontSize.sm },
-  presets: { flexDirection: "row", padding: theme.spacing[1], gap: theme.spacing[1] },
-}));
+/** One ratio as an icon over its label; the divider's current ratio is filled. */
+function RatioPresetTile({ preset }: { preset: RatioPresetChoice }) {
+  const { t } = useTranslation();
+  const [hovered, setHovered] = useState(false);
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+  const disabled = !preset.available;
+  const { isCurrent } = preset;
+  const tileStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.tile,
+      isCurrent ? styles.tileCurrent : null,
+      pressed ? styles.tilePressed : null,
+      disabled ? styles.tileDisabled : null,
+    ],
+    [isCurrent, disabled],
+  );
+  const ratioStyle = useMemo(
+    () => [styles.ratio, isCurrent || hovered ? null : styles.ratioMuted],
+    [isCurrent, hovered],
+  );
+  const accessibilityState = useMemo(() => ({ disabled }), [disabled]);
+  return (
+    <PressHighlight
+      accessibilityRole="button"
+      accessibilityLabel={t("workspace.splits.ratio", { ratio: preset.label })}
+      accessibilityState={accessibilityState}
+      disabled={disabled}
+      highlightStyle={styles.tilePressed}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      onPress={preset.select}
+      style={tileStyle}
+      testID={`workspace-split-preset-${preset.id}`}
+    >
+      <View>{preset.icon}</View>
+      <Text style={ratioStyle}>{preset.label}</Text>
+    </PressHighlight>
+  );
+}
+
+const styles = StyleSheet.create((theme) => {
+  const geometry = createControlGeometry(theme);
+
+  return {
+    tile: {
+      ...geometry.buttonMd,
+      width: 52,
+      minHeight: 58,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: theme.spacing[0.5],
+      paddingHorizontal: theme.spacing[0.5],
+      borderWidth: 1,
+      borderColor: "transparent",
+    },
+    tileCurrent: {
+      backgroundColor: theme.colors.surface3,
+      borderColor: theme.colors.surface3,
+    },
+    tilePressed: { opacity: 0.85 },
+    tileDisabled: { opacity: theme.opacity[50] },
+    ratio: {
+      ...geometry.buttonTextMd,
+      color: theme.colors.foreground,
+      fontWeight: theme.fontWeight.medium,
+      fontSize: theme.fontSize.sm,
+    },
+    ratioMuted: { color: theme.colors.foregroundMuted },
+    presets: { flexDirection: "row", padding: theme.spacing[1], gap: theme.spacing[1] },
+  };
+});
