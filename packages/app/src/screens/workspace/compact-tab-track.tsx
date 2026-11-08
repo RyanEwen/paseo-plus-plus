@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode, RefObject } from "react";
-import { View } from "react-native";
+import { View, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { isWeb } from "@/constants/platform";
@@ -23,13 +23,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 0,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
-  },
-  tab: {
-    height: COMPACT_TAB_CONTROL_HEIGHT,
-  },
-  tabFrame: {
-    flexDirection: "row",
-    alignItems: "center",
   },
 }));
 
@@ -70,10 +63,15 @@ export function compactTabStripContainerStyle(compact: boolean) {
 }
 
 export interface CompactTabChipPresentation {
-  tabStyle: typeof styles.tab | undefined;
-  frameStyle: typeof styles.tabFrame | undefined;
+  tabStyle: ViewStyle | undefined;
+  frameStyle: ViewStyle | undefined;
   accessibilityRole: "tab" | "button";
 }
+
+// Plain objects, not stylesheet entries: these constants are built at module scope, and neither
+// style depends on the theme.
+const COMPACT_TAB_STYLE: ViewStyle = { height: COMPACT_TAB_CONTROL_HEIGHT };
+const COMPACT_TAB_FRAME_STYLE: ViewStyle = { flexDirection: "row", alignItems: "center" };
 
 const WIDE_TAB_CHIP: CompactTabChipPresentation = {
   tabStyle: undefined,
@@ -82,8 +80,8 @@ const WIDE_TAB_CHIP: CompactTabChipPresentation = {
 };
 
 const COMPACT_TAB_CHIP: CompactTabChipPresentation = {
-  tabStyle: styles.tab,
-  frameStyle: styles.tabFrame,
+  tabStyle: COMPACT_TAB_STYLE,
+  frameStyle: COMPACT_TAB_FRAME_STYLE,
   accessibilityRole: "tab",
 };
 
