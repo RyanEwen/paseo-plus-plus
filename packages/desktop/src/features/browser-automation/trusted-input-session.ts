@@ -24,6 +24,8 @@ interface FocusInputTargetOptions {
   requiresEditable?: boolean;
 }
 
+type FocusInputOutcome = "focused" | "stale_ref" | "not_focused" | "not_focusable";
+
 /** Focus inside the guest without the pointer gesture that transfers host DOM focus.
  * Revalidate after synchronous focus handlers, before native input. This does not make
  * later page scripts and the separate native input message an atomic operation.
@@ -33,7 +35,7 @@ export async function focusInputTarget({
   page,
   elementExpression,
   requiresEditable = false,
-}: FocusInputTargetOptions): Promise<"focused" | "stale_ref" | "not_focused"> {
+}: FocusInputTargetOptions): Promise<FocusInputOutcome> {
   const result = await page.executeJavaScript(String.raw`(() => {
     const resolveElement = () => (${elementExpression});
     const element = resolveElement();
@@ -63,6 +65,7 @@ export async function focusInputTarget({
       resolveElement() === element &&
       editingHostFor() === editingHost;
     if (typeof editingHost.focus !== 'function') return { focused: false };
+    const activeBeforeFocus = document.activeElement;
     editingHost.focus({ preventScroll: true });
     if (!stillCurrent()) return { staleRef: true };
     const tagName = element.tagName ? element.tagName.toLowerCase() : '';
@@ -105,7 +108,10 @@ export async function focusInputTarget({
       if (!stillCurrent()) return { staleRef: true };
       return { focused: document.activeElement === editingHost && selectionWithin(currentSelection) };
     }
-    return { focused: document.activeElement === element };
+    if (document.activeElement === element) return { focused: true };
+    // focus() on an element that cannot take focus is a no-op. A page handler
+    // that redirected focus leaves a different active element instead.
+    return { focused: false, notFocusable: document.activeElement === activeBeforeFocus };
   })()`);
   if (!result || typeof result !== "object") {
     return "stale_ref";
@@ -114,12 +120,24 @@ export async function focusInputTarget({
   if (record.staleRef === true) {
     return "stale_ref";
   }
+  if (record.notFocusable === true) {
+    return "not_focusable";
+  }
   return record.focused === true ? "focused" : "not_focused";
 }
 
-/** Refuse native input when a page handler redirected focus or disabled the original target. */
-export function inputFocusFailure(requestId: string): FailurePayload {
-  return fail(requestId, "browser_unsupported", "Browser input target did not retain focus.");
+/** Refuse native input when the target never took focus, or a page handler
+ * redirected focus or disabled it. Sending the key anyway would reach another element.
+ */
+export function inputFocusFailure(
+  requestId: string,
+  outcome: Exclude<FocusInputOutcome, "focused" | "stale_ref">,
+): FailurePayload {
+  const message =
+    outcome === "not_focusable"
+      ? "This element cannot receive keyboard focus, so nothing was sent. Target a focusable element such as an input or button, or omit the ref to send the key to the element that already has focus."
+      : "Browser input target did not retain focus.";
+  return fail(requestId, "browser_unsupported", message);
 }
 
 interface TrustedInputOperation {
