@@ -168,11 +168,11 @@ export const es: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Pestañas de espacios en móvil",
-        hint: "Mostrar pestañas del mismo ancho en pantallas compactas, con desplazamiento solo cuando sea necesario. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
+        hint: "Mostrar las pestañas con su ancho natural en pantallas compactas, con desplazamiento cuando no quepan. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
       },
       widerWorkspaceTabs: {
         label: "Pestañas de espacio de trabajo más anchas",
-        hint: "Permite hasta un 50 % más de ancho para títulos largos. En el teléfono, las pestañas del espacio de trabajo siempre comparten por igual el ancho disponible.",
+        hint: "Permite hasta un 50 % más de ancho para títulos largos, también en el teléfono.",
       },
 
       descriptiveToolCalls: {
