@@ -25,10 +25,13 @@ const TRACK_STYLE: ViewStyle = { flexDirection: "row" };
 const TAB_STYLE: ViewStyle = { width: 64, height: 44, flexShrink: 0 };
 
 /**
- * React Native Web measures layout in a zero-delay timeout. Two macrotask turns let a reveal
- * started by a commit or a delivered callback finish measuring and scrolling.
+ * Let a commit's layout work finish. React Native Web delivers onLayout from a ResizeObserver,
+ * which runs during a rendered frame, and then measures in a zero-delay timeout.
  */
 async function settleMeasurements(): Promise<void> {
+  for (let frame = 0; frame < 2; frame += 1) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
   for (let turn = 0; turn < 2; turn += 1) {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
@@ -204,8 +207,9 @@ async function commit(props: ScrollProbeProps): Promise<void> {
 /** Seed the overflowing six-tab rail with its last tab selected and revealed. */
 async function mountLast(fixture: RailFixture): Promise<HeldCallbacks> {
   await commit({ fixture, tabKeys: SIX_TABS, activeTabKey: "last", enabled: true });
-  expect(fixture.isVisible("last")).toBe(true);
+  await expect.poll(() => fixture.isVisible("last")).toBe(true);
   expect(fixture.requireElement().scrollLeft).toBeGreaterThan(0);
+  await settleMeasurements();
   return fixture.hold();
 }
 
@@ -256,7 +260,11 @@ it("does not scroll without a selection and reveals the next one", async () => {
   }
 
   await commit({ fixture, tabKeys: SIX_TABS, activeTabKey: "first", enabled: true });
-  expect(fixture.commands).toEqual([[{ x: LEADING_INSET, animated: false }]]);
+  // The newly selected chip starts observing layout, so it may reveal a second time.
+  expect(fixture.commands.length).toBeGreaterThan(0);
+  for (const command of fixture.commands) {
+    expect(command).toEqual([{ x: LEADING_INSET, animated: false }]);
+  }
   expect(fixture.isVisible("first")).toBe(true);
 });
 
@@ -285,7 +293,7 @@ it("keeps callbacks from an unmounted rail from scrolling either rail", async ()
 it("reveals a selection that only moved when tabs to its left close", async () => {
   const fixture = new RailFixture();
   await commit({ fixture, tabKeys: TEN_TABS, activeTabKey: "fifth", enabled: true });
-  expect(fixture.isVisible("fifth")).toBe(true);
+  await expect.poll(() => fixture.isVisible("fifth")).toBe(true);
   const scrolledBeforeClose = fixture.requireElement().scrollLeft;
   expect(scrolledBeforeClose).toBeGreaterThan(0);
 

@@ -59,12 +59,11 @@ import {
   TabStripContent,
   compactTabChipPresentation,
   compactTabStripContainerStyle,
-  compactTabStripLayout,
-  measuredTabTrackWidth,
   selectedTabKey,
   showsInlineCloseButton,
   showsInlineNewTabButton,
   tabStripScrolls,
+  usesCompactTabSlots,
 } from "@/screens/workspace/compact-tab-track";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import {
@@ -1137,9 +1136,8 @@ function ResolvedWorkspaceDesktopTabsRow({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
-  const { fillAvailableWidth, rendersSlots } = compactTabStripLayout({ host, compact: isCompact });
+  const rendersSlots = usesCompactTabSlots({ host, compact: isCompact });
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
-  const [tabsScrollWidth, setTabsScrollWidth] = useState(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const explorerDisplay = useExplorerTabDisplay(host);
   const iconOnly = explorerDisplay !== null && explorerDisplay.enabled;
@@ -1166,24 +1164,19 @@ function ResolvedWorkspaceDesktopTabsRow({
   }, []);
 
   const layoutMetrics = useMemo(() => {
-    // The measured compact scroll viewport already excludes the toolbar and other actions.
-    let actionsReservedWidth = 0;
-    if (!fillAvailableWidth) {
-      const newTabWidth = isCompact
-        ? COMPACT_TAB_CONTROL_HEIGHT
-        : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH;
-      actionsReservedWidth = Math.max(
+    const newTabWidth = isCompact
+      ? COMPACT_TAB_CONTROL_HEIGHT
+      : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH;
+
+    return {
+      rowHorizontalInset: 0,
+      actionsReservedWidth: Math.max(
         0,
         newTabWidth +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
           (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
-      );
-    }
-
-    return {
-      rowHorizontalInset: 0,
-      actionsReservedWidth,
+      ),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
       minTabWidth: workspaceTabMinimumWidth(host, isCompact),
@@ -1195,7 +1188,6 @@ function ResolvedWorkspaceDesktopTabsRow({
     };
   }, [
     exitFocusModeWidth,
-    fillAvailableWidth,
     focusModeEnabled,
     host,
     isCompact,
@@ -1323,18 +1315,12 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
-  const measuredTabsWidth = measuredTabTrackWidth({
-    fillAvailableWidth,
-    scrollWidth: tabsScrollWidth,
-    containerWidth: tabsContainerWidth,
-  });
   const { layout } = useWorkspaceTabLayout({
     iconOnlyTabWidth: iconOnly ? iconOnlyTabWidth(isCompact) : null,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
-    viewportWidthOverride: measuredTabsWidth > 0 ? measuredTabsWidth : null,
+    viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
     compact: isCompact,
-    fillAvailableWidth,
   });
   // A scroll view keeps its offset when its content shrinks under the viewport, so a row that
   // stops scrolling would leave the tabs it had panned past out of view with no way back.
@@ -1485,13 +1471,10 @@ function ResolvedWorkspaceDesktopTabsRow({
     tabScroll;
   const onScrollLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      if (fillAvailableWidth) {
-        updateMeasuredWidth(setTabsScrollWidth, event);
-      }
       boundaryOnLayout(event);
       selectedTabOnLayout(event);
     },
-    [boundaryOnLayout, selectedTabOnLayout, fillAvailableWidth],
+    [boundaryOnLayout, selectedTabOnLayout],
   );
   const onScrollContentSizeChange = useCallback(
     (width: number) => {
