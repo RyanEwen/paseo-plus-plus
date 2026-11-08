@@ -137,6 +137,25 @@ describe("Android update feedback", () => {
     );
   });
 
+  it("labels the check button while checking and places the update actions in a row", async () => {
+    releases.holdFinds = true;
+    let check!: Promise<void>;
+    act(() => {
+      check = updater.getState().check({ intent: "manual" });
+    });
+    const checking = within(container).getByRole("button", { name: "Checking..." });
+    expect(checking.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      releases.finishFind(update);
+      await check;
+    });
+    const checkBox = within(container).getByRole("button", { name: "Check" }).getBoundingClientRect();
+    const installBox = within(container)
+      .getByRole("button", { name: "Install update" })
+      .getBoundingClientRect();
+    expect(installBox.left).toBeGreaterThanOrEqual(checkBox.right);
+  });
+
   it("shows check failures and recovers to the current-version acknowledgement", async () => {
     releases.next = new Error("Offline");
     await click("Check");
