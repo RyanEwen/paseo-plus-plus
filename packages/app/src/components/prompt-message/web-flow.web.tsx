@@ -16,6 +16,7 @@ import {
 import { StyleSheet } from "react-native-unistyles";
 import { ScrollView } from "../ui/scroll-view";
 import { controlHeightForLayout } from "../ui/control-geometry";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { SPACING } from "@/styles/theme";
 import {
   NaturalMessageFlowContext,
@@ -199,6 +200,7 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
   const attachments = useRef<HTMLElement | null>(null);
   const wasBounded = useRef(props.bounded);
   const g = webMessageGeometry(sample, hasText);
+  const isCompact = useIsCompactFormFactor();
   const { width, naturalHeight, padding, textWidth, summaryHeight, controlsWidth, controlsHeight } =
     g;
   const { clipWidth, inset, controlGap, clipTextWidth, textTranslateX } = webMessageWidths(
@@ -354,13 +356,13 @@ export function WebUserMessageFlow(props: UserMessageFlowProps) {
       justifyContent: "center",
       width: "max-content",
       maxWidth: Math.max(0, width - padding * 2),
-      // The 44 px field height reserved for the controls row, at every width.
-      minHeight: props.controls ? controlHeightForLayout("md", true) : 0,
+      // Reserve exactly the md control's height, so an attachment-only bubble matches More.
+      minHeight: props.controls ? controlHeightForLayout("md", isCompact) : 0,
       flexShrink: 0,
       visibility: bounded ? "visible" : "hidden",
       pointerEvents: bounded ? "auto" : "none",
     }),
-    [compact, bodyHeight, controlsHeight, padding, width, bounded, props.controls],
+    [compact, bodyHeight, controlsHeight, padding, width, bounded, props.controls, isCompact],
   );
   // Ordinary flow owns this entire allocation, including the gap to its actions.
   // Bounded paint must still let later chat receive input outside its real content.
