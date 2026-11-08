@@ -3,20 +3,20 @@ import { vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
 import type { StreamItem, UserMessageImageAttachment } from "@/types/stream";
-import { ActualPromptRowsProvider } from "../actual-prompt-rows";
-import { PromptNavigationContext } from "../prompt-navigation-actions";
-import { PromptUserMessage } from "../prompt-user-message";
-import { createWebStreamStrategy } from "../strategy-web";
-import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "../strategy";
-import type { PromptNavigationControls } from "../use-prompt-navigation-controls";
-import { buildAgentStreamRenderModel } from "../model";
-import { createStreamPresentation } from "../presentation";
+import { ActualPromptRowsProvider } from "./actual-prompt-rows";
+import { PromptNavigationContext } from "./prompt-navigation-actions";
+import { PromptUserMessage } from "./prompt-user-message";
+import { createWebStreamStrategy } from "./strategy-web";
+import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
+import type { PromptNavigationControls } from "./use-prompt-navigation-controls";
+import { buildAgentStreamRenderModel } from "./model";
+import { createStreamPresentation } from "./presentation";
 import {
   mergeRetainedPrompts,
   retainedCanonicalPositions,
 } from "@/timeline/canonical-prompt-context";
 import type { CanonicalPromptContext } from "@/timeline/canonical-prompt-model";
-import { useStreamHistoryWindow } from "../use-stream-history-window";
+import { useStreamHistoryWindow } from "./use-stream-history-window";
 
 export const ACTUAL_PROMPT_ID = "message-1";
 export const ACTUAL_SUCCESSOR_ID = "message-2";

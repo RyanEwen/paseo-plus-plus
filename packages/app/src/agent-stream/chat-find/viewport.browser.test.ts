@@ -6,7 +6,7 @@ import {
   ActualPromptTestFixture,
   ACTUAL_PROMPT_ID,
   ACTUAL_SUCCESSOR_ID,
-} from "./actual-prompt-test-fixture";
+} from "../actual-prompt-rows.test-fixture";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFindViewport } from "./viewport.web";
 import { ChatFindModel } from "./model";
