@@ -46,6 +46,16 @@ describe("ExplorerIconOnlyMenuItem", () => {
     expect(control.toggle).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a failed save visible in the row, which also works without hover", () => {
+    const view = render(
+      <MenuRoot defaultOpen>
+        <ExplorerIconOnlyMenuItem control={displayControl({ failed: true })} />
+      </MenuRoot>,
+    );
+
+    expect(view.getByText("Unable to save. Try again.")).toBeTruthy();
+  });
+
   it("renders nothing outside the Explorer", () => {
     const view = render(
       <MenuRoot defaultOpen>
