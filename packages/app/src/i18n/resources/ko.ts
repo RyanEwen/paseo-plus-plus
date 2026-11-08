@@ -130,8 +130,6 @@ export const ko: TranslationResources = {
       before: "상태 변경 전",
       after: "상태 변경 후",
       imageLabel: "{{title}} 예시",
-      positions:
-        "상태 변경 전후의 최종 위치입니다. 정지 이미지는 애니메이션 시간을 보여주지 않습니다.",
       explorer: "변경 목록과 작업 사본 차이의 예입니다.",
       workspaceLimit:
         "그룹별 초기 표시 개수를 선택하거나 모두 표시하세요. 이미 펼친 그룹은 펼쳐진 상태를 유지합니다.",
@@ -163,11 +161,11 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 같은 너비의 탭을 표시하고 필요한 경우에만 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 탭을 원래 너비로 표시하고 공간이 부족하면 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
       },
       widerWorkspaceTabs: {
         label: "더 넓은 작업 공간 탭",
-        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰의 작업 공간 탭은 항상 사용 가능한 너비를 균등하게 나눕니다.",
+        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰에도 적용됩니다.",
       },
 
       descriptiveToolCalls: {

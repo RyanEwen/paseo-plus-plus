@@ -39,6 +39,7 @@ const attentionColorMapping = densityIconProps("sm", (theme) => ({
 const runningColorMapping = densityIconProps("sm", (theme) => ({
   color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
 }));
+import { statusGroupHeaderDataSet } from "./status-group-header-anchor";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -124,6 +125,7 @@ export function SidebarWorkspaceGroupHeader({
     [],
   );
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  const headerDataSet = useMemo(() => statusGroupHeaderDataSet(group.key), [group.key]);
   // The row uses a state callback, so pass its static shape to the native highlight.
   const highlightStyle = useMemo(
     () => [resolveHighlightCorners(styles.statusGroupRow), styles.statusGroupRowPressed],
@@ -168,6 +170,7 @@ export function SidebarWorkspaceGroupHeader({
       style={rowStyle}
       highlightStyle={highlightStyle}
       onPress={handlePress}
+      dataSet={headerDataSet}
       testID={`sidebar-status-group-${group.key}`}
     >
       {renderContent}

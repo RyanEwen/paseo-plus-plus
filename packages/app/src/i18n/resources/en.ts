@@ -128,8 +128,6 @@ export const en = {
       before: "Before the status change",
       after: "After the status change",
       imageLabel: "{{title}} example",
-      positions:
-        "Settled positions before and after a status change. These still images do not show animation timing.",
       explorer: "Example of the Changes list and working-copy diff.",
       workspaceLimit:
         "Choose a starting count for each group or Show all. Groups you have expanded stay expanded.",
@@ -161,11 +159,11 @@ export const en = {
       },
       mobileWorkspaceTabs: {
         label: "Mobile workspace tabs",
-        hint: "Show equal-width tabs on compact screens, scrolling only when needed. Turn off to use the tab chooser without changing the selected tab.",
+        hint: "Show tabs at their natural width on compact screens, scrolling when they do not fit. Turn off to use the tab chooser without changing the selected tab.",
       },
       widerWorkspaceTabs: {
         label: "Wider workspace tabs",
-        hint: "Allow long tab titles up to 50% more width. Phone workspace tabs always share the available width equally.",
+        hint: "Allow long tab titles up to 50% more width, on phones too.",
       },
 
       descriptiveToolCalls: {

@@ -136,8 +136,6 @@ export const fr: TranslationResources = {
       before: "Avant le changement d’état",
       after: "Après le changement d’état",
       imageLabel: "Exemple : {{title}}",
-      positions:
-        "Positions finales avant et après un changement d’état. Ces images ne montrent pas la durée de l’animation.",
       explorer: "Exemple de la liste des changements et du diff de la copie de travail.",
       workspaceLimit:
         "Choisissez un nombre initial par groupe ou Tout afficher. Les groupes que vous avez développés restent développés.",
@@ -169,11 +167,11 @@ export const fr: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Onglets des espaces sur mobile",
-        hint: "Afficher des onglets de même largeur sur les écrans compacts, avec défilement uniquement si nécessaire. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
+        hint: "Afficher les onglets à leur largeur naturelle sur les écrans compacts, avec défilement s’ils ne tiennent pas. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
       },
       widerWorkspaceTabs: {
         label: "Onglets d’espace de travail plus larges",
-        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Sur téléphone, les onglets de l’espace de travail se partagent toujours la largeur disponible à parts égales.",
+        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs, y compris sur téléphone.",
       },
 
       descriptiveToolCalls: {

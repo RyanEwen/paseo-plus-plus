@@ -133,8 +133,6 @@ export const ptBR: TranslationResources = {
       before: "Antes da mudança de status",
       after: "Depois da mudança de status",
       imageLabel: "Exemplo de {{title}}",
-      positions:
-        "Posições finais antes e depois de uma mudança de estado. Estas imagens não mostram a duração da animação.",
       explorer: "Exemplo da lista de alterações e das diferenças da cópia de trabalho.",
       workspaceLimit:
         "Escolha uma quantidade inicial por grupo ou Mostrar tudo. Os grupos que você expandiu continuam expandidos.",
@@ -167,11 +165,11 @@ export const ptBR: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Abas de espaços no celular",
-        hint: "Mostrar abas com a mesma largura em telas compactas, com rolagem apenas quando necessário. Desative para usar o seletor de abas sem mudar a aba selecionada.",
+        hint: "Mostrar as abas com a largura natural em telas compactas, com rolagem quando não couberem. Desative para usar o seletor de abas sem mudar a aba selecionada.",
       },
       widerWorkspaceTabs: {
         label: "Abas do espaço de trabalho mais largas",
-        hint: "Permita até 50% mais largura para títulos longos. No celular, as abas do espaço de trabalho sempre dividem igualmente a largura disponível.",
+        hint: "Permita até 50% mais largura para títulos longos, inclusive no celular.",
       },
 
       descriptiveToolCalls: {

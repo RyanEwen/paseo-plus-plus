@@ -135,8 +135,6 @@ export const es: TranslationResources = {
       before: "Antes del cambio de estado",
       after: "Después del cambio de estado",
       imageLabel: "Ejemplo de {{title}}",
-      positions:
-        "Posiciones finales antes y después de un cambio de estado. Estas imágenes no muestran la duración de la animación.",
       explorer: "Ejemplo de la lista de cambios y las diferencias de la copia de trabajo.",
       workspaceLimit:
         "Elige una cantidad inicial por grupo o Mostrar todo. Los grupos que hayas expandido permanecen expandidos.",
@@ -168,11 +166,11 @@ export const es: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Pestañas de espacios en móvil",
-        hint: "Mostrar pestañas del mismo ancho en pantallas compactas, con desplazamiento solo cuando sea necesario. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
+        hint: "Mostrar las pestañas con su ancho natural en pantallas compactas, con desplazamiento cuando no quepan. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
       },
       widerWorkspaceTabs: {
         label: "Pestañas de espacio de trabajo más anchas",
-        hint: "Permite hasta un 50 % más de ancho para títulos largos. En el teléfono, las pestañas del espacio de trabajo siempre comparten por igual el ancho disponible.",
+        hint: "Permite hasta un 50 % más de ancho para títulos largos, también en el teléfono.",
       },
 
       descriptiveToolCalls: {
