@@ -18,7 +18,7 @@ This is an npm workspace monorepo:
 ## Docs
 
 Before selecting a base, integration target, or upstream synchronization path for this fork, read
-[fork branches and ownership](docs/worktree-development.md#fork-branches-and-ownership).
+[fork branches and upstream sync](docs/fork-branches.md).
 
 `docs/` is the source of truth for system-level and process-level knowledge. **"The docs", "check the docs", or "check the X docs" always mean this directory — not the web.** Look here before fetching anything online; the docs capture gotchas and conventions you cannot derive from the code or external sources.
 
@@ -74,7 +74,8 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [SECURITY.md](SECURITY.md)                                               | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [public-docs/hub/security.md](public-docs/hub/security.md)               | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
 | [docs/agent-documentation-review.md](docs/agent-documentation-review.md) | Codex lifecycle hooks for keeping fork descriptions and developer docs aligned                                                 |
-| [docs/worktree-development.md](docs/worktree-development.md)             | Fork branch layers (upstream fixes, fork base, features), owner lifecycle, upstream sync, environment qualification, review    |
+| [docs/fork-branches.md](docs/fork-branches.md)                           | Fork branch layers (upstream fixes, fork base, features), ownership, upstream sync from release tags                           |
+| [docs/worktree-development.md](docs/worktree-development.md)             | Worktree states, environment qualification, disk budget, check queue, review assembly                                          |
 | [docs/native-browser-feasibility.md](docs/native-browser-feasibility.md) | Native browser ownership, practical extension limits and qualification gates                                                   |
 | [docs/relay-endpoint-security.md](docs/relay-endpoint-security.md)       | Relay E2EE modes: Noise NK mapping, record framing, negotiation, the `requireProtectedSecurity` flag, close codes              |
 | [docs/terminal-rendering.md](docs/terminal-rendering.md)                 | Native terminal view: xterm owns the grid, cluster placement, emoji widths, mixed-direction limits, render regression          |
