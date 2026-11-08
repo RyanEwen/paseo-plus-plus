@@ -2170,9 +2170,13 @@ describe("workspace-layout-store actions", () => {
     expect(after.root.group.sizes[1]).toBeCloseTo(mainShare * 0.4);
     expect(after.root.group.sizes[2]).toBeCloseTo(CONTENT_SHARE * 0.3);
     expect(after.root.group.sizes[3]).toBeCloseTo(EXPLORER_SHARE);
-    expect(
-      workspaceLayoutStore.getState().splitSizesByWorkspace[workspaceKey][after.root.group.id],
-    ).toEqual(after.root.group.sizes);
+    // The overlay holds rendered children only, so the docked Explorer has no entry.
+    const saved =
+      workspaceLayoutStore.getState().splitSizesByWorkspace[workspaceKey][after.root.group.id];
+    expect(saved).toHaveLength(3);
+    expect(saved[0]).toBeCloseTo(0.7 * 0.6);
+    expect(saved[1]).toBeCloseTo(0.7 * 0.4);
+    expect(saved[2]).toBeCloseTo(0.3);
     expect(collectContentTabs(after.root).length).toBe(3);
   });
 

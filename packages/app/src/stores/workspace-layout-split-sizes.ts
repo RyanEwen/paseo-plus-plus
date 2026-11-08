@@ -8,10 +8,9 @@ import {
 /**
  * Committed divider weights per split group, keyed by group id (`splitSizesByWorkspace[workspace]`).
  *
- * An entry has one of two lengths. Structural edits (split, move) save every child of the
- * group, including a docked Explorer pane. Ordinary divider drags and presets commit the rendered
- * group, which omits the Explorer pane. Readers accept both: a full-length entry is used as is,
- * and a content-only entry is spread around the Explorer pane's own allocation.
+ * Each entry holds the weights of the group's rendered children, so a docked Explorer pane has no
+ * entry of its own. Layouts saved before this shape are converted once on load by
+ * `convertSavedSplitSizes`.
  */
 export type SplitSizeOverlay = Record<string, number[]>;
 
@@ -46,12 +45,11 @@ export function projectMainSplitTree(
 
   const saved = overlay?.[node.group.id];
   const renderedSaved = saved?.length === retained.length ? saved : undefined;
-  const fullSizes = saved?.length === node.group.children.length ? saved : node.group.sizes;
   const projectedSizes = retained.map(({ sourceIndex }, renderedIndex) => {
     if (renderedSaved) {
       return renderedSaved[renderedIndex];
     }
-    return fullSizes[sourceIndex];
+    return node.group.sizes[sourceIndex];
   });
   const total = projectedSizes.reduce((sum, size) => sum + size, 0);
   return {
@@ -87,17 +85,88 @@ export function withCurrentSplitSizes(
 }
 
 /** Bind each surviving group's overlay entry to its new child order after a structural edit. */
-export function collectSplitSizes(root: SplitNode): SplitSizeOverlay {
+export function collectSplitSizes(
+  root: SplitNode,
+  explorerPaneId: string | null,
+): SplitSizeOverlay {
   if (root.kind === "pane") {
     return {};
   }
+  const explorerIndex = findExplorerIndex(root.group, explorerPaneId);
+  const sizes =
+    explorerIndex >= 0 ? removeExplorerShare(root.group.sizes, explorerIndex) : root.group.sizes;
   return Object.assign(
-    { [root.group.id]: root.group.sizes },
-    ...root.group.children.map(collectSplitSizes),
+    { [root.group.id]: sizes },
+    ...root.group.children.map((child) => collectSplitSizes(child, explorerPaneId)),
   );
 }
 
-/** One group's weights after applying its overlay entry, in either accepted shape. */
+/**
+ * Convert overlay entries saved with an Explorer share into the rendered-children shape.
+ * Safe on every load: entries already in that shape, and groups no longer in the tree, are kept.
+ *
+ * @param saved Persisted overlays by workspace key.
+ * @param layouts Restored layouts by workspace key.
+ * @param explorerPaneIds Docked Explorer pane by workspace key.
+ */
+export function convertSavedSplitSizes(
+  saved: Record<string, SplitSizeOverlay>,
+  layouts: Record<string, WorkspaceLayout>,
+  explorerPaneIds: Record<string, string | null>,
+): Record<string, SplitSizeOverlay> {
+  const converted: Record<string, SplitSizeOverlay> = {};
+  for (const [workspaceKey, overlay] of Object.entries(saved)) {
+    const layout = layouts[workspaceKey];
+    converted[workspaceKey] = layout
+      ? convertOverlay(layout.root, overlay, explorerPaneIds[workspaceKey] ?? null)
+      : overlay;
+  }
+  return converted;
+}
+
+function convertOverlay(
+  node: SplitNode,
+  overlay: SplitSizeOverlay,
+  explorerPaneId: string | null,
+): SplitSizeOverlay {
+  if (node.kind === "pane") {
+    return overlay;
+  }
+  let result = overlay;
+  const entry = overlay[node.group.id];
+  const explorerIndex = findExplorerIndex(node.group, explorerPaneId);
+  if (entry?.length === node.group.children.length && explorerIndex >= 0) {
+    result = Object.assign({}, overlay, {
+      [node.group.id]: removeExplorerShare(entry, explorerIndex),
+    });
+  }
+  for (const child of node.group.children) {
+    result = convertOverlay(child, result, explorerPaneId);
+  }
+  return result;
+}
+
+/** Index of the docked Explorer pane among a group's direct children, or -1. */
+function findExplorerIndex(group: SplitGroup, explorerPaneId: string | null): number {
+  if (!explorerPaneId) {
+    return -1;
+  }
+  return group.children.findIndex(
+    (child) => child.kind === "pane" && child.pane.id === explorerPaneId,
+  );
+}
+
+/** Weights of the other children, rescaled to sum to 1. */
+function removeExplorerShare(sizes: number[], explorerIndex: number): number[] {
+  const content = sizes.filter((_size, index) => index !== explorerIndex);
+  const total = content.reduce((sum, size) => sum + size, 0);
+  if (total <= 0) {
+    return content;
+  }
+  return content.map((size) => size / total);
+}
+
+/** One group's weights after applying its overlay entry. */
 function resolveCommittedGroupSizes(
   group: SplitGroup,
   saved: number[] | undefined,
@@ -106,17 +175,11 @@ function resolveCommittedGroupSizes(
   if (!saved) {
     return group.sizes;
   }
-  if (saved.length === group.children.length) {
-    return clampNormalizedSizes(saved);
+  const explorerIndex = findExplorerIndex(group, explorerPaneId);
+  if (explorerIndex < 0) {
+    return saved.length === group.children.length ? clampNormalizedSizes(saved) : group.sizes;
   }
-  if (!explorerPaneId) {
-    return group.sizes;
-  }
-  const explorerIndex = group.children.findIndex(
-    (child) => child.kind === "pane" && child.pane.id === explorerPaneId,
-  );
-  const savedIsContentOnly = explorerIndex >= 0 && saved.length === group.children.length - 1;
-  if (!savedIsContentOnly) {
+  if (saved.length !== group.children.length - 1) {
     return group.sizes;
   }
   return projectContentSizesAroundExplorer(group.sizes, saved, explorerIndex);

@@ -4,7 +4,11 @@ import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
-import { collectSplitSizes, withCurrentSplitSizes } from "./workspace-layout-split-sizes";
+import {
+  collectSplitSizes,
+  convertSavedSplitSizes,
+  withCurrentSplitSizes,
+} from "./workspace-layout-split-sizes";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -1830,7 +1834,10 @@ export function createWorkspaceLayoutStore(
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             splitSizesByWorkspace: {
               ...state.splitSizesByWorkspace,
-              [normalizedWorkspaceKey]: collectSplitSizes(result.layout.root),
+              [normalizedWorkspaceKey]: collectSplitSizes(
+                result.layout.root,
+                explorerSidebarPaneId,
+              ),
             },
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
@@ -1876,7 +1883,10 @@ export function createWorkspaceLayoutStore(
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             splitSizesByWorkspace: {
               ...state.splitSizesByWorkspace,
-              [normalizedWorkspaceKey]: collectSplitSizes(result.layout.root),
+              [normalizedWorkspaceKey]: collectSplitSizes(
+                result.layout.root,
+                explorerSidebarPaneId,
+              ),
             },
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
@@ -1943,7 +1953,10 @@ export function createWorkspaceLayoutStore(
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
               splitSizesByWorkspace: {
                 ...state.splitSizesByWorkspace,
-                [normalizedWorkspaceKey]: collectSplitSizes(normalizedNextLayout.root),
+                [normalizedWorkspaceKey]: collectSplitSizes(
+                  normalizedNextLayout.root,
+                  explorerSidebarPaneId,
+                ),
               },
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
@@ -2366,7 +2379,11 @@ export function createWorkspaceLayoutStore(
                 new Set(agentIds),
               ]),
             ),
-            splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
+            splitSizesByWorkspace: convertSavedSplitSizes(
+              result.data.splitSizesByWorkspace ?? {},
+              layoutByWorkspace,
+              explorerSidebarPaneIdByWorkspace,
+            ),
             explorerSidebarWidthByWorkspace:
               result.data.explorerSidebarWidthByWorkspace ??
               convertLegacyExplorerSidebarRatios(
