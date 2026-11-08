@@ -1,4 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
@@ -86,14 +87,18 @@ interface SidebarWorkspaceGroupHeaderProps {
 }
 
 /**
- * Group name for the header's accessible name. When the heading shows a count, the count is
- * announced with the name so screen readers hear the same total the row displays.
+ * Group name for the header's accessible name. When the heading shows a count, the localised
+ * count is announced with the name so screen readers hear the same total the row displays.
  */
-function statusGroupSpokenLabel(label: string, workspaceCount: number | undefined): string {
+function statusGroupSpokenLabel(
+  t: TFunction,
+  label: string,
+  workspaceCount: number | undefined,
+): string {
   if (workspaceCount === undefined) {
     return label;
   }
-  return `${label} (${workspaceCount})`;
+  return t("statusGroups.workspaceCount", { label, count: workspaceCount });
 }
 
 /** Collapsible section header shared by status buckets and the empty-project section. */
@@ -152,7 +157,7 @@ export function SidebarWorkspaceGroupHeader({
     [collapsed, group.leading, group.label, group.key, isCompact, workspaceCount],
   );
   const accessibilityLabel = t("sidebar.statusGroupAccessibility", {
-    label: statusGroupSpokenLabel(group.label, workspaceCount),
+    label: statusGroupSpokenLabel(t, group.label, workspaceCount),
   });
 
   return (
