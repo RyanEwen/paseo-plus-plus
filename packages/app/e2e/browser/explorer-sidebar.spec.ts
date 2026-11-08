@@ -9,7 +9,7 @@ import {
   expectTabTitleFits,
 } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { seedAppSettings } from "../support/helpers/app-settings-seed";
+import { seedAppSettings } from "../support/helpers/app-settings";
 import {
   ensureExplorerSidebar,
   openFilesPanel,
