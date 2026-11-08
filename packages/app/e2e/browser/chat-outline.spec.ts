@@ -381,8 +381,9 @@ test("indexes a new agent's prompts only once the agent exists", async ({ page }
 /** Pinned bodies retain their full natural box. Hover its visible clip without
  * scrollIntoView moving the timeline and changing the arrow's owning row.
  */
-async function clickMessageNavigation(message: Locator, testID: string) {
-  const hover = await message.evaluate((node) => {
+/** Where to hover a pinned row, with whether that point currently belongs to it. */
+function readPinnedHoverPoint(message: Locator) {
+  return message.evaluate((node) => {
     const row = node.closest<HTMLElement>("[data-actual-prompt-row]");
     if (row?.dataset.promptPinned !== "true") return null;
     const bubble = node.querySelector('[data-testid="user-message-bubble"]')!;
@@ -405,6 +406,17 @@ async function clickMessageNavigation(message: Locator, testID: string) {
       id: row.dataset.historyRowId,
     };
   });
+}
+
+async function clickMessageNavigation(message: Locator, testID: string) {
+  // The pinned row can still be settling after the previous step, so wait for it to own the point.
+  await expect
+    .poll(async () => {
+      const point = await readPinnedHoverPoint(message);
+      return point === null || point.owned;
+    })
+    .toBe(true);
+  const hover = await readPinnedHoverPoint(message);
   if (hover) {
     expect(hover.width).toBeGreaterThan(0);
     expect(hover.height).toBeGreaterThan(0);

@@ -1,6 +1,11 @@
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect } from "../fixtures";
 
+/** A medium control is a 44 px tap target below the 600 px md breakpoint and 32 px above it. */
+function minimumDisclosureHeight(page: Page): number {
+  return page.viewportSize()!.width < 600 ? 44 : 32;
+}
+
 /** Compact previews omit counts; More retains the real attachment disclosure. */
 export async function expectNoCompactAttachmentCount(row: Locator) {
   await expect(row.getByTestId("user-message-attachments-summary")).toHaveCount(0);
@@ -41,7 +46,9 @@ export async function expectCompactStickyAttachments(
   expect(await measureCompactAttachmentAllocation(sticky, prompt)).toEqual(geometry);
   await expect(sticky).toHaveAttribute("data-prompt-pinned", "true");
   expect(geometry.disclosure!.bounds.width).toBeGreaterThan(0);
-  expect(geometry.disclosure!.bounds.height).toBeGreaterThanOrEqual(44);
+  expect(geometry.disclosure!.bounds.height).toBeGreaterThanOrEqual(
+    minimumDisclosureHeight(sticky.page()),
+  );
   expect(geometry.disclosure!.bounds.left).toBeGreaterThanOrEqual(geometry.viewport!.bounds.left);
   expect(geometry.disclosure!.bounds.right).toBeLessThanOrEqual(geometry.viewport!.bounds.right);
   if (!prompt) {
@@ -279,7 +286,7 @@ export async function expectActualSingleLineGeometry(row: Locator) {
   if (await disclosure.count()) {
     const size = await disclosure.boundingBox();
     expect(size!.width).toBeGreaterThanOrEqual(44);
-    expect(size!.height).toBeGreaterThanOrEqual(44);
+    expect(size!.height).toBeGreaterThanOrEqual(minimumDisclosureHeight(row.page()));
   }
   await expect(row.getByTestId("text-preview-measurement")).toHaveCount(0);
   const actions = row.getByTestId("user-message-trailing-row");
