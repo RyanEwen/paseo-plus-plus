@@ -361,7 +361,13 @@ function StatusGroupList({
     (row: DraggableRenderItemInfo<StatusListItem>) => {
       const { item } = row;
       if (item.kind === "header") {
-        return <SidebarWorkspaceGroupHeader group={item.group} collapsed={item.collapsed} />;
+        return (
+          <SidebarWorkspaceGroupHeader
+            group={item.group}
+            collapsed={item.collapsed}
+            workspaceCount={item.group.rows.length}
+          />
+        );
       }
       if (item.kind === "footer") {
         return <StatusGroupFooter item={item} onToggle={toggleExpanded} />;
