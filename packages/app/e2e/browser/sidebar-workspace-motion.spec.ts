@@ -101,6 +101,18 @@ function statusGroupRows(page: Page, bucket: string): Locator {
   return page.getByTestId(`sidebar-status-group-rows-${bucket}`);
 }
 
+/** A collapsed status group renders its header and none of its rows. */
+async function expectStatusGroupCollapsed(page: Page, bucket: string): Promise<void> {
+  await expect(statusGroupHeader(page, bucket)).toBeVisible({ timeout: 30_000 });
+  await expect(statusGroupRows(page, bucket)).toHaveCount(0);
+}
+
+/** An expanded status group renders its rows under its header. */
+async function expectStatusGroupExpanded(page: Page, bucket: string): Promise<void> {
+  await expect(statusGroupHeader(page, bucket)).toBeVisible();
+  await expect(statusGroupRows(page, bucket).first()).toBeVisible();
+}
+
 function statusGroupHeader(page: Page, bucket: string): Locator {
   return page.getByTestId(`sidebar-status-group-${bucket}`);
 }
@@ -446,7 +458,7 @@ test.describe("Sidebar workspace motion", () => {
       const header = statusGroupHeader(page, "attention");
       await expect(row).toBeVisible({ timeout: 30_000 });
       await header.click();
-      await expect(header).toHaveAttribute("aria-expanded", "false");
+      await expectStatusGroupCollapsed(page, "attention");
 
       // A move into the collapsed group keeps the dialog's draft and focus, and the group shut.
       const input = await openRenameWithDraft(page, subject, "Keep this hidden-row draft");
@@ -454,7 +466,7 @@ test.describe("Sidebar workspace motion", () => {
       await expect(row).toHaveCount(0);
       await expect(input).toHaveValue("Keep this hidden-row draft");
       await expect(input).toBeFocused();
-      await expect(header).toHaveAttribute("aria-expanded", "false");
+      await expectStatusGroupCollapsed(page, "attention");
       await cancelRename(page);
 
       // A focused row that moves into the collapsed group hands focus to that group's header.
@@ -464,12 +476,10 @@ test.describe("Sidebar workspace motion", () => {
       await subject.client.markWorkspaceUnread(subject.workspaceId);
       await expect(row).toHaveCount(0);
       await expect(header).toBeFocused();
-      await expect(header).toHaveAttribute("aria-expanded", "false");
-      await expect(statusGroupRows(page, "attention")).toHaveCount(0);
+      await expectStatusGroupCollapsed(page, "attention");
 
       await page.reload();
-      await expect(header).toHaveAttribute("aria-expanded", "false", { timeout: 30_000 });
-      await expect(statusGroupRows(page, "attention")).toHaveCount(0);
+      await expectStatusGroupCollapsed(page, "attention");
     } finally {
       await subject.cleanup();
       await other.cleanup();
@@ -492,7 +502,7 @@ test.describe("Sidebar workspace motion", () => {
       await page.getByTestId("sidebar-status-group-show-more-done").click();
       await expect(row).toBeVisible({ timeout: 30_000 });
       await header.click();
-      await expect(header).toHaveAttribute("aria-expanded", "false");
+      await expectStatusGroupCollapsed(page, "attention");
       await row.focus();
       await clipHeaderAboveScrollport(header);
       await expectHeaderClipped(header);
@@ -502,8 +512,8 @@ test.describe("Sidebar workspace motion", () => {
       await subject.client.markWorkspaceUnread(subject.workspaceId);
       await expect(row).toHaveCount(0);
       await expect(header).not.toBeFocused();
-      await expect(header).toHaveAttribute("aria-expanded", "false");
-      await expect(statusGroupHeader(page, "done")).toHaveAttribute("aria-expanded", "true");
+      await expectStatusGroupCollapsed(page, "attention");
+      await expectStatusGroupExpanded(page, "done");
     } finally {
       await subject.cleanup();
       await other.cleanup();
@@ -531,7 +541,7 @@ test.describe("Sidebar workspace motion", () => {
       await subject.client.clearWorkspaceAttention(subject.workspaceId);
       await expect(row).toHaveCount(0);
       await expect(header).not.toBeFocused();
-      await expect(header).toHaveAttribute("aria-expanded", "true");
+      await expectStatusGroupExpanded(page, "done");
       await expect(
         statusGroupRows(page, "done").locator('[data-testid^="sidebar-workspace-row-"]'),
       ).toHaveCount(20);
@@ -598,6 +608,7 @@ test.describe("Sidebar workspace motion", () => {
         page,
         rowTestId: smallHeaderTestId,
         viewportTestId: "sidebar-project-workspace-list-scroll",
+        afterPaint: true,
       });
 
       await smallHeader.click();
