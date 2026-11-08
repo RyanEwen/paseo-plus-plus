@@ -74,22 +74,59 @@ describe("fork preview updates", () => {
     expect(() => selectForkPreview([preview])).toThrow("Unexpected fork release asset URL");
   });
   test("accepts matching bytes and rejects tampered or duplicate checksums", () => {
-    const bytes = Buffer.from("daemon");
-    const line = `${createHash("sha256").update(bytes).digest("hex")}  daemon.tgz`;
+    const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+    const digest = sha256("daemon");
+    const line = `${digest}  daemon.tgz`;
     expect(() =>
-      verifyForkChecksum({ checksums: line, filename: "daemon.tgz", bytes }),
+      verifyForkChecksum({ checksums: line, filename: "daemon.tgz", digest }),
     ).not.toThrow();
     expect(() =>
-      verifyForkChecksum({
-        checksums: line,
-        filename: "daemon.tgz",
-        bytes: Buffer.from("tampered"),
-      }),
+      verifyForkChecksum({ checksums: line, filename: "daemon.tgz", digest: sha256("tampered") }),
     ).toThrow("checksum mismatch");
     expect(() =>
-      verifyForkChecksum({ checksums: `${line}\n${line}`, filename: "daemon.tgz", bytes }),
+      verifyForkChecksum({ checksums: `${line}\n${line}`, filename: "daemon.tgz", digest }),
     ).toThrow("checksum mismatch");
   });
+});
+
+/** A release page full of previews, so only the page cap can end the listing. */
+function fullReleasePage(page: number) {
+  return Array.from({ length: 100 }, (_unused, index) => release((page - 1) * 100 + index + 1));
+}
+
+test("stops listing releases at GitHub's 1000 release limit", async () => {
+  const pages: number[] = [];
+  const preview = await resolveForkPreview({
+    async request(url) {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page > 10) throw new Error(`Requested release page ${page} past the cap`);
+      pages.push(page);
+      return Response.json(fullReleasePage(page));
+    },
+  });
+  expect(pages).toHaveLength(10);
+  expect(preview.version).toBe("0.11.1-preview.1000");
+});
+
+test("streams the package to disk instead of buffering the whole response", async () => {
+  const preview = release(12);
+  const bytes = Buffer.from("streamed-daemon");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const refuseBuffering = async (): Promise<ArrayBuffer> => {
+    throw new Error("Package response was buffered");
+  };
+  const download = await downloadForkPreview({
+    async request(url) {
+      if (url.includes("api.github.com")) return Response.json([preview]);
+      if (url.endsWith("SHA256SUMS")) return new Response(`${digest}  ${preview.assets[0].name}\n`);
+      return Object.assign(new Response(bytes), { arrayBuffer: refuseBuffering });
+    },
+  });
+  try {
+    expect(await readFile(download.file)).toEqual(bytes);
+  } finally {
+    await download.cleanup();
+  }
 });
 
 test("downloads the selected fork bytes, verifies them, and removes the temporary package", async () => {
