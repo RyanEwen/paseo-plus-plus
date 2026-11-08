@@ -6,8 +6,8 @@ import { resolveProjectLeadingStatus } from "./project-leading-status";
 export interface ProjectHeaderActivity {
   /** The status the leading glyph shows. */
   leadingStatus: SidebarStateBucket | null;
-  /** Whether the leading slot leaves its semantics to the chip and the title. */
-  leadingHiddenFromAccessibility: boolean;
+  /** Whether the glyph's status badge leaves its announcement to the chip. */
+  leadingStatusHiddenFromAccessibility: boolean;
   /** The status the chip shows, or null when the chip is off or the status is unknown. */
   chipBucket: SidebarStateBucket | null;
 }
@@ -30,7 +30,7 @@ export function useProjectHeaderActivity({
   const chipsEnabled = useAppSettings().settings.paseoPlusPlus.sidebarActivityChips;
   return {
     leadingStatus: resolveProjectLeadingStatus({ bucket, chipsEnabled, collapsed }),
-    leadingHiddenFromAccessibility: chipsEnabled,
+    leadingStatusHiddenFromAccessibility: chipsEnabled,
     chipBucket: chipsEnabled ? bucket : null,
   };
 }

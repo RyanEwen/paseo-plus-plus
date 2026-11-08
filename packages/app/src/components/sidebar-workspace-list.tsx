@@ -1013,7 +1013,7 @@ function ProjectHeaderRow({
           chevron={chevron}
           showChevron={isHovered && chevron !== null}
           isArchiving={isArchiving}
-          hiddenFromAccessibility={headerActivity.leadingHiddenFromAccessibility}
+          statusHiddenFromAccessibility={headerActivity.leadingStatusHiddenFromAccessibility}
         />
 
         <View style={styles.projectTitleGroup}>
