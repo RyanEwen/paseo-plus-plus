@@ -93,11 +93,8 @@ interface WebMessageNodes {
 /** Ordinary previews allocate their committed clip, toggle and caller chrome.
  * The hidden full Text remains searchable but does not enlarge this allocation.
  */
-function readOrdinaryPreviewMeasurement(
-  nodes: WebMessageNodes,
-  binding: object,
-  width: number,
-): WebMessageMeasurement | null {
+/** The mounted measurement nodes, or null until every one exists at a usable width. */
+function readMeasurementNodes(nodes: WebMessageNodes, width: number) {
   const body = nodes.body.current;
   const trailing = nodes.trailing.current;
   const bubble = nodes.frames.get("bubble");
@@ -105,25 +102,48 @@ function readOrdinaryPreviewMeasurement(
   const text = nodes.frames.get("text");
   const controls = nodes.frames.get("controls");
   if (!body || !trailing || !bubble || !content || !text || !controls || !(width > 0)) return null;
-  const ink = textGeometry(content.querySelector<HTMLElement>('[data-testid="user-message-text"]'));
-  const bubbleStyle = getComputedStyle(bubble);
+  return { body, trailing, bubble, content, textFrame: text, controls };
+}
+
+function measuredText(content: HTMLElement) {
+  return content.querySelector<HTMLElement>('[data-testid="user-message-text"]');
+}
+
+function bubbleCorners(style: CSSStyleDeclaration): string {
+  return `${style.borderTopLeftRadius} ${style.borderTopRightRadius} ${style.borderBottomRightRadius} ${style.borderBottomLeftRadius}`;
+}
+
+/** The summary size, which a compact preview may not have mounted. */
+function summarySize(nodes: WebMessageNodes) {
+  const bounds = nodes.summary.current?.getBoundingClientRect();
+  return { summaryWidth: bounds?.width ?? 0, summaryHeight: bounds?.height ?? 0 };
+}
+
+function readOrdinaryPreviewMeasurement(
+  nodes: WebMessageNodes,
+  binding: object,
+  width: number,
+): WebMessageMeasurement | null {
+  const found = readMeasurementNodes(nodes, width);
+  if (!found) return null;
+  const { body, trailing, bubble, content, textFrame, controls } = found;
+  const ink = textGeometry(measuredText(content));
   const trailingHeight = trailing.getBoundingClientRect().height;
   return {
     binding,
     font: ink.font,
     textHeight: ink.height,
-    summaryWidth: nodes.summary.current?.getBoundingClientRect().width ?? 0,
-    summaryHeight: nodes.summary.current?.getBoundingClientRect().height ?? 0,
+    ...summarySize(nodes),
     visualTrailingHeight: trailingHeight,
     compactTrailingHeight: trailingHeight,
-    corners: `${bubbleStyle.borderTopLeftRadius} ${bubbleStyle.borderTopRightRadius} ${bubbleStyle.borderBottomRightRadius} ${bubbleStyle.borderBottomLeftRadius}`,
+    corners: bubbleCorners(getComputedStyle(bubble)),
     metrics: {
       width,
       bodyHeight: body.getBoundingClientRect().height,
       trailingHeight,
       bubble: frame(bubble, body),
       content: frame(content, bubble),
-      text: frame(text, content),
+      text: frame(textFrame, content),
       prefixHeight: ink.prefixHeight,
       controls: frame(controls, nodes.rail.current ?? body),
     },
@@ -136,15 +156,10 @@ function readNaturalMeasurement(
   width: number,
   compactTrailingPadding: number,
 ): WebMessageMeasurement | null {
-  const body = nodes.body.current;
-  const trailing = nodes.trailing.current;
-  const bubble = nodes.frames.get("bubble");
-  const content = nodes.frames.get("content");
-  const textFrame = nodes.frames.get("text");
-  const controls = nodes.frames.get("controls");
-  if (!body || !trailing || !bubble || !content || !textFrame || !controls || !(width > 0))
-    return null;
-  const text = content.querySelector<HTMLElement>('[data-testid="user-message-text"]');
+  const found = readMeasurementNodes(nodes, width);
+  if (!found) return null;
+  const { body, trailing, bubble, content, textFrame, controls } = found;
+  const text = measuredText(content);
   const ink = textGeometry(text);
   const trailingHeight = trailingHeights(trailing, compactTrailingPadding);
   const naturalText = frame(textFrame, content);
@@ -171,11 +186,10 @@ function readNaturalMeasurement(
     binding,
     font: ink.font,
     textHeight: ink.height,
-    summaryWidth: nodes.summary.current?.getBoundingClientRect().width ?? 0,
-    summaryHeight: nodes.summary.current?.getBoundingClientRect().height ?? 0,
+    ...summarySize(nodes),
     visualTrailingHeight: trailing.getBoundingClientRect().height,
     compactTrailingHeight: trailingHeight.compact,
-    corners: `${bubbleStyle.borderTopLeftRadius} ${bubbleStyle.borderTopRightRadius} ${bubbleStyle.borderBottomRightRadius} ${bubbleStyle.borderBottomLeftRadius}`,
+    corners: bubbleCorners(bubbleStyle),
     metrics: {
       width,
       bodyHeight: naturalHeight,
