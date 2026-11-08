@@ -100,8 +100,8 @@ async function requireBox(locator: Locator, name: string) {
 }
 
 /**
- * Show the grouping under test and return its scroll owner. Status groups cap Done rows behind
- * Show more, so status mode expands the group to give the list enough rows to overflow.
+ * Show the grouping under test and return its scroll owner. The seeded count stays under the
+ * default workspace limit of 20, so status mode lists every row with no Show more to expand.
  */
 async function openGroupingList(page: Page, grouping: "project" | "status"): Promise<Locator> {
   if (grouping === "project") {
@@ -109,9 +109,6 @@ async function openGroupingList(page: Page, grouping: "project" | "status"): Pro
   }
 
   await selectSidebarStatusGrouping(page);
-  const showMore = page.locator('[data-testid^="sidebar-status-group-show-more-"]').first();
-  await expect(showMore).toBeVisible();
-  await showMore.click();
   return page.getByTestId("sidebar-status-list-scroll");
 }
 
