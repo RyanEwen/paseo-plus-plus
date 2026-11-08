@@ -86,11 +86,12 @@ function restingStyle(testID: string): Record<string, unknown> {
   return JSON.parse(element?.getAttribute("data-style") ?? "{}");
 }
 
+const STUB_ACTIONS = { enabled: true, expandAll: vi.fn(), collapseAll: vi.fn() };
+
 describe("sidebar bulk collapse compact menu items", () => {
   it("render from the actions they are given, without the sidebar model inside the sheet", async () => {
     layout.compact = true;
-    const actions = { enabled: true, expandAll: vi.fn(), collapseAll: vi.fn() };
-    await act(() => root?.render(<SidebarBulkCollapseMenuItems actions={actions} />));
+    await act(() => root?.render(<SidebarBulkCollapseMenuItems actions={STUB_ACTIONS} />));
     expect(container!.querySelector('[data-testid="sidebar-expand-all"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="sidebar-collapse-all"]')).not.toBeNull();
   });
