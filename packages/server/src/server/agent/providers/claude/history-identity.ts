@@ -15,6 +15,9 @@ import { checkClaudeRewindHandle } from "./history.js";
 /** Messages a query may emit before its root init acknowledgment names the native session. */
 const MAX_PENDING_IDENTITY_MESSAGES = 100;
 
+const CLAUDE_HISTORY_AUDIT_TRUNCATED_WARNING =
+  "This Claude profile has more than 10,000 history entries, so Paseo checked only the first 10,000 for links at launch.";
+
 /** The session state the identity collaborator reads, and the one adoption it performs. */
 export interface ClaudeHistoryIdentityHost {
   isClosed(): boolean;
@@ -49,6 +52,7 @@ export class ClaudeHistoryIdentity {
   private freshRewindQuery: Query | null = null;
   private initialHistoryQuery: Query | null = null;
   private pendingMessages: SDKMessage[] = [];
+  private auditWarningPending: boolean;
 
   constructor(
     private readonly host: ClaudeHistoryIdentityHost,
@@ -56,6 +60,8 @@ export class ClaudeHistoryIdentity {
       storage?: ProviderHistoryStorage;
       freshRewind?: ClaudeFreshRewindContext;
       initialHistory?: ClaudeInitialHistoryContext;
+      /** The launch audit stopped at its entry bound. */
+      auditTruncated?: boolean;
     },
   ) {
     if (input.storage?.kind === "configured-home") {
@@ -65,6 +71,14 @@ export class ClaudeHistoryIdentity {
     }
     this.freshRewind = input.freshRewind;
     this.initialHistory = input.initialHistory;
+    this.auditWarningPending = input.auditTruncated === true;
+  }
+
+  /** The launch audit's warning, the first time it is asked for. */
+  takeAuditWarning(): string | null {
+    if (!this.auditWarningPending) return null;
+    this.auditWarningPending = false;
+    return CLAUDE_HISTORY_AUDIT_TRUNCATED_WARNING;
   }
 
   /** A first or rewound native ID is still pending, so query output waits for its init. */
@@ -198,7 +212,7 @@ export class ClaudeHistoryIdentity {
     commit: () => Promise<void>;
   }): Promise<void> {
     try {
-      checkClaudeRewindHandle(input.storage, this.host.harnessEnvironment(), input.file);
+      await checkClaudeRewindHandle(input.storage, this.host.harnessEnvironment(), input.file);
       await input.commit();
     } catch (error) {
       if (error instanceof HistoryIdentityCommittedError) {
