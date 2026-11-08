@@ -741,7 +741,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
           natural: hasNaturalRowChanges(entries, contentRef.current, measuredRowHeights.current),
         });
       }),
-    [],
+    [onRowGeometryChange],
   );
   const observeActualRowBody = useCallback(
     (body: HTMLDivElement | null) => {
