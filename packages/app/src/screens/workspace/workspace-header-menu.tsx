@@ -41,7 +41,10 @@ import {
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
 import { usePluginWorkspaceMenu } from "@/plugins";
-import { CompactPluginPanelMenuItems } from "./compact-plugin-panel-menu-items";
+import {
+  CompactPluginPanelMenuItems,
+  useCompactPluginPanelItems,
+} from "./compact-plugin-panel-menu-items";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -262,6 +265,7 @@ export function WorkspaceHeaderMenuMobile({
   }, [normalizedServerId, router]);
   const scriptsMenu = useWorkspaceScriptsMenuPages(scripts);
   const pluginMenu = usePluginWorkspaceMenu(normalizedServerId, normalizedWorkspaceId);
+  const pluginPanelItems = useCompactPluginPanelItems(normalizedServerId);
   const pages = useMemo(
     () => [...scriptsMenu.pages, ...pluginMenu.pages],
     [scriptsMenu.pages, pluginMenu.pages],
@@ -313,7 +317,7 @@ export function WorkspaceHeaderMenuMobile({
             {t("workspace.header.actions.newBrowser")}
           </DropdownMenuItem>
         ) : null}
-        <CompactPluginPanelMenuItems serverId={normalizedServerId} />
+        <CompactPluginPanelMenuItems items={pluginPanelItems} />
         <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
