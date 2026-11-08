@@ -3,7 +3,7 @@ import {
   captureVisibleActualPrompt,
   expectMatchingPromptInk,
   expectActualTextIdentity,
-  expectSingleLineStickyGeometry,
+  expectActualSingleLineGeometry,
   expectCompactStickyAttachments,
   expectNoCompactAttachmentCount,
 } from "../support/helpers/sticky-preview-geometry";
@@ -395,7 +395,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
     await scrollTimelinePastPrompt(page, prompt);
     await expectNoCompactAttachmentCount(attachmentRow);
     await expectCompactStickyAttachments(attachmentRow, prompt, testInfo);
-    const attachmentTextGeometry = await expectSingleLineStickyGeometry(attachmentRow);
+    const attachmentTextGeometry = await expectActualSingleLineGeometry(attachmentRow);
     await attachmentRow.getByRole("button", { name: "Expand user message", exact: true }).click();
     await expect(attachmentRow.getByTestId("user-message")).toContainText(prompt);
     await expectActualTextIdentity(original, textIdentity!, prompt);
@@ -405,7 +405,7 @@ test("sticky user message preserves uploaded image and file attachments", async 
     ).toBeVisible();
     await attachmentRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
     await expectNoCompactAttachmentCount(attachmentRow);
-    expect((await expectSingleLineStickyGeometry(attachmentRow)).height).toBeCloseTo(
+    expect((await expectActualSingleLineGeometry(attachmentRow)).height).toBeCloseTo(
       attachmentTextGeometry.height,
       0,
     );

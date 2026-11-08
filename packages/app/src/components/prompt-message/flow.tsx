@@ -194,6 +194,14 @@ export function useNaturalMessageMeasurements(
   props: Pick<UserMessageFlowProps, "revision" | "message" | "bounded">,
 ) {
   const { fontScale } = useWindowDimensions();
+  return useNaturalMessageMeasurementsAtScale(props, fontScale);
+}
+
+/** The natural measurement owner at an explicit device font scale. */
+export function useNaturalMessageMeasurementsAtScale(
+  props: Pick<UserMessageFlowProps, "revision" | "message" | "bounded">,
+  fontScale: number,
+) {
   const [width, setWidth] = useState(0);
   const [fontRevision, setFontRevision] = useState(0);
   const invalidateMeasurements = useCallback(() => setFontRevision((revision) => revision + 1), []);

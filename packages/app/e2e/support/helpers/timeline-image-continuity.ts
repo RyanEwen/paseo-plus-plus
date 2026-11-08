@@ -45,11 +45,11 @@ export async function expectImageCompletionContinuity(
       const timeline = page.getByTestId("agent-chat-scroll");
       const image = page.getByRole("button", { name: "Controlled landscape" }).first();
       await timeline.hover();
-      for (let step = 0; step < 30 && !(await image.count()); step += 1) {
+      // Each attempt scrolls one step, so the retry is what walks up to the image.
+      await expect(async () => {
         await page.mouse.wheel(0, -300);
-        await page.waitForTimeout(50);
-      }
-      await expect(image).toBeAttached();
+        await expect(image).toBeAttached({ timeout: 50 });
+      }).toPass({ intervals: [0], timeout: 5_000 });
       const code = page
         .locator("[data-history-row-id]")
         .filter({ hasText: "const continuity_boundary" })

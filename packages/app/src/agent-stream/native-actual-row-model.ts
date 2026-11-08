@@ -108,15 +108,13 @@ export interface NativeViewportLifetime {
   release(viewport: object): boolean;
   isCurrent(current: NativeViewportLifetime | null, held: object | null): boolean;
   /** Inactive or detached observations remain retained, but cannot be consumed. */
-  readMeasurements(
-    input: NativeViewportMeasurementRead,
-  ): ReturnType<typeof createNativeViewportMetrics>;
+  readMeasurements(input: NativeViewportMeasurementRead): NativeViewportMetrics;
 }
 
 interface NativeViewportMeasurementRead {
   current: NativeViewportLifetime | null;
   held: object | null;
-  measurements: ReturnType<typeof createNativeViewportMetrics>;
+  measurements: NativeViewportMetrics;
 }
 
 export interface NativeViewportAttachment<Viewport extends object> {
@@ -151,15 +149,25 @@ export interface NativeViewportRefOwner<Viewport extends object> extends NativeV
 }
 
 /** A new native view starts with no retained layout, content or bottom offset. */
-export function createNativeViewportMetrics() {
+export interface NativeViewportMetrics {
+  containerKey: string;
+  contentHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  offsetY: number;
+  viewportMeasuredForKey: string | null;
+  contentMeasuredForKey: string | null;
+}
+
+export function createNativeViewportMetrics(): NativeViewportMetrics {
   return {
     containerKey: "native-virtualized",
     contentHeight: 0,
     viewportWidth: 0,
     viewportHeight: 0,
     offsetY: 0,
-    viewportMeasuredForKey: null as string | null,
-    contentMeasuredForKey: null as string | null,
+    viewportMeasuredForKey: null,
+    contentMeasuredForKey: null,
   };
 }
 
