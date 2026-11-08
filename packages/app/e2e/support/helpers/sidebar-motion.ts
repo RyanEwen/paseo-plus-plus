@@ -32,7 +32,7 @@ type MotionWindow = Window & { __sidebarMotionProbe?: MotionProbe };
  * The sidebar view is written in the store's current persisted shape, so the app starts in the
  * requested grouping without taking the legacy migration path.
  *
- * @param workspaceSortMode the Status profile's workspace sort.
+ * @param workspaceSortMode the workspace sort of the seeded grouping's profile.
  */
 export async function seedSidebarMotionPreferences({
   page,
@@ -46,7 +46,7 @@ export async function seedSidebarMotionPreferences({
   workspaceSortMode?: SidebarModePreferences["workspaceSortMode"];
 }) {
   const modeProfiles = defaultSidebarModeProfiles();
-  modeProfiles.status.workspaceSortMode = workspaceSortMode;
+  modeProfiles[groupMode].workspaceSortMode = workspaceSortMode;
   await page.addInitScript(
     ({ motionEnabled, sidebarView }) => {
       if (!localStorage.getItem("@paseo:app-settings")) {
@@ -76,68 +76,83 @@ export async function seedSidebarMotionPreferences({
  * @param rowTestId the element to follow (a workspace row or a project header).
  * @param freeze pause the first running transition once, for pixel evidence of a middle frame.
  * @param viewportTestId also record this scroll viewport's bounds and scroll offset per frame.
+ * @param afterPaint sample after each paint instead of inside the frame callback. Another frame
+ *   callback may still scroll this frame, so a read inside it can see geometry never painted.
  */
 export async function startSidebarMotionProbe({
   page,
   rowTestId,
   freeze = false,
   viewportTestId,
+  afterPaint = false,
 }: {
   page: Page;
   rowTestId: string;
   freeze?: boolean;
   viewportTestId?: string;
+  afterPaint?: boolean;
 }) {
-  const options = { pauseForCapture: freeze, viewportTestId: viewportTestId ?? null };
+  const options = { pauseForCapture: freeze, viewportTestId: viewportTestId ?? null, afterPaint };
   await page
     .getByTestId(rowTestId)
-    .evaluate((row, { pauseForCapture, viewportTestId: viewportId }) => {
-      const win = window as MotionWindow;
-      const testId = row.getAttribute("data-testid");
-      const probe: MotionProbe = { frames: [], paused: false, animation: null, stop: false };
-      win.__sidebarMotionProbe = probe;
-      const start = performance.now();
-      const viewport = viewportId ? document.querySelector(`[data-testid="${viewportId}"]`) : null;
-      function readViewport() {
-        if (!viewport) return undefined;
-        const bounds = viewport.getBoundingClientRect();
-        return { top: bounds.top, bottom: bounds.bottom, scrollTop: viewport.scrollTop };
-      }
-      function capture() {
-        if (probe.stop) return;
-        const wrapper = row.closest("[data-position-transition]");
-        const animation =
-          wrapper?.getAnimations().find((candidate) => candidate.playState === "running") ?? null;
-        const timing = animation?.effect?.getTiming();
-        const duration = typeof timing?.duration === "number" ? timing.duration : null;
-        if (
-          pauseForCapture &&
-          !probe.paused &&
-          animation &&
-          typeof animation.currentTime === "number" &&
-          animation.currentTime >= 25
-        ) {
-          animation.pause();
-          probe.animation = animation;
-          probe.paused = true;
+    .evaluate(
+      (row, { pauseForCapture, viewportTestId: viewportId, afterPaint: sampleAfterPaint }) => {
+        const win = window as MotionWindow;
+        const testId = row.getAttribute("data-testid");
+        const probe: MotionProbe = { frames: [], paused: false, animation: null, stop: false };
+        win.__sidebarMotionProbe = probe;
+        const start = performance.now();
+        const viewport = viewportId
+          ? document.querySelector(`[data-testid="${viewportId}"]`)
+          : null;
+        function readViewport() {
+          if (!viewport) return undefined;
+          const bounds = viewport.getBoundingClientRect();
+          return { top: bounds.top, bottom: bounds.bottom, scrollTop: viewport.scrollTop };
         }
-        probe.frames.push({
-          at: performance.now() - start,
-          top: row.getBoundingClientRect().top,
-          bottom: row.getBoundingClientRect().bottom,
-          connected: row.isConnected,
-          sameNode: document.querySelector(`[data-testid="${testId}"]`) === row,
-          duration,
-          group:
-            row
-              .closest('[data-testid^="sidebar-status-group-rows-"]')
-              ?.getAttribute("data-testid") ?? null,
-          viewport: readViewport(),
-        });
-        requestAnimationFrame(capture);
-      }
-      requestAnimationFrame(capture);
-    }, options);
+        function capture() {
+          if (probe.stop) return;
+          const wrapper = row.closest("[data-position-transition]");
+          const animation =
+            wrapper?.getAnimations().find((candidate) => candidate.playState === "running") ?? null;
+          const timing = animation?.effect?.getTiming();
+          const duration = typeof timing?.duration === "number" ? timing.duration : null;
+          if (
+            pauseForCapture &&
+            !probe.paused &&
+            animation &&
+            typeof animation.currentTime === "number" &&
+            animation.currentTime >= 25
+          ) {
+            animation.pause();
+            probe.animation = animation;
+            probe.paused = true;
+          }
+          probe.frames.push({
+            at: performance.now() - start,
+            top: row.getBoundingClientRect().top,
+            bottom: row.getBoundingClientRect().bottom,
+            connected: row.isConnected,
+            sameNode: document.querySelector(`[data-testid="${testId}"]`) === row,
+            duration,
+            group:
+              row
+                .closest('[data-testid^="sidebar-status-group-rows-"]')
+                ?.getAttribute("data-testid") ?? null,
+            viewport: readViewport(),
+          });
+          scheduleCapture();
+        }
+        function scheduleCapture() {
+          requestAnimationFrame(() => {
+            if (sampleAfterPaint) setTimeout(capture, 0);
+            else capture();
+          });
+        }
+        scheduleCapture();
+      },
+      options,
+    );
 }
 
 /** Resume the genuine paused transition after capturing its intermediate painted state. */
