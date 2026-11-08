@@ -6,7 +6,9 @@ import { saveImportedSshHost, type SshKeyImport } from "./ssh-key-import-model";
 type ProbeSshHost = HostMutations["probeAndUpsertRemoteSshConnection"];
 export type SavedSshHost = Awaited<ReturnType<ProbeSshHost>>;
 type FormError =
-  | { kind: "targetRequired" | "invalidTarget" | "keyRequired" | "unableToSave" }
+  | {
+      kind: "targetRequired" | "invalidTarget" | "targetNeedsUser" | "keyRequired" | "unableToSave";
+    }
   | { kind: "connectionFailed" | "importFailed"; detail: string };
 
 type SshTarget = ReturnType<typeof parseSshTransportUri>;
@@ -88,6 +90,11 @@ export function openRemoteSshForm(snapshot: RemoteSshFormSnapshot): RemoteSshFor
       parsed = parseSshTransportUri(trimmedTarget);
     } catch {
       publish({ error: { kind: "invalidTarget" } });
+      return null;
+    }
+    // Android has no SSH config to supply a username. Desktop's OpenSSH may have one.
+    if (snapshot.keyImport && !parsed.host.includes("@")) {
+      publish({ error: { kind: "targetNeedsUser" } });
       return null;
     }
     if (snapshot.keyImport && !privateKey) {

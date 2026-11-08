@@ -94,6 +94,27 @@ describe("openRemoteSshForm", () => {
       expect(model.getState().error).toEqual({ kind: "invalidTarget" });
     });
 
+    it("rejects a target without a username on Android before contacting the server", async () => {
+      const { model, keyImport } = openAndroidForm();
+      model.setTarget("ssh://example.com");
+      await model.importKey();
+
+      await model.submit();
+
+      expect(model.getState().error).toEqual({ kind: "targetNeedsUser" });
+      expect(keyImport.calls.inspect).toHaveLength(0);
+    });
+
+    it("leaves the username to OpenSSH on desktop", async () => {
+      const probe = createTestProbe();
+      const model = openRemoteSshForm({ keyImport: null, probeHost: probe.probeHost });
+      model.setTarget("ssh://example.com");
+
+      await expect(model.submit()).resolves.toBe(SAVED_HOST);
+
+      expect(probe.inputs[0]).toMatchObject({ host: "example.com" });
+    });
+
     it("requires an imported key on Android", async () => {
       const { model, keyImport } = openAndroidForm();
       model.setTarget("ssh://deploy@example.com");

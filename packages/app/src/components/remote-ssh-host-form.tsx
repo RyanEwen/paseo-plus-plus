@@ -90,6 +90,9 @@ function OpenRemoteSshHostForm({
       case "invalidTarget":
         errorMessage = t("pairing.remoteSsh.errors.invalidTarget");
         break;
+      case "targetNeedsUser":
+        errorMessage = t("sshErrors.targetNeedsUser");
+        break;
       case "keyRequired":
         errorMessage = t("pairing.remoteSsh.keyImport.required");
         break;
