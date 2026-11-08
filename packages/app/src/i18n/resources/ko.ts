@@ -163,11 +163,11 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 같은 너비의 탭을 표시하고 필요한 경우에만 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 탭을 원래 너비로 표시하고 공간이 부족하면 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
       },
       widerWorkspaceTabs: {
         label: "더 넓은 작업 공간 탭",
-        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰의 작업 공간 탭은 항상 사용 가능한 너비를 균등하게 나눕니다.",
+        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰에도 적용됩니다.",
       },
 
       descriptiveToolCalls: {
