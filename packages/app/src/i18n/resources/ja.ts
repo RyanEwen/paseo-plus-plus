@@ -69,8 +69,6 @@ export const ja: TranslationResources = {
       before: "状態変更前",
       after: "状態変更後",
       imageLabel: "{{title}} の例",
-      positions:
-        "状態変更前後の確定した位置です。静止画像ではアニメーションの時間は示していません。",
       explorer: "変更一覧と作業コピーの差分の例です。",
       workspaceLimit:
         "各グループの初期表示数を選ぶか、すべて表示します。展開済みのグループは展開されたままです。",

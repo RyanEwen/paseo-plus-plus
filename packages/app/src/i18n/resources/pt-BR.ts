@@ -71,8 +71,6 @@ export const ptBR: TranslationResources = {
       before: "Antes da mudança de status",
       after: "Depois da mudança de status",
       imageLabel: "Exemplo de {{title}}",
-      positions:
-        "Posições finais antes e depois de uma mudança de estado. Estas imagens não mostram a duração da animação.",
       explorer: "Exemplo da lista de alterações e das diferenças da cópia de trabalho.",
       workspaceLimit:
         "Escolha uma quantidade inicial por grupo ou Mostrar tudo. Os grupos que você expandiu continuam expandidos.",

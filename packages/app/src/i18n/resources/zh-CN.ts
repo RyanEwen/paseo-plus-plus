@@ -66,7 +66,6 @@ export const zhCN: TranslationResources = {
       before: "状态更改前",
       after: "状态更改后",
       imageLabel: "{{title}} 示例",
-      positions: "状态更改前后的最终位置。这些静态图片不展示动画时长。",
       explorer: "更改列表和工作副本差异的示例。",
       workspaceLimit: "选择每组的初始显示数量或显示全部。已展开的组会保持展开。",
     },
