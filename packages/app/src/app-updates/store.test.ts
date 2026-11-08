@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   VALID_SHA256,
   buildAndroidUpdate,
@@ -159,6 +160,27 @@ describe("Android update operation", () => {
     await updater.getState().install();
     expect(updater.getState().status).toBe("idle");
     expect(releases.finds).toBe(0);
+  });
+});
+
+describe("Android native update failures", () => {
+  beforeAll(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("shows translated copy for a coded native rejection", async () => {
+    const { updater, native } = createFakeAndroidUpdater();
+    await updater.getState().check(manual);
+    native.downloadFailures = [
+      Object.assign(new Error("Call to function has been rejected."), {
+        code: "ERR_UPDATE_CHECKSUM_MISMATCH",
+      }),
+    ];
+    await updater.getState().install();
+    expect(updater.getState()).toMatchObject({
+      status: "error",
+      error: "Update checksum mismatch. Try downloading again.",
+    });
   });
 });
 

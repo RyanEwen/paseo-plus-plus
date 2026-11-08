@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { AndroidUpdateDownloadProgress, AndroidUpdaterNative } from "./native-contract";
 import type { AndroidUpdate } from "./releases";
+import { describeUpdateFailure } from "./errors";
 
 export type AndroidUpdateStatus =
   | "idle"
@@ -130,7 +131,7 @@ export function createAndroidUpdater({
           }
           set({
             status: "error",
-            error: error instanceof Error ? error.message : "Unable to check for updates",
+            error: describeUpdateFailure(error, "Unable to check for updates"),
           });
         }
       },
@@ -153,7 +154,7 @@ export function createAndroidUpdater({
             status: "error",
             progress: null,
             preparedVersionCode: null,
-            error: error instanceof Error ? error.message : "Unable to install update",
+            error: describeUpdateFailure(error, "Unable to install update"),
           });
         }
       },

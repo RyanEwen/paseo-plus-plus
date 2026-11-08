@@ -10,6 +10,8 @@ import {
   type ForkReleaseAsset,
 } from "@getpaseo/protocol/fork-release";
 
+import { AndroidUpdateError } from "./errors";
+
 const safeAssetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** Preview Android version codes are this offset plus the workflow build number. */
 const previewVersionCodeOffset = 1_000_000_000;
@@ -33,6 +35,15 @@ interface PreviewBuild {
   versionCode: number;
 }
 
+/** The tag's build number, or null outside the preview namespace; out-of-range tags fail. */
+function parsePreviewBuild(tagName: string): number | null {
+  try {
+    return parseForkPreviewBuild(tagName);
+  } catch (cause) {
+    throw new AndroidUpdateError("invalidBuildNumber", { cause });
+  }
+}
+
 /**
  * Published fork previews with their Android version codes, newest first.
  * Drafts and tags outside the preview namespace are ignored.
@@ -41,7 +52,7 @@ function listPreviewBuilds(releases: ForkRelease[]): PreviewBuild[] {
   const previews = releases.flatMap((release) => {
     // The final prerelease bridges older installs to normal GitHub releases with the same tags.
     if (release.draft) return [];
-    const build = parseForkPreviewBuild(release.tag_name);
+    const build = parsePreviewBuild(release.tag_name);
     if (build === null) return [];
     return [{ release, versionCode: previewVersionCodeOffset + build }];
   });
@@ -52,7 +63,7 @@ function listPreviewBuilds(releases: ForkRelease[]): PreviewBuild[] {
 function assertCanonicalAsset(asset: ForkReleaseAsset, tag: string): void {
   const safeName = safeAssetNamePattern.test(asset.name) && !asset.name.includes("..");
   if (!safeName || !isCanonicalForkAssetUrl({ asset, tagName: tag })) {
-    throw new Error("Unexpected fork release asset URL");
+    throw new AndroidUpdateError("unexpectedAssetUrl");
   }
 }
 
@@ -63,7 +74,7 @@ function selectReleaseAssets(release: ForkRelease): {
 } {
   const apks = release.assets.filter((asset) => asset.name.endsWith(".apk"));
   const checksum = release.assets.find((asset) => asset.name === "SHA256SUMS");
-  if (apks.length !== 1 || !checksum) throw new Error("Preview is missing its APK or checksum");
+  if (apks.length !== 1 || !checksum) throw new AndroidUpdateError("missingApk");
   const apk = apks[0];
   assertCanonicalAsset(apk, release.tag_name);
   assertCanonicalAsset(checksum, release.tag_name);
@@ -94,16 +105,8 @@ export function selectAndroidUpdate(
 /** Reject absent or ambiguous checksums before asking native code to download an APK. */
 export function readApkChecksum(text: string, filename: string): string {
   const digest = readForkChecksum({ checksums: text, filename });
-  if (digest === null) throw new Error("Invalid APK checksum inventory");
+  if (digest === null) throw new AndroidUpdateError("invalidChecksumInventory");
   return digest;
-}
-
-/** GitHub refused the request because this network used up its unauthenticated API allowance. */
-export class GitHubRateLimitError extends Error {
-  constructor() {
-    super("GitHub rate limit reached. Try again later.");
-    this.name = "GitHubRateLimitError";
-  }
 }
 
 /** GitHub signals an exhausted allowance with 429, or 403 and no remaining requests. */
@@ -121,8 +124,10 @@ export async function requestUpdateResource(
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const response = await request(url, { signal: controller.signal });
-    if (isRateLimited(response)) throw new GitHubRateLimitError();
-    if (!response.ok) throw new Error(`Update request failed (HTTP ${response.status})`);
+    if (isRateLimited(response)) throw new AndroidUpdateError("rateLimited");
+    if (!response.ok) {
+      throw new AndroidUpdateError("requestFailed", { status: response.status });
+    }
     // Consume metadata inside the timeout, not only the response headers.
     return await response.text();
   } finally {
