@@ -1,6 +1,7 @@
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import { filterSidebarByText } from "./sidebar-text-filter";
 import { ProjectPinGutterProvider } from "./project-pin-gutter";
+import type { SidebarProjectActivity } from "./sidebar-project-activity";
 import { useSidebarProjectActivity } from "./use-sidebar-project-activity";
 import { useSessionStore } from "@/stores/session-store";
 import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
@@ -36,6 +37,8 @@ import {
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  /** Each project's whole activity, including workspaces the quick text filter hides. */
+  projectActivity: ReadonlyMap<string, SidebarProjectActivity>;
   /**
    * Every project the sidebar could show, before any filter narrows it.
    *
@@ -271,6 +274,7 @@ export function SidebarModelProvider({
       resolvedProjectFilters,
       hasProjectsBeforeFilter: list.projects.length > 0,
       workspaceEntriesByKey: textFiltered.entries,
+      projectActivity,
       groupMode,
       workspaceGroups: projection.workspaceGroups,
       projectIconTargets: projection.projectIconTargets,
@@ -285,6 +289,7 @@ export function SidebarModelProvider({
       groupMode,
       list,
       textFiltered,
+      projectActivity,
       projection,
       toggleProjectCollapsed,
       workspaceEntriesByKey,
