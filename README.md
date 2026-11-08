@@ -48,6 +48,7 @@ For fork development and integration, follow the [fork branches guide](docs/fork
 - [Android SSH hosts](docs/fork-features/android-ssh-hosts.md)
 
 - [Restore archived workspaces](docs/fork-features/restore-archived-workspaces.md)
+- [Archive all workspaces in a project](docs/fork-features/restore-archived-workspaces.md)
 - [Branch and worktree choices](docs/fork-features/branch-and-worktree-choices.md)
 
 - [Android plugin video](docs/fork-features/android-plugin-video.md)
@@ -63,13 +64,15 @@ For fork development and integration, follow the [fork branches guide](docs/fork
 
 - [Codex async questions](docs/fork-features/codex-async-questions.md)
 - [Workspace notifications](docs/fork-features/workspace-notifications.md)
+- [Viewed chats suppress notifications](docs/fork-features/workspace-notifications.md)
 - [Agent-aware attention](docs/fork-features/agent-aware-attention.md)
 
-- [Prompt and history recovery](docs/fork-features/steadier-reading.md)
 - [Configured provider profiles, migration guidance and history preview](docs/fork-features/provider-history-preview.md)
 - [Mobile navigation](docs/fork-features/mobile-navigation.md)
 
-- [Workspace pickers, status and child workspaces](docs/fork-features/workspace-pickers-and-status.md)
+- [Workspace pickers and status](docs/fork-features/workspace-pickers-and-status.md)
+- [Child workspaces](docs/fork-features/child-workspaces.md)
+- [Workspace row status rail](docs/fork-features/workspace-row-status-rail.md)
 - [Independent fork installations](docs/fork-features/independent-fork-installations.md)
 
 <!-- fork-overview:end -->

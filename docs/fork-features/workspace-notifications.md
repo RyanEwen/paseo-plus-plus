@@ -4,6 +4,10 @@ Agent and terminal notifications name their workspace, with the project name inc
 
 [Agent-aware attention](agent-aware-attention.md) keeps routine agent-directed results quiet and gives explicit human escalation its own chat target.
 
+Desktop does not show a notification for the chat you are viewing, and opening a chat removes its delivered alerts.
+
+Notifications reach every device registered with a host, including a development build and the store build of the app on the same phone.
+
 Chat notifications open their owning workspace, including older notifications without a workspace link. Windows banners and Notification Center entries retain their chat targets across app restarts.
 
 Opening a workspace clears its existing notifications across connected devices. Dismissing an alert in Windows or Android also clears that alert on your other devices. Offline or closed apps catch up when reopened; Windows swipe synchronization requires Paseo to remain running, including minimized in the tray. Newer alerts and notifications for other workspaces stay in place. Hosts must support notification synchronization.

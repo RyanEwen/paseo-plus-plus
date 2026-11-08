@@ -1,7 +1,5 @@
 # Child workspaces
 
-Host, project, checkout, and branch choices follow the setup order and include explanations. Hover over truncated choices to see full values.
-
 Workspaces owned by agents in one clear parent workspace appear beneath that workspace. Expand or collapse a family with the chevron at the right of its parent row. Paseo uses agent relationships on the same host and within the same project; shared, independent, unresolved or filtered-out parents leave workspaces at the top level. Names, branches and directory paths do not establish parentage.
 
 Children follow their parent in Status view while keeping their own status. A collapsed family shows child status and whether children need your attention beneath the parent's details, inside the same row. This summary is separate from the parent's own status. Selecting a child temporarily reveals its parent chain without changing your saved collapse choices.
