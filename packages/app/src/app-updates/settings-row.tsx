@@ -31,13 +31,14 @@ export function AndroidAppUpdateRow() {
         </Text>
       </View>
       <View style={styles.actions}>
-        <Button variant="outline" size="sm" disabled={busy} onPress={handleCheck}>
-          {t("settings.about.updates.check")}
+        <Button variant="outline" disabled={busy} onPress={handleCheck}>
+          {status === "checking"
+            ? t("settings.about.updates.checking")
+            : t("settings.about.updates.check")}
         </Button>
         {update ? (
           <Button
             variant="default"
-            size="sm"
             disabled={busy}
             loading={isAndroidUpdateTransferring(status)}
             onPress={handleInstall}
@@ -51,5 +52,6 @@ export function AndroidAppUpdateRow() {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  actions: { gap: theme.spacing[2], alignItems: "flex-end" },
+  // Same arrangement as the desktop update row in About.
+  actions: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
 }));

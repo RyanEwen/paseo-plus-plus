@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  GitHubRateLimitError,
-  findAndroidUpdate,
-  readApkChecksum,
-  selectAndroidUpdate,
-} from "./releases";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
+import { AndroidUpdateError } from "./errors";
+import { findAndroidUpdate, readApkChecksum, selectAndroidUpdate } from "./releases";
+
+beforeAll(async () => {
+  await i18n.changeLanguage("en");
+});
 
 function release(build: number, version = "0.11.1") {
   const tag = `v${version}-preview.${build}`;
@@ -98,6 +99,7 @@ describe("fork Android update selection", () => {
       readApkChecksum(`${digest}  paseo.apk\n${digest}  paseo.apk`, "paseo.apk"),
     ).toThrow();
     expect(() => readApkChecksum("bad  paseo.apk", "paseo.apk")).toThrow();
+    expect(() => readApkChecksum(`${digest} extra  paseo.apk`, "paseo.apk")).toThrow();
     expect(() => readApkChecksum(`${digest}  other.apk`, "paseo.apk")).toThrow();
   });
 });
@@ -203,7 +205,7 @@ describe("GitHub request budget", () => {
       async () => new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } }),
     );
     const failure = findAndroidUpdate(1_000_000_013, { fetch: limited });
-    await expect(failure).rejects.toBeInstanceOf(GitHubRateLimitError);
+    await expect(failure).rejects.toMatchObject({ key: "rateLimited" });
     await expect(failure).rejects.toThrow("GitHub rate limit reached. Try again later.");
     const throttled = vi.fn(async () => new Response("{}", { status: 429 }));
     await expect(findAndroidUpdate(1_000_000_013, { fetch: throttled })).rejects.toThrow(
@@ -216,5 +218,17 @@ describe("GitHub request budget", () => {
     await expect(findAndroidUpdate(1_000_000_013, { fetch: forbidden })).rejects.toThrow(
       "Update request failed (HTTP 403)",
     );
+  });
+});
+
+describe("Android release error localisation", () => {
+  it("reports JavaScript release failures through their translation keys", async () => {
+    expect(() => readApkChecksum("bad  paseo.apk", "paseo.apk")).toThrow(AndroidUpdateError);
+    expect(() => selectAndroidUpdate([release(1_100_000_001)], 0)).toThrow(AndroidUpdateError);
+    const failed = vi.fn(async () => new Response("{}", { status: 500 }));
+    await expect(findAndroidUpdate(0, { fetch: failed })).rejects.toMatchObject({
+      key: "requestFailed",
+      message: "Update request failed (HTTP 500)",
+    });
   });
 });
