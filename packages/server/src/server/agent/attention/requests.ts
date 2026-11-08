@@ -1,3 +1,4 @@
+import { AttentionObjectiveError } from "./errors.js";
 import { randomUUID } from "node:crypto";
 import { samePeer } from "./peers.js";
 import { z } from "zod";
@@ -86,7 +87,7 @@ export class AgentAttentionRequests {
       }
       const objectiveId = input.objectives.get(admission.requestId);
       if (!objectiveId) {
-        throw new Error("Accepted request has no objective membership");
+        throw new AttentionObjectiveError("request-without-objective");
       }
       this.records.push({
         link: structuredClone(link),
@@ -197,7 +198,7 @@ export class AgentAttentionRequests {
       record.link.objectiveId !== query.link.objectiveId ||
       !samePeer({ left: record.requester, right: query.requester, localServerId: this.serverId })
     ) {
-      throw new Error("Attention outcome does not belong to this requester");
+      throw new AttentionObjectiveError("outcome-requester-mismatch");
     }
     if (query.acknowledgeOutcomeId) {
       record.outcomes = record.outcomes.filter(

@@ -132,10 +132,10 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
 import {
   AgentAttentionObjectives,
-  AttentionObjectiveError,
   type AttentionAdmission,
   type StoredAttentionObjectives,
 } from "./attention/objectives.js";
+import { AttentionObjectiveError } from "./attention/errors.js";
 import type {
   AgentAttentionPeer,
   AgentAttentionContext,

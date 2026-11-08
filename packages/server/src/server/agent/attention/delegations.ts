@@ -1,3 +1,4 @@
+import type { AttentionFailureReason } from "./errors.js";
 import type { AgentAttentionLink, AgentAttentionPeer } from "@getpaseo/protocol/agent-attention";
 import type { AgentAttentionOutcome } from "@getpaseo/protocol/messages";
 import { samePeer } from "./peers.js";
@@ -20,7 +21,7 @@ export type AttentionCallbackReservation =
   | { status: "consumed" };
 
 /** Raised by the ledger for a claim it refuses; the message names the refusal. */
-type RefusalFactory = (reason: string) => Error;
+type RefusalFactory = (reason: AttentionFailureReason) => Error;
 
 /**
  * Live ownership of callback deliveries on delegations. Persisted deliveries record what was
@@ -48,7 +49,7 @@ export class CallbackReservations {
       (outcome.kind === "rejected") !== (outcome.acceptedTurnId === null) ||
       (outcome.kind === "permission" && !outcome.permission)
     ) {
-      throw this.refuse("invalid request outcome evidence");
+      throw this.refuse("invalid-outcome-evidence");
     }
     if (
       outcome.requestId !== input.link.requestId ||
@@ -58,19 +59,19 @@ export class CallbackReservations {
         localServerId: input.localServerId,
       })
     ) {
-      throw this.refuse("outcome identity mismatch");
+      throw this.refuse("outcome-identity-mismatch");
     }
     const deliveries = (delegation.deliveries ??= []);
     const existing = deliveries.find((entry) => entry.outcomeId === outcome.id);
     if (existing) {
       if (existing.deliveryId !== input.deliveryId) {
-        throw this.refuse("outcome message identity changed");
+        throw this.refuse("outcome-message-changed");
       }
       if (existing.status === "consumed") {
         return { status: "consumed" };
       }
       if (this.owners.has(existing)) {
-        throw this.refuse("outcome already reserved");
+        throw this.refuse("outcome-already-reserved");
       }
     }
     const delivery = existing ?? {
@@ -102,7 +103,7 @@ export class CallbackReservations {
       reservation.deliveryId !== input.deliveryId ||
       this.owners.get(reservation) !== input.lease
     ) {
-      throw this.refuse("callback reservation changed");
+      throw this.refuse("callback-reservation-changed");
     }
   }
 

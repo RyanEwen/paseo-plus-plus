@@ -391,7 +391,7 @@ describe("toAgentPayload", () => {
       }),
     );
 
-    const payload = buildStoredAgentPayload(record, ["codex"]);
+    const payload = buildStoredAgentPayload(record, ["codex"], { agentAwareAttention: true });
 
     expect(record.persistence?.metadata).toEqual({
       conversationId: "conversation-stored",
@@ -412,10 +412,14 @@ describe("toAgentPayload", () => {
       createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
     );
 
-    expect(buildStoredAgentPayload(record, ["codex"]).lastError).toBe("boom");
-    expect(buildStoredAgentPayload({ ...record, lastError: null }, ["codex"])).not.toHaveProperty(
-      "lastError",
-    );
+    expect(
+      buildStoredAgentPayload(record, ["codex"], { agentAwareAttention: true }).lastError,
+    ).toBe("boom");
+    expect(
+      buildStoredAgentPayload({ ...record, lastError: null }, ["codex"], {
+        agentAwareAttention: true,
+      }),
+    ).not.toHaveProperty("lastError");
   });
 
   it("omits lastUsage when not available", () => {

@@ -239,10 +239,10 @@ function buildStoredPersistenceHandle(
 /** Apply the current host presentation choice to retained facts without mutating the stored record. */
 function storedHumanAttention(
   record: StoredAgentRecord,
-  options?: { agentAwareAttention?: boolean },
+  options: { agentAwareAttention: boolean },
 ): boolean | undefined {
   return AttentionPresentation.project({
-    enabled: options?.agentAwareAttention ?? true,
+    enabled: options.agentAwareAttention,
     humanAttentionRequired: record.humanAttentionRequired,
     requiresAttention: record.requiresAttention ?? false,
     attentionMessage: record.attentionMessage,
@@ -252,7 +252,7 @@ function storedHumanAttention(
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
-  options?: { agentAwareAttention?: boolean },
+  options: { agentAwareAttention: boolean },
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
