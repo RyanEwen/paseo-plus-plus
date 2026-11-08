@@ -36,9 +36,8 @@ export function AccentSection() {
   let hint = t("paseoPlusPlus.accent.hint");
   if (!supported) hint = t("paseoPlusPlus.accent.updateHost");
   if (pending !== null) hint = t("paseoPlusPlus.saving");
-  let failure: string | undefined;
-  if (error) failure = t("paseoPlusPlus.loadFailed");
-  if (failed) failure = t("paseoPlusPlus.saveFailed");
+  // A load failure is reported, with Retry, by the Paseo++ section around this picker.
+  const failure = failed ? t("paseoPlusPlus.saveFailed") : undefined;
 
   return (
     <SettingsSection title={t("paseoPlusPlus.accent.title")}>
