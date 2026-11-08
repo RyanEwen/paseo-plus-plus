@@ -704,22 +704,39 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return resized;
   });
 
-  const onRowGeometryChangeRef = useRef<(change: RowGeometryChange) => void>(() => {});
+  const onRowGeometryChange = useStableEvent(({ synchronous, natural }: RowGeometryChange) => {
+    if (!isActiveRef.current) return;
+    if (!natural) {
+      updatePinnedRow();
+      return;
+    }
+    const content = contentRef.current;
+    if (content) reconcilePromptFlow(content, actualRows !== null);
+    if (synchronous)
+      flushSync(() => {
+        measureVirtualizedRows();
+      });
+    else if (measureVirtualizedRows()) return;
+    reconcileReadingPosition();
+    updatePinnedRow();
+    updateScrollMetrics();
+    if (followOutputRef.current) scheduleStickToBottom();
+  });
   // Natural publication and visual paint share this owner, but only actual
   // ordinary layout changes may enter measurement/reading reconciliation.
   const onFlowGeometryChange = useCallback(
-    () => onRowGeometryChangeRef.current({ synchronous: false, natural: true }),
-    [],
+    () => onRowGeometryChange({ synchronous: false, natural: true }),
+    [onRowGeometryChange],
   );
   const onPaintGeometryChange = useCallback(
-    () => onRowGeometryChangeRef.current({ synchronous: false, natural: false }),
-    [],
+    () => onRowGeometryChange({ synchronous: false, natural: false }),
+    [onRowGeometryChange],
   );
   const naturalRowObserver = useMemo(
     () =>
       new ResizeObserver((entries) => {
         if (!isActiveRef.current || !contentRef.current) return;
-        onRowGeometryChangeRef.current({
+        onRowGeometryChange({
           synchronous: true,
           natural: hasNaturalRowChanges(entries, contentRef.current, measuredRowHeights.current),
         });
@@ -982,25 +999,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       virtualOffsetListener.current?.(container.scrollTop, false);
     }
   });
-
-  onRowGeometryChangeRef.current = ({ synchronous, natural }) => {
-    if (!isActiveRef.current) return;
-    if (!natural) {
-      updatePinnedRow();
-      return;
-    }
-    const content = contentRef.current;
-    if (content) reconcilePromptFlow(content, actualRows !== null);
-    if (synchronous)
-      flushSync(() => {
-        measureVirtualizedRows();
-      });
-    else if (measureVirtualizedRows()) return;
-    reconcileReadingPosition();
-    updatePinnedRow();
-    updateScrollMetrics();
-    if (followOutputRef.current) scheduleStickToBottom();
-  };
 
   // Apply row positions and their scroll correction in the same paint, including
   // the ordinary-to-virtualized handoff and measurements of newly mounted rows.
