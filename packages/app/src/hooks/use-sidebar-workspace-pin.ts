@@ -43,6 +43,8 @@ export function useSidebarWorkspacePinController(): ToggleSidebarWorkspacePin {
       if (!client) {
         throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       }
+      // The menu disables this for known old hosts. Before server info arrives it stays enabled, and
+      // an old daemon would ignore the scope and pin globally, so the request stops here.
       if (
         scope === "project" &&
         !hostSupportsFeature(
