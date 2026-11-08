@@ -1159,7 +1159,7 @@ async function executeType(
         }
         const focused = await focusInputTarget({ page, elementExpression, requiresEditable: true });
         if (focused === "stale_ref") return staleRefFailure(requestId, ref);
-        if (focused !== "focused") return inputFocusFailure(requestId);
+        if (focused !== "focused") return inputFocusFailure(requestId, focused);
       }
       await page.insertText(text);
       return {
@@ -1213,7 +1213,7 @@ async function executeKeypress(
         if (focused === "stale_ref") {
           return staleRefFailure(requestId, ref);
         }
-        if (focused !== "focused") return inputFocusFailure(requestId);
+        if (focused !== "focused") return inputFocusFailure(requestId, focused);
       }
       dispatchTrustedKey((event) => page.sendInputEvent(event), key);
       return {
