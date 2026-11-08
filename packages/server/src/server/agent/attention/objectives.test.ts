@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { AgentAttentionObjectives, AttentionObjectiveError } from "./objectives.js";
+import { AgentAttentionObjectives } from "./objectives.js";
+import { AttentionObjectiveError } from "./errors.js";
 
 test("waiting human objectives survive serialization, unrelated work, and authenticated callbacks", () => {
   let objectives = new AgentAttentionObjectives(undefined, "home");
@@ -302,4 +303,85 @@ test("an ordinary agent request cannot claim a human objective by reusing its me
     ]),
   ).toThrow(AttentionObjectiveError);
   expect(objectives.hasHumanAudience()).toBe(true);
+});
+
+test("a refused operation names its typed reason", () => {
+  const objectives = new AgentAttentionObjectives();
+  expect(() => objectives.declare("missing", "final")).toThrow(
+    expect.objectContaining({ reason: "objective-not-in-turn", objectiveId: "missing" }),
+  );
+});
+
+test("a live ledger and its detached candidate follow the daemon's presentation mode", () => {
+  const mode = { agentAware: false };
+  const objectives = new AgentAttentionObjectives(undefined, "home", mode);
+  objectives.admit({ inputs: [{ kind: "human", requestId: "human-job" }], steering: false });
+  const lease = objectives.reserveHumanAttention("human-job", "Needs a decision");
+  if (!lease) {
+    throw new Error("Expected a human attention reservation");
+  }
+
+  expect(objectives.agentAwarePresentation).toBe(false);
+  expect(objectives.humanAttentionCandidate(lease).agentAwarePresentation).toBe(false);
+
+  mode.agentAware = true;
+  expect(objectives.agentAwarePresentation).toBe(true);
+});
+
+test("a delegate still reports to the requesting agent after its objective is final", () => {
+  const source = new AgentAttentionObjectives(undefined, "origin");
+  source.admit({ inputs: [{ kind: "human", requestId: "human-job" }], steering: false });
+  const peer = { agentId: "worker", serverId: "target" };
+  const link = source.outgoing({ recipient: peer })?.requesterObjective;
+  if (!link) {
+    throw new Error("Expected exact request link");
+  }
+  source.declare("human-job", "final");
+  expect(source.finish()).toBe(true);
+
+  // The finished delegation is durable, and a reused ID is a different request.
+  const restored = new AgentAttentionObjectives(source.snapshot(), "origin");
+  restored.admit({ inputs: [{ kind: "human", requestId: "human-job" }], steering: false });
+  restored.declare("human-job", "waiting");
+  const requester = { agentId: "caller", serverId: "origin" };
+  const outcome = {
+    id: "outcome",
+    requestId: link.requestId,
+    requester,
+    acceptedTurnId: "worker-turn",
+    kind: "finished" as const,
+    lastMessage: "Late result",
+    error: null,
+  };
+  const reservation = restored.reserveCallback({
+    link,
+    peer,
+    requester,
+    outcome,
+    deliveryId: "delivery",
+  });
+  expect(reservation.status).toBe("reserved");
+
+  restored.admit({
+    inputs: [
+      {
+        kind: "agent",
+        requestId: "delivery",
+        requester: peer,
+        attention: {
+          continuation: link,
+          delivery: { outcomeId: "outcome", deliveryId: "delivery" },
+        },
+      },
+    ],
+    steering: false,
+    acceptance: { turnId: "callback-turn" },
+  });
+
+  expect(restored.snapshot().delegations[0].deliveries).toEqual([
+    { outcomeId: "outcome", deliveryId: "delivery", status: "consumed" },
+  ]);
+  expect(restored.describe().activeObjectiveIds).toEqual([]);
+  expect(restored.finish()).toBe(false);
+  expect(restored.describe().objectives.map(({ id }) => id)).toEqual(["human-job"]);
 });

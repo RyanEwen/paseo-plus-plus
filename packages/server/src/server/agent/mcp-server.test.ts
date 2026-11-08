@@ -251,6 +251,7 @@ interface TestDeps {
 
 function buildAgentManagerSpies() {
   return {
+    agentAwareAttentionEnabled: true,
     createAgent: vi.fn(),
     // Legacy catalogue fixtures have no accepted objective until a case supplies one.
     prepareAttentionMessage: vi
@@ -627,6 +628,8 @@ class FakeBrowserToolsBroker {
 }
 
 class BoundaryAgentManagerFake {
+  public readonly agentAwareAttentionEnabled = true;
+
   public getPluginTools(): [] {
     return [];
   }
