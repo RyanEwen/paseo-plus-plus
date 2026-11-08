@@ -8,7 +8,6 @@ import {
   expectActualExpandedGeometry,
   expectActualRowUnpinned,
   expectActualFindVisible,
-  expectSingleLineStickyGeometry,
 } from "../support/helpers/sticky-preview-geometry";
 import { observePromptPointer } from "../support/helpers/prompt-pointer-observation";
 import type { JSHandle, Locator, Page, TestInfo } from "@playwright/test";
@@ -1048,7 +1047,7 @@ for (const viewport of [
         realHeight,
         0,
       );
-      const shortGeometry = await expectSingleLineStickyGeometry(shortRow);
+      const shortGeometry = await expectActualSingleLineGeometry(shortRow);
       await page.screenshot({
         path: `../../docs/qa-evidence/sticky-user-message/short-preview-${viewport.width}.png`,
       });
@@ -1059,7 +1058,7 @@ for (const viewport of [
         const disclosure = selected.getByTestId("user-message-disclosure");
         await expect(disclosure).toHaveText("more…");
         await expectInBubblePromptDisclosure(selected);
-        const longGeometry = await expectSingleLineStickyGeometry(selected);
+        const longGeometry = await expectActualSingleLineGeometry(selected);
         expect(longGeometry.height).toBeCloseTo(shortGeometry.height, 0);
         expect(longGeometry.controlsOffset).toBeCloseTo(shortGeometry.controlsOffset, 0);
         const stablePreview = await selected.evaluate(async (node) => {

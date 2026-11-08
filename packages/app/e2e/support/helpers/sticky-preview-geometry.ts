@@ -1,11 +1,6 @@
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect } from "../fixtures";
 
-/** Shared compact geometry now belongs to the one mounted actual message. */
-export async function expectSingleLineStickyGeometry(row: Locator) {
-  return expectActualSingleLineGeometry(row);
-}
-
 /** Compact previews omit counts; More retains the real attachment disclosure. */
 export async function expectNoCompactAttachmentCount(row: Locator) {
   await expect(row.getByTestId("user-message-attachments-summary")).toHaveCount(0);
