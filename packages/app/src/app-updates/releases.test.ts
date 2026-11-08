@@ -1,11 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { i18n } from "@/i18n/i18next";
 import { AndroidUpdateError } from "./errors";
-import {
-  findAndroidUpdate,
-  readApkChecksum,
-  selectAndroidUpdate,
-} from "./releases";
+import { findAndroidUpdate, readApkChecksum, selectAndroidUpdate } from "./releases";
 
 beforeAll(async () => {
   await i18n.changeLanguage("en");

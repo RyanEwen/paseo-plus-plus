@@ -149,7 +149,9 @@ describe("Android update feedback", () => {
       releases.finishFind(update);
       await check;
     });
-    const checkBox = within(container).getByRole("button", { name: "Check" }).getBoundingClientRect();
+    const checkBox = within(container)
+      .getByRole("button", { name: "Check" })
+      .getBoundingClientRect();
     const installBox = within(container)
       .getByRole("button", { name: "Install update" })
       .getBoundingClientRect();
