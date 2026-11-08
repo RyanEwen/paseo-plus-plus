@@ -5,4 +5,4 @@ description: Sync the newest tagged upstream release (betas included, never upst
 
 # Sync fork
 
-Follow [Sync upstream through the layers](../../../docs/worktree-development.md#sync-upstream-through-the-layers) end-to-end. That guide owns the procedure and authorization boundaries. Read the repository instructions first and honor current session permissions.
+Follow [Sync upstream through the layers](../../../docs/fork-branches.md#sync-upstream-through-the-layers) end-to-end. That guide owns the procedure and authorization boundaries. Read the repository instructions first and honor current session permissions.
