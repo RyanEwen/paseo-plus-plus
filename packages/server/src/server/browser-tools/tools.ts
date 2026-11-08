@@ -783,7 +783,7 @@ function screenshotCanceled(context: {
     payload: browserToolsFailure({
       requestId: "browser_screenshot",
       code: "browser_timeout",
-      message: "Screenshot canceled.",
+      message: "Screenshot canceled before it finished.",
       retryable: true,
     }),
     context,

@@ -722,6 +722,15 @@ function requireSnapshotRefs(result: Awaited<ReturnType<BrowserAutomationHarness
   });
 }
 
+const QUEUE_TIMEOUT_FAILURE = {
+  ok: false,
+  error: {
+    code: "browser_timeout",
+    message: "Screenshot queue timed out. Retry after the current captures finish.",
+    retryable: true,
+  },
+};
+
 describe("executeAutomationCommand", () => {
   test("list tabs without a workspace reports every live registered tab", () => {
     const registry = new FakeRegistry();
@@ -2132,15 +2141,58 @@ describe("executeAutomationCommand", () => {
         ok: false,
         error: { code: "screenshot_no_frame" },
       });
-      await expect(queued).resolves.toMatchObject({
-        ok: false,
-        error: { code: "screenshot_no_frame" },
-      });
+      await expect(queued).resolves.toMatchObject(QUEUE_TIMEOUT_FAILURE);
       expect(browser.tab.capturedViewports).toHaveLength(1);
     } finally {
       await vi.runAllTimersAsync();
       vi.useRealTimers();
     }
+  });
+
+  test("a deadline reached while queued reports the queue, not a missing frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.deferCaptures = true;
+      const capture = () =>
+        browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } });
+      const first = capture();
+      await browser.tab.waitForCaptureStart(1);
+      const queued = capture();
+      await vi.advanceTimersByTimeAsync(CAPTURE_TIMEOUT_MS);
+      await expect(queued).resolves.toMatchObject(QUEUE_TIMEOUT_FAILURE);
+      await expect(first).resolves.toMatchObject({
+        ok: false,
+        error: { code: "screenshot_no_frame" },
+      });
+      browser.tab.finishNextCapture();
+    } finally {
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  test("a caller cancellation says the screenshot was canceled", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.deferCaptures = true;
+    const first = browser.execute({ command: "screenshot", args: { browserId: BROWSER_A } });
+    await browser.tab.waitForCaptureStart(1);
+    const controller = new AbortController();
+    const queued = browser.execute(
+      { command: "screenshot", args: { browserId: BROWSER_A } },
+      { signal: controller.signal },
+    );
+    controller.abort();
+    await expect(queued).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Screenshot canceled before it finished.",
+        retryable: true,
+      },
+    });
+    browser.tab.finishNextCapture();
+    await expect(first).resolves.toMatchObject({ ok: true });
   });
 
   test.each(["timeout", "cancel"])(
