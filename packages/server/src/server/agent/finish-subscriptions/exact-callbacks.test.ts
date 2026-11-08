@@ -10,7 +10,8 @@ import type {
   AgentAttentionRequestQuery,
 } from "@getpaseo/protocol/agent-attention";
 import type { Logger } from "pino";
-import { AgentAttentionObjectives, AttentionObjectiveError } from "../attention/objectives.js";
+import { AgentAttentionObjectives } from "../attention/objectives.js";
+import { AttentionObjectiveError } from "../attention/errors.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
@@ -445,7 +446,7 @@ function holdFirstReservation(hold: () => Promise<void>) {
  * A caller with one waiting human objective delegated to a parented child whose exact finished
  * outcome is ready. Tests watch it through the gate harness and assert one exact delivery.
  */
-async function createCallbackRecoveryScenario() {
+async function createCallbackRecoveryScenario(options: { objectiveFinal?: boolean } = {}) {
   const workdir = mkdtempSync(join(tmpdir(), "attention-callback-recovery-"));
   const logger = createTestLogger();
   const retries: FinishRetry[] = [];
@@ -476,6 +477,10 @@ async function createCallbackRecoveryScenario() {
   const link = source.outgoing({ recipient: peer })?.requesterObjective;
   if (!link) {
     throw new Error("Expected exact request link");
+  }
+  if (options.objectiveFinal) {
+    source.declare("human-job", "final");
+    source.finish();
   }
   await manager.createAgent({ provider: "claude", cwd: workdir, title: "Caller" }, callerId, {
     workspaceId: undefined,
@@ -543,10 +548,10 @@ async function createCallbackRecoveryScenario() {
           },
         },
       ]),
-    ).toThrow("Objective");
+    ).toThrow(AttentionObjectiveError);
     await expect(
       restored.reserveAttentionCallback({ ...claim, deliveryId: "other-message" }),
-    ).rejects.toThrow("Objective");
+    ).rejects.toThrow(AttentionObjectiveError);
   }
 
   /** Message delivery for the current manager, with enqueue and release observed. */
@@ -695,6 +700,19 @@ test("fresh manager recovers an exact unconsumed callback reservation and delive
     scenario.watch(delivery);
 
     await scenario.expectDeliveredOnce({ delivery, enqueue });
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("a child's completion still reaches the caller after the objective is marked final", async () => {
+  const scenario = await createCallbackRecoveryScenario({ objectiveFinal: true });
+  try {
+    const { delivery, enqueue } = scenario.startDelivery();
+    scenario.watch(delivery);
+
+    await scenario.expectDeliveredOnce({ delivery, enqueue });
+    expect(scenario.state.manager.getAttentionObjectives(scenario.callerId).objectives).toEqual([]);
   } finally {
     await scenario.cleanup();
   }

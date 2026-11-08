@@ -1,3 +1,4 @@
+import { AttentionObjectiveError, type AttentionFailureReason } from "./errors.js";
 import { AgentAttentionRequests, StoredAttentionRequestsSchema } from "./requests.js";
 import { CallbackReservations, type AttentionCallbackReservation } from "./delegations.js";
 import { HumanAttentionClaims } from "./human-claims.js";
@@ -42,6 +43,8 @@ const delegationSchema = z.object({
   requestId: z.string(),
   acceptedMessageIds: z.array(z.string()).optional(),
   deliveries: z.array(callbackDeliverySchema).optional(),
+  /** The objective closed, but this delegate may still report back to the requesting agent. */
+  objectiveFinished: z.boolean().optional(),
   recipient: AgentAttentionPeerSchema,
 });
 
@@ -57,6 +60,11 @@ export const StoredAttentionObjectivesSchema = z.object({
 export type StoredAttentionObjectives = z.infer<typeof StoredAttentionObjectivesSchema>;
 type AttentionObjective = z.infer<typeof objectiveSchema>;
 
+/** The part of a daemon's presentation policy a live ledger reads. */
+interface AttentionPresentationMode {
+  readonly agentAware: boolean;
+}
+
 export type AttentionAdmission =
   | { kind: "human"; requestId: string }
   | {
@@ -67,13 +75,6 @@ export type AttentionAdmission =
     }
   | { kind: "continuation"; objectiveIds: readonly string[]; admissionId: string };
 
-export class AttentionObjectiveError extends Error {
-  constructor(readonly objectiveId: string) {
-    super(`Objective ${objectiveId} does not belong to this accepted turn`);
-    this.name = "AttentionObjectiveError";
-  }
-}
-
 /**
  * Owns output audience independently of provider turns and lifecycle parentage.
  * Admission is called only after provider acceptance, under the manager's turn fence.
@@ -83,13 +84,15 @@ export class AgentAttentionObjectives {
   readonly blockers: AttentionBlockers;
   private readonly state: StoredAttentionObjectives & { admissionId: string };
   private readonly callbacks = new CallbackReservations(
-    (reason) => new AttentionObjectiveError(reason),
+    (reason: AttentionFailureReason) => new AttentionObjectiveError(reason),
   );
   private readonly humanClaims = new HumanAttentionClaims<AttentionObjective>();
 
   constructor(
     stored?: StoredAttentionObjectives,
     private localServerId?: string,
+    /** The owning daemon's live presentation mode; absent for detached ledgers. */
+    private readonly presentation?: AttentionPresentationMode,
   ) {
     const state = stored
       ? structuredClone(stored)
@@ -105,6 +108,11 @@ export class AgentAttentionObjectives {
       (ids) => this.captureBlockerMembers(ids),
       localServerId,
     );
+  }
+
+  /** Whether this ledger's daemon currently presents audience decisions. */
+  get agentAwarePresentation(): boolean {
+    return this.presentation?.agentAware ?? true;
   }
 
   get isAudienceKnown(): boolean {
@@ -212,7 +220,7 @@ export class AgentAttentionObjectives {
   /** A delayed permission response cannot replace work admitted after its original request. */
   assertContinuation(input: Extract<AttentionAdmission, { kind: "continuation" }>): void {
     if (input.admissionId !== this.state.admissionId) {
-      throw new AttentionObjectiveError("retired permission continuation");
+      throw new AttentionObjectiveError("retired-continuation");
     }
     for (const id of input.objectiveIds) {
       this.requireActiveObjective(id);
@@ -233,7 +241,7 @@ export class AgentAttentionObjectives {
         input.attention?.requesterObjective &&
         input.attention.requesterObjective.requestId !== input.requestId
       ) {
-        throw new AttentionObjectiveError("request identity mismatch");
+        throw new AttentionObjectiveError("request-identity-mismatch");
       }
       if (
         input.kind !== "continuation" &&
@@ -241,7 +249,7 @@ export class AgentAttentionObjectives {
       ) {
         const existing = this.state.objectives.find((entry) => entry.id === input.requestId);
         if (existing && this.isAudienceConflict(existing, input)) {
-          throw new AttentionObjectiveError("request identity belongs to another audience");
+          throw new AttentionObjectiveError("audience-conflict");
         }
       }
     }
@@ -289,9 +297,12 @@ export class AgentAttentionObjectives {
       active.filter((objective) => objective.disposition !== "waiting").map(({ id }) => id),
     );
     this.state.objectives = this.state.objectives.filter(({ id }) => !completed.has(id));
-    this.state.delegations = this.state.delegations.filter(
-      ({ objectiveId }) => !completed.has(objectiveId),
-    );
+    // Delegates outlive the request they served. Their later results still reach this agent.
+    for (const delegation of this.state.delegations) {
+      if (completed.has(delegation.objectiveId)) {
+        delegation.objectiveFinished = true;
+      }
+    }
     this.state.activeObjectiveIds = this.state.activeObjectiveIds.filter(
       (id) => !completed.has(id),
     );
@@ -315,15 +326,15 @@ export class AgentAttentionObjectives {
   humanAttentionCandidate(lease: symbol): AgentAttentionObjectives {
     const owner = this.humanClaims.owner(lease);
     if (!owner || !this.isHumanAttentionReservationCurrent(lease)) {
-      throw new AttentionObjectiveError("retired human attention claim");
+      throw new AttentionObjectiveError("retired-human-claim");
     }
     const snapshot = this.snapshot();
     const objective = snapshot.objectives[this.state.objectives.indexOf(owner.objective)];
     if (!objective) {
-      throw new AttentionObjectiveError(owner.objective.id);
+      throw new AttentionObjectiveError("objective-not-in-turn", owner.objective.id);
     }
     objective.announcedReasons.push(owner.reason);
-    return new AgentAttentionObjectives(snapshot, this.localServerId);
+    return new AgentAttentionObjectives(snapshot, this.localServerId, this.presentation);
   }
 
   /** A reused string ID cannot make a retired objective's in-flight announcement current again. */
@@ -364,9 +375,7 @@ export class AgentAttentionObjectives {
   }): AgentMessageAttention | undefined {
     const active = this.activeObjectives();
     if (!objectiveId && active.length > 1) {
-      throw new AttentionObjectiveError(
-        "Specify objectiveId when this turn contains multiple requests",
-      );
+      throw new AttentionObjectiveError("ambiguous-objective");
     }
     const objective = objectiveId ? this.requireActiveObjective(objectiveId) : active[0];
     if (!objective) {
@@ -457,8 +466,9 @@ export class AgentAttentionObjectives {
         entry.requestId === link.requestId &&
         samePeer({ left: entry.recipient, right: peer, localServerId: this.localServerId }),
     );
-    if (!delegation || !this.state.objectives.some((entry) => entry.id === link.objectiveId)) {
-      throw new AttentionObjectiveError(link.objectiveId);
+    const objectiveOpen = this.state.objectives.some((entry) => entry.id === link.objectiveId);
+    if (!delegation || !(delegation.objectiveFinished || objectiveOpen)) {
+      throw new AttentionObjectiveError("objective-not-in-turn", link.objectiveId);
     }
     return delegation;
   }
@@ -493,7 +503,7 @@ export class AgentAttentionObjectives {
   private requireActiveObjective(objectiveId: string): AttentionObjective {
     const objective = this.activeObjectives().find(({ id }) => id === objectiveId);
     if (!objective) {
-      throw new AttentionObjectiveError(objectiveId);
+      throw new AttentionObjectiveError("objective-not-in-turn", objectiveId);
     }
     return objective;
   }
@@ -505,7 +515,8 @@ export class AgentAttentionObjectives {
       return input.objectiveIds.filter((id) => known.has(id));
     }
     if (input.kind === "agent" && input.attention?.continuation) {
-      return [this.resolveAgentContinuation(input).id];
+      const objective = this.resolveAgentContinuation(input);
+      return objective ? [objective.id] : [];
     }
     const existing = this.state.objectives.find(({ id }) => id === input.requestId);
     if (existing) {
@@ -528,17 +539,23 @@ export class AgentAttentionObjectives {
     return [input.requestId];
   }
 
-  /** An invalid claim is rejected, never reclassified as a fresh ordinary agent request. */
+  /**
+   * An invalid claim is rejected, never reclassified as a fresh ordinary agent request.
+   *
+   * @returns The objective the callback continues, or null for a reserved completion whose
+   * objective already finished. That completion reaches the agent without reopening the request,
+   * even when a later objective reuses its ID.
+   */
   private resolveAgentContinuation(
     input: Extract<AttentionAdmission, { kind: "agent" }>,
-  ): AttentionObjective {
+  ): AttentionObjective | null {
     const link = input.attention?.continuation;
     if (!link) {
-      throw new AttentionObjectiveError("missing continuation claim");
+      throw new AttentionObjectiveError("missing-continuation");
     }
     const delegation = this.findDelegation(link, input.requester);
     if (delegation.acceptedMessageIds?.includes(input.requestId)) {
-      throw new AttentionObjectiveError("replayed continuation");
+      throw new AttentionObjectiveError("replayed-continuation");
     }
     const deliveryClaim = input.attention?.delivery;
     if (deliveryClaim) {
@@ -552,12 +569,19 @@ export class AgentAttentionObjectives {
         input.requestId !== deliveryClaim.deliveryId ||
         !this.callbacks.isOwned(reservation)
       ) {
-        throw new AttentionObjectiveError("unreserved outcome delivery");
+        throw new AttentionObjectiveError("unreserved-delivery");
       }
+    }
+    if (delegation.objectiveFinished) {
+      // Only a reserved completion outlives the objective. A bare claim could reopen closed work.
+      if (!deliveryClaim) {
+        throw new AttentionObjectiveError("objective-not-in-turn", link.objectiveId);
+      }
+      return null;
     }
     const objective = this.state.objectives.find(({ id }) => id === link.objectiveId);
     if (!objective) {
-      throw new AttentionObjectiveError(link.objectiveId);
+      throw new AttentionObjectiveError("objective-not-in-turn", link.objectiveId);
     }
     return objective;
   }
