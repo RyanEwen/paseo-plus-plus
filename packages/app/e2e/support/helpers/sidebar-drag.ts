@@ -44,15 +44,19 @@ export async function finishSidebarDrag(page: Page): Promise<void> {
  * until their order swaps.
  *
  * @param pressRow how to press the source row (project and workspace rows arm differently).
+ * @param dropTarget where the pointer lands, by default the second row. Pass a parent's family
+ *   cell to drop below it: closest-center collision compares against the whole cell, and the
+ *   parent row's center ties with the dragged row's own slot, so no reorder would happen.
  */
 export async function quickDragFirstSidebarRowAfterSecond(
   rows: Locator,
   pressRow: (rows: Locator) => Promise<void>,
+  dropTarget: Locator = rows.nth(1),
 ): Promise<void> {
   await expect(rows).toHaveCount(2);
   const before = await sidebarRowTestIds(rows);
   const sourceBox = await visibleBoundingBox(rows.nth(0));
-  const targetBox = await visibleBoundingBox(rows.nth(1));
+  const targetBox = await visibleBoundingBox(dropTarget);
 
   const page = rows.page();
   const source = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 };
