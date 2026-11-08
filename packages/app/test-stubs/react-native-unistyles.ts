@@ -87,7 +87,8 @@ const testTheme = {
   },
 };
 
-type StyleFactory<T> = (theme: typeof testTheme) => T;
+// Unistyles passes the runtime as the factory's second argument, so the stub does too.
+type StyleFactory<T> = (theme: typeof testTheme, runtime: typeof UnistylesRuntime) => T;
 
 function isStyleFactory<T>(styles: T | StyleFactory<T>): styles is StyleFactory<T> {
   return typeof styles === "function";
@@ -147,7 +148,7 @@ export const StyleSheet = {
     bottom: 0,
   },
   create: <T>(styles: T | StyleFactory<T>): T =>
-    resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
+    resolveStyles(isStyleFactory(styles) ? styles(testTheme, UnistylesRuntime) : styles),
 };
 
 export const withUnistyles = <T>(Component: T): T => Component;
