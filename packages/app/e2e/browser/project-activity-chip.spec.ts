@@ -91,6 +91,53 @@ test("a project chip stays on the row rail through reload, renames and pinning",
   }
 });
 
+test("a project chip summarizes the whole project while the quick filter hides rows", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const workspace = await seedWorkspace({
+    repoPrefix: "sidebar-chip-filter-",
+    title: "Busy worker",
+  });
+  try {
+    const created = await workspace.client.createWorkspace({
+      source: { kind: "worktree", cwd: workspace.repoPath, worktreeSlug: "quiet-worker" },
+      title: "Quiet worker",
+    });
+    expect(created.error).toBeNull();
+    if (!created.workspace) throw new Error("Quiet workspace was not created");
+    const serverId = getServerId();
+    const busyRow = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspace.workspaceId}`);
+    const quietRow = page.getByTestId(`sidebar-workspace-row-${serverId}:${created.workspace.id}`);
+    const chip = page.getByTestId(`sidebar-project-status-${workspace.projectKey}`);
+    await gotoAppShell(page);
+    await expect(busyRow).toBeVisible({ timeout: 30_000 });
+
+    const agent = await workspace.client.createAgent({
+      provider: "mock",
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "Busy agent",
+      model: "one-minute-stream",
+      initialPrompt: "Stay busy",
+    });
+    await workspace.client.waitForAgentUpsert(
+      agent.id,
+      (candidate) => candidate.status === "running",
+      15_000,
+    );
+    await expect(chip).toHaveText("Working");
+
+    await page.getByTestId("sidebar-quick-filter-toggle").click();
+    await page.getByTestId("sidebar-quick-filter-input").fill("Quiet worker");
+    await expect(busyRow).toHaveCount(0);
+    await expect(quietRow).toBeVisible();
+    await expect(chip).toHaveText("Working");
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("a working chip counts every working workspace and slides aside for project actions", async ({
   page,
 }, testInfo) => {

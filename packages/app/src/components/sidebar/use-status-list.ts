@@ -3,7 +3,6 @@ import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { mergeWithRemainder } from "@/utils/sidebar-reorder";
 import type { SidebarWorkspaceGroup } from "./sidebar-labels";
 import {
@@ -11,8 +10,7 @@ import {
   resolveStatusGroupReorder,
   type StatusListItem,
 } from "./status-list-items";
-import { useOpenWorkspaceKeep } from "./use-limited-sidebar-group";
-import { useSidebarRecencyClock } from "./workspace-recency-clock";
+import { useOpenWorkspaceKeep, useSidebarLimitInputs } from "./use-limited-sidebar-group";
 import { useSidebarWorkspaceTree } from "./workspace-tree-context";
 
 const NO_EXPANDED_GROUPS: ReadonlySet<string> = new Set();
@@ -48,9 +46,7 @@ export function useStatusListItems({
   groups: SidebarWorkspaceGroup[];
   collapsedGroupKeys: ReadonlySet<string>;
 }) {
-  const initialCount = useSidebarViewStore((state) => state.initialWorkspaceCount);
-  const days = useSidebarViewStore((state) => state.workspaceUpdatedWithinDays);
-  const now = useSidebarRecencyClock();
+  const { initialCount, days, now } = useSidebarLimitInputs();
   const keep = useOpenWorkspaceKeep(useActiveWorkspaceSelection());
   const { tree: workspaceTree, activeWorkspaceKey } = useSidebarWorkspaceTree();
   const [expandedGroupKeys, setExpandedGroupKeys] = useState(NO_EXPANDED_GROUPS);
