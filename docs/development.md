@@ -1,7 +1,7 @@
 # Development
 
 For this fork's branch roles, feature ownership, and integration process, follow the
-[worktree guide](worktree-development.md#fork-branches-and-ownership).
+[fork branches guide](fork-branches.md).
 
 ## Prerequisites
 
@@ -411,7 +411,7 @@ exact ref also resolves through its stored branch name.
 Worktrees inherit committed Git state only; uncommitted source-checkout changes are not copied.
 
 These are generic application ref-resolution rules. For this fork, use the explicit base and
-comparison targets in the [fork branch strategy](worktree-development.md#fork-branches-and-ownership).
+comparison targets in the [fork branch strategy](fork-branches.md).
 
 ## paseo.json service scripts
 
