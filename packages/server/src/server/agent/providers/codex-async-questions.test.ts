@@ -293,41 +293,49 @@ test("a failed submission releases the request so the user can retry", async () 
   }
 });
 
-test("manager keeps an async question published and answerable after the turn is interrupted", async () => {
-  const { session, ask, finish } = await setup();
-  const { manager, agent } = await manage(session);
-  const resolved: string[] = [];
-  let managerCanceled!: () => void;
-  const canceledByManager = new Promise<void>((resolve) => {
-    managerCanceled = resolve;
-  });
-  const unsubscribe = manager.subscribe(
-    (event) => {
-      if (event.type !== "agent_stream") return;
-      if (event.event.type === "permission_resolved") resolved.push(event.event.requestId);
-      if (event.event.type === "turn_canceled") managerCanceled();
-    },
-    { agentId: agent.id, replayState: false },
-  );
-  try {
-    await ask();
-    const [permission] = session.getPendingPermissions();
+const managerTurnEnds = [
+  { name: "interrupted", status: "interrupted", terminalEvent: "turn_canceled" },
+  { name: "failed", status: "failed", terminalEvent: "turn_failed" },
+] as const;
 
-    // The manager handles the session's turn_canceled asynchronously; wait for its dispatch.
-    await finish("interrupted");
-    await canceledByManager;
+test.each(managerTurnEnds)(
+  "manager keeps an async question published and answerable after the turn is $name",
+  async ({ status, terminalEvent }) => {
+    const { session, appServer, ask } = await setup();
+    const { manager, agent } = await manage(session);
+    const resolved: string[] = [];
+    let managerEndedTurn!: () => void;
+    const turnEndedByManager = new Promise<void>((resolve) => {
+      managerEndedTurn = resolve;
+    });
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type !== "agent_stream") return;
+        if (event.event.type === "permission_resolved") resolved.push(event.event.requestId);
+        if (event.event.type === terminalEvent) managerEndedTurn();
+      },
+      { agentId: agent.id, replayState: false },
+    );
+    try {
+      await ask();
+      const [permission] = session.getPendingPermissions();
 
-    expect(Array.from(manager.getAgent(agent.id)!.pendingPermissions.keys())).toEqual([
-      permission.id,
-    ]);
-    expect(resolved).toEqual([]);
-    await manager.respondToPermission(agent.id, permission.id, answer);
-    expect(manager.getAgent(agent.id)!.pendingPermissions.size).toBe(0);
-  } finally {
-    unsubscribe();
-    await manager.closeAgent(agent.id);
-  }
-});
+      // The manager handles the session's terminal event asynchronously; wait for its dispatch.
+      appServer.completeTurn({ status });
+      await turnEndedByManager;
+
+      expect(Array.from(manager.getAgent(agent.id)!.pendingPermissions.keys())).toEqual([
+        permission.id,
+      ]);
+      expect(resolved).toEqual([]);
+      await manager.respondToPermission(agent.id, permission.id, answer);
+      expect(manager.getAgent(agent.id)!.pendingPermissions.size).toBe(0);
+    } finally {
+      unsubscribe();
+      await manager.closeAgent(agent.id);
+    }
+  },
+);
 
 test("shows an async question, keeps streaming, and delivers its answer without interrupting", async () => {
   const { session, appServer, events, ask, say } = await setup();

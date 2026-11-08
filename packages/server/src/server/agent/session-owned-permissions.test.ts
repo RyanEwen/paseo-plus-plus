@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { AgentPermissionRequest } from "./agent-sdk-types.js";
-import { survivesTurnCancellation } from "./session-owned-permissions.js";
+import { survivesTurnEnd } from "./session-owned-permissions.js";
 
 const asyncQuestion: AgentPermissionRequest = {
   id: "permission-async-question-1",
@@ -21,18 +21,18 @@ function sessionHolding(...requests: AgentPermissionRequest[]) {
 }
 
 test("keeps a Codex async question the session still holds", () => {
-  expect(survivesTurnCancellation(sessionHolding(asyncQuestion), asyncQuestion)).toBe(true);
+  expect(survivesTurnEnd(sessionHolding(asyncQuestion), asyncQuestion)).toBe(true);
 });
 
 test("drops a Codex async question the session no longer holds", () => {
-  expect(survivesTurnCancellation(sessionHolding(), asyncQuestion)).toBe(false);
+  expect(survivesTurnEnd(sessionHolding(), asyncQuestion)).toBe(false);
 });
 
 test("drops turn-scoped approvals even while the session still lists them", () => {
-  expect(survivesTurnCancellation(sessionHolding(commandApproval), commandApproval)).toBe(false);
+  expect(survivesTurnEnd(sessionHolding(commandApproval), commandApproval)).toBe(false);
 });
 
 test("drops a same-named question from another provider", () => {
   const claudeQuestion = { ...asyncQuestion, provider: "claude" as const };
-  expect(survivesTurnCancellation(sessionHolding(claudeQuestion), claudeQuestion)).toBe(false);
+  expect(survivesTurnEnd(sessionHolding(claudeQuestion), claudeQuestion)).toBe(false);
 });
