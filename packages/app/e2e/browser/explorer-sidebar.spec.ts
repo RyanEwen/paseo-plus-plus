@@ -9,6 +9,7 @@ import {
   expectTabTitleFits,
 } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { expectNoSheetOpen, tapSheetBackdrop } from "../support/helpers/sheet";
 import {
   ensureExplorerSidebar,
   openFilesPanel,
@@ -196,11 +197,13 @@ test("Explorer keeps Files and Changes close actions in the context menu", async
 
 /**
  * Open the Files tab's context menu and flip Icon-only tabs, asserting its checked state before
- * and after. The row stays open after selection, so the menu is dismissed afterwards.
+ * and after. The row stays open after selection, like the other preference toggles, so the
+ * caller supplies how this layout dismisses the menu: Escape on a popover, the backdrop on a sheet.
  */
 async function toggleIconOnlyTabsFromFilesMenu(
   page: Parameters<typeof ensureExplorerSidebar>[0],
   checkedBefore: boolean,
+  dismissMenu: (page: Parameters<typeof ensureExplorerSidebar>[0]) => Promise<void>,
 ) {
   const files = explorerSidebar(page).getByTestId("workspace-tab-files");
   await files.click({ button: "right", position: { x: 12, y: 13 } });
@@ -208,8 +211,17 @@ async function toggleIconOnlyTabsFromFilesMenu(
   await expect(toggle).toHaveAttribute("aria-checked", String(checkedBefore));
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", String(!checkedBefore));
-  await page.keyboard.press("Escape");
+  await dismissMenu(page);
   await expect(toggle).toHaveCount(0);
+}
+
+async function dismissPopoverMenu(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  await page.keyboard.press("Escape");
+}
+
+async function dismissSheetMenu(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  await tapSheetBackdrop(page);
+  await expectNoSheetOpen(page);
 }
 
 /** Assert the Files tab is a label-less square cell of `width` that keeps its accessible name. */
@@ -233,14 +245,14 @@ test("switches Explorer tabs to icon-only from a tab's context menu and keeps th
     await waitForWorkspaceTabsVisible(page);
     await ensureExplorerSidebar(page);
 
-    await toggleIconOnlyTabsFromFilesMenu(page, false);
+    await toggleIconOnlyTabsFromFilesMenu(page, false, dismissPopoverMenu);
     await expectIconOnlyFilesTab(page, 28);
 
     await page.reload();
     await ensureExplorerSidebar(page);
     await expectIconOnlyFilesTab(page, 28);
 
-    await toggleIconOnlyTabsFromFilesMenu(page, true);
+    await toggleIconOnlyTabsFromFilesMenu(page, true, dismissPopoverMenu);
     await expectTabTitleFits(page, "Files", { min: 64, max: 96 });
   } finally {
     await workspace.cleanup();
@@ -254,7 +266,7 @@ test("offers the Icon-only tabs toggle in the compact Explorer tab menu", async 
     await page.setViewportSize({ width: 390, height: 844 });
     await openFilesPanel(page);
 
-    await toggleIconOnlyTabsFromFilesMenu(page, false);
+    await toggleIconOnlyTabsFromFilesMenu(page, false, dismissSheetMenu);
     await expectIconOnlyFilesTab(page, 44);
   } finally {
     await workspace.cleanup();
