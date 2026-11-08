@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import {
@@ -7,6 +7,7 @@ import {
   type AdditionalFile,
   type AdditionalFilesControl,
 } from "@/tool-calls/additional-files";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { highlightDiffLines } from "@/utils/diff-highlight";
 import { DiffViewer } from "./diff-viewer";
 
@@ -30,7 +31,7 @@ function AdditionalFileRow({ file, onOpenFile }: AdditionalFileRowProps) {
   return (
     <View style={styles.file} testID="tool-call-additional-file">
       {canOpen ? (
-        <Pressable
+        <PressHighlight
           onPress={open}
           accessibilityRole="link"
           accessibilityLabel={`${t("message.actions.openFile")}: ${file.displayPath}`}
@@ -39,7 +40,7 @@ function AdditionalFileRow({ file, onOpenFile }: AdditionalFileRowProps) {
           <Text style={styles.link} numberOfLines={1}>
             {file.displayPath}
           </Text>
-        </Pressable>
+        </PressHighlight>
       ) : (
         <Text style={styles.path} numberOfLines={1}>
           {file.displayPath}
