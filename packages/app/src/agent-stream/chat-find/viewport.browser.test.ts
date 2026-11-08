@@ -2431,6 +2431,9 @@ function hoverTranscriptGeometry(host: HTMLElement) {
   };
 }
 
+/** Centre first, then towards each edge, across the visible width of a hover target. */
+const HOVER_POINT_FRACTIONS = [0.5, 0.25, 0.1, 0.75, 0.9];
+
 /** Address visible points through the viewport so hovering a partially visible
  * assistant row cannot invoke the driver's scroll-into-view preparation.
  */
@@ -2443,9 +2446,13 @@ async function hoverVisibleTranscriptTarget(scroll: HTMLElement, target: HTMLEle
   const bottom = Math.min(scrollBounds.bottom - 1, bounds.bottom - 1);
   expect(right).toBeGreaterThan(left);
   expect(bottom).toBeGreaterThan(top);
-  const x = (left + right) / 2;
   const y = (top + bottom) / 2;
-  expect(target.contains(document.elementFromPoint(x, y))).toBe(true);
+  // More is a sibling of the bubble painted over its right side, so the visible centre
+  // can belong to that control. Hover a point the target itself really receives.
+  const x = HOVER_POINT_FRACTIONS.map((fraction) => left + (right - left) * fraction).find(
+    (candidate) => target.contains(document.elementFromPoint(candidate, y)),
+  );
+  if (x === undefined) throw new Error("No visible point of the hover target receives input");
   await userEvent.hover(scroll, {
     position: { x: x - scrollBounds.left, y: y - scrollBounds.top },
   });
