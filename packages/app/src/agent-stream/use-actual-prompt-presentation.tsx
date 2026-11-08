@@ -62,6 +62,7 @@ function NativePromptDisclosureAction({ driver, expanded }: NativePromptDisclosu
     <Button
       variant="ghost"
       size="md"
+      style={styles.disclosure}
       textStyle={styles.disclosureText}
       accessibilityLabel={t(expanded ? "stickyPrompt.expand" : "stickyPrompt.collapse")}
       accessibilityState={expanded ? COLLAPSED_DISCLOSURE : EXPANDED_DISCLOSURE}
@@ -130,6 +131,7 @@ function usePromptDisclosure(id: string, props: MessageProps) {
         <Button
           variant="ghost"
           size="md"
+          style={styles.disclosure}
           textStyle={styles.disclosureText}
           accessibilityLabel={t(expanded ? "stickyPrompt.collapse" : "stickyPrompt.expand")}
           accessibilityState={disclosureState}
@@ -199,5 +201,7 @@ export function useActualPromptPresentation(id: string, props: MessageProps): Pr
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // v0.15.3 widened compact md buttons; More has to fit inside a short one-line bubble.
+  disclosure: { paddingHorizontal: theme.spacing[4] },
   disclosureText: { color: theme.colors.userMessageForeground },
 }));
