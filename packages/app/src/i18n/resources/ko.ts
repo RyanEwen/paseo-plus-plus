@@ -2,6 +2,67 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  sshErrors: {
+    invalidTarget: "사용자 이름을 명시하여 ssh://user@hostname 형식으로 입력하세요.",
+    keyTooLarge: "64KiB보다 작은 개인 키를 선택하세요.",
+    keyUnreadable: "개인 키를 읽을 수 없습니다. 형식과 암호를 확인하세요.",
+    unreachable: "SSH 서버에 연결할 수 없습니다. 호스트 이름과 포트를 확인하세요.",
+    invalidCredentials: "SSH 자격 증명이 잘못되었습니다.",
+    importExpired: "SSH 키 가져오기가 만료되었습니다. 키를 다시 가져오세요.",
+    keyMissing: "이 기기에서 이 SSH 호스트의 개인 키를 가져오세요.",
+    sessionClosed: "SSH 세션이 닫혔습니다.",
+    unexpected: "SSH 브리지에 예기치 않은 오류가 발생했습니다. 다시 시도하세요.",
+    targetNeedsUser: "대상을 user@host 형식으로 입력하세요.",
+    keyFormatUnsupported: "지원되지 않는 키 형식입니다. OpenSSH 또는 PEM 개인 키를 사용하세요.",
+  },
+  worktreeOptions: {
+    branch: "브랜치",
+    searchBranches: "브랜치 검색",
+    searchWorktrees: "worktree 검색",
+    loadingWorktrees: "worktree 불러오는 중…",
+    baseBranch: "기준 브랜치",
+    newBranch: "새 브랜치",
+    useDifferentBranchName: "다른 브랜치 이름 사용",
+    worktreeAndBranchName: "worktree 및 브랜치 이름",
+    worktreeName: "worktree 이름",
+    newBranchName: "새 브랜치 이름",
+    detached: "분리됨 {{head}}",
+    projectUnavailable: "선택한 호스트에서 프로젝트를 사용할 수 없습니다",
+    chooseProject: "프로젝트를 선택하세요",
+    updateHost: "선택한 worktree 옵션을 사용하려면 이 호스트를 업데이트하세요.",
+    worktreeMissing: "선택한 worktree가 더 이상 없습니다. 다른 worktree를 선택하세요.",
+    enterNewBranchName: "새 브랜치 이름을 입력하세요.",
+    invalidWorktreeName:
+      "worktree 이름에는 소문자, 숫자, 단일 하이픈만 사용할 수 있습니다(최대 50자).",
+    chooseExistingBranch: "기존 브랜치를 선택하세요.",
+    branchCheckedOut: "브랜치가 이미 {{path}}에 체크아웃되어 있습니다. 기존 worktree를 선택하세요.",
+  },
+  androidUpdateErrors: {
+    saveFailed: "다운로드한 업데이트를 저장할 수 없습니다.",
+    invalidChecksum: "업데이트 체크섬이 잘못되었습니다.",
+    checksumMismatch: "체크섬이 일치하지 않습니다. 다시 다운로드하세요.",
+    previewBuildsOnly: "앱 업데이트는 포크 미리 보기 빌드에서만 사용할 수 있습니다.",
+    invalidApk: "다운로드한 APK가 잘못되었습니다. 다시 다운로드하세요.",
+    otherApp: "이 업데이트는 다른 앱의 것입니다.",
+    versionMismatch: "업데이트 버전이 일치하지 않거나 더 이상 최신이 아닙니다.",
+    signingMismatch: "업데이트 서명 키가 이 설치와 일치하지 않습니다.",
+    insecureRedirect: "안전하지 않은 다운로드 리디렉션입니다.",
+    invalidRedirect: "다운로드 리디렉션이 잘못되었습니다.",
+    downloadFailed: "업데이트 다운로드에 실패했습니다(HTTP {{status}}).",
+    timedOut: "업데이트 다운로드 시간이 초과되었습니다. 다시 시도하세요.",
+    tooLarge: "업데이트 APK가 다운로드 한도를 초과합니다.",
+    tooManyRedirects: "다운로드 리디렉션이 너무 많습니다.",
+    invalidBuildNumber: "미리 보기 빌드 번호가 잘못되었습니다",
+    unexpectedAssetUrl: "포크 릴리스 파일 URL이 예상과 다릅니다",
+    missingApk: "미리 보기에 APK 또는 체크섬이 없습니다",
+    invalidChecksumInventory: "APK 체크섬 목록이 잘못되었습니다",
+    rateLimited: "GitHub 사용량 한도에 도달했습니다. 나중에 다시 시도하세요.",
+    requestFailed: "업데이트 요청에 실패했습니다(HTTP {{status}})",
+  },
+  statusGroups: {
+    workspaceCount_one: "{{label}} (작업 공간 {{count}}개)",
+    workspaceCount_other: "{{label}} (작업 공간 {{count}}개)",
+  },
   explorerTabs: {
     iconOnlyLabel: "아이콘 전용 탭",
     iconOnlyHint:
@@ -100,11 +161,11 @@ export const ko: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "모바일 작업공간 탭",
-        hint: "작은 화면에서 같은 너비의 탭을 표시하고 필요한 경우에만 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
+        hint: "작은 화면에서 탭을 원래 너비로 표시하고 공간이 부족하면 스크롤합니다. 끄면 선택한 탭을 유지하며 탭 선택기를 사용합니다.",
       },
       widerWorkspaceTabs: {
         label: "더 넓은 작업 공간 탭",
-        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰의 작업 공간 탭은 항상 사용 가능한 너비를 균등하게 나눕니다.",
+        hint: "긴 탭 제목의 최대 너비를 50% 늘립니다. 휴대폰에도 적용됩니다.",
       },
 
       descriptiveToolCalls: {

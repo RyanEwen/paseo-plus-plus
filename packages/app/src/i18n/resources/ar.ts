@@ -2,6 +2,67 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  sshErrors: {
+    invalidTarget: "أدخل ssh://user@hostname مع اسم مستخدم صريح.",
+    keyTooLarge: "اختر مفتاحًا خاصًا أصغر من 64 كيلوبايت.",
+    keyUnreadable: "تعذرت قراءة المفتاح الخاص. تحقق من تنسيقه وعبارة المرور.",
+    unreachable: "تعذر الوصول إلى خادم SSH. تحقق من اسم المضيف والمنفذ.",
+    invalidCredentials: "بيانات اعتماد SSH غير صالحة.",
+    importExpired: "انتهت صلاحية استيراد مفتاح SSH. استورد المفتاح مرة أخرى.",
+    keyMissing: "استورد مفتاحًا خاصًا لمضيف SSH هذا على هذا الجهاز.",
+    sessionClosed: "جلسة SSH مغلقة.",
+    unexpected: "فشل جسر SSH بشكل غير متوقع. حاول مرة أخرى.",
+    targetNeedsUser: "أدخل الهدف بالصيغة user@host.",
+    keyFormatUnsupported: "تنسيق هذا المفتاح غير مدعوم. استخدم مفتاحًا خاصًا بتنسيق OpenSSH أو PEM.",
+  },
+  worktreeOptions: {
+    branch: "الفرع",
+    searchBranches: "البحث في الفروع",
+    searchWorktrees: "البحث في worktree",
+    loadingWorktrees: "جارٍ تحميل worktree…",
+    baseBranch: "الفرع الأساسي",
+    newBranch: "فرع جديد",
+    useDifferentBranchName: "استخدام اسم فرع مختلف",
+    worktreeAndBranchName: "اسم worktree والفرع",
+    worktreeName: "اسم worktree",
+    newBranchName: "اسم الفرع الجديد",
+    detached: "منفصل {{head}}",
+    projectUnavailable: "المشروع غير متاح على المضيف المحدد",
+    chooseProject: "اختر مشروعًا",
+    updateHost: "حدّث هذا المضيف لاستخدام خيارات worktree المحددة.",
+    worktreeMissing: "لم يعد worktree المحدد موجودًا. اختر واحدًا آخر.",
+    enterNewBranchName: "أدخل اسم فرع جديد.",
+    invalidWorktreeName:
+      "يجب أن يستخدم اسم worktree أحرفًا صغيرة وأرقامًا وشرطات مفردة (50 حرفًا كحد أقصى).",
+    chooseExistingBranch: "اختر فرعًا موجودًا.",
+    branchCheckedOut: "الفرع مستخدم بالفعل في {{path}}. حدد worktree الموجود له بدلاً من ذلك.",
+  },
+  androidUpdateErrors: {
+    saveFailed: "تعذر حفظ التحديث الذي تم تنزيله.",
+    invalidChecksum: "المجموع الاختباري للتحديث غير صالح.",
+    checksumMismatch: "المجموع الاختباري غير مطابق. نزّل التحديث مرة أخرى.",
+    previewBuildsOnly: "التحديثات متاحة فقط في إصدارات المعاينة من النسخة المشتقة.",
+    invalidApk: "ملف APK الذي تم تنزيله غير صالح. نزّله مرة أخرى.",
+    otherApp: "ينتمي التحديث إلى تطبيق آخر.",
+    versionMismatch: "إصدار التحديث غير مطابق أو لم يعد أحدث.",
+    signingMismatch: "مفتاح توقيع التحديث لا يطابق هذا التثبيت.",
+    insecureRedirect: "إعادة توجيه تنزيل غير آمنة.",
+    invalidRedirect: "إعادة توجيه تنزيل غير صالحة.",
+    downloadFailed: "فشل تنزيل التحديث (HTTP {{status}}).",
+    timedOut: "انتهت مهلة تنزيل التحديث. حاول مرة أخرى.",
+    tooLarge: "ملف APK للتحديث يتجاوز حد التنزيل.",
+    tooManyRedirects: "عدد كبير جدًا من عمليات إعادة توجيه التنزيل.",
+    invalidBuildNumber: "رقم بناء المعاينة غير صالح",
+    unexpectedAssetUrl: "عنوان URL غير متوقع لملف إصدار النسخة المشتقة",
+    missingApk: "المعاينة تفتقد ملف APK أو المجموع الاختباري",
+    invalidChecksumInventory: "قائمة المجاميع الاختبارية لملف APK غير صالحة",
+    rateLimited: "تم بلوغ حد GitHub. حاول لاحقًا.",
+    requestFailed: "فشل طلب التحديث (HTTP {{status}})",
+  },
+  statusGroups: {
+    workspaceCount_one: "{{label}} ({{count}} مساحة عمل)",
+    workspaceCount_other: "{{label}} ({{count}} مساحات عمل)",
+  },
   explorerTabs: {
     iconOnlyLabel: "علامات تبويب بالأيقونات فقط",
     iconOnlyHint:
@@ -98,11 +159,11 @@ export const ar: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "علامات تبويب مساحات العمل على الهاتف",
-        hint: "اعرض علامات تبويب متساوية العرض على الشاشات الصغيرة، مع التمرير عند الحاجة فقط. عطّل الخيار لاستخدام محدد علامات التبويب دون تغيير علامة التبويب المحددة.",
+        hint: "اعرض علامات التبويب بعرضها الطبيعي على الشاشات الصغيرة، مع التمرير عندما لا تتسع. عطّل الخيار لاستخدام محدد علامات التبويب دون تغيير علامة التبويب المحددة.",
       },
       widerWorkspaceTabs: {
         label: "علامات تبويب أوسع لمساحة العمل",
-        hint: "اسمح لعناوين علامات التبويب الطويلة بعرض أكبر بنسبة تصل إلى 50٪. تتقاسم علامات تبويب مساحة العمل على الهاتف العرض المتاح بالتساوي دائمًا.",
+        hint: "اسمح لعناوين علامات التبويب الطويلة بعرض أكبر بنسبة تصل إلى 50٪، على الهاتف أيضًا.",
       },
 
       descriptiveToolCalls: {

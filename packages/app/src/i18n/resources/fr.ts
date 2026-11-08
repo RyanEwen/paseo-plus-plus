@@ -2,6 +2,71 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  sshErrors: {
+    invalidTarget: "Saisissez ssh://utilisateur@hôte avec un nom d'utilisateur explicite.",
+    keyTooLarge: "Choisissez une clé privée de moins de 64 Kio.",
+    keyUnreadable: "Impossible de lire la clé privée. Vérifiez son format et sa phrase secrète.",
+    unreachable: "Impossible de joindre le serveur SSH. Vérifiez l'hôte et le port.",
+    invalidCredentials: "Identifiants SSH non valides.",
+    importExpired: "L'importation de la clé SSH a expiré. Importez-la de nouveau.",
+    keyMissing: "Importez une clé privée pour cet hôte SSH sur cet appareil.",
+    sessionClosed: "La session SSH est fermée.",
+    unexpected: "Le pont SSH a échoué de façon inattendue. Réessayez.",
+    targetNeedsUser: "Saisissez la cible sous la forme utilisateur@hôte.",
+    keyFormatUnsupported:
+      "Ce format de clé n'est pas pris en charge. Utilisez une clé privée OpenSSH ou PEM.",
+  },
+  worktreeOptions: {
+    branch: "Branche",
+    searchBranches: "Rechercher des branches",
+    searchWorktrees: "Rechercher des worktrees",
+    loadingWorktrees: "Chargement des worktrees…",
+    baseBranch: "Branche de base",
+    newBranch: "Nouvelle branche",
+    useDifferentBranchName: "Utiliser un autre nom de branche",
+    worktreeAndBranchName: "Nom du worktree et de la branche",
+    worktreeName: "Nom du worktree",
+    newBranchName: "Nom de la nouvelle branche",
+    detached: "Détachée {{head}}",
+    projectUnavailable: "Le projet n'est pas disponible sur l'hôte sélectionné",
+    chooseProject: "Choisissez un projet",
+    updateHost: "Mettez cet hôte à jour pour utiliser les options de worktree sélectionnées.",
+    worktreeMissing: "Le worktree sélectionné n'existe plus. Choisissez-en un autre.",
+    enterNewBranchName: "Saisissez un nom de nouvelle branche.",
+    invalidWorktreeName:
+      "Le nom du worktree doit utiliser des minuscules, des chiffres et des tirets simples (50 caractères maximum).",
+    chooseExistingBranch: "Choisissez une branche existante.",
+    branchCheckedOut:
+      "Branche déjà extraite dans {{path}}. Sélectionnez plutôt son worktree existant.",
+  },
+  androidUpdateErrors: {
+    saveFailed: "Impossible d'enregistrer la mise à jour téléchargée.",
+    invalidChecksum: "Somme de contrôle de la mise à jour non valide.",
+    checksumMismatch: "La somme de contrôle ne correspond pas. Téléchargez de nouveau.",
+    previewBuildsOnly:
+      "Les mises à jour ne sont disponibles que dans les versions preview du fork.",
+    invalidApk: "L'APK téléchargé n'est pas valide. Téléchargez-le de nouveau.",
+    otherApp: "La mise à jour appartient à une autre application.",
+    versionMismatch: "La version de la mise à jour ne correspond pas ou n'est plus récente.",
+    signingMismatch:
+      "La clé de signature de la mise à jour ne correspond pas à cette installation.",
+    insecureRedirect: "Redirection de téléchargement non sécurisée.",
+    invalidRedirect: "Redirection de téléchargement non valide.",
+    downloadFailed: "Échec du téléchargement de la mise à jour (HTTP {{status}}).",
+    timedOut: "Le téléchargement a expiré. Réessayez.",
+    tooLarge: "L'APK de la mise à jour dépasse la limite de téléchargement.",
+    tooManyRedirects: "Trop de redirections de téléchargement.",
+    invalidBuildNumber: "Numéro de build preview non valide",
+    unexpectedAssetUrl: "URL inattendue d'un fichier de version du fork",
+    missingApk: "Il manque l'APK ou la somme de contrôle à la preview",
+    invalidChecksumInventory: "Inventaire des sommes de contrôle APK non valide",
+    rateLimited: "Limite GitHub atteinte. Réessayez plus tard.",
+    requestFailed: "Échec de la demande de mise à jour (HTTP {{status}})",
+  },
+  statusGroups: {
+    workspaceCount_one: "{{label}} ({{count}} espace de travail)",
+    workspaceCount_other: "{{label}} ({{count}} espaces de travail)",
+  },
   explorerTabs: {
     iconOnlyLabel: "Onglets avec icônes seules",
     iconOnlyHint:
@@ -102,11 +167,11 @@ export const fr: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Onglets des espaces sur mobile",
-        hint: "Afficher des onglets de même largeur sur les écrans compacts, avec défilement uniquement si nécessaire. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
+        hint: "Afficher les onglets à leur largeur naturelle sur les écrans compacts, avec défilement s’ils ne tiennent pas. Désactivez pour utiliser le sélecteur d’onglets sans changer l’onglet actif.",
       },
       widerWorkspaceTabs: {
         label: "Onglets d’espace de travail plus larges",
-        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs. Sur téléphone, les onglets de l’espace de travail se partagent toujours la largeur disponible à parts égales.",
+        hint: "Accordez jusqu’à 50 % de largeur supplémentaire aux titres longs, y compris sur téléphone.",
       },
 
       descriptiveToolCalls: {

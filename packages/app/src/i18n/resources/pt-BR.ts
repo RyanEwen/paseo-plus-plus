@@ -2,6 +2,68 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  sshErrors: {
+    invalidTarget: "Digite ssh://usuario@host com um nome de usuário explícito.",
+    keyTooLarge: "Escolha uma chave privada menor que 64 KiB.",
+    keyUnreadable: "Não foi possível ler a chave privada. Verifique o formato e a senha.",
+    unreachable: "Não foi possível acessar o servidor SSH. Verifique o host e a porta.",
+    invalidCredentials: "Credenciais SSH inválidas.",
+    importExpired: "A importação da chave SSH expirou. Importe a chave novamente.",
+    keyMissing: "Importe uma chave privada para este host SSH neste dispositivo.",
+    sessionClosed: "A sessão SSH está fechada.",
+    unexpected: "A ponte SSH falhou inesperadamente. Tente novamente.",
+    targetNeedsUser: "Digite o destino como usuario@host.",
+    keyFormatUnsupported:
+      "Este formato de chave não é compatível. Use uma chave privada OpenSSH ou PEM.",
+  },
+  worktreeOptions: {
+    branch: "Branch",
+    searchBranches: "Buscar branches",
+    searchWorktrees: "Buscar worktrees",
+    loadingWorktrees: "Carregando worktrees…",
+    baseBranch: "Branch base",
+    newBranch: "Nova branch",
+    useDifferentBranchName: "Usar outro nome de branch",
+    worktreeAndBranchName: "Nome do worktree e da branch",
+    worktreeName: "Nome do worktree",
+    newBranchName: "Nome da nova branch",
+    detached: "Desanexado {{head}}",
+    projectUnavailable: "O projeto não está disponível no host selecionado",
+    chooseProject: "Escolha um projeto",
+    updateHost: "Atualize este host para usar as opções de worktree selecionadas.",
+    worktreeMissing: "O worktree selecionado não existe mais. Escolha outro.",
+    enterNewBranchName: "Digite um nome para a nova branch.",
+    invalidWorktreeName:
+      "O nome do worktree deve usar letras minúsculas, números e hifens simples (máximo de 50 caracteres).",
+    chooseExistingBranch: "Escolha uma branch existente.",
+    branchCheckedOut: "A branch já está em uso em {{path}}. Selecione o worktree existente.",
+  },
+  androidUpdateErrors: {
+    saveFailed: "Não foi possível salvar a atualização baixada.",
+    invalidChecksum: "Checksum da atualização inválido.",
+    checksumMismatch: "O checksum não confere. Baixe novamente.",
+    previewBuildsOnly: "As atualizações estão disponíveis apenas nas versões preview do fork.",
+    invalidApk: "O APK baixado é inválido. Baixe novamente.",
+    otherApp: "A atualização pertence a outro aplicativo.",
+    versionMismatch: "A versão da atualização não confere ou não é mais recente.",
+    signingMismatch: "A chave de assinatura da atualização não corresponde a esta instalação.",
+    insecureRedirect: "Redirecionamento de download inseguro.",
+    invalidRedirect: "Redirecionamento de download inválido.",
+    downloadFailed: "Falha ao baixar a atualização (HTTP {{status}}).",
+    timedOut: "O download da atualização expirou. Tente novamente.",
+    tooLarge: "O APK da atualização excede o limite de download.",
+    tooManyRedirects: "Redirecionamentos de download em excesso.",
+    invalidBuildNumber: "Número de build preview inválido",
+    unexpectedAssetUrl: "URL inesperada de arquivo da versão do fork",
+    missingApk: "A preview não tem o APK ou o checksum",
+    invalidChecksumInventory: "Inventário de checksums do APK inválido",
+    rateLimited: "Limite do GitHub atingido. Tente mais tarde.",
+    requestFailed: "Falha na solicitação de atualização (HTTP {{status}})",
+  },
+  statusGroups: {
+    workspaceCount_one: "{{label}} ({{count}} espaço de trabalho)",
+    workspaceCount_other: "{{label}} ({{count}} espaços de trabalho)",
+  },
   explorerTabs: {
     iconOnlyLabel: "Abas somente com ícones",
     iconOnlyHint:
@@ -103,11 +165,11 @@ export const ptBR: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Abas de espaços no celular",
-        hint: "Mostrar abas com a mesma largura em telas compactas, com rolagem apenas quando necessário. Desative para usar o seletor de abas sem mudar a aba selecionada.",
+        hint: "Mostrar as abas com a largura natural em telas compactas, com rolagem quando não couberem. Desative para usar o seletor de abas sem mudar a aba selecionada.",
       },
       widerWorkspaceTabs: {
         label: "Abas do espaço de trabalho mais largas",
-        hint: "Permita até 50% mais largura para títulos longos. No celular, as abas do espaço de trabalho sempre dividem igualmente a largura disponível.",
+        hint: "Permita até 50% mais largura para títulos longos, inclusive no celular.",
       },
 
       descriptiveToolCalls: {

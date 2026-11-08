@@ -2,6 +2,70 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  sshErrors: {
+    invalidTarget: "Introduce ssh://usuario@host con un nombre de usuario explícito.",
+    keyTooLarge: "Elige una clave privada de menos de 64 KiB.",
+    keyUnreadable:
+      "No se puede leer la clave privada. Comprueba su formato y la frase de contraseña.",
+    unreachable: "No se puede acceder al servidor SSH. Comprueba el host y el puerto.",
+    invalidCredentials: "Credenciales SSH no válidas.",
+    importExpired: "La importación de la clave SSH caducó. Vuelve a importarla.",
+    keyMissing: "Importa una clave privada para este host SSH en este dispositivo.",
+    sessionClosed: "La sesión SSH está cerrada.",
+    unexpected: "El puente SSH falló de forma inesperada. Inténtalo de nuevo.",
+    targetNeedsUser: "Introduce el destino como usuario@host.",
+    keyFormatUnsupported:
+      "Este formato de clave no es compatible. Usa una clave privada OpenSSH o PEM.",
+  },
+  worktreeOptions: {
+    branch: "Rama",
+    searchBranches: "Buscar ramas",
+    searchWorktrees: "Buscar worktrees",
+    loadingWorktrees: "Cargando worktrees…",
+    baseBranch: "Rama base",
+    newBranch: "Rama nueva",
+    useDifferentBranchName: "Usar otro nombre de rama",
+    worktreeAndBranchName: "Nombre de worktree y rama",
+    worktreeName: "Nombre del worktree",
+    newBranchName: "Nombre de la rama nueva",
+    detached: "Separado {{head}}",
+    projectUnavailable: "El proyecto no está disponible en el host seleccionado",
+    chooseProject: "Elige un proyecto",
+    updateHost: "Actualiza este host para usar las opciones de worktree seleccionadas.",
+    worktreeMissing: "El worktree seleccionado ya no existe. Elige otro.",
+    enterNewBranchName: "Introduce un nombre para la rama nueva.",
+    invalidWorktreeName:
+      "El nombre del worktree debe usar minúsculas, números y guiones simples (máximo 50 caracteres).",
+    chooseExistingBranch: "Elige una rama existente.",
+    branchCheckedOut: "La rama ya está activa en {{path}}. Selecciona su worktree existente.",
+  },
+  androidUpdateErrors: {
+    saveFailed: "No se puede guardar la actualización descargada.",
+    invalidChecksum: "Suma de comprobación de la actualización no válida.",
+    checksumMismatch: "La suma de comprobación no coincide. Vuelve a descargarla.",
+    previewBuildsOnly:
+      "Las actualizaciones solo están disponibles en las versiones preview del fork.",
+    invalidApk: "El APK descargado no es válido. Vuelve a descargarlo.",
+    otherApp: "La actualización pertenece a otra aplicación.",
+    versionMismatch: "La versión de la actualización no coincide o ya no es más reciente.",
+    signingMismatch: "La clave de firma de la actualización no coincide con esta instalación.",
+    insecureRedirect: "Redirección de descarga insegura.",
+    invalidRedirect: "Redirección de descarga no válida.",
+    downloadFailed: "Falló la descarga de la actualización (HTTP {{status}}).",
+    timedOut: "La descarga agotó el tiempo de espera. Inténtalo de nuevo.",
+    tooLarge: "El APK de la actualización supera el límite de descarga.",
+    tooManyRedirects: "Demasiadas redirecciones de descarga.",
+    invalidBuildNumber: "Número de compilación preview no válido",
+    unexpectedAssetUrl: "URL inesperada de un recurso de la versión del fork",
+    missingApk: "A la versión preview le falta el APK o la suma de comprobación",
+    invalidChecksumInventory: "Inventario de sumas de comprobación del APK no válido",
+    rateLimited: "Se alcanzó el límite de GitHub. Inténtalo más tarde.",
+    requestFailed: "Falló la solicitud de actualización (HTTP {{status}})",
+  },
+  statusGroups: {
+    workspaceCount_one: "{{label}} ({{count}} espacio de trabajo)",
+    workspaceCount_other: "{{label}} ({{count}} espacios de trabajo)",
+  },
   explorerTabs: {
     iconOnlyLabel: "Pestañas solo con iconos",
     iconOnlyHint:
@@ -102,11 +166,11 @@ export const es: TranslationResources = {
       },
       mobileWorkspaceTabs: {
         label: "Pestañas de espacios en móvil",
-        hint: "Mostrar pestañas del mismo ancho en pantallas compactas, con desplazamiento solo cuando sea necesario. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
+        hint: "Mostrar las pestañas con su ancho natural en pantallas compactas, con desplazamiento cuando no quepan. Desactiva para usar el selector de pestañas sin cambiar la pestaña seleccionada.",
       },
       widerWorkspaceTabs: {
         label: "Pestañas de espacio de trabajo más anchas",
-        hint: "Permite hasta un 50 % más de ancho para títulos largos. En el teléfono, las pestañas del espacio de trabajo siempre comparten por igual el ancho disponible.",
+        hint: "Permite hasta un 50 % más de ancho para títulos largos, también en el teléfono.",
       },
 
       descriptiveToolCalls: {
