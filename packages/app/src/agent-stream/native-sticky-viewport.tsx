@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, type ReactNode, type RefObject } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { useComposerViewportRef } from "@/composer/dock/internal/viewport-ref";
+import { resolveNativeMotionOwner } from "./native-actual-row-model";
 import type { View } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 import type { DockReservationSnapshot } from "@/keyboard/shift/internal/policy";
@@ -39,6 +48,20 @@ export interface NativeMeasurementContextValue {
   stationaryViewportRef: RefObject<View | null> | null;
 }
 export const NativeMeasurementContext = createContext<NativeMeasurementContextValue | null>(null);
+/** Resolve this viewport's motion owner and the measurement context it publishes. */
+export function useNativeMeasurementOwner(input: {
+  allowStandalone: boolean;
+  hasMotion: boolean;
+}): NativeMeasurementContextValue {
+  const stationaryViewportRef = useComposerViewportRef();
+  const mode = resolveNativeMotionOwner({
+    allowStandalone: input.allowStandalone,
+    hasMotion: input.hasMotion,
+    hasStationaryClip: stationaryViewportRef !== null,
+  });
+  return useMemo(() => ({ mode, stationaryViewportRef }), [mode, stationaryViewportRef]);
+}
+
 export function useNativeMeasurementContext() {
   const value = useContext(NativeMeasurementContext);
   if (!value) throw new Error("Native transcript requires its declared motion boundary");

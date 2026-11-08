@@ -1,8 +1,6 @@
 import { useStreamTopOverlayInset } from "./top-overlay";
 import type { ReactNode } from "react";
-import { useComposerViewportRef } from "@/composer/dock/internal/viewport-ref";
-import { NativeMeasurementContext } from "./native-sticky-viewport";
-import { resolveNativeMotionOwner } from "./native-actual-row-model";
+import { NativeMeasurementContext, useNativeMeasurementOwner } from "./native-sticky-viewport";
 import { ActualPromptRowsContext } from "./actual-prompt-rows";
 import { createNativeStickyLayout } from "./native-sticky-layout";
 import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
@@ -300,14 +298,8 @@ export function NativeActualMotionBoundary({
   children: ReactNode;
 }) {
   const inherited = useContext(KeyboardDockDisplacementContext);
-  const stationaryViewportRef = useComposerViewportRef();
   const zero = useSharedValue(0);
-  const mode = resolveNativeMotionOwner({
-    allowStandalone,
-    hasMotion: inherited !== null,
-    hasStationaryClip: stationaryViewportRef !== null,
-  });
-  const value = useMemo(() => ({ mode, stationaryViewportRef }), [mode, stationaryViewportRef]);
+  const value = useNativeMeasurementOwner({ allowStandalone, hasMotion: inherited !== null });
   return (
     <KeyboardDockDisplacementContext.Provider value={inherited ?? zero}>
       <NativeMeasurementContext.Provider value={value}>
