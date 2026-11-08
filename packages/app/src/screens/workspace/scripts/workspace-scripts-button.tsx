@@ -1,5 +1,4 @@
 import { WorkspaceBrowserDestinationItems } from "@/workspace/browser/link-menu";
-import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
 import { useCallback, useMemo, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
@@ -24,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
+import { openServiceUrl } from "@/utils/open-service-url";
 import type {
   WorkspaceScriptLinkKind,
   WorkspaceScriptLinkTarget,
@@ -315,6 +315,7 @@ function ScriptRow({
   liveTerminalIdSet,
   actions,
   onViewTerminal,
+  onOpenUrlInBrowserTab,
 }: ScriptRowProps): ReactElement {
   const { t } = useTranslation();
   const isRunning = script.lifecycle === "running";
@@ -326,12 +327,11 @@ function ScriptRow({
   const { start, stop, restart } = actions;
   const closeMenu = useDropdownMenuClose();
 
-  const { openPrimary } = useWorkspaceLinkOpening();
   const handleOpenService = useCallback(() => {
     if (!selectedLink) return;
     closeMenu();
-    void openPrimary(selectedLink.url);
-  }, [selectedLink, closeMenu, openPrimary]);
+    void openServiceUrl(selectedLink.url, { openInApp: onOpenUrlInBrowserTab });
+  }, [selectedLink, closeMenu, onOpenUrlInBrowserTab]);
 
   const handleView = useCallback(() => {
     if (liveTerminalId) onViewTerminal?.(liveTerminalId);
@@ -435,7 +435,10 @@ function ScriptRow({
       </View>
       {selectedLink ? (
         <View style={styles.hostList}>
-          <WorkspaceBrowserDestinationItems url={selectedLink.url} />
+          <WorkspaceBrowserDestinationItems
+            url={selectedLink.url}
+            primaryFollowsWorkspaceLinks={false}
+          />
           <ServiceLinkRow
             selectedTarget={selectedLink}
             targets={linkTargets}
@@ -456,6 +459,7 @@ export function WorkspaceScriptsButton({
   liveTerminalIds = [],
   onScriptTerminalStarted,
   onViewTerminal,
+  onOpenUrlInBrowserTab,
   hideLabels,
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { t } = useTranslation();
@@ -514,6 +518,7 @@ export function WorkspaceScriptsButton({
                 liveTerminalIdSet={liveTerminalIdSet}
                 actions={actions}
                 onViewTerminal={onViewTerminal}
+                onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
               />
             ))}
           </DropdownMenuContent>

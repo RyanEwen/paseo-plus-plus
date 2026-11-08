@@ -9,6 +9,8 @@ import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { darkTheme as theme } from "@/styles/theme";
+import { persistAppSettings, type ServiceUrlBehavior } from "@/hooks/use-settings";
+import { openExternalUrl } from "@/utils/open-external-url";
 import { WorkspaceScriptsButton } from "./workspace-scripts-button";
 
 void testI18n;
@@ -224,6 +226,7 @@ const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 
 interface RenderScriptsOptions {
   hideLabels?: boolean;
+  onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
 function renderScripts(
@@ -252,6 +255,7 @@ function renderScripts(
           scripts={nextScripts}
           liveTerminalIds={LIVE_TERMINAL_IDS}
           hideLabels={options.hideLabels}
+          onOpenUrlInBrowserTab={options.onOpenUrlInBrowserTab}
         />
       </QueryClientProvider>
     );
@@ -290,6 +294,39 @@ function requirePrimaryIcon(row: HTMLElement): HTMLElement {
     throw new Error("Missing row icon");
   }
   return icon;
+}
+
+const SERVICE_URL = "http://localhost:57483";
+
+/** Act as desktop with this Service URLs choice; the Ask dialog answers "External browser". */
+async function prepareServiceUrlSetting(serviceUrlBehavior: ServiceUrlBehavior): Promise<void> {
+  vi.mocked(openExternalUrl).mockClear();
+  vi.stubGlobal("paseoDesktop", {
+    dialog: { askWithCheckbox: async () => ({ confirmed: false, dontAskAgain: false }) },
+  });
+  await persistAppSettings({ serviceUrlBehavior });
+}
+
+/** Render a running service and click its open action. */
+function renderAndOpenService(
+  onOpenUrlInBrowserTab: (url: string) => void,
+): ReturnType<typeof renderScripts> {
+  const rendered = renderScripts(
+    [
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        terminalId: "terminal-script-1",
+      }),
+    ],
+    { onOpenUrlInBrowserTab },
+  );
+  fireEvent.click(
+    document.querySelector('[data-testid="workspace-scripts-open-dev"]') as HTMLElement,
+  );
+  return rendered;
 }
 
 describe("WorkspaceScriptsButton", () => {
@@ -493,6 +530,36 @@ describe("WorkspaceScriptsButton", () => {
     expect(requireRow("dev").textContent).toContain("localhost:57483");
     expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openExternally"));
     expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openInPaseo"));
+  });
+
+  it("opens the workspace browser when Service URLs is In Paseo", async () => {
+    const openInBrowserTab = vi.fn();
+    await prepareServiceUrlSetting("in-app");
+
+    current = renderAndOpenService(openInBrowserTab);
+
+    await vi.waitFor(() => expect(openInBrowserTab).toHaveBeenCalledExactlyOnceWith(SERVICE_URL));
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("opens the system browser when Service URLs is External", async () => {
+    const openInBrowserTab = vi.fn();
+    await prepareServiceUrlSetting("external");
+
+    current = renderAndOpenService(openInBrowserTab);
+
+    await vi.waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(SERVICE_URL));
+    expect(openInBrowserTab).not.toHaveBeenCalled();
+  });
+
+  it("asks when Service URLs is Ask and follows the answer", async () => {
+    const openInBrowserTab = vi.fn();
+    await prepareServiceUrlSetting("ask");
+
+    current = renderAndOpenService(openInBrowserTab);
+
+    await vi.waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(SERVICE_URL));
+    expect(openInBrowserTab).not.toHaveBeenCalled();
   });
 
   it("stops a running script through its terminal", async () => {

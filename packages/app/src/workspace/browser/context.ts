@@ -85,6 +85,25 @@ export interface WorkspaceLinkOpening {
   defaultDestination: BrowserLinkDestination;
 }
 
+/**
+ * The opener as a fire-and-forget callback for callers that ignore its result, such as the upstream
+ * Service URLs path. Failures are reported like any other link failure; without an opener it does nothing.
+ */
+export function useReportedBrowserOpener(
+  openInPaseo: OpenWorkspaceBrowserUrl | undefined,
+): (url: string) => void {
+  const { reportError } = useContext(WorkspaceLinkPolicyContext);
+  return useCallback(
+    (url: string) => {
+      const open = async () => {
+        await openInPaseo?.(url);
+      };
+      open().catch(reportError);
+    },
+    [openInPaseo, reportError],
+  );
+}
+
 /** Primary activation always belongs to the nearest opener scope, never the globally selected workspace. */
 export function useWorkspaceLinkOpening(): WorkspaceLinkOpening {
   const { enabled, isEnabled, reportError } = useContext(WorkspaceLinkPolicyContext);

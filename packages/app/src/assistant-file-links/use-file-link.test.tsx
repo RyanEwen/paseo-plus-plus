@@ -11,6 +11,7 @@ import { AssistantFileLinkResolverProvider } from "./provider";
 import {
   WorkspaceBrowserOpenerProvider,
   WorkspaceLinkPolicyContext,
+  useReportedBrowserOpener,
   useWorkspaceLinkOpening,
   type WorkspaceLinkPolicy,
 } from "@/workspace/browser/context";
@@ -70,6 +71,10 @@ function createQueryClient(): QueryClient {
       mutations: { retry: false },
     },
   });
+}
+
+function failBrowserOpening(): void {
+  throw new Error("Workspace is unavailable");
 }
 
 function createToast(): ToastApi {
@@ -209,6 +214,23 @@ describe("useFileLink", () => {
 
     expect(toast.error).toHaveBeenCalledExactlyOnceWith("Could not open terminal link");
     expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed fire-and-forget browser opening through the policy", async () => {
+    const toast = createToast();
+    const { result } = renderHook(() => useReportedBrowserOpener(failBrowserOpening), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles: [],
+        toast,
+      }),
+    });
+
+    act(() => result.current("https://example.com/service"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledExactlyOnceWith("Workspace is unavailable"),
+    );
   });
 
   it("opens a chat HTTP link in the workspace browser when Workspace links is on", async () => {
