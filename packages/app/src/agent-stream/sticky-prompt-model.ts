@@ -1,6 +1,7 @@
 import { coversCanonicalInterval } from "@/timeline/canonical-reading-source";
 import type { CanonicalTimelineCoverage } from "@/timeline/canonical-prompt-model";
 import type { PromptReadingPosition } from "./prompt-reading-position";
+import type { ControlSize } from "@/components/ui/control-geometry";
 import type { StreamItem } from "@/types/stream";
 import type { ChatOutlinePrompt } from "./chat-outline/model";
 import type { PromptDiscoveryStatus } from "./use-prompt-discovery";
@@ -176,6 +177,11 @@ export function getMissingReadingPromptSeq(input: {
   }
   if (input.target?.item) return undefined;
   return input.target?.seq;
+}
+
+/** Touch layouts keep a full 44 px tap target; pointer layouts use the 28 px dense size. */
+export function promptArrowControlSize(isCompact: boolean): ControlSize {
+  return isCompact ? "md" : "sm";
 }
 
 /** Discovery may also begin before the first loaded user message exists. */

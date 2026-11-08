@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import type { StreamItem } from "@/types/stream";
 import {
   INITIAL_STICKY_PROMPT_STATE,
   NO_PROMPT_ROWS,
   indexContextSources,
+  promptArrowControlSize,
   reduceStickyPromptState,
   resolveIndexedContextSource,
   selectPromptHead,
@@ -387,5 +389,12 @@ describe("selectPromptHead", () => {
     const head = [prompt("u1", 1)];
 
     expect(selectPromptHead(head)).toBe(head);
+  });
+});
+
+describe("promptArrowControlSize", () => {
+  it("gives phones a 44 px tap target and desktop a 28 px control", () => {
+    expect(controlHeightForLayout(promptArrowControlSize(true), true)).toBe(44);
+    expect(controlHeightForLayout(promptArrowControlSize(false), false)).toBe(28);
   });
 });

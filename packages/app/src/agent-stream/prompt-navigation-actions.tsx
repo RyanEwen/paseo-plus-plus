@@ -6,6 +6,7 @@ import { View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { promptArrowControlSize } from "./sticky-prompt-model";
 import type { PromptNavigationControls } from "./use-prompt-navigation-controls";
 
 export const PromptNavigationContext = createContext<PromptNavigationControls | null>(null);
@@ -20,7 +21,7 @@ export function PromptNavigationActions({ messageId }: { messageId: string }) {
   if (!navigation) return null;
   const position = navigation.targetIds.indexOf(messageId);
   if (position < 0) return null;
-  const size = compact ? "md" : "sm";
+  const size = promptArrowControlSize(compact);
   return (
     <View style={styles.row}>
       <Button
