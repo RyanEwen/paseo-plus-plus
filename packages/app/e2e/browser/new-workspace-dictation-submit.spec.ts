@@ -46,7 +46,15 @@ function sendSessionMessage(
   ws.send(JSON.stringify({ type: "session", message }));
 }
 
-function enableDictationCapability(message: WebSocketMessage): WebSocketMessage {
+const REALTIME_VOICE_DISABLED = {
+  enabled: false,
+  reason: "Realtime voice is disabled in this test.",
+};
+
+function enableDictationCapability(
+  message: WebSocketMessage,
+  voice: { enabled: boolean; reason: string } = REALTIME_VOICE_DISABLED,
+): WebSocketMessage {
   const envelope = parseEnvelope(message);
   const payload = envelope?.message?.payload;
   if (
@@ -61,7 +69,7 @@ function enableDictationCapability(message: WebSocketMessage): WebSocketMessage 
   (payload as Record<string, unknown>).capabilities = {
     voice: {
       dictation: { enabled: true, reason: "" },
-      voice: { enabled: false, reason: "Realtime voice is disabled in this test." },
+      voice,
     },
   };
   return JSON.stringify(envelope);
@@ -250,6 +258,80 @@ test("dictation shortcut leaves retained fullscreen and exposes recording contro
       page.getByText("Realtime voice is disabled in this test.", { exact: true }),
     ).toBeVisible();
     await expect(composerLocator(page)).toHaveValue(draft);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+/** Accepts realtime voice locally, so the composer enters voice mode without a speech provider. */
+async function installRealtimeVoiceHarness(page: Page): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+
+    ws.onMessage((message) => {
+      const request = sessionMessage(message);
+      if (request?.type === "voice_audio_chunk") {
+        return;
+      }
+      if (request?.type === "set_voice_mode") {
+        sendSessionMessage(ws, {
+          type: "set_voice_mode_response",
+          payload: {
+            requestId: request.requestId,
+            enabled: request.enabled,
+            agentId: request.agentId ?? null,
+            accepted: true,
+            error: null,
+          },
+        });
+        return;
+      }
+      server.send(message);
+    });
+
+    server.onMessage((message) =>
+      ws.send(enableDictationCapability(message, { enabled: true, reason: "" })),
+    );
+  });
+}
+
+async function pressSpaceOnNeutralSurface(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+  await page.keyboard.press("Space");
+}
+
+test("Space activates a focused sidebar button without toggling realtime voice", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "voice-space-focused-control-",
+    title: "Voice Space focused control",
+  });
+  await installSyntheticMicrophone(page);
+  await installRealtimeVoiceHarness(page);
+  const mute = page.getByRole("button", { name: "Mute realtime voice", exact: true });
+  const unmute = page.getByRole("button", { name: "Unmute realtime voice", exact: true });
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await page.getByRole("button", { name: "Enable Voice mode", exact: true }).click();
+    await expect(mute).toBeVisible();
+
+    // Prove the shortcut is live while voice is active, so the focused-control case can fail.
+    await pressSpaceOnNeutralSurface(page);
+    await expect(unmute).toBeVisible();
+    await pressSpaceOnNeutralSurface(page);
+    await expect(mute).toBeVisible();
+
+    await page.getByTestId("sidebar-help").focus();
+    await page.keyboard.press("Space");
+    await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
+    await expect(mute).toBeVisible();
+    await expect(unmute).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }
