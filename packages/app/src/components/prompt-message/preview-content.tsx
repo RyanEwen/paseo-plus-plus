@@ -10,7 +10,7 @@ import {
 import { ScrollView } from "@/components/ui/scroll-view";
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { controlHeightForLayout } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import {
   NaturalMessageFlowContext,
   type UserMessageBodyPresentation,
@@ -212,8 +212,8 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: Math.round(theme.fontSize.content * 1.4) + theme.spacing[4] * 2,
   },
   action: {
-    // The 44 px field height the preview row has always reserved, at every width.
-    minHeight: controlHeightForLayout("md", true),
+    // Reserve exactly the height of the md control this slot holds, at each layout.
+    minHeight: CONTROL_HEIGHTS.md,
     justifyContent: "center",
     alignSelf: "center",
     flexShrink: 0,
