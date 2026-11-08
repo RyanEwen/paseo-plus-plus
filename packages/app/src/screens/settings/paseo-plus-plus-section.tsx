@@ -1,9 +1,6 @@
 import { AccentSection } from "./paseo-plus-plus/accent-section";
 import { DEVICE_LOCAL_FORK_SETTING_KEYS } from "@/paseo-plus-plus/device-local-settings";
-import {
-  FEATURE_EXAMPLE_CAPTION_KEYS,
-  FEATURE_EXAMPLE_IMAGES,
-} from "@/paseo-plus-plus/settings-examples";
+import { FEATURE_EXAMPLE_IMAGES } from "@/paseo-plus-plus/settings-examples";
 import { SettingsExample } from "@/components/settings/settings-example";
 import { SettingsSyncSection } from "./settings-sync-section";
 import { ExplorerSection } from "@/screens/settings/paseo-plus-plus/explorer-section";
@@ -175,17 +172,16 @@ function FeatureSwitch({
   );
   const label = t(`paseoPlusPlus.features.${feature}.label`);
   const hint = t(`paseoPlusPlus.features.${feature}.hint`);
-  const extraCaptionKey = FEATURE_EXAMPLE_CAPTION_KEYS[feature];
   const help = useMemo(
     () => (
       <SettingsExample
         title={label}
-        caption={extraCaptionKey ? `${hint} ${t(extraCaptionKey)}` : hint}
+        caption={hint}
         images={FEATURE_EXAMPLE_IMAGES[feature]}
         testID={`settings-example-${feature}`}
       />
     ),
-    [feature, label, hint, extraCaptionKey, t],
+    [feature, label, hint],
   );
   return (
     <SettingsSwitch

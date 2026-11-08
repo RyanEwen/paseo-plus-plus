@@ -130,8 +130,6 @@ export const ko: TranslationResources = {
       before: "상태 변경 전",
       after: "상태 변경 후",
       imageLabel: "{{title}} 예시",
-      positions:
-        "상태 변경 전후의 최종 위치입니다. 정지 이미지는 애니메이션 시간을 보여주지 않습니다.",
       explorer: "변경 목록과 작업 사본 차이의 예입니다.",
       workspaceLimit:
         "그룹별 초기 표시 개수를 선택하거나 모두 표시하세요. 이미 펼친 그룹은 펼쳐진 상태를 유지합니다.",
