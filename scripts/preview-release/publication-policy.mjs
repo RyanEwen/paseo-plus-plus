@@ -136,7 +136,6 @@ export function resolvePublicationPolicy({
   qualifiedBridge,
   retainedBridge,
   releases,
-  comparison,
 }) {
   if (!["bridge", "preview", "latest"].includes(kind)) {
     throw new Error("Release kind must be bridge, preview or latest");
@@ -172,14 +171,9 @@ export function resolvePublicationPolicy({
   if (kind === "latest") requireQualifiedBridge(qualifiedBridge);
   const expectedBridge = kind === "preview" ? retainedBridge : qualifiedBridge;
   const identity = requireRetainedBridge(expectedBridge, releases);
+  // Do not require Git ancestry from the bridge: rebuilding main onto an upstream release replaces
+  // those commits while keeping their code, so ancestry says nothing about the update path.
   requireNewerBuild(current, identity);
-  if (
-    comparison?.status !== "ahead" ||
-    comparison.base_commit?.sha !== expectedBridge.commit ||
-    comparison.merge_base_commit?.sha !== expectedBridge.commit
-  ) {
-    throw new Error("Release source must descend from the retained bridge source");
-  }
   return kind === "preview"
     ? { prerelease: true, makeLatest: false }
     : { prerelease: false, makeLatest: true };
@@ -251,18 +245,12 @@ export function requirePublicationPolicy({ kind, repo, release }) {
     "--paginate",
     "--slurp",
   ]).flat();
-  const expectedBridge = kind === "preview" ? retainedBridge : qualifiedBridge;
-  const comparison =
-    kind === "bridge"
-      ? null
-      : readGitHubJson([`repos/${repo}/compare/${expectedBridge.commit}...${release.commit}`]);
   const policy = resolvePublicationPolicy({
     kind,
     release,
     qualifiedBridge,
     retainedBridge,
     releases,
-    comparison,
   });
   if (
     kind === "latest" &&
