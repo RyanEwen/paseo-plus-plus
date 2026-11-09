@@ -256,7 +256,7 @@ switching to `latest.yml`, or clearing that flag would change this update contra
 `releaseType: prerelease` is retained for compatibility; packaging runs with `--publish never`,
 and the reviewed publisher controls GitHub classification.
 
-Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`. Preview publication instead checks the source-controlled public release API inventory and canonical provenance under `docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint and source ancestry. This retention evidence proves availability, not installed updater behavior; it cannot open the Latest gate.
+Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`. Preview publication instead checks the source-controlled public release API inventory and canonical provenance under `docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint. This retention evidence proves availability, not installed updater behavior; it cannot open the Latest gate.
 After the bridge is published and its real updater paths pass qualification, review a source change
 that replaces `null` with its `schemaVersion: 1`, exact `releaseId`, `tag`, full source `commit`,
 `assetFingerprint`, and repository-relative `qualificationEvidence` Markdown path under
@@ -274,9 +274,10 @@ fixture evidence and what ran on installed packages. First normal publication ne
 CI and complete asset validation as well as the reviewed bridge receipt.
 
 The publisher rechecks the bridge before builds, before draft changes and immediately before
-publication. It requires the pinned prerelease and assets to remain public and unchanged, a source
-descended from the bridge, and a higher workflow counter without a lower desktop core version
-than any published fork build.
+publication. It requires the pinned prerelease and assets to remain public and unchanged, and a
+higher workflow counter without a lower desktop core version than any published fork build. It does
+not require Git ancestry from the bridge, because rebuilding `main` onto an upstream release replaces
+those commits while keeping their code.
 It refuses another bridge after one is published. If bridge qualification fails, hold normal
 publication and review the repair plan. Keep the bridge classified as a prerelease, and never delete or replace its assets. Restore an accidentally changed classification only with explicit authorization and before/after verification of the unchanged release identity, source, notes and complete asset inventory. Continuing previews retain the original bridge and cannot put its reserved marker in their notes.
 

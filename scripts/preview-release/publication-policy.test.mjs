@@ -56,11 +56,6 @@ function publicationFixture() {
       assetFingerprint: fingerprintBridgeAssets(assets),
     },
     releases: [bridge],
-    comparison: {
-      status: "ahead",
-      base_commit: { sha: bridge.target_commitish },
-      merge_base_commit: { sha: bridge.target_commitish },
-    },
   };
 }
 
@@ -143,20 +138,6 @@ test("normal release gate requires the exact retained prerelease, asset inventor
       () => resolvePublicationPolicy({ ...fixture, kind, releases: [] }),
       /immutable assets must remain published/,
     );
-  }
-  for (const comparison of [
-    null,
-    { ...fixture.comparison, status: "identical" },
-    { ...fixture.comparison, status: "diverged" },
-    { ...fixture.comparison, base_commit: { sha: "c".repeat(40) } },
-    { ...fixture.comparison, merge_base_commit: { sha: "c".repeat(40) } },
-  ]) {
-    for (const kind of ["latest", "preview"]) {
-      assert.throws(
-        () => resolvePublicationPolicy({ ...fixture, kind, comparison }),
-        /descend from the retained bridge/,
-      );
-    }
   }
   for (const qualificationEvidence of [
     "../receipt.md",
