@@ -43,11 +43,8 @@ test("the PowerShell probe measures the inspector's exact command against its ow
     "utf8",
   );
   assert.match(script, /self: process\.pid/);
-  const processes = readFileSync(
-    new URL("packages/server/src/terminal/terminal-worker-processes.ts", repoRoot),
-    "utf8",
-  );
-  assert.ok(processes.includes(`"${EXACT_PROCESS_LIST}"`), "process list text drifted");
+  // Terminal workers no longer list Windows processes (upstream #8818), so the probe's process
+  // list is a standalone measurement with no inspector command to match.
   assert.doesNotMatch(exactSelfQuery(4242), /\$PID/i);
 });
 
