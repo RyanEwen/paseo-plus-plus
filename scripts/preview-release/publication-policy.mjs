@@ -96,7 +96,7 @@ function requireNewerBuild(current, previous) {
   }
 }
 
-/** Require the exact published prerelease and pinned assets before admitting normal releases. */
+/** Require the exact published prerelease bridge and its pinned assets before any normal release. */
 function requireRetainedBridge(retainedBridge, releases) {
   if (
     !retainedBridge ||
@@ -127,8 +127,12 @@ function requireRetainedBridge(retainedBridge, releases) {
 }
 
 /**
- * Resolve GitHub classification from reviewed bridge evidence and fresh read-only API results.
- * A receipt attests real updater qualification; release metadata alone cannot establish that.
+ * Resolve GitHub classification from bridge evidence and fresh read-only API results.
+ *
+ * `preview` publishes a normal release marked Latest, provided the retained prerelease bridge is
+ * still published unchanged for clients that only discover prereleases. `bridge` was a once-only
+ * prerelease and is refused once one exists. `latest` is the older receipt-gated path to the same
+ * classification and stays closed while no reviewed receipt exists.
  */
 export function resolvePublicationPolicy({
   kind,
@@ -161,22 +165,20 @@ export function resolvePublicationPolicy({
       )
     ) {
       throw new Error(
-        "The final updater bridge already exists; retain it and use latest after qualification",
+        "The final updater bridge already exists; retain it and publish with release_kind=preview",
       );
     }
     return { prerelease: true, makeLatest: false };
   }
 
-  // Retention permits continued prereleases; only installed-updater evidence permits Latest.
+  // Every normal release requires the retained bridge; only `latest` also requires a receipt.
   if (kind === "latest") requireQualifiedBridge(qualifiedBridge);
   const expectedBridge = kind === "preview" ? retainedBridge : qualifiedBridge;
   const identity = requireRetainedBridge(expectedBridge, releases);
   // Do not require Git ancestry from the bridge: rebuilding main onto an upstream release replaces
   // those commits while keeping their code, so ancestry says nothing about the update path.
   requireNewerBuild(current, identity);
-  return kind === "preview"
-    ? { prerelease: true, makeLatest: false }
-    : { prerelease: false, makeLatest: true };
+  return { prerelease: false, makeLatest: true };
 }
 
 /** Pin availability from captured public API/provenance, without claiming installed-updater qualification. */

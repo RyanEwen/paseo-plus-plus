@@ -84,9 +84,9 @@ test("normal Latest publication stays closed until a published bridge is qualifi
   );
 });
 
-test("continuing preview prereleases require retention but never invent Latest qualification", () => {
+test("previews publish as normal Latest releases while the prerelease bridge is retained", () => {
   const fixture = { ...publicationFixture(), kind: "preview", qualifiedBridge: null };
-  assert.deepEqual(resolvePublicationPolicy(fixture), { prerelease: true, makeLatest: false });
+  assert.deepEqual(resolvePublicationPolicy(fixture), { prerelease: false, makeLatest: true });
   assert.throws(
     () => resolvePublicationPolicy({ ...fixture, kind: "latest" }),
     /reviewed qualified-bridge receipt/,
@@ -114,7 +114,7 @@ test("non-bridge release notes cannot create a second bridge marker", () => {
   assert.doesNotThrow(() => requirePreviewNotes(updaterBridgeMarker, "bridge"));
 });
 
-test("normal release gate requires the exact retained prerelease, asset inventory and source ancestry", () => {
+test("normal release gate requires the exact retained prerelease and its asset inventory", () => {
   const fixture = publicationFixture();
   const bridge = fixture.releases[0];
   for (const replacement of [

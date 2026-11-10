@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       release_kind:
-        description: "Preview prerelease, once-only updater bridge, or qualified normal Latest"
+        description: "Preview (normal Latest release), once-only updater bridge, or receipt-gated Latest"
         required: true
         default: preview
         type: choice

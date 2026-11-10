@@ -227,18 +227,21 @@ exclude preview tags. The preview workflow does not publish npm packages to a re
 
 ### Final prerelease bridge and normal Latest releases
 
-The bridge `v0.11.2-preview.32` remains published as a prerelease. Continue shipping preview prereleases with `release_kind=preview` while installed-updater qualification is unfinished. Normal Latest publication remains closed pending that qualification and a reviewed receipt.
-
-The once-only `bridge` release contains the Android and standalone-host updater transition. The `preview` choice continues prereleases without marking another bridge; `latest` switches to normal GitHub releases marked **Latest** only after qualification. Keep
+Publish previews with `release_kind=preview`. They publish as normal GitHub releases marked
+**Latest**, starting with `v0.15.3-preview.45`. Keep
 `v<upstream-version>-preview.<workflow-run-number>`, the `preview` desktop channel and its three
 manifest filenames, package identities, profiles, signing keys, and workflow sequence unchanged.
 Do not assume the next run number: draft, failed and verification runs also consume the sequence.
 
-Older Android apps and standalone hosts only discover prereleases. Keep the final bridge published
-as a prerelease with all its original assets so they can update to it before discovering normal
-releases. Bridge clients accept either classification within the same exact fork tag namespace.
-Drafts, unrelated tags, incomplete newest builds and noncanonical asset URLs remain ineligible.
-Checksums, Android package/signing-key checks, installer approval and version checks still apply.
+Standalone hosts from `v0.11.1-preview.22` through `v0.11.2-preview.30`, and Android apps from
+`v0.11.1-preview.25` through `v0.11.2-preview.30`, only discover prereleases. Earlier Android builds
+and hosts have no in-app updater. The bridge `v0.11.2-preview.32` and its successors through
+`v0.12.0-preview.36` stay published as prereleases, so those clients update to the newest of them
+and then discover normal releases: from `.32` on, the selectors accept either classification within
+the exact fork tag namespace. Keep the bridge published as a prerelease with all its original
+assets. Drafts, unrelated tags, incomplete newest builds and noncanonical asset URLs remain
+ineligible. Checksums, Android package/signing-key checks, installer approval and version checks
+still apply.
 
 The shipped Android and host selectors page through the whole release history (see
 `packages/server/src/server/session/daemon/fork-preview.ts`), so normal releases do not push the
@@ -249,37 +252,27 @@ Removing them needs a separate compatibility decision after reviewing installed-
 New desktop builds query `RyanEwen/paseo-plus-plus` directly. Android and standalone hosts use its API directly. Builds through preview32 query `RyanEwen/paseo` and depend on its retained redirect. Verify the legacy Atom feed, release API, channel manifests and installer URLs live before claiming those installs can update automatically. Never create a separate repository at the old name; that overrides the redirect.
 
 Desktop's installed electron-updater reads the Atom feed and selects the `preview` channel from
-the tag; it does not use GitHub's prerelease flag on this path. Legacy desktop installs can move
-directly to a normal release with the retained tag and manifests. Keep `allowPrerelease=true` and
+the tag; it does not use GitHub's prerelease flag on this path. Keep `allowPrerelease=true` and
 set `allowDowngrade=false` after assigning the channel. Changing the tag to an unsuffixed version,
 switching to `latest.yml`, or clearing that flag would change this update contract. The packager's
 `releaseType: prerelease` is retained for compatibility; packaging runs with `--publish never`,
-and the reviewed publisher controls GitHub classification.
-
-Normal publication is closed while `scripts/preview-release/qualified-bridge.json` is `null`. Preview publication instead checks the source-controlled public release API inventory and canonical provenance under `docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint. This retention evidence proves availability, not installed updater behavior; it cannot open the Latest gate.
-After the bridge is published and its real updater paths pass qualification, review a source change
-that replaces `null` with its `schemaVersion: 1`, exact `releaseId`, `tag`, full source `commit`,
-`assetFingerprint`, and repository-relative `qualificationEvidence` Markdown path under
-`docs/qa-evidence/`. Compute the fingerprint with `fingerprintBridgeAssets` from the published
-release's complete API asset inventory. It pins IDs, names, sizes and SHA-256 digests, independent
-of API ordering. Record the raw inventory and qualification evidence before reviewing the receipt.
-A successful build or a marker in release notes is insufficient qualification.
-
-Qualify legacy Android to bridge, then bridge discovery of normal-classified fixture releases;
-verify retained settings, checksum/signing rejection, newer version enforcement and installer
-approval. Qualify real standalone-host updates on Linux x64 and ARM64, including reconnection
-and retained state. Use the existing desktop provider suite for feed parsing, redirects and hashes,
-then verify signed Windows updates and Linux AppImage update/install paths separately. Record what is
-fixture evidence and what ran on installed packages. First normal publication needs fresh exact-source
-CI and complete asset validation as well as the reviewed bridge receipt.
+and the publisher controls GitHub classification.
 
 The publisher rechecks the bridge before builds, before draft changes and immediately before
-publication. It requires the pinned prerelease and assets to remain public and unchanged, and a
-higher workflow counter without a lower desktop core version than any published fork build. It does
-not require Git ancestry from the bridge, because rebuilding `main` onto an upstream release replaces
-those commits while keeping their code.
-It refuses another bridge after one is published. If bridge qualification fails, hold normal
-publication and review the repair plan. Keep the bridge classified as a prerelease, and never delete or replace its assets. Restore an accidentally changed classification only with explicit authorization and before/after verification of the unchanged release identity, source, notes and complete asset inventory. Continuing previews retain the original bridge and cannot put its reserved marker in their notes.
+publication, against the source-controlled API inventory and provenance under
+`docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint. It requires
+the pinned prerelease and assets to remain public and unchanged, and a higher workflow counter
+without a lower desktop core version than any published fork build. It does not require Git
+ancestry from the bridge, because rebuilding `main` onto an upstream release replaces those
+commits while keeping their code. It refuses another `bridge` release after one is published.
+Never delete or replace the bridge's assets or change its classification. Restore an accidentally
+changed classification only with explicit authorization and before/after verification of the
+unchanged release identity, source, notes and complete asset inventory. Previews cannot put the
+bridge's reserved marker in their notes.
+
+`release_kind=latest` is an older path to the same classification that also requires a reviewed
+receipt in `scripts/preview-release/qualified-bridge.json`. It stays closed while that file is
+`null`; use `preview` instead.
 
 ### Standalone fork daemon
 
@@ -363,11 +356,9 @@ gh workflow run preview-release.yml --repo RyanEwen/paseo-plus-plus --ref main \
 The default creates a draft only after every build passes. It validates the complete platform set,
 checks updater hashes against the binaries, merges Windows architecture manifests, and generates
 `SHA256SUMS` plus source provenance. Review the draft's notes and downloads before publishing it.
-Use `release_kind=preview` for continuing prereleases. The once-only `release_kind=bridge` is already published. After the
-[bridge qualification gate](#final-prerelease-bridge-and-normal-latest-releases) opens, use
-`release_kind=latest` for normal releases. Drafts stay prereleases until publication: the final
-publish call sets `prerelease=true, make_latest=false` for previews and the bridge, or
-`prerelease=false, make_latest=true` for normal releases.
+Use `release_kind=preview`; the once-only `release_kind=bridge` is already published. Drafts are
+created as prereleases, and the final publish call sets `prerelease=false, make_latest=true`. See
+[the final prerelease bridge](#final-prerelease-bridge-and-normal-latest-releases).
 Use `publish=true` only with authorization to publish that release; publication remains gated on
 every build and asset check. A failed build or upload never makes an update discoverable.
 
