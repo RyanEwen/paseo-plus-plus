@@ -58,10 +58,10 @@ export function SettingsExample({ title, caption, images, testID }: SettingsExam
             caption={caption}
           />
         ))}
-        <Text style={styles.caption}>
-          {caption}
-          {annotated ? ` ${t("paseoPlusPlus.examples.annotated")}` : ""}
-        </Text>
+        <Text style={styles.caption}>{caption}</Text>
+        {annotated ? (
+          <Text style={styles.caption}>{t("paseoPlusPlus.examples.annotated")}</Text>
+        ) : null}
       </View>
     );
   }, [images, exampleWidth, title, caption, t]);
@@ -105,12 +105,14 @@ function SettingsExampleImageFrame({
           inlineUnistylesStyle({ width: fitted.frameWidth, height: fitted.frameHeight }),
         ]}
       >
-        <Image
-          source={image.source}
-          resizeMode="contain"
-          accessibilityLabel={`${t("paseoPlusPlus.examples.imageLabel", { title })}. ${label ?? caption}`}
+        {/*
+          Keep the measured geometry on this wrapper, not on the Image. On web, Unistyles' Image
+          appends inline width and height resets after the caller's styles to drop the size React
+          Native Web reads from the source; that erases inline sizes and leaves a 0x0 image.
+        */}
+        <View
           style={[
-            styles.image,
+            styles.imagePlacement,
             inlineUnistylesStyle({
               width: fitted.imageWidth,
               height: fitted.imageHeight,
@@ -118,7 +120,14 @@ function SettingsExampleImageFrame({
               top: fitted.imageTop,
             }),
           ]}
-        />
+        >
+          <Image
+            source={image.source}
+            resizeMode="contain"
+            accessibilityLabel={`${t("paseoPlusPlus.examples.imageLabel", { title })}. ${label ?? caption}`}
+            style={styles.image}
+          />
+        </View>
         {hasAnnotations ? (
           <ScreenshotAnnotations
             width={fitted.viewport.width}
@@ -141,7 +150,8 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     borderRadius: theme.borderRadius.sm,
   },
-  image: { position: "absolute" },
+  imagePlacement: { position: "absolute" },
+  image: { width: "100%", height: "100%" },
   caption: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
