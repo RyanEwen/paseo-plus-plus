@@ -62,6 +62,10 @@ export function positionRetainedPrompt({
   if (nextTop <= 0) return null;
   const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
   if (!body) return null;
+  // Retained paint shows only the message; a collapsed turn's summary is not context.
+  for (const sibling of body.parentElement?.children ?? []) {
+    if (sibling !== body && sibling instanceof HTMLElement) sibling.style.visibility = "hidden";
+  }
   const collision = Math.min(0, nextTop - body.getBoundingClientRect().height);
   row.style.top = `${viewportBounds.top - host.getBoundingClientRect().top + collision}px`;
   // Clip all descendant overflow at the actual viewport end, including preparation.

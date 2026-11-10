@@ -10,6 +10,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useCallback, useMemo } from "react";
 import { Platform, View } from "react-native";
+import { isNative } from "@/constants/platform";
 import { useTranslation } from "react-i18next";
 import { SettingsCard, SettingsRow, SettingsSection, SettingsSwitch } from "@/components/settings";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
@@ -33,9 +34,12 @@ const OPTIONAL_FEATURES: readonly PaseoPlusPlusFeature[] = [
   "androidAutomaticUpdateChecks",
 ];
 
-/** Android update checks only apply to the Android app; other platforms never show the switch. */
+/** Android update checks only apply to the Android app, and sticky prompts are desktop
+ * only; platforms where a feature has no effect never show its switch. */
 const VISIBLE_FEATURES = OPTIONAL_FEATURES.filter(
-  (feature) => feature !== "androidAutomaticUpdateChecks" || Platform.OS === "android",
+  (feature) =>
+    (feature !== "androidAutomaticUpdateChecks" || Platform.OS === "android") &&
+    (feature !== "stickyUserPrompts" || !isNative),
 );
 
 const DEVICE_LOCAL_FEATURES: ReadonlySet<string> = new Set(DEVICE_LOCAL_FORK_SETTING_KEYS);

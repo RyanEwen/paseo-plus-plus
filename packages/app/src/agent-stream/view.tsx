@@ -10,6 +10,7 @@ import { mergeRetainedPrompts } from "@/timeline/canonical-prompt-context";
 import { shouldIndexUserPrompts } from "./chat-outline/model";
 import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
 import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
+import { useStickyPromptsEnabled } from "./sticky-prompt-availability";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -367,7 +368,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
     const readableToolActivity = useReadableToolActivity();
-    const stickyEnabled = useSettings((settings) => settings.paseoPlusPlus.stickyUserPrompts);
+    const stickyEnabled = useStickyPromptsEnabled();
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
