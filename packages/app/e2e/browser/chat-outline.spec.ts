@@ -983,10 +983,8 @@ test("actual user row find expands each occurrence and preserves its text node",
   }
 });
 
-for (const viewport of [
-  { width: 1440, height: 900 },
-  { width: 390, height: 844 },
-]) {
+// Sticky prompts pin on desktop only; compact layouts show ordinary messages without a pin.
+for (const viewport of [{ width: 1440, height: 900 }]) {
   test(`sticky preview discloses only rendered overflow at ${viewport.width}px`, async ({
     page,
   }, testInfo) => {
