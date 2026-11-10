@@ -115,8 +115,18 @@ describe("native natural measurement revisions", () => {
   );
 });
 
+/** The unit project renders the .web text preview, which observes its text's size. */
+class InertResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
 describe("native pinned prompt press", () => {
-  beforeEach(() => vi.stubGlobal("React", React));
+  beforeEach(() => {
+    vi.stubGlobal("React", React);
+    vi.stubGlobal("ResizeObserver", InertResizeObserver);
+  });
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
