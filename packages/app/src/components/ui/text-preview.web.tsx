@@ -1,4 +1,5 @@
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
 import { isWeb } from "@/constants/platform";
 import {
   memo,
@@ -10,7 +11,10 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { Text, View, type TextProps } from "react-native";
+import { StyleSheet, Text, View, type TextProps } from "react-native";
+
+/** Overflow may change direction this many times for one input before it is held on. */
+const OVERFLOW_FLIPS_PER_INPUT = 2;
 
 function renderedLineHeight(element: HTMLElement): number {
   if (!isWeb) return 0;
@@ -45,21 +49,46 @@ export const TextPreview = memo(function TextPreview({
 }) {
   const ref = useRef<Text>(null);
   const [measurement, setMeasurement] = useState({ lineHeight: 0, overflowing: false });
+  // Callers often build their style inline, so re-measure for a changed style, not for a
+  // fresh object with the same values.
+  const styleKey = useMemo(
+    () => JSON.stringify(StyleSheet.flatten(props.style) ?? null),
+    [props.style],
+  );
+  const inputs = useMemo(
+    () => ({ children, numberOfLines, expanded, styleKey }),
+    [children, numberOfLines, expanded, styleKey],
+  );
+  const latest = useRef(measurement);
+  const flips = useRef({ inputs, count: 0 });
+  const measureRef = useRef<() => void>(() => {});
+  const retryMeasure = useCallback(() => measureRef.current(), []);
+  const spendLayoutUpdate = useLayoutUpdateBudget(retryMeasure);
   const measure = useCallback(() => {
     if (!isWeb || !(ref.current instanceof HTMLElement)) return;
     const element = ref.current;
     const bounds = element.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
     const lineHeight = renderedLineHeight(element);
-    const overflowing =
+    const measuredOverflow =
       bounds.height > lineHeight * numberOfLines || element.scrollWidth > element.clientWidth;
-    setMeasurement((current) =>
-      current.lineHeight === lineHeight && current.overflowing === overflowing
-        ? current
-        : { lineHeight, overflowing },
-    );
-  }, [numberOfLines]);
-  useLayoutEffect(measure, [children, expanded, measure, props.style]);
+    if (flips.current.inputs !== inputs) flips.current = { inputs, count: 0 };
+    const current = latest.current;
+    // When overflow keeps changing the layout that produced it, hold the clamped state
+    // instead of flipping on every layout pass.
+    const held = flips.current.count >= OVERFLOW_FLIPS_PER_INPUT;
+    const overflowing = held ? true : measuredOverflow;
+    if (current.lineHeight === lineHeight && current.overflowing === overflowing) return;
+    if (!spendLayoutUpdate()) return;
+    if (current.overflowing !== overflowing) flips.current.count += 1;
+    const next = { lineHeight, overflowing };
+    latest.current = next;
+    setMeasurement(next);
+  }, [numberOfLines, inputs, spendLayoutUpdate]);
+  useLayoutEffect(() => {
+    measureRef.current = measure;
+  }, [measure]);
+  useLayoutEffect(measure, [measure]);
   useEffect(() => {
     if (!isWeb || !(ref.current instanceof HTMLElement)) return;
     let active = true;
