@@ -273,7 +273,8 @@ describe("SettingsInfoTip", () => {
     pressSettingsHelp("Bulk actions");
     const image = document.querySelector("img");
     expect(image).not.toBeNull();
-    expect(image?.parentElement?.style.width).toBe("60px");
+    // The Image fills a wrapper that carries the measured size; see settings-example.tsx.
+    expect(image?.parentElement?.parentElement?.style.width).toBe("60px");
     const annotation = document.querySelector('svg[viewBox="0 0 60 36"]');
     expect(annotation?.getAttribute("aria-hidden")).toBe("true");
     expect(annotation?.querySelectorAll("rect")).toHaveLength(2);
@@ -308,7 +309,8 @@ describe("SettingsInfoTip", () => {
     );
     pressSettingsHelp("Project activity");
     const image = document.querySelector("img")!;
-    const original = image.parentElement!;
+    // img -> Image root (fills its wrapper) -> measured placement wrapper -> clipped frame.
+    const original = image.parentElement!.parentElement!;
     const frame = original.parentElement!;
     expect(frame.style.width).toBe("272px");
     expect(original.style.width).toBe("1224px");
