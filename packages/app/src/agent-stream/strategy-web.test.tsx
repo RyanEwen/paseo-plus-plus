@@ -55,14 +55,27 @@ const FOLLOWING_READING_POSITION = {
   manual: false,
 } satisfies Omit<PromptReadingPosition, "rowId">;
 
+/** Prompt rows render inside ActualPromptBody, as PromptUserMessage does; others ignore it. */
 function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
   return {
     renderHistoryVirtualizedRow: (item) => {
       onRowRender();
-      return <div style={VIRTUAL_ROW_STYLE}>{item.id}</div>;
+      return (
+        <ActualPromptBody>
+          <div style={VIRTUAL_ROW_STYLE}>{item.id}</div>
+        </ActualPromptBody>
+      );
     },
-    renderHistoryMountedRow: (item) => <div>{item.id}</div>,
-    renderLiveHeadRow: (item) => <div>{item.id}</div>,
+    renderHistoryMountedRow: (item) => (
+      <ActualPromptBody>
+        <div>{item.id}</div>
+      </ActualPromptBody>
+    ),
+    renderLiveHeadRow: (item) => (
+      <ActualPromptBody>
+        <div>{item.id}</div>
+      </ActualPromptBody>
+    ),
     renderLiveAuxiliary: () => null,
   };
 }
