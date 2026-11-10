@@ -1,5 +1,5 @@
 import { useCallback, useContext, useMemo } from "react";
-import { View, type TextLayoutEvent } from "react-native";
+import { View, type GestureResponderEvent, type TextLayoutEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { TextPreview } from "@/components/ui/text-preview";
 import { isWeb } from "@/constants/platform";
@@ -8,6 +8,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MESSAGE_TEXT_DATASET } from "../message-layout";
 import type { UserMessageProps } from "./index";
 import { NaturalMessageFlowContext, webMessageFlow, nativeStickyDriver } from "./flow";
+import { nativeMessageRoleVisible } from "./flow-model";
 import { NativeMessageSuffixMask } from "./native-flow";
 
 function ignorePreviewOverflow(_overflowing: boolean): void {
@@ -54,6 +55,18 @@ export function UserMessageText({
   );
   const keyboardLink = useTextLink(onContentPress);
   const nativeDriver = nativeStickyDriver(naturalFlow);
+  // The text is drawn above the bubble's press target, and native touches never reach a
+  // sibling underneath, so the text forwards the tap itself, but only while it is pinned.
+  const pressPinnedText = useCallback(
+    (event: GestureResponderEvent) => {
+      if (!nativeDriver || !onContentPress) return;
+      if (nativeMessageRoleVisible(nativeDriver.presentation.value.mode, "pinned")) {
+        onContentPress(event);
+      }
+    },
+    [nativeDriver, onContentPress],
+  );
+  const nativeTextPress = nativeDriver && onContentPress ? pressPinnedText : undefined;
   const textAccessibility = useMemo(
     () =>
       onContentPress && !nativeDriver
@@ -66,8 +79,19 @@ export function UserMessageText({
             onPress: onContentPress,
             ...keyboardLink,
           }
-        : { accessible: !hideTextAccessibility, "aria-hidden": hideTextAccessibility },
-    [onContentPress, hideTextAccessibility, contentAccessibilityLabel, keyboardLink, nativeDriver],
+        : {
+            accessible: !hideTextAccessibility,
+            "aria-hidden": hideTextAccessibility,
+            onPress: nativeTextPress,
+          },
+    [
+      onContentPress,
+      hideTextAccessibility,
+      contentAccessibilityLabel,
+      keyboardLink,
+      nativeDriver,
+      nativeTextPress,
+    ],
   );
   return (
     <View style={userMessageTextStyles.textRegion}>
