@@ -146,9 +146,10 @@ describe("native pinned prompt press", () => {
 
   /** Press the message text itself, which sits above the bubble's press target. */
   function pressText(mode: NativeMessageMode) {
+    const flow = nativeStickyFlow(mode);
     const onContentPress = vi.fn();
     const view = render(
-      <NaturalMessageFlowContext.Provider value={nativeStickyFlow(mode)}>
+      <NaturalMessageFlowContext.Provider value={flow}>
         <UserMessageText
           message="Pinned prompt"
           hasText
