@@ -206,6 +206,45 @@ function readNaturalMeasurement(
   };
 }
 
+/** Rail widths within this distance are the same layout, not a reason to re-bind. */
+const RAIL_WIDTH_TOLERANCE_PX = 1;
+
+function sameRailWidth(left: number, right: number): boolean {
+  return Math.abs(left - right) < RAIL_WIDTH_TOLERANCE_PX;
+}
+
+/** Two widths the rail has been flipping between since the last genuinely new width. */
+interface RailWidthOscillation {
+  first: number;
+  second: number;
+}
+
+/**
+ * The width to bind for a measured rail. Re-binding changes layout, and that layout can move
+ * the rail back (for example a scrollbar that appears only at one width). Once the rail
+ * returns to the width it just left, hold the current width while it stays on that pair;
+ * any other width is a real change and re-binds.
+ */
+function settleRailWidth(input: {
+  current: number;
+  actual: number;
+  previous: number | null;
+  oscillation: RailWidthOscillation | null;
+}): { width: number; oscillation: RailWidthOscillation | null } {
+  const { current, actual, previous, oscillation } = input;
+  if (sameRailWidth(actual, current)) return { width: current, oscillation };
+  if (
+    oscillation &&
+    (sameRailWidth(actual, oscillation.first) || sameRailWidth(actual, oscillation.second))
+  ) {
+    return { width: current, oscillation };
+  }
+  if (previous !== null && sameRailWidth(actual, previous)) {
+    return { width: current, oscillation: { first: previous, second: current } };
+  }
+  return { width: actual, oscillation: null };
+}
+
 /** A layout-bound web adapter for the existing natural-flow contract. Content,
  * rail width and font changes release preparation before measuring again in
  * ordinary layout. Scroll position is never an input or an invalidation source.
@@ -232,12 +271,25 @@ export function useWebMessageMeasurements(
   );
   const current = useRef(binding);
   const font = useRef<{ binding: object; value: string } | null>(null);
+  // Each content and width gets one font retry, so a font string that never matches cannot
+  // keep re-binding.
+  const fontRetry = useRef<{ revision: object; width: number } | null>(null);
+  const previousWidth = useRef<number | null>(null);
+  const widthOscillation = useRef<RailWidthOscillation | null>(null);
   const [measurement, setMeasurement] = useState<WebMessageMeasurement | null>(null);
   const read = useCallback(() => {
     if (current.current !== binding) return;
     const actualWidth = rail.current?.getBoundingClientRect().width ?? 0;
-    if (actualWidth !== width) {
-      setWidth(actualWidth);
+    const settled = settleRailWidth({
+      current: width,
+      actual: actualWidth,
+      previous: previousWidth.current,
+      oscillation: widthOscillation.current,
+    });
+    widthOscillation.current = settled.oscillation;
+    if (settled.width !== width) {
+      previousWidth.current = width;
+      setWidth(settled.width);
       return;
     }
     const nodes = { rail, body, trailing, summary, frames: frames.current };
@@ -246,13 +298,17 @@ export function useWebMessageMeasurements(
         ? readOrdinaryPreviewMeasurement(nodes, binding, width)
         : readNaturalMeasurement(nodes, binding, width, compactTrailingPadding);
     if (!next) return;
-    if (font.current?.binding === binding && font.current.value !== next.font) {
+    const fontChanged = font.current?.binding === binding && font.current.value !== next.font;
+    const fontRetried =
+      fontRetry.current?.revision === props.revision && fontRetry.current.width === width;
+    if (fontChanged && !fontRetried) {
+      fontRetry.current = { revision: props.revision, width };
       setFontRevision((value) => value + 1);
       return;
     }
     font.current = { binding, value: next.font };
     setMeasurement((previous) => (sameMeasurement(previous, next) ? previous : next));
-  }, [binding, width, compactTrailingPadding, bodyPresentation]);
+  }, [binding, width, compactTrailingPadding, bodyPresentation, props.revision]);
   const readCurrent = useRef(read);
   const observer = useMemo(() => new ResizeObserver(() => readCurrent.current()), []);
   const registerElement = useCallback(
