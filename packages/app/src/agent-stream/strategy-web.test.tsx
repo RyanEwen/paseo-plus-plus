@@ -1,4 +1,5 @@
 import { ActualPromptRowsContext, ActualPromptRowsProvider } from "./actual-prompt-rows";
+import { ActualPromptBody } from "./actual-prompt/prompt-body";
 import { uniqueStreamSegments, precedingPromptIndex } from "./actual-row-collection";
 import { syncActualPromptPin, getOriginalPromptTop } from "./actual-prompt-pin.web";
 /**
@@ -364,7 +365,12 @@ describe("createWebStreamStrategy", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    const renderRow = (item: StreamItem) => <MeasuredTestRow item={item} />;
+    // Prompt rows render their message inside the one observed body, as PromptUserMessage does.
+    const renderRow = (item: StreamItem) => (
+      <ActualPromptBody>
+        <MeasuredTestRow item={item} />
+      </ActualPromptBody>
+    );
     const input: StreamRenderInput = {
       agentId: "agent",
       segments: {
@@ -411,7 +417,7 @@ describe("createWebStreamStrategy", () => {
     mounted.getBoundingClientRect = () => ({ height: 120 }) as DOMRect;
     // No React update, outer-container resize or scroll accompanies intrinsic growth.
     act(() => observations.get(mounted)!());
-    expect(mounted.parentElement!.style.height).toBe("120px");
+    expect(mounted.closest<HTMLElement>("[data-history-row-id]")!.style.height).toBe("120px");
     act(() =>
       root?.render(
         render({
