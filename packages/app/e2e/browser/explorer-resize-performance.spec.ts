@@ -158,6 +158,10 @@ test("Explorer divider hover presets honor pixel minimums and persist exact widt
 
   // At this viewport the body is narrower than 360 / .3, making 30/70 impossible.
   await page.setViewportSize({ width: 1000, height: 1000 });
+  // The dock re-clamps after the resize; measuring before that hovers where the divider used to be.
+  await expect
+    .poll(async () => (await explorer.boundingBox())?.width)
+    .toBeLessThan(shellWidth * 0.4);
   const narrowBounds = await separator.boundingBox();
   if (!narrowBounds) throw new Error("Explorer divider is missing after resize");
   await page.mouse.move(narrowBounds.x + narrowBounds.width / 2, narrowBounds.y + 100);
