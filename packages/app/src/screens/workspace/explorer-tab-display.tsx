@@ -8,6 +8,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { isNative } from "@/constants/platform";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import type { PaneHost } from "@/panels/panel-manifest";
 
@@ -99,7 +100,9 @@ export function useExplorerTabDisplay(host: PaneHost): ExplorerTabDisplayControl
 
 /**
  * Adds the Icon-only tabs toggle to a right-click on the empty Explorer strip (pointer layouts
- * only). Renders `children` unchanged for a null control.
+ * only). Renders `children` unchanged for a null control and on native, where the strip menu cannot
+ * open: there the trigger's `flex: 1` wrapper collapses to zero height inside the rail, and the tab
+ * strip would overflow under the Explorer panel's divider and content.
  */
 export function ExplorerTabStripContextMenu({
   control,
@@ -108,7 +111,7 @@ export function ExplorerTabStripContextMenu({
   control: ExplorerTabDisplayControl | null;
   children: ReactNode;
 }) {
-  if (!control) return children;
+  if (!control || isNative) return children;
   return (
     <ContextMenu>
       <ContextMenuTrigger contextOnly enabledOnMobile={false} style={styles.stripContextHost}>
