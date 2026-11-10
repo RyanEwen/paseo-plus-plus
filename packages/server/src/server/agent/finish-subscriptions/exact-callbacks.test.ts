@@ -272,10 +272,16 @@ async function createRoutedRecipientScenario(input: { parented: boolean }) {
     }
   }
 
-  /** Wait until `count` watches ended, then for the dispatch receipts they produced. */
+  /**
+   * Wait until `count` watches ended, then for the dispatch receipts they produced. A callback
+   * reservation can retry a few times before its objective is admitted for the caller's turn,
+   * which takes well over the default one-second poll on a loaded CI runner.
+   */
   async function settleWatches(count: number) {
     await expect
-      .poll(() => signals.length === count && signals.every((signal) => signal.aborted))
+      .poll(() => signals.length === count && signals.every((signal) => signal.aborted), {
+        timeout: 15_000,
+      })
       .toBe(true);
     const dispatched = enqueue.mock.results.flatMap((result) =>
       result.type === "return" ? [result.value.dispatched] : [],
