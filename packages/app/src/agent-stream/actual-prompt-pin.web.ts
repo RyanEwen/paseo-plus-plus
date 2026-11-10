@@ -47,19 +47,60 @@ function getChildrenExtent(parent: Element, except: Element | null): number {
   return extent;
 }
 
+function verticalEdges(style: CSSStyleDeclaration): number {
+  return (
+    (Number.parseFloat(style.paddingTop) || 0) +
+    (Number.parseFloat(style.paddingBottom) || 0) +
+    (Number.parseFloat(style.borderTopWidth) || 0) +
+    (Number.parseFloat(style.borderBottomWidth) || 0)
+  );
+}
+
 /**
- * Ordinary content rendered beside the message in its row, such as a collapsed turn's
- * summary. It stays in flow under the body and never joins the sticky paint.
+ * The elements between a prompt body and its row content wrapper. Callers such as the
+ * stream's turn spacing wrap the message in their own views, which also hold ordinary
+ * content after it, like a collapsed turn's summary.
  */
-function getPromptSiblingExtent(body: HTMLElement): number {
-  return body.parentElement ? getChildrenExtent(body.parentElement, body) : 0;
+function getPromptBodyAncestors(body: HTMLElement): HTMLElement[] {
+  const ancestors: HTMLElement[] = [];
+  for (let node = body.parentElement; node; node = node.parentElement) {
+    if (node.hasAttribute("data-actual-prompt-row-content")) return ancestors;
+    ancestors.push(node);
+  }
+  return [];
+}
+
+/**
+ * The natural stacked height of `element` with the body at `bodyHeight`. Ancestors on the
+ * body's path may be stretched to the lane, so they are summed from their children instead
+ * of measured; everything else, such as the summary, keeps its own height.
+ */
+function getNaturalExtentAround(element: Element, body: HTMLElement, bodyHeight: number): number {
+  if (element === body) return bodyHeight;
+  let extent = verticalEdges(getComputedStyle(element));
+  for (const child of element.children) {
+    if (!(child instanceof HTMLElement)) continue;
+    const style = getComputedStyle(child);
+    const height = child.contains(body)
+      ? getNaturalExtentAround(child, body, bodyHeight)
+      : child.getBoundingClientRect().height;
+    extent +=
+      height +
+      (Number.parseFloat(style.marginTop) || 0) +
+      (Number.parseFloat(style.marginBottom) || 0);
+  }
+  return extent;
 }
 
 export function getNaturalPromptRowHeight(row: HTMLElement): number {
   const body = row.matches("[data-actual-prompt-row]")
     ? row.querySelector<HTMLElement>("[data-actual-prompt-content]")
     : null;
-  if (body) return getNaturalPromptBodyHeight(body) + getPromptSiblingExtent(body);
+  if (body) {
+    const content = body.closest("[data-actual-prompt-row-content]") ?? body.parentElement;
+    const bodyHeight = getNaturalPromptBodyHeight(body);
+    return content ? getNaturalExtentAround(content, body, bodyHeight) : bodyHeight;
+  }
   // A prompt row without a message body still measures its content, not the lane it fills.
   const content = row.matches("[data-actual-prompt-row]")
     ? row.querySelector("[data-actual-prompt-row-content]")
@@ -207,6 +248,23 @@ export function syncActualPromptPin({
   return pinnedId;
 }
 
+/**
+ * CSS sticky cannot move an element beyond its parent's box. While the lane is installed,
+ * stretch every view between the body and the lane-filling row content so the body's
+ * sticky range spans the lane; ordinary content after the body stays in flow.
+ */
+function stretchPromptBodyAncestors(body: HTMLElement, enabled: boolean): void {
+  for (const ancestor of getPromptBodyAncestors(body)) {
+    if (enabled) {
+      ancestor.style.flexGrow = "1";
+      ancestor.dataset.promptLaneStretch = "true";
+    } else if (ancestor.dataset.promptLaneStretch) {
+      ancestor.style.removeProperty("flex-grow");
+      delete ancestor.dataset.promptLaneStretch;
+    }
+  }
+}
+
 interface PromptLaneInput {
   row: HTMLElement;
   body: HTMLElement;
@@ -235,6 +293,7 @@ function applyPromptLane({
   yieldPaint,
 }: PromptLaneInput): void {
   row.style.height = enabled ? `${height}px` : "";
+  stretchPromptBodyAncestors(body, enabled);
   if (enabled && !row.hasAttribute("data-index"))
     row.style.marginBottom = `${naturalHeight - height}px`;
   else row.style.removeProperty("margin-bottom");
