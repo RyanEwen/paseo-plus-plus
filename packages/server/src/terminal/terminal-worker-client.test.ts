@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { isPlatform } from "../test-utils/platform.js";
 import { encodeFrame, FrameDecoder, TerminalWorkerFrameError } from "./terminal-worker-frames.js";
-import { connectTerminalWorker, TerminalWorkerConnectError } from "./terminal-worker-client.js";
+import { createConnection, createServer, type Server } from "node:net";
+import { randomUUID } from "node:crypto";
+import {
+  connectTerminalWorker,
+  probeTerminalWorkerSocket,
+  TerminalWorkerConnectError,
+} from "./terminal-worker-client.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
 import { terminalWorkerLogPath, terminalWorkerRecordPath } from "./terminal-worker-record.js";
 
@@ -104,19 +110,16 @@ describe("terminal worker startup phases", () => {
       "init-done",
       "socket-listen-begin",
       "socket-listening",
-      "inspect-begin",
-      "inspect-result",
       "record-written",
       "ready-attempt",
       "ready-written",
     ]);
     for (const line of lines) {
       expect(line).toMatch(
-        /^Terminal worker startup pid=\d+ platform=\w+ arch=\w+ elapsedMs=\d+ phase=[a-z-]+( status=[a-z-]+ durationMs=\d+)?$/,
+        /^Terminal worker startup pid=\d+ platform=\w+ arch=\w+ elapsedMs=\d+ phase=[a-z-]+$/,
       );
       expect(line).toContain(`pid=${record.pid} `);
     }
-    expect(lines.find((line) => phaseOf(line) === "inspect-result")).toContain("status=alive");
 
     const log = readFileSync(terminalWorkerLogPath(paseoHome), "utf8");
     for (const sensitive of [record.secret, record.recordId, record.socketPath, paseoHome]) {
@@ -131,49 +134,9 @@ describe("terminal worker startup phases", () => {
     await waitUntil(() => !existsSync(recordPath), 10_000);
     expect(readStartupLines(paseoHome)).toHaveLength(lines.length);
   });
-
-  // The Windows inspector runs PowerShell by absolute path, so this PATH failure is POSIX only.
-  it.skipIf(isPlatform("win32"))(
-    "records the phase a real start failed after and keeps its original error",
-    async () => {
-      const paseoHome = mkdtempSync(path.join(tmpdir(), "tw-phase-fail-"));
-      temporaryDirs.push(paseoHome);
-      const originalPath = process.env.PATH;
-      // The worker cannot find `ps`, so its real self-inspection fails.
-      process.env.PATH = paseoHome;
-      try {
-        await expect(
-          launchTerminalWorker({ paseoHome, paseoVersion: "0.0.0-test" }),
-        ).rejects.toThrow(/cannot read its own process identity/);
-      } finally {
-        process.env.PATH = originalPath;
-      }
-
-      // Everything through ready-attempt precedes the fd 3 write that rejected the launch. Nothing
-      // later is asserted: the launcher kills a worker that reports an error, so ready-written may
-      // never be logged.
-      const lines = readStartupLines(paseoHome);
-      expect(lines.map(phaseOf).slice(0, 8)).toEqual([
-        "entry",
-        "init-done",
-        "socket-listen-begin",
-        "socket-listening",
-        "inspect-begin",
-        "inspect-result",
-        "failed",
-        "ready-attempt",
-      ]);
-      expect(lines.find((line) => phaseOf(line) === "inspect-result")).toContain("status=error");
-      expect(lines.find((line) => phaseOf(line) === "failed")).toContain("after=inspect-result");
-      expect(readFileSync(terminalWorkerLogPath(paseoHome), "utf8")).toContain(
-        "Terminal worker failed to start: Terminal worker cannot read its own process identity",
-      );
-    },
-  );
 });
 
 it("bounds a stalled framed writer to one chunk and resumes in order", async () => {
-  const { createServer, createConnection } = await import("node:net");
   const { attachFramedSocket } = await import("./terminal-worker-frames.js");
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -213,4 +176,42 @@ it("bounds a stalled framed writer to one chunk and resumes in order", async () 
     writer.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+// The probe decides whether a live pid named by an unidentifiable worker record is still the
+// worker. A refused answer retires the record, so it must hold for a Windows named pipe too.
+describe("terminal worker socket probe", () => {
+  function socketPath(): string {
+    if (isPlatform("win32")) return `\\\\.\\pipe\\paseo-tw-probe-${randomUUID()}`;
+    const directory = mkdtempSync(path.join(tmpdir(), "tw-probe-"));
+    temporaryDirs.push(directory);
+    return path.join(directory, "w.sock");
+  }
+
+  async function serve(at: string): Promise<Server> {
+    const server = createServer((socket) => socket.on("error", () => {}));
+    await new Promise<void>((resolve) => server.listen(at, resolve));
+    return server;
+  }
+
+  it("answers accepting while a worker serves the socket", async () => {
+    const at = socketPath();
+    const server = await serve(at);
+    try {
+      expect(await probeTerminalWorkerSocket(at)).toBe("accepting");
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("answers refused for a socket nobody ever served", async () => {
+    expect(await probeTerminalWorkerSocket(socketPath())).toBe("refused");
+  });
+
+  it("answers refused once the worker that served the socket closed it", async () => {
+    const at = socketPath();
+    const server = await serve(at);
+    await new Promise((resolve) => server.close(resolve));
+    expect(await probeTerminalWorkerSocket(at)).toBe("refused");
+  });
 });
