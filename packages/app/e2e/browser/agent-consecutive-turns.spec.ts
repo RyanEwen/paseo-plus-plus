@@ -42,7 +42,7 @@ interface ContentChildFrame extends ElementFrame {
 interface TurnFrame {
   at: number;
   userRow: ElementFrame;
-  userRowFlow: { rowId: string | null; top: number | null };
+  userRowFlow: { rowId: string | null; top: number | null; pinned: boolean };
   attachment: ElementFrame;
   footerRow: ElementFrame;
   spinner: ElementFrame;
@@ -242,10 +242,11 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       const row = promptRow?.closest("[data-actual-prompt-row]");
       const content = row?.querySelector("[data-actual-prompt-content]");
       if (!row || !content || !promptRow || !content.contains(promptRow)) {
-        return { rowId: null, top: null };
+        return { rowId: null, top: null, pinned: false };
       }
       return {
         rowId: row.getAttribute("data-history-row-id"),
+        pinned: row.getAttribute("data-prompt-pinned") === "true",
         top: rectOf(row).top + rectOf(promptRow).top - rectOf(content).top,
       };
     };
@@ -711,8 +712,11 @@ function expectAtomicIdleToRunningTransition(frames: TurnFrame[]): void {
 function expectSubmittedMessageHeightStable(frames: TurnFrame[]): void {
   const first = frames.findIndex((frame) => frame.userRow.visible);
   const baseline = frames[first]?.userRow.rect?.height;
+  // Once the streamed reply pushes the prompt to the top, it pins in its compact form on
+  // purpose. Only the frames before that can show a resize caused by the canonical echo.
+  const pinned = frames.findIndex((frame, index) => index >= first && frame.userRowFlow.pinned);
   const changes = frames
-    .slice(first)
+    .slice(first, pinned >= 0 ? pinned : undefined)
     .flatMap((frame, offset) =>
       geometryChanged(frame.userRow.rect?.height, baseline)
         ? [`frame ${first + offset}: submitted row height changed`]
