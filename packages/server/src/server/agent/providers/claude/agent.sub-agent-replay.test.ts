@@ -21,6 +21,7 @@ import { claudeProjectDirSync } from "./project-dir.js";
 
 const TOOL_USE_ID = "toolu_01DgLoPMW9";
 const AGENT_ID = "a1730a6215e1f5cf6";
+const RESUME_TOOL_USE_ID = "toolu_01ResumeSendMessage";
 const WORKFLOW_TOOL_USE_ID = "toolu_01XskpjeASyuFyXC5qsLHYps";
 const WORKFLOW_RUN_ID = "wf_4a0af4f7-f56";
 
@@ -664,6 +665,57 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         sidechainLines: [sidechainEntry({ stopReason: null })],
       });
       expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "running" });
+    });
+
+    /** A notification about the child as a whole, optionally under the call that last ran it. */
+    function childNotification(status: string, toolUseId?: string): string {
+      const toolUseLine = toolUseId ? `\n<tool-use-id>${toolUseId}</tool-use-id>` : "";
+      const text = `<task-notification>\n<task-id>${AGENT_ID}</task-id>${toolUseLine}\n<status>${status}</status>\n<summary>Background task ended</summary>\n</task-notification>`;
+      return JSON.stringify({
+        type: "user",
+        timestamp: "2026-07-26T06:29:00.000Z",
+        message: { role: "user", content: [{ type: "text", text }] },
+      });
+    }
+
+    function sendMessageResume(): string {
+      return parentEntry([
+        {
+          type: "tool_use",
+          id: RESUME_TOOL_USE_ID,
+          name: "SendMessage",
+          input: { to: AGENT_ID, message: "Carry on with the task." },
+        },
+      ]);
+    }
+
+    test("completes a child resumed with SendMessage after it was stopped", async () => {
+      writeSession({
+        parentLines: [
+          ...backgroundLaunch(),
+          childNotification("stopped"),
+          sendMessageResume(),
+          childNotification("completed", RESUME_TOOL_USE_ID),
+        ],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: null })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "completed",
+      });
+    });
+
+    test("cancels a child stopped without a later completion", async () => {
+      writeSession({
+        parentLines: [...backgroundLaunch(), childNotification("stopped")],
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [sidechainEntry({ stopReason: null })],
+      });
+      expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+        id: TOOL_USE_ID,
+        status: "canceled",
+      });
     });
 
     test("completes from the child's own end_turn", async () => {
