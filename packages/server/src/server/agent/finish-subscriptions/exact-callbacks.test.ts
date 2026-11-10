@@ -141,16 +141,30 @@ function setupFinishWait(params: FinishWaitFixture): () => void {
  * choose the correlation each watch claims and the outcome each child result carries.
  */
 /**
- * One line per queued callback: its event, the exact outcome it carries, and which child result
- * its prompt names. Used in failure output, where the raw spy calls are too large to read.
+ * One line per queued callback: its event, the exact outcome it carries, which child result its
+ * prompt names, and whether its dispatch reached the caller. A failed dispatch was never
+ * delivered; the watch releases its reservation and queues the same outcome again.
  */
-function describeQueuedCallbacks(enqueue: MockInstance<AgentMessageDelivery["enqueue"]>): string[] {
-  return enqueue.mock.calls.map(([message]) => {
+async function describeQueuedCallbacks(
+  enqueue: MockInstance<AgentMessageDelivery["enqueue"]>,
+): Promise<Array<{ line: string; outcomeId: string; delivered: boolean }>> {
+  const dispatches = await Promise.allSettled(
+    enqueue.mock.results.map((result) =>
+      result.type === "return" ? result.value.dispatched : Promise.reject(result.value),
+    ),
+  );
+  return enqueue.mock.calls.map(([message], index) => {
     const prompt =
       typeof message.prompt === "string" ? message.prompt : JSON.stringify(message.prompt);
     const result = prompt.match(/EXACT_RESULT_\d|Untrusted current message/)?.[0] ?? "no result";
     const outcomeId = message.source.attention?.delivery?.outcomeId ?? "none";
-    return `${message.source.event} outcome=${outcomeId} result=${result}`;
+    const delivered = dispatches[index]?.status === "fulfilled";
+    const status = delivered ? "delivered" : "failed";
+    return {
+      line: `${message.source.event} outcome=${outcomeId} result=${result} ${status}`,
+      outcomeId,
+      delivered,
+    };
   });
 }
 
@@ -349,11 +363,16 @@ it.each([
     scenario.resolveResults(true);
     await scenario.settleWatches(2);
 
-    // Describe every queued callback in the failure message, so an intermittent extra one in CI
-    // shows which result and kind it was, and which retries preceded it, instead of only a count.
-    const queued = describeQueuedCallbacks(scenario.enqueue);
-    const retries = scenario.retries.map((retry) => String(retry.error));
-    expect(queued, JSON.stringify({ queued, retries })).toHaveLength(2);
+    // A dispatch can fail when the caller's turn changes under it; the watch then queues the same
+    // outcome again. Count deliveries, not queue attempts, and require each outcome exactly once.
+    const queued = await describeQueuedCallbacks(scenario.enqueue);
+    const delivered = queued.filter((entry) => entry.delivered).map((entry) => entry.outcomeId);
+    const report = JSON.stringify({
+      queued: queued.map((entry) => entry.line),
+      retries: scenario.retries.map((retry) => String(retry.error)),
+    });
+    expect(delivered, report).toHaveLength(2);
+    expect(new Set(delivered).size, report).toBe(2);
     expect(scenario.acknowledgements).toHaveLength(2);
     expect(
       (await scenario.storedDeliveries())?.map((entries) => entries.map((item) => item.status)),
@@ -362,6 +381,37 @@ it.each([
     expect(prompts).toContain("EXACT_RESULT_0");
     expect(prompts).toContain("EXACT_RESULT_1");
     expect(prompts).not.toContain("Untrusted current message");
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("a callback whose dispatch fails is queued again and delivered once", async () => {
+  const scenario = await createRoutedRecipientScenario({ parented: false });
+  try {
+    // The first callback's dispatch fails as it does when the caller's active turn changes.
+    scenario.enqueue.mockImplementationOnce((message) => {
+      const dispatched = Promise.reject(
+        new Error("Active turn changed before steering could be delivered"),
+      );
+      void dispatched.catch(() => undefined);
+      return { status: "queued", messageId: message.messageId ?? randomUUID(), dispatched };
+    });
+    scenario.watchRequests((link) => ({ continuation: link }));
+    scenario.resolveResults(true);
+    await scenario.settleWatches(2);
+
+    const queued = await describeQueuedCallbacks(scenario.enqueue);
+    const delivered = queued.filter((entry) => entry.delivered).map((entry) => entry.outcomeId);
+    expect(queued.filter((entry) => !entry.delivered)).toHaveLength(1);
+    expect(delivered).toHaveLength(2);
+    expect(new Set(delivered).size).toBe(2);
+    expect(scenario.retries.map((retry) => String(retry.error))).toEqual([
+      "Error: Active turn changed before steering could be delivered",
+    ]);
+    expect(
+      (await scenario.storedDeliveries())?.map((entries) => entries.map((item) => item.status)),
+    ).toEqual([["consumed"], ["consumed"]]);
   } finally {
     await scenario.cleanup();
   }
