@@ -6733,6 +6733,25 @@ function labelReplayedSubagentCard(
 }
 
 /**
+ * Records a task notification's outcome under its tool-use id and under its task id. A child
+ * resumed with SendMessage reports under the resume's tool-use id, or under none when it was
+ * stopped; its task id stays the child's agent id, so the latest notification there wins.
+ */
+function recordTaskNotificationOutcome(
+  entry: ClaudeHistoryEntry,
+  maps: {
+    outcomes: Map<string, { status: ProviderSubagentStatus }>;
+    outcomesByAgentId: Map<string, { status: ProviderSubagentStatus }>;
+  },
+): void {
+  const notification = readTaskNotificationFromHistoryRecord(entry);
+  const status = mapTaskStatus(notification?.status ?? undefined);
+  if (!notification || !status) return;
+  if (notification.toolUseId) maps.outcomes.set(notification.toolUseId, { status });
+  if (notification.taskId) maps.outcomesByAgentId.set(notification.taskId, { status });
+}
+
+/**
  * Collect what the parent transcript knows about its Task calls, in the shape the shared replay
  * source consumes. The agentId scrape is kept only as a fallback for sessions recorded before
  * Claude Code wrote the meta sidecar.
@@ -6743,12 +6762,9 @@ async function readClaudeReplayParentFacts(
   const toolCalls = new Map<string, { title?: string; description?: string }>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
+  const outcomesByAgentId: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
-    }
+    recordTaskNotificationOutcome(entry, { outcomes, outcomesByAgentId });
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
@@ -6776,6 +6792,7 @@ async function readClaudeReplayParentFacts(
     toolCalls,
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
+    outcomesByAgentId,
   };
 }
 
