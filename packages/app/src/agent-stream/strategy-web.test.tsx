@@ -74,7 +74,9 @@ function MeasuredTestRow({ item }: { item: StreamItem }) {
     (node: HTMLDivElement | null) => {
       const row = node?.closest<HTMLElement>("[data-history-row-id]");
       if (!row) return;
-      // Measure the intrinsic message body, not its extended sticky lane.
+      // Measure the intrinsic row content, not its extended sticky lane. This row has no
+      // message body, so its own node is the content the row measures.
+      node!.getBoundingClientRect = () => ({ height }) as DOMRect;
       const body = node?.closest<HTMLElement>("[data-actual-prompt-content]");
       if (body) body.getBoundingClientRect = () => ({ height }) as DOMRect;
       Object.defineProperty(row, "offsetHeight", {

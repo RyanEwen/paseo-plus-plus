@@ -33,29 +33,38 @@ export function getNaturalPromptBodyHeight(body: HTMLElement): number {
   return body.getBoundingClientRect().height;
 }
 
+/** The stacked natural extent of `parent`'s children, leaving out `except`. */
+function getChildrenExtent(parent: Element, except: Element | null): number {
+  let extent = 0;
+  for (const child of parent.children) {
+    if (child === except || !(child instanceof HTMLElement)) continue;
+    const style = getComputedStyle(child);
+    extent +=
+      child.getBoundingClientRect().height +
+      (Number.parseFloat(style.marginTop) || 0) +
+      (Number.parseFloat(style.marginBottom) || 0);
+  }
+  return extent;
+}
+
 /**
  * Ordinary content rendered beside the message in its row, such as a collapsed turn's
  * summary. It stays in flow under the body and never joins the sticky paint.
  */
 function getPromptSiblingExtent(body: HTMLElement): number {
-  let extent = 0;
-  for (const sibling of body.parentElement?.children ?? []) {
-    if (sibling === body || !(sibling instanceof HTMLElement)) continue;
-    const style = getComputedStyle(sibling);
-    extent +=
-      sibling.getBoundingClientRect().height +
-      Number.parseFloat(style.marginTop) +
-      Number.parseFloat(style.marginBottom);
-  }
-  return extent;
+  return body.parentElement ? getChildrenExtent(body.parentElement, body) : 0;
 }
 
 export function getNaturalPromptRowHeight(row: HTMLElement): number {
   const body = row.matches("[data-actual-prompt-row]")
     ? row.querySelector<HTMLElement>("[data-actual-prompt-content]")
     : null;
-  if (!body) return row.getBoundingClientRect().height;
-  return getNaturalPromptBodyHeight(body) + getPromptSiblingExtent(body);
+  if (body) return getNaturalPromptBodyHeight(body) + getPromptSiblingExtent(body);
+  // A prompt row without a message body still measures its content, not the lane it fills.
+  const content = row.matches("[data-actual-prompt-row]")
+    ? row.querySelector("[data-actual-prompt-row-content]")
+    : null;
+  return content ? getChildrenExtent(content, null) : row.getBoundingClientRect().height;
 }
 
 /** Add the real caller chrome to the body owner's independently prepared compact paint. */
