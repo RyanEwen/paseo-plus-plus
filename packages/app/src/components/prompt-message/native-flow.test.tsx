@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook } from "@testing-library/react";
 import * as React from "react";
-import { describe, expect, it } from "vitest";
-import type { UserMessageFlowProps, useNaturalMessageMeasurements } from "./flow";
-import { resolveMessageFlow } from "./flow-model";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  NaturalMessageFlowContext,
+  type MessageFlowContext,
+  type UserMessageFlowProps,
+  type useNaturalMessageMeasurements,
+} from "./flow";
+import { resolveMessageFlow, type NativeMessageMode } from "./flow-model";
+import { UserMessageText } from "./text";
 import { useNativeNaturalMeasurements } from "./native-flow";
 import type { NativeMessagePresentationDriver } from "./native-presentation";
 
@@ -107,4 +113,62 @@ describe("native natural measurement revisions", () => {
       ).toBeNull();
     },
   );
+});
+
+describe("native pinned prompt press", () => {
+  beforeEach(() => vi.stubGlobal("React", React));
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  /** The Android sticky flow, with its presentation shared value in `mode`. */
+  function nativeStickyFlow(mode: NativeMessageMode): MessageFlowContext {
+    const driver = {
+      binding: 1,
+      presentation: { value: { mode, prefixHeight: 20 } },
+    } as unknown as NativeMessagePresentationDriver;
+    return {
+      adapter: "nativeSticky",
+      driver,
+      compact: false,
+      bubbleWidth: undefined,
+      textWidth: undefined,
+      textClipWidth: undefined,
+      textPrefixHeight: undefined,
+      textTranslateX: 0,
+      textTranslateY: 0,
+      register() {},
+      reportFrame() {},
+      reportText() {},
+    };
+  }
+
+  /** Press the message text itself, which sits above the bubble's press target. */
+  function pressText(mode: NativeMessageMode) {
+    const onContentPress = vi.fn();
+    const view = render(
+      <NaturalMessageFlowContext.Provider value={nativeStickyFlow(mode)}>
+        <UserMessageText
+          message="Pinned prompt"
+          hasText
+          onContentPress={onContentPress}
+          contentAccessibilityLabel="Go to message"
+        />
+      </NaturalMessageFlowContext.Provider>,
+    );
+    fireEvent.click(view.getByTestId("user-message-text"));
+    return onContentPress;
+  }
+
+  it.each(["compact", "expanded"] as const)(
+    "returns to the message when its %s pinned text is tapped",
+    (mode) => {
+      expect(pressText(mode)).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps ordinary message text inert", () => {
+    expect(pressText("ordinary")).not.toHaveBeenCalled();
+  });
 });
