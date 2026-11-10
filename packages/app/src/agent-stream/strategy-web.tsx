@@ -41,6 +41,7 @@ import { withUnistyles } from "react-native-unistyles";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
@@ -417,6 +418,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const actualRows = useContext(ActualPromptRowsContext);
   const [pinnedRowId, setPinnedRowId] = useState<string | null>(null);
+  const pinnedOwner = useRef<string | null>(null);
+  const updatePinnedRowRef = useRef<() => void>(() => {});
+  const retryPinUpdate = useCallback(() => updatePinnedRowRef.current(), []);
+  const spendPinUpdate = useLayoutUpdateBudget(retryPinUpdate);
   const isActive = useRetainedPanelActive();
   const { originalFindMessageId, selectFindOriginalMessage, chatFindRowIndexes } =
     useFindRowOwnership(actualRows, props.agentId, isActive, segments.historyVirtualized);
@@ -887,9 +892,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       yieldOrdinaryPaint: retained !== null,
     });
     const owner = retained ?? next;
-    setPinnedRowId((current) => (current === owner ? current : owner));
+    if (pinnedOwner.current === owner) return;
+    // A pin change re-lays out the rows it pins; bound how often that can chain per frame.
+    if (!spendPinUpdate()) return;
+    pinnedOwner.current = owner;
+    setPinnedRowId(owner);
   });
 
+  useLayoutEffect(() => {
+    updatePinnedRowRef.current = updatePinnedRow;
+  }, [updatePinnedRow]);
   const onRetainedFlowGeometryChange = useCallback(() => updatePinnedRow(), [updatePinnedRow]);
 
   const reportReadingPosition = useStableEvent(() => {

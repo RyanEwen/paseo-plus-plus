@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import type { ComponentRef } from "react";
 import type { View } from "react-native";
 import { SPACING } from "@/styles/theme";
+import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
 import type { MessageFlowContext, UserMessageFlowProps } from "./flow";
 import { sameFrame, type MessageFlowFrame, type MessageFlowMeasurements } from "./flow-model";
 
@@ -207,13 +208,6 @@ function readNaturalMeasurement(
 }
 
 /**
- * Synchronous state updates one hook may make before its next read waits for an animation
- * frame. Layout effects and ResizeObserver callbacks run inside one synchronous React chain,
- * so this keeps every chain far below React's nested update limit (#185).
- */
-const SYNC_UPDATES_PER_FRAME = 3;
-
-/**
  * Width and font re-binds allowed for one set of real inputs (content, presentation and
  * disclosure). Past it, layout that never settles keeps the last measurement instead of
  * measuring again; a real input change starts a new budget.
@@ -225,9 +219,6 @@ interface MeasurementBudget {
   inputs: object | null;
   rebinds: number;
   measurements: number;
-  syncUpdates: number;
-  frame: number | null;
-  pending: boolean;
   last: WebMessageMeasurement | null;
 }
 
@@ -308,9 +299,6 @@ export function useWebMessageMeasurements(
     inputs: null,
     rebinds: 0,
     measurements: 0,
-    syncUpdates: 0,
-    frame: null,
-    pending: false,
     last: null,
   });
   // Real inputs, as opposed to the width and font this hook measures for itself.
@@ -333,28 +321,9 @@ export function useWebMessageMeasurements(
     ],
   );
   const readCurrent = useRef<() => void>(() => {});
-  /** The next animation frame restores the sync budget and runs any deferred read, once. */
-  const scheduleBudgetFrame = useCallback(() => {
-    const state = budget.current;
-    if (state.frame !== null) return;
-    state.frame = requestAnimationFrame(() => {
-      state.frame = null;
-      state.syncUpdates = 0;
-      if (!state.pending) return;
-      state.pending = false;
-      readCurrent.current();
-    });
-  }, []);
-  /** Measure again on the next animation frame instead of now. */
-  const deferRead = useCallback(() => {
-    budget.current.pending = true;
-    scheduleBudgetFrame();
-  }, [scheduleBudgetFrame]);
-  /** Spend one synchronous state update from this frame's budget. */
-  const spendSyncUpdate = useCallback(() => {
-    budget.current.syncUpdates += 1;
-    scheduleBudgetFrame();
-  }, [scheduleBudgetFrame]);
+  const retryRead = useCallback(() => readCurrent.current(), []);
+  // Past this frame's budget, the read waits for the next animation frame.
+  const spendLayoutUpdate = useLayoutUpdateBudget(retryRead);
   const [measurement, setMeasurement] = useState<WebMessageMeasurement | null>(null);
   const read = useCallback(() => {
     if (current.current !== binding) return;
@@ -363,11 +332,6 @@ export function useWebMessageMeasurements(
       state.inputs = inputs;
       state.rebinds = 0;
       state.measurements = 0;
-    }
-    // Past this frame's synchronous budget, measure on the next frame instead of now.
-    if (state.syncUpdates >= SYNC_UPDATES_PER_FRAME) {
-      deferRead();
-      return;
     }
     const canRebind = state.rebinds < REBINDS_PER_INPUT;
     const actualWidth = rail.current?.getBoundingClientRect().width ?? 0;
@@ -379,9 +343,9 @@ export function useWebMessageMeasurements(
     });
     widthOscillation.current = settled.oscillation;
     if (settled.width !== width && canRebind) {
+      if (!spendLayoutUpdate()) return;
       previousWidth.current = width;
       state.rebinds += 1;
-      spendSyncUpdate();
       setWidth(settled.width);
       return;
     }
@@ -395,18 +359,18 @@ export function useWebMessageMeasurements(
     const fontRetried =
       fontRetry.current?.revision === props.revision && fontRetry.current.width === width;
     if (fontChanged && !fontRetried && canRebind) {
+      if (!spendLayoutUpdate()) return;
       fontRetry.current = { revision: props.revision, width };
       state.rebinds += 1;
-      spendSyncUpdate();
       setFontRevision((value) => value + 1);
       return;
     }
     font.current = { binding, value: next.font };
     // Never set an equal measurement, and stop once layout has had its budget of changes.
     if (sameMeasurement(state.last, next) || state.measurements >= MEASUREMENTS_PER_INPUT) return;
+    if (!spendLayoutUpdate()) return;
     state.last = next;
     state.measurements += 1;
-    spendSyncUpdate();
     setMeasurement(next);
   }, [
     binding,
@@ -415,8 +379,7 @@ export function useWebMessageMeasurements(
     bodyPresentation,
     props.revision,
     inputs,
-    deferRead,
-    spendSyncUpdate,
+    spendLayoutUpdate,
   ]);
   const observer = useMemo(() => new ResizeObserver(() => readCurrent.current()), []);
   const registerElement = useCallback(
@@ -472,12 +435,9 @@ export function useWebMessageMeasurements(
   useLayoutEffect(() => {
     const invalidateFont = () => setFontRevision((value) => value + 1);
     document.fonts?.addEventListener("loadingdone", invalidateFont);
-    const state = budget.current;
     return () => {
       observer.disconnect();
       document.fonts?.removeEventListener("loadingdone", invalidateFont);
-      if (state.frame !== null) cancelAnimationFrame(state.frame);
-      state.frame = null;
     };
   }, [observer]);
   const reportFrame = useCallback(() => readCurrent.current(), []);
