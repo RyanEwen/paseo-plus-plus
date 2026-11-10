@@ -206,6 +206,34 @@ function readNaturalMeasurement(
   };
 }
 
+/**
+ * Synchronous state updates one hook may make before its next read waits for an animation
+ * frame. Layout effects and ResizeObserver callbacks run inside one synchronous React chain,
+ * so this keeps every chain far below React's nested update limit (#185).
+ */
+const SYNC_UPDATES_PER_FRAME = 3;
+
+/**
+ * Width and font re-binds allowed for one set of real inputs (content, presentation and
+ * disclosure). Past it, layout that never settles keeps the last measurement instead of
+ * measuring again; a real input change starts a new budget.
+ */
+const REBINDS_PER_INPUT = 8;
+
+/** How much measuring one hook may still do before waiting or settling. */
+interface MeasurementBudget {
+  inputs: object | null;
+  rebinds: number;
+  measurements: number;
+  syncUpdates: number;
+  frame: number | null;
+  pending: boolean;
+  last: WebMessageMeasurement | null;
+}
+
+/** Measurement updates allowed for one set of real inputs, such as images loading. */
+const MEASUREMENTS_PER_INPUT = 32;
+
 /** Rail widths within this distance are the same layout, not a reason to re-bind. */
 const RAIL_WIDTH_TOLERANCE_PX = 1;
 
@@ -276,9 +304,72 @@ export function useWebMessageMeasurements(
   const fontRetry = useRef<{ revision: object; width: number } | null>(null);
   const previousWidth = useRef<number | null>(null);
   const widthOscillation = useRef<RailWidthOscillation | null>(null);
+  const budget = useRef<MeasurementBudget>({
+    inputs: null,
+    rebinds: 0,
+    measurements: 0,
+    syncUpdates: 0,
+    frame: null,
+    pending: false,
+    last: null,
+  });
+  // Real inputs, as opposed to the width and font this hook measures for itself.
+  const inputs = useMemo(
+    () => ({
+      revision: props.revision,
+      bodyPresentation,
+      bounded: props.bounded,
+      compact: props.compact,
+      controls: props.controls,
+      compactTrailingPadding,
+    }),
+    [
+      props.revision,
+      bodyPresentation,
+      props.bounded,
+      props.compact,
+      props.controls,
+      compactTrailingPadding,
+    ],
+  );
+  const readCurrent = useRef<() => void>(() => {});
+  /** The next animation frame restores the sync budget and runs any deferred read, once. */
+  const scheduleBudgetFrame = useCallback(() => {
+    const state = budget.current;
+    if (state.frame !== null) return;
+    state.frame = requestAnimationFrame(() => {
+      state.frame = null;
+      state.syncUpdates = 0;
+      if (!state.pending) return;
+      state.pending = false;
+      readCurrent.current();
+    });
+  }, []);
+  /** Measure again on the next animation frame instead of now. */
+  const deferRead = useCallback(() => {
+    budget.current.pending = true;
+    scheduleBudgetFrame();
+  }, [scheduleBudgetFrame]);
+  /** Spend one synchronous state update from this frame's budget. */
+  const spendSyncUpdate = useCallback(() => {
+    budget.current.syncUpdates += 1;
+    scheduleBudgetFrame();
+  }, [scheduleBudgetFrame]);
   const [measurement, setMeasurement] = useState<WebMessageMeasurement | null>(null);
   const read = useCallback(() => {
     if (current.current !== binding) return;
+    const state = budget.current;
+    if (state.inputs !== inputs) {
+      state.inputs = inputs;
+      state.rebinds = 0;
+      state.measurements = 0;
+    }
+    // Past this frame's synchronous budget, measure on the next frame instead of now.
+    if (state.syncUpdates >= SYNC_UPDATES_PER_FRAME) {
+      deferRead();
+      return;
+    }
+    const canRebind = state.rebinds < REBINDS_PER_INPUT;
     const actualWidth = rail.current?.getBoundingClientRect().width ?? 0;
     const settled = settleRailWidth({
       current: width,
@@ -287,8 +378,10 @@ export function useWebMessageMeasurements(
       oscillation: widthOscillation.current,
     });
     widthOscillation.current = settled.oscillation;
-    if (settled.width !== width) {
+    if (settled.width !== width && canRebind) {
       previousWidth.current = width;
+      state.rebinds += 1;
+      spendSyncUpdate();
       setWidth(settled.width);
       return;
     }
@@ -301,15 +394,30 @@ export function useWebMessageMeasurements(
     const fontChanged = font.current?.binding === binding && font.current.value !== next.font;
     const fontRetried =
       fontRetry.current?.revision === props.revision && fontRetry.current.width === width;
-    if (fontChanged && !fontRetried) {
+    if (fontChanged && !fontRetried && canRebind) {
       fontRetry.current = { revision: props.revision, width };
+      state.rebinds += 1;
+      spendSyncUpdate();
       setFontRevision((value) => value + 1);
       return;
     }
     font.current = { binding, value: next.font };
-    setMeasurement((previous) => (sameMeasurement(previous, next) ? previous : next));
-  }, [binding, width, compactTrailingPadding, bodyPresentation, props.revision]);
-  const readCurrent = useRef(read);
+    // Never set an equal measurement, and stop once layout has had its budget of changes.
+    if (sameMeasurement(state.last, next) || state.measurements >= MEASUREMENTS_PER_INPUT) return;
+    state.last = next;
+    state.measurements += 1;
+    spendSyncUpdate();
+    setMeasurement(next);
+  }, [
+    binding,
+    width,
+    compactTrailingPadding,
+    bodyPresentation,
+    props.revision,
+    inputs,
+    deferRead,
+    spendSyncUpdate,
+  ]);
   const observer = useMemo(() => new ResizeObserver(() => readCurrent.current()), []);
   const registerElement = useCallback(
     (name: FrameName, node: HTMLElement | null) => {
@@ -364,9 +472,12 @@ export function useWebMessageMeasurements(
   useLayoutEffect(() => {
     const invalidateFont = () => setFontRevision((value) => value + 1);
     document.fonts?.addEventListener("loadingdone", invalidateFont);
+    const state = budget.current;
     return () => {
       observer.disconnect();
       document.fonts?.removeEventListener("loadingdone", invalidateFont);
+      if (state.frame !== null) cancelAnimationFrame(state.frame);
+      state.frame = null;
     };
   }, [observer]);
   const reportFrame = useCallback(() => readCurrent.current(), []);
