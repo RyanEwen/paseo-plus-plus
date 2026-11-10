@@ -12,7 +12,7 @@ function Throwing(): React.ReactNode {
 /** A layout effect that sets new state on every commit, like a measurement loop. */
 function MeasurementLoop() {
   const [count, setCount] = React.useState(0);
-  React.useLayoutEffect(() => setCount((value) => value + 1));
+  React.useLayoutEffect(() => setCount(count + 1), [count]);
   return <span>{count}</span>;
 }
 

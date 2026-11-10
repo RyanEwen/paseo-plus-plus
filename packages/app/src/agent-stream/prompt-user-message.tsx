@@ -35,13 +35,14 @@ export const PromptUserMessage = memo(function PromptUserMessage({
   );
   // If the sticky presentation fails, this row shows the ordinary message instead, and
   // bare text if even that fails, rather than taking the chat down.
+  const bareText = useMemo(() => <Text selectable>{props.message}</Text>, [props.message]);
   const plainMessage = useMemo(
     () => (
-      <PromptRowBoundary fallback={<Text selectable>{props.message}</Text>}>
+      <PromptRowBoundary fallback={bareText}>
         <UserMessage {...props} navigationActions={actions} />
       </PromptRowBoundary>
     ),
-    [props, actions],
+    [props, actions, bareText],
   );
   return (
     <ActualPromptBody>

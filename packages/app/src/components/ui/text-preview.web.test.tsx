@@ -25,6 +25,11 @@ function flipMeasuredHeight() {
  * A caller whose layout follows the preview's overflow: each change re-renders the preview
  * with a fresh style object, as callers that build styles inline do.
  */
+/** Builds a new style object on each call, as inline caller styles do. */
+function freshStyle(lineHeight: number, opacity = 1) {
+  return { lineHeight, opacity };
+}
+
 function OverflowFollower({ onReport }: { onReport: () => void }) {
   const [overflowing, setOverflowing] = React.useState(false);
   const report = React.useCallback(
@@ -34,7 +39,7 @@ function OverflowFollower({ onReport }: { onReport: () => void }) {
     },
     [onReport],
   );
-  const style = { lineHeight: 20, opacity: overflowing ? 1 : 0.99 };
+  const style = freshStyle(20, overflowing ? 1 : 0.99);
   return (
     <TextPreview numberOfLines={1} onOverflowChange={report} style={style}>
       Prompt text that flips between one and two lines as its own layout changes
@@ -64,14 +69,14 @@ describe("TextPreview measurement convergence", () => {
   it("re-measures for a style change, not for each fresh style object", () => {
     const measured = flipMeasuredHeight();
     const view = render(
-      <TextPreview numberOfLines={1} onOverflowChange={vi.fn()} style={{ lineHeight: 20 }}>
+      <TextPreview numberOfLines={1} onOverflowChange={vi.fn()} style={freshStyle(20)}>
         Stable prompt
       </TextPreview>,
     );
     const reads = measured.mock.calls.length;
     act(() =>
       view.rerender(
-        <TextPreview numberOfLines={1} onOverflowChange={vi.fn()} style={{ lineHeight: 20 }}>
+        <TextPreview numberOfLines={1} onOverflowChange={vi.fn()} style={freshStyle(20)}>
           Stable prompt
         </TextPreview>,
       ),

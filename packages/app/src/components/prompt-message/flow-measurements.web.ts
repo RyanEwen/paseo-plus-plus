@@ -3,7 +3,7 @@ import type { ComponentRef } from "react";
 import type { View } from "react-native";
 import { SPACING } from "@/styles/theme";
 import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
-import type { MessageFlowContext, UserMessageFlowProps } from "./flow";
+import type { MessageFlowContext, UserMessageBodyPresentation, UserMessageFlowProps } from "./flow";
 import { sameFrame, type MessageFlowFrame, type MessageFlowMeasurements } from "./flow-model";
 
 type FrameName = Parameters<MessageFlowContext["register"]>[0];
@@ -225,6 +225,35 @@ interface MeasurementBudget {
 /** Measurement updates allowed for one set of real inputs, such as images loading. */
 const MEASUREMENTS_PER_INPUT = 32;
 
+/** Starts a fresh budget when the real inputs change, so new content can measure again. */
+function resetBudgetForInputs(budget: MeasurementBudget, inputs: object): void {
+  if (budget.inputs === inputs) return;
+  budget.inputs = inputs;
+  budget.rebinds = 0;
+  budget.measurements = 0;
+}
+
+/** Reads the measurement for whichever body presentation the row is using. */
+function readPresentationMeasurement(
+  nodes: WebMessageNodes,
+  options: {
+    binding: object;
+    width: number;
+    bodyPresentation: UserMessageBodyPresentation;
+    compactTrailingPadding: number;
+  },
+): WebMessageMeasurement | null {
+  if (options.bodyPresentation === "ordinaryPreview") {
+    return readOrdinaryPreviewMeasurement(nodes, options.binding, options.width);
+  }
+  return readNaturalMeasurement(
+    nodes,
+    options.binding,
+    options.width,
+    options.compactTrailingPadding,
+  );
+}
+
 /** Rail widths within this distance are the same layout, not a reason to re-bind. */
 const RAIL_WIDTH_TOLERANCE_PX = 1;
 
@@ -328,11 +357,7 @@ export function useWebMessageMeasurements(
   const read = useCallback(() => {
     if (current.current !== binding) return;
     const state = budget.current;
-    if (state.inputs !== inputs) {
-      state.inputs = inputs;
-      state.rebinds = 0;
-      state.measurements = 0;
-    }
+    resetBudgetForInputs(state, inputs);
     const canRebind = state.rebinds < REBINDS_PER_INPUT;
     const actualWidth = rail.current?.getBoundingClientRect().width ?? 0;
     const settled = settleRailWidth({
@@ -350,10 +375,12 @@ export function useWebMessageMeasurements(
       return;
     }
     const nodes = { rail, body, trailing, summary, frames: frames.current };
-    const next =
-      bodyPresentation === "ordinaryPreview"
-        ? readOrdinaryPreviewMeasurement(nodes, binding, width)
-        : readNaturalMeasurement(nodes, binding, width, compactTrailingPadding);
+    const next = readPresentationMeasurement(nodes, {
+      binding,
+      width,
+      bodyPresentation,
+      compactTrailingPadding,
+    });
     if (!next) return;
     const fontChanged = font.current?.binding === binding && font.current.value !== next.font;
     const fontRetried =
