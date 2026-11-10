@@ -2,7 +2,7 @@
 
 Every fork feature has its own maintained branch, owner, tests and documentation. Maintain the fork assuming upstream never accepts those features. Upstream adoption is optional and does not gate fork completion or releases. The Paseo team may borrow our branches.
 
-Preserve prepared upstream-facing branches and their qualification receipts as optional borrowing material. Do not require new counterparts or duplicate every subsequent fork change into them. Record the exact source and verification limits when one is used; its historical checks do not qualify later fork changes.
+Preserve prepared upstream-facing branches and their qualification receipts as optional borrowing material. Do not require new counterparts or duplicate every subsequent fork change into them. Record the exact source and verification limits when one is used; its historical checks do not qualify later fork changes. Assess every branch's upstream readiness against the upstream release tag the fork builds on, not upstream `main`. Do not refresh a branch because it conflicts with upstream `main`.
 
 An upstream request does not authorize pushing or posting there.
 
