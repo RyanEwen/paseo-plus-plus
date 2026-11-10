@@ -85,6 +85,43 @@ function reportFrame(view: ReturnType<typeof renderMeasurements>): void {
   act(() => view.result.current.reportFrame());
 }
 
+/** `reads` rail widths cycling through `widths`, starting `offset` steps in. */
+function cyclingWidths(widths: readonly number[], reads: number, offset = 0): number[] {
+  return Array.from({ length: reads }, (_, read) => widths[(read + offset) % widths.length]!);
+}
+
+/** Give an ordinary preview the nodes it measures. */
+function attachMeasuredNodes(view: ReturnType<typeof renderMeasurements>): void {
+  const nodes = measuredNodes();
+  const measurements = view.result.current;
+  act(() => {
+    measurements.body.current = nodes.body;
+    measurements.trailing.current = nodes.trailing;
+    for (const [name, node] of nodes.frames) measurements.register(name, node as never);
+  });
+}
+
+/** Mount one measurement hook per rail, all sharing one content revision. */
+function renderRows(rails: readonly HTMLDivElement[]) {
+  const revision = {};
+  const view = renderHook(() =>
+    rails.map(() =>
+      useWebMessageMeasurements({ revision, bounded: false, compact: false, controls: null }),
+    ),
+  );
+  for (const [index, measurements] of view.result.current.entries()) {
+    measurements.rail.current = rails[index]!;
+  }
+  return view;
+}
+
+/** Report a frame for every row inside one act, as rows mounting together do. */
+function reportEveryFrame(view: ReturnType<typeof renderRows>): void {
+  act(() => {
+    for (const measurements of view.result.current) measurements.reportFrame();
+  });
+}
+
 describe("web message measurement convergence", () => {
   beforeEach(() => {
     vi.stubGlobal("React", React);
@@ -103,56 +140,37 @@ describe("web message measurement convergence", () => {
 
   it("settles when the rail width alternates as each re-bind changes layout", () => {
     // A scrollbar that appears for one width and disappears for the other.
-    const alternating = Array.from({ length: 200 }, (_, read) => (read % 2 === 0 ? 300 : 315));
-    const view = renderMeasurements(railWithWidths(alternating));
+    const view = renderMeasurements(railWithWidths(cyclingWidths([300, 315], 200)));
     expect(() => reportFrame(view)).not.toThrow();
     expect([300, 315]).toContain(view.result.current.width);
   });
 
   it("never exceeds React's update depth when the rail cycles through three widths", () => {
-    const cycling = Array.from({ length: 300 }, (_, read) => [300, 315, 330][read % 3]!);
-    const view = renderMeasurements(railWithWidths(cycling));
-    expect(() => act(() => view.result.current.reportFrame())).not.toThrow();
+    const view = renderMeasurements(railWithWidths(cyclingWidths([300, 315, 330], 300)));
+    expect(() => reportFrame(view)).not.toThrow();
     expect([300, 315, 330]).toContain(view.result.current.width);
   });
 
   it("never exceeds React's update depth when the measured font never matches", () => {
     const view = renderMeasurements(railWithWidths([300]), "ordinaryPreview");
-    const nodes = measuredNodes();
-    act(() => {
-      view.result.current.body.current = nodes.body;
-      view.result.current.trailing.current = nodes.trailing;
-      for (const [name, node] of nodes.frames) view.result.current.register(name, node as never);
-    });
-    expect(() => act(() => view.result.current.reportFrame())).not.toThrow();
+    attachMeasuredNodes(view);
+    expect(() => reportFrame(view)).not.toThrow();
   });
 
   it("never exceeds React's update depth when many cycling rows mount together", () => {
-    const rows = Array.from({ length: 40 }, (_, row) =>
-      railWithWidths(Array.from({ length: 300 }, (_, read) => 300 + ((read + row) % 3) * 15)),
+    const rails = Array.from({ length: 40 }, (_, row) =>
+      railWithWidths(cyclingWidths([300, 315, 330], 300, row)),
     );
-    const revision = {};
-    const view = renderHook(() =>
-      rows.map(() =>
-        useWebMessageMeasurements({ revision, bounded: false, compact: false, controls: null }),
-      ),
-    );
-    view.result.current.forEach((measurements, index) => {
-      measurements.rail.current = rows[index]!;
-    });
-    expect(() =>
-      act(() => {
-        for (const measurements of view.result.current) measurements.reportFrame();
-      }),
-    ).not.toThrow();
+    const view = renderRows(rails);
+    expect(() => reportEveryFrame(view)).not.toThrow();
   });
 
   it("ignores sub-pixel rail jitter instead of re-binding", () => {
     const view = renderMeasurements(railWithWidths([300, 300.4, 299.7, 300.2]));
-    act(() => view.result.current.reportFrame());
+    reportFrame(view);
     expect(view.result.current.width).toBe(300);
-    act(() => view.result.current.reportFrame());
-    act(() => view.result.current.reportFrame());
+    reportFrame(view);
+    reportFrame(view);
     expect(view.result.current.width).toBe(300);
   });
 });
