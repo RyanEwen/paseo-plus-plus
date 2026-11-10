@@ -147,6 +147,11 @@ export interface ClaudeReplayParentFacts {
    * none: its immediate result only says the child started.
    */
   outcomesByToolCallId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
+  /**
+   * Child agent id -> latest task notification outcome. A child resumed with SendMessage
+   * finishes under the resume's tool-use id, so its launch id never receives the outcome.
+   */
+  outcomesByAgentId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
 }
 
 interface ParentLink {
@@ -188,7 +193,10 @@ function resolveParentLink(
       : parent.linksByAgentId.get(subagent.agentId)?.toolCallId;
   if (!toolCallId || !parent.toolCalls.has(toolCallId)) return null;
 
-  const status = parent.outcomesByToolCallId.get(toolCallId)?.status ?? null;
+  const status =
+    parent.outcomesByToolCallId.get(toolCallId)?.status ??
+    parent.outcomesByAgentId.get(subagent.agentId)?.status ??
+    null;
   return { id: toolCallId, toolCallId, status };
 }
 
