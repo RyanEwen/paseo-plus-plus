@@ -63,6 +63,12 @@ export async function verifySettingsExamplesHelp(page: Page, compact: boolean, d
           ),
         )
         .toBe(true);
+      // A loaded source is not enough: the screenshot must also have a drawn size in its frame.
+      await expect(image).toBeVisible();
+      const imageBounds = await image.boundingBox();
+      expect(imageBounds).not.toBeNull();
+      expect(imageBounds!.width).toBeGreaterThan(0);
+      expect(imageBounds!.height).toBeGreaterThan(0);
     }
     const annotations = content.locator("svg");
     const marked = [
