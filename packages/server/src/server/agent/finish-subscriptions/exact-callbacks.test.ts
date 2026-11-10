@@ -16,7 +16,7 @@ import { toAgentPayload } from "../agent-projections.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
 import { createTestAgentMessages } from "../../test-utils/agent-messages.js";
-import { expect, test, vi } from "vitest";
+import { expect, test, vi, type MockInstance } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -140,6 +140,20 @@ function setupFinishWait(params: FinishWaitFixture): () => void {
  * A caller with two waiting human objectives, each delegated to the same routed child. Tests
  * choose the correlation each watch claims and the outcome each child result carries.
  */
+/**
+ * One line per queued callback: its event, the exact outcome it carries, and which child result
+ * its prompt names. Used in failure output, where the raw spy calls are too large to read.
+ */
+function describeQueuedCallbacks(enqueue: MockInstance<AgentMessageDelivery["enqueue"]>): string[] {
+  return enqueue.mock.calls.map(([message]) => {
+    const prompt =
+      typeof message.prompt === "string" ? message.prompt : JSON.stringify(message.prompt);
+    const result = prompt.match(/EXACT_RESULT_\d|Untrusted current message/)?.[0] ?? "no result";
+    const outcomeId = message.source.attention?.delivery?.outcomeId ?? "none";
+    return `${message.source.event} outcome=${outcomeId} result=${result}`;
+  });
+}
+
 async function createRoutedRecipientScenario(input: { parented: boolean }) {
   const workdir = mkdtempSync(join(tmpdir(), "attention-watch-membership-"));
   const logger = createTestLogger();
@@ -272,10 +286,16 @@ async function createRoutedRecipientScenario(input: { parented: boolean }) {
     }
   }
 
-  /** Wait until `count` watches ended, then for the dispatch receipts they produced. */
+  /**
+   * Wait until `count` watches ended, then for the dispatch receipts they produced. A callback
+   * reservation can retry a few times before its objective is admitted for the caller's turn,
+   * which takes well over the default one-second poll on a loaded CI runner.
+   */
   async function settleWatches(count: number) {
     await expect
-      .poll(() => signals.length === count && signals.every((signal) => signal.aborted))
+      .poll(() => signals.length === count && signals.every((signal) => signal.aborted), {
+        timeout: 15_000,
+      })
       .toBe(true);
     const dispatched = enqueue.mock.results.flatMap((result) =>
       result.type === "return" ? [result.value.dispatched] : [],
@@ -329,7 +349,11 @@ it.each([
     scenario.resolveResults(true);
     await scenario.settleWatches(2);
 
-    expect(scenario.enqueue).toHaveBeenCalledTimes(2);
+    // Describe every queued callback in the failure message, so an intermittent extra one in CI
+    // shows which result and kind it was, and which retries preceded it, instead of only a count.
+    const queued = describeQueuedCallbacks(scenario.enqueue);
+    const retries = scenario.retries.map((retry) => String(retry.error));
+    expect(queued, JSON.stringify({ queued, retries })).toHaveLength(2);
     expect(scenario.acknowledgements).toHaveLength(2);
     expect(
       (await scenario.storedDeliveries())?.map((entries) => entries.map((item) => item.status)),
