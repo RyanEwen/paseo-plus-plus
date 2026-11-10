@@ -2035,11 +2035,14 @@ it("pins only the message while a collapsed turn's summary scrolls away under it
 
   await readAtPromptHandoff(fixture.host);
   await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
-  // Read past the summary's full height: it leaves with the transcript, not with the pin.
-  readAt(fixture.host, scroll.scrollTop + TURN_SUMMARY_STYLE.height * 2);
+  // At the handoff the summary sits just below the compact preview. Read exactly past its
+  // bottom: an ordinary summary leaves with the transcript, while a pinned one would not move.
+  const viewportTop = scroll.getBoundingClientRect().top;
+  const summaryDistance = summary.getBoundingClientRect().bottom - viewportTop;
+  expect(summaryDistance).toBeGreaterThan(0);
+  readAt(fixture.host, scroll.scrollTop + summaryDistance + 8);
   await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
   await settleDisclosurePaint();
-  const viewportTop = scroll.getBoundingClientRect().top;
   expect(body.getBoundingClientRect().bottom).toBeGreaterThan(viewportTop);
   expect(summary.getBoundingClientRect().bottom).toBeLessThanOrEqual(viewportTop + 1);
 });
