@@ -33,6 +33,11 @@ function renderMeasurements(rail: HTMLDivElement) {
   return view;
 }
 
+/** Report one measurement frame, the way the layout effect does. */
+function reportFrame(view: ReturnType<typeof renderMeasurements>): void {
+  act(() => view.result.current.reportFrame());
+}
+
 describe("web message measurement convergence", () => {
   beforeEach(() => {
     vi.stubGlobal("React", React);
@@ -47,7 +52,7 @@ describe("web message measurement convergence", () => {
     // A scrollbar that appears for one width and disappears for the other.
     const alternating = Array.from({ length: 200 }, (_, read) => (read % 2 === 0 ? 300 : 315));
     const view = renderMeasurements(railWithWidths(alternating));
-    expect(() => act(() => view.result.current.reportFrame())).not.toThrow();
+    expect(() => reportFrame(view)).not.toThrow();
     expect([300, 315]).toContain(view.result.current.width);
   });
 
