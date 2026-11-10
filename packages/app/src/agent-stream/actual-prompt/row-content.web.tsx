@@ -1,4 +1,4 @@
-import React, { type CSSProperties, useCallback, useContext, useMemo } from "react";
+import React, { type CSSProperties, createContext, useCallback, useContext, useMemo } from "react";
 import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 import {
   ActualPinnedRowContext,
@@ -13,6 +13,17 @@ export const ACTUAL_ROW_STYLE: CSSProperties = {
   flexDirection: "column",
   width: "100%",
 };
+
+/**
+ * A prompt row's content fills the row's reserved lane, so the message body's sticky
+ * containing block spans it, while ordinary content after the message stays in flow.
+ */
+const ACTUAL_PROMPT_ROW_CONTENT_STYLE: CSSProperties = { ...ACTUAL_ROW_STYLE, flexGrow: 1 };
+
+/** Registers the one element that sticks: the message body, rendered by ActualPromptBody. */
+export const ActualPromptBodyContext = createContext<React.RefCallback<HTMLDivElement> | null>(
+  null,
+);
 
 export interface MeasuredStreamRowGeometry {
   width: number;
@@ -136,11 +147,25 @@ export function ActualRowContent({
     },
     [owner, bodyRef, applyGeometry],
   );
+  const content = (
+    <ActualPromptFlowGeometryContext.Provider value={isPrompt ? reportGeometry : null}>
+      <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
+    </ActualPromptFlowGeometryContext.Provider>
+  );
+  if (!isPrompt) {
+    return (
+      <div ref={registerBody} data-actual-prompt-content style={ACTUAL_ROW_STYLE}>
+        {content}
+      </div>
+    );
+  }
+  // Only the message body sticks. A collapsed turn's summary, rendered after the message
+  // in the same row, stays ordinary content that scrolls away beneath the pinned prompt.
   return (
-    <div ref={registerBody} data-actual-prompt-content style={ACTUAL_ROW_STYLE}>
-      <ActualPromptFlowGeometryContext.Provider value={isPrompt ? reportGeometry : null}>
-        <ActualPinnedRowContext.Provider value={pinned}>{children}</ActualPinnedRowContext.Provider>
-      </ActualPromptFlowGeometryContext.Provider>
+    <div data-actual-prompt-row-content style={ACTUAL_PROMPT_ROW_CONTENT_STYLE}>
+      <ActualPromptBodyContext.Provider value={registerBody}>
+        {content}
+      </ActualPromptBodyContext.Provider>
     </div>
   );
 }

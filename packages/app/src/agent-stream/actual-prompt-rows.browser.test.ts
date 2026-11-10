@@ -7,6 +7,7 @@ import {
   ACTUAL_PROMPT_ID,
   ACTUAL_SUCCESSOR_ID,
 } from "./actual-prompt-rows.test-fixture";
+import { PromptUserMessage } from "./prompt-user-message";
 import { expect, it, vi } from "vitest";
 import { revealFindOccurrence } from "./chat-find/body-reveal.web";
 import { findMessageMatches } from "./chat-find/ranges.web";
@@ -2004,4 +2005,41 @@ it("restores upstream preview allocation OFF and full natural allocation ON with
     setActualRoot(null);
     await deleteAttachments([image]);
   }
+});
+
+const TURN_SUMMARY_STYLE = { height: 32 };
+
+/** Mirror view.tsx's collapsed turn: the summary renders after the message in its row. */
+function withTurnSummary(content: React.ReactNode): React.ReactNode {
+  if (!React.isValidElement(content) || content.type !== PromptUserMessage) return content;
+  return React.createElement(
+    React.Fragment,
+    null,
+    content,
+    React.createElement("div", { "data-testid": "turn-summary", style: TURN_SUMMARY_STYLE }),
+  );
+}
+
+it("pins only the message while a collapsed turn's summary scrolls away under it", async () => {
+  const prompt = "Pin this message\nwhile its collapsed turn\nsummary scrolls away";
+  const fixture = actualPrompt(prompt, { wrapRow: withTurnSummary });
+  await document.fonts.ready;
+  const scroll = fixture.host.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+  const row = fixture.host.querySelector<HTMLElement>(
+    `[data-history-row-id="${ACTUAL_PROMPT_ID}"]`,
+  )!;
+  const summary = row.querySelector<HTMLElement>('[data-testid="turn-summary"]')!;
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]")!;
+  // The summary is ordinary row content, outside the one element that sticks.
+  expect(body.contains(summary)).toBe(false);
+
+  await readAtPromptHandoff(fixture.host);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  // Read past the summary's full height: it leaves with the transcript, not with the pin.
+  readAt(fixture.host, scroll.scrollTop + TURN_SUMMARY_STYLE.height * 2);
+  await expect.poll(() => pinnedPromptIds(fixture.host)).toEqual([ACTUAL_PROMPT_ID]);
+  await settleDisclosurePaint();
+  const viewportTop = scroll.getBoundingClientRect().top;
+  expect(body.getBoundingClientRect().bottom).toBeGreaterThan(viewportTop);
+  expect(summary.getBoundingClientRect().bottom).toBeLessThanOrEqual(viewportTop + 1);
 });

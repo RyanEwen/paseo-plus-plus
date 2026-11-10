@@ -16,14 +16,11 @@ export function getOriginalPromptTop(element: HTMLElement): number {
   );
 }
 
-export function getNaturalPromptRowHeight(row: HTMLElement): number {
-  const body = row.matches("[data-actual-prompt-row]")
-    ? row.querySelector<HTMLElement>("[data-actual-prompt-content]")
-    : null;
-  const naturalHeight = Number(body?.dataset.promptFlowHeight);
-  const visualHeight = Number(body?.dataset.promptVisualHeight);
+/** The message body's natural height: its published flow plus the body's own chrome. */
+export function getNaturalPromptBodyHeight(body: HTMLElement): number {
+  const naturalHeight = Number(body.dataset.promptFlowHeight);
+  const visualHeight = Number(body.dataset.promptVisualHeight);
   if (
-    body &&
     naturalHeight > 0 &&
     visualHeight > 0 &&
     Number.isFinite(naturalHeight) &&
@@ -33,7 +30,32 @@ export function getNaturalPromptRowHeight(row: HTMLElement): number {
     // group spacing and margins too, rather than reconstructing caller chrome.
     return naturalHeight + body.getBoundingClientRect().height - visualHeight;
   }
-  return (body ?? row).getBoundingClientRect().height;
+  return body.getBoundingClientRect().height;
+}
+
+/**
+ * Ordinary content rendered beside the message in its row, such as a collapsed turn's
+ * summary. It stays in flow under the body and never joins the sticky paint.
+ */
+function getPromptSiblingExtent(body: HTMLElement): number {
+  let extent = 0;
+  for (const sibling of body.parentElement?.children ?? []) {
+    if (sibling === body || !(sibling instanceof HTMLElement)) continue;
+    const style = getComputedStyle(sibling);
+    extent +=
+      sibling.getBoundingClientRect().height +
+      Number.parseFloat(style.marginTop) +
+      Number.parseFloat(style.marginBottom);
+  }
+  return extent;
+}
+
+export function getNaturalPromptRowHeight(row: HTMLElement): number {
+  const body = row.matches("[data-actual-prompt-row]")
+    ? row.querySelector<HTMLElement>("[data-actual-prompt-content]")
+    : null;
+  if (!body) return row.getBoundingClientRect().height;
+  return getNaturalPromptBodyHeight(body) + getPromptSiblingExtent(body);
 }
 
 /** Add the real caller chrome to the body owner's independently prepared compact paint. */
@@ -50,6 +72,12 @@ function getCompactPromptRowHeight(row: HTMLElement): number | undefined {
   )
     return undefined;
   return compact + body.getBoundingClientRect().height - visual;
+}
+
+/** The pinned body's natural height, or the whole row's when it has no body. */
+function getActualPromptBodyHeight(row: HTMLElement): number {
+  const body = row.querySelector<HTMLElement>("[data-actual-prompt-content]");
+  return body ? getNaturalPromptBodyHeight(body) : getNaturalPromptRowHeight(row);
 }
 
 /** Restore natural flow before any successor or reading-anchor measurement. A row
@@ -112,6 +140,7 @@ export function syncActualPromptPin({
     id: row.dataset.historyRowId!,
     top: row.getBoundingClientRect().top - viewportTop + viewport.scrollTop,
     height: getNaturalPromptRowHeight(row),
+    bodyHeight: getActualPromptBodyHeight(row),
     compactHeight: getCompactPromptRowHeight(row),
   }));
   const positions = new Map(virtualPrompts.map((row) => [row.id, row.top]));
@@ -137,7 +166,8 @@ export function syncActualPromptPin({
     ? resolveActualPromptPin(
         ordered.map((row) => ({
           ...row,
-          height: geometry.find((item) => item.id === row.id)?.height ?? 0,
+          // The message, not the ordinary content after it, hands off to compact paint.
+          height: geometry.find((item) => item.id === row.id)?.bodyHeight ?? 0,
           compactHeight: geometry.find((item) => item.id === row.id)?.compactHeight,
         })),
         viewport.scrollTop,
@@ -158,6 +188,7 @@ export function syncActualPromptPin({
       body,
       enabled: enabled && !originalRows.has(own.id),
       naturalHeight: own.height,
+      bodyNaturalHeight: own.bodyHeight,
       compactHeight: own.compactHeight,
       height,
       pinned: own.id === pinnedId,
@@ -171,7 +202,10 @@ interface PromptLaneInput {
   row: HTMLElement;
   body: HTMLElement;
   enabled: boolean;
+  /** The whole row's natural height, including ordinary content after the message. */
   naturalHeight: number;
+  /** The message body's own natural height, which alone sticks. */
+  bodyNaturalHeight: number;
   compactHeight: number | undefined;
   /** The lane height: the row's own natural height, or the gap to the next prompt. */
   height: number;
@@ -185,6 +219,7 @@ function applyPromptLane({
   body,
   enabled,
   naturalHeight,
+  bodyNaturalHeight,
   compactHeight,
   height,
   pinned,
@@ -205,7 +240,7 @@ function applyPromptLane({
   // During the React handoff, an ordinary body must not jump to the top before
   // its bounded paint commits. More remains at the top without moving this gate.
   const bounded = pinned && body.dataset.promptBounded === "true";
-  const ordinaryTop = Math.min(0, (compactHeight ?? naturalHeight) - naturalHeight);
+  const ordinaryTop = Math.min(0, (compactHeight ?? bodyNaturalHeight) - bodyNaturalHeight);
   const stickyTop = bounded ? 0 : ordinaryTop;
   body.style.top = sticky ? `${stickyTop}px` : "";
   body.style.flexShrink = "0";

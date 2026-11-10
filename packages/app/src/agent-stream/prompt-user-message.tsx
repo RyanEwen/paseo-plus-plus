@@ -6,6 +6,7 @@ import { NativeStickyLayoutContext } from "./native-sticky-layout-context";
 import { ActualPromptRowsContext, ActualPromptFlowGeometryContext } from "./actual-prompt-rows";
 import type { NaturalMessageGeometry } from "@/components/prompt-message/flow-model";
 import { useChatFindSelectedMessageId } from "./chat-find/selection";
+import { ActualPromptBody } from "./actual-prompt/prompt-body";
 
 /** Attach viewport-owned navigation without changing the shared message renderer's identity. */
 export const PromptUserMessage = memo(function PromptUserMessage({
@@ -31,17 +32,19 @@ export const PromptUserMessage = memo(function PromptUserMessage({
     [timelineMessageId, hasNavigation],
   );
   return (
-    <UserMessage
-      {...props}
-      navigationActions={actions}
-      keepActionsVisible={navigation?.actionVisibleMessageId === timelineMessageId}
-      {...presentation}
-      bodyPresentation={actualRows ? "actualPrompt" : "ordinaryPreview"}
-      forceOrdinaryPreviewExpanded={selectedFindMessageId === timelineMessageId}
-      onNaturalFlowGeometry={
-        webGeometry || (nativeLayout && actualRows) ? reportNaturalGeometry : undefined
-      }
-      naturalFlowMaximumHeight={webGeometry ? actualRows?.bodyViewportHeight : undefined}
-    />
+    <ActualPromptBody>
+      <UserMessage
+        {...props}
+        navigationActions={actions}
+        keepActionsVisible={navigation?.actionVisibleMessageId === timelineMessageId}
+        {...presentation}
+        bodyPresentation={actualRows ? "actualPrompt" : "ordinaryPreview"}
+        forceOrdinaryPreviewExpanded={selectedFindMessageId === timelineMessageId}
+        onNaturalFlowGeometry={
+          webGeometry || (nativeLayout && actualRows) ? reportNaturalGeometry : undefined
+        }
+        naturalFlowMaximumHeight={webGeometry ? actualRows?.bodyViewportHeight : undefined}
+      />
+    </ActualPromptBody>
   );
 });
