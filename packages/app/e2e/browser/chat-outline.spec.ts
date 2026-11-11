@@ -2104,10 +2104,6 @@ test("keeps the finished cold real transcript stationary after hover input stops
       contextDelivery: "immediate",
     });
     observedHistory = history;
-    // Upstream history paging (#8358) can fill a fresh open with one older page before it
-    // reveals the transcript. Let that page through, so no held request can time out during
-    // hover; any later request stays held and fails the final count.
-    history.releasePage(1);
     const finished = await agent.client.waitForFinish(agent.agentId, 15_000);
     expect(finished.status).not.toBe("running");
     expect(finished.final?.lastError ?? null).toBeNull();
@@ -2147,19 +2143,7 @@ test("keeps the finished cold real transcript stationary after hover input stops
     expect(history.getReadAccounting().contextBefore ?? 0).toBeGreaterThan(0);
     expect(history.getReadAccounting().contentBefore).toBeGreaterThan(0);
     expect(history.getReadAccounting().errors).toEqual([]);
-    await expect(page.getByTestId("agent-initial-fill")).toHaveCount(0);
-    expect(history.getRequestCount()).toBeLessThanOrEqual(1);
-    const filledPages = history
-      .getWindowPages()
-      .filter((receipt) => receipt.direction === "before");
-    expect(filledPages.every((receipt) => receipt.forwarded)).toBe(true);
-    // The fill page must stay inside the tool run, so the prompt remains a retained row.
-    const filledEntries = filledPages.flatMap((receipt) => receipt.entries);
-    expect(filledEntries.filter((entry) => entry.type === "user_message")).toHaveLength(0);
-    await expect(row).toHaveAttribute("data-prompt-pinned", "true");
-    await expect(timeline.locator(`[data-history-row-id="${recovered.id}"]`)).toHaveCount(0);
-    const settledRequestCount = history.getRequestCount();
-    const settledPages = [...history.getWindowPages()];
+    expect(history.getRequestCount()).toBe(0);
     await page.evaluate(() => document.fonts.ready);
     // Leave the timeline before installing the one-entry callthrough boundary.
     const outside = await timeline.evaluate((element) => {
@@ -2205,9 +2189,9 @@ test("keeps the finished cold real transcript stationary after hover input stops
     const calls = await state.evaluate((value) => value.calls());
     evidence.outerCalls = calls;
     expect(calls).toEqual([]);
-    expect(history.getRequestCount()).toBe(settledRequestCount);
+    expect(history.getRequestCount()).toBe(0);
     expect(history.getReadAccounting().errors).toEqual([]);
-    expect(history.getWindowPages()).toEqual(settledPages);
+    expect(history.getWindowPages()).toEqual([tail]);
   } finally {
     try {
       if (observation) {
