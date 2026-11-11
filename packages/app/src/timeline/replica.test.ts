@@ -2004,7 +2004,7 @@ describe("viewed owner source metadata acceptance", () => {
     const cursor = useSessionStore
       .getState()
       .sessions[SERVER_ID]!.agentTimelineCursor.get(AGENT_ID)!;
-    owner.enqueueStreamEvent(AGENT_ID, {
+    owner.applyStreamEvent(AGENT_ID, {
       event: {
         type: "timeline",
         provider: "codex",
