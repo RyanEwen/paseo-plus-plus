@@ -1835,9 +1835,11 @@ export class AgentManager {
         ? { sessionId: input.sessionId, nativeHandle: input.nativeHandle }
         : undefined,
     );
-    // An old failed request has no creation provenance. Reserving it must not adopt the new default.
+    // An old failed request has no creation provenance, and a registered agent reopened by its
+    // own record already has a route. Neither may adopt a newly configured default.
+    const reopensExisting = !previous || previous.registration === "registered";
     const operation =
-      input.operation === "create" && record && !previous ? "resume" : input.operation;
+      input.operation === "create" && record && reopensExisting ? "resume" : input.operation;
     const storage = await input.client.resolveHistoryStorage?.({
       provider: input.config.provider,
       config: input.config,

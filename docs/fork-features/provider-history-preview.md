@@ -91,6 +91,7 @@ The destination is an unverified proposal. `--json` returns the text and its bou
 New creation and import requests record their intent in the agent record before the provider session opens, then bind the returned session ID and storage location.
 
 - A request interrupted before registration leaves an unresolved intent. It is hidden from agent and history lists and cannot be opened. Retry with a new request; reusing the reserved ID fails with `HISTORY_INTENT_CONFLICT`, except when the daemon retries the same creation and can prove it never reached the provider.
+- A registered chat on a shared profile whose provider never started a session (for example, one never prompted before a restart) opens its first session under the same ID. It keeps its recorded route and does not adopt a configured profile set up since.
 - `created` means Paseo initiated the session, not that Paseo owns it exclusively: a native client may adopt it later. Imported sessions keep their native IDs and history.
 - Treat `needs-classification` as a review requirement. Imported, native-only and conflicting sessions are marked for preservation; a shared working directory or a provider origin label does not prove a session can be removed.
 
