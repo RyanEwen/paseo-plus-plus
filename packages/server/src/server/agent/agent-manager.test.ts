@@ -3169,6 +3169,7 @@ test.each([
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
         lastStatus: "closed",
+        metadata: {},
         persistence: null,
         launchEnv: expectedEnv,
       });
@@ -13321,6 +13322,7 @@ test.each([
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-02T00:00:00Z",
       lastStatus: "closed",
+      metadata: {},
       persistence:
         phase === "known-handle" ? { provider: "codex", sessionId: "kept-native" } : undefined,
       providerHistory: {
@@ -13441,6 +13443,7 @@ test("legacy startup retry preserves unknown provenance and original workspace",
       workspaceId: "legacy-workspace",
       labels: {},
       lastStatus: "closed",
+      metadata: {},
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       config: { model: "gpt-5.4" },
@@ -13695,6 +13698,7 @@ test("configured native archive/restore checks binding before any native request
       cwd: directory,
       labels: {},
       lastStatus: "closed",
+      metadata: {},
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       persistence: { provider: "codex", sessionId: "native-bound" },

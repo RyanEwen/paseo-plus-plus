@@ -35,6 +35,7 @@ async function record(
     cwd: directory,
     labels: {},
     lastStatus: "closed",
+    metadata: {},
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     persistence: { provider, sessionId: id },
@@ -417,6 +418,7 @@ test.each(["codex-work", "codex-personal"])(
       workspaceId: "fixture-workspace",
       labels: {},
       lastStatus: "closed",
+      metadata: {},
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       providerHistory: {

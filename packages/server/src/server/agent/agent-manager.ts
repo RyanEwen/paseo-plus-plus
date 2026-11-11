@@ -519,6 +519,8 @@ interface HistoryIntentInput {
   workspaceId: string | undefined;
   launchEnv?: Record<string, string>;
   owner?: AgentOwner;
+  /** The creation's plugin metadata; the registered record keeps the same value. */
+  metadata?: AgentMetadata;
 }
 
 interface ManagedAgentBase {
@@ -1876,6 +1878,7 @@ export class AgentManager {
       launchEnv: options.env ? { ...options.env } : undefined,
       workspaceId: options.workspaceId,
       owner: options.owner,
+      metadata: options.metadata,
     };
   }
 
@@ -1958,6 +1961,7 @@ export class AgentManager {
         config: serializeAgentConfig(config),
         launchEnv: input.launchEnv,
         owner: input.owner,
+        metadata: input.metadata ?? {},
         createdAt: now,
         updatedAt: now,
         lastStatus: "closed",
