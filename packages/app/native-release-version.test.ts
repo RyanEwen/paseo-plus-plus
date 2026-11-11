@@ -5,6 +5,7 @@ const {
   FDROID_ABI_VERSION_CODE_SUFFIXES,
   getFdroidVersionCodes,
   getNativeReleaseVersion,
+  getPreviewReleaseVersion,
 } = require("./native-release-version");
 
 describe("native release version", () => {
@@ -60,6 +61,19 @@ describe("native release version", () => {
     },
   );
 
+  it("gives consecutive previews distinct Android codes while preserving upstream version math", () => {
+    expect(getPreviewReleaseVersion("0.11.0-beta.5", 12)).toEqual({
+      appVersion: "0.11.0",
+      version: "0.11.0-preview.12",
+      androidVersionCode: 1_000_000_012,
+      iosBuildNumber: "11000005",
+    });
+    expect(getPreviewReleaseVersion("0.12.0-preview.13", 13).androidVersionCode).toBe(
+      1_000_000_013,
+    );
+    expect(() => getPreviewReleaseVersion("0.11.0", 0)).toThrow("Preview build number");
+    expect(() => getPreviewReleaseVersion("0.11.0", 1.5)).toThrow("Preview build number");
+  });
   it("reserves the final iOS build slot for a stable release", () => {
     expect(getNativeReleaseVersion("0.2.6")).toEqual({
       appVersion: "0.2.6",

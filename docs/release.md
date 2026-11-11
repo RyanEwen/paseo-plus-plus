@@ -2,6 +2,19 @@
 
 All workspaces share one version and release together.
 
+## Repository and release lanes
+
+Select the repository and distribution lane before preparing a release:
+
+| Repository               | Release path                                                                              | Default source                   |
+| ------------------------ | ----------------------------------------------------------------------------------------- | -------------------------------- |
+| RyanEwen/paseo-plus-plus | [Fork distribution](#fork-preview-distribution), manually dispatched; no npm publication. | Exact validated `fork/main` SHA. |
+| getpaseo/paseo           | Upstream stable/beta npm, desktop, and store flows below.                                 | `origin/main` in this checkout.  |
+
+The beta/stable skills must apply this selection before following an upstream checklist. A request
+for a new fork distribution lane needs an explicit decision; it is not implied by invoking a skill.
+For branch ownership and integration, follow the [fork branch guide](fork-branches.md).
+
 ## Two steps
 
 A release has exactly two steps. The agent does the first, the user authorizes the second.
@@ -9,16 +22,16 @@ A release has exactly two steps. The agent does the first, the user authorizes t
 **Preparation** (reversible — agent does this):
 
 - format, lint, typecheck all green
-- resolve the [release base](#release-base-and-source), get the [release inventory](#release-inventory) approved when one applies, and confirm CI for the resulting release source is green
+- for upstream publication, resolve the [release base](#release-base-and-source), get the [release inventory](#release-inventory) approved when one applies, and confirm CI for the resulting release source is green
 - classify the diff from the previous stable to the release source as patch or minor, then show the
   target version and rationale to the user
-- draft the changelog, show it to the user, wait for review
+- draft user-facing notes for the selected lane and wait for review; fork releases use workflow notes, upstream releases use `CHANGELOG.md`
 - run the pre-release sanity check, surface findings to the user
 
 **Go-ahead** (user says "go ahead"):
 
 - commit the approved release inputs locally on the release branch
-- run the release, which publishes npm and pushes the release branch and tag
+- run the approved lane: the fork preview workflow, or the upstream release command that publishes npm and pushes the release branch and tag
 - create the release heartbeat immediately and babysit it to completion
 - [reconcile `main`](#reconcile-main) with what shipped
 
@@ -32,6 +45,11 @@ Rules that apply to both steps:
 - If the user asks for a release preview, show the prospective changelog/release contents and answer questions, but do not commit, tag, publish, or run release commands until they explicitly authorize the release.
 
 ## Main stays open
+
+For fork previews, resolve `fork/main` once, record the SHA, and confirm that exact commit's latest
+push CI is green before dispatch. Use a clean checkout of that source. Local `main` must track the fork
+and match the intended remote head; a review assembly is not a release source by default. See the
+[fork workflow](#prepare-and-publish) for its fixed-source and complete-asset gates.
 
 Merge normal PRs into `main` at any time, including while a beta soaks or a release is being
 finalized. Each release builds in a short-lived release workspace, and its published tag records
@@ -70,6 +88,10 @@ npm dist-tags are independent pointers:
   newer than the version `beta` points to, which covers promotions and direct stable releases, so
   `@getpaseo/cli@beta` users never sit behind stable. A stable hotfix on an older line leaves
   `beta` on the active newer beta.
+
+## Release branch discipline
+
+Use a temporary `next` branch only when the user explicitly selects it. Preserve that PR target through delivery, keep it current by merging the selected integration ref, and integrate it after the release. Fork feature work follows the [fork branch guide](fork-branches.md). Normal upstream releases use the release workspace flow below.
 
 ## Release base and source
 
@@ -168,9 +190,206 @@ Make `fork-overview` a required status check in the fork's branch protection to 
 PR merges. Direct local merges still require the review above. CI can require that review; it
 cannot determine whether a feature description is accurate.
 
+## Fork preview distribution
+
+The [fork branch guide](fork-branches.md) owns fork branch roles,
+feature ownership, upstream synchronization, and review integration. Use its canonical integration
+ref for release preparation. Existing workflow allowlists still recognize legacy repository and
+branch names; those entries do not define another active release or integration lane.
+
+The **Fork Preview Release** workflow is manually dispatched on fork `main`. It builds Windows
+and Linux for x64 and ARM64, plus standalone Linux daemon/CLI packages and an Android APK. macOS is
+deferred until Apple signing is available. iOS and hosted web are excluded. These builds display
+as Paseo++. The desktop identity is `sh.paseo.plusplus.desktop`, its profile folder is `Paseo++`,
+and its OS link scheme is `paseo-plus-plus`. Desktop downloads use `Paseo-Plus-Plus`; AppImage
+filenames stay stable across versions so subsequent updates replace the installed file in place.
+The desktop uses a fresh installation and profile, without importing legacy preview settings or
+connections. The renderer storage origin stays `paseo://app`. Android uses `sh.paseo.plusplus` and the same OS link scheme. See
+[Android app variants](android.md#app-variants).
+
+The workflow resolves one commit and requires that commit's latest push CI to have passed. All jobs use
+that SHA, even if the branch moves during the build. Its run number identifies each preview; reruns
+reuse that number. Android gets a separate increasing version code so upstream beta numbering
+cannot leave later previews with the same native version. Never recreate the workflow under another
+name and reset its sequence after publishing previews.
+
+Android preview builds isolate optimized Hermes compilation from Gradle's heap and use serial native
+tasks on the hosted runner. See the
+[Android build resource constraints](android.md#f-droid--source-only-android-builds) before increasing
+parallelism or moving native compilation and Hermes onto a smaller runner.
+
+Windows installers and Linux AppImages update exclusively from this fork's `preview` channel.
+The Stable/Beta selector is omitted in preview builds. The optional desktop CLI installs as `paseo-plus-plus-desktop`
+so it can coexist with the official `paseo` command. Android builds also update from published
+fork releases; see [Android update controls](android.md#app-variants). Other Linux packages can
+be downloaded from the release. Official tag-triggered release, deployment, and changelog workflows
+exclude preview tags. The preview workflow does not publish npm packages to a registry.
+
+### Final prerelease bridge and normal Latest releases
+
+Publish previews with `release_kind=preview`. They publish as normal GitHub releases marked
+**Latest**, starting with `v0.15.3-preview.45`. Keep
+`v<upstream-version>-preview.<workflow-run-number>`, the `preview` desktop channel and its three
+manifest filenames, package identities, profiles, signing keys, and workflow sequence unchanged.
+Do not assume the next run number: draft, failed and verification runs also consume the sequence.
+
+Standalone hosts from `v0.11.1-preview.22` through `v0.11.2-preview.30`, and Android apps from
+`v0.11.1-preview.25` through `v0.11.2-preview.30`, only discover prereleases. Earlier Android builds
+and hosts have no in-app updater. The bridge `v0.11.2-preview.32` and its successors through
+`v0.12.0-preview.36` stay published as prereleases, so those clients update to the newest of them
+and then discover normal releases: from `.32` on, the selectors accept either classification within
+the exact fork tag namespace. Keep the bridge published as a prerelease with all its original
+assets. Drafts, unrelated tags, incomplete newest builds and noncanonical asset URLs remain
+ineligible. Checksums, Android package/signing-key checks, installer approval and version checks
+still apply.
+
+The shipped Android and host selectors page through the whole release history (see
+`packages/server/src/server/session/daemon/fork-preview.ts`), so normal releases do not push the
+retained bridge out of their search; growing history only adds latency and rate-limit exposure.
+Retain the bridge and legacy repository redirect without a calendar or release-count expiry.
+Removing them needs a separate compatibility decision after reviewing installed-client support.
+
+New desktop builds query `RyanEwen/paseo-plus-plus` directly. Android and standalone hosts use its API directly. Builds through preview32 query `RyanEwen/paseo` and depend on its retained redirect. Verify the legacy Atom feed, release API, channel manifests and installer URLs live before claiming those installs can update automatically. Never create a separate repository at the old name; that overrides the redirect.
+
+Desktop's installed electron-updater reads the Atom feed and selects the `preview` channel from
+the tag; it does not use GitHub's prerelease flag on this path. Keep `allowPrerelease=true` and
+set `allowDowngrade=false` after assigning the channel. Changing the tag to an unsuffixed version,
+switching to `latest.yml`, or clearing that flag would change this update contract. The packager's
+`releaseType: prerelease` is retained for compatibility; packaging runs with `--publish never`,
+and the publisher controls GitHub classification.
+
+The publisher rechecks the bridge before builds, before draft changes and immediately before
+publication, against the source-controlled API inventory and provenance under
+`docs/qa-evidence/updater-bridge/`, including the complete original asset fingerprint. It requires
+the pinned prerelease and assets to remain public and unchanged, and a higher workflow counter
+without a lower desktop core version than any published fork build. It does not require Git
+ancestry from the bridge, because rebuilding `main` onto an upstream release replaces those
+commits while keeping their code. It refuses another `bridge` release after one is published.
+Never delete or replace the bridge's assets or change its classification. Restore an accidentally
+changed classification only with explicit authorization and before/after verification of the
+unchanged release identity, source, notes and complete asset inventory. Previews cannot put the
+bridge's reserved marker in their notes.
+
+`release_kind=latest` is an older path to the same classification that also requires a reviewed
+receipt in `scripts/preview-release/qualified-bridge.json`. It stays closed while that file is
+`null`; use `preview` instead.
+
+### Standalone fork daemon
+
+The preview release includes `paseo-daemon-<version>-linux-<arch>.tgz` for Linux x64 and ARM64.
+Windows uses the daemon bundled with the desktop app. See the
+[installation commands](fork-installation.md#standalone-daemon-linux-and-wsl) for setup.
+
+These packages include the daemon, CLI, web UI, and native runtime dependencies. Linux packages
+require glibc; Alpine/musl hosts are excluded. The `paseo-plus-plus` command uses its own settings
+and host identity in `~/.paseo-plus-plus`, with the default listen address `127.0.0.1:6791`.
+The desktop app keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790. Resolve these
+defaults from the enclosing packaged manifest after managed environment scrubbing. Saved listen
+addresses remain authoritative, including profiles initialized at 6767 by older previews. Upstream Paseo,
+the desktop daemon, and the standalone daemon can run side by side with their defaults.
+
+The app's host update action installs the newest published fork build for the host's platform
+and architecture, after checking its SHA256SUMS entry. It keeps the original npm prefix and
+refuses linked or mismatched installs. Draft releases remain invisible. Desktop-owned daemons
+update with Desktop; source checkouts and Nix installations need their existing deployment flow.
+Daemon packages are part of the complete release gate, so missing daemon builds keep the release
+in draft. The existing supervisor restarts its worker after a successful update; the supervisor itself
+keeps running until the service is restarted. Systemd service replacement is an operator action.
+
+After publishing two daemon previews, dispatch the same preview workflow with
+`verify_daemon_updates_only=true` and `publish=false`. It reuses the two native Linux daemon jobs to
+install the older published package, start it in a temporary home on an ephemeral loopback port,
+run a terminal command, update through the real host RPC, and reconnect at the newer version.
+It checks retained workspace state and another terminal command before stopping its own daemon.
+This mode builds no app installers and publishes no release. Its log artifacts are the update
+acceptance evidence for both Linux architectures.
+
+`windows_powershell_probe=true` runs only the diagnostic `windows-powershell-probe` job; its scope and recorded fields are in `scripts/preview-release/windows-powershell-probe/`. It is not release qualification: it runs standalone Node without the release job's build load, so a clean result does not clear the packaged app. It cannot be combined with `publish`, `bridge`, `latest` or daemon verification. Each run consumes a `run_number`, which leaves a gap in preview numbers.
+
+### Signing configuration
+
+Windows uses electron-builder's Azure Trusted Signing integration, with PrintStream's existing
+account, certificate profile, and publisher. Paseo has a dedicated service principal with only
+the Artifact Signing Certificate Profile Signer role on that certificate profile. Keep the
+account name and PrintStream's credentials unchanged so its releases continue using the same resource.
+Azure configuration is held in GitHub variables; Paseo's credential is a GitHub secret.
+The workflow fails when signing is missing,
+then verifies both the executable architecture and signatures before accepting a Windows build.
+See [electron-builder's Azure setup](https://www.electron.build/v26/docs/features/code-signing/code-signing-win/).
+
+Configure these in the fork's Actions settings:
+
+| Kind      | Names                                                                                                                                  | Purpose                                            |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Variables | `PREVIEW_AZURE_TENANT_ID`, `PREVIEW_AZURE_CLIENT_ID`                                                                                   | Dedicated Paseo signing service principal          |
+| Variables | `PREVIEW_AZURE_SIGNING_ENDPOINT`, `PREVIEW_AZURE_SIGNING_ACCOUNT`, `PREVIEW_AZURE_CERTIFICATE_PROFILE`, `PREVIEW_AZURE_PUBLISHER_NAME` | Signing account and exact certificate common name  |
+| Secret    | `PREVIEW_AZURE_CLIENT_SECRET`                                                                                                          | Signing service principal credential               |
+| Variable  | `PREVIEW_AZURE_CLIENT_SECRET_EXPIRY`                                                                                                   | Credential rotation date (ISO date, informational) |
+| Variables | `PREVIEW_EXPO_PROJECT_ID`, `PREVIEW_EXPO_OWNER`, `PREVIEW_EXPO_SLUG`                                                                   | Fork's Expo notification project                   |
+| Secrets   | `PREVIEW_ANDROID_KEYSTORE_BASE64`, `PREVIEW_ANDROID_KEYSTORE_PASSWORD`, `PREVIEW_ANDROID_KEY_ALIAS`, `PREVIEW_ANDROID_KEY_PASSWORD`    | Dedicated Android preview signing key              |
+| Secret    | `PREVIEW_GOOGLE_SERVICES_PLUS_PLUS_JSON`                                                                                               | Firebase configuration for `sh.paseo.plusplus`     |
+
+Rotate Paseo's client secret before the recorded expiry, then update the Actions secret and expiry
+variable together. The initial dedicated credential expires on April 4, 2027. Rotating it does not
+require changing PrintStream's application or credential.
+
+The Firebase Android app and Expo Android application identifier must both use `sh.paseo.plusplus`.
+Associate the fork's FCM v1 service-account credential with that identifier in Expo; registering
+only the Firebase app does not configure Expo's notification delivery.
+
+Keep the Android key and its passwords backed up outside the checkout before removing a worktree
+or development environment. Replacing the key prevents future APKs from updating installed previews.
+Paseo++ installs separately from the former Debug app because its package identity changed. Set up
+connections and preferences in the new app. Subsequent signed Paseo++ previews update in place.
+The workflow does not uninstall existing apps or import their settings.
+
+### Prepare and publish
+
+Ensure the workflow file is available on the fork's default branch so GitHub exposes manual dispatch.
+Select fork `main` when running it. Wait for push CI on the exact source commit to pass first.
+
+```bash
+gh workflow run preview-release.yml --repo RyanEwen/paseo-plus-plus --ref main \
+  -f release_kind=preview -f notes="Describe what users can do in this release." -F publish=false
+```
+
+The default creates a draft only after every build passes. It validates the complete platform set,
+checks updater hashes against the binaries, merges Windows architecture manifests, and generates
+`SHA256SUMS` plus source provenance. Review the draft's notes and downloads before publishing it.
+Use `release_kind=preview`; the once-only `release_kind=bridge` is already published. Drafts are
+created as prereleases, and the final publish call sets `prerelease=false, make_latest=true`. See
+[the final prerelease bridge](#final-prerelease-bridge-and-normal-latest-releases).
+Use `publish=true` only with authorization to publish that release; publication remains gated on
+every build and asset check. A failed build or upload never makes an update discoverable.
+
+A published fork release is immutable. Rerunning its upload is refused rather than replacing files
+that clients may already have downloaded. Start a new workflow run for a corrected release.
+
+### Completed repository migration and updater compatibility
+
+The repository and integration branch migration completed on October 14, 2026. The current
+repository is RyanEwen/paseo-plus-plus. Historical redirect assumptions do not establish current
+availability; verify the exact legacy URLs before using them for installed-client acceptance. Current branch roles are in the
+[fork branch guide](fork-branches.md). The old cutover sequence is
+complete; do not repeat its rename or local-ref operations when continuing feature work.
+
+A branch-rename push can retain the removed default branch in its event payload. Fresh manual CI
+on `main` checks the current ref context; it does not replace the preview publisher's latest-push-CI
+requirement. Keep that event-routing failure separate from actual test failures when judging source
+qualification.
+
+Which repository each installed build queries, and the rule for the legacy redirect, are in
+[the final prerelease bridge](#final-prerelease-bridge-and-normal-latest-releases). User-facing
+repository and release-note links use the new name.
+
+Keep published assets immutable and retain the existing preview workflow path, ID, and increasing
+run sequence. Do not change app IDs, profiles, package names, link schemes, signing keys, checksum
+rules, or updater channels as part of repository housekeeping. The inherited website deployment
+and automatic Nix bot writes remain restricted to upstream; fork preview publishing is separate.
+
 ## ACP catalog updates
 
-ACP catalog work enters a release through an explicit user request:
+In the upstream flow, ACP catalog work enters a release through an explicit user request:
 
 - **Check ACP drift** — run `npm run acp:version-drift:check`. When drift exists,
   run `npm run acp:version-drift:update`, verify the catalog, and include the
@@ -183,7 +402,7 @@ release push as the changelog and version commit.
 
 ## Release version decision
 
-Every fresh release starts by classifying the full diff from the previous
+Every fresh upstream release starts by classifying the full diff from the previous
 stable to the resolved release source. The highest-impact change determines the
 version:
 
@@ -482,7 +701,7 @@ before checks. Do not assume restoration runs dependency setup or recovers unsav
 
 ## Release completion and heartbeat
 
-A release is **in progress** after npm publication and tag push. Report it as
+An upstream release is **in progress** after npm publication and tag push. Report it as
 **shipped** only after every applicable build, publication, asset, manifest, and
 store submission passes the completion checklist.
 
@@ -525,9 +744,11 @@ later transitions and stops itself when the release is complete.
 
 ## Release notes on GitHub
 
-The GitHub Release body is populated automatically by the `Release Notes Sync` workflow (`.github/workflows/release-notes-sync.yml`). It triggers on every `v*` tag push and on any push to `main` that touches `CHANGELOG.md`, then runs `scripts/sync-release-notes-from-changelog.mjs` to mirror the matching changelog entry into the release body. You don't need to write release notes on GitHub manually — keep `CHANGELOG.md` correct and the workflow will sync it. To force a re-sync, dispatch the workflow with the tag input.
+For upstream releases, the GitHub Release body is populated automatically by the `Release Notes Sync` workflow (`.github/workflows/release-notes-sync.yml`). It triggers on every `v*` tag push and on any push to `main` that touches `CHANGELOG.md`, then runs `scripts/sync-release-notes-from-changelog.mjs` to mirror the matching changelog entry into the release body. You don't need to write release notes on GitHub manually; keep `CHANGELOG.md` correct and the workflow will sync it. To force a re-sync, dispatch the workflow with the tag input.
 
 ## Website behavior
+
+This section describes the upstream website and its stable/beta distribution. Fork preview downloads and notes follow the [fork workflow](#fork-preview-distribution).
 
 - The website download page defaults to GitHub's latest published **stable** release.
 - A published beta prerelease is offered behind the Stable/Beta switch on `/download` (`?channel=beta`), never as the default. The switch only appears while the newest prerelease leads stable on its core version, so promoting `X.Y.Z-beta.N` to `X.Y.Z` retires the beta channel from the page until the next beta line opens.
@@ -637,9 +858,13 @@ Release notes depend on the changelog heading format. The heading **must** be st
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
 
-`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Content between the release heading and the first `###` is the release's [highlights](#changelog-highlights). The What's new sheet, the website changelog and the GitHub release body show the highlights and keep the sections collapsed behind one control: Show all changes in the app and on the website, and an All changes `<details>` block that `Release Notes Sync` writes into the release body, so the file itself never needs HTML. A release with nothing before its first `###` shows its sections. Older entries that open with summary paragraphs are treated as highlights. The app, the website and the release scripts each parse the file with their own code, and installed apps keep the parser they shipped with, so those two heading rules are fixed: new kinds of content go inside the highlights or a section as Markdown, never behind a new heading level or marker. `scripts/test-support/changelog-structure.json` holds the cases all three parsers are tested against; change a structure rule there first. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
+For the upstream Paseo app, `CHANGELOG.md` on upstream `main` is what the **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Content between the release heading and the first `###` is the release's [highlights](#changelog-highlights). The What's new sheet, the website changelog and the GitHub release body show the highlights and keep the sections collapsed behind one control: Show all changes in the app and on the website, and an All changes `<details>` block that `Release Notes Sync` writes into the release body, so the file itself never needs HTML. A release with nothing before its first `###` shows its sections. Older entries that open with summary paragraphs are treated as highlights. The app, the website and the release scripts each parse the file with their own code, and installed apps keep the parser they shipped with, so those two heading rules are fixed: new kinds of content go inside the highlights or a section as Markdown, never behind a new heading level or marker. `scripts/test-support/changelog-structure.json` holds the cases all three parsers are tested against; change a structure rule there first. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render: the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update; write it for them.
+
+Paseo++ uses [published fork release notes](#prepare-and-publish) for **What's new**.
 
 ## Changelog policy
+
+This policy governs the upstream `CHANGELOG.md` and stable/beta entries. Fork previews use the reviewed notes in the [fork workflow](#prepare-and-publish).
 
 - `CHANGELOG.md` holds stable releases and at most one entry for the current beta series.
 - The first beta of a version inserts a top entry like `## 0.1.60-beta.1 - YYYY-MM-DD`.
@@ -816,6 +1041,8 @@ Changelog scope follows the release being described:
 Every entry covers `previous stable release → release source`: first beta, later beta, direct stable release, and promotion alike. The beta entry always reads as the stable entry would if the beta were promoted today.
 
 ## Completion checklist
+
+These beta/stable checklists apply to upstream publication. Fork previews use the complete build and asset gate in [Prepare and publish](#prepare-and-publish).
 
 ### Beta release
 

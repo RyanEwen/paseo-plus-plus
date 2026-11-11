@@ -2,6 +2,8 @@
 
 Download desktop and Android builds from [Paseo++ releases](https://github.com/RyanEwen/paseo-plus-plus/releases). New builds discover updates from this repository directly. Builds are available for Windows and Linux (x64 and ARM64), plus Android. Windows and Linux AppImage builds receive updates from Paseo++ releases. The desktop app includes its own daemon. macOS is deferred until Apple signing is available; iOS and hosted web are excluded.
 
+Releases are normal GitHub releases marked Latest. Older Android apps and standalone hosts update through the retained prerelease bridge; see [the release transition](release.md#final-prerelease-bridge-and-normal-latest-releases).
+
 Paseo++ desktop and Android apps keep their own settings and identities, separate from upstream Paseo. Set up your hosts and preferences independently in each app. The desktop app also keeps its bundled daemon in `~/.paseo-plus-plus-desktop` on port 6790, separate from the standalone daemon. Existing desktop profiles that saved port 6767 retain that setting; changing the packaged default does not rewrite saved addresses.
 
 ## Standalone daemon (Linux and WSL)

@@ -4,10 +4,11 @@ const pkg = require("./package.json");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidOptionalCamera = require("./plugins/with-android-optional-camera");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
+const withAndroidReleaseSigning = require("./plugins/with-android-release-signing");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
 const withAndroidScroll = require("./modules/paseo-scroll/app.plugin");
-const { getNativeReleaseVersion } = require("./native-release-version");
+const { getNativeReleaseVersion, getPreviewReleaseVersion } = require("./native-release-version");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
@@ -116,13 +117,15 @@ const variants = {
 };
 
 const variant = isPreviewBuild ? variants.preview : (variants[appVariant] ?? variants.production);
-const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
+const nativeReleaseVersion = isPreviewBuild
+  ? getPreviewReleaseVersion(pkg.version, Number(process.env.PASEO_PREVIEW_BUILD_NUMBER))
+  : getNativeReleaseVersion(pkg.version);
 
 export default {
   expo: {
     name: variant.name,
     slug: isPreviewBuild ? previewExpoProject.slug : "voice-mobile",
-    version: nativeReleaseVersion.appVersion,
+    version: isPreviewBuild ? nativeReleaseVersion.version : nativeReleaseVersion.appVersion,
     orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: isPreviewBuild ? "paseo-plus-plus" : "paseo",
@@ -214,6 +217,7 @@ export default {
       ],
       ...buildProfile.fdroidPlugins,
       ...(isProfileBuild || isWatchdogBuild ? [withAndroidProfileable] : []),
+      ...(isPreviewBuild ? [withAndroidReleaseSigning] : []),
     ],
     experiments: {
       typedRoutes: true,

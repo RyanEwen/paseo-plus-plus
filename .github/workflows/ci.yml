@@ -1,9 +1,10 @@
 name: CI
 
 on:
+  # COMPAT(forkIntegrationRename): added in v0.11.2, remove ryan/dev and ryan/preview after 2027-04-14 once cutover is complete.
   push:
-    branches: [main]
-  # Every base branch, so stacked PRs and PRs into any base get the same checks.
+    branches: [main, ryan/dev, ryan/preview]
+  # Every base branch receives PR checks, including integration branches.
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -56,7 +57,7 @@ jobs:
           filters: .github/ci-paths.yml
 
       - name: Validate CI contracts
-        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/changelog-utils.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/sync-release-notes-from-changelog.test.mjs scripts/upload-release-assets.test.mjs
+        run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/changelog-utils.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/sync-release-notes-from-changelog.test.mjs scripts/upload-release-assets.test.mjs scripts/release-version-utils.test.mjs scripts/preview-release/github.test.mjs scripts/preview-release/daemon.test.mjs scripts/preview-release/npm.test.mjs scripts/preview-release/metadata.test.mjs scripts/preview-release/credentials.test.mjs scripts/preview-release/android-signing-files.test.mjs scripts/preview-release/source.test.mjs scripts/preview-release/publication-policy.test.mjs scripts/preview-release/windows-powershell-probe/index.test.mjs scripts/preview-release/workflow.test.mjs scripts/trace-paths.test.mjs
 
   quality:
     name: quality
@@ -156,8 +157,8 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
-      - name: Verify built-in plugins from built output
-        run: node --test scripts/builtin-plugins-dist.test.mjs
+      - name: Verify built-in plugins and traced daemon from built output
+        run: node --test scripts/builtin-plugins-dist.test.mjs scripts/trace-daemon-dist.test.mjs
 
       - name: Typecheck all packages
         run: npm run typecheck
@@ -329,8 +330,14 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
+      - name: Build desktop packaging hook dependencies
+        run: npm run build:main --workspace=@getpaseo/desktop
+
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
+
+      - name: Validate desktop release manifests
+        run: npx vitest run scripts/validate-desktop-manifests.test.mjs scripts/native-pty.test.mjs scripts/preview-release/android-bundle.test.mjs scripts/preview-release/android-compiler-budget.test.mjs scripts/preview-release/android-hermes.test.mjs scripts/preview-release/android-signer.test.mjs scripts/preview-release/assets.test.mjs scripts/preview-release/prepare.test.mjs scripts/preview-release/runtime.test.mjs --bail=1
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}

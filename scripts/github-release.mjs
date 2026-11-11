@@ -28,7 +28,7 @@ export function getGitHubRelease(repo, tag, execFileSync = nodeExecFileSync) {
         "api",
         `repos/${repo}/releases?per_page=100`,
         "--jq",
-        `[.[] | select(.draft == true and .name == ${JSON.stringify(expectedName)})] | sort_by(.id)`,
+        `[.[] | select(.draft == true and (.tag_name == ${JSON.stringify(tag)} or .name == ${JSON.stringify(expectedName)}))] | sort_by(.id)`,
       ],
       {
         encoding: "utf8",
