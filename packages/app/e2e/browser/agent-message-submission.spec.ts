@@ -26,6 +26,8 @@ import {
   submitMessage,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedAppSettings } from "../support/helpers/app-settings";
+import { expectToolCallRowAfter } from "../support/helpers/tool-call-row";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   createAgentTabFromMenu,
@@ -365,11 +367,17 @@ async function selectSendBehaviorInSettings(
     .toBe(stored);
 }
 
+/** These streaming races exercise individual tool cards, whatever chat display is stored. */
+async function seedDetailedToolCalls(page: Page): Promise<void> {
+  await seedAppSettings(page, { chatDisplay: "full" });
+}
+
 async function replaySteeredSleepTurnInBrowser(
   page: Page,
   testInfo: { workerIndex: number },
   shape: "claude" | "codex",
 ): Promise<void> {
+  await seedDetailedToolCalls(page);
   const gate = await installDaemonWebSocketGate(page);
   gate.holdNextShellToolCall("completed");
   await gotoAppShell(page);
@@ -676,6 +684,7 @@ async function expectStaleCanonicalPagePreservesNewerLiveOutput(
   page: Page,
   testInfo: { workerIndex: number },
 ): Promise<void> {
+  await seedDetailedToolCalls(page);
   const gate = await installDaemonWebSocketGate(page);
   const agent = await seedMockAgentWorkspace({
     repoPrefix: `submission-stale-canonical-${testInfo.workerIndex}-`,
@@ -1186,7 +1195,17 @@ test.describe("Agent message submission", () => {
         hasText: "I'll take a look at the scroll anchor behavior you described.",
       }),
     ).toBeVisible();
-    await awaitToolCall(page, "Read");
+    const reply = page
+      .getByTestId("assistant-message")
+      .filter({ hasText: "I'll take a look at the scroll anchor behavior you described." })
+      .last();
+    // Full chat shows each operation; the submitted turn's own read and search follow its reply,
+    // so the earlier turn's identical rows cannot satisfy these.
+    await expectToolCallRowAfter(reply, {
+      label: "Read",
+      summary: "packages/app/src/components/conversation-list.tsx",
+    });
+    await expectToolCallRowAfter(reply, { label: "Searched", summary: "scrollToEnd" });
     await finishTimelineRowStabilityCheck();
   });
 

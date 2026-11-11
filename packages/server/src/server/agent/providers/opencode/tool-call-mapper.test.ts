@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
+import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 import { mapOpencodeToolCall } from "./tool-call-mapper.js";
 
 function expectMapped<T>(item: T | null): T {
@@ -12,6 +13,18 @@ function expectMapped<T>(item: T | null): T {
 }
 
 describe("opencode tool-call mapper", () => {
+  it.each([
+    ["read_file", { file_path: "a.ts" }, "read"],
+    ["apply_patch", { file_path: "a.ts" }, "edit"],
+    ["write_file", { file_path: "a.ts", content: "x" }, "write"],
+    ["grep", { pattern: "needle" }, "search"],
+  ] as const)("exposes %s activity through canonical details", (toolName, input, kind) => {
+    const call = expectMapped(
+      mapOpencodeToolCall({ toolName, callId: "activity", input, output: null, status: "running" }),
+    );
+    expect(describeToolActivity(call)[0]?.kind).toBe(kind);
+  });
+
   // OpenCode reports a tool part as `pending` with `input: {}` before the running part carries input.
   it.each([
     { toolName: "bash", input: { command: "echo hi" }, title: "Shell" },

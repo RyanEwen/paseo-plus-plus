@@ -221,7 +221,7 @@ export default function contribute(client) {
       await expandAndCollapseLongPrompt(page);
 
       const summary = page.getByTestId("turn-summary").last().getByRole("button");
-      await expect(summary).toHaveText(/^Edited 1 file/);
+      await expect(summary).toHaveText(/^1 file operation/);
       // Text chunks that stream back to back merge into one message, so the reply holds
       // at least the stream's last chunk.
       await expect(page.getByTestId("assistant-message").last()).toHaveText(
@@ -555,12 +555,10 @@ test("loads complete long turns and preserves expansion while revealing older hi
     await expectComposerVisible(page);
     const latest = page
       .getByTestId("turn-summary")
-      .getByRole("button", { name: "Ran 120 commands", exact: true });
+      .getByRole("button", { name: "120 commands", exact: true });
     await expect(latest).toBeVisible();
     await expect(
-      page
-        .getByTestId("turn-summary")
-        .getByRole("button", { name: "Ran 60 commands", exact: true }),
+      page.getByTestId("turn-summary").getByRole("button", { name: "60 commands", exact: true }),
     ).toBeVisible();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
     await latest.click();
@@ -590,6 +588,8 @@ async function useThinkingDisplay(
         "@paseo:app-settings",
         JSON.stringify({
           ...settings,
+          // The group assertions read the classic "Read 1 file" wording in both variants.
+          paseoPlusPlus: { descriptiveToolCalls: false },
           chatDisplay: sessionStorage.getItem("e2e-chat-display") ?? settings.chatDisplay,
         }),
       );

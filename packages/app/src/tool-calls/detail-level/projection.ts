@@ -5,7 +5,11 @@ import {
   type GroupedHistory,
   type GroupedToolCalls,
 } from "./grouping";
-import { buildOverviewGroup, type OverviewToolCallGroup } from "./overview/model";
+import {
+  buildOverviewGroup,
+  type OverviewSummaryOptions,
+  type OverviewToolCallGroup,
+} from "./overview/model";
 
 /** Whether consecutive tool calls show one by one or as one summary row. */
 export type ToolCallDetailLevel = "overview" | "detailed";
@@ -14,6 +18,8 @@ export type ToolCallDetailGroup = OverviewToolCallGroup;
 export interface PreparedToolCallHistory {
   mode: "overview";
   autoExpandReasoning: boolean;
+  /** How groups count their calls; live groups reuse it so history and live rows agree. */
+  summaryOptions: OverviewSummaryOptions;
   grouped: GroupedHistory<ToolCallDetailGroup>;
 }
 
@@ -43,6 +49,7 @@ export function prepareToolCallHistory(
   level: ToolCallDetailLevel,
   tail: StreamItem[],
   autoExpandReasoning = false,
+  summaryOptions: OverviewSummaryOptions = {},
 ): PreparedToolCallHistory | null {
   if (level === "detailed") {
     return null;
@@ -50,9 +57,10 @@ export function prepareToolCallHistory(
   return {
     mode: "overview",
     autoExpandReasoning,
+    summaryOptions,
     grouped: prepareGroupedHistory({
       tail: visibleToolCallItems(tail),
-      buildGroup: buildOverviewGroup,
+      buildGroup: (run) => buildOverviewGroup(run, summaryOptions),
       autoExpandReasoning,
     }),
   };
@@ -76,11 +84,12 @@ export function projectToolCallDetailLevel(input: {
   if (!input.preparedHistory || input.preparedHistory.mode !== input.level) {
     throw new Error(`Missing prepared ${input.level} tool call history`);
   }
+  const { summaryOptions } = input.preparedHistory;
   return groupLiveToolCalls({
     history: input.preparedHistory.grouped,
     autoExpandReasoning: input.preparedHistory.autoExpandReasoning,
     head: visibleToolCallItems(input.head),
     isTurnActive: input.isTurnActive,
-    buildGroup: buildOverviewGroup,
+    buildGroup: (run) => buildOverviewGroup(run, summaryOptions),
   });
 }

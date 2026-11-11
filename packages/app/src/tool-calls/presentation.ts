@@ -2,6 +2,7 @@ import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import type { PlanOutcome } from "@/components/plan-card";
 import type { ComponentType } from "react";
+import type { TFunction } from "i18next";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { ToolCallDisplayInput } from "@/utils/tool-call-display";
 import { buildToolCallDisplayModel } from "@/utils/tool-call-display";
@@ -10,6 +11,7 @@ import {
   hasMeaningfulToolCallDetail,
   isPendingToolCallDetail,
 } from "@/utils/tool-call-detail-state";
+import { activityIconDetail, buildActivityDisplay } from "./activity";
 
 type ToolCallStatus = "executing" | "running" | "completed" | "failed" | "canceled";
 export type ToolCallPresentationIcon = ComponentType<{ size?: number; color?: string }>;
@@ -24,6 +26,8 @@ interface BuildToolCallPresentationInput {
   metadata?: Record<string, unknown>;
   targetAgentTitle?: string;
   resolveIcon: ToolCallIconResolver;
+  /** Translator for readable activity labels; absent keeps the classic labels. */
+  activityTranslation?: TFunction;
 }
 
 export interface ToolCallPresentation {
@@ -54,6 +58,7 @@ function displayDetail(detail: ToolCallDetail | undefined): ToolCallDetail {
   return detail ?? { type: "unknown", input: null, output: null };
 }
 
+/** Build one row/detail policy; an absent translator retains classic tool labels. */
 export function buildToolCallPresentation(
   input: BuildToolCallPresentationInput,
 ): ToolCallPresentation {
@@ -71,6 +76,20 @@ export function buildToolCallPresentation(
     cwd: input.cwd,
     targetAgentTitle: input.targetAgentTitle,
   });
+  const activity = input.activityTranslation
+    ? buildActivityDisplay(
+        {
+          agentMessage: input.agentMessage,
+          status: displayStatus(input.status),
+          detail: detailForDisplay,
+          metadata: input.metadata,
+          cwd: input.cwd,
+        },
+        input.activityTranslation,
+      )
+    : undefined;
+  const labels = activity ?? displayModel;
+  const iconDetail = activityIconDetail(detail, activity?.kind);
   const isLoadingDetails = isPendingToolCallDetail({
     detail,
     status: input.status,
@@ -80,10 +99,10 @@ export function buildToolCallPresentation(
 
   return {
     detail,
-    displayName: displayModel.displayName,
-    summary: displayModel.summary,
+    displayName: labels.displayName,
+    summary: labels.summary,
     errorText: displayModel.errorText,
-    icon: input.resolveIcon(input.toolName, detail, input.agentMessage),
+    icon: input.resolveIcon(input.toolName, iconDetail, input.agentMessage),
     isLoadingDetails,
     hasDetails,
     canOpenDetails: hasDetails || isLoadingDetails,

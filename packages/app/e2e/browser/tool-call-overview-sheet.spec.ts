@@ -5,6 +5,17 @@ import { gateSecondToolCall } from "../support/helpers/tool-call-gate";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedAppSettings } from "../support/helpers/app-settings";
+import {
+  ACTIVITY_OPAQUE_COMMAND,
+  ACTIVITY_PATCH_DIFFS,
+  ACTIVITY_READ_COMMAND,
+  ACTIVITY_READ_OUTPUT,
+  ACTIVITY_SCENE_LABELS,
+  openActivityDetails,
+  TOOL_ACTIVITY_SCENE_PROMPT,
+  TOOL_ACTIVITY_SCENE_SIZE,
+} from "../support/helpers/tool-activity";
 import {
   readReactRenders,
   recordReactRenders,
@@ -401,3 +412,80 @@ test("forms a closed group when the lone tool call was left closed", async ({ pa
     await agent.cleanup();
   }
 });
+
+for (const compact of [false, true]) {
+  test.describe(`readable activity ${compact ? "compact" : "desktop"}`, () => {
+    test.use({
+      viewport: compact ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+      hasTouch: compact,
+    });
+    for (const mode of ["readable", "classic"] as const) {
+      test(`labels daemon-delivered provider activity in ${mode} mode and keeps its details`, async ({
+        page,
+      }, testInfo) => {
+        test.setTimeout(120_000);
+        const labels = ACTIVITY_SCENE_LABELS[mode];
+        await seedAppSettings(page, {
+          chatDisplay: "collapseToolCalls",
+          autoExpandReasoning: true,
+          paseoPlusPlus: { descriptiveToolCalls: mode === "readable" },
+        });
+        const agent = await seedMockAgentWorkspace({
+          repoPrefix: "readable-tool-activity-",
+          title: "Readable tool activity",
+          model: "ten-second-stream",
+        });
+        try {
+          await openOverviewAgent(page, agent);
+          await agent.client.sendAgentMessage(agent.agentId, TOOL_ACTIVITY_SCENE_PROMPT);
+
+          // The group summary counts the scene's operations in the selected wording.
+          const group = page.getByTestId("tool-call-group").first();
+          for (const part of labels.groupParts) {
+            await expect(group).toContainText(part);
+          }
+
+          // Opening the group with the keyboard lists every call with its label.
+          const groupButton = group.getByRole("button").first();
+          await groupButton.focus();
+          await expect(groupButton).toBeFocused();
+          await groupButton.press("Enter");
+          const root = compact ? page.getByTestId("tool-call-group-sheet") : group;
+          await expect(root).toBeVisible();
+          const badges = root.getByTestId("tool-call-badge");
+          await expect(badges).toHaveCount(TOOL_ACTIVITY_SCENE_SIZE);
+          for (const [index, label] of labels.rows.entries()) {
+            await expect(badges.nth(index)).toContainText(label);
+          }
+          await expect(badges.nth(0)).toContainText(labels.readSummary);
+          await testInfo.attach("readable-activity-labels", {
+            body: await page.screenshot(),
+            contentType: "image/png",
+          });
+
+          // Details keep the exact command and output, and every file of the patch, in both modes.
+          const read = await openActivityDetails(page, badges.nth(0), compact);
+          await expect(read.surface).toContainText(ACTIVITY_READ_COMMAND);
+          await expect(read.surface).toContainText(ACTIVITY_READ_OUTPUT);
+          await read.close();
+
+          const patch = await openActivityDetails(page, badges.nth(4), compact);
+          for (const diff of ACTIVITY_PATCH_DIFFS) {
+            await expect(patch.surface).toContainText(diff);
+          }
+          await testInfo.attach("readable-activity-multi-file-details", {
+            body: await page.screenshot(),
+            contentType: "image/png",
+          });
+          await patch.close();
+
+          const opaque = await openActivityDetails(page, badges.nth(6), compact);
+          await expect(opaque.surface).toContainText(ACTIVITY_OPAQUE_COMMAND);
+          await expect(opaque.surface).toContainText("opaque script output");
+        } finally {
+          await agent.cleanup();
+        }
+      });
+    }
+  });
+}

@@ -56,6 +56,7 @@ import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { resolveContentMaxWidth, useSettings } from "@/hooks/use-settings";
+import { useReadableToolActivity } from "@/tool-calls/use-readable-tool-activity";
 import type { ToastApi } from "@/components/toast-host";
 import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -361,6 +362,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
+    const readableToolActivity = useReadableToolActivity();
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -529,6 +531,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           transform: transformTimelineItem,
           display: chatDisplay,
           autoExpandReasoning,
+          readableToolActivity,
           expandedTurnHostIds,
           isTurnActive,
           activeTurnId: effectiveTurnPresentation.turnId,
@@ -540,6 +543,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         transformTimelineItem,
         chatDisplay,
         autoExpandReasoning,
+        readableToolActivity,
         expandedTurnHostIds,
         isTurnActive,
         effectiveTurnPresentation.turnId,

@@ -7,7 +7,11 @@ import {
   type ToolCallItem,
   type TurnSummaryItem,
 } from "@/types/stream";
-import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
+import {
+  summarizeToolCalls,
+  type OverviewSummary,
+  type OverviewSummaryOptions,
+} from "@/tool-calls/detail-level/overview/model";
 
 export interface TurnCollapse {
   tail: StreamItem[];
@@ -33,6 +37,8 @@ export interface CollapseTurnsInput {
   getGroupedCalls: (itemId: string) => readonly (ToolCallItem | ThoughtItem)[] | undefined;
   /** The previous fold of the same history, whose unchanged summary rows are reused. */
   previousSummaryRowsByHostId: ReadonlyMap<string, TurnSummaryItem>;
+  /** Count turn work the same way as the tool-call groups inside it. */
+  summaryOptions?: OverviewSummaryOptions;
 }
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
@@ -42,13 +48,14 @@ const EMPTY_HOSTS: ReadonlyMap<string, string> = new Map();
 function summarizeTurn(
   items: readonly StreamItem[],
   getGroupedCalls: CollapseTurnsInput["getGroupedCalls"],
+  summaryOptions: OverviewSummaryOptions | undefined,
 ): OverviewSummary {
   const calls: (ToolCallItem | ThoughtItem)[] = [];
   for (const item of items) {
     if ((item.kind === "tool_call" || item.kind === "thought") && !isTurnTrigger(item))
       calls.push(...(getGroupedCalls(item.id) ?? [item]));
   }
-  return summarizeToolCalls(calls);
+  return summarizeToolCalls(calls, summaryOptions);
 }
 
 function hasWork(tools: OverviewSummary): boolean {
@@ -155,7 +162,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       return;
     }
     const folded = tail.slice(runStart, replyIndex);
-    const tools = summarizeTurn(folded, input.getGroupedCalls);
+    const tools = summarizeTurn(folded, input.getGroupedCalls, input.summaryOptions);
     if (!hasWork(tools) && !folded.some(isAssistantReply)) {
       output.push(...tail.slice(runStart, runEnd));
       return;

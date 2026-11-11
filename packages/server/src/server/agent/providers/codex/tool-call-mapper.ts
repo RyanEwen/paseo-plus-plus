@@ -8,6 +8,7 @@ import {
   truncateDiffText,
 } from "../tool-call-mapper-utils.js";
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
+import { commandActivityMetadata, fileChangeActivityMetadata } from "./tool-activity-metadata.js";
 import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";
 
 interface CodexMapperOptions {
@@ -707,6 +708,7 @@ function mapCommandExecutionItem(
     status,
     error,
     cwd: item.cwd ?? null,
+    ...commandActivityMetadata(item.commandActions),
   };
 }
 
@@ -1002,6 +1004,7 @@ function mapFileChangeItem(
     status,
     error,
     cwd: options?.cwd ?? null,
+    ...fileChangeActivityMetadata(files),
   };
 }
 
