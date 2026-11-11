@@ -1,5 +1,8 @@
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import { WorkspaceHttpLinkMenu } from "@/workspace/browser/link-menu";
 import {
   useCallback,
+  useMemo,
   useState,
   type PropsWithChildren,
   type ReactElement,
@@ -25,7 +28,6 @@ import { Pressable } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { PrHint } from "@/git/use-pr-status-query";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -315,6 +317,7 @@ function ChecksSummaryPressable({
   forge: PrHint["forge"];
   url: string;
 }) {
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const counts = countCheckPresentations(checks);
   const accessibilityLabel = formatCheckPresentationCountsLabel(
@@ -322,9 +325,10 @@ function ChecksSummaryPressable({
     t("workspace.git.pr.sections.checks"),
     t,
   );
+  const checksUrl = useMemo(() => buildForgeChecksUrl(forge, url) ?? url, [forge, url]);
   const handlePress = useCallback(() => {
-    void openExternalUrl(buildForgeChecksUrl(forge, url) ?? url);
-  }, [forge, url]);
+    void openPrimary(checksUrl);
+  }, [checksUrl, openPrimary]);
 
   const renderChildren = useCallback(
     ({ hovered }: { pressed: boolean; hovered?: boolean }) => (
@@ -334,14 +338,16 @@ function ChecksSummaryPressable({
   );
 
   return (
-    <Pressable
-      accessibilityLabel={accessibilityLabel}
-      accessibilityRole="link"
-      style={checksSummaryPressableStyle}
-      onPress={handlePress}
-    >
-      {renderChildren}
-    </Pressable>
+    <WorkspaceHttpLinkMenu url={checksUrl}>
+      <Pressable
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="link"
+        style={checksSummaryPressableStyle}
+        onPress={handlePress}
+      >
+        {renderChildren}
+      </Pressable>
+    </WorkspaceHttpLinkMenu>
   );
 }
 

@@ -1,5 +1,9 @@
 "use dom";
 
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import { useTranslation } from "react-i18next";
+import { buildTerminalLinkMenuInput, runTerminalLinkMenuAction } from "@/terminal/link-menu";
+
 import type {
   TerminalFindHandle,
   TerminalFindResult,
@@ -34,7 +38,6 @@ import type {
 } from "../terminal/local-links/terminal-local-link-provider";
 import type { TerminalClipboardWriter } from "../terminal/native-renderer/terminal-selection";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
-import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
 
 export interface TerminalEmulatorHandle {
@@ -178,6 +181,8 @@ export default function TerminalEmulator({
   focusRequestToken = 0,
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
+  const { openPrimary, openInPaseo, reportError } = useWorkspaceLinkOpening();
+  const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<TerminalEmulatorRuntime | null>(null);
@@ -205,6 +210,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onOpenExternalUrl: openPrimary,
     onFilePaste,
   });
   mountCallbacksRef.current = {
@@ -217,6 +223,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onOpenExternalUrl: openPrimary,
     onFilePaste,
   };
   const pendingModifiersRef = useRef(pendingModifiers);
@@ -450,10 +457,7 @@ export default function TerminalEmulator({
     const runtime = new TerminalEmulatorRuntime();
     runtimeRef.current = runtime;
     runtime.setCallbacks({
-      callbacks: {
-        ...mountCallbacksRef.current,
-        onOpenExternalUrl: openExternalUrl,
-      },
+      callbacks: mountCallbacksRef.current,
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
     runtime.setCharacterWidths({ widths: characterWidthsRef.current });
@@ -488,11 +492,12 @@ export default function TerminalEmulator({
         onInputModeChange,
         onResolveLocalFileLink,
         onOpenLocalFileLink,
+        onOpenExternalUrl: openPrimary,
         onFilePaste,
-        onOpenExternalUrl: openExternalUrl,
       },
     });
   }, [
+    openPrimary,
     onFindRequest,
     onFilePaste,
     onFindResult,
@@ -540,18 +545,23 @@ export default function TerminalEmulator({
     runtimeRef.current?.resize({ forceClaim: false, shouldClaim: false });
   }, [resizeRequestToken]);
 
-  const showTerminalContextMenu = useCallback(() => {
+  const showTerminalContextMenu = useCallback(async () => {
     const showContextMenu = window.paseoDesktop?.menu?.showContextMenu;
     if (typeof showContextMenu !== "function") {
       return;
     }
-
-    const hasSelection = Boolean(window.getSelection()?.toString());
-    void showContextMenu({
-      kind: "terminal",
-      hasSelection,
+    // Capture URL and owning opener before the asynchronous native menu can outlive a tab switch.
+    const link = buildTerminalLinkMenuInput({
+      url: runtimeRef.current?.getHoveredLinkUrl(),
+      hasWorkspaceBrowser: Boolean(openInPaseo),
+      t,
     });
-  }, []);
+    const hasSelection = Boolean(window.getSelection()?.toString());
+    const action = await showContextMenu({ kind: "terminal", hasSelection, link });
+    if (link) {
+      await runTerminalLinkMenuAction({ action, url: link.url, openInPaseo });
+    }
+  }, [openInPaseo, t]);
 
   const handleRootPointerDown = useCallback(() => {
     onFocus?.();
@@ -561,9 +571,9 @@ export default function TerminalEmulator({
   const handleRootContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
-      showTerminalContextMenu();
+      void showTerminalContextMenu().catch(reportError);
     },
-    [showTerminalContextMenu],
+    [showTerminalContextMenu, reportError],
   );
 
   const rootDivStyle = useMemo<CSSProperties>(

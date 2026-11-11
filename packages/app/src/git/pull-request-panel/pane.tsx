@@ -1,3 +1,8 @@
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import {
+  WorkspaceHttpLinkMenu,
+  WorkspaceBrowserDestinationItems,
+} from "@/workspace/browser/link-menu";
 import { useCallback, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -17,7 +22,6 @@ import {
 } from "lucide-react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -136,11 +140,6 @@ const ADD_TO_CHAT_MENU_ICON = (
 const COPY_MENU_ICON = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const OPEN_MENU_ICON = <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />;
 
-function handleMarkdownLinkPress(url: string): boolean {
-  void openExternalUrl(url);
-  return false;
-}
-
 function entryHeaderPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.entryHeaderPressable, Boolean(hovered) && styles.hoverable];
 }
@@ -198,6 +197,7 @@ export function PullRequestPane({
   activityLoading: boolean;
   workspaceAttachmentScopeKey?: string;
 }) {
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const toolbarRefreshButtonStyle = useCallback(
@@ -227,8 +227,8 @@ export function PullRequestPane({
   const [loadingCheckKeys, setLoadingCheckKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   const handleOpenPrUrl = useCallback(() => {
-    void openExternalUrl(data.url);
-  }, [data.url]);
+    void openPrimary(data.url);
+  }, [data.url, openPrimary]);
 
   const refreshSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
@@ -482,16 +482,18 @@ export function PullRequestPane({
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
         <PaneContentToolbar style={styles.toolbar} testID="pr-pane-toolbar">
           <View style={styles.toolbarActions}>
-            <Button
-              variant="ghost"
-              size="sm"
-              leftIcon={ExternalLink}
-              onPress={handleOpenPrUrl}
-              style={styles.viewButton}
-              testID="pr-pane-view-pr"
-            >
-              {t("workspace.git.pr.actions.viewPullRequest")}
-            </Button>
+            <WorkspaceHttpLinkMenu url={data.url}>
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={ExternalLink}
+                onPress={handleOpenPrUrl}
+                style={styles.viewButton}
+                testID="pr-pane-view-pr"
+              >
+                {t("workspace.git.pr.actions.viewPullRequest")}
+              </Button>
+            </WorkspaceHttpLinkMenu>
           </View>
           {refreshSupported ? (
             <Pressable
@@ -524,35 +526,15 @@ export function PullRequestPane({
           ) : null}
         </PaneContentToolbar>
 
-        <Pressable onPress={handleOpenPrUrl} style={styles.header}>
-          {({ hovered }) => (
-            <>
-              <Text style={styles.title} testID="pr-pane-title">
-                {data.title}
-                <Text style={styles.titleNumber}>
-                  {" "}
-                  {forgePresentation.numberPrefix}
-                  {data.number}
-                </Text>
-              </Text>
-              <View style={styles.metaLine}>
-                <StateIcon size={14} uniProps={statePresentation.iconColor} />
-                <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
-                  {t(getStateLabelKey(data.state))}
-                </Text>
-                {nativeHeaderMeta}
-                {repoIdentity ? (
-                  <Text style={styles.repoRef} numberOfLines={1}>
-                    {repoIdentity}
-                  </Text>
-                ) : null}
-                <View style={hovered ? styles.headerLinkIcon : styles.headerLinkIconHidden}>
-                  <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
-                </View>
-              </View>
-            </>
-          )}
-        </Pressable>
+        <PullRequestHeaderLink
+          data={data}
+          numberPrefix={forgePresentation.numberPrefix}
+          StateIcon={StateIcon}
+          stateIconColor={statePresentation.iconColor}
+          meta={nativeHeaderMeta}
+          repoIdentity={repoIdentity}
+          onPress={handleOpenPrUrl}
+        />
 
         {nativeChecksSection ?? (
           <ChecksSection
@@ -618,6 +600,63 @@ export function PullRequestPane({
         </Section>
       </ScrollView>
     </View>
+  );
+}
+
+/**
+ * The pane's title block, which opens the pull request. Kept as its own component so the workspace
+ * link menu around it does not deepen the pane's JSX.
+ */
+function PullRequestHeaderLink({
+  data,
+  numberPrefix,
+  StateIcon,
+  stateIconColor,
+  meta,
+  repoIdentity,
+  onPress,
+}: {
+  data: PrPaneData;
+  numberPrefix: string;
+  StateIcon: PrStatePresentation["Icon"];
+  stateIconColor: IconColorMapping;
+  meta: React.ReactNode;
+  repoIdentity: string | null;
+  onPress: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <WorkspaceHttpLinkMenu url={data.url}>
+      <Pressable onPress={onPress} style={styles.header}>
+        {({ hovered }) => (
+          <>
+            <Text style={styles.title} testID="pr-pane-title">
+              {data.title}
+              <Text style={styles.titleNumber}>
+                {" "}
+                {numberPrefix}
+                {data.number}
+              </Text>
+            </Text>
+            <View style={styles.metaLine}>
+              <StateIcon size={14} uniProps={stateIconColor} />
+              <Text style={stateLabelStyle(data.state)} testID="pr-pane-state">
+                {t(getStateLabelKey(data.state))}
+              </Text>
+              {meta}
+              {repoIdentity ? (
+                <Text style={styles.repoRef} numberOfLines={1}>
+                  {repoIdentity}
+                </Text>
+              ) : null}
+              <View style={hovered ? styles.headerLinkIcon : styles.headerLinkIconHidden}>
+                <ThemedExternalLink size={12} uniProps={foregroundMutedColorMapping} />
+              </View>
+            </View>
+          </>
+        )}
+      </Pressable>
+    </WorkspaceHttpLinkMenu>
   );
 }
 
@@ -687,14 +726,15 @@ function ActivityKebab({
   onMenuOpenChange: (open: boolean) => void;
   onAddToChat: (activity: PrPaneActivity) => void;
 }) {
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const handleAddToChat = useCallback(() => onAddToChat(activity), [activity, onAddToChat]);
   const handleCopy = useCallback(() => {
     void writeMarkdownToRichClipboard(activity.body, getDefaultMarkdownClipboardEnvironment());
   }, [activity.body]);
   const handleOpen = useCallback(() => {
-    void openExternalUrl(activity.url);
-  }, [activity.url]);
+    void openPrimary(activity.url);
+  }, [activity.url, openPrimary]);
 
   return (
     <View style={kebabSlotStyle(visible)} pointerEvents={visible ? "auto" : "none"}>
@@ -717,6 +757,7 @@ function ActivityKebab({
               Copy
             </DropdownMenuItem>
           ) : null}
+          <WorkspaceBrowserDestinationItems url={activity.url} />
           <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpen}>
             {t("workspace.git.pr.actions.openOn", { brand: brandLabel })}
           </DropdownMenuItem>
@@ -816,6 +857,7 @@ function SingleActivityCard({
   entry: Extract<PrTimelineEntry, { kind: "single" }>;
   collapsed: boolean;
 }) {
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const { activity } = entry;
   const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
@@ -827,8 +869,8 @@ function SingleActivityCard({
       onToggleCollapsed(entry.id, collapsed);
       return;
     }
-    void openExternalUrl(activity.url);
-  }, [activity.url, collapsed, entry.id, hasBody, onToggleCollapsed]);
+    void openPrimary(activity.url);
+  }, [activity.url, collapsed, entry.id, hasBody, onToggleCollapsed, openPrimary]);
 
   if (!hasBody) {
     return (
@@ -838,18 +880,20 @@ function SingleActivityCard({
         onPointerLeave={handlePointerLeave}
         testID="pr-pane-activity-row"
       >
-        <Pressable onPress={handleHeaderPress} style={entryHeaderPressableStyle}>
-          <ActivityHeader activity={activity} avatarSize={20}>
-            <ActivityKebab
-              activity={activity}
-              visible={actionsVisible}
-              attachEnabled={attachEnabled}
-              brandLabel={brandLabel}
-              onMenuOpenChange={setMenuOpen}
-              onAddToChat={onAddToChat}
-            />
-          </ActivityHeader>
-        </Pressable>
+        <WorkspaceHttpLinkMenu url={activity.url}>
+          <Pressable onPress={handleHeaderPress} style={entryHeaderPressableStyle}>
+            <ActivityHeader activity={activity} avatarSize={20}>
+              <ActivityKebab
+                activity={activity}
+                visible={actionsVisible}
+                attachEnabled={attachEnabled}
+                brandLabel={brandLabel}
+                onMenuOpenChange={setMenuOpen}
+                onAddToChat={onAddToChat}
+              />
+            </ActivityHeader>
+          </Pressable>
+        </WorkspaceHttpLinkMenu>
       </View>
     );
   }
@@ -876,7 +920,7 @@ function SingleActivityCard({
       {collapsed ? null : (
         <>
           <View style={styles.cardBody}>
-            <MarkdownRenderer text={activity.body} compact onLinkPress={handleMarkdownLinkPress} />
+            <MarkdownRenderer text={activity.body} compact />
           </View>
           {attachEnabled && canAddPullRequestActivityToChat(activity) ? (
             <View style={styles.cardFooter}>
@@ -987,7 +1031,7 @@ function ReviewCard({
         <>
           {hasBody ? (
             <View style={styles.cardBody}>
-              <MarkdownRenderer text={review.body} compact onLinkPress={handleMarkdownLinkPress} />
+              <MarkdownRenderer text={review.body} compact />
             </View>
           ) : null}
           {attachEnabled && canAddPullRequestActivityToChat(review) ? (
@@ -1042,6 +1086,7 @@ function ThreadBlock({
   onAddThreadToChat: (thread: PrThreadEntry) => void;
   onToggleCollapsed: (entryId: string, collapsed: boolean) => void;
 }) {
+  const { openPrimary } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
     useRevealOnHover();
@@ -1053,8 +1098,8 @@ function ThreadBlock({
     [onAddThreadToChat, thread],
   );
   const handleOpenThread = useCallback(() => {
-    void openExternalUrl(thread.comments[0].url);
-  }, [thread.comments]);
+    void openPrimary(thread.comments[0].url);
+  }, [thread.comments, openPrimary]);
 
   const [root, ...replies] = thread.comments;
 
@@ -1092,6 +1137,7 @@ function ThreadBlock({
                 {renderKebabTriggerIcon}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={200}>
+                <WorkspaceBrowserDestinationItems url={root.url} />
                 <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpenThread}>
                   {t("workspace.git.pr.actions.openOn", { brand: brandLabel })}
                 </DropdownMenuItem>
@@ -1184,7 +1230,7 @@ function ThreadComment({
       </View>
       {comment.body.trim() !== "" ? (
         <View style={styles.threadCommentBody}>
-          <MarkdownRenderer text={comment.body} compact onLinkPress={handleMarkdownLinkPress} />
+          <MarkdownRenderer text={comment.body} compact />
         </View>
       ) : null}
     </View>

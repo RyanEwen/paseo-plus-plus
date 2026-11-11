@@ -1,3 +1,4 @@
+import { WorkspaceBrowserDestinationItems } from "@/workspace/browser/link-menu";
 import { useCallback, useMemo, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
@@ -429,6 +430,10 @@ function ScriptRow({
       </View>
       {selectedLink ? (
         <View style={styles.hostList}>
+          <WorkspaceBrowserDestinationItems
+            url={selectedLink.url}
+            primaryFollowsWorkspaceLinks={false}
+          />
           <ServiceLinkRow
             selectedTarget={selectedLink}
             targets={linkTargets}

@@ -1,4 +1,10 @@
 import { resolveWorkspaceTabLaunchDestination } from "@/workspace-tabs/launcher/internal/destination";
+import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
+import type { OpenWorkspaceBrowserUrl } from "@/workspace/browser/use-opening";
+import {
+  WorkspaceBrowserOpenerProvider,
+  useReportedBrowserOpener,
+} from "@/workspace/browser/context";
 import {
   AdaptiveWorkspaceChrome,
   type WorkspaceCompactHeaderTabs,
@@ -787,16 +793,20 @@ function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
 function WorkspaceContentProviders({
   children,
   workspaceKey,
+  openBrowserUrl,
   sheetPaneHost,
 }: {
   children: ReactNode;
   workspaceKey: string | null;
+  openBrowserUrl: OpenWorkspaceBrowserUrl | undefined;
   sheetPaneHost: SheetPaneHost | null;
 }) {
   return (
     <WorkspaceFocusProvider workspaceKey={workspaceKey}>
       <DiffDocumentWorkspaceCacheProvider>
-        <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
+        <WorkspaceBrowserOpenerProvider value={openBrowserUrl}>
+          <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
+        </WorkspaceBrowserOpenerProvider>
       </DiffDocumentWorkspaceCacheProvider>
     </WorkspaceFocusProvider>
   );
@@ -1909,20 +1919,8 @@ function WorkspaceScreenContent({
     [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
   );
 
-  const handleOpenUrlInBrowserTab = useCallback(
-    (url: string) => {
-      if (!persistenceKey || !getIsElectron()) {
-        return;
-      }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        FOCUSED_PANE_PLACEMENT,
-      );
-    },
-    [openWorkspaceTabFocused, persistenceKey],
-  );
+  const openOwnedBrowser = useWorkspaceBrowserOpening(normalizedServerId, normalizedWorkspaceId);
+  const handleOpenUrlInBrowserTab = useReportedBrowserOpener(openOwnedBrowser);
 
   useDesktopBrowserNewTabRequests({
     enabled: Boolean(persistenceKey),
@@ -3894,6 +3892,7 @@ function WorkspaceScreenContent({
     <WorkspaceContentProviders
       key={persistenceKey}
       workspaceKey={persistenceKey}
+      openBrowserUrl={openOwnedBrowser}
       sheetPaneHost={sheetPaneHost}
     >
       <WorkspaceMarkdownLinks

@@ -4,10 +4,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import React, { useCallback, useMemo, useState, type ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
+import {
+  WorkspaceBrowserOpenerProvider,
+  WorkspaceLinkPolicyContext,
+  useReportedBrowserOpener,
+  useWorkspaceLinkOpening,
+  type WorkspaceLinkPolicy,
+} from "@/workspace/browser/context";
+import { openExternalUrl } from "@/utils/open-external-url";
+import { toErrorMessage } from "@/utils/error-messages";
 import type { DirectorySuggestionResult } from "./resolver";
 import { useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
@@ -64,6 +73,10 @@ function createQueryClient(): QueryClient {
   });
 }
 
+function failBrowserOpening(): void {
+  throw new Error("Workspace is unavailable");
+}
+
 function createToast(): ToastApi {
   return {
     show: vi.fn<ToastApi["show"]>(),
@@ -72,9 +85,32 @@ function createToast(): ToastApi {
   };
 }
 
-function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; toast?: ToastApi }) {
+/** The Workspace links preference as the policy port sees it; tests flip `enabled` directly. */
+interface TestPreference {
+  enabled: boolean;
+}
+
+function createWrapper(input: {
+  client: TestClient;
+  openedFiles: OpenedFile[];
+  toast?: ToastApi;
+  preference?: TestPreference;
+  onOpenHttpUrl?: (url: string) => void | Promise<void>;
+}) {
   const queryClient = createQueryClient();
+  const toast = input.toast ?? createToast();
+  const preference = input.preference ?? { enabled: true };
   return function Wrapper({ children }: { children: ReactNode }) {
+    // Keyed on the current value so a rerender after flipping the preference updates `enabled`.
+    const enabled = preference.enabled;
+    const policy = useMemo<WorkspaceLinkPolicy>(
+      () => ({
+        enabled,
+        isEnabled: () => preference.enabled,
+        reportError: (error) => toast.error(toErrorMessage(error)),
+      }),
+      [enabled],
+    );
     const openWorkspaceFile = useCallback(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
         input.openedFiles.push({ target, disposition });
@@ -84,21 +120,266 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
 
     return (
       <QueryClientProvider client={queryClient}>
-        <AssistantFileLinkResolverProvider
-          client={input.client}
-          serverId="server-1"
-          workspaceRoot="/Users/test/project"
-          onOpenWorkspaceFile={openWorkspaceFile}
-          toast={input.toast}
-        >
-          {children}
-        </AssistantFileLinkResolverProvider>
+        <WorkspaceLinkPolicyContext.Provider value={policy}>
+          <WorkspaceBrowserOpenerProvider value={input.onOpenHttpUrl}>
+            <AssistantFileLinkResolverProvider
+              client={input.client}
+              serverId="server-1"
+              workspaceRoot="/Users/test/project"
+              onOpenWorkspaceFile={openWorkspaceFile}
+              toast={input.toast}
+            >
+              {children}
+            </AssistantFileLinkResolverProvider>
+          </WorkspaceBrowserOpenerProvider>
+        </WorkspaceLinkPolicyContext.Provider>
       </QueryClientProvider>
     );
   };
 }
 
 describe("useFileLink", () => {
+  beforeEach(() => {
+    vi.stubGlobal("React", React);
+    vi.clearAllMocks();
+  });
+
+  it("reports a failed owning browser activation once without opening externally", async () => {
+    const toast = createToast();
+    const openedUrls: string[] = [];
+    const { result } = renderHook(() => useWorkspaceLinkOpening(), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles: [],
+        toast,
+        onOpenHttpUrl: async (url) => {
+          openedUrls.push(url);
+          throw new Error("Owning workspace is unavailable");
+        },
+      }),
+    });
+
+    await act(async () => {
+      await result.current.openPrimary("https://example.com/owned");
+    });
+
+    expect(openedUrls).toEqual(["https://example.com/owned"]);
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith("Owning workspace is unavailable");
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("applies the preference at activation time to a primary opener captured earlier", async () => {
+    const preference = { enabled: true };
+    const internal: string[] = [];
+    const { result } = renderHook(() => useWorkspaceLinkOpening(), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles: [],
+        preference,
+        onOpenHttpUrl: (url) => {
+          internal.push(url);
+        },
+      }),
+    });
+    const capturedPrimary = result.current.openPrimary;
+
+    preference.enabled = false;
+    await act(async () => {
+      await capturedPrimary("https://example.com/after-turning-off");
+    });
+
+    expect(internal).toEqual([]);
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(
+      "https://example.com/after-turning-off",
+    );
+  });
+
+  it("toasts an asynchronous menu failure through the scope's error reporter", async () => {
+    const toast = createToast();
+    const failure = createDeferred<void>();
+    const { result } = renderHook(() => useWorkspaceLinkOpening(), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles: [],
+        toast,
+        onOpenHttpUrl: async () => {},
+      }),
+    });
+    const pendingMenuAction = failure.promise.catch(result.current.reportError);
+
+    await act(async () => {
+      failure.reject(new Error("Could not open terminal link"));
+      await pendingMenuAction;
+    });
+
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith("Could not open terminal link");
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed fire-and-forget browser opening through the policy", async () => {
+    const toast = createToast();
+    const { result } = renderHook(() => useReportedBrowserOpener(failBrowserOpening), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles: [],
+        toast,
+      }),
+    });
+
+    act(() => result.current("https://example.com/service"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledExactlyOnceWith("Workspace is unavailable"),
+    );
+  });
+
+  it("opens a chat HTTP link in the workspace browser when Workspace links is on", async () => {
+    const onOpenHttpUrl = vi.fn(async () => {});
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const source = { href: "https://example.invalid/guide" };
+    const { result } = renderHook(() => useFileLink(source), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles: [],
+        preference: { enabled: true },
+        onOpenHttpUrl,
+      }),
+    });
+
+    act(() => result.current.onPress());
+
+    await waitFor(() => expect(onOpenHttpUrl).toHaveBeenCalledExactlyOnceWith(source.href));
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+  });
+
+  it("opens a chat HTTP link externally when Workspace links is off", async () => {
+    const onOpenHttpUrl = vi.fn(async () => {});
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const source = { href: "https://example.invalid/guide" };
+    const { result } = renderHook(() => useFileLink(source), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles: [],
+        preference: { enabled: false },
+        onOpenHttpUrl,
+      }),
+    });
+
+    act(() => result.current.onPress());
+
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(source.href));
+    expect(onOpenHttpUrl).not.toHaveBeenCalled();
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+  });
+
+  it("opens HTTP links externally when the preference is on but no owning opener is available", async () => {
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const openedFiles: OpenedFile[] = [];
+    const source = { href: "https://example.invalid/no-owning-opener" };
+    const { result } = renderHook(() => useFileLink(source), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        preference: { enabled: true },
+      }),
+    });
+    act(() => result.current.onPress());
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(source.href));
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+    expect(openedFiles).toEqual([]);
+  });
+
+  it("keeps the explicit browser opener and offers it as the alternate when primary opening is off", async () => {
+    const preference = { enabled: true };
+    const onOpenHttpUrl = vi.fn(async () => {});
+    const { result, rerender } = renderHook(() => useWorkspaceLinkOpening(), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: vi.fn(async () => resolvedSuggestions([])) },
+        openedFiles: [],
+        preference,
+        onOpenHttpUrl,
+      }),
+    });
+    expect(result.current.defaultDestination).toBe("paseo");
+
+    preference.enabled = false;
+    rerender();
+    expect(result.current.defaultDestination).toBe("external");
+
+    await act(async () => {
+      await result.current.openInPaseo?.("https://example.invalid/explicit");
+    });
+    expect(onOpenHttpUrl).toHaveBeenCalledExactlyOnceWith("https://example.invalid/explicit");
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("opens externally after a pending file lookup when the preference was turned off during it", async () => {
+    const preference = { enabled: true };
+    const deferred = createDeferred<DirectorySuggestionResult>();
+    const getDirectorySuggestions = vi.fn(() => deferred.promise);
+    const openedFiles: OpenedFile[] = [];
+    const onOpenHttpUrl = vi.fn(async () => {});
+    const httpSource = { href: "https://example.invalid/after-lookup" };
+    const { result, rerender } = renderHook(
+      () => ({ file: useFileLink(SOURCE), http: useFileLink(httpSource) }),
+      {
+        wrapper: createWrapper({
+          client: { getDirectorySuggestions },
+          openedFiles,
+          preference,
+          onOpenHttpUrl,
+        }),
+      },
+    );
+    const capturedHttpPress = result.current.http.onPress;
+    act(() => result.current.file.onPress());
+    await waitFor(() => expect(getDirectorySuggestions).toHaveBeenCalledTimes(1));
+
+    preference.enabled = false;
+    rerender();
+    deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
+    await waitFor(() => expect(openedFiles).toHaveLength(1));
+    expect(openedFiles[0].target.path).toBe("/Users/test/project/docs/dumm.md");
+
+    act(() => capturedHttpPress());
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(httpSource.href));
+    expect(onOpenHttpUrl).not.toHaveBeenCalled();
+  });
+
+  it("opens in the workspace browser after a pending file lookup when the preference was turned on during it", async () => {
+    const preference = { enabled: false };
+    const deferred = createDeferred<DirectorySuggestionResult>();
+    const getDirectorySuggestions = vi.fn(() => deferred.promise);
+    const openedFiles: OpenedFile[] = [];
+    const onOpenHttpUrl = vi.fn(async () => {});
+    const httpSource = { href: "https://example.invalid/after-lookup" };
+    const { result, rerender } = renderHook(
+      () => ({ file: useFileLink(SOURCE), http: useFileLink(httpSource) }),
+      {
+        wrapper: createWrapper({
+          client: { getDirectorySuggestions },
+          openedFiles,
+          preference,
+          onOpenHttpUrl,
+        }),
+      },
+    );
+    const capturedHttpPress = result.current.http.onPress;
+    act(() => result.current.file.onPress());
+    await waitFor(() => expect(getDirectorySuggestions).toHaveBeenCalledTimes(1));
+
+    preference.enabled = true;
+    rerender();
+    deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
+    await waitFor(() => expect(openedFiles).toHaveLength(1));
+    expect(openedFiles[0].target.path).toBe("/Users/test/project/docs/dumm.md");
+
+    act(() => capturedHttpPress());
+    await waitFor(() => expect(onOpenHttpUrl).toHaveBeenCalledExactlyOnceWith(httpSource.href));
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
   // Lookups resolve after a test's last assertion; an unmounted hook cannot re-render
   // once jsdom is torn down.
   afterEach(() => {

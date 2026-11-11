@@ -93,8 +93,20 @@ export interface DesktopWebUtilsBridge {
   getPathForFile?: (file: File) => string;
 }
 
+export type TerminalLinkMenuAction = "open-internal" | "open-external" | "copy-link";
+
+export interface TerminalLinkMenuInput {
+  url: string;
+  openInPaseo: boolean;
+  labels: { internal: string; external: string; copy: string };
+}
+
 export interface DesktopMenuBridge {
-  showContextMenu?: (input?: { kind?: "terminal"; hasSelection?: boolean }) => Promise<void>;
+  showContextMenu?: (input?: {
+    kind?: "terminal";
+    hasSelection?: boolean;
+    link?: TerminalLinkMenuInput;
+  }) => Promise<TerminalLinkMenuAction | null>;
   setCapturingShortcut?: (capturing: boolean) => Promise<void>;
 }
 

@@ -8,6 +8,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
+import { darkTheme as theme } from "@/styles/theme";
+import { persistAppSettings, type ServiceUrlBehavior } from "@/hooks/use-settings";
+import { openExternalUrl } from "@/utils/open-external-url";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
 import { useWorkspaceScriptActions } from "./use-workspace-script-actions";
 import { WorkspaceScriptsButton } from "./workspace-scripts-button";
@@ -15,7 +18,6 @@ import { WorkspaceScriptsButton } from "./workspace-scripts-button";
 void testI18n;
 
 const {
-  theme,
   startWorkspaceScriptMock,
   killTerminalMock,
   setStringAsyncMock,
@@ -24,25 +26,6 @@ const {
   routePreferenceListenersMock,
   setPreferredRouteMock,
 } = vi.hoisted(() => {
-  const hoistedTheme = {
-    spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12 },
-    borderWidth: { 1: 1 },
-    borderRadius: { md: 6, lg: 8 },
-    fontSize: { xs: 11, sm: 13 },
-    fontWeight: { normal: "400", medium: "500" },
-    colors: {
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      surface2: "#222",
-      borderAccent: "#444",
-      palette: {
-        blue: { 500: "#0a84ff" },
-        green: { 500: "#30d158" },
-        red: { 300: "#ff9f99", 500: "#ff453a" },
-      },
-    },
-  };
-
   const routePreferenceByServerId: Record<string, "public" | "paseo" | "direct"> = {};
   const routePreferenceListeners = new Set<() => void>();
   const setPreferredRoute = vi.fn((serverId: string, kind: "public" | "paseo" | "direct") => {
@@ -51,7 +34,6 @@ const {
   });
 
   return {
-    theme: hoistedTheme,
     startWorkspaceScriptMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
       requestId: "start-1",
@@ -76,24 +58,30 @@ vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
 });
 
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: unknown) => (typeof factory === "function" ? factory(theme) : factory),
-  },
-  withUnistyles:
-    (Component: React.ComponentType<Record<string, unknown>>) =>
-    ({
-      uniProps,
-      ...rest
-    }: {
-      uniProps?: (theme: unknown) => Record<string, unknown>;
-    } & Record<string, unknown>) => {
-      const themed = uniProps ? uniProps(theme) : {};
-      return React.createElement(Component, { ...rest, ...themed });
+// The real theme: the menu engine's stylesheets read more of it than a hand-built subset holds.
+vi.mock("react-native-unistyles", async () => {
+  const { darkTheme } = await import("@/styles/theme");
+  return {
+    StyleSheet: {
+      create: (factory: unknown) => (typeof factory === "function" ? factory(darkTheme) : factory),
     },
-}));
+    withUnistyles:
+      (Component: React.ComponentType<Record<string, unknown>>) =>
+      ({
+        uniProps,
+        ...rest
+      }: {
+        uniProps?: (theme: unknown) => Record<string, unknown>;
+      } & Record<string, unknown>) => {
+        const themed = uniProps ? uniProps(darkTheme) : {};
+        return React.createElement(Component, { ...rest, ...themed });
+      },
+  };
+});
 
-vi.mock("@/constants/platform", () => ({
+// Spread the real module: the menu engine behind the browser destination rows imports more of it.
+vi.mock("@/constants/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/constants/platform")>()),
   isNative: false,
   isWeb: true,
 }));
@@ -181,7 +169,9 @@ vi.mock("@/components/ui/tooltip", () => ({
   ),
 }));
 
-vi.mock("lucide-react-native", () => {
+// The scripts UI icons stay stubbed so assertions can read them; every other icon is real.
+vi.mock("lucide-react-native", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react-native")>();
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", {
       "data-icon": name,
@@ -190,6 +180,7 @@ vi.mock("lucide-react-native", () => {
       "data-testid": props.testID,
     });
   return {
+    ...actual,
     ChevronDown: createIcon("ChevronDown"),
     Copy: createIcon("Copy"),
     Eye: createIcon("Eye"),
@@ -229,6 +220,7 @@ const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 
 interface RenderScriptsOptions {
   hideLabels?: boolean;
+  onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
 const testToast = { show: () => () => {}, error: () => {}, copied: copiedToastMock };
@@ -239,9 +231,11 @@ const scriptClient = {
 function ScriptsOwner({
   scripts,
   hideLabels,
+  onOpenUrlInBrowserTab,
 }: {
   scripts: WorkspaceScriptPayload[];
   hideLabels?: boolean;
+  onOpenUrlInBrowserTab?: (url: string) => void;
 }) {
   const actions = useWorkspaceScriptActions({
     client: scriptClient,
@@ -255,6 +249,7 @@ function ScriptsOwner({
       scripts={scripts}
       liveTerminalIds={LIVE_TERMINAL_IDS}
       hideLabels={hideLabels}
+      onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
     />
   );
 }
@@ -280,7 +275,11 @@ function renderScripts(
     return (
       <QueryClientProvider client={queryClient}>
         <ToastApiProvider api={testToast}>
-          <ScriptsOwner scripts={nextScripts} hideLabels={options.hideLabels} />
+          <ScriptsOwner
+            scripts={nextScripts}
+            hideLabels={options.hideLabels}
+            onOpenUrlInBrowserTab={options.onOpenUrlInBrowserTab}
+          />
         </ToastApiProvider>
       </QueryClientProvider>
     );
@@ -319,6 +318,39 @@ function requirePrimaryIcon(row: HTMLElement): HTMLElement {
     throw new Error("Missing row icon");
   }
   return icon;
+}
+
+const SERVICE_URL = "http://localhost:57483";
+
+/** Act as desktop with this Service URLs choice; the Ask dialog answers "External browser". */
+async function prepareServiceUrlSetting(serviceUrlBehavior: ServiceUrlBehavior): Promise<void> {
+  vi.mocked(openExternalUrl).mockClear();
+  vi.stubGlobal("paseoDesktop", {
+    dialog: { askWithCheckbox: async () => ({ confirmed: false, dontAskAgain: false }) },
+  });
+  await persistAppSettings({ serviceUrlBehavior });
+}
+
+/** Render a running service and click its open action. */
+function renderAndOpenService(
+  onOpenUrlInBrowserTab: (url: string) => void,
+): ReturnType<typeof renderScripts> {
+  const rendered = renderScripts(
+    [
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        terminalId: "terminal-script-1",
+      }),
+    ],
+    { onOpenUrlInBrowserTab },
+  );
+  fireEvent.click(
+    document.querySelector('[data-testid="workspace-scripts-open-dev"]') as HTMLElement,
+  );
+  return rendered;
 }
 
 describe("WorkspaceScriptsButton", () => {
@@ -505,6 +537,53 @@ describe("WorkspaceScriptsButton", () => {
     ]);
 
     expect(requireRow("dev").textContent).toContain("dev--proj--repo.services.example.com");
+  });
+
+  it("adds no browser destination rows to a service without a workspace browser", () => {
+    current = renderScripts([
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        terminalId: "terminal-script-1",
+      }),
+    ]);
+
+    // The service row itself opens the link; without a built-in browser there is nothing else.
+    expect(requireRow("dev").textContent).toContain("localhost:57483");
+    expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openExternally"));
+    expect(document.body.textContent).not.toContain(testI18n.t("workspace.browser.openInPaseo"));
+  });
+
+  it("opens the workspace browser when Service URLs is In Paseo", async () => {
+    const openInBrowserTab = vi.fn();
+    await prepareServiceUrlSetting("in-app");
+
+    current = renderAndOpenService(openInBrowserTab);
+
+    await vi.waitFor(() => expect(openInBrowserTab).toHaveBeenCalledExactlyOnceWith(SERVICE_URL));
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("opens the system browser when Service URLs is External", async () => {
+    const openInBrowserTab = vi.fn();
+    await prepareServiceUrlSetting("external");
+
+    current = renderAndOpenService(openInBrowserTab);
+
+    await vi.waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(SERVICE_URL));
+    expect(openInBrowserTab).not.toHaveBeenCalled();
+  });
+
+  it("asks when Service URLs is Ask and follows the answer", async () => {
+    const openInBrowserTab = vi.fn();
+    await prepareServiceUrlSetting("ask");
+
+    current = renderAndOpenService(openInBrowserTab);
+
+    await vi.waitFor(() => expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(SERVICE_URL));
+    expect(openInBrowserTab).not.toHaveBeenCalled();
   });
 
   it("stops a running script through its terminal", async () => {

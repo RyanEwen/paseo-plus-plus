@@ -9,6 +9,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { useLinkMenu } from "@/components/ui/link-menu-context";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
@@ -39,6 +40,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     forgeUrl ? markdownLinkSource(forgeUrl) : markdownLinkSource(link.url, link.sourceType),
   );
   const tooltip = forgeUrl ?? tooltipPath;
+  const linkMenu = useLinkMenu();
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
   const handleMouseLeave = useCallback(() => setHovered(false), []);
@@ -61,7 +63,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       {children}
     </a>
   );
-  return (
+  const linkWithTooltip = (
     <Tooltip delayDuration={400}>
       <TooltipTrigger asChild onHoverIn={onHoverIn}>
         <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
@@ -75,6 +77,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       ) : null}
     </Tooltip>
   );
+  return linkMenu({ url: link.url, primaryOpensExternally: false, children: linkWithTooltip });
 }
 // TooltipTrigger also supplies native Pressable handlers; forward only DOM events.
 // A View renders a div, which is invalid inside the library's prose paragraphs.

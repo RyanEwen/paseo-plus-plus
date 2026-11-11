@@ -1,3 +1,5 @@
+import { useWorkspaceLinkOpening } from "@/workspace/browser/context";
+import { WorkspaceBrowserDestinationItems } from "@/workspace/browser/link-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,6 +12,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
@@ -18,12 +21,14 @@ import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
-import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
+import {
+  planWorkspaceOpenTargets,
+  type PlannedForgeOpenTarget,
+} from "@/workspace/open-in-editor/planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
@@ -88,6 +93,7 @@ export function WorkspaceOpenInEditorButton({
   activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
+  const { openPrimary, openInPaseo } = useWorkspaceLinkOpening();
   const { t } = useTranslation();
   const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -121,7 +127,7 @@ export function WorkspaceOpenInEditorButton({
     cwd: shouldQueryCheckout ? cwd : "",
   });
 
-  const targets = useMemo<OpenTarget[]>(
+  const plannedTargets = useMemo(
     () =>
       planWorkspaceOpenTargets({
         workspaceDirectory: cwd,
@@ -132,24 +138,6 @@ export function WorkspaceOpenInEditorButton({
         isLocalExecution: isLocalDaemon,
         checkoutStatus,
         forge: resolvedForge,
-      }).map((target) => {
-        if (target.source === "forge") {
-          const presentation = getForgePresentation(target.forge);
-          return {
-            id: target.id,
-            label: target.label,
-            icon: renderForgeOpenTargetIcon(presentation.icon),
-            onOpen: () => openExternalUrl(target.url),
-          };
-        }
-        return {
-          id: target.id,
-          label: target.label,
-          icon: (
-            <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
-          ),
-          onOpen: () => openDesktopTarget(target.openInput),
-        };
       }),
     [
       activeFile,
@@ -161,6 +149,37 @@ export function WorkspaceOpenInEditorButton({
       isLocalDaemon,
       resolvedFile,
     ],
+  );
+  // The forge page is the one target that is also a web page, so it gets browser destinations.
+  const forgeUrl = useMemo(
+    () =>
+      plannedTargets.find((target): target is PlannedForgeOpenTarget => target.source === "forge")
+        ?.url,
+    [plannedTargets],
+  );
+
+  const targets = useMemo<OpenTarget[]>(
+    () =>
+      plannedTargets.map((target) => {
+        if (target.source === "forge") {
+          const presentation = getForgePresentation(target.forge);
+          return {
+            id: target.id,
+            label: target.label,
+            icon: renderForgeOpenTargetIcon(presentation.icon),
+            onOpen: () => openPrimary(target.url),
+          };
+        }
+        return {
+          id: target.id,
+          label: target.label,
+          icon: (
+            <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
+          ),
+          onOpen: () => openDesktopTarget(target.openInput),
+        };
+      }),
+    [plannedTargets, openPrimary],
   );
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
@@ -186,6 +205,7 @@ export function WorkspaceOpenInEditorButton({
     [openMutation],
   );
 
+  const canOpenInBrowser = Boolean(openInPaseo && forgeUrl);
   const handleSelectTarget = useCallback(
     (target: OpenTarget) => {
       void updatePreferredEditor(target.id).catch((error: unknown) => {
@@ -257,7 +277,7 @@ export function WorkspaceOpenInEditorButton({
             </View>
           )}
         </Pressable>
-        {targets.length > 1 ? (
+        {targets.length > 1 || canOpenInBrowser ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               testID="workspace-open-in-editor-caret"
@@ -269,8 +289,8 @@ export function WorkspaceOpenInEditorButton({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              minWidth={148}
-              maxWidth={176}
+              minWidth={canOpenInBrowser ? 220 : 148}
+              maxWidth={canOpenInBrowser ? 280 : 176}
               testID="workspace-open-in-editor-menu"
             >
               {targets.map((target) => (
@@ -281,6 +301,12 @@ export function WorkspaceOpenInEditorButton({
                   onSelect={handleSelectTarget}
                 />
               ))}
+              {canOpenInBrowser ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <WorkspaceBrowserDestinationItems url={forgeUrl} />
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}

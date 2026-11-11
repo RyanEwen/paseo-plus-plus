@@ -8,6 +8,8 @@ import {
 } from "./use-retained-canonical-transcript";
 import { shouldIndexUserPrompts } from "./chat-outline/model";
 import { useStickyPromptsEnabled } from "./sticky-prompt-availability";
+import { useWorkspaceBrowserOpening } from "@/workspace/browser/use-opening";
+import { WorkspaceBrowserOpenerProvider } from "@/workspace/browser/context";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -426,6 +428,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
 
+    const openHttpUrl = useWorkspaceBrowserOpening(resolvedServerId, context.workspaceId);
     const workspaceRoot = context.cwd?.trim() || "";
     const { revealDirectory } = useFileExplorerActions({
       serverId: resolvedServerId,
@@ -804,33 +807,36 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        // Chat links open in this agent's own workspace browser, whichever workspace is on screen.
         return (
-          <AssistantFileLinkResolverProvider
-            client={client}
-            serverId={resolvedServerId}
-            workspaceRoot={workspaceRoot}
-            onOpenWorkspaceFile={handleInlinePathPress}
-            toast={toast}
-          >
-            <ChatFindExpansion messageId={getStreamItemMessageId(item)}>
-              {(renderFullContent) => (
-                <AssistantMessage
-                  renderFullContent={renderFullContent}
-                  occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
-                  message={item.text}
-                  timestamp={item.timestamp.getTime()}
-                  workspaceRoot={workspaceRoot}
-                  serverId={resolvedServerId}
-                  client={client}
-                  spacing={layoutItem.assistantSpacing}
-                  phase={layoutItem.phase}
-                />
-              )}
-            </ChatFindExpansion>
-          </AssistantFileLinkResolverProvider>
+          <WorkspaceBrowserOpenerProvider value={openHttpUrl}>
+            <AssistantFileLinkResolverProvider
+              client={client}
+              serverId={resolvedServerId}
+              workspaceRoot={workspaceRoot}
+              onOpenWorkspaceFile={handleInlinePathPress}
+              toast={toast}
+            >
+              <ChatFindExpansion messageId={getStreamItemMessageId(item)}>
+                {(renderFullContent) => (
+                  <AssistantMessage
+                    renderFullContent={renderFullContent}
+                    occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
+                    message={item.text}
+                    timestamp={item.timestamp.getTime()}
+                    workspaceRoot={workspaceRoot}
+                    serverId={resolvedServerId}
+                    client={client}
+                    spacing={layoutItem.assistantSpacing}
+                    phase={layoutItem.phase}
+                  />
+                )}
+              </ChatFindExpansion>
+            </AssistantFileLinkResolverProvider>
+          </WorkspaceBrowserOpenerProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [agentId, client, handleInlinePathPress, openHttpUrl, resolvedServerId, toast, workspaceRoot],
     );
 
     const renderThoughtItem = useCallback(
