@@ -1599,7 +1599,7 @@ export class Session {
 
   /** Reproject current stored/live rows after a committed host preference change, without marking unread. */
   async refreshAttentionPresentation(): Promise<void> {
-    const records = await this.agentStorage.list();
+    const records = await this.agentStorage.listAll();
     for (const record of records) {
       const live = this.agentManager.getAgent(record.id);
       // The preference only changes projections that carry an audience decision; agents
@@ -1612,7 +1612,7 @@ export class Session {
         await this.agentUpdates.emitStoredRecord(record);
       }
     }
-    const workspaces = await this.workspaceRegistry.list();
+    const workspaces = await this.workspaceRegistry.listAll();
     await this.emitWorkspaceUpdatesForWorkspaceIds(
       workspaces.map((workspace) => workspace.workspaceId),
     );
