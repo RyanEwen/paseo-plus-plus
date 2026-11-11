@@ -351,6 +351,19 @@ export class AgentAttentionCoordinator {
     return { agentProblem, humanProblem: !this.presentation.agentAware || !agentProblem };
   }
 
+  /**
+   * Whether starting an accepted turn reads the agent's unread result. A turn requested only by
+   * other agents leaves the human's unread result alone; any human turn, an unknown audience, or
+   * agent-aware presentation being off reads it, as upstream does. Call after admission.
+   */
+  turnStartReadsResult(agent: ManagedAgent): boolean {
+    const ledger = agent.attentionObjectives;
+    if (!this.presentation.agentAware || ledger?.isAudienceKnown !== true) {
+      return true;
+    }
+    return ledger.hasHumanAudience();
+  }
+
   get agentAwareAttentionEnabled(): boolean {
     return this.presentation.agentAware;
   }
