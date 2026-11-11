@@ -8,14 +8,14 @@ const ThemedEye = withUnistyles(Eye, (theme) => ({ color: theme.colors.foregroun
 const ThemedEyeOff = withUnistyles(EyeOff, (theme) => ({ color: theme.colors.foregroundMuted }));
 
 const styles = StyleSheet.create((theme) => ({
-  // Boxed adornment beside a default-size field: the field chrome's height and radius in each
-  // layout. ToolbarButton owns the interaction feedback.
+  // Boxed adornment beside a default-size field: the field chrome's height and radius
+  // (fieldControlMd in control-geometry). ToolbarButton owns the interaction feedback.
   box: {
     height: CONTROL_HEIGHTS.md,
     width: CONTROL_HEIGHTS.md,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: { xs: theme.borderRadius.lg, md: theme.borderRadius.md },
+    borderRadius: theme.borderRadius.lg,
     backgroundColor: theme.colors.surface2,
   },
 }));
