@@ -635,3 +635,65 @@ describe("fetchAgentHistoryPage", () => {
     ).rejects.toThrow("No connected hosts could load agent history");
   });
 });
+
+it("scopes every history page by workspace identity before pagination", async () => {
+  const client = createClient([historyPayload({ entries: [], hasMore: true, nextCursor: "next" })]);
+  await fetchAgentHistoryBatch({
+    hosts: [{ serverId: "host-a", serverLabel: "A", client }],
+    cursorByServerId: null,
+    workspaceId: "workspace-a",
+  });
+  await fetchAgentHistoryBatch({
+    hosts: [{ serverId: "host-a", serverLabel: "A", client }],
+    cursorByServerId: { "host-a": "next" },
+    workspaceId: "workspace-a",
+  });
+  expect(client.calls.map((call) => call.workspaceId)).toEqual(["workspace-a", "workspace-a"]);
+  expect(client.calls[1].page?.cursor).toBe("next");
+});
+
+// Existing helper interfaces: explicitly supplied invalid scope must reach the SDK validator.
+it("preserves explicitly empty workspace scope on a direct history page", async () => {
+  const client = createClient([historyPayload({ entries: [] })]);
+  await fetchAgentHistoryPage({
+    client,
+    serverId: "host-a",
+    cursor: null,
+    workspaceId: "",
+  });
+
+  expect(client.calls).toEqual([
+    {
+      workspaceId: "",
+      filter: { includeArchived: true, includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200 },
+    } satisfies FetchAgentHistoryOptions,
+  ]);
+});
+
+it("preserves explicitly empty workspace scope through every batch page", async () => {
+  const client = createClient([historyPayload({ entries: [], hasMore: true, nextCursor: "next" })]);
+  const hosts = [{ serverId: "host-a", serverLabel: "A", client }];
+  await fetchAgentHistoryBatch({ hosts, cursorByServerId: null, workspaceId: "" });
+  await fetchAgentHistoryBatch({
+    hosts,
+    cursorByServerId: { "host-a": "next" },
+    workspaceId: "",
+  });
+
+  expect(client.calls).toEqual([
+    {
+      workspaceId: "",
+      filter: { includeArchived: true, includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200 },
+    },
+    {
+      workspaceId: "",
+      filter: { includeArchived: true, includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 200, cursor: "next" },
+    },
+  ] satisfies FetchAgentHistoryOptions[]);
+});

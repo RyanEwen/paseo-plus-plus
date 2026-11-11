@@ -1484,6 +1484,7 @@ export const ProjectSuggestionsRequestSchema = z.object({
 export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
+  workspaceId: z.string().min(1).optional(),
   filter: AgentDirectoryFilterSchema.optional(),
   // A free-text filter over agent title, workspace name, branch, and project name.
   // Matching rows follow the requested sort and cursor pagination.

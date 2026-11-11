@@ -26,12 +26,16 @@ import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-bad
 import { findHighlightRanges } from "@/components/ui/highlighted-text-segments";
 
 interface AgentListProps {
+  /** Use stacked rows in bounded surfaces whose width cannot fit History columns. */
+  rowLayout?: "auto" | "stacked";
   agents: AggregatedAgent[];
   showCheckoutInfo?: boolean;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   selectedAgentId?: string;
   onAgentSelect?: () => void;
+  /** Open a picked agent in place of navigating to it, when the caller decides where it opens. */
+  onAgentOpen?: (agent: AggregatedAgent) => void;
   listFooterComponent?: ReactElement | null;
   showAttentionIndicator?: boolean;
   showHostColumn?: boolean;
@@ -345,16 +349,19 @@ export function AgentList({
   onRefresh,
   selectedAgentId,
   onAgentSelect,
+  onAgentOpen,
   listFooterComponent,
   showAttentionIndicator = true,
   showHostColumn = false,
+  rowLayout = "auto",
   search,
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
-  const isMobile = useIsCompactFormFactor();
+  const isCompact = useIsCompactFormFactor();
+  const isMobile = isCompact || rowLayout === "stacked";
   const { archiveAgent } = useArchiveAgent();
 
   const actionClient = useSessionStore((state) =>
@@ -374,6 +381,10 @@ export function AgentList({
       const agentId = agent.id;
 
       onAgentSelect?.();
+      if (onAgentOpen) {
+        onAgentOpen(agent);
+        return;
+      }
       navigateToAgent({
         serverId,
         agentId,
@@ -381,7 +392,7 @@ export function AgentList({
         pin: true,
       });
     },
-    [isActionSheetVisible, onAgentSelect],
+    [isActionSheetVisible, onAgentOpen, onAgentSelect],
   );
 
   const handleAgentLongPress = useCallback(

@@ -35,6 +35,8 @@ import {
 } from "@getpaseo/protocol/terminal-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
+import { useReopenClosedAgentLaunchItem } from "@/workspace-tabs/launcher";
+import { WorkspaceNewTabMenuItem } from "./workspace-new-tab-menu";
 import {
   useWorkspaceScriptsMenuPages,
   type UseWorkspaceScriptsMenuPagesInput,
@@ -270,6 +272,7 @@ export function WorkspaceHeaderMenuMobile({
   const router = useRouter();
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
   const { config } = useDaemonConfig(normalizedServerId);
+  const reopenClosedAgentItem = useReopenClosedAgentLaunchItem();
   const profiles = useMemo(
     () => resolveTerminalProfiles(config?.terminalProfiles),
     [config?.terminalProfiles],
@@ -319,6 +322,7 @@ export function WorkspaceHeaderMenuMobile({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
+        {reopenClosedAgentItem ? <WorkspaceNewTabMenuItem item={reopenClosedAgentItem} /> : null}
         {onExitFocusMode ? (
           <DropdownMenuItem onSelect={onExitFocusMode}>
             {t("workspace.tabs.actions.exitFocusMode")}

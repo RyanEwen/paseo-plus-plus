@@ -8993,6 +8993,112 @@ test.each([false, true])(
   },
 );
 
+// New optional carrier field; the established transport adapter retains correlation and old requests.
+test("carries workspace history identity on every page while unscoped history stays unscoped", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workspace-history",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { workspaceAgentHistory: true } });
+  await connecting;
+  const first = client.fetchAgentHistory({ workspaceId: "workspace-a", page: { limit: 1 } });
+  const firstRequest = parseSentFrame(mock.sent[0]);
+  expect(firstRequest).toMatchObject({
+    type: "fetch_agent_history_request",
+    workspaceId: "workspace-a",
+    page: { limit: 1 },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_history_response",
+      payload: {
+        requestId: firstRequest.requestId,
+        entries: [],
+        pageInfo: { nextCursor: "next", prevCursor: null, hasMore: true },
+      },
+    }),
+  );
+  await first;
+  const next = client.fetchAgentHistory({
+    workspaceId: "workspace-a",
+    page: { limit: 1, cursor: "next" },
+  });
+  const nextRequest = parseSentFrame(mock.sent[1]);
+  expect(nextRequest).toMatchObject({
+    type: "fetch_agent_history_request",
+    workspaceId: "workspace-a",
+    page: { limit: 1, cursor: "next" },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_history_response",
+      payload: {
+        requestId: nextRequest.requestId,
+        entries: [],
+        pageInfo: { nextCursor: null, prevCursor: "next", hasMore: false },
+      },
+    }),
+  );
+  await next;
+  const global = client.fetchAgentHistory();
+  const globalRequest = parseSentFrame(mock.sent[2]);
+  expect(globalRequest).not.toHaveProperty("workspaceId");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_history_response",
+      payload: {
+        requestId: globalRequest.requestId,
+        entries: [],
+        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      },
+    }),
+  );
+  await global;
+  expect(mock.sent).toHaveLength(3);
+});
+
+test("rejects explicitly empty workspace history scope without sending a global request", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "empty-workspace-history",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { workspaceAgentHistory: true } });
+  await connecting;
+
+  const outcome = client.fetchAgentHistory({ workspaceId: "" }).then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason: unknown) => ({ status: "rejected", reason }),
+  );
+  // Reply to every sent frame so an implementation that wrongly sends an unscoped request
+  // fails on the assertion rather than on the request timeout.
+  for (const frame of mock.sent) {
+    const request = parseSentFrame(frame);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "fetch_agent_history_response",
+        payload: {
+          requestId: request.requestId,
+          entries: [],
+          pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+        },
+      }),
+    );
+  }
+
+  expect(await outcome).toEqual({ status: "rejected", reason: expect.any(z.ZodError) });
+  expect(mock.sent).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // Relay endpoint security through the real secure channel
 // ---------------------------------------------------------------------------

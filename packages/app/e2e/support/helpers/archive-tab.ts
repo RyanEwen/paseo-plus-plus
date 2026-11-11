@@ -225,6 +225,12 @@ export async function closeActiveAgentWithShortcut(page: Page, agentId: string):
 }
 
 export async function closeWorkspaceAgentTab(page: Page, agentId: string): Promise<void> {
+  // Tab close controls accept pointer input only while their tab is hovered.
+  await page
+    .getByTestId(`workspace-tab-agent_${agentId}`)
+    .filter({ visible: true })
+    .first()
+    .hover();
   const closeButton = page.getByTestId(`workspace-agent-close-${agentId}`).filter({
     visible: true,
   });
