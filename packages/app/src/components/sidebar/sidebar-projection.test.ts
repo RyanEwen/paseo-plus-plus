@@ -799,6 +799,20 @@ describe("authoritative workspace parents", () => {
     ]);
   });
 
+  it("ignores background helpers when deciding which workspace owns another", () => {
+    const helper = { ...treeAgent("helper", "child", "o"), background: true };
+    const helperOnly = { ...treeAgent("helper-only", "grandchild", "p"), background: true };
+    expect(
+      parents([
+        treeAgent("p", "parent"),
+        treeAgent("o", "other"),
+        treeAgent("c", "child", "p"),
+        helper,
+        helperOnly,
+      ]),
+    ).toEqual([["srv:child", "srv:parent"]]);
+  });
+
   it("keeps partial agent directories top-level until the full ownership evidence is hydrated", () => {
     expect([
       ...resolveWorkspaceParents({

@@ -25,6 +25,7 @@ function relationships(agents: ReadonlyMap<string, Agent>): WorkspaceTreeSession
         workspaceId: agent.workspaceId,
         parentAgentId: agent.parentAgentId,
         archivedAt: agent.archivedAt,
+        background: agent.background,
       },
     ]),
   );

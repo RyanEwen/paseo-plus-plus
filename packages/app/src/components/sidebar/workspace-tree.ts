@@ -5,12 +5,18 @@ import type {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { aggregateKnownSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 
-/** Only authoritative lifetime relationships participate in workspace ownership. */
-export type WorkspaceTreeAgent = Pick<Agent, "id" | "workspaceId" | "parentAgentId" | "archivedAt">;
+/**
+ * Only authoritative lifetime relationships participate in workspace ownership. `background`
+ * marks hidden helpers, which never decide which workspace owns another.
+ */
+export type WorkspaceTreeAgent = Pick<
+  Agent,
+  "id" | "workspaceId" | "parentAgentId" | "archivedAt" | "background"
+>;
 
 /**
  * Whether two agent collections describe the same workspace ownership: the same agents, each in
- * the same workspace, under the same parent and with the same archived state. Runtime activity is
+ * the same workspace, under the same parent, with the same archived and background state. Runtime activity is
  * ignored, so status and timestamp updates never look like a relationship change.
  */
 export function sameWorkspaceTreeAgents(
@@ -25,6 +31,7 @@ export function sameWorkspaceTreeAgents(
     if (agent.workspaceId !== other.workspaceId) return false;
     if (agent.parentAgentId !== other.parentAgentId) return false;
     if (Boolean(agent.archivedAt) !== Boolean(other.archivedAt)) return false;
+    if (Boolean(agent.background) !== Boolean(other.background)) return false;
   }
   return true;
 }
@@ -81,7 +88,9 @@ export function resolveWorkspaceParents(input: {
     );
     const agentsByWorkspace = new Map<string, WorkspaceTreeAgent[]>();
     for (const agent of session.agents.values()) {
-      if (agent.archivedAt || !agent.workspaceId) continue;
+      // A background helper placed in a workspace does not announce itself, so it cannot attach
+      // or detach that workspace. Its relationships still count when walking another agent's chain.
+      if (agent.archivedAt || agent.background || !agent.workspaceId) continue;
       const agents = agentsByWorkspace.get(agent.workspaceId) ?? [];
       agents.push(agent);
       agentsByWorkspace.set(agent.workspaceId, agents);

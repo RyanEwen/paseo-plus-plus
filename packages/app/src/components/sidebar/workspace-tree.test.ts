@@ -21,7 +21,7 @@ describe("workspace tree agent comparison", () => {
     expect(sameWorkspaceTreeAgents(agents(parent, child), agents(parent, { ...child }))).toBe(true);
   });
 
-  it("detects a changed parent, workspace, archive state or membership", () => {
+  it("detects a changed parent, workspace, archive or background state, or membership", () => {
     const before = agents(parent, child);
     expect(sameWorkspaceTreeAgents(before, agents(parent, { ...child, parentAgentId: null }))).toBe(
       false,
@@ -32,6 +32,9 @@ describe("workspace tree agent comparison", () => {
     expect(
       sameWorkspaceTreeAgents(before, agents(parent, { ...child, archivedAt: new Date(0) })),
     ).toBe(false);
+    expect(sameWorkspaceTreeAgents(before, agents(parent, { ...child, background: true }))).toBe(
+      false,
+    );
     expect(sameWorkspaceTreeAgents(before, agents(parent))).toBe(false);
     expect(sameWorkspaceTreeAgents(before, agents(parent, treeAgent("other", "w-child")))).toBe(
       false,
