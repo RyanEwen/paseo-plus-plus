@@ -1,3 +1,5 @@
+import { useChatPreferencesSupport } from "@/settings-sync/use-chat-preferences-support";
+import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -8,13 +10,16 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { isNative } from "@/constants/platform";
-import { useAppSettings, type ChatDisplay } from "@/hooks/use-settings";
+import { type ChatDisplay } from "@/hooks/use-settings";
 
 const CHAT_DISPLAYS: readonly ChatDisplay[] = ["full", "collapseToolCalls", "collapseTurns"];
 
 export function ChatSection() {
   const { t } = useTranslation();
-  const { settings, updateSettings } = useAppSettings();
+  const supported = useChatPreferencesSupport();
+  const { settings, save, pending, failed, isLoading, isEditingBlocked, error } = useSettingsSave<
+    "chatDisplay" | "autoExpandReasoning" | "chatOutlineEnabled"
+  >();
 
   const chatDisplayOptions = useMemo(
     () =>
@@ -26,16 +31,16 @@ export function ChatSection() {
   );
 
   const changeChatDisplay = useCallback(
-    (chatDisplay: ChatDisplay) => void updateSettings({ chatDisplay }),
-    [updateSettings],
+    (chatDisplay: ChatDisplay) => void save("chatDisplay", { chatDisplay }),
+    [save],
   );
   const changeAutoExpandReasoning = useCallback(
-    (autoExpandReasoning: boolean) => void updateSettings({ autoExpandReasoning }),
-    [updateSettings],
+    (autoExpandReasoning: boolean) => void save("autoExpandReasoning", { autoExpandReasoning }),
+    [save],
   );
   const changeChatOutline = useCallback(
-    (chatOutlineEnabled: boolean) => void updateSettings({ chatOutlineEnabled }),
-    [updateSettings],
+    (chatOutlineEnabled: boolean) => void save("chatOutlineEnabled", { chatOutlineEnabled }),
+    [save],
   );
 
   return (
@@ -50,7 +55,15 @@ export function ChatSection() {
           />
           <SettingsSelect
             label={t("settings.general.chatDisplay.label")}
-            hint={t("settings.general.chatDisplay.description")}
+            hint={t(
+              supported
+                ? "settings.general.chatDisplay.description"
+                : "settings.general.chatDisplay.updateHost",
+            )}
+            disabled={
+              !supported || isLoading || isEditingBlocked || pending !== null || error !== null
+            }
+            error={failed === "chatDisplay" ? t("paseoPlusPlus.saveFailed") : undefined}
             value={settings.chatDisplay}
             options={chatDisplayOptions}
             onValueChange={changeChatDisplay}

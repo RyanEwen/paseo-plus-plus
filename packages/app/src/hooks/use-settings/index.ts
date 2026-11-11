@@ -1,4 +1,5 @@
-import { useCallback, useMemo } from "react";
+import { settingsSyncGate } from "@/settings-sync/gate";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/data/query-client";
@@ -132,6 +133,8 @@ export interface UseAppSettingsReturn {
   settings: AppSettings;
   isLoading: boolean;
   error: unknown;
+  /** The selected settings authority has successfully supplied readable values. */
+  isReadReady: boolean;
   updateSettings: (updates: AppSettingsUpdate) => Promise<void>;
   resetSettings: () => Promise<void>;
 }
@@ -140,14 +143,23 @@ export interface UseSettingsReturn {
   settings: Settings;
   isLoading: boolean;
   error: unknown;
+  /** The selected settings authority has successfully supplied readable values. */
+  isReadReady: boolean;
   updateSettings: (updates: Partial<Settings>) => Promise<void>;
   resetSettings: () => Promise<void>;
 }
 
 type SettingsSelector<TSelected> = (settings: Settings) => TSelected;
 
+const readSettingsAvailable = () => settingsSyncGate.getState().readAvailable;
+
 export function useAppSettings(): UseAppSettingsReturn {
   const queryClient = useQueryClient();
+  const readAvailable = useSyncExternalStore(
+    settingsSyncGate.subscribe,
+    readSettingsAvailable,
+    readSettingsAvailable,
+  );
   const { data, isPending, error } = useQuery({
     queryKey: APP_SETTINGS_QUERY_KEY,
     queryFn: () => loadAppSettingsFromStorage(),
@@ -184,6 +196,7 @@ export function useAppSettings(): UseAppSettingsReturn {
     settings,
     isLoading: isPending,
     error: error ?? null,
+    isReadReady: readAvailable && !isPending && error == null,
     updateSettings,
     resetSettings,
   };
@@ -248,6 +261,7 @@ export function useSettings<TSelected>(
     settings,
     isLoading: appSettings.isLoading || desktopSettings.isLoading,
     error: appSettings.error ?? desktopSettings.error,
+    isReadReady: appSettings.isReadReady,
     updateSettings,
     resetSettings,
   };
@@ -262,11 +276,24 @@ export async function saveAppSettings(input: {
   updates: AppSettingsUpdate;
   deps?: SettingsDeps;
 }): Promise<void> {
+  const syncHandler = settingsSyncGate.getState().saveHandler;
+  if (syncHandler && (await syncHandler(input.queryClient, input.updates))) return;
   await saveAppSettingsPure({
     queryClient: input.queryClient,
     updates: input.updates,
     deps: input.deps ?? productionDeps,
   });
+}
+
+/**
+ * Save through ordinary local storage without consulting the settings sync handler. Settings
+ * sync uses it for its own writes: adopted host values and device-only leaves.
+ */
+export async function saveAppSettingsLocally(input: {
+  queryClient: QueryClient;
+  updates: AppSettingsUpdate;
+}): Promise<void> {
+  await saveAppSettingsPure({ ...input, deps: productionDeps });
 }
 
 export async function loadAppSettingsFromStorage(deps?: SettingsDeps): Promise<AppSettings> {

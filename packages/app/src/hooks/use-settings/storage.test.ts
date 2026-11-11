@@ -1,4 +1,5 @@
 import { ACCENT_OPTIONS } from "@/styles/accent";
+import { SYNC_APP_SETTING_KEYS } from "@getpaseo/protocol/app-settings-keys";
 import { DEFAULT_PASEO_PLUS_PLUS_PREFERENCES } from "@/paseo-plus-plus/preferences";
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
@@ -1283,6 +1284,22 @@ describe("content max width", () => {
     expect((await load(10)).contentMaxWidth).toBe(600);
     expect((await load("wide")).contentMaxWidth).toBeNull();
   });
+});
+
+it("registers every shared app preference for daemon sync and excludes device settings", () => {
+  const sharedKeys = Object.keys(DEFAULT_CLIENT_SETTINGS).filter(
+    (key) => key !== "filePanelAssociations",
+  );
+  // The fork-base registry also lists keys of feature layers that may be absent from this build,
+  // so require every stored shared key rather than exact equality.
+  expect(SYNC_APP_SETTING_KEYS).toEqual(expect.arrayContaining(sharedKeys));
+  // Optional legacy wire keys remain accepted after their client preference is replaced.
+  expect(SYNC_APP_SETTING_KEYS).toEqual(
+    expect.arrayContaining(["toolCallDetailLevel", "useLegacyTerminalRenderer"]),
+  );
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("filePanelAssociations");
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("manageBuiltInDaemon");
+  expect(SYNC_APP_SETTING_KEYS).not.toContain("releaseChannel");
 });
 
 describe("font family CSS safety", () => {

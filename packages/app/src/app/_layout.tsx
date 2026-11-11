@@ -1,4 +1,5 @@
 import { AndroidUpdateCalloutSource } from "@/app-updates/callout-source";
+import { SettingsSyncBootstrap } from "@/settings-sync/bootstrap";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import {
   WindowLayoutProvider,
@@ -933,6 +934,9 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
     <HostRuntimeBootstrapProvider>
       <AccentSettingsAdapter />
       <NotificationOpenBridge />
+      {/* Feature settings domain adapters (useSettingsDomainAdapter) mount above this line, so
+          React runs their registration effects before the settings sync bootstrap loads. */}
+      <SettingsSyncBootstrap />
       <SidebarCalloutProvider>
         <ProvidersWrapper>{children}</ProvidersWrapper>
       </SidebarCalloutProvider>

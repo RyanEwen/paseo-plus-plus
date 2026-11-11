@@ -42,6 +42,11 @@ Existing functionality keeps working across versions. Never gate an established 
 
 The `appSettingsAccentColor` capability belongs to the explicitly selected settings host, independent of the active workspace host. Without it, disable the accent picker and explain that the settings host needs updating. Device-only preferences remain available. Explicit initialization omits only the unsupported accent field; normal edits and pending outboxes retain their existing host ownership and failure behavior.
 
+The `appSettingsChatPreferences` capability covers chat display and send shortcut writes on the
+selected settings host. Older hosts retain their stored tool-detail preferences; disable these
+new synchronized edits with an update instruction. Device-only choices remain available, and
+explicit initialization omits the unsupported keys.
+
 ## Client capability ownership
 
 The client package advertises the protocol behavior it implements. Add each new capability to

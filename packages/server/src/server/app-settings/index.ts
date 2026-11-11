@@ -1,0 +1,129 @@
+import {
+  EMPTY_APP_SETTINGS_SNAPSHOT,
+  applySettingsPatches,
+  FORBIDDEN_SETTINGS_KEYS,
+  settingsFieldKey,
+  settingsPathRevision,
+  settingsPathsOverlap,
+  isSyncedSettingsPath,
+} from "@getpaseo/protocol/app-settings-values";
+import { promises as fs } from "node:fs";
+import { join } from "node:path";
+import { SYNC_SETTING_DOMAINS } from "@getpaseo/protocol/app-settings-keys";
+import {
+  AppSettingsSnapshotSchema,
+  type AppSettingsSnapshot,
+  type AppSettingsPatch,
+  type AppSettingsPatchInput,
+  type AppSettingsPatchResult,
+} from "@getpaseo/protocol/app-settings";
+import { writeJsonFileAtomic } from "../atomic-file.js";
+
+/** File-backed host authority. Mutations serialize, and observers see only durable writes. */
+export class AppSettingsStore {
+  private queue: Promise<unknown> = Promise.resolve();
+  private readonly listeners = new Set<(snapshot: AppSettingsSnapshot) => void>();
+  private readonly file: string;
+
+  constructor(
+    paseoHome: string,
+    private readonly write = writeJsonFileAtomic,
+  ) {
+    this.file = join(paseoHome, "app-settings.json");
+  }
+
+  /** Missing means uninitialized. Corruption and IO errors must never authorize seeding. */
+  async read(): Promise<AppSettingsSnapshot> {
+    await this.queue;
+    return this.readFile();
+  }
+
+  private async readFile(): Promise<AppSettingsSnapshot> {
+    try {
+      return AppSettingsSnapshotSchema.parse(JSON.parse(await fs.readFile(this.file, "utf8")));
+    } catch (error) {
+      const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+      if (missing) return structuredClone(EMPTY_APP_SETTINGS_SNAPSHOT);
+      throw error;
+    }
+  }
+
+  subscribe(listener: (snapshot: AppSettingsSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /** Apply all leaves atomically or return conflicting paths without writing any of them. */
+  patch(input: AppSettingsPatchInput): Promise<AppSettingsPatchResult> {
+    const operation = this.queue.then(() => this.persistPatch(input));
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+  private async persistPatch({
+    patches,
+    initialize = false,
+  }: AppSettingsPatchInput): Promise<AppSettingsPatchResult> {
+    const snapshot = await this.readFile();
+    validatePatches(patches);
+    if (!snapshot.initialized && !initialize)
+      throw new Error("Choose Use this device settings to initialize this host.");
+    if (snapshot.initialized && initialize)
+      return { snapshot, conflicts: patches.map((patch) => patch.path) };
+    const conflicts = patches
+      .filter((patch) => settingsPathRevision(snapshot, patch.path) !== patch.expectedRevision)
+      .map((patch) => patch.path);
+    if (conflicts.length) return { snapshot, conflicts };
+
+    const next = structuredClone(snapshot);
+    next.initialized = true;
+    next.revision += 1;
+    next.values = applySettingsPatches(next.values, patches);
+    for (const patch of patches) next.fieldRevisions[settingsFieldKey(patch.path)] = next.revision;
+    if (JSON.stringify(next).length > 256_000)
+      throw new Error("App settings exceed the storage limit");
+    await this.write(this.file, next);
+    for (const listener of this.listeners) {
+      try {
+        listener(structuredClone(next));
+      } catch (error) {
+        console.error("[AppSettings] Observer failed", error);
+      }
+    }
+    return { snapshot: next, conflicts: [] };
+  }
+}
+
+/** Writable keys for a registry domain, or null when the first path segment is not a domain. */
+function syncDomainKeys(domain: string): readonly string[] | null {
+  if (!Object.hasOwn(SYNC_SETTING_DOMAINS, domain)) return null;
+  return SYNC_SETTING_DOMAINS[domain as keyof typeof SYNC_SETTING_DOMAINS];
+}
+
+/** Restrict documents to preferences and reject unsafe paths, overlap and oversized JSON. */
+function validatePatches(patches: AppSettingsPatch[]): void {
+  if (!patches.length || patches.length > 256 || JSON.stringify(patches).length > 128_000)
+    throw new Error("Invalid app settings patch size");
+  const paths: string[][] = [];
+  for (const patch of patches) {
+    const allowed = syncDomainKeys(patch.path[0]!);
+    if (
+      allowed === null ||
+      patch.path.length < 2 ||
+      patch.path.length > 8 ||
+      patch.path.some((part) => FORBIDDEN_SETTINGS_KEYS.has(part))
+    )
+      throw new Error("Invalid app settings path");
+    if (!allowed.includes(patch.path[1]!))
+      throw new Error("Only app preferences may be synchronized");
+    if (!isSyncedSettingsPath(patch.path))
+      throw new Error("Usage host selection stays on the device");
+    const json = JSON.stringify(patch.value);
+    if (json === undefined) throw new Error("Preference must be JSON");
+    // Objects are patched through leaves. Arrays are ordered preference values, replaced whole.
+    if (patch.value !== null && typeof patch.value === "object" && !Array.isArray(patch.value))
+      throw new Error("Patch preference objects through their leaves");
+    if (paths.some((path) => settingsPathsOverlap(path, patch.path)))
+      throw new Error("Overlapping preference paths");
+    paths.push(patch.path);
+  }
+}

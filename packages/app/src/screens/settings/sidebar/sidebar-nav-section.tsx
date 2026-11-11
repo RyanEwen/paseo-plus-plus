@@ -80,6 +80,7 @@ interface SidebarNavRowProps {
   item: SidebarNavItem;
   isFirst: boolean;
   isLast: boolean;
+  disabled: boolean;
   onMove: (key: string, direction: "up" | "down") => void;
   onSetVisible: (key: string, visible: boolean) => void;
 }
@@ -88,6 +89,7 @@ function SidebarNavRow({
   item,
   isFirst,
   isLast,
+  disabled,
   onMove,
   onSetVisible,
 }: SidebarNavRowProps): ReactElement {
@@ -120,7 +122,7 @@ function SidebarNavRow({
           variant="ghost"
           leftIcon={moveUpIcon}
           onPress={handleMoveUp}
-          disabled={isFirst}
+          disabled={disabled || isFirst}
           accessibilityLabel={t("settings.appearance.sidebar.moveUp")}
           testID={`sidebar-nav-move-up-${item.key}`}
         />
@@ -128,11 +130,12 @@ function SidebarNavRow({
           variant="ghost"
           leftIcon={moveDownIcon}
           onPress={handleMoveDown}
-          disabled={isLast}
+          disabled={disabled || isLast}
           accessibilityLabel={t("settings.appearance.sidebar.moveDown")}
           testID={`sidebar-nav-move-down-${item.key}`}
         />
         <Switch
+          disabled={disabled}
           value={item.visible}
           onValueChange={handleVisibleChange}
           accessibilityLabel={label}
@@ -156,7 +159,7 @@ const SECTION_COPY = {
 
 function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElement {
   const { t } = useTranslation();
-  const { items, setVisible, move } = useSidebarNavItems(section);
+  const { items, setVisible, move, disabled } = useSidebarNavItems(section);
 
   return (
     <SettingsSection
@@ -169,6 +172,7 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
           <SidebarNavRow
             key={item.key}
             item={item}
+            disabled={disabled}
             isFirst={index === 0}
             isLast={index === items.length - 1}
             onMove={move}

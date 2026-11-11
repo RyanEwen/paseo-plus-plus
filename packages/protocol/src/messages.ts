@@ -5,6 +5,13 @@ import {
   AgentAttentionRequestQuerySchema,
   AgentMessageAttentionSchema,
 } from "./agent-attention.js";
+import {
+  AppSettingsGetRequestSchema,
+  AppSettingsPatchRequestSchema,
+  AppSettingsGetResponseSchema,
+  AppSettingsPatchResponseSchema,
+  AppSettingsChangedSchema,
+} from "./app-settings.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -3523,6 +3530,8 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  AppSettingsGetRequestSchema,
+  AppSettingsPatchRequestSchema,
   HostsListRequestSchema,
   HostsAddRequestSchema,
   HostsUpdateRequestSchema,
@@ -7451,6 +7460,9 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  AppSettingsGetResponseSchema,
+  AppSettingsPatchResponseSchema,
+  AppSettingsChangedSchema,
   HostsListResponseSchema,
   HostsChangedSchema,
   HostsAddResponseSchema,
