@@ -49,6 +49,7 @@ import {
   WORKSPACE_LABEL_PAGE_ID,
   type WorkspaceLabelTarget,
 } from "@/workspace-labels/picker";
+import { WORKSPACE_KEBAB_OPTICAL_PULL, WORKSPACE_KEBAB_SIZE } from "./workspace-kebab-geometry";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -509,8 +510,8 @@ function archiveButtonStyle({
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     // Larger on touch so the kebab is an easy tap target.
-    width: bySizing({ touch: 32, pointer: 18 }),
-    height: bySizing({ touch: 32, pointer: 18 }),
+    width: bySizing(WORKSPACE_KEBAB_SIZE),
+    height: bySizing(WORKSPACE_KEBAB_SIZE),
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 4,
@@ -518,7 +519,10 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: bySizing({ touch: -6, pointer: 0 }),
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
     // pull the painted dots through that unused view-box space onto the trailing-content rail.
-    marginRight: bySizing({ touch: -14, pointer: -7 }),
+    marginRight: bySizing({
+      touch: -WORKSPACE_KEBAB_OPTICAL_PULL.touch,
+      pointer: -WORKSPACE_KEBAB_OPTICAL_PULL.pointer,
+    }),
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

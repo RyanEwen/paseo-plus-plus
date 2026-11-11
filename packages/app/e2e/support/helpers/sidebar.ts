@@ -6,6 +6,7 @@ import {
   defaultSidebarModeProfiles,
   type SidebarModeProfiles,
 } from "../../../src/stores/sidebar-mode-preferences";
+import type { SidebarStateBucket } from "../../../src/utils/sidebar-agent-state";
 
 interface ContextMenuAnchor {
   x: number;
@@ -172,7 +173,12 @@ export async function expectWorkspaceRowHoverCleared(
   workspaceId: string,
 ): Promise<void> {
   const workspaceKey = `${getServerId()}:${workspaceId}`;
-  await expect(page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`)).toBeHidden();
+  // The animated rail stays mounted; hidden means no painted or interactive action space.
+  const actions = page.getByTestId(`sidebar-workspace-hover-actions-${workspaceKey}`);
+  await expect(actions).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("width", "0px");
+  await expect(actions).toHaveCSS("pointer-events", "none");
+  await expect(actions).toHaveJSProperty("inert", true);
   await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
 }
 
@@ -448,4 +454,12 @@ export async function seedSidebarModeProfiles(
       state: { groupMode: "project", workspaceSort, modeProfiles },
     },
   );
+}
+
+/** Assert a workspace row draws its status on the trailing rail, not the leading title rail. */
+export async function expectStatusOnRight(row: Locator, state: SidebarStateBucket): Promise<void> {
+  const rowBounds = await row.boundingBox();
+  const statusBounds = await row.getByTestId(`workspace-status-indicator-${state}`).boundingBox();
+  if (!rowBounds || !statusBounds) throw new Error("Workspace status has no rendered bounds");
+  expect(statusBounds.x).toBeGreaterThan(rowBounds.x + rowBounds.width / 2);
 }

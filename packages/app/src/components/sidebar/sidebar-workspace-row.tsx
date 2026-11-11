@@ -5,7 +5,6 @@ import { StyleSheet } from "react-native-unistyles";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { density } from "@/styles/density";
-import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
@@ -29,7 +28,7 @@ import {
   SidebarWorkspaceRowContent,
   resolveTrailingActionVisibility,
   SidebarWorkspaceTrailingActionBase,
-  SidebarWorkspaceTrailingActionOverlay,
+  SidebarWorkspaceTrailingStatusActions,
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
@@ -333,7 +332,6 @@ function WorkspaceRowBody({
               >
                 <WorkspaceRowTrailingActions
                   workspace={workspace}
-                  backdrop={backdrop}
                   trailing={trailing}
                   isHovered={isHovered}
                   isTouchPlatform={isTouchPlatform}
@@ -362,7 +360,6 @@ function WorkspaceRowBody({
 
 function WorkspaceRowTrailingActions({
   workspace,
-  backdrop,
   trailing,
   isHovered,
   isTouchPlatform,
@@ -381,7 +378,6 @@ function WorkspaceRowTrailingActions({
   onRename,
 }: {
   workspace: SidebarWorkspaceEntry;
-  backdrop: SidebarSurfaceBackdrop;
   trailing: SidebarWorkspaceTrailing;
   isHovered: boolean;
   isTouchPlatform: boolean;
@@ -405,7 +401,6 @@ function WorkspaceRowTrailingActions({
     trailingPresentation,
     showKebab: showKebabInSlot,
     showArchiveButton,
-    showScrim,
     renderSlot,
     reserveSlotWidth,
   } = resolveTrailingActionVisibility({
@@ -428,10 +423,9 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
             <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay
+          <SidebarWorkspaceTrailingStatusActions
+            workspace={workspace}
             visible={kebab.showKebab}
-            scrimBackdrop={showScrim ? backdrop : undefined}
-            workspaceKey={workspace.workspaceKey}
             onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
           >
             {onArchive ? (
@@ -453,7 +447,7 @@ function WorkspaceRowTrailingActions({
                 archiveShortcutKeys={archiveShortcutKeys}
               />
             ) : null}
-          </SidebarWorkspaceTrailingActionOverlay>
+          </SidebarWorkspaceTrailingStatusActions>
         </SidebarWorkspaceTrailingActionSlot>
       ) : null}
     </>

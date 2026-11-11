@@ -71,23 +71,30 @@ test.describe("Workspace archive undo", () => {
     return worktree;
   }
 
-  test("the hover archive button overlays the title instead of narrowing it", async ({ page }) => {
-    const worktree = await seedWorktree(page, "archive-button-overlay");
+  test("the hover archive button slides in beside the status without covering the title", async ({
+    page,
+  }) => {
+    const worktree = await seedWorktree(page, "archive-button-reveal");
 
     await page.mouse.move(0, 0);
     await expect(rowArchiveButton(page, worktree.workspaceId)).toHaveCount(0);
     const restingWidth = await workspaceTitleWidth(page, worktree.workspaceId);
 
+    // The fork's trailing rail reserves the actions' width instead of painting them over the title.
     await workspaceRow(page, worktree.workspaceId).hover();
     await expect(rowArchiveButton(page, worktree.workspaceId)).toBeVisible();
-    await expect(page.getByTestId("sidebar-workspace-trailing-scrim")).toBeVisible();
-    expect(await workspaceTitleWidth(page, worktree.workspaceId)).toBe(restingWidth);
+    await expect(page.getByTestId("sidebar-workspace-trailing-scrim")).toHaveCount(0);
+    expect(await workspaceTitleWidth(page, worktree.workspaceId)).toBeLessThanOrEqual(restingWidth);
 
-    const [buttonBox, kebabBox] = await Promise.all([
+    const [titleBox, buttonBox, kebabBox] = await Promise.all([
+      page
+        .getByTestId(`sidebar-workspace-title-${getServerId()}:${worktree.workspaceId}`)
+        .boundingBox(),
       rowArchiveButton(page, worktree.workspaceId).boundingBox(),
       rowKebab(page, worktree.workspaceId).boundingBox(),
     ]);
-    if (!buttonBox || !kebabBox) throw new Error("Row actions are not laid out");
+    if (!titleBox || !buttonBox || !kebabBox) throw new Error("Row actions are not laid out");
+    expect(buttonBox.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
     expect(kebabBox.x - (buttonBox.x + buttonBox.width)).toBeGreaterThanOrEqual(8);
   });
 

@@ -8,7 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Text, View } from "react-native";
+import { Dimensions, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -22,7 +22,7 @@ import {
 } from "lucide-react-native";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
 import { DiffStat } from "@/components/diff-stat";
 import { Pressable } from "react-native";
 import type { GestureResponderEvent } from "react-native";
@@ -42,7 +42,9 @@ import { formatCheckPresentationCountsLabel } from "@/git/check-presentation-cop
 import { CheckPresentationIcon, getCheckPresentationTone } from "@/git/check-presentation.view";
 import { buildForgeChecksUrl } from "@/git/forge-url";
 
-const HOVER_CARD_WIDTH = 260;
+const HOVER_CARD_MIN_WIDTH = 260;
+/** The card's left and right borders, which sit outside its content. */
+const HOVER_CARD_BORDER_WIDTH = 2;
 
 interface WorkspaceHoverCardProps {
   workspace: SidebarWorkspaceEntry;
@@ -75,10 +77,26 @@ export function WorkspaceHoverCard({
         testID="workspace-hover-card"
         style={styles.card}
       >
-        <WorkspaceHoverCardContent workspace={workspace} prHint={prHint} />
+        <ViewportFit>
+          <WorkspaceHoverCardContent workspace={workspace} prHint={prHint} />
+        </ViewportFit>
       </HoverCardContent>
     </HoverCard>
   );
+}
+
+/**
+ * Cap the open card's content to the window, keeping a margin on each side.
+ *
+ * It mounts only while the card is open and reads the window once, so closed rows never subscribe
+ * to window size. Web hover cards close on resize, so a reopened card reads the new size.
+ */
+function ViewportFit({ children }: { children: ReactNode }): ReactElement {
+  const fitStyle = useMemo(() => {
+    const { width } = Dimensions.get("window");
+    return { maxWidth: Math.max(0, width - SPACING[3] * 2 - HOVER_CARD_BORDER_WIDTH) };
+  }, []);
+  return <View style={fitStyle}>{children}</View>;
 }
 
 function WorkspaceHoverCardContent({
@@ -362,7 +380,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
     borderRadius: theme.borderRadius.lg,
     paddingTop: theme.spacing[2],
-    width: HOVER_CARD_WIDTH,
+    minWidth: HOVER_CARD_MIN_WIDTH,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
@@ -391,7 +409,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[2],
   },
   cardInfoText: {
-    flex: 1,
+    // Natural text width determines the card size; only shrink at the viewport ceiling.
+    flexShrink: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,

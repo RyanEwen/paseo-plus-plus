@@ -70,7 +70,6 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { density, densityIconBox, densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
-import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
@@ -151,7 +150,7 @@ import {
   SidebarWorkspaceShortcutBadge,
   resolveTrailingActionVisibility,
   SidebarWorkspaceTrailingActionBase,
-  SidebarWorkspaceTrailingActionOverlay,
+  SidebarWorkspaceTrailingStatusActions,
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
@@ -683,7 +682,6 @@ function ProjectMenuItems({
 
 function WorkspaceRowRightGroup({
   workspace,
-  backdrop,
   isHovered,
   isTouchPlatform,
   isCreating,
@@ -705,7 +703,6 @@ function WorkspaceRowRightGroup({
   onToggleProjectPin,
 }: {
   workspace: SidebarWorkspaceEntry;
-  backdrop: SidebarSurfaceBackdrop;
   isHovered: boolean;
   isTouchPlatform: boolean;
   isCreating: boolean;
@@ -734,7 +731,6 @@ function WorkspaceRowRightGroup({
     trailingPresentation,
     showKebab: showKebabInSlot,
     showArchiveButton,
-    showScrim,
     renderSlot,
     reserveSlotWidth,
   } = resolveTrailingActionVisibility({
@@ -757,10 +753,9 @@ function WorkspaceRowRightGroup({
           <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
             <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay
+          <SidebarWorkspaceTrailingStatusActions
+            workspace={workspace}
             visible={kebab.showKebab}
-            scrimBackdrop={showScrim ? backdrop : undefined}
-            workspaceKey={workspace.workspaceKey}
             onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
           >
             {onArchive ? (
@@ -787,7 +782,7 @@ function WorkspaceRowRightGroup({
                 openInFileManagerPath={workspacePath}
               />
             ) : null}
-          </SidebarWorkspaceTrailingActionOverlay>
+          </SidebarWorkspaceTrailingStatusActions>
         </SidebarWorkspaceTrailingActionSlot>
       ) : null}
     </>
@@ -1295,7 +1290,6 @@ function WorkspaceRowInner({
               >
                 <WorkspaceRowRightGroup
                   workspace={workspace}
-                  backdrop={backdrop}
                   isHovered={isHovered}
                   isTouchPlatform={isTouchPlatform}
                   isCreating={isCreating}

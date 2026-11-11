@@ -9,6 +9,7 @@ import {
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   expectOnlyWorkspaceHoverCardFor,
+  expectStatusOnRight,
   expectWorkspaceHoverCardClosed,
   expectWorkspaceHoverCardOpen,
   expectWorkspaceHoverCardStaysOpen,
@@ -103,6 +104,18 @@ async function openWorkspaceHoverCard(page: import("@playwright/test").Page, wor
   return hoverCard;
 }
 
+/** Assert the rendered hover-card value is readable without single-line clipping. */
+async function expectHoverCardValueFits(page: Page, testID: string, value: string): Promise<void> {
+  const text = page.getByTestId(testID);
+  await expect(text).toHaveText(value);
+  await expect
+    .poll(async () => text.evaluate((element) => element.scrollWidth - element.clientWidth))
+    .toBe(0);
+}
+
+/** The card's minimum width; long names must grow it past this floor. */
+const HOVER_CARD_MIN_WIDTH = 260;
+
 async function sortWorkspacesBySidebarOrder<T extends { workspaceId: string }>(
   page: Page,
   workspaces: T[],
@@ -123,13 +136,18 @@ interface PaseoOwnedWorktree {
   projectName: string;
   workspaceId: string;
   worktreeSlug: string;
+  branchName: string;
 }
 
 async function withPaseoOwnedWorktree(
   run: (workspace: PaseoOwnedWorktree) => Promise<void>,
 ): Promise<void> {
-  const project = await seedWorkspace({ repoPrefix: "sidebar-hover-owned-worktree-" });
-  const worktreeSlug = "hover-card-owned-worktree";
+  const branchName = "feature/hover-card-with-a-long-branch-name-that-should-remain-readable";
+  const project = await seedWorkspace({
+    repoPrefix: "sidebar-hover-owned-worktree-",
+    repo: { branches: [branchName] },
+  });
+  const worktreeSlug = "hover-card-owned-worktree-with-a-long-directory";
 
   try {
     const created = await project.client.createWorkspace({
@@ -138,6 +156,8 @@ async function withPaseoOwnedWorktree(
         cwd: project.repoPath,
         projectId: project.projectId,
         worktreeSlug,
+        action: "checkout",
+        refName: branchName,
       },
     });
     if (!created.workspace) {
@@ -149,6 +169,7 @@ async function withPaseoOwnedWorktree(
       projectName: path.basename(project.repoPath),
       workspaceId: created.workspace.id,
       worktreeSlug,
+      branchName,
     });
   } finally {
     await project.cleanup();
@@ -625,13 +646,54 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
-  test("Paseo-owned worktree hover card shows the worktree directory name", async ({ page }) => {
-    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeSlug }) => {
+  test("workspace status sits on the trailing rail beside its actions on desktop and compact", async ({
+    page,
+  }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "sidebar-trailing-status-",
+      title: "Trailing status",
+      initialPrompt: "Finish this test turn.",
+    });
+
+    try {
+      await workspace.client.waitForFinish(workspace.agentId, 20_000);
+      await workspace.client.clearWorkspaceAttention(workspace.workspaceId);
+      await gotoAppShell(page);
+
+      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      await expectStatusOnRight(row, "done");
+      await (await openWorkspaceReadAction(page, workspace.workspaceId, "unread")).click();
+      await expectStatusOnRight(row, "attention");
+
+      // Touch keeps the menu visible beside the status instead of revealing it on hover.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+      await expectStatusOnRight(row, "attention");
+      const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+      await expect(page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`)).toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("Paseo-owned worktree hover card fits long branch and directory names", async ({
+    page,
+  }, testInfo) => {
+    await withPaseoOwnedWorktree(async ({ projectName, workspaceId, worktreeSlug, branchName }) => {
       await gotoAppShell(page);
       await waitForSidebarProject(page, projectName);
       await openWorkspaceHoverCard(page, workspaceId);
 
-      await expect(page.getByTestId("hover-card-workspace-cwd")).toHaveText(worktreeSlug);
+      await expectHoverCardValueFits(page, "hover-card-workspace-cwd", worktreeSlug);
+      await expectHoverCardValueFits(page, "hover-card-workspace-branch", branchName);
+      const card = page.getByTestId("workspace-hover-card");
+      const bounds = await card.boundingBox();
+      const viewport = page.viewportSize();
+      if (!bounds || !viewport) throw new Error("Workspace hover card has no rendered bounds");
+      expect(bounds.width).toBeGreaterThan(HOVER_CARD_MIN_WIDTH);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+      await page.screenshot({ path: testInfo.outputPath("workspace-hover-card-long-names.png") });
     });
   });
 });

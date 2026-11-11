@@ -32,14 +32,12 @@ async function pressProjectRow(rows: Locator) {
 }
 
 async function pressWorkspaceRow(rows: Locator) {
-  const solidScrimStop = rows
-    .nth(0)
-    .getByTestId("sidebar-workspace-trailing-scrim")
-    .locator("stop")
-    .nth(1);
-  const hoverScrimColor = await solidScrimStop.getAttribute("stop-color");
+  const row = rows.nth(0);
+  const hoveredBackground = await row.evaluate((node) => getComputedStyle(node).backgroundColor);
   await rows.page().mouse.down();
-  await expect.poll(() => solidScrimStop.getAttribute("stop-color")).not.toBe(hoverScrimColor);
+  await expect
+    .poll(() => row.evaluate((node) => getComputedStyle(node).backgroundColor))
+    .not.toBe(hoveredBackground);
 }
 
 async function quickDragFirstRowAfterSecond(
@@ -56,10 +54,11 @@ async function quickDragFirstRowAfterSecond(
   const target = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };
 
   await page.mouse.move(source.x, source.y);
-  const trailingScrim = rows.nth(0).getByTestId("sidebar-workspace-trailing-scrim");
   await pressRow(rows);
   await page.mouse.move(source.x, source.y + 7);
-  await expect(trailingScrim).toHaveCount(0);
+  await expect
+    .poll(() => rows.nth(0).evaluate((node) => getComputedStyle(node).borderTopWidth))
+    .toBe("1px");
   await page.mouse.move(target.x, target.y, { steps: 4 });
   await finishSidebarDrag(page);
 
