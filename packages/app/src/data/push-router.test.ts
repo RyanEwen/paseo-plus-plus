@@ -636,6 +636,18 @@ describe("server data push router", () => {
       });
   });
 
+  /** A changed file whose path names the scope subscription that delivered it. */
+  function scopeMarkerFile(index: number) {
+    return {
+      path: `scope-${index}.ts`,
+      isNew: false,
+      isDeleted: false,
+      additions: 1,
+      deletions: 0,
+      hunks: [],
+    };
+  }
+
   it("routes whole and literal file observations independently and releases only the selected scope", () => {
     const queryClient = new QueryClient();
     const fake = createFakeClient();
@@ -666,20 +678,22 @@ describe("server data push router", () => {
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
     try {
       expect(fake.subscribeCheckoutDiffCalls.map((call) => call.compare.filePath)).toEqual(scopes);
+      // Each scope receives a distinct file so the cache shows which subscription fed it. The
+      // modern diff stream reports updates as ready snapshots, so the marker is a file, not an error.
       fake.subscribeCheckoutDiffCalls.forEach((call, index) =>
         fake.emit({
           type: "checkout_diff_update",
           payload: {
             subscriptionId: call.subscriptionId,
             cwd,
-            files: [],
-            error: { code: "UNKNOWN", message: `scope-${index}` },
+            files: [scopeMarkerFile(index)],
+            error: null,
           },
         }),
       );
       keys.forEach((key, index) =>
         expect(queryClient.getQueryData(key)).toMatchObject({
-          error: { message: `scope-${index}` },
+          files: [{ path: scopeMarkerFile(index).path }],
         }),
       );
       releases[1]!();
