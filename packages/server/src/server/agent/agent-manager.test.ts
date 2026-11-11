@@ -11,10 +11,22 @@ import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, promises as fs } from "node:fs";
 import { join } from "node:path";
+
+import {
+  type ControlledInterruptFixture,
+  SessionRecordingAgentClient,
+  SteeringTestSession,
+  TEST_CAPABILITIES,
+  TestAgentClient,
+  TestAgentSession,
+  createControlledInterruptFixture,
+  deferred,
+  drainAsyncGenerator,
+  logger,
+} from "./test-utils/manager-fixtures.js";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
   AgentManagerShuttingDownError,
@@ -29,7 +41,9 @@ import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js"
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+
 import { startAgentRun } from "./agent-prompt.js";
+
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -72,28 +86,6 @@ import { V2Harness } from "./providers/opencode/test-utils/v2-harness.js";
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
 
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason?: unknown) => void;
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-async function drainAsyncGenerator<T>(generator: AsyncGenerator<T>): Promise<void> {
-  for await (const _ of generator) {
-    // Drain provider events while AgentManager subscribers observe them.
-  }
-}
-
 function waitForAgentLifecycle(
   manager: AgentManager,
   agentId: string,
@@ -115,16 +107,6 @@ function waitForAgentLifecycle(
     );
   });
 }
-
-const TEST_CAPABILITIES = {
-  supportsStreaming: false,
-  supportsSessionPersistence: false,
-  supportsSessionListing: true,
-  supportsDynamicModes: false,
-  supportsMcpServers: false,
-  supportsReasoningStream: false,
-  supportsToolInvocations: false,
-} as const;
 
 class RecordingTimelineStore implements AgentTimelineStore {
   readonly writes: AgentTimelineRow[][] = [];
@@ -209,73 +191,6 @@ function expectArchivedAgentRecord(
   expect(record?.requiresAttention).toBe(false);
   expect(record?.attentionReason).toBeNull();
   expect(record?.attentionTimestamp).toBeNull();
-}
-
-class TestAgentClient implements AgentClient {
-  readonly provider: AgentProvider;
-  readonly capabilities = TEST_CAPABILITIES;
-  readonly createdConfigs: AgentSessionConfig[] = [];
-  readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
-
-  constructor(provider: AgentProvider = "codex") {
-    this.provider = provider;
-  }
-
-  async isAvailable(): Promise<boolean> {
-    return true;
-  }
-
-  async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-    this.createdConfigs.push(config);
-    return new TestAgentSession(config);
-  }
-
-  async fetchCatalog() {
-    return {
-      models: [
-        {
-          provider: this.provider,
-          id: "gpt-5.4",
-          label: "GPT-5.4",
-          isDefault: true,
-        },
-        {
-          provider: this.provider,
-          id: "gpt-5.4-mini",
-          label: "GPT-5.4 Mini",
-        },
-        {
-          provider: this.provider,
-          id: "gpt-5.2-codex",
-          label: "GPT-5.2 Codex",
-        },
-      ],
-      modes: [],
-    };
-  }
-
-  async resumeSession(
-    _handle: AgentPersistenceHandle,
-    config?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
-  ): Promise<AgentSession> {
-    this.resumeOverrides.push(config);
-    return new TestAgentSession({
-      provider: this.provider,
-      cwd: config?.cwd ?? process.cwd(),
-      daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
-    });
-  }
-}
-
-class SessionRecordingAgentClient extends TestAgentClient {
-  readonly sessions: TestAgentSession[] = [];
-
-  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-    const session = new TestAgentSession(config);
-    this.sessions.push(session);
-    return session;
-  }
 }
 
 class HeldAgentCreationClient extends TestAgentClient {
@@ -451,95 +366,6 @@ class EnvProbeAgentClient extends TestAgentClient {
   }
 }
 
-class TestAgentSession implements AgentSession {
-  readonly provider = "codex" as const;
-  readonly capabilities = TEST_CAPABILITIES;
-  readonly id = randomUUID();
-  private runtimeModel: string | null = null;
-  private subscribers = new Set<(event: AgentStreamEvent) => void>();
-  private turnIdCounter = 0;
-  private interrupted = false;
-
-  constructor(private readonly config: AgentSessionConfig) {}
-
-  async run(): Promise<AgentRunResult> {
-    return {
-      sessionId: this.id ?? this.config.provider,
-      finalText: "",
-      timeline: [],
-    };
-  }
-
-  async startTurn(): Promise<{ turnId: string }> {
-    this.interrupted = false;
-    const turnId = `turn-${this.id}-${++this.turnIdCounter}`;
-    // Use setTimeout so events arrive after the caller sets up the foreground waiter
-    setTimeout(() => {
-      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-      this.runtimeModel = "gpt-5.2-codex";
-    }, 0);
-    return { turnId };
-  }
-
-  subscribe(callback: (event: AgentStreamEvent) => void): () => void {
-    this.subscribers.add(callback);
-    return () => {
-      this.subscribers.delete(callback);
-    };
-  }
-
-  pushEvent(event: AgentStreamEvent): void {
-    for (const cb of this.subscribers) {
-      try {
-        cb(event);
-      } catch {
-        // error isolation per design
-      }
-    }
-  }
-
-  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
-
-  async getRuntimeInfo() {
-    return {
-      provider: this.provider,
-      sessionId: this.id,
-      model: this.runtimeModel ?? this.config.model ?? null,
-      modeId: this.config.modeId ?? null,
-    };
-  }
-
-  async getAvailableModes() {
-    return [];
-  }
-
-  async getCurrentMode() {
-    return null;
-  }
-
-  async setMode(): Promise<void> {}
-
-  getPendingPermissions() {
-    return [];
-  }
-
-  async respondToPermission(): Promise<void> {}
-
-  describePersistence() {
-    return {
-      provider: this.provider,
-      sessionId: this.id,
-    };
-  }
-
-  async interrupt(): Promise<void> {
-    this.interrupted = true;
-  }
-
-  async close(): Promise<void> {}
-}
-
 class ResumeTrackingTestAgentClient extends TestAgentClient {
   private readonly retryStarted = deferred<void>();
 
@@ -578,53 +404,6 @@ class CloseRecordingTestAgentSession extends TestAgentSession {
 
   override async close(): Promise<void> {
     this.closed = true;
-  }
-}
-
-class SteeringTestSession extends TestAgentSession {
-  interruptCount = 0;
-  startCount = 0;
-  steerCount = 0;
-  steerResult: "accepted" | "unavailable" | Error = "accepted";
-  startPrompts: AgentPromptInput[] = [];
-
-  override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
-    this.startPrompts.push(prompt);
-    const turnId = `active-turn-${++this.startCount}`;
-    setTimeout(() => this.pushEvent({ type: "turn_started", provider: this.provider, turnId }), 0);
-    return { turnId };
-  }
-
-  override async interrupt(): Promise<void> {
-    this.interruptCount += 1;
-    this.pushEvent({
-      type: "turn_canceled",
-      provider: this.provider,
-      turnId: `active-turn-${this.startCount}`,
-    });
-  }
-
-  async steerActiveTurn(
-    prompt: AgentPromptInput,
-    options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
-  ): Promise<import("./agent-sdk-types.js").SteerResult> {
-    this.steerCount += 1;
-    if (options.expectedTurnId !== `active-turn-${this.startCount}`) {
-      return { status: "unavailable" };
-    }
-    if (this.steerResult instanceof Error) throw this.steerResult;
-    if (this.steerResult === "unavailable") return { status: "unavailable" };
-    this.pushEvent({
-      type: "timeline",
-      provider: this.provider,
-      item: {
-        type: "user_message",
-        text: typeof prompt === "string" ? prompt : "structured",
-        clientMessageId: options.clientMessageId,
-        messageId: `provider-${options.clientMessageId}`,
-      },
-    });
-    return { status: "accepted" };
   }
 }
 
@@ -1777,86 +1556,6 @@ class McpCapableTestAgentClient extends TestAgentClient {
   }
 }
 
-class ControlledInterruptSession extends TestAgentSession {
-  interruptCalled = false;
-
-  constructor(
-    config: AgentSessionConfig,
-    readonly turnId: string,
-    private readonly interruptBehavior: (session: ControlledInterruptSession) => Promise<void>,
-  ) {
-    super(config);
-  }
-
-  override async startTurn(): Promise<{ turnId: string }> {
-    setTimeout(() => {
-      this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.turnId });
-    }, 0);
-    return { turnId: this.turnId };
-  }
-
-  override async interrupt(): Promise<void> {
-    this.interruptCalled = true;
-    await this.interruptBehavior(this);
-  }
-}
-
-interface ControlledInterruptFixture {
-  agentId: string;
-  manager: AgentManager;
-  session: ControlledInterruptSession;
-  startForegroundRun(): Promise<void>;
-  cleanup(): Promise<void>;
-}
-
-async function createControlledInterruptFixture(options: {
-  name: string;
-  agentId: string;
-  turnId: string;
-  interrupt: (session: ControlledInterruptSession) => Promise<void>;
-}): Promise<ControlledInterruptFixture> {
-  const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${options.name}-`));
-  const session = new ControlledInterruptSession(
-    { provider: "codex", cwd: workdir },
-    options.turnId,
-    options.interrupt,
-  );
-  const client = new (class extends TestAgentClient {
-    override async createSession(): Promise<AgentSession> {
-      return session;
-    }
-  })();
-  const manager = new AgentManager({
-    clients: { codex: client },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
-    logger,
-    rescueTimeouts: { interruptSessionMs: 10 },
-    idFactory: () => options.agentId,
-  });
-  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    workspaceId: undefined,
-  });
-
-  return {
-    agentId: agent.id,
-    manager,
-    session,
-    async startForegroundRun() {
-      const run = manager.streamAgent(agent.id, "exercise cancellation");
-      void (async () => {
-        for await (const _event of run) {
-          // Keep the foreground stream subscribed until the controlled turn settles.
-        }
-      })();
-      await manager.waitForAgentRunStart(agent.id);
-    },
-    async cleanup() {
-      await manager.closeAgent(agent.id);
-      rmSync(workdir, { recursive: true, force: true });
-    },
-  };
-}
-
 class HeldRuntimeInfoSession extends TestAgentSession {
   private readonly runtimeInfoRequested = deferred<void>();
   private readonly runtimeInfoAllowed = deferred<void>();
@@ -2059,8 +1758,6 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
     },
   };
 }
-
-const logger = createTestLogger();
 
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
@@ -6827,6 +6524,35 @@ test("getAgent does not expose committed history internals once manager owns the
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
 });
 
+test("an exact wait ends when no run can still admit the request", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unadmitted-request-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new StreamingAssistantClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000121",
+  });
+  const idle = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const query = {
+    requester: { agentId: "waiting-requester" },
+    link: { objectiveId: "caller-job", requestId: "never-submitted", token: "cap-lost" },
+  };
+
+  for (const agentId of [idle.id, "00000000-0000-4000-8000-000000000999"]) {
+    await expect(
+      manager.waitForAttentionOutcome({
+        agentId,
+        query,
+        signal: AbortSignal.timeout(5_000),
+        waitForSubmission: true,
+      }),
+    ).resolves.toBeNull();
+  }
+});
+
 test("streams coalesced assistant chunks and retains the projected message", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provisional-timeline-"));
   const storagePath = join(workdir, "agents");
@@ -6875,7 +6601,18 @@ test("streams coalesced assistant chunks and retains the projected message", asy
     { agentId: snapshot.id, replayState: false },
   );
 
-  const stream = manager.streamAgent(snapshot.id, "hello");
+  const requester = { agentId: "coalesced-requester" };
+  const link = { objectiveId: "caller-job", requestId: "coalesced-request", token: "cap-A" };
+  const stream = manager.streamAgent(snapshot.id, "hello", {
+    attention: [
+      {
+        kind: "agent",
+        requestId: link.requestId,
+        requester,
+        attention: { requesterObjective: link },
+      },
+    ],
+  });
   while (true) {
     const next = await stream.next();
     if (next.done) {
@@ -6911,6 +6648,16 @@ test("streams coalesced assistant chunks and retains the projected message", asy
       text: "final reply",
     },
   ]);
+  const outcome = await manager.waitForAttentionOutcome({
+    agentId: snapshot.id,
+    query: { requester, link },
+    signal: new AbortController().signal,
+  });
+  expect(outcome).toMatchObject({
+    kind: "finished",
+    requestId: link.requestId,
+    lastMessage: "final reply",
+  });
   const fetched = await manager.fetchTimeline(snapshot.id, {
     direction: "tail",
     limit: 0,
@@ -9196,7 +8943,7 @@ test("onAgentAttention is not called for internal agents", async () => {
   expect(attentionCalls).toHaveLength(0);
 });
 
-test("onAgentAttention is not called for delegated child agents", async () => {
+test("agent-directed child completion stays quiet for the human", async () => {
   const childAgentId = "00000000-0000-4000-8000-000000000112";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -9224,7 +8971,11 @@ test("onAgentAttention is not called for delegated child agents", async () => {
     { labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" }, workspaceId: undefined },
   );
 
-  await manager.runAgent(agent.id, "hello");
+  await manager.runAgent(agent.id, "hello", {
+    attention: [
+      { kind: "agent", requestId: "delegated-request", requester: { agentId: "parent-agent" } },
+    ],
+  });
 
   expect(attentionCalls).toEqual([]);
 });
@@ -14478,8 +14229,11 @@ describe("agent options", () => {
       persistence: { provider: "codex", sessionId: "thread-1" },
     });
 
-    const payload = buildStoredAgentPayload(record, ["codex"], (provider, own) =>
-      manager.effectiveOptionsFor(provider, own),
+    const payload = buildStoredAgentPayload(
+      record,
+      ["codex"],
+      (provider, own) => manager.effectiveOptionsFor(provider, own),
+      { agentAwareAttention: true },
     );
 
     expect(payload.options).toEqual({ service_tier: "fast" });
@@ -14502,8 +14256,11 @@ describe("agent options", () => {
       persistence: { provider: "codex", sessionId: "thread-2" },
     });
 
-    const payload = buildStoredAgentPayload(record, ["codex"], (provider, own) =>
-      manager.effectiveOptionsFor(provider, own),
+    const payload = buildStoredAgentPayload(
+      record,
+      ["codex"],
+      (provider, own) => manager.effectiveOptionsFor(provider, own),
+      { agentAwareAttention: true },
     );
 
     expect(payload.options).toEqual({ service_tier: "default", fast_mode: "false" });

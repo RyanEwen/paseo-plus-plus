@@ -292,6 +292,7 @@ export class DaemonExecutions implements HubExecutionAgents {
               record,
               this.agentManager.getRegisteredProviderIds(),
               (provider, own) => this.agentManager.effectiveOptionsFor(provider, own),
+              { agentAwareAttention: this.agentManager.agentAwareAttentionEnabled },
             ),
             status: "closed",
           },

@@ -2,7 +2,7 @@ import type { TFunction } from "i18next";
 import type { ComposerTrackPillSegment } from "@/composer/tracks";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
-import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
+import { STATUS_BUCKET_ORDER, deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
 import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
@@ -52,11 +52,32 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
-    statusBucket: deriveSubagentStatusBucket(
-      status,
-      row.kind === "paseo" ? row.backgroundWork : undefined,
-    ),
+    statusBucket: subagentStatusBucket(row, status),
   };
+}
+
+/**
+ * A managed child reports its own human attention, blockers and review reason. Without one it
+ * falls back to its lifecycle, so a failed child stays visible after its error was read.
+ * Provider subagents report only their lifecycle.
+ */
+function subagentStatusBucket(row: SubagentRow, status: AgentLifecycleStatus): SidebarStateBucket {
+  const backgroundWork = row.kind === "paseo" ? row.backgroundWork : undefined;
+  const lifecycle = deriveSubagentStatusBucket(status, backgroundWork);
+  // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor
+  // includes audience metadata. Older hosts keep the track's lifecycle-only presentation.
+  if (row.kind !== "paseo" || row.humanAttentionRequired === undefined) {
+    return lifecycle;
+  }
+  const attention = deriveSidebarStateBucket({
+    status,
+    backgroundWork,
+    requiresAttention: row.humanAttentionRequired && row.requiresAttention,
+    attentionReason: row.attentionReason,
+    attentionMessage: row.attentionMessage,
+    pendingPermissionCount: row.pendingPermissionCount,
+  });
+  return attention === "done" ? lifecycle : attention;
 }
 
 type ActiveStatusBucket = Exclude<SidebarStateBucket, "done">;
@@ -86,9 +107,9 @@ export interface SubagentPillPresentation {
  * "1 failed" over a child that is still working says the fan-out has stopped. Every state present
  * gets its own mark and its own count, in the order the sidebar's status groups list them.
  *
- * It stays one line because subagent rows only ever reach three states — see
- * `buildSubagentRowPresentationData`, which reports no attention of its own — so the pill is two
- * segments at worst, and falls back to naming what it opens once nothing is happening.
+ * It falls back to naming what it opens once nothing is happening. A managed child on an
+ * audience-aware host can also report needs input and attention, so a fan-out can show a mark
+ * for each of those states.
  */
 export function buildSubagentPillPresentation(
   t: TFunction,

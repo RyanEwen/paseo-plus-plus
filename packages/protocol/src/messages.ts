@@ -1,3 +1,10 @@
+import {
+  DaemonNotificationPreferencesSchema,
+  AgentAttentionContextSchema,
+  AgentAttentionPeerSchema,
+  AgentAttentionRequestQuerySchema,
+  AgentMessageAttentionSchema,
+} from "./agent-attention.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -235,6 +242,7 @@ export const MutableDaemonConfigSchema = z
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
+    notifications: DaemonNotificationPreferencesSchema.optional(),
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
     // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
@@ -266,6 +274,7 @@ export const MutableDaemonConfigPatchSchema = z
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    notifications: DaemonNotificationPreferencesSchema.optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
@@ -933,6 +942,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
+  attentionObjectives: AgentAttentionContextSchema.optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
@@ -962,6 +974,8 @@ export const AgentListItemPayloadSchema = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   providerUnavailable: z.boolean().optional(),
 });
@@ -1509,6 +1523,7 @@ export const SendAgentMessageRequestSchema = z.object({
   /** Opaque sender identity for agent-originated prompts. */
   sourceAgentId: z.string().min(1).optional(),
   sourceAgentServerId: z.string().min(1).optional(),
+  agentAttention: AgentMessageAttentionSchema.optional(),
   sessionMode: z.string().optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
@@ -1522,6 +1537,7 @@ export const WaitForFinishRequestSchema = z.object({
   /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
   timeoutMs: z.number().int().positive().optional(),
+  attentionRequest: AgentAttentionRequestQuerySchema.optional(),
 });
 
 export const DaemonGetStatusRequestSchema = z.object({
@@ -1869,6 +1885,9 @@ export const CreateAgentRequestMessageSchema = z.object({
   // Optional caller context lets managed CLI invocations use the same daemon-owned
   // workspace and parentage policy as agent-scoped MCP creation.
   callerAgentId: z.string().optional(),
+  sourceAgentId: z.string().min(1).optional(),
+  sourceAgentServerId: z.string().min(1).optional(),
+  agentAttention: AgentMessageAttentionSchema.optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
   clientMessageId: z.string().optional(),
@@ -4477,6 +4496,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    humanAttentionRequired: z.boolean().optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
     // coerces a missing field to `null` so downstream code never has to
@@ -5473,6 +5493,18 @@ export const SendAgentMessageResponseMessageSchema = z.object({
   }),
 });
 
+export const AgentAttentionOutcomeSchema = z.object({
+  id: z.string(),
+  requestId: z.string(),
+  requester: AgentAttentionPeerSchema,
+  acceptedTurnId: z.string().nullable(),
+  kind: z.enum(["permission", "finished", "error", "canceled", "rejected"]),
+  lastMessage: z.string().nullable(),
+  error: z.string().nullable(),
+  permission: AgentPermissionRequestPayloadSchema.optional(),
+});
+export type AgentAttentionOutcome = z.infer<typeof AgentAttentionOutcomeSchema>;
+
 export const WaitForFinishResponseMessageSchema = z.object({
   type: z.literal("wait_for_finish_response"),
   payload: z.object({
@@ -5481,6 +5513,7 @@ export const WaitForFinishResponseMessageSchema = z.object({
     final: AgentSnapshotPayloadSchema.nullable(),
     error: z.string().nullable(),
     lastMessage: z.string().nullable(),
+    attentionOutcome: AgentAttentionOutcomeSchema.nullable().optional(),
   }),
 });
 

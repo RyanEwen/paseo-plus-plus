@@ -1,3 +1,4 @@
+import { toAgentPayload } from "../agent/agent-projections.js";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -754,6 +755,41 @@ describe("ScheduleService", () => {
       expect.stringContaining(`Schedule fired (id=${schedule.id}, run=`),
       undefined,
     ]);
+  });
+
+  test("an agent-target schedule run is a human objective whose result needs the human", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+      workspaceId: undefined,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const schedule = await service.create({
+      prompt: "Summarize overnight changes",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agent.id },
+    });
+
+    await service.runOnce(schedule.id);
+    await manager.flush();
+
+    // A standalone schedule has no requesting agent, so its finished result is for the human.
+    const current = manager.getAgent(agent.id);
+    if (!current) throw new Error("Expected the scheduled agent to stay loaded");
+    expect(toAgentPayload(current)).toMatchObject({
+      requiresAttention: true,
+      humanAttentionRequired: true,
+    });
   });
 
   test("titles scheduled new agents from the schedule prompt", async () => {

@@ -117,6 +117,8 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `internal`           | `boolean?`                               | Whether this is a system-internal agent                                                                                                                                                                                                                                                                                                                                             |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
 
+[Agent-aware attention](fork-features/agent-aware-attention.md) adds three optional fields. `attentionObjectives` is the attention ledger: objective audiences, delegated requests and their outcomes. `humanAttentionRequired` is the daemon's decision that the attention is for the human; absent means the audience is unknown and the older attention rule applies. `attentionMessage` is the reason an agent gave when it explicitly asked for the human.
+
 ### Nested: SerializableConfig
 
 | Field              | Type                       | Description                  |

@@ -184,6 +184,75 @@ describe("AgentStorage", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("snapshot operation null skips its write and commit callback", async () => {
+    const agent = createManagedAgent({ id: "snapshot-null" });
+    await storage.applySnapshot(agent);
+    const before = await storage.get(agent.id);
+    const persistedBefore = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(persistedBefore?.id).toBe(agent.id);
+    const resolveSnapshot = vi.fn(() => null);
+    const onCommitted = vi.fn();
+    await storage.applySnapshot(
+      { ...agent, cwd: "/tmp/skipped-snapshot" },
+      { operation: { resolveSnapshot, onCommitted } },
+    );
+    expect(resolveSnapshot).toHaveBeenCalledOnce();
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(await storage.get(agent.id)).toEqual(before);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toEqual(persistedBefore);
+    await storage.applySnapshot({ ...agent, currentModeId: "after-skip" });
+    expect((await storage.get(agent.id))?.lastModeId).toBe("after-skip");
+  });
+
+  test("snapshot operation deleting skips resolution and commit callback", async () => {
+    const agent = createManagedAgent({ id: "snapshot-deleting" });
+    await storage.applySnapshot(agent);
+    const before = await storage.get(agent.id);
+    const persistedBefore = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(persistedBefore?.id).toBe(agent.id);
+    const resolveSnapshot = vi.fn(() => ({ ...agent, cwd: "/tmp/deleted-snapshot" }));
+    const onCommitted = vi.fn();
+    storage.beginDelete(agent.id);
+    await storage.applySnapshot(agent, { operation: { resolveSnapshot, onCommitted } });
+    expect(resolveSnapshot).not.toHaveBeenCalled();
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(await storage.get(agent.id)).toEqual(before);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toEqual(persistedBefore);
+    await storage.remove(agent.id);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toBeNull();
+  });
+
+  test("snapshot operation wrong identity cannot write another agent", async () => {
+    const first = createManagedAgent({ id: "snapshot-first" });
+    const second = createManagedAgent({ id: "snapshot-second" });
+    await storage.applySnapshot(first);
+    await storage.applySnapshot(second);
+    const beforeFirst = await storage.get(first.id);
+    const beforeSecond = await storage.get(second.id);
+    const persistedBefore = new AgentStorage(storagePath, logger);
+    const persistedFirst = await persistedBefore.get(first.id);
+    const persistedSecond = await persistedBefore.get(second.id);
+    expect(persistedFirst?.id).toBe(first.id);
+    expect(persistedSecond?.id).toBe(second.id);
+    const onCommitted = vi.fn();
+    await expect(
+      storage.applySnapshot(first, {
+        operation: {
+          resolveSnapshot: () => ({ ...second, currentModeId: "wrong-writer" }),
+          onCommitted,
+        },
+      }),
+    ).rejects.toThrow("Snapshot resolver changed agent identity");
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(await storage.get(first.id)).toEqual(beforeFirst);
+    expect(await storage.get(second.id)).toEqual(beforeSecond);
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.get(first.id)).toEqual(persistedFirst);
+    expect(await reloaded.get(second.id)).toEqual(persistedSecond);
+    await storage.applySnapshot({ ...first, currentModeId: "after-rejection" });
+    expect((await storage.get(first.id))?.lastModeId).toBe("after-rejection");
+  });
+
   test("mutateRecord skips a null result and reports the committed record after a write", async () => {
     const record = retryIntent("queued-mutation");
     await storage.reserveHistoryIntent(record);
@@ -1314,7 +1383,7 @@ describe("configured Claude rewind commits", () => {
   beforeEach(async () => {
     directory = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-rewind-storage-"));
     writer = faultableWriter();
-    registry = new AgentStorage(directory, log, { writeJsonFile: writer.write });
+    registry = new AgentStorage(directory, log, { writeRecordFile: writer.write });
     await registry.applySnapshot(
       createManagedAgent({
         id: "guarded",

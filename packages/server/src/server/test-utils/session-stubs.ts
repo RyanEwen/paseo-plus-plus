@@ -348,3 +348,17 @@ export function createAgentMessageDeliveryStub(): SessionOptions["agentMessages"
     },
   });
 }
+
+/** The agent manager members the websocket server calls to wire agent-aware attention. */
+export function attentionAgentManagerStub() {
+  return {
+    setAttentionHost: () => {},
+    setAttentionPresentationEnabled: () => {},
+    agentAwareAttentionEnabled: true,
+  };
+}
+
+/** The daemon config read the websocket server makes for the attention preference. */
+export function attentionConfigStoreStub() {
+  return { get: () => ({ notifications: { agentAwareAttention: true } }) };
+}

@@ -1,5 +1,10 @@
 import { forkCapabilities } from "./fork-capabilities.js";
 import { registerAccentColorCapability } from "./accent-color-capability.js";
+import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
+import {
+  attachAttentionPresentationConfig,
+  resolveRemoteAttentionRequester,
+} from "./agent/attention/host-wiring.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -733,24 +738,31 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
-      dispatch: async (batch) => {
-        const { disposition } = await sendPreparedPromptToAgent({
+      dispatch: (batch) =>
+        dispatchWithAttentionRejection({
           agentManager,
-          agentStorage,
-          agentId: batch.recipientId,
-          prompt: batch.prompt,
-          activeTurnBehavior: batch.activeTurnBehavior,
-          sessionMode: batch.sessionMode,
-          clearPendingPermissions: batch.clearPendingPermissions,
-          unarchive: batch.unarchive,
-          runOptions: { clientMessageId: batch.messageIds[0] },
-          onDispatch: batch.onDispatch,
           logger: this.logger,
-        });
-        if (disposition === "turn_started")
-          await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
-        return disposition;
-      },
+          recipientId: batch.recipientId,
+          admissions: batch.attention,
+          dispatch: async () => {
+            const { disposition } = await sendPreparedPromptToAgent({
+              agentManager,
+              agentStorage,
+              agentId: batch.recipientId,
+              prompt: batch.prompt,
+              activeTurnBehavior: batch.activeTurnBehavior,
+              sessionMode: batch.sessionMode,
+              clearPendingPermissions: batch.clearPendingPermissions,
+              unarchive: batch.unarchive,
+              runOptions: { clientMessageId: batch.messageIds[0], attention: batch.attention },
+              onDispatch: batch.onDispatch,
+              logger: this.logger,
+            });
+            if (disposition === "turn_started")
+              await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
+            return disposition;
+          },
+        }),
       onError: (err, batch) =>
         this.logger.error(
           { err, agentId: batch.recipientId, messageIds: batch.messageIds },
@@ -786,6 +798,11 @@ export class VoiceAssistantWebSocketServer {
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
+    this.agentManager.setAttentionHost({
+      serverId,
+      resolveRemoteRequester: (peer) =>
+        resolveRemoteAttentionRequester(peer, () => this.toolHosts()),
+    });
     this.passwordHash = auth?.password;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -821,8 +838,15 @@ export class VoiceAssistantWebSocketServer {
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
     });
+    const unsubscribeAttention = attachAttentionPresentationConfig({
+      store: this.daemonConfigStore,
+      agentManager: this.agentManager,
+      sessions: () => [...this.sessions.values()].map((connection) => connection.session),
+      logger: this.logger,
+    });
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();
+      unsubscribeAttention();
       unsubscribeChange();
     };
 
@@ -2908,6 +2932,7 @@ export class VoiceAssistantWebSocketServer {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    message?: string;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
@@ -2943,6 +2968,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceId: agent.workspaceId,
       agentId: params.agentId,
       assistantMessage,
+      attentionMessage: params.message,
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 

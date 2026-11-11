@@ -2,6 +2,7 @@ import type { PromptDispatchDisposition } from "../agent-prompt.js";
 import { randomUUID } from "node:crypto";
 import type { AgentPromptInput, AgentPromptContentBlock } from "../agent-sdk-types.js";
 import { prepareAgentMessage, type AgentPromptSource } from "./envelope.js";
+import type { AttentionAdmission } from "../attention/objectives.js";
 
 interface Message {
   recipientId: string;
@@ -25,7 +26,9 @@ interface Admitted extends Message {
   resolve(disposition: PromptDispatchDisposition): void;
   reject(error: unknown): void;
 }
-interface DispatchRequest {
+/** One batch handed to the daemon's dispatch port. */
+export interface DispatchRequest {
+  attention: readonly AttentionAdmission[];
   recipientId: string;
   messageIds: readonly string[];
   prompt: AgentPromptInput;
@@ -75,6 +78,15 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           typeof entry === "string" ? [{ type: "text", text: entry }] : entry,
         );
     const request: DispatchRequest = {
+      attention: messages.map((message) => ({
+        kind: "agent",
+        requestId: message.receipt.messageId,
+        requester: {
+          agentId: message.source.agentId,
+          ...(message.source.serverId ? { serverId: message.source.serverId } : {}),
+        },
+        attention: message.source.attention,
+      })),
       recipientId,
       messageIds: messages.map((message) => message.receipt.messageId),
       prompt,

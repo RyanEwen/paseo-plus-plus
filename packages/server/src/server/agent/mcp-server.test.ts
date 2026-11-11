@@ -1,3 +1,4 @@
+import { AgentAttentionObjectives } from "./attention/objectives.js";
 import {
   createFinishSubscriptions,
   createFinishObservation,
@@ -24,6 +25,8 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import type { ToolHosts } from "./host-operations/index.js";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -248,7 +251,12 @@ interface TestDeps {
 
 function buildAgentManagerSpies() {
   return {
+    agentAwareAttentionEnabled: true,
     createAgent: vi.fn(),
+    // Legacy catalogue fixtures have no accepted objective until a case supplies one.
+    prepareAttentionMessage: vi
+      .fn<AgentManager["prepareAttentionMessage"]>()
+      .mockResolvedValue(undefined),
     waitForAgentEvent: vi.fn().mockResolvedValue({
       status: "idle",
       permission: null,
@@ -624,6 +632,8 @@ class FakeBrowserToolsBroker {
 }
 
 class BoundaryAgentManagerFake {
+  public readonly agentAwareAttentionEnabled = true;
+
   public getPluginTools(): [] {
     return [];
   }
@@ -992,6 +1002,16 @@ describe("Paseo tool timeline presentation", () => {
         .filter((name) => name !== "speak" && !cataloged.has(name));
       expect(tools.length).toBeGreaterThan(40);
       expect(uncataloged).toEqual([]);
+      for (const name of [
+        "get_attention_context",
+        "report_objective_status",
+        "request_human_attention",
+      ]) {
+        const tool = tools.find((entry) => entry.name === name);
+        if (!tool) throw new Error(`Expected ${name} to be advertised`);
+        expect(tool.inputSchema.properties).not.toHaveProperty("agentId");
+        expect(tool.inputSchema.properties).not.toHaveProperty("serverId");
+      }
     } finally {
       await client.close();
       await server.close();
@@ -3961,6 +3981,31 @@ describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
+  it("rejects an unknown recipient before recording any delegation", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(null);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "send_agent_prompt");
+    const parsed = await tool.inputSchema.safeParseAsync({
+      agentId: "mistyped-agent",
+      prompt: "Follow up",
+    });
+    if (!parsed.success) {
+      throw new Error("Expected caller send_agent_prompt input to parse");
+    }
+
+    await expect(tool.handler(parsed.data as Record<string, unknown>)).rejects.toThrow(
+      "Agent mistyped-agent not found",
+    );
+    expect(spies.agentManager.prepareAttentionMessage).not.toHaveBeenCalled();
+  });
+
   it("defaults agent-scoped prompts to background finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
@@ -4009,6 +4054,11 @@ describe("send_agent_prompt MCP tool", () => {
     const response = await tool.handler(parsed.data as Record<string, unknown>);
 
     expect(response.structuredContent).toMatchObject({ deliveryStatus: "queued" });
+    expect(spies.agentManager.prepareAttentionMessage).toHaveBeenCalledExactlyOnceWith({
+      agentId: "parent-agent",
+      recipient: { agentId: "child-agent" },
+      objectiveId: undefined,
+    });
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     await serverDeliveries
       .get(server)!
@@ -4050,12 +4100,21 @@ describe("send_agent_prompt MCP tool", () => {
 
     await tool.handler(parsed.data as Record<string, unknown>);
 
+    expect(spies.agentManager.prepareAttentionMessage).not.toHaveBeenCalled();
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
   it("allows agent-scoped callers to opt out of finish notifications", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
+    const attention = {
+      requesterObjective: {
+        objectiveId: "human-job",
+        token: "test-delegation-token",
+        requestId: "delegation-request",
+      },
+    };
+    spies.agentManager.prepareAttentionMessage.mockResolvedValue(attention);
     const parentAgent = {
       id: "parent-agent",
       config: {},
@@ -4090,9 +4149,30 @@ describe("send_agent_prompt MCP tool", () => {
     await invokeToolWithParsedInput(tool, {
       agentId: "child-agent",
       prompt: "Follow up",
+      objectiveId: "human-job",
       notifyOnFinish: false,
     });
 
+    expect(spies.agentManager.prepareAttentionMessage).toHaveBeenCalledExactlyOnceWith({
+      agentId: "parent-agent",
+      recipient: { agentId: "child-agent" },
+      objectiveId: "human-job",
+    });
+    expect(spies.agentManager.streamAgent).toHaveBeenCalledExactlyOnceWith(
+      "child-agent",
+      expect.any(String),
+      expect.objectContaining({
+        clientMessageId: "delegation-request",
+        attention: [
+          {
+            kind: "agent",
+            requestId: "delegation-request",
+            requester: { agentId: "parent-agent" },
+            attention,
+          },
+        ],
+      }),
+    );
     expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
@@ -6122,6 +6202,131 @@ describe("speak MCP tool", () => {
 describe("agent snapshot MCP serialization", () => {
   const logger = createTestLogger();
 
+  const legacyAttentionId = "legacy-attention-agent";
+
+  /** Serve one agent with no attention metadata as a live manager agent. */
+  function seedLiveLegacyAgent({ spies }: TestDeps) {
+    const agent = createManagedAgent({ id: legacyAttentionId });
+    spies.agentManager.getAgent.mockReturnValue(agent);
+    spies.agentManager.listAgents.mockReturnValue([agent]);
+  }
+
+  /** Serve the same agent only from storage. */
+  function seedStoredLegacyAgent({ spies }: TestDeps) {
+    const now = new Date().toISOString();
+    const record = createStoredRecord({
+      id: legacyAttentionId,
+      archivedAt: null,
+      updatedAt: now,
+      lastActivityAt: now,
+    });
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentStorage.get.mockResolvedValue(record);
+    spies.agentStorage.list.mockResolvedValue([record]);
+  }
+
+  it.each([
+    { source: "live", seed: seedLiveLegacyAgent },
+    { source: "stored", seed: seedStoredLegacyAgent },
+  ])(
+    "omits absent attention metadata from $source MCP snapshots and list items",
+    async ({ seed }) => {
+      const deps = createTestDeps();
+      const { agentManager, agentStorage } = deps;
+      const id = legacyAttentionId;
+      seed(deps);
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        logger,
+      });
+      const status = await registeredTool(server, "get_agent_status").handler({ agentId: id });
+      const snapshot = AgentSnapshotPayloadSchema.parse(status.structuredContent.snapshot);
+      const listed = await registeredTool(server, "list_agents").handler({});
+      const items = z.array(AgentListItemPayloadSchema).parse(listed.structuredContent.agents);
+      expect(items).toHaveLength(1);
+      expect(items[0].id).toBe(id);
+      for (const payload of [snapshot, items[0]]) {
+        expect(payload).not.toHaveProperty("humanAttentionRequired");
+        expect(payload).not.toHaveProperty("attentionMessage");
+        expect(payload).not.toHaveProperty("attentionObjectives");
+      }
+    },
+  );
+
+  it.each([
+    { humanAttentionRequired: false, attentionMessage: null },
+    { humanAttentionRequired: true, attentionMessage: null },
+    { humanAttentionRequired: true, attentionMessage: "Review this exact result" },
+  ])(
+    "retains known MCP attention metadata $humanAttentionRequired/$attentionMessage",
+    async (row) => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      const objectives = new AgentAttentionObjectives();
+      objectives.admit({
+        inputs: [{ kind: "human", requestId: "exact-human-objective" }],
+        acceptance: { turnId: "accepted-sdk-turn" },
+      });
+      const attention = row.humanAttentionRequired
+        ? {
+            requiresAttention: true as const,
+            attentionReason: "finished" as const,
+            attentionTimestamp: new Date("2026-10-27T00:00:00.000Z"),
+          }
+        : { requiresAttention: false as const };
+      const agent = createManagedAgent({
+        id: "known-live-attention",
+        attention,
+        attentionObjectives: objectives,
+        attentionMessage: row.attentionMessage,
+      });
+      const now = new Date().toISOString();
+      const stored = createStoredRecord({
+        id: "known-stored-attention",
+        archivedAt: null,
+        updatedAt: now,
+        lastActivityAt: now,
+        requiresAttention: row.humanAttentionRequired,
+        humanAttentionRequired: row.humanAttentionRequired,
+        attentionMessage: row.attentionMessage,
+        attentionObjectives: objectives.snapshot(),
+      });
+      spies.agentManager.getAgent.mockImplementation((id: string) =>
+        id === agent.id ? agent : null,
+      );
+      spies.agentManager.listAgents.mockReturnValue([agent]);
+      spies.agentStorage.get.mockImplementation(async (id: string) =>
+        id === stored.id ? stored : null,
+      );
+      spies.agentStorage.list.mockResolvedValue([stored]);
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        logger,
+      });
+      const liveStatus = await registeredTool(server, "get_agent_status").handler({
+        agentId: agent.id,
+      });
+      const liveSnapshot = AgentSnapshotPayloadSchema.parse(liveStatus.structuredContent.snapshot);
+      expect(liveSnapshot.attentionObjectives).toEqual(objectives.describe());
+      const storedStatus = await registeredTool(server, "get_agent_status").handler({
+        agentId: stored.id,
+      });
+      const storedSnapshot = AgentSnapshotPayloadSchema.parse(
+        storedStatus.structuredContent.snapshot,
+      );
+      const listed = await registeredTool(server, "list_agents").handler({});
+      const items = z.array(AgentListItemPayloadSchema).parse(listed.structuredContent.agents);
+      expect(items.map((item) => item.id).sort()).toEqual([agent.id, stored.id].sort());
+      for (const payload of [liveSnapshot, storedSnapshot, ...items]) {
+        expect(payload.humanAttentionRequired).toBe(row.humanAttentionRequired);
+        expect(payload.attentionMessage).toBe(row.attentionMessage);
+      }
+    },
+  );
+
   it("returns compact list items from list_agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.listAgents = vi.fn().mockReturnValue([
@@ -6944,6 +7149,124 @@ describe("local durable finish subscription MCP wiring", () => {
       expect(await subscriptions.list()).toEqual([]);
     } finally {
       await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+});
+
+describe("remote delegated creation", () => {
+  const logger = createTestLogger();
+
+  it("drops the finish watch when the host returns a different delegated identity", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-remote-identity-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new HeldTurnAgentClient("codex", true) },
+      registry: storage,
+      logger,
+    });
+    try {
+      const caller = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        undefined,
+        { workspaceId: "wks_caller" },
+      );
+      // An idempotent replay that matches an agent created before delegated identities existed.
+      const remoteClient = {
+        fetchWorkspaces: async () => ({
+          entries: [{ id: "wks_remote", workspaceDirectory: "/tmp/remote" }],
+        }),
+        createAgent: async () => ({
+          id: "previously-created-agent",
+          provider: "codex",
+          status: "idle",
+          cwd: "/tmp/remote",
+          workspaceId: "wks_remote",
+          currentModeId: null,
+          availableModes: [],
+        }),
+      } as unknown as DaemonClient;
+      const hosts: ToolHosts = {
+        directory: async () => {
+          throw new Error("This test addresses the host directly");
+        },
+        use: async (_serverId, action) => action(remoteClient),
+      };
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: caller.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        serverId: "self",
+        hosts: () => hosts,
+        logger,
+      });
+
+      const response = await invokeToolWithParsedInput(registeredTool(server, "create_agent"), {
+        serverId: "remote",
+        provider: "codex/gpt-5.4",
+        title: "Remote child",
+        initialPrompt: "Do the remote work",
+        workspaceId: "wks_remote",
+        idempotencyKey: "replayed-request",
+      });
+
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toMatchObject({
+        serverId: "remote",
+        error: "Host returned a different agent identity for the delegated request",
+      });
+      expect([...serverSubscriptionRecords.get(server)!.values()]).toEqual([]);
+    } finally {
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+});
+
+describe("attention tools bound to a caller", () => {
+  const logger = createTestLogger();
+
+  it("reads the caller's human objective and records its waiting disposition", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-attention-tools-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    try {
+      const caller = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        undefined,
+        { workspaceId: "wks_caller" },
+      );
+      // A human prompt opens the caller's accepted turn and its human objective.
+      const run = manager.runAgent(caller.id, "Delegate the report", {
+        clientMessageId: "human-report",
+      });
+      void run.catch(() => undefined);
+      await manager.waitForAgentRunStart(caller.id);
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: caller.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const context = await registeredTool(server, "get_attention_context").handler({});
+      expect(context.structuredContent).toEqual({
+        activeObjectiveIds: ["human-report"],
+        objectives: [{ id: "human-report", audience: { kind: "human" }, disposition: "normal" }],
+      });
+      await registeredTool(server, "report_objective_status").handler({
+        objectiveId: "human-report",
+        disposition: "waiting",
+      });
+      expect(manager.getAttentionObjectives(caller.id).objectives).toEqual([
+        { id: "human-report", audience: { kind: "human" }, disposition: "waiting" },
+      ]);
+
+      client.sessions[0]?.finishTurn();
+      await run.catch(() => undefined);
+    } finally {
       await removeAgentStateDir(manager, storage, workdir);
     }
   });

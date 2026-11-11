@@ -1,3 +1,4 @@
+import { isAgentAwareAttentionEnabled } from "@getpaseo/protocol/agent-attention";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent } from "./agent/agent-prompt.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
@@ -426,6 +427,7 @@ export interface PaseoDaemonConfig {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
   };
+  notifications?: MutableDaemonConfig["notifications"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
@@ -597,6 +599,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
     },
+    notifications: { agentAwareAttention: isAgentAwareAttentionEnabled(config) },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,

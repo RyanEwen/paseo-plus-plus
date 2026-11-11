@@ -13,6 +13,8 @@ export type AgentDirectoryEntry = Pick<
   | "workspaceId"
   | "provider"
   | "requiresAttention"
+  | "humanAttentionRequired"
+  | "attentionMessage"
   | "attentionReason"
   | "attentionTimestamp"
   | "archivedAt"

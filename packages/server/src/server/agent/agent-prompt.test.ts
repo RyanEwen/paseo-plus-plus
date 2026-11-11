@@ -14,7 +14,9 @@ import { join } from "node:path";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
+
 import { waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+
 import type {
   AgentClient,
   AgentRunResult,

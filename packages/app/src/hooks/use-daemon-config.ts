@@ -9,6 +9,8 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 interface UseDaemonConfigResult {
   config: MutableDaemonConfig | null;
   isLoading: boolean;
+  error: Error | null;
+  retry(): void;
   patchConfig: (patch: MutableDaemonConfigPatch) => Promise<MutableDaemonConfig | undefined>;
 }
 
@@ -44,9 +46,15 @@ export function useDaemonConfig(serverId: string | null): UseDaemonConfigResult 
     [client, queryClient, queryKey],
   );
 
+  const retry = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey });
+  }, [queryClient, queryKey]);
+
   return {
     config: configQuery.data ?? null,
     isLoading: configQuery.isLoading,
+    error: configQuery.error,
+    retry,
     patchConfig,
   };
 }

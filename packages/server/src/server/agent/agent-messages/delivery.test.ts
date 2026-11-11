@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { createAgentMessageDelivery, parseAgentMessages } from "./index.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
+import type { DispatchRequest } from "./delivery.js";
 
 function createClock() {
   let now = 0;
@@ -282,6 +283,60 @@ test("batches retain each sender's attachment context and image order", async ()
         .join("\n"),
     )?.map((message) => message.source?.agentId),
   ).toEqual(["one", "two"]);
+});
+
+test("batch provenance retains separate recipients and capability links without rendering tokens", async () => {
+  const requests: DispatchRequest[] = [];
+  const delivery = createAgentMessageDelivery({
+    dispatch: async (request) => {
+      requests.push(request);
+      return "steered";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "one",
+    prompt: "result one",
+    source: {
+      kind: "agent-message",
+      agentId: "worker-a",
+      serverId: "host-a",
+      attention: {
+        continuation: {
+          objectiveId: "human-job",
+          token: "private-reply-capability",
+          requestId: "original-request",
+        },
+      },
+    },
+  });
+  delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "two",
+    prompt: "result two",
+    source: { kind: "agent-notification", agentId: "worker-b", event: "finished" },
+  });
+  await delivery.close();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.attention).toEqual([
+    {
+      kind: "agent",
+      requestId: "one",
+      requester: { agentId: "worker-a", serverId: "host-a" },
+      attention: {
+        continuation: {
+          objectiveId: "human-job",
+          token: "private-reply-capability",
+          requestId: "original-request",
+        },
+      },
+    },
+    { kind: "agent", requestId: "two", requester: { agentId: "worker-b" } },
+  ]);
+  expect(JSON.stringify(requests[0]?.prompt)).not.toContain("private-reply-capability");
 });
 
 test("runtime safety sees queued messages until provider dispatch settles", async () => {

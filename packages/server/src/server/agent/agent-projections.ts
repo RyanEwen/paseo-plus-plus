@@ -2,6 +2,7 @@ import {
   registerProviderHistory,
   withoutHistoryStorageOptions,
 } from "./provider-history/binding.js";
+import { AttentionPresentation } from "./attention/presentation.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -112,6 +113,12 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
+    attentionObjectives: agent.attentionObjectives?.snapshot(),
+    humanAttentionRequired: agent.attentionObjectives?.requiresHumanAttention({
+      hasUnread: agent.attention.requiresAttention,
+      hasProblem: agent.lifecycle === "error" || agent.pendingPermissions.size > 0,
+    }),
+    attentionMessage: agent.attentionMessage,
     internal: options?.internal,
     ...(agent.background ? { background: true } : {}),
     owner: agent.owner,
@@ -120,6 +127,18 @@ export function toStoredAgentRecord(
       sessionId: persistence?.sessionId ?? null,
     }),
   } satisfies StoredAgentRecord;
+}
+
+/** Omit absent audience metadata before JSON sanitization, preserving known false and explicit null. */
+function projectAttentionPresentation(
+  input: Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage">,
+): Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage"> {
+  return {
+    ...(input.humanAttentionRequired !== undefined
+      ? { humanAttentionRequired: input.humanAttentionRequired }
+      : {}),
+    ...(input.attentionMessage !== undefined ? { attentionMessage: input.attentionMessage } : {}),
+  };
 }
 
 /** Account discovery depends on the harness session and its model, so the key follows both. */
@@ -139,6 +158,7 @@ export function toAgentPayload(
     configuredThinkingOptionId: thinkingOptionId,
   });
 
+  const attentionObjectives = agent.attentionObjectives?.describe();
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
@@ -174,6 +194,11 @@ export function toAgentPayload(
     metadata: agent.metadata,
     archivedAt: options?.archivedAt ?? null,
     ...visibilityFlags(agent),
+    ...(attentionObjectives !== undefined ? { attentionObjectives } : {}),
+    ...projectAttentionPresentation({
+      humanAttentionRequired: AttentionPresentation.forAgent(agent),
+      attentionMessage: agent.attentionMessage,
+    }),
   };
 
   const usageScopeKey = projectUsageScopeKey(agent);
@@ -235,6 +260,19 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+/** Apply the current host presentation choice to retained facts without mutating the stored record. */
+function storedHumanAttention(
+  record: StoredAgentRecord,
+  options: { agentAwareAttention: boolean },
+): boolean | undefined {
+  return AttentionPresentation.project({
+    enabled: options.agentAwareAttention,
+    humanAttentionRequired: record.humanAttentionRequired,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionMessage: record.attentionMessage,
+  });
+}
+
 /** The wire carries `internal` and `background` only when set. */
 function visibilityFlags(agent: {
   internal?: boolean;
@@ -272,6 +310,7 @@ export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
   effectiveOptionsFor: EffectiveOptionsResolver,
+  attention: { agentAwareAttention: boolean },
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -322,6 +361,10 @@ export function buildStoredAgentPayload(
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
+    ...projectAttentionPresentation({
+      humanAttentionRequired: storedHumanAttention(record, attention),
+      attentionMessage: record.attentionMessage,
+    }),
     archivedAt: record.archivedAt ?? null,
     ...visibilityFlags(record),
     labels: normalizeLabels(record.labels),
@@ -350,6 +393,10 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
+    ...projectAttentionPresentation({
+      humanAttentionRequired: agent.humanAttentionRequired,
+      attentionMessage: agent.attentionMessage,
+    }),
     labels: agent.labels,
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };

@@ -17,6 +17,10 @@ function paseo(id: string, status: PaseoSubagentRow["status"] = "idle"): PaseoSu
         ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
         : { phase: "idle", cancellationRequestId: null },
     requiresAttention: false,
+    humanAttentionRequired: undefined,
+    attentionMessage: undefined,
+    attentionReason: null,
+    pendingPermissionCount: 0,
     createdAt: new Date(),
   };
 }

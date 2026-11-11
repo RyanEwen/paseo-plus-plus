@@ -23,6 +23,7 @@ import {
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { StoredAttentionObjectivesSchema } from "./attention/objectives.js";
 import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
 import { foldFeatureValues } from "./option-controls.js";
 
@@ -94,6 +95,9 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  attentionObjectives: StoredAttentionObjectivesSchema.optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   background: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
@@ -179,11 +183,20 @@ function matchesCreatedIntentRetry(
   );
 }
 
+/** Optional ownership hooks run inside the existing writer, without changing ordinary snapshots. */
+export interface AgentSnapshotOperation {
+  /** Resolve the current view when its queue entry runs; null skips this write and its callback. */
+  resolveSnapshot(): ManagedAgent | null;
+  /** Runs after persistence and cache update, before the next write; must be synchronous and not throw. */
+  onCommitted?(): void;
+}
+
 export interface AgentSnapshotOptions {
   /** Manager registration only: atomically publish a created Claude chat before its lazy first native ID. */
   registerClaudeEmptyCreation?: boolean;
   title?: string | null;
   internal?: boolean;
+  operation?: AgentSnapshotOperation;
 }
 
 interface AgentStorageReadOptions {
@@ -214,18 +227,20 @@ export class AgentStorage {
   private loadPromise: Promise<void> | null = null;
   private logger: Logger;
 
-  private readonly writeJsonFile: (filePath: string, value: unknown) => Promise<void>;
+  private readonly writeRecordFile: (path: string, record: StoredAgentRecord) => Promise<void>;
 
+  /**
+   * `options.writeRecordFile` replaces the durable per-record write (an atomic JSON write by
+   * default); tests use it to hold or fail one record's commit.
+   */
   constructor(
     baseDir: string,
     logger: Logger,
-    /** Record file writer; tests inject failures here. Defaults to the atomic JSON writer. */
-    options: { writeJsonFile?: (filePath: string, value: unknown) => Promise<void> } = {},
+    options?: { writeRecordFile?: (path: string, record: StoredAgentRecord) => Promise<void> },
   ) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
-    this.writeJsonFile =
-      options.writeJsonFile ?? ((filePath, value) => writeJsonFileAtomic(filePath, value));
+    this.writeRecordFile = options?.writeRecordFile ?? writeJsonFileAtomic;
   }
 
   async initialize(): Promise<void> {
@@ -380,6 +395,18 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  /** Apply a domain mutation to the current record inside its existing write queue. */
+  async update(
+    agentId: string,
+    mutate: (record: StoredAgentRecord) => StoredAgentRecord,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return mutate(existing);
+    });
+  }
+
   async reserveHistoryIntent(
     record: StoredAgentRecord,
     retry?: HistoryIntentRetryAdmission,
@@ -500,7 +527,7 @@ export class AgentStorage {
     const previousPath = this.pathById.get(agentId);
     const nextPath = this.buildRecordPath(record);
 
-    await this.writeJsonFile(nextPath, record);
+    await this.writeRecordFile(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {
@@ -562,35 +589,44 @@ export class AgentStorage {
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    await this.queueRecordMutation(agent.id, (existing) => {
-      assertPendingClaudeQuerySnapshot(agent, existing);
-      const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
+    await this.queueRecordMutation(
+      agent.id,
+      (existing) => {
+        const current = options?.operation ? options.operation.resolveSnapshot() : agent;
+        if (!current) return null;
+        if (current.id !== agent.id) throw new Error("Snapshot resolver changed agent identity");
+        assertPendingClaudeQuerySnapshot(current, existing);
+        const record = toStoredAgentRecord(current, {
+          title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+          createdAt: existing?.createdAt,
+          internal: hasInternalOverride
+            ? options?.internal
+            : (current.internal ?? existing?.internal),
+        });
 
-      // Older adapters and snapshots do not own daemon history provenance.
-      record.providerHistory = snapshotHistoryBinding(
-        existing,
-        agent,
-        record,
-        options?.registerClaudeEmptyCreation,
-      );
-      // Only the explicit rewind queue operation can create/consume this recovery intent.
-      record.claudeFreshRewind = existing?.claudeFreshRewind;
+        // Older adapters and snapshots do not own daemon history provenance.
+        record.providerHistory = snapshotHistoryBinding(
+          existing,
+          current,
+          record,
+          options?.registerClaudeEmptyCreation,
+        );
+        // Only the explicit rewind queue operation can create/consume this recovery intent.
+        record.claudeFreshRewind = existing?.claudeFreshRewind;
 
-      // Preserve soft-delete/archive status across snapshot flushes. The
-      // projection runs inside the per-agent write queue so it cannot commit a
-      // stale pre-archive record after the archive mutation.
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
-      // Background is fixed at creation; a runtime opened without it cannot clear it.
-      if (existing?.background) record.background = true;
-      record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, agent);
-      return record;
-    });
+        // Preserve soft-delete/archive status across snapshot flushes. The
+        // projection runs inside the per-agent write queue so it cannot commit a
+        // stale pre-archive record after the archive mutation.
+        if (existing && existing.archivedAt !== undefined) {
+          record.archivedAt = existing.archivedAt;
+        }
+        // Background is fixed at creation; a runtime opened without it cannot clear it.
+        if (existing?.background) record.background = true;
+        record.resumeOnStartup = shouldResumeSnapshotOnStartup(existing, current);
+        return record;
+      },
+      options?.operation?.onCommitted,
+    );
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
