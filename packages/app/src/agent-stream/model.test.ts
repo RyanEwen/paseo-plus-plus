@@ -5,7 +5,6 @@ import {
   retainedCanonicalPositions,
 } from "@/timeline/canonical-prompt-context";
 import type { CanonicalPromptContext } from "@/timeline/canonical-prompt-model";
-import { nativeChronologicalRows } from "./native-actual-row-model";
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
@@ -215,7 +214,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
   });
 
-  it("derives the same timing for chronological native rendering", () => {
+  it("derives the same timing on native", () => {
     const tail = [userMessage("u1", 1), assistantMessage("a1", 4)];
 
     const model = buildAgentStreamRenderModel({
@@ -291,49 +290,6 @@ describe("buildAgentStreamRenderModel", () => {
       });
     },
   );
-});
-
-describe("actual native canonical row collection", () => {
-  it("keeps one canonical prompt key while live and committed lanes overlap and hand back", () => {
-    const user = userMessage("prompt", 1);
-    const response = assistantMessage("response", 2);
-    const live = nativeChronologicalRows({
-      historyVirtualized: [],
-      historyMounted: [],
-      liveHead: [user, response],
-    });
-    const overlap = nativeChronologicalRows({
-      historyVirtualized: [],
-      historyMounted: [user],
-      liveHead: [user, response],
-    });
-    const committed = nativeChronologicalRows({
-      historyVirtualized: [],
-      historyMounted: [user, response],
-      liveHead: [],
-    });
-    expect(live.map((row) => row.id)).toEqual(["prompt", "response"]);
-    expect(overlap).toEqual(live);
-    expect(committed).toEqual(live);
-    expect(overlap[0]).toBe(user);
-    expect(committed[0]).toBe(user);
-  });
-  it("prepends older history without changing the retained user row's key or revision", () => {
-    const old = userMessage("old", 1);
-    const retained = userMessage("retained", 3);
-    const before = nativeChronologicalRows({
-      historyVirtualized: [],
-      historyMounted: [retained],
-      liveHead: [],
-    });
-    const after = nativeChronologicalRows({
-      historyVirtualized: [old],
-      historyMounted: [retained],
-      liveHead: [],
-    });
-    expect(after.map((row) => row.id)).toEqual(["old", "retained"]);
-    expect(after[1]).toBe(before[0]);
-  });
 });
 
 describe("canonical predecessor presentation membership", () => {

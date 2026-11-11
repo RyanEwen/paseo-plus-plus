@@ -1,155 +1,149 @@
 export const HISTORY_START_THRESHOLD_PX = 96;
 
-export type HistoryStartPaginationState =
-  | { status: "dormant" }
-  | { status: "ready" }
-  | { status: "loading"; requestedProgressKey: string; requestObserved: boolean }
-  | { status: "settling"; loadedProgressKey: string }
-  | { status: "latched" };
-
 export interface HistoryStartPaginationInput {
   distanceFromHistoryStart: number;
-  /** Full transcript allocation, including retained natural row reservations. */
-  contentHeight: number;
-  viewportHeight: number;
+  isUnderfilled: boolean;
   hasOlderHistory: boolean;
   isLoadingOlderHistory: boolean;
   isReady: boolean;
   progressKey: string | null;
 }
 
-export interface HistoryStartPaginationTransition {
-  state: HistoryStartPaginationState;
-  shouldLoad: boolean;
-}
-
-export function createHistoryStartPaginationState(): HistoryStartPaginationState {
-  return { status: "dormant" };
+export interface HistoryStartPaginationState {
+  status: "dormant" | "ready" | "loading" | "settling" | "failed";
+  visible: boolean;
 }
 
 export function isHistoryStartLoadingOperation(state: HistoryStartPaginationState): boolean {
   return state.status === "loading" || state.status === "settling";
 }
 
-/**
- * Applies upward user input to the pager. A latch is released only by input at the start edge,
- * so momentum inside the threshold cannot chain pages after a short page lands. Pass
- * `releaseLatch: false` for input that arrives away from that edge.
- */
-export function rearmHistoryStartPagination(
-  state: HistoryStartPaginationState,
-  releaseLatch = true,
-): HistoryStartPaginationState {
-  if (state.status === "dormant" || (state.status === "latched" && releaseLatch)) {
-    return { status: "ready" };
-  }
-  return state;
-}
+/** Owns one pagination operation, including the initial viewport reveal. */
+export function createHistoryStartPagination(input: {
+  initiallyVisible: boolean;
+  read: () => HistoryStartPaginationInput | null;
+  load: () => Promise<boolean>;
+  changed: (state: HistoryStartPaginationState) => void;
+  scheduleSettle: () => void;
+}) {
+  let state: HistoryStartPaginationState = { status: "dormant", visible: input.initiallyVisible };
+  let requestedKey: string | null = null;
+  let completed = false;
+  let fill = false;
+  let generation = 0;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
 
-export function abandonHistoryStartPaginationRequest(
-  state: HistoryStartPaginationState,
-  requestedProgressKey: string,
-): HistoryStartPaginationState {
-  if (
-    state.status !== "loading" ||
-    state.requestObserved ||
-    state.requestedProgressKey !== requestedProgressKey
-  ) {
-    return state;
-  }
-  return { status: "latched" };
-}
-
-export function evaluateHistoryStartPagination(
-  state: HistoryStartPaginationState,
-  input: HistoryStartPaginationInput,
-): HistoryStartPaginationTransition {
-  if (state.status === "dormant") {
-    return { state, shouldLoad: false };
-  }
-  if (state.status === "loading") {
-    if (input.progressKey !== null && input.progressKey !== state.requestedProgressKey) {
-      return {
-        state: { status: "settling", loadedProgressKey: input.progressKey },
-        shouldLoad: false,
-      };
-    }
-    if (input.isLoadingOlderHistory && !state.requestObserved) {
-      return { state: { ...state, requestObserved: true }, shouldLoad: false };
-    }
-    if (!input.isLoadingOlderHistory && !input.hasOlderHistory) {
-      return { state: { status: "latched" }, shouldLoad: false };
-    }
-    if (
-      state.requestObserved &&
-      !input.isLoadingOlderHistory &&
-      input.progressKey === state.requestedProgressKey
-    ) {
-      return { state: { status: "latched" }, shouldLoad: false };
-    }
-    return { state, shouldLoad: false };
-  }
-
-  if (state.status === "settling") {
-    return { state, shouldLoad: false };
-  }
-
-  const isAtHistoryStart = input.distanceFromHistoryStart <= HISTORY_START_THRESHOLD_PX;
-  if (!isAtHistoryStart) {
-    return state.status === "ready"
-      ? { state, shouldLoad: false }
-      : { state: { status: "ready" }, shouldLoad: false };
-  }
-  if (
-    state.status === "latched" ||
-    !input.isReady ||
-    !input.hasOlderHistory ||
-    input.isLoadingOlderHistory ||
-    input.progressKey === null
-  ) {
-    return { state, shouldLoad: false };
-  }
-  return {
-    state: {
-      status: "loading",
-      requestedProgressKey: input.progressKey,
-      requestObserved: false,
-    },
-    shouldLoad: true,
+  const publish = (status: HistoryStartPaginationState["status"], visible = state.visible) => {
+    if (status === state.status && visible === state.visible) return;
+    state = { status, visible };
+    input.changed(state);
   };
-}
+  const clear = () => {
+    generation++;
+    clearTimeout(timeout);
+    timeout = undefined;
+  };
+  const finish = (status: HistoryStartPaginationState["status"]) => {
+    clear();
+    publish(status, true);
+  };
+  const fail = () => finish("failed");
 
-export function settleHistoryStartPagination(
-  state: HistoryStartPaginationState,
-  input: HistoryStartPaginationInput,
-): HistoryStartPaginationTransition {
-  if (state.status !== "settling") {
-    return { state, shouldLoad: false };
-  }
-  const isAtHistoryStart = input.distanceFromHistoryStart <= HISTORY_START_THRESHOLD_PX;
-  // Compacted pages can leave offset zero in an already full transcript. Only
-  // a viewport without a scrollable range may continue without new user input.
-  // DOM scrollHeight is at least clientHeight, so equality remains fill-eligible.
-  const needsViewportFill = input.viewportHeight > 0 && input.contentHeight <= input.viewportHeight;
-  if (
-    !isAtHistoryStart ||
-    !needsViewportFill ||
-    !input.isReady ||
-    !input.hasOlderHistory ||
-    input.isLoadingOlderHistory ||
-    input.progressKey === null
-  ) {
-    return {
-      state: isAtHistoryStart ? { status: "latched" } : { status: "ready" },
-      shouldLoad: false,
-    };
-  }
+  const watchProgress = (geometry: HistoryStartPaginationInput | null) => {
+    if (completed && !geometry?.isReady) {
+      clearTimeout(timeout);
+      timeout = undefined;
+    } else if (timeout === undefined) {
+      const request = generation;
+      timeout = setTimeout(() => {
+        timeout = undefined;
+        // A completed request waits for its retained view to become measurable again.
+        // Unfinished requests still time out even while the view is inactive.
+        if (request === generation && (!completed || input.read()?.isReady)) fail();
+      }, 15_000);
+    }
+  };
+
+  const update = () => {
+    const geometry = input.read();
+    if (isHistoryStartLoadingOperation(state)) watchProgress(geometry);
+    if (!geometry) return;
+    if (state.status === "loading") {
+      if (!completed) return;
+      if (geometry.progressKey !== null && geometry.progressKey !== requestedKey) {
+        publish("settling");
+        input.scheduleSettle();
+      } else if (!geometry.hasOlderHistory) {
+        finish("dormant");
+      }
+      return;
+    }
+    if (state.status === "settling" || state.status === "failed" || !geometry.isReady) return;
+    const atStart = geometry.distanceFromHistoryStart <= HISTORY_START_THRESHOLD_PX;
+    if (state.status === "dormant" && !geometry.isUnderfilled) {
+      publish("dormant", true);
+      return;
+    }
+    if (!atStart || (!geometry.isUnderfilled && state.status !== "ready")) return;
+    if (!geometry.hasOlderHistory) {
+      finish("dormant");
+      return;
+    }
+    if (geometry.isLoadingOlderHistory || geometry.progressKey === null) return;
+    fill = geometry.isUnderfilled;
+    requestedKey = geometry.progressKey;
+    completed = false;
+    publish("loading");
+    const request = ++generation;
+    watchProgress(geometry);
+    void input.load().then(
+      (applied) => {
+        if (request !== generation) return undefined;
+        if (!applied) {
+          fail();
+          return undefined;
+        }
+        completed = true;
+        update();
+        return undefined;
+      },
+      () => {
+        if (request === generation) fail();
+      },
+    );
+  };
   return {
-    state: {
-      status: "loading",
-      requestedProgressKey: input.progressKey,
-      requestObserved: false,
+    get state() {
+      return state;
     },
-    shouldLoad: true,
+    update,
+    settle() {
+      if (state.status !== "settling") return;
+      const geometry = input.read();
+      if (!geometry?.isReady) return;
+      clear();
+      if (fill && !geometry.isUnderfilled) {
+        publish("dormant", true);
+      } else if (geometry.distanceFromHistoryStart > HISTORY_START_THRESHOLD_PX) {
+        publish("ready", true);
+      } else if (!geometry.hasOlderHistory) {
+        publish("dormant", true);
+      } else {
+        publish("ready");
+        update();
+      }
+    },
+    rearm() {
+      if (state.status === "dormant" || state.status === "failed") publish("ready", true);
+      update();
+    },
+    reveal() {
+      publish(state.status, true);
+    },
+    reset(visible: boolean) {
+      clear();
+      publish("dormant", visible);
+    },
+    dispose: clear,
   };
 }

@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { BottomAnchorTransportBehavior } from "./strategy";
-import {
-  createPaintedLanding,
-  getPaintedNativeTailGeometry,
-  type PaintedNativeTailEvidence,
-  type PaintedNativeTailGeometry,
-} from "./painted-landing";
 
 export type BottomAnchorMode = "sticky-bottom" | "detached";
 
@@ -20,12 +14,6 @@ export interface BottomAnchorLocalRequest {
   agentId: string;
 }
 
-/** Terminal work belongs to the driver, agent, request and gesture that began it. */
-export interface BottomAnchorUserScroll {
-  finish(params: { isNearBottom: boolean }): void;
-  retire(): void;
-}
-
 export type BottomAnchorBlockedReason =
   | "waiting_for_history_readiness"
   | "waiting_for_measurable_viewport"
@@ -36,14 +24,14 @@ type BottomAnchorRequestReason =
   | BottomAnchorRouteRequest["reason"]
   | BottomAnchorLocalRequest["reason"];
 
-export interface BottomAnchorRequest {
+interface BottomAnchorRequest {
   id: number;
   agentId: string;
   reason: BottomAnchorRequestReason;
   requestKey: string;
 }
 
-export interface ControllerMeasurementState {
+interface ControllerMeasurementState {
   containerKey: string;
   viewportWidth: number;
   viewportHeight: number;
@@ -53,14 +41,13 @@ export interface ControllerMeasurementState {
   contentMeasuredForKey: string | null;
 }
 
-export interface AttemptContext {
+interface AttemptContext {
   requestId: number | null;
   retries: number;
   confirmationPasses?: number;
   startedContentHeight?: number;
   startedOffsetY?: number;
   startedViewportHeight?: number;
-  paintedGeometry?: PaintedNativeTailGeometry;
 }
 
 interface ScheduledFrameHandle {
@@ -78,40 +65,35 @@ interface BottomAnchorControllerDriver {
     pendingVerification: AttemptContext | null;
     blockedReason: BottomAnchorBlockedReason | null;
   };
-  resetForAgent: () => void;
   applyRouteRequest: (request: BottomAnchorRouteRequest | null) => void;
   requestLocalAnchor: (request: BottomAnchorLocalRequest) => void;
-  beginUserScroll: () => BottomAnchorUserScroll;
-  endUserScroll: (params: { isNearBottom: boolean }) => void;
+  beginUserScroll: () => void;
+  endUserScroll: (params: { isAtEnd: boolean }) => void;
   detachByUser: () => void;
+  holdForDisclosure: () => void;
+  releaseDisclosure: (params: { isAtEnd: boolean }) => void;
   handleViewportMetricsChange: (params: {
     previousViewportWidth: number;
     viewportWidth: number;
     previousViewportHeight: number;
     viewportHeight: number;
   }) => void;
-  handleContentSizeChange: (params: {
-    previousContentHeight: number;
-    contentHeight: number;
-  }) => void;
+  handleContentSizeChange: () => void;
   prepareForStickyViewportChange: () => void;
-  prepareForStickyContentChange: () => void;
   handleScrollNearBottomChange: (params: {
     nextIsNearBottom: boolean;
     scrollDelta: number;
   }) => void;
   notifyAuthoritativeHistoryMaybeChanged: () => void;
-  notifyPaintedNativeTailMaybeChanged: () => void;
   reevaluate: (animated?: boolean) => void;
 }
 
-export interface CreateBottomAnchorControllerDriverInput {
+interface CreateBottomAnchorControllerDriverInput {
   getAgentId: () => string;
   getIsAuthoritativeHistoryReady: () => boolean;
   getRenderStrategy: () => string;
   getTransportBehavior: () => BottomAnchorTransportBehavior;
   getMeasurementState: () => ControllerMeasurementState;
-  getPaintedNativeTailEvidence?: () => PaintedNativeTailEvidence | null;
   isNearBottom: () => boolean;
   scrollToBottom: (animated: boolean) => void;
   onModeChange: (mode: BottomAnchorMode) => void;
@@ -261,28 +243,6 @@ function createBottomAnchorControllerDriver(
   let stickyMeasurementRevision = 0;
   let lastVerifiedStickyMeasurementRevision = 0;
   let isUserScrollActive = false;
-  let activeUserScrollOwner: object | null = null;
-
-  // The painted-landing machine owns its own landing; it reaches the driver's
-  // request, verification and blocked-reason state only through this host.
-  const painted = createPaintedLanding({
-    input,
-    maxRetries: MAX_VERIFICATION_RETRIES,
-    getPendingRequest: () => pendingRequest,
-    clearPendingRequest: () => {
-      pendingRequest = null;
-    },
-    getPendingVerification: () => pendingVerification,
-    setPendingVerification: (attempt) => {
-      pendingVerification = attempt;
-    },
-    setBlockedReason: (reason) => setBlockedReason(reason),
-    deriveBlockedReason: (metrics) => deriveDriverBlockedReason(metrics),
-    markVerified: () => markStickyMeasurementVerified(),
-    cancelPendingAttempt: () => cancelPendingAttempt(),
-    scheduleVerification: (attempt) => scheduleVerification(attempt),
-    evaluate: (reason) => evaluate(false, reason),
-  });
 
   const setBlockedReason = (nextBlockedReason: BottomAnchorBlockedReason | null) => {
     if (blockedReason === nextBlockedReason) {
@@ -323,7 +283,6 @@ function createBottomAnchorControllerDriver(
   };
 
   const cancelPendingRequest = (_reason: string) => {
-    painted.reset();
     const currentRequest = pendingRequest;
     if (!currentRequest) {
       cancelPendingAttempt();
@@ -353,10 +312,6 @@ function createBottomAnchorControllerDriver(
       delayFrames: delayFramesOverride ?? input.getTransportBehavior().verificationDelayFrames,
       callback: () => {
         verificationHandle = null;
-        if (attemptContext.paintedGeometry) {
-          painted.verify(attemptContext, attemptContext.paintedGeometry);
-          return;
-        }
         const currentRequest = pendingRequest;
         const isRequestAttempt = currentRequest && attemptContext.requestId === currentRequest.id;
         const measurementState = input.getMeasurementState();
@@ -457,11 +412,10 @@ function createBottomAnchorControllerDriver(
       | "content_size_change"
       | "scroll_near_bottom_change"
       | "user_scroll_end"
+      | "disclosure_released"
       | "history_readiness_change"
       | "manual_reevaluate"
-      | "retry_scroll"
-      | "painted_content_change"
-      | "viewport_gesture_retired",
+      | "retry_scroll",
   ) => {
     if (isUserScrollActive) {
       return;
@@ -474,7 +428,6 @@ function createBottomAnchorControllerDriver(
       callback: () => {
         attemptHandle = null;
         const measurementState = input.getMeasurementState();
-        if (painted.tryLand(measurementState)) return;
         const nextBlockedReason = deriveDriverBlockedReason(measurementState);
         setBlockedReason(nextBlockedReason);
 
@@ -494,7 +447,6 @@ function createBottomAnchorControllerDriver(
 
   const createRequest = (request: BottomAnchorRouteRequest | BottomAnchorLocalRequest) => {
     cancelPendingAttempt();
-    painted.reset();
     const nextRequest: BottomAnchorRequest = {
       id: requestSequence + 1,
       agentId: request.agentId,
@@ -515,10 +467,8 @@ function createBottomAnchorControllerDriver(
     evaluate(request.reason === "jump-to-bottom", "request_created");
   };
 
-  const driver: BottomAnchorControllerDriver = {
+  return {
     destroy() {
-      activeUserScrollOwner = null;
-      isUserScrollActive = false;
       cancelPendingAttempt();
     },
     getSnapshot() {
@@ -528,19 +478,6 @@ function createBottomAnchorControllerDriver(
         pendingVerification,
         blockedReason,
       };
-    },
-    resetForAgent() {
-      lastRouteRequestKey = null;
-      pendingRequest = null;
-      painted.reset();
-      blockedReason = null;
-      cancelPendingAttempt();
-      stickyMeasurementRevision = 0;
-      lastVerifiedStickyMeasurementRevision = 0;
-      isUserScrollActive = false;
-      activeUserScrollOwner = null;
-      mode = "sticky-bottom";
-      input.onModeChange("sticky-bottom");
     },
     applyRouteRequest(request) {
       if (!request) {
@@ -555,47 +492,19 @@ function createBottomAnchorControllerDriver(
     requestLocalAnchor(request) {
       createRequest(request);
     },
-    beginUserScroll(): BottomAnchorUserScroll {
+    // The gesture owns the viewport, so following stops until it ends: content growing at the end
+    // must not move the rows under the finger. The gesture's end decides whether following resumes.
+    beginUserScroll() {
       isUserScrollActive = true;
       cancelPendingAttempt();
-      painted.reset();
-      const owner = {};
-      const startedRequestSequence = requestSequence;
-      const startedAgent = input.getAgentId();
-      activeUserScrollOwner = owner;
-
-      // Departure cannot certify bottom. Retire only this gesture and preserve
-      // any route/local request that replaced the one active when it began.
-      function retireViewportGesture() {
-        if (activeUserScrollOwner !== owner) return;
-        activeUserScrollOwner = null;
-        isUserScrollActive = false;
-        if (input.getAgentId() !== startedAgent) return;
-        if (requestSequence !== startedRequestSequence) {
-          if (pendingRequest) evaluate(false, "viewport_gesture_retired");
-          return;
-        }
-        if (mode === "sticky-bottom") {
-          cancelPendingRequest("viewport_gesture_departed");
-          setModeInternal("detached");
-        }
-      }
-      return {
-        finish(params) {
-          if (activeUserScrollOwner !== owner) return;
-          if (input.getAgentId() !== startedAgent || requestSequence !== startedRequestSequence) {
-            retireViewportGesture();
-            return;
-          }
-          driver.endUserScroll(params);
-        },
-        retire: retireViewportGesture,
-      };
+      setModeInternal("detached");
     },
+    // Following resumes only for a gesture that ends at the end. Resuming from short of it would
+    // scroll the rows the finger just let go of, so a release above the end, or with output that
+    // arrived below it during the gesture, stays detached with the pill.
     endUserScroll(params) {
-      activeUserScrollOwner = null;
       isUserScrollActive = false;
-      if (params.isNearBottom) {
+      if (params.isAtEnd) {
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
           pendingVerification = { requestId: null, retries: 0 };
@@ -617,9 +526,8 @@ function createBottomAnchorControllerDriver(
         markStickyMeasurementVerified();
         return;
       }
-      if (mode === "sticky-bottom") {
-        this.detachByUser();
-      }
+      cancelPendingRequest("user_scrolled_away");
+      setModeInternal("detached");
     },
     detachByUser() {
       if (mode === "detached") {
@@ -627,6 +535,21 @@ function createBottomAnchorControllerDriver(
       }
       cancelPendingRequest("user_scrolled_away");
       setModeInternal("detached");
+    },
+    // A disclosure keeps its trigger in place, so following output stops while it applies.
+    holdForDisclosure() {
+      cancelPendingRequest("disclosure");
+      setModeInternal("detached");
+    },
+    // Following resumes only if the applied change left the list at its end. Scroll events
+    // during the hold never re-stick: before the change lands the list is still at the end.
+    releaseDisclosure(params) {
+      if (isUserScrollActive || mode !== "detached" || !params.isAtEnd) {
+        return;
+      }
+      setModeInternal("sticky-bottom");
+      pendingVerification = { requestId: null, retries: 0 };
+      evaluate(false, "disclosure_released");
     },
     handleViewportMetricsChange(params) {
       if (
@@ -652,55 +575,19 @@ function createBottomAnchorControllerDriver(
         evaluate(false, "viewport_change");
       }
     },
-    handleContentSizeChange(params) {
-      if (params.previousContentHeight !== params.contentHeight) {
-        markStickyMeasurementChanged();
-      }
-      if (isUserScrollActive) {
+    // The list keeps its own end through content changes while following, so a change in content
+    // height never scrolls from here. It only gives a pending jump another look at the new geometry.
+    handleContentSizeChange() {
+      if (isUserScrollActive || !pendingRequest) {
         return;
       }
-      const shouldRestick = __private__.shouldRestickOnContentChange({
-        mode,
-        previousContentHeight: params.previousContentHeight,
-        contentHeight: params.contentHeight,
-      });
-      if (shouldRestick && !pendingRequest) {
-        pendingVerification = { requestId: null, retries: 0 };
-        if (attemptHandle) {
-          input.cancelFrame(attemptHandle);
-          attemptHandle = null;
-        }
-        runAttempt(false);
-        return;
-      }
-      if (shouldRestick || pendingRequest) {
-        evaluate(false, "content_size_change");
-      }
+      evaluate(false, "content_size_change");
     },
     prepareForStickyViewportChange() {
       if (mode !== "sticky-bottom") {
         return;
       }
       markStickyMeasurementChanged();
-    },
-    prepareForStickyContentChange() {
-      if (mode !== "sticky-bottom") {
-        return;
-      }
-      markStickyMeasurementChanged();
-      if (isUserScrollActive) {
-        return;
-      }
-      if (!pendingRequest) {
-        pendingVerification = { requestId: null, retries: 0 };
-        if (attemptHandle) {
-          input.cancelFrame(attemptHandle);
-          attemptHandle = null;
-        }
-        runAttempt(false);
-        return;
-      }
-      evaluate(false, "content_size_change");
     },
     handleScrollNearBottomChange(params) {
       const { nextIsNearBottom, scrollDelta } = params;
@@ -746,22 +633,10 @@ function createBottomAnchorControllerDriver(
       }
       evaluate(false, "history_readiness_change");
     },
-    notifyPaintedNativeTailMaybeChanged() {
-      if (
-        getPaintedNativeTailGeometry({
-          input,
-          request: pendingRequest,
-          metrics: input.getMeasurementState(),
-        })
-      ) {
-        evaluate(false, "painted_content_change");
-      }
-    },
     reevaluate(animated = false) {
       evaluate(animated, "manual_reevaluate");
     },
   };
-  return driver;
 }
 
 export const __private__ = {
@@ -791,13 +666,6 @@ export const __private__ = {
           input.previousViewportWidth !== input.viewportWidth))
     );
   },
-  shouldRestickOnContentChange(input: {
-    mode: BottomAnchorMode;
-    previousContentHeight: number;
-    contentHeight: number;
-  }): boolean {
-    return input.mode === "sticky-bottom" && input.contentHeight > input.previousContentHeight;
-  },
   shouldDetachFromScrollAway(input: {
     mode: BottomAnchorMode;
     nextIsNearBottom: boolean;
@@ -824,7 +692,6 @@ export function useBottomAnchorController(input: {
   renderStrategy: string;
   getTransportBehavior: () => BottomAnchorTransportBehavior;
   getMeasurementState: () => ControllerMeasurementState;
-  getPaintedNativeTailEvidence?: () => PaintedNativeTailEvidence | null;
   isNearBottom: () => boolean;
   scrollToBottom: (animated: boolean) => void;
 }) {
@@ -834,7 +701,6 @@ export function useBottomAnchorController(input: {
   const renderStrategyRef = useRef(input.renderStrategy);
   const getTransportBehaviorRef = useRef(input.getTransportBehavior);
   const getMeasurementStateRef = useRef(input.getMeasurementState);
-  const getPaintedNativeTailEvidenceRef = useRef(input.getPaintedNativeTailEvidence);
   const isNearBottomRef = useRef(input.isNearBottom);
   const scrollToBottomRef = useRef(input.scrollToBottom);
   const driverRef = useRef<BottomAnchorControllerDriver | null>(null);
@@ -844,7 +710,6 @@ export function useBottomAnchorController(input: {
   renderStrategyRef.current = input.renderStrategy;
   getTransportBehaviorRef.current = input.getTransportBehavior;
   getMeasurementStateRef.current = input.getMeasurementState;
-  getPaintedNativeTailEvidenceRef.current = input.getPaintedNativeTailEvidence;
   isNearBottomRef.current = input.isNearBottom;
   scrollToBottomRef.current = input.scrollToBottom;
 
@@ -855,7 +720,6 @@ export function useBottomAnchorController(input: {
       getRenderStrategy: () => renderStrategyRef.current,
       getTransportBehavior: () => getTransportBehaviorRef.current(),
       getMeasurementState: () => getMeasurementStateRef.current(),
-      getPaintedNativeTailEvidence: () => getPaintedNativeTailEvidenceRef.current?.() ?? null,
       isNearBottom: () => isNearBottomRef.current(),
       scrollToBottom: (animated) => scrollToBottomRef.current(animated),
       onModeChange: (nextMode) => setMode(nextMode),
@@ -864,10 +728,6 @@ export function useBottomAnchorController(input: {
       cancelFrame: (handle) => cancelScheduledAnimationFrame(handle),
     });
   }
-
-  useEffect(() => {
-    driverRef.current?.resetForAgent();
-  }, [input.agentId]);
 
   useEffect(() => {
     driverRef.current?.applyRouteRequest(input.routeRequest);
@@ -890,13 +750,19 @@ export function useBottomAnchorController(input: {
       driverRef.current?.requestLocalAnchor(request);
     },
     beginUserScroll() {
-      return driverRef.current?.beginUserScroll();
+      driverRef.current?.beginUserScroll();
     },
-    endUserScroll(params: { isNearBottom: boolean }) {
+    endUserScroll(params: { isAtEnd: boolean }) {
       driverRef.current?.endUserScroll(params);
     },
     detachByUser() {
       driverRef.current?.detachByUser();
+    },
+    holdForDisclosure() {
+      driverRef.current?.holdForDisclosure();
+    },
+    releaseDisclosure(params: { isAtEnd: boolean }) {
+      driverRef.current?.releaseDisclosure(params);
     },
     handleViewportLayout() {},
     handleViewportMetricsChange(params: {
@@ -907,20 +773,14 @@ export function useBottomAnchorController(input: {
     }) {
       driverRef.current?.handleViewportMetricsChange(params);
     },
-    handleContentSizeChange(params: { previousContentHeight: number; contentHeight: number }) {
-      driverRef.current?.handleContentSizeChange(params);
+    handleContentSizeChange() {
+      driverRef.current?.handleContentSizeChange();
     },
     prepareForStickyViewportChange() {
       driverRef.current?.prepareForStickyViewportChange();
     },
-    prepareForStickyContentChange() {
-      driverRef.current?.prepareForStickyContentChange();
-    },
     handleScrollNearBottomChange(params: { nextIsNearBottom: boolean; scrollDelta: number }) {
       driverRef.current?.handleScrollNearBottomChange(params);
-    },
-    notifyPaintedNativeTailMaybeChanged() {
-      driverRef.current?.notifyPaintedNativeTailMaybeChanged();
     },
     reevaluate(animated = false) {
       driverRef.current?.reevaluate(animated);

@@ -13,7 +13,7 @@ it.each(["normal", "virtual"] as const)(
   "preserves the ordinary reading anchor when older history fills a gap after an installed isolated prompt in %s history",
   async (historyPlacement) => {
     const prompt = "Already retained context.";
-    const requestOlder = vi.fn(() => true);
+    const requestOlder = vi.fn(async () => true);
     const fixture = actualPrompt(prompt, {
       historyPlacement,
       contextOnlyPrompt: true,
@@ -124,7 +124,7 @@ it.each(["normal", "virtual"] as const)(
 
 /** Older rows tall enough to scroll, so the viewport follows output from a real offset. */
 function pagedTranscript() {
-  const onNearHistoryStart = vi.fn(() => true);
+  const onNearHistoryStart = vi.fn(async () => true);
   const olderHistory = Array.from({ length: 30 }, (_, index) => ({
     kind: "user_message" as const,
     id: `older-${index}`,

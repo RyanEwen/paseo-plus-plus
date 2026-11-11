@@ -1,6 +1,3 @@
-import { DockReservationContext } from "./dock-reservation";
-import { usePublishDockReservation } from "./use-dock-reservation";
-import { KeyboardDockDisplacementContext } from "./dock-displacement.ios";
 import { useMemo, useEffect, useRef, type ReactNode } from "react";
 import { Animated, useAnimatedValue, type View, type ViewProps } from "react-native";
 import { useKeyboardAnimation } from "react-native-keyboard-controller";
@@ -13,31 +10,40 @@ interface KeyboardTranslateViewProps extends ViewProps {
   enabled?: boolean;
   /** Space below the view's resting position that the keyboard may fill before the view moves. */
   bottomClearance?: number;
+  /**
+   * Distance the view rises beyond the keyboard's overlap of the safe area, so content
+   * resting on the safe-area boundary keeps this gap above the open keyboard.
+   */
+  keyboardGap?: number;
 }
 
 export function KeyboardTranslateView({
   children,
   enabled = true,
   bottomClearance = 0,
+  keyboardGap = 0,
   style,
   ...props
 }: KeyboardTranslateViewProps) {
-  const reservation = usePublishDockReservation(enabled, bottomClearance);
   const insets = useSafeAreaInsets();
   const { height, progress } = useKeyboardAnimation();
-  const translateY = useMemo(
-    () =>
-      Animated.add(
-        Animated.add(height, Animated.multiply(progress, insets.bottom)),
-        bottomClearance,
-      ).interpolate({
-        inputRange: [-1, 0],
-        outputRange: [-1, 0],
-        extrapolateLeft: "extend",
-        extrapolateRight: "clamp",
-      }),
-    [bottomClearance, height, insets.bottom, progress],
-  );
+  // Mirrors resolveKeyboardLift on the native driver: `overlap` is the negated shift.
+  const translateY = useMemo(() => {
+    const overlap = Animated.add(height, Animated.multiply(progress, insets.bottom));
+    const lift = Animated.add(overlap, bottomClearance).interpolate({
+      inputRange: [-1, 0],
+      outputRange: [-1, 0],
+      extrapolateLeft: "extend",
+      extrapolateRight: "clamp",
+    });
+    if (!(keyboardGap > 0)) return lift;
+    const gap = overlap.interpolate({
+      inputRange: [-keyboardGap, 0],
+      outputRange: [-keyboardGap, 0],
+      extrapolate: "clamp",
+    });
+    return Animated.add(lift, gap);
+  }, [bottomClearance, height, insets.bottom, keyboardGap, progress]);
   // Fullscreen resizes this view while disabling translation. iOS Fabric can
   // reapply its previous transform during that layout commit. Keep the graph
   // attached and apply the mode on the native animation frame; a static zero or
@@ -55,32 +61,22 @@ export function KeyboardTranslateView({
     animation.start();
     return () => animation.stop();
   }, [enabled, enabledValue, translateY]);
-  // Measurement and sticky compensation must read the same gated native transform.
-  const effectiveTranslateY = useMemo(
-    () => Animated.multiply(translateY, enabledValue),
-    [enabledValue, translateY],
-  );
-  const displacement = useMemo(
-    () => Animated.multiply(effectiveTranslateY, -1),
-    [effectiveTranslateY],
-  );
   const keyboardStyle = useMemo(
-    () => ({ transform: [{ translateY: effectiveTranslateY }] }),
-    [effectiveTranslateY],
+    () => ({ transform: [{ translateY: Animated.multiply(translateY, enabledValue) }] }),
+    [enabledValue, translateY],
   );
 
   const frameRef = useRef<View>(null);
-  const translation = useMemo(() => ({ enabled, bottomClearance }), [bottomClearance, enabled]);
+  const translation = useMemo(
+    () => ({ enabled, bottomClearance, keyboardGap }),
+    [bottomClearance, enabled, keyboardGap],
+  );
   const scope = useKeyboardTranslationScope(frameRef, translation);
 
   return (
     <Animated.View ref={frameRef} style={[style, keyboardStyle]} {...props}>
       <KeyboardTranslationContext.Provider value={scope}>
-        <KeyboardDockDisplacementContext.Provider value={displacement}>
-          <DockReservationContext.Provider value={reservation}>
-            {children}
-          </DockReservationContext.Provider>
-        </KeyboardDockDisplacementContext.Provider>
+        {children}
       </KeyboardTranslationContext.Provider>
     </Animated.View>
   );

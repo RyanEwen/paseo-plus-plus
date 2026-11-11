@@ -12,17 +12,16 @@ import {
   IDLE_SCROLL_KEYBOARD_DISMISS_GESTURE,
   recordScroll,
   releaseDrag,
-  type ScrollListOrder,
 } from "./model";
 
 type ScrollEvent = NativeSyntheticEvent<NativeScrollEvent>;
 
 /**
  * Owns the chat history's flick-to-dismiss behavior. The native stream only
- * forwards the FlatList scroll lifecycle; removing this hook and those three
+ * forwards the LegendList scroll lifecycle; removing this hook and those three
  * calls removes the feature completely.
  */
-export function useScrollKeyboardDismiss(order: ScrollListOrder = "inverted") {
+export function useScrollKeyboardDismiss() {
   const { shift } = useKeyboardShift();
   const gestureRef = useRef(IDLE_SCROLL_KEYBOARD_DISMISS_GESTURE);
 
@@ -35,7 +34,7 @@ export function useScrollKeyboardDismiss(order: ScrollListOrder = "inverted") {
   });
 
   const onScrollEndDrag = useStableEvent((event: ScrollEvent) => {
-    const release = releaseDrag(gestureRef.current, event, order);
+    const release = releaseDrag(gestureRef.current, event);
     gestureRef.current = release.gesture;
 
     // `shift` is the app's UI-thread-derived keyboard inset. Besides avoiding a

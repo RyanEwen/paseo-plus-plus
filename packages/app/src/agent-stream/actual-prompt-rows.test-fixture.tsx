@@ -83,7 +83,7 @@ const renderers: StreamSegmentRenderers = {
   renderLiveAuxiliary: () => null,
 };
 const nearBottom = vi.fn();
-const loadOlder = vi.fn(() => false);
+const loadOlder = vi.fn(async () => false);
 const EMPTY_OLDER_HISTORY: readonly StreamItem[] = [];
 const EMPTY_LOCAL_HISTORY: StreamItem[] = [];
 const EMPTY_CONTEXTS: readonly CanonicalPromptContext[] = [];
@@ -176,11 +176,12 @@ function useLocalHistoryFixture(localHistory: LocalHistoryFixture | undefined) {
       ]),
     [contexts, items, model.retainedOnlyIds],
   );
-  const revealLocalHistory = useCallback(() => {
+  const revealLocalHistory = useCallback(async () => {
     if (!localHistory?.allowReveal()) return false;
     localHistory.onReveal();
-    // Call directly: the real hook publishes its local reveal before its first await.
-    return localLoadOlder();
+    // An async body runs synchronously until its first await, so the real hook still
+    // publishes its local reveal before this returns.
+    return await localLoadOlder();
   }, [localHistory, localLoadOlder]);
   if (!localHistory) return {};
   return {

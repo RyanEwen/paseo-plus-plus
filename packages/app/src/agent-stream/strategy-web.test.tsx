@@ -185,7 +185,7 @@ describe("createWebStreamStrategy", () => {
         routeBottomAnchorRequest: null,
         isAuthoritativeHistoryReady: true,
         onNearBottomChange: () => {},
-        onNearHistoryStart: () => true,
+        onNearHistoryStart: async () => true,
         isLoadingOlderHistory: false,
         hasOlderHistory: false,
         olderHistoryProgressKey: null,
@@ -307,7 +307,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: () => {},
-      onNearHistoryStart: () => true,
+      onNearHistoryStart: async () => true,
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -403,7 +403,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: () => {},
-      onNearHistoryStart: () => true,
+      onNearHistoryStart: async () => true,
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
       olderHistoryProgressKey: null,
@@ -1471,50 +1471,6 @@ describe("createWebStreamStrategy", () => {
     expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
   });
 
-  it("arms the pager from upward input while a held reader is not following output", async () => {
-    const viewport = await mountPagedTail();
-    act(() => {
-      viewport.handle.current?.holdReadingPosition();
-    });
-
-    await wheelUpTo(viewport, 518, 16);
-    await wheelUpTo(viewport, 0, 16);
-
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-  });
-
-  it("arms the pager from a native scrollbar drag while a held reader is not following output", async () => {
-    const viewport = await mountPagedTail();
-    Object.defineProperty(viewport.scrollContainer, "offsetWidth", {
-      configurable: true,
-      value: 500,
-    });
-    Object.defineProperty(viewport.scrollContainer, "clientWidth", {
-      configurable: true,
-      value: 488,
-    });
-    act(() => {
-      viewport.handle.current?.holdReadingPosition();
-    });
-
-    act(() => {
-      const press = new MouseEvent("pointerdown", { button: 0, clientX: 496 });
-      Object.defineProperties(press, {
-        pointerType: { value: "mouse" },
-        isPrimary: { value: true },
-        pointerId: { value: 1 },
-      });
-      viewport.scrollContainer.dispatchEvent(press);
-    });
-    viewport.scrollContainer.scrollTop = 0;
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
-    });
-    await act(async () => Promise.resolve());
-
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-  });
-
   it.each([
     ["ArrowUp", {}],
     ["PageUp", {}],
@@ -1740,31 +1696,6 @@ describe("createWebStreamStrategy", () => {
     expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
   });
 
-  it("neither detaches nor arms when only geometry moves the viewport up", async () => {
-    const viewport = await mountPagedTail();
-    viewport.scrollContainer.scrollTop = 0;
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
-    });
-    await act(async () => Promise.resolve());
-    expect(viewport.scrollContainer.style.overflowAnchor).toBe("auto");
-    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
-
-    act(() => {
-      viewport.handle.current?.holdReadingPosition();
-    });
-    viewport.scrollContainer.scrollTop = 40;
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
-    });
-    viewport.scrollContainer.scrollTop = 0;
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
-    });
-    await act(async () => Promise.resolve());
-    expect(viewport.onNearHistoryStart).not.toHaveBeenCalled();
-  });
-
   it("issues one request across repeated input while a page is outstanding", async () => {
     const viewport = await mountPagedTail();
     await wheelUpTo(viewport, 518, 16);
@@ -1788,54 +1719,6 @@ describe("createWebStreamStrategy", () => {
     viewport.rerender({ isLoadingOlderHistory: false, olderHistoryProgressKey: "epoch-1:40" });
     await act(async () => Promise.resolve());
     expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not release a latched pager from upward input away from the start edge", async () => {
-    const viewport = await mountPagedTail();
-    await wheelUpTo(viewport, 518, 16);
-    await wheelUpTo(viewport, 0, 16);
-    viewport.rerender({ isLoadingOlderHistory: true });
-    viewport.rerender({ isLoadingOlderHistory: false });
-    await act(async () => Promise.resolve());
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-
-    // A short page can leave the reader inside the threshold, as its wheel momentum continues.
-    viewport.scrollContainer.scrollTop = 60;
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -10 }));
-    });
-    viewport.scrollContainer.scrollTop = 50;
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new Event("scroll"));
-    });
-    await act(async () => Promise.resolve());
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-  });
-
-  it("latches a request that completes without advancing history until new upward input", async () => {
-    const viewport = await mountPagedTail();
-    await wheelUpTo(viewport, 518, 16);
-    await wheelUpTo(viewport, 0, 16);
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-
-    viewport.rerender({ isLoadingOlderHistory: true });
-    expect(
-      viewport.scrollContainer.querySelector('[data-testid="load-older-history-spinner"]'),
-    ).not.toBeNull();
-
-    // The response settled with the same cursor: the spinner ends and nothing retries by itself.
-    viewport.rerender({ isLoadingOlderHistory: false });
-    await act(async () => Promise.resolve());
-    expect(
-      viewport.scrollContainer.querySelector('[data-testid="load-older-history-spinner"]'),
-    ).toBeNull();
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      viewport.scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -1000 }));
-    });
-    await act(async () => Promise.resolve());
-    expect(viewport.onNearHistoryStart).toHaveBeenCalledTimes(2);
   });
 
   it("reattaches follow-output when a small scroll range returns to bottom", async () => {

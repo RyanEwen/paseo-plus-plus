@@ -29,6 +29,7 @@ import {
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
   observeProviderSubagentTimeline,
+  loadOlderProviderSubagentTimeline,
   useProviderSubagentStore,
   type ProviderSubagentTimelineState,
 } from "@/subagents/provider-store";
@@ -36,7 +37,7 @@ import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 import type { StreamItem } from "@/types/stream";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveSubagentStatusBucket } from "@/subagents";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -112,10 +113,7 @@ function useProviderSubagentDescriptor(
     titleState: descriptor ? "ready" : "loading",
     icon: useProviderIcon(provider, context.serverId),
     statusBucket: descriptor
-      ? deriveSidebarStateBucket({
-          status: providerSubagentLifecycleStatus(descriptor.status),
-          requiresAttention: descriptor.status === "failed",
-        })
+      ? deriveSubagentStatusBucket(providerSubagentLifecycleStatus(descriptor.status))
       : null,
   };
 }
@@ -203,22 +201,16 @@ function ProviderSubagentPanel() {
       if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
         return false;
       }
-      const firstSeq = timeline.cursor?.startSeq ?? null;
-      if (firstSeq === null) return false;
       setIsLoadingOlder(true);
       try {
-        const payload = await client.fetchProviderSubagentTimeline(
-          target.parentAgentId,
-          target.subagentId,
-          {
-            direction: "before",
-            cursor: { epoch: timeline.epoch, seq: firstSeq },
-            limit: TIMELINE_FETCH_PAGE_SIZE,
-          },
-        );
-        if (acceptance?.signal.aborted) return false;
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return true;
+        return await loadOlderProviderSubagentTimeline({
+          client,
+          serverId,
+          parentAgentId: target.parentAgentId,
+          subagentId: target.subagentId,
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          signal: acceptance?.signal,
+        });
       } catch {
         return false;
       } finally {
@@ -317,7 +309,6 @@ function ProviderSubagentPanel() {
       {subtitle ? <PaneSubtitle text={subtitle} testID="provider-subagent-pane-subtitle" /> : null}
       <View style={styles.stream}>
         <AgentStreamView
-          nativeViewportPlacement="standalone"
           agentId={streamId}
           serverId={serverId}
           context={streamContext}

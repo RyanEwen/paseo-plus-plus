@@ -2,8 +2,7 @@
  * Pure state machine for the chat history's flick-to-dismiss gesture.
  *
  * Native keyboardDismissMode cannot express this interaction: "on-drag"
- * dismisses on the first pixel, while "interactive" behaves incorrectly on an
- * inverted list. We therefore classify the list's existing scroll gesture at
+ * dismisses on the first pixel, while "interactive" is iOS-only. We therefore classify the list's existing scroll gesture at
  * release instead of introducing a competing pan recognizer.
  */
 
@@ -90,13 +89,9 @@ export function recordScroll(
   };
 }
 
-/** Whether the history list renders newest-first (inverted) or oldest-first (chronological). */
-export type ScrollListOrder = "inverted" | "chronological";
-
 export function releaseDrag(
   gesture: ScrollKeyboardDismissGesture,
   event: ScrollKeyboardDismissEvent,
-  order: ScrollListOrder = "inverted",
 ): { gesture: ScrollKeyboardDismissGesture; shouldDismiss: boolean } {
   if (gesture.phase === "idle") {
     return { gesture, shouldDismiss: false };
@@ -118,13 +113,12 @@ export function releaseDrag(
     spanStartY = samples.previousSampleY;
   }
 
+  // The list runs oldest to newest, so moving toward older messages lowers the offset.
   const spanDurationMs = releaseTs - spanStartTs;
-  // Positive history velocity always means older messages, regardless of list order.
-  const historyDelta = (releaseY - spanStartY) * (order === "inverted" ? 1 : -1);
-  const releaseVelocity = spanDurationMs > 0 ? historyDelta / spanDurationMs : 0;
+  const towardOlderVelocity = spanDurationMs > 0 ? (spanStartY - releaseY) / spanDurationMs : 0;
 
   return {
     gesture: IDLE_SCROLL_KEYBOARD_DISMISS_GESTURE,
-    shouldDismiss: releaseVelocity > DISMISS_VELOCITY_POINTS_PER_MS,
+    shouldDismiss: towardOlderVelocity > DISMISS_VELOCITY_POINTS_PER_MS,
   };
 }
