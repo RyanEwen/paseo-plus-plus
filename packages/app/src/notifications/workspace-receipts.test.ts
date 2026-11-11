@@ -375,6 +375,31 @@ describe("Cross-device workspace notification receipts", () => {
     lastWorkspaceReadId?: string,
   ) => ({ latestSequence, acknowledgedThrough, dismissedSequences: [], lastWorkspaceReadId });
 
+  it("marks only an explicit read, not a foreground opening, as reading the workspace's agents", async () => {
+    const f = fixture();
+    await f.sync.start();
+    f.sync.accept([
+      { id: "opened", notificationReceipts: state(2, 0, "read") },
+      { id: "read", notificationReceipts: state(2, 0, "read") },
+    ]);
+    const release = f.sync.open("opened");
+    await f.sync.markRead("read");
+    const stored = JSON.parse(f.storage.get("@paseo:notification-receipts:host")!);
+    expect(
+      stored.outbox.map((entry: { notification: NotificationAcknowledgement }) => [
+        entry.notification.kind === "workspace" ? entry.notification.marksAgentsRead : null,
+      ]),
+    ).toEqual([[false], [undefined]]);
+
+    f.sync.setConnected(true);
+    await f.sync.flush();
+    const sent = new Map(f.requests.map((request) => [request.workspaceId, request.notification]));
+    expect(sent.get("opened")).toMatchObject({ kind: "workspace", marksAgentsRead: false });
+    expect(sent.get("read")).not.toHaveProperty("marksAgentsRead");
+    release();
+    f.sync.dispose();
+  });
+
   it("drops permanently rejected acknowledgements without stalling other workspaces", async () => {
     const device = memoryDevice();
     device.pending.push({

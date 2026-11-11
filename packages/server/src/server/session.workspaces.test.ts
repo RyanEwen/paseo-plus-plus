@@ -10563,6 +10563,86 @@ test.each(["legacy", "receipt"] as const)(
   },
 );
 
+test("opening a workspace acknowledges its deliveries without marking its agents read", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "receipt-open-delivery-only-"));
+  try {
+    const timestamp = "2026-11-11T10:00:00.000Z";
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "opened-workspace",
+      projectId: "project",
+      cwd: directory,
+      kind: "directory",
+      displayName: "Opened",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const registry = new FileBackedWorkspaceRegistry(
+      path.join(directory, "workspaces.json"),
+      createTestLogger(),
+    );
+    await registry.upsert(workspace);
+    const storage = new AgentStorage(path.join(directory, "agents"), createTestLogger());
+    const unread = (id: string): StoredAgentRecord => ({
+      ...makeStoredAgent({
+        id,
+        workspaceId: workspace.workspaceId,
+        cwd: directory,
+        updatedAt: timestamp,
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
+      attentionTimestamp: timestamp,
+    });
+    await storage.upsert(unread("selected"));
+    await storage.upsert(unread("other"));
+    const receipts = new WorkspaceNotificationReceipts(registry, async () => {});
+    await receipts.issue(workspace.workspaceId, { agentId: "other", timestamp });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWorkspaceTests({
+      workspaceRegistry: registry,
+      notificationReceipts: receipts,
+      onMessage: (message) => messages.push(message),
+      agentStorage: {
+        listAll: () => storage.listAll(),
+        get: (id: string) => storage.get(id),
+        update: (id: string, mutate: (record: StoredAgentRecord) => StoredAgentRecord) =>
+          storage.update(id, mutate),
+      },
+    });
+    session.listAgentPayloads = async () =>
+      (await storage.listAll()).map((record) =>
+        buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, { agentAwareAttention: true }),
+      );
+
+    await session.handleMessage({
+      type: "workspace.clear_attention.request",
+      workspaceId: workspace.workspaceId,
+      requestId: "open",
+      notification: {
+        kind: "workspace",
+        acknowledgementId: "open-operation",
+        throughSequence: 1,
+        observedReadId: null,
+        attention: [],
+        marksAgentsRead: false,
+      },
+    });
+
+    expect(findByType(messages, "workspace.clear_attention.response").payload).toMatchObject({
+      success: true,
+      clearedAgentIds: [],
+    });
+    // Unread status follows deliberate focus; opening only settles the delivered alerts.
+    expect((await storage.get("selected"))?.requiresAttention).toBe(true);
+    expect((await storage.get("other"))?.requiresAttention).toBe(true);
+    expect(
+      (await registry.get(workspace.workspaceId))?.notificationReceipts?.acknowledgedThrough,
+    ).toBe(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("T59 sequential bounded receipt chunks preserve intervening newer attention and one read identity", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "t59-chunk-cas-"));
   try {

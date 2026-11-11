@@ -24,6 +24,12 @@ export const NotificationAcknowledgementSchema = z.discriminatedUnion("kind", [
     throughSequence: SequenceSchema,
     observedReadId: z.string().nullable().optional(),
     attention: z.array(ObservedAttentionSchema).max(WORKSPACE_NOTIFICATION_ATTENTION_LIMIT),
+    /**
+     * False when opening the workspace settles its delivered alerts without reading its agents;
+     * unread status then follows deliberate agent focus. Absent (older clients) or true marks
+     * the observed agents read.
+     */
+    marksAgentsRead: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal("event"),

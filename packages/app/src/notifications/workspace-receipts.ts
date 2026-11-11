@@ -144,6 +144,8 @@ export class WorkspaceNotificationSynchronizer {
             throughSequence: receipts.latestSequence,
             observedReadId: receipts.lastWorkspaceReadId ?? null,
             attention: observed.map((item) => Object.assign({}, item)),
+            // Opening settles delivered alerts; unread status follows deliberate agent focus.
+            marksAgentsRead: false,
           }
         : null,
     };
