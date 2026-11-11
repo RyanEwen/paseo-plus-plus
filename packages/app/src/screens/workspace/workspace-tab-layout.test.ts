@@ -1,3 +1,4 @@
+import { buildDesktopFrameStyle } from "@/components/ui/combobox-frame-style";
 import {
   WorkspaceHeaderExplorerToggle,
   WorkspaceExplorerSidebarToggle,
@@ -10,6 +11,8 @@ import {
   MIN_WORKSPACE_TAB_WIDTH,
   workspaceTabMinimumWidth,
   resolveWorkspaceTabScrollOffset,
+  workspaceTabSwitcherPopoverLayout,
+  selectWorkspaceChrome,
   computeWorkspaceTabLayout,
   retainWorkspaceTabMeasuredWidth,
 } from "@/screens/workspace/workspace-tab-layout";
@@ -447,4 +450,38 @@ describe("selected workspace tab visibility", () => {
   it("waits for usable native measurements", () => {
     expect(resolveWorkspaceTabScrollOffset({ ...geometry, viewportWidth: 0 })).toBe(0);
   });
+});
+
+import { shouldUseCompactWorkspaceHeader } from "./workspace-tab-layout";
+it.each([
+  [349, true],
+  [499, true],
+  [500, false],
+  [800, false],
+])("workspace width %s selects compact=%s", (width, compact) => {
+  expect(shouldUseCompactWorkspaceHeader(width)).toBe(compact);
+});
+
+describe("desktop pane chrome", () => {
+  it("replaces the pane header and rail together at the pane width boundary", () => {
+    const full = ["workspace header", "pane tab rail"];
+    expect(selectWorkspaceChrome({ width: 440, compact: "pane dropdown", full })).toBe(
+      "pane dropdown",
+    );
+    expect(selectWorkspaceChrome({ width: 500, compact: "pane dropdown", full })).toBe(full);
+    expect(selectWorkspaceChrome({ width: null, compact: "pane dropdown", full })).toBe(full);
+  });
+});
+
+it("gives the tab switcher a readable popover width independent of its 16pt count badge", () => {
+  const frame = buildDesktopFrameStyle({
+    desktopMinWidth: workspaceTabSwitcherPopoverLayout.desktopMinWidth,
+    desktopLockWidth: false,
+    referenceWidth: 16,
+    desktopFixedHeight: undefined,
+    desktopPositionStyle: {},
+    shouldHideDesktopContent: false,
+    availableHeight: 600,
+  }) as Array<{ minWidth?: number }>;
+  expect(frame[0].minWidth).toBeGreaterThanOrEqual(320);
 });
