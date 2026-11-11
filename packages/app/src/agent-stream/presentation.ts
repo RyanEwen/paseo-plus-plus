@@ -28,6 +28,7 @@ const PROJECTION_KEYS: { readonly [K in ProjectionKey]: true } = {
   expandedTurnHostIds: true,
   isTurnActive: true,
   activeTurnId: true,
+  readableToolActivity: true,
 };
 
 /** Whether two inputs project the same ordinary presentation (retained rows aside). */
