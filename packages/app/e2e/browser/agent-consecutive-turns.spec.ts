@@ -42,6 +42,7 @@ interface ContentChildFrame extends ElementFrame {
 interface TurnFrame {
   at: number;
   userRow: ElementFrame;
+  userRowFlow: { rowId: string | null; top: number | null; pinned: boolean };
   attachment: ElementFrame;
   footerRow: ElementFrame;
   spinner: ElementFrame;
@@ -218,6 +219,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       };
     };
     const findImageAttachment = (row: Element | undefined) =>
+      row?.querySelector('[data-testid="user-message-attachments-summary"]') ??
       row?.querySelector('[role="button"][aria-label="Open image attachment"]');
     const findAgentTabState = () => {
       const agentTab = Array.from(
@@ -235,6 +237,19 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
             candidate.getAttribute("aria-label") ?? "",
           ) && isVisible(candidate),
       ).length;
+    /** CSS sticky moves the painted child, never the owning row's original position. */
+    const originalUserRow = (promptRow: Element | undefined) => {
+      const row = promptRow?.closest("[data-actual-prompt-row]");
+      const content = row?.querySelector("[data-actual-prompt-content]");
+      if (!row || !content || !promptRow || !content.contains(promptRow)) {
+        return { rowId: null, top: null, pinned: false };
+      }
+      return {
+        rowId: row.getAttribute("data-history-row-id"),
+        pinned: row.getAttribute("data-prompt-pinned") === "true",
+        top: rectOf(row).top + rectOf(promptRow).top - rectOf(content).top,
+      };
+    };
     const sample = () => {
       const viewport = Array.from(
         document.querySelectorAll('[data-testid="agent-chat-scroll"]'),
@@ -274,6 +289,7 @@ async function recordTurnFrames(page: Page, prompt: string): Promise<void> {
       state.frames.push({
         at: performance.now(),
         userRow: snapshot(promptRow, viewport),
+        userRowFlow: originalUserRow(promptRow),
         attachment: snapshot(attachment, viewport),
         footerRow: snapshot(footerRow, viewport, spinner.painted),
         spinner,
@@ -443,15 +459,23 @@ function formatFrames(frames: TurnFrame[], centers: number | number[]): string {
 }
 
 function submittedRowContentTop(frame: TurnFrame | undefined): number | undefined {
-  const viewportTop = frame?.userRow.rect?.top;
+  const originalTop = frame?.userRowFlow.top;
   const scrollTop = frame?.scroll.scrollTop;
-  return viewportTop == null || scrollTop == null ? undefined : viewportTop + scrollTop;
+  return originalTop == null || scrollTop == null ? undefined : originalTop + scrollTop;
 }
 
 function expectRowContinuity(frames: TurnFrame[]): void {
   const first = frames.findIndex((frame) => hasPaintedLayout(frame.userRow));
   const baselineFrame = frames[first];
   const baselineContentTop = submittedRowContentTop(baselineFrame);
+  const originalOwnerLost = frames.findIndex(
+    (frame, index) =>
+      index >= first &&
+      hasPaintedLayout(frame.userRow) &&
+      (frame.userRowFlow.top === null ||
+        frame.userRowFlow.rowId === null ||
+        frame.userRowFlow.rowId !== baselineFrame?.userRowFlow.rowId),
+  );
   const disappeared = frames.findIndex(
     (frame, index) => index > first && !hasPaintedLayout(frame.userRow),
   );
@@ -482,6 +506,7 @@ function expectRowContinuity(frames: TurnFrame[]): void {
   );
   const violations = [
     ...(first < 0 ? ["submitted row never became visible"] : []),
+    ...(originalOwnerLost >= 0 ? ["submitted row lost its original flow owner"] : []),
     ...(disappeared >= 0
       ? [
           `submitted row disappeared for ${Math.max(0, reappeared - disappeared)} recorded frames (${Math.max(0, (frames[reappeared]?.at ?? frames.at(-1)?.at ?? 0) - frames[disappeared].at).toFixed(1)}ms) before authoritative recovery`,
@@ -493,9 +518,12 @@ function expectRowContinuity(frames: TurnFrame[]): void {
         ]
       : []),
     ...(viewportChanged >= 0 ? ["scroll viewport geometry changed"] : []),
-    ...(attachmentMissing >= 0 ? ["submitted image attachment left the painted layout"] : []),
+    ...(attachmentMissing >= 0
+      ? ["submitted attachment or compact summary left the painted layout"]
+      : []),
   ];
   let failure = Math.max(0, first);
+  if (originalOwnerLost >= 0) failure = originalOwnerLost;
   if (attachmentMissing >= 0) failure = attachmentMissing;
   if (viewportChanged >= 0) failure = viewportChanged;
   if (contentShifted >= 0) failure = contentShifted;
@@ -684,8 +712,11 @@ function expectAtomicIdleToRunningTransition(frames: TurnFrame[]): void {
 function expectSubmittedMessageHeightStable(frames: TurnFrame[]): void {
   const first = frames.findIndex((frame) => frame.userRow.visible);
   const baseline = frames[first]?.userRow.rect?.height;
+  // Once the streamed reply pushes the prompt to the top, it pins in its compact form on
+  // purpose. Only the frames before that can show a resize caused by the canonical echo.
+  const pinned = frames.findIndex((frame, index) => index >= first && frame.userRowFlow.pinned);
   const changes = frames
-    .slice(first)
+    .slice(first, pinned >= 0 ? pinned : undefined)
     .flatMap((frame, offset) =>
       geometryChanged(frame.userRow.rect?.height, baseline)
         ? [`frame ${first + offset}: submitted row height changed`]

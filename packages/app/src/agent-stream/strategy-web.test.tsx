@@ -1,3 +1,7 @@
+import { ActualPromptRowsContext, ActualPromptRowsProvider } from "./actual-prompt-rows";
+import { ActualPromptBody } from "./actual-prompt/prompt-body";
+import { uniqueStreamSegments, precedingPromptIndex } from "./actual-row-collection";
+import { syncActualPromptPin, getOriginalPromptTop } from "./actual-prompt-pin.web";
 /**
  * @vitest-environment jsdom
  */
@@ -51,14 +55,27 @@ const FOLLOWING_READING_POSITION = {
   manual: false,
 } satisfies Omit<PromptReadingPosition, "rowId">;
 
+/** Prompt rows render inside ActualPromptBody, as PromptUserMessage does; others ignore it. */
 function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
   return {
     renderHistoryVirtualizedRow: (item) => {
       onRowRender();
-      return <div style={VIRTUAL_ROW_STYLE}>{item.id}</div>;
+      return (
+        <ActualPromptBody>
+          <div style={VIRTUAL_ROW_STYLE}>{item.id}</div>
+        </ActualPromptBody>
+      );
     },
-    renderHistoryMountedRow: (item) => <div>{item.id}</div>,
-    renderLiveHeadRow: (item) => <div>{item.id}</div>,
+    renderHistoryMountedRow: (item) => (
+      <ActualPromptBody>
+        <div>{item.id}</div>
+      </ActualPromptBody>
+    ),
+    renderLiveHeadRow: (item) => (
+      <ActualPromptBody>
+        <div>{item.id}</div>
+      </ActualPromptBody>
+    ),
     renderLiveAuxiliary: () => null,
   };
 }
@@ -69,8 +86,14 @@ function MeasuredTestRow({ item }: { item: StreamItem }) {
   const height = item.kind === "user_message" && item.text === "grown" ? 120 : 24;
   const measure = React.useCallback(
     (node: HTMLDivElement | null) => {
-      if (!node?.parentElement) return;
-      Object.defineProperty(node.parentElement, "offsetHeight", {
+      const row = node?.closest<HTMLElement>("[data-history-row-id]");
+      if (!row) return;
+      // Measure the intrinsic row content, not its extended sticky lane. This row has no
+      // message body, so its own node is the content the row measures.
+      node!.getBoundingClientRect = () => ({ height }) as DOMRect;
+      const body = node?.closest<HTMLElement>("[data-actual-prompt-content]");
+      if (body) body.getBoundingClientRect = () => ({ height }) as DOMRect;
+      Object.defineProperty(row, "offsetHeight", {
         configurable: true,
         value: height,
       });
@@ -94,6 +117,7 @@ describe("createWebStreamStrategy", () => {
   let originalOffsetHeight: PropertyDescriptor | undefined;
 
   beforeEach(() => {
+    vi.stubGlobal("React", React);
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
       value: true,
       configurable: true,
@@ -137,6 +161,7 @@ describe("createWebStreamStrategy", () => {
       Reflect.deleteProperty(HTMLElement.prototype, "offsetHeight");
     }
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it.each(["liveHead", "historyMounted"] as const)(
@@ -324,9 +349,108 @@ describe("createWebStreamStrategy", () => {
       ),
     );
     expect(
-      (container.querySelector('[data-history-row-id="message-1"]') as HTMLElement).style.transform,
-    ).toBe("translateY(120px)");
+      (container.querySelector('[data-history-row-id="message-1"]') as HTMLElement).style.top,
+    ).toBe("120px");
     expect(row.querySelector("button")!.textContent).toBe("Loaded");
+  });
+
+  it("observes intrinsic bodies in every lane and retires them across handoff and unmount", () => {
+    const observations = new Map<Element, () => void>();
+    const unobserved = new Set<Element>();
+    const disconnected = vi.fn();
+    class BodyObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observations.set(target, () =>
+          this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver),
+        );
+      }
+      unobserve(target: Element) {
+        observations.delete(target);
+        unobserved.add(target);
+      }
+      disconnect() {
+        disconnected();
+      }
+    }
+    vi.stubGlobal("ResizeObserver", BodyObserver);
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    // Prompt rows render their message inside the one observed body, as PromptUserMessage does.
+    const renderRow = (item: StreamItem) => (
+      <ActualPromptBody>
+        <MeasuredTestRow item={item} />
+      </ActualPromptBody>
+    );
+    const input: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [userMessage(0)],
+        historyMounted: [userMessage(1)],
+        liveHead: [userMessage(2)],
+      },
+      boundary: { hasVirtualizedHistory: true, hasMountedHistory: true, hasLiveHead: true },
+      renderers: {
+        renderHistoryVirtualizedRow: renderRow,
+        renderHistoryMountedRow: renderRow,
+        renderLiveHeadRow: renderRow,
+        renderLiveAuxiliary: () => null,
+      },
+      listEmptyComponent: null,
+      viewportRef: React.createRef<StreamViewportHandle>(),
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: () => {},
+      onNearHistoryStart: async () => true,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    };
+    const render = (next: StreamRenderInput) => (
+      <ActualPromptRowsProvider enabled scope="agent:epoch" availableHeight={500}>
+        {strategy.render(next)}
+      </ActualPromptRowsProvider>
+    );
+    act(() => root?.render(render(input)));
+    const bodies = [0, 1, 2].map(
+      (index) =>
+        container!.querySelector<HTMLElement>(
+          `[data-history-row-id="message-${index}"] [data-actual-prompt-content]`,
+        )!,
+    );
+    for (const body of bodies) expect(observations.has(body)).toBe(true);
+    const mounted = bodies[1]!;
+    mounted.getBoundingClientRect = () => ({ height: 120 }) as DOMRect;
+    // No React update, outer-container resize or scroll accompanies intrinsic growth.
+    act(() => observations.get(mounted)!());
+    expect(mounted.closest<HTMLElement>("[data-history-row-id]")!.style.height).toBe("120px");
+    act(() =>
+      root?.render(
+        render({
+          ...input,
+          segments: {
+            historyVirtualized: [userMessage(0), userMessage(1)],
+            historyMounted: [userMessage(2)],
+            liveHead: [],
+          },
+        }),
+      ),
+    );
+    expect(
+      container.querySelector('[data-history-row-id="message-2"] [data-actual-prompt-content]'),
+    ).toBe(bodies[2]);
+    expect(observations.has(bodies[2]!)).toBe(true);
+    act(() => root?.unmount());
+    root = null;
+    for (const body of bodies) expect(unobserved.has(body)).toBe(true);
+    expect(disconnected).toHaveBeenCalled();
   });
 
   it("keeps the timeline width stable with an overlay scrollbar", () => {
@@ -499,6 +623,46 @@ describe("createWebStreamStrategy", () => {
     expect(renderCountById.get(other.id)).toBe(1);
   });
 
+  it("bounds prompt disclosure by the window and measured pane through resize", () => {
+    const height = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(1000);
+    act(() => window.dispatchEvent(new Event("resize")));
+    let observed: React.ContextType<typeof ActualPromptRowsContext> = null;
+    function Probe() {
+      observed = React.useContext(ActualPromptRowsContext);
+      return null;
+    }
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const render = (availableHeight: number) =>
+      act(() =>
+        root?.render(
+          <ActualPromptRowsProvider enabled scope="agent:epoch" availableHeight={availableHeight}>
+            <Probe />
+          </ActualPromptRowsProvider>,
+        ),
+      );
+    render(900);
+    const read = () => {
+      expect(observed).not.toBeNull();
+      return observed!;
+    };
+    expect(read().bodyViewportHeight).toBeGreaterThan(0);
+    expect(read().bodyViewportHeight).toBeLessThan(1000 * 0.6);
+    expect(read().bodyViewportHeight).toBeLessThan(900 * 0.8);
+    act(() => read().expand("message-1"));
+    const beforeResize = read().bodyViewportHeight;
+    height.mockReturnValue(600);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(read().bodyViewportHeight).toBeLessThan(beforeResize);
+    expect(read().bodyViewportHeight).toBeLessThan(600 * 0.6);
+    act(() => read().reportViewportHeight(200));
+    expect(read().bodyViewportHeight).toBeLessThan(200 * 0.8);
+    render(120);
+    expect(read().bodyViewportHeight).toBeLessThan(120 * 0.8);
+    expect(read().expandedIds.has("message-1")).toBe(true);
+  });
+
   it("keeps a row mounted when it moves from the live head into mounted history", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
     const viewportRef = React.createRef<StreamViewportHandle>();
@@ -510,7 +674,13 @@ describe("createWebStreamStrategy", () => {
         mounted();
         return unmounted;
       }, []);
-      return <div>{item.id}</div>;
+      const rows = React.useContext(ActualPromptRowsContext);
+      const toggle = React.useCallback(() => rows?.toggleExpanded(item.id), [rows]);
+      return (
+        <button type="button" onClick={toggle}>
+          {rows?.expandedIds.has(item.id) ? "Less" : "More"}
+        </button>
+      );
     }
     const renderers: StreamSegmentRenderers = {
       ...createRenderers(vi.fn()),
@@ -541,35 +711,44 @@ describe("createWebStreamStrategy", () => {
 
     act(() => {
       root?.render(
-        strategy.render({
-          ...renderInput,
-          segments: { historyVirtualized: [], historyMounted: [], liveHead: [item] },
-          boundary: {
-            hasVirtualizedHistory: false,
-            hasMountedHistory: false,
-            hasLiveHead: true,
-          },
-        }),
+        <ActualPromptRowsProvider enabled scope="agent:epoch" availableHeight={500}>
+          {strategy.render({
+            ...renderInput,
+            segments: { historyVirtualized: [], historyMounted: [], liveHead: [item] },
+            boundary: {
+              hasVirtualizedHistory: false,
+              hasMountedHistory: false,
+              hasLiveHead: true,
+            },
+          })}
+        </ActualPromptRowsProvider>,
       );
     });
     expect(mounted).toHaveBeenCalledTimes(1);
+    const originalButton = container.querySelector("button")!;
+    act(() => originalButton.click());
+    expect(originalButton.textContent).toBe("Less");
 
     act(() => {
       root?.render(
-        strategy.render({
-          ...renderInput,
-          segments: { historyVirtualized: [], historyMounted: [item], liveHead: [] },
-          boundary: {
-            hasVirtualizedHistory: false,
-            hasMountedHistory: true,
-            hasLiveHead: false,
-          },
-        }),
+        <ActualPromptRowsProvider enabled scope="agent:epoch" availableHeight={500}>
+          {strategy.render({
+            ...renderInput,
+            segments: { historyVirtualized: [], historyMounted: [item], liveHead: [] },
+            boundary: {
+              hasVirtualizedHistory: false,
+              hasMountedHistory: true,
+              hasLiveHead: false,
+            },
+          })}
+        </ActualPromptRowsProvider>,
       );
     });
 
     expect(mounted).toHaveBeenCalledTimes(1);
     expect(unmounted).not.toHaveBeenCalled();
+    expect(container.querySelector("button")).toBe(originalButton);
+    expect(originalButton.textContent).toBe("Less");
   });
 
   it("reports the live-head row as the reading position", () => {
@@ -1075,6 +1254,11 @@ describe("createWebStreamStrategy", () => {
     act(() => {
       scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -900 }));
     });
+    // Layout can reconcile before the browser publishes the wheel's scroll event.
+    act(() => {
+      root?.render(strategy.render({ ...renderInput, isAuthoritativeHistoryReady: false }));
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
     scrollContainer.scrollTop = 91;
     act(() => {
       scrollContainer.dispatchEvent(new Event("scroll"));
@@ -1967,6 +2151,10 @@ describe("createWebStreamStrategy", () => {
 
         constructor(private readonly callback: ResizeObserverCallback) {}
 
+        unobserve(target: Element) {
+          observed.delete(target);
+        }
+
         observe(target: Element) {
           observed.set(target, {
             callback: this.callback,
@@ -2061,6 +2249,11 @@ describe("createWebStreamStrategy", () => {
         height: rowsShifted ? 116 : 40,
         bottom: rowsShifted ? 120 : 160,
       }) as DOMRect;
+    // Sticky rows measure the intrinsic body, independently of their extended lane.
+    firstRow.querySelector<HTMLElement>("[data-actual-prompt-content]")!.getBoundingClientRect =
+      firstRow.getBoundingClientRect;
+    secondRow.querySelector<HTMLElement>("[data-actual-prompt-content]")!.getBoundingClientRect =
+      secondRow.getBoundingClientRect;
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
     scrollContainer.scrollTop = 1000;
@@ -2125,5 +2318,238 @@ describe("createWebStreamStrategy", () => {
     });
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
     expect(scrollTo).toHaveBeenCalledWith({ top: 2200, behavior: "auto" });
+  });
+});
+
+describe("actual web prompt cells", () => {
+  it("restores natural flow before collecting successors and spans the full unmounted virtual extent", () => {
+    const content = document.createElement("div");
+    const viewport = document.createElement("div");
+    viewport.append(content);
+    viewport.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    viewport.scrollTop = 200;
+    const first = document.createElement("div");
+    first.dataset.actualPromptRow = "true";
+    first.dataset.historyRowId = "first";
+    const body = document.createElement("div");
+    body.dataset.actualPromptContent = "true";
+    first.append(body);
+    let intrinsic = 80;
+    body.getBoundingClientRect = () => ({ height: intrinsic }) as DOMRect;
+    first.getBoundingClientRect = () => ({ top: 80 - viewport.scrollTop }) as DOMRect;
+    const next = document.createElement("div");
+    next.dataset.actualPromptRow = "true";
+    next.dataset.historyRowId = "next";
+    const nextBody = document.createElement("div");
+    nextBody.dataset.actualPromptContent = "true";
+    next.append(nextBody);
+    nextBody.getBoundingClientRect = () => ({ height: 80 }) as DOMRect;
+    next.getBoundingClientRect = () =>
+      ({
+        top:
+          80 +
+          (Number.parseFloat(first.style.height) || intrinsic) +
+          (Number.parseFloat(first.style.marginBottom) || 0) +
+          200 -
+          viewport.scrollTop,
+      }) as DOMRect;
+    content.append(first, next);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
+    expect(first.style.height).toBe("280px");
+    expect(first.style.marginBottom).toBe("-200px");
+    intrinsic = 120;
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
+    expect(next.getBoundingClientRect().top).toBe(200);
+    expect(first.style.height).toBe("320px");
+    expect(first.style.marginBottom).toBe("-200px");
+    expect(next.style.height).toBe("800px");
+    expect(next.style.marginBottom).toBe("-720px");
+    // A virtual-to-normal handoff can carry its old lane height with no flow margin.
+    first.dataset.index = "0";
+    first.style.removeProperty("margin-bottom");
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
+    delete first.dataset.index;
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
+    expect(next.getBoundingClientRect().top).toBe(200);
+    const auxiliary = document.createElement("div");
+    auxiliary.dataset.streamAuxiliary = "true";
+    auxiliary.getBoundingClientRect = () => ({ bottom: 1400 - viewport.scrollTop }) as DOMRect;
+    content.append(auxiliary);
+    syncActualPromptPin({ content, viewport, enabled: true, virtualPrompts: [], virtualEnd: 1200 });
+    expect(next.style.height).toBe("1000px");
+    syncActualPromptPin({ content, viewport, enabled: false });
+    expect(first.style.height).toBe("");
+    expect(first.style.marginBottom).toBe("");
+  });
+
+  it("gives the same cell a browser-owned sticky lane with original jump coordinates", () => {
+    const viewport = document.createElement("div");
+    const content = document.createElement("div");
+    viewport.appendChild(content);
+    document.body.appendChild(viewport);
+    Object.defineProperty(viewport, "getBoundingClientRect", { value: () => ({ top: 100 }) });
+    const source = document.createElement("div");
+    source.dataset.historyRowId = "old";
+    source.dataset.actualPromptRow = "";
+    const body = document.createElement("div");
+    body.dataset.actualPromptContent = "";
+    Object.assign(body.dataset, {
+      promptFlowHeight: "80",
+      promptVisualHeight: "80",
+      promptCompactHeight: "80",
+      promptBounded: "true",
+    });
+    const text = document.createElement("span");
+    text.textContent = "The same selectable prompt";
+    body.appendChild(text);
+    source.appendChild(body);
+    const next = document.createElement("div");
+    next.dataset.historyRowId = "next";
+    next.dataset.actualPromptRow = "";
+    const nextBody = document.createElement("div");
+    nextBody.dataset.actualPromptContent = "";
+    Object.assign(nextBody.dataset, {
+      promptFlowHeight: "80",
+      promptVisualHeight: "80",
+      promptCompactHeight: "80",
+      promptBounded: "true",
+    });
+    next.appendChild(nextBody);
+    content.append(source, next);
+    const bounds = (top: number) => ({ top, height: 80, width: 300 });
+    source.getBoundingClientRect = () => bounds(180 - viewport.scrollTop) as DOMRect;
+    next.getBoundingClientRect = () => bounds(500 - viewport.scrollTop) as DOMRect;
+    body.getBoundingClientRect = () =>
+      bounds(
+        Math.min(420 - viewport.scrollTop, Math.max(100, 180 - viewport.scrollTop)),
+      ) as DOMRect;
+    nextBody.getBoundingClientRect = () => bounds(500 - viewport.scrollTop) as DOMRect;
+    text.getBoundingClientRect = body.getBoundingClientRect;
+    try {
+      viewport.scrollTop = 200;
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBe("old");
+      expect(body.style.position).toBe("sticky");
+      expect(body.style.top).toBe("0px");
+      expect(body.style.transform).toBe("");
+      expect(source.style.height).toBe("320px");
+      expect(source.style.marginBottom).toBe("-240px");
+      expect(source.style.pointerEvents).toBe("none");
+      expect(body.style.pointerEvents).toBe("none");
+      expect(getOriginalPromptTop(text)).toBe(-20);
+      expect(getOriginalPromptTop(source)).toBe(-20);
+      expect(content.querySelectorAll("span")).toHaveLength(1);
+      expect(source.firstChild?.firstChild).toBe(text);
+      viewport.scrollTop = 350;
+      syncActualPromptPin({ content, viewport, enabled: true });
+      expect(body.getBoundingClientRect().top).toBe(70);
+      expect(getOriginalPromptTop(text)).toBe(-170);
+      expect(body.style.transform).toBe("");
+      viewport.scrollTop = 400;
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBe("next");
+      expect(body.style.transform).toBe("");
+      viewport.scrollTop = 79;
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBeNull();
+      expect(nextBody.style.transform).toBe("");
+      expect(source.firstChild?.firstChild).toBe(text);
+      expect(syncActualPromptPin({ content, viewport, enabled: false })).toBeNull();
+      expect(body.style.position).toBe("");
+      expect(source.style.height).toBe("");
+      expect(source.style.marginBottom).toBe("");
+    } finally {
+      viewport.remove();
+    }
+  });
+
+  it("ends a retained virtual prompt lane at an unmounted successor without measuring the lane", () => {
+    const viewport = document.createElement("div");
+    const content = document.createElement("div");
+    const row = document.createElement("div");
+    const body = document.createElement("div");
+    row.dataset.historyRowId = "old";
+    row.dataset.actualPromptRow = "";
+    row.dataset.index = "0";
+    row.style.position = "absolute";
+    row.style.top = "80px";
+    body.dataset.actualPromptContent = "";
+    Object.assign(body.dataset, {
+      promptFlowHeight: "80",
+      promptVisualHeight: "80",
+      promptCompactHeight: "80",
+      promptBounded: "true",
+    });
+    row.append(body);
+    content.append(row);
+    viewport.append(content);
+    viewport.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    row.getBoundingClientRect = () =>
+      ({
+        top: 180 - viewport.scrollTop,
+        height: Number.parseFloat(row.style.height) || 80,
+      }) as DOMRect;
+    body.getBoundingClientRect = () => ({ top: 100, height: 80 }) as DOMRect;
+    viewport.scrollTop = 200;
+    expect(
+      syncActualPromptPin({
+        content,
+        viewport,
+        enabled: true,
+        virtualPrompts: [
+          { id: "old", top: 80 },
+          { id: "unmounted", top: 400 },
+        ],
+      }),
+    ).toBe("old");
+    expect(row.style.height).toBe("320px");
+    expect(row.style.top).toBe("80px");
+    expect(row.style.transform).toBe("");
+    expect(row.style.marginBottom).toBe("");
+    syncActualPromptPin({
+      content,
+      viewport,
+      enabled: true,
+      virtualPrompts: [
+        { id: "old", top: 80 },
+        { id: "unmounted", top: 400 },
+      ],
+    });
+    expect(row.style.height).toBe("320px");
+    viewport.scrollTop = 400;
+    // The successor still ends this lane, but has no mounted body/compact
+    // publication to own physical sticky paint. Never claim an unmounted owner.
+    expect(content.querySelector('[data-history-row-id="unmounted"]')).toBeNull();
+    expect(
+      syncActualPromptPin({
+        content,
+        viewport,
+        enabled: true,
+        virtualPrompts: [
+          { id: "old", top: 80 },
+          { id: "unmounted", top: 400 },
+        ],
+      }),
+    ).toBeNull();
+    expect(row.dataset.promptPinned).toBe("false");
+    expect(row.firstChild).toBe(body);
+  });
+
+  it("retains only the preceding prompt index across sparse and unmeasured history", () => {
+    const measurements = Array.from({ length: 1000 }, (_, index) => ({ start: index * 24 }));
+    expect(precedingPromptIndex([0, 200, 600, 900], measurements, 18000)).toBe(600);
+    expect(precedingPromptIndex([200, 600], measurements, 100)).toBe(-1);
+    expect(precedingPromptIndex([0, 200, 600, 900], measurements.slice(0, 800), 24000)).toBe(600);
+  });
+
+  it("renders a canonical live/history handoff once using the current live revision", () => {
+    const history = userMessage(1);
+    const live = { ...history, text: "updated canonical prompt" };
+    const segments = uniqueStreamSegments({
+      historyVirtualized: [history],
+      historyMounted: [history],
+      liveHead: [live],
+    });
+    expect(segments.historyVirtualized).toEqual([]);
+    expect(segments.historyMounted).toEqual([]);
+    expect(segments.liveHead).toEqual([live]);
+    expect(segments.liveHead[0]).toBe(live);
   });
 });

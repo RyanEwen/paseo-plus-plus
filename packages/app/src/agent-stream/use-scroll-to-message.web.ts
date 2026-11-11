@@ -1,3 +1,4 @@
+import { getOriginalPromptTop } from "./actual-prompt-pin.web";
 import type { PromptJumpPlacement } from "./prompt-jump-placement";
 import type React from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
@@ -40,6 +41,7 @@ export function useScrollToMessage({
   onSettled,
   onStarted,
 }: UseScrollToMessageInput) {
+  const placementRef = useRef<PromptJumpPlacement>("original");
   const occurrenceRef = useRef<ScrollToMessageOccurrence | undefined>(undefined);
   const removeAbortListener = useRef<(() => void) | null>(null);
   const settled = useStableEvent(onSettled);
@@ -70,7 +72,25 @@ export function useScrollToMessage({
             const target = scrollContainerRef.current?.querySelector<HTMLElement>(
               `[data-message-id="${CSS.escape(messageId)}"]`,
             );
-            return target ? target.getBoundingClientRect().top : null;
+            if (placementRef.current === "pinned") {
+              const row = target?.closest<HTMLElement>("[data-actual-prompt-row]");
+              const body = row?.querySelector<HTMLElement>("[data-actual-prompt-content]");
+              const flow = Number(body?.dataset.promptFlowHeight);
+              const compact = Number(body?.dataset.promptCompactHeight);
+              if (
+                !row ||
+                !body ||
+                !(flow > 0) ||
+                !(compact > 0) ||
+                !Number.isFinite(flow) ||
+                !Number.isFinite(compact)
+              )
+                return null;
+              // Both extents share the same current body owner. Caller chrome
+              // cancels in their difference; expanded More is never an input.
+              return row.getBoundingClientRect().top + Math.max(0, flow - compact);
+            }
+            return target ? getOriginalPromptTop(target) : null;
           },
           estimateTargetTop(messageId) {
             // Find occurrences own their exact target; a message-row estimate must
@@ -135,6 +155,7 @@ export function useScrollToMessage({
       occurrence?: ScrollToMessageOccurrence,
       placement: PromptJumpPlacement = "original",
     ) => {
+      placementRef.current = placement;
       occurrenceRef.current = occurrence;
       removeAbortListener.current?.();
       const cancel = () => settleController.cancel();

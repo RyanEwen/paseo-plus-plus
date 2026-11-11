@@ -593,6 +593,50 @@ describe("timeline presentation", () => {
   });
 });
 
+it("keeps ordinary viewport segments stable when only retained prompt paint changes", () => {
+  const tail = hydrateStreamState([
+    { event: assistant("The ordinary answer remains unchanged."), timestamp: new Date(1000) },
+  ]);
+  const head: StreamItem[] = [];
+  const retained: UserMessageItem = {
+    kind: "user_message",
+    id: "retained-user",
+    text: "Earlier user prompt.",
+    timestamp: new Date(0),
+  };
+  const present = createStreamPresentation();
+  const input = { ...presentationOptions, tail, head, transform: undefined };
+  function viewportModel(result: { tail: StreamItem[]; head: StreamItem[] }) {
+    return buildAgentStreamRenderModel({
+      tail: result.tail,
+      head: result.head,
+      platform: "web",
+      isMobileBreakpoint: false,
+      historyStart: 0,
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+    });
+  }
+  const before = viewportModel(present(input));
+  const recovered = present({ ...input, retained: [retained] });
+  const after = viewportModel(recovered);
+  expect(recovered.retained).toEqual([retained]);
+  expect(after.segments.historyMounted).toBe(before.segments.historyMounted);
+  expect(after.segments.historyVirtualized).toBe(before.segments.historyVirtualized);
+  expect(after.segments.liveHead).toBe(before.segments.liveHead);
+  const grown = present({
+    ...input,
+    retained: [retained],
+    head: hydrateStreamState([
+      { event: assistant("A real newly arrived answer.", "new-answer"), timestamp: new Date(2000) },
+    ]),
+  });
+  expect(rows(grown)).toMatchObject([
+    { text: "The ordinary answer remains unchanged." },
+    { text: "A real newly arrived answer." },
+  ]);
+});
+
 it("folds work before a plugin-rendered reply and leaves the reply visible", () => {
   const timestamp = new Date("2026-01-01T00:00:00.000Z");
   const tail: StreamItem[] = [

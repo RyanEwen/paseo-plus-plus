@@ -396,9 +396,14 @@ type SelectionProofWindow = Window & { __lateImageSelection?: { start: Node; end
 
 async function selectImageFixtureParagraphs(page: Page): Promise<string> {
   const message = page.getByTestId("assistant-message");
-  await message
-    .getByText("Paragraph one stays selected while the workspace image loads.", { exact: true })
-    .scrollIntoViewIfNeeded();
+  // Express upward reading intent before selecting, so bottom-follow cannot undo the reveal.
+  await page.getByTestId("agent-chat-scroll").filter({ visible: true }).hover();
+  await page.mouse.wheel(0, -1_200);
+  await expect(
+    message.getByText("Paragraph one stays selected while the workspace image loads.", {
+      exact: true,
+    }),
+  ).toBeInViewport({ ratio: 1 });
   const bounds = await message.evaluate((root) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let start: Text | undefined;

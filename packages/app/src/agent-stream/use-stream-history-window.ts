@@ -98,7 +98,9 @@ export function useStreamHistoryWindow(input: {
         return false;
       }
       setWindow({
-        boundaryItemId: items[nextStart]?.id ?? null,
+        // At the transcript start the window has no boundary row, so a later change to the
+        // first row cannot move it back to the initial window.
+        boundaryItemId: nextStart === 0 ? null : (items[nextStart]?.id ?? null),
         initialized: true,
       });
       return true;

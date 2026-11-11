@@ -62,6 +62,8 @@ export interface StreamViewportHandle {
   prepareForViewportChange: () => void;
   /** Cancel only message navigation, leaving bottom anchoring and delivery intact. */
   cancelMessageScroll?: () => void;
+  /** Expand the actual row for a current find request without moving the viewport. */
+  expandMessageForFind?: (messageId: string, signal: AbortSignal) => void;
   /**
    * Run a disclosure's state change so the row that owns its trigger keeps the edge the trigger
    * sits on in place. Following output stops; it resumes if the change leaves the list at its end.
@@ -90,6 +92,8 @@ export interface StreamHistoryRowRevision {
 export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
+  /** One canonical message mounted for paint only, outside the ordinary layout window. */
+  retainedPrompt?: StreamItem;
   /** Isolated display context stays mounted but cannot own ordinary reading geometry. */
   contextOnlyIds?: ReadonlySet<string>;
   historyRowRevision?: StreamHistoryRowRevision;

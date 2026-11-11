@@ -21,7 +21,16 @@ const previewStyle: ViewStyle = {
   overflow: isNative ? "scroll" : "hidden",
 };
 
-export function MessagePreview({ children }: { children: ReactNode }) {
+export function MessagePreview({
+  children,
+  enabled = true,
+  forceExpanded = false,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+  /** Find temporarily exposes the body without changing the user's disclosure preference. */
+  forceExpanded?: boolean;
+}) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
@@ -35,17 +44,29 @@ export function MessagePreview({ children }: { children: ReactNode }) {
     [hold],
   );
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  const effectiveExpanded = !enabled || expanded || forceExpanded;
+  const previewDataSet = useMemo(
+    () => ({
+      messagePreviewEnabled: String(enabled),
+      messagePreviewExpanded: String(effectiveExpanded),
+    }),
+    [enabled, effectiveExpanded],
+  );
   return (
     <>
-      <View style={!expanded && previewStyle}>
-        <View style={styles.body} onLayout={measure}>
+      <View
+        style={!effectiveExpanded && previewStyle}
+        testID="user-message-preview-clip"
+        dataSet={previewDataSet}
+      >
+        <View style={styles.body} onLayout={measure} testID="user-message-preview-body">
           {children}
         </View>
-        {overflowing && !expanded ? (
+        {enabled && overflowing && !effectiveExpanded ? (
           <EdgeFade edge="bottom" solidFraction={0} backdrop="surface3" style={styles.fade} />
         ) : null}
       </View>
-      {overflowing ? (
+      {enabled && overflowing && !forceExpanded ? (
         <Button
           variant="ghost"
           size="sm"
@@ -99,7 +120,7 @@ export function MessageSender({
 
 const styles = StyleSheet.create((theme) => ({
   body: { flexShrink: 0 },
-  sender: { paddingRight: 0, borderRightWidth: 0, maxWidth: "100%" },
+  sender: { pointerEvents: "auto", paddingRight: 0, borderRightWidth: 0, maxWidth: "100%" },
   senderText: { flexShrink: 1 },
   toggle: { alignSelf: "flex-start", paddingHorizontal: 0, minHeight: 0, borderWidth: 0 },
   expandedToggle: { marginTop: theme.spacing[2] },

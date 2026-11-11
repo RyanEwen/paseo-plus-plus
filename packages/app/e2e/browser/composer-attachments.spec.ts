@@ -1,3 +1,13 @@
+import type { Locator } from "@playwright/test";
+import {
+  captureVisibleActualPrompt,
+  expectMatchingPromptInk,
+  expectActualTextIdentity,
+  expectActualSingleLineGeometry,
+  expectCompactStickyAttachments,
+  expectNoCompactAttachmentCount,
+} from "../support/helpers/sticky-preview-geometry";
+import { chatOutlineRail } from "../support/helpers/chat-outline";
 import { expect, test } from "../support/fixtures";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
@@ -17,6 +27,7 @@ import {
   expectComposerEditable,
   expectAttachButtonDisabled,
   fillComposerDraft,
+  submitMessageWithButton,
   dropFileOnComposer,
   sendDraftToQueue,
   expectQueuedMessageButton,
@@ -40,6 +51,14 @@ import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
 
+import {
+  openAgentTimeline,
+  seedLongMockAgentTimeline,
+  scrollTimelinePastPrompt,
+  scrollActualPromptPastHandoff,
+  expectTimelinePromptLandedBelowTop,
+} from "../support/helpers/timeline-pagination";
+
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
@@ -51,6 +70,13 @@ const TEST_JSON = {
   mimeType: "application/json",
   buffer: Buffer.from(JSON.stringify({ composer: "drop" })),
 };
+
+/** An outline tick exists only once the prompt has a canonical timeline sequence. */
+async function outlinePromptSequence(entry: Locator): Promise<number> {
+  await expect(entry).toHaveAttribute("data-testid", /^chat-outline-tick-\d+$/);
+  const tickId = await entry.getAttribute("data-testid");
+  return Number(tickId!.slice("chat-outline-tick-".length));
+}
 
 test.describe("Composer attachments", () => {
   test("selected file shows a loading attachment until upload is acknowledged", async ({
@@ -309,4 +335,246 @@ test.describe("Composer attachments", () => {
       await workspace.cleanup();
     }
   });
+});
+
+test("sticky user message preserves uploaded image and file attachments", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const agent = await seedLongMockAgentTimeline({ turns: 20 });
+  try {
+    await openAgentTimeline(page, agent);
+
+    await chatOutlineRail(page).getByRole("tab").first().click();
+    await expectTimelinePromptLandedBelowTop(page, agent.oldestPrompt);
+    await scrollTimelinePastPrompt(page, agent.oldestPrompt);
+    await attachImageFromMenu(page, TEST_IMAGE);
+    await attachFileFromMenu(page, TEST_JSON);
+    await expectAttachmentPill(page, "composer-file-attachment-pill");
+    const prompt = "Attached sample.";
+    await submitMessageWithButton(page, prompt);
+    const timeline = page.getByTestId("agent-chat-scroll");
+    const original = timeline.getByTestId("user-message").filter({ hasText: prompt });
+    // Image encoding precedes sending: an optimistic row or the previous idle state is not acceptance.
+    await expect(original).toHaveAttribute("aria-busy", "false");
+    const attachmentEntry = chatOutlineRail(page).getByRole("tab", { name: /Attached sample\./ });
+    const attachmentSequence = await outlinePromptSequence(attachmentEntry);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await agent.client.sendAgentMessage(
+      agent.agentId,
+      "emit 85 assistant messages before synthetic user message",
+    );
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    // Select the intended attachment prompt explicitly; synthetic stream fixtures can
+    // insert additional user rows, so a previous arrow does not identify this target.
+    const paddingEntries = chatOutlineRail(page).getByRole("tab", {
+      name: /emit 85 assistant messages before synthetic user message/,
+    });
+    await expect(paddingEntries).toHaveCount(1);
+    expect(attachmentSequence).toBeLessThan(await outlinePromptSequence(paddingEntries));
+    const attachmentRow = original.locator("xpath=ancestor::*[@data-actual-prompt-row][1]");
+    await attachmentEntry.click();
+    await expectTimelinePromptLandedBelowTop(page, prompt);
+    await page.evaluate(() => document.fonts.ready);
+    const originalText = original.getByTestId("user-message-text");
+    const textIdentity = await originalText.elementHandle();
+    expect(textIdentity).not.toBeNull();
+    const originalInk = await captureVisibleActualPrompt(page, originalText, true);
+    await scrollTimelinePastPrompt(page, prompt);
+    await expectNoCompactAttachmentCount(attachmentRow);
+    await expectActualTextIdentity(original, textIdentity!, prompt);
+    // Compare the same natural first line outside only the declared opaque
+    // right-side controls. The real Text owner and its wrapping remain unchanged.
+    await expectMatchingPromptInk(page, originalInk, originalText, {
+      firstLineOnly: true,
+      allowCompactOverlay: true,
+    });
+    await page.screenshot({
+      path: "../../docs/qa-evidence/sticky-user-message/attachment-single-copy.png",
+    });
+    await scrollTimelinePastPrompt(page, prompt);
+    await expectNoCompactAttachmentCount(attachmentRow);
+    await expectCompactStickyAttachments(attachmentRow, prompt, testInfo);
+    const attachmentTextGeometry = await expectActualSingleLineGeometry(attachmentRow);
+    await attachmentRow.getByRole("button", { name: "Expand user message", exact: true }).click();
+    await expect(attachmentRow.getByTestId("user-message")).toContainText(prompt);
+    await expectActualTextIdentity(original, textIdentity!, prompt);
+    await expect(attachmentRow).toContainText(TEST_JSON.name);
+    await expect(
+      attachmentRow.getByRole("button", { name: "Open image attachment", exact: true }),
+    ).toBeVisible();
+    await attachmentRow.getByRole("button", { name: "Collapse user message", exact: true }).click();
+    await expectNoCompactAttachmentCount(attachmentRow);
+    expect((await expectActualSingleLineGeometry(attachmentRow)).height).toBeCloseTo(
+      attachmentTextGeometry.height,
+      0,
+    );
+
+    // Reuse real uploads for an attachment-only prompt, without inventing placeholder text.
+    await attachImageFromMenu(page, TEST_IMAGE);
+    await attachFileFromMenu(page, TEST_JSON);
+    await submitMessageWithButton(page, "");
+    const attachmentOnlyOriginal = timeline
+      .getByTestId("user-message")
+      .filter({ hasNot: page.getByTestId("user-message-text") });
+    await expect(attachmentOnlyOriginal).toHaveCount(1);
+    await expect(attachmentOnlyOriginal).toHaveAttribute("aria-busy", "false");
+    const attachmentOnlyRow = attachmentOnlyOriginal.locator(
+      "xpath=ancestor::*[@data-actual-prompt-row][1]",
+    );
+    const attachmentOnlyRowId = await attachmentOnlyRow.getAttribute("data-history-row-id");
+    expect(attachmentOnlyRowId).not.toBeNull();
+    const attachmentOnlyEntry = chatOutlineRail(page).getByRole("tab", {
+      name: /^\d+ of \d+:\s*$/,
+    });
+    const attachmentOnlySequence = await outlinePromptSequence(attachmentOnlyEntry);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await agent.client.sendAgentMessage(
+      agent.agentId,
+      "emit 85 assistant messages before synthetic user message",
+    );
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    // This fixture has one empty-preview prompt. Synthetic user events can change
+    // its order, so retain its canonical sequence tick instead of an earlier count.
+    await expect(paddingEntries).toHaveCount(2);
+    expect(attachmentOnlySequence).toBeLessThan(await outlinePromptSequence(paddingEntries.last()));
+    await expect(attachmentOnlyEntry).toHaveCount(1);
+    const attachmentOnlyTickId = await attachmentOnlyEntry.getAttribute("data-testid");
+    expect(attachmentOnlyTickId).toMatch(/^chat-outline-tick-\d+$/);
+    const attachmentOnlyTick = chatOutlineRail(page).getByTestId(attachmentOnlyTickId!);
+    await attachmentOnlyTick.click();
+    await expect(attachmentOnlyOriginal).toHaveCount(1);
+
+    // Sample one mounted occurrence and its viewport together after hover, while
+    // the existing navigation owner settles the requested original at its 8px inset.
+    const readAttachmentOnlyLanding = () =>
+      attachmentOnlyOriginal.getByTestId("user-message-bubble").evaluate((bubble) => {
+        const viewport = bubble.closest<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+        const originalBounds = bubble.closest("[data-actual-prompt-row]")!.getBoundingClientRect();
+        const viewportBounds = viewport.getBoundingClientRect();
+        return {
+          messageId: bubble.closest("[data-message-id]")?.getAttribute("data-message-id"),
+          originalBounds: originalBounds.toJSON(),
+          viewportBounds: viewportBounds.toJSON(),
+          relativeTop: originalBounds.top - viewportBounds.top,
+          scrollTop: viewport.scrollTop,
+          scrollHeight: viewport.scrollHeight,
+          clientHeight: viewport.clientHeight,
+        };
+      });
+    await timeline.hover();
+    let previousLanding: Awaited<ReturnType<typeof readAttachmentOnlyLanding>> | undefined;
+    await expect
+      .poll(async () => {
+        const current = await readAttachmentOnlyLanding();
+        const stable =
+          previousLanding !== undefined &&
+          previousLanding.messageId === current.messageId &&
+          previousLanding.scrollTop === current.scrollTop &&
+          previousLanding.scrollHeight === current.scrollHeight &&
+          previousLanding.relativeTop === current.relativeTop;
+        previousLanding = current;
+        return stable ? Math.abs(current.relativeTop - 8) : Number.POSITIVE_INFINITY;
+      })
+      .toBeLessThanOrEqual(2);
+    await expect(attachmentOnlyTick).toHaveAttribute("aria-selected", "true");
+    const attachmentOnlyLanding = await readAttachmentOnlyLanding();
+    expect(Math.abs(attachmentOnlyLanding.relativeTop - 8)).toBeLessThanOrEqual(2);
+    expect(attachmentOnlyLanding.messageId).toBeTruthy();
+    await testInfo.attach("attachment-only-before-wheel", {
+      body: JSON.stringify({ tickId: attachmentOnlyTickId, ...attachmentOnlyLanding }, null, 2),
+      contentType: "application/json",
+    });
+    await scrollActualPromptPastHandoff(page, attachmentOnlyRow);
+    await expect
+      .poll(() =>
+        attachmentOnlyRow.evaluate(
+          (row) =>
+            row.getBoundingClientRect().top -
+            row.closest('[data-testid="agent-chat-scroll"]')!.getBoundingClientRect().top,
+        ),
+      )
+      .toBeLessThan(0);
+    await expect(attachmentOnlyRow).toHaveAttribute("data-prompt-pinned", "true");
+    await expect(
+      timeline.locator('[data-actual-prompt-row][data-prompt-pinned="true"]'),
+    ).toHaveAttribute("data-history-row-id", attachmentOnlyRowId!);
+    await expectNoCompactAttachmentCount(attachmentOnlyRow);
+    await expect(attachmentOnlyRow.getByTestId("user-message-text")).toHaveCount(0);
+    await expectCompactStickyAttachments(attachmentOnlyRow, "", testInfo);
+    const attachmentOnlyBubble = attachmentOnlyRow.getByTestId("user-message-bubble");
+    const attachmentOnlyMore = attachmentOnlyRow.getByRole("button", {
+      name: "Expand user message",
+      exact: true,
+    });
+    await expect
+      .poll(async () => (await attachmentOnlyBubble.boundingBox())!.height)
+      .toBeCloseTo((await attachmentOnlyMore.boundingBox())!.height, 0);
+    await attachmentOnlyRow
+      .getByRole("button", { name: "Expand user message", exact: true })
+      .click();
+    await expect(attachmentOnlyRow).toContainText(TEST_JSON.name);
+    await expect(
+      attachmentOnlyRow.getByRole("button", { name: "Open image attachment", exact: true }),
+    ).toBeVisible();
+    await attachmentOnlyRow
+      .getByRole("button", { name: "Collapse user message", exact: true })
+      .click();
+    await expect
+      .poll(async () => (await attachmentOnlyBubble.boundingBox())!.height)
+      .toBeCloseTo((await attachmentOnlyMore.boundingBox())!.height, 0);
+  } catch (error) {
+    // Capture the still-owned conversation before agent cleanup can remove its route.
+    try {
+      const geometry = await page.evaluate(() => {
+        const sticky = document.querySelector(
+          '[data-actual-prompt-row][data-prompt-pinned="true"]',
+        );
+        const selectors = [
+          '[data-testid="user-message-bubble"]',
+          '[data-testid="user-message-text"]',
+          '[data-testid="user-message-trailing-row"]',
+          '[data-testid="user-message-disclosure"]',
+          "[data-message-text=true]",
+        ];
+        return {
+          url: location.href,
+          viewport: { width: innerWidth, height: innerHeight },
+          nodes: selectors.map((selector) => {
+            const node = sticky?.querySelector(selector);
+            if (!node) return { selector, present: false };
+            const style = getComputedStyle(node);
+            return {
+              selector,
+              present: true,
+              bounds: node.getBoundingClientRect().toJSON(),
+              parentBounds: node.parentElement?.getBoundingClientRect().toJSON(),
+              lineHeight: style.lineHeight,
+              paddingTop: style.paddingTop,
+              paddingBottom: style.paddingBottom,
+              opacity: style.opacity,
+              pointerEvents: style.pointerEvents,
+            };
+          }),
+        };
+      });
+      await testInfo.attach("attachments-failure-geometry", {
+        body: JSON.stringify(geometry, null, 2),
+        contentType: "application/json",
+      });
+    } catch (captureError) {
+      console.error("attachments geometry capture failed before cleanup", String(captureError));
+    }
+    try {
+      await page.screenshot({
+        path: testInfo.outputPath("attachments-before-cleanup.png"),
+        timeout: 2_000,
+      });
+    } catch (captureError) {
+      console.error("attachments screenshot capture failed before cleanup", String(captureError));
+    }
+    throw error;
+  } finally {
+    await agent.cleanup();
+  }
 });
