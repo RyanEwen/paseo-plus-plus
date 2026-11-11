@@ -57,6 +57,7 @@ class FakeDaemonProbe {
     },
     resolveAppVersion: () => null,
     createDesktopTransportFactory: () => null,
+    createSshTransportFactory: () => null,
     buildDesktopTransportUrl: (target) => {
       if (target.transportType === "ssh") {
         return `paseo+desktop://ssh?host=${encodeURIComponent(target.host)}`;
@@ -221,7 +222,23 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.createdConfigs()[0]?.url).toBe("paseo+desktop://socket?path=%2Ftmp%2Fpaseo.sock");
   });
 
-  it("uses the desktop transport for Remote SSH connections", async () => {
+  it("uses the Android SSH bridge for probes when supplied", async () => {
+    const { buildClientConfig } = await import("./test-daemon-connection");
+    const androidTransport = vi.fn();
+    const config = await buildClientConfig(
+      { id: "ssh:deploy%40example.com::", type: "remoteSsh", host: "deploy@example.com" },
+      undefined,
+      undefined,
+      {
+        ...probe.deps,
+        createSshTransportFactory: () => androidTransport,
+      },
+    );
+    expect(config.transportFactory).toBe(androidTransport);
+    expect(config.url).toBe("paseo+desktop://ssh?host=deploy%40example.com");
+  });
+
+  it("connects Remote SSH through the platform SSH transport", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const transportFactory = vi.fn();
     const result = await connectToDaemon(
@@ -235,7 +252,7 @@ describe("test-daemon-connection connectToDaemon", () => {
       undefined,
       {
         ...probe.deps,
-        createDesktopTransportFactory: () => transportFactory,
+        createSshTransportFactory: () => transportFactory,
       },
     );
     await result.client.close();

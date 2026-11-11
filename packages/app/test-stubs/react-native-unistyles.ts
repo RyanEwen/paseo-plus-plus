@@ -41,6 +41,7 @@ const testTheme = {
       zinc: { 600: "#52525b" },
       red: { 300: "#fca5a5" },
       white: "#ffffff",
+      zinc: { 600: "#52525b" },
     },
   },
   borderWidth: { 1: 1 },

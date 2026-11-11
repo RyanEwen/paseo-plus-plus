@@ -13,6 +13,18 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 `development` uses Android `debug`.
 
+## SSH connections
+
+`modules/paseo-ssh` owns Android's SSH transport and credential storage. It needs a native rebuild; Expo Go cannot load it. Its tunnel shares the desktop's client transport lifecycle through `hosts/transport-bridge`.
+
+Credentials stay on the device that imported them. Desktop credentials never reach the phone, and the host registry stores only the destination. Private keys and passphrases are encrypted with a non-exportable Android Keystore key in `noBackupFilesDir`, so backups and device transfers never carry them.
+
+Discovery rejects the SSH handshake before login, so the key signs nothing until the user approves the server's SHA-256 fingerprint. Credentials are committed after a successful daemon probe and before the host is published: a saved host can always reconnect, and a failed probe never replaces credentials that already work. Reconnects reject a changed fingerprint.
+
+Native errors cross the bridge as codes, and `hosts/ssh/ssh-native-bridge.ts` owns their user-facing copy. Expo prefixes every native rejection message with the module and function name, so never display the native message.
+
+User setup and platform limits live in [Connectivity](../public-docs/connectivity.md#android).
+
 ## Version codes
 
 `packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.

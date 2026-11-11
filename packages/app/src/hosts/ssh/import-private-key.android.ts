@@ -1,0 +1,24 @@
+import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
+import { i18n } from "@/i18n/i18next";
+import { assertImportablePrivateKey, type ImportedPrivateKey } from "./ssh-key-import-model";
+
+/** Read one bounded private-key file and erase the picker's temporary cache copy immediately. */
+export async function importPrivateKey(): Promise<ImportedPrivateKey | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: "*/*",
+    multiple: false,
+    copyToCacheDirectory: true,
+  });
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  const file = new File(asset.uri);
+  try {
+    if (file.size > 65536) throw new Error(i18n.t("sshErrors.keyTooLarge"));
+    const text = await file.text();
+    assertImportablePrivateKey(text);
+    return { name: asset.name, text };
+  } finally {
+    file.delete();
+  }
+}

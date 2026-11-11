@@ -3,25 +3,15 @@ import {
   listenToLocalTransportEvents,
   openLocalTransportSession,
   sendLocalTransportMessage,
-  type OpenLocalTransportSessionInput,
 } from "./desktop-daemon";
 
-export interface LocalDaemonTransportEvent {
-  sessionId: string;
-  kind: "open" | "message" | "close" | "error";
-  text?: string | null;
-  binaryBase64?: string | null;
-  code?: number | null;
-  reason?: string | null;
-  error?: string | null;
-}
+import type { DaemonTransportBridge as LocalDaemonTransportRpc } from "@/hosts/transport-bridge/types";
 
-export interface LocalDaemonTransportRpc {
-  openSession(input: OpenLocalTransportSessionInput): Promise<void>;
-  listenToEvents(handler: (event: LocalDaemonTransportEvent) => void): Promise<() => void>;
-  sendMessage(input: { sessionId: string; text?: string; binaryBase64?: string }): Promise<void>;
-  closeSession(sessionId: string): Promise<void>;
-}
+// Upstream names for the shared bridge types, kept so desktop call sites stay unchanged.
+export type {
+  BridgeDaemonTransportEvent as LocalDaemonTransportEvent,
+  DaemonTransportBridge as LocalDaemonTransportRpc,
+} from "@/hosts/transport-bridge/types";
 
 export const defaultLocalDaemonTransportRpc: LocalDaemonTransportRpc = {
   openSession: openLocalTransportSession,
