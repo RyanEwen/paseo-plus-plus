@@ -652,6 +652,21 @@ describe("codex tool-call mapper", () => {
           "+size = large",
         ].join("\n"),
       },
+      // Readable tool activity counts each file of the batch from this fork metadata.
+      metadata: {
+        fileChanges: [
+          {
+            path: "alpha.txt",
+            kind: "update",
+            diff: "@@ -1 +1 @@\n-color = blue\n+color = green\n",
+          },
+          {
+            path: "beta.txt",
+            kind: "update",
+            diff: "@@ -1 +1 @@\n-size = small\n+size = large\n",
+          },
+        ],
+      },
     });
   });
 
