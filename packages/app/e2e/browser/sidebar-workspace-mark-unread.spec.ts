@@ -333,6 +333,7 @@ test("a cached read chat acknowledges a completion that arrived while the app wa
   page,
   workspaces,
 }) => {
+  await seedLegacyCompactTabSwitcher(page);
   await openCompactWorkspace(page, workspaces.subject);
   await expectStatus(page, workspaces.subject.workspaceId, "done");
   await closeMobileAgentSidebar(page);
