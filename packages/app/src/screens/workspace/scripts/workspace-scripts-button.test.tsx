@@ -11,6 +11,8 @@ import { createRoot } from "react-dom/client";
 import { darkTheme as theme } from "@/styles/theme";
 import { persistAppSettings, type ServiceUrlBehavior } from "@/hooks/use-settings";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { ToastApiProvider } from "@/contexts/toast-api-context";
+import { useWorkspaceScriptActions } from "./use-workspace-script-actions";
 import { WorkspaceScriptsButton } from "./workspace-scripts-button";
 
 void testI18n;
@@ -32,7 +34,13 @@ const {
   });
 
   return {
-    startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
+    startWorkspaceScriptMock: vi.fn(async () => ({
+      terminalId: "terminal-script-1",
+      requestId: "start-1",
+      workspaceId: "workspace-1",
+      scriptName: "dev",
+      error: null,
+    })),
     killTerminalMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
       success: true,
@@ -100,20 +108,6 @@ vi.mock("@/workspace-service-routes/store", async () => {
       ),
   };
 });
-
-vi.mock("@/stores/session-store", () => ({
-  useSessionStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      sessions: {
-        "test-server": {
-          client: {
-            startWorkspaceScript: startWorkspaceScriptMock,
-            killTerminal: killTerminalMock,
-          },
-        },
-      },
-    }),
-}));
 
 vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ show: vi.fn(), error: vi.fn(), copied: copiedToastMock }),
@@ -229,6 +223,37 @@ interface RenderScriptsOptions {
   onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
+const testToast = { show: () => () => {}, error: () => {}, copied: copiedToastMock };
+const scriptClient = {
+  startWorkspaceScript: startWorkspaceScriptMock,
+  killTerminal: killTerminalMock,
+};
+function ScriptsOwner({
+  scripts,
+  hideLabels,
+  onOpenUrlInBrowserTab,
+}: {
+  scripts: WorkspaceScriptPayload[];
+  hideLabels?: boolean;
+  onOpenUrlInBrowserTab?: (url: string) => void;
+}) {
+  const actions = useWorkspaceScriptActions({
+    client: scriptClient,
+    serverId: "test-server",
+    workspaceId: "workspace-1",
+    scripts,
+  });
+  return (
+    <WorkspaceScriptsButton
+      actions={actions}
+      scripts={scripts}
+      liveTerminalIds={LIVE_TERMINAL_IDS}
+      hideLabels={hideLabels}
+      onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+    />
+  );
+}
+
 function renderScripts(
   scripts: WorkspaceScriptPayload[],
   options: RenderScriptsOptions = {},
@@ -249,14 +274,13 @@ function renderScripts(
   function element(nextScripts: WorkspaceScriptPayload[]): ReactElement {
     return (
       <QueryClientProvider client={queryClient}>
-        <WorkspaceScriptsButton
-          serverId="test-server"
-          workspaceId="workspace-1"
-          scripts={nextScripts}
-          liveTerminalIds={LIVE_TERMINAL_IDS}
-          hideLabels={options.hideLabels}
-          onOpenUrlInBrowserTab={options.onOpenUrlInBrowserTab}
-        />
+        <ToastApiProvider api={testToast}>
+          <ScriptsOwner
+            scripts={nextScripts}
+            hideLabels={options.hideLabels}
+            onOpenUrlInBrowserTab={options.onOpenUrlInBrowserTab}
+          />
+        </ToastApiProvider>
       </QueryClientProvider>
     );
   }
