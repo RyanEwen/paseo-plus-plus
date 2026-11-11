@@ -1,3 +1,4 @@
+import { useAppSettings } from "@/hooks/use-settings";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -875,6 +876,8 @@ function ProjectHeaderRow({
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
+  const { settings } = useAppSettings();
+  const { sidebarProjectEmphasis } = settings.paseoPlusPlus;
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -961,7 +964,10 @@ function ProjectHeaderRow({
         />
 
         <View style={styles.projectTitleGroup}>
-          <Text style={styles.projectTitle} numberOfLines={1}>
+          <Text
+            style={[styles.projectTitle, sidebarProjectEmphasis && styles.projectTitleEmphasized]}
+            numberOfLines={1}
+          >
             {displayName}
           </Text>
         </View>
@@ -2700,6 +2706,9 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
+  },
+  projectTitleEmphasized: {
+    fontWeight: theme.fontWeight.bold,
   },
   projectActionButton: {
     flexDirection: "row",
