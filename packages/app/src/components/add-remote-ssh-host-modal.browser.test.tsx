@@ -96,6 +96,28 @@ describe("Android SSH key import form", () => {
     ).toBe("Import private key");
     expect((within(document.body).getByLabelText("SSH host") as HTMLInputElement).value).toBe("");
   });
+  it("reports the saved host before closing the form", async () => {
+    const events: string[] = [];
+    const recordClose = () => events.push("close");
+    const recordSaved = () => events.push("saved");
+    act(() =>
+      root.render(
+        <RemoteSshHostForm
+          hosts={[]}
+          probeAndUpsertRemoteSshConnection={save}
+          keyImport={keyImport}
+          visible
+          onClose={recordClose}
+          onSaved={recordSaved}
+        />,
+      ),
+    );
+    typeTarget("ssh://deploy@example.com");
+    await click("Import private key");
+    await click("Connect");
+    await click("Trust and connect");
+    expect(events).toEqual(["saved", "close"]);
+  });
   it("shows import errors in the form and lets the user retry without losing the target", async () => {
     keyImport.failNextInspect(new SshBridgeError("ERR_SSH_KEY_UNREADABLE"));
     mount();

@@ -121,11 +121,12 @@ function OpenRemoteSshHostForm({
     const result = await model.submit();
     if (!result) return;
     model.close();
-    onClose();
+    // Report the save first: the add-host flow ends its session when the form closes.
     onSaved?.({
       ...result,
       isNewHost: !hosts.some((profile) => profile.serverId === result.serverId),
     });
+    onClose();
   }, [hosts, model, onClose, onSaved]);
   const handleImport = useCallback(() => {
     void model.importKey();

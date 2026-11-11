@@ -1,4 +1,5 @@
 import { lightHighlightColors } from "@getpaseo/highlight";
+import { lightTheme } from "../src/styles/theme";
 
 const testTheme = {
   colorScheme: "light",
@@ -29,12 +30,15 @@ const testTheme = {
     surface1: "#fafafa",
     surface2: "#f4f4f5",
     surface3: "#e4e4e7",
+    surfaceSidebar: lightTheme.colors.surfaceSidebar,
     border: "#e4e4e7",
     borderAccent: "#a1a1aa",
     palette: {
       amber: { 500: "#f59e0b" },
-      blue: { 300: "#93c5fd" },
-      green: { 500: "#22c55e" },
+      blue: { 300: "#93c5fd", 400: "#60a5fa" },
+      green: { 400: "#4ade80", 500: "#22c55e" },
+      yellow: { 400: "#facc15" },
+      zinc: { 600: "#52525b" },
       red: { 300: "#fca5a5" },
       white: "#ffffff",
       zinc: { 600: "#52525b" },
