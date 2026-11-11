@@ -210,6 +210,7 @@ export default defineConfig({
       "markdown-it",
       "expo-clipboard",
       "@floating-ui/react-native",
+      "@react-native-masked-view/masked-view",
       "@tanstack/react-query",
       "@tanstack/react-virtual",
       "react-i18next",
