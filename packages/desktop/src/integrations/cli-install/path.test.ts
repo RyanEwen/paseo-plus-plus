@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { resolveCliInstallSourcePath, resolveCliShimPath } from "./path";
+import { resolveCliInstallSourcePath, resolveCliShimPath, resolveCliTargetFilename } from "./path";
 
 describe("cli-install-path", () => {
+  it("installs previews under a separate command on each desktop platform", () => {
+    for (const platform of ["win32", "linux", "darwin"] as const) {
+      const extension = platform === "win32" ? ".cmd" : "";
+      expect(resolveCliTargetFilename({ platform, isPreview: false })).toBe(`paseo${extension}`);
+      expect(resolveCliTargetFilename({ platform, isPreview: true })).toBe(
+        `paseo-plus-plus-desktop${extension}`,
+      );
+    }
+  });
   it("uses the bundled shim for packaged macOS installs", () => {
     expect(
       resolveCliInstallSourcePath({

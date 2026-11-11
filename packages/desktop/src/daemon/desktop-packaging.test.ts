@@ -40,6 +40,7 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   );
 
   mkdirSync(dirname(shimPath), { recursive: true });
+  writeFileSync(join(resourcesPath, "paseo-executable-name"), "Paseo\n");
   mkdirSync(dirname(mainPath), { recursive: true });
   copyFileSync(join(packageRoot, "bin", "paseo"), shimPath);
   chmodSync(shimPath, 0o755);
@@ -63,6 +64,81 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("loads the packaging hook without compiled desktop output", () => {
+    // CI runs desktop unit tests before build:main, so loading the hook must not read dist.
+    const script = [
+      'const Module = require("node:module");',
+      "const load = Module._load;",
+      "Module._load = function (request, parent, isMain) {",
+      `  const fromDesktop = parent?.filename?.startsWith(${JSON.stringify(packageRoot)}) &&`,
+      '    !parent.filename.includes("node_modules");',
+      "  if (fromDesktop && /(^|[\\\\/])dist([\\\\/]|$)/.test(request)) {",
+      "    throw new Error(`loaded compiled desktop output: ${request}`);",
+      "  }",
+      "  return load.call(this, request, parent, isMain);",
+      "};",
+      `require(${JSON.stringify(join(packageRoot, "scripts", "after-pack.js"))});`,
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("runs the bundled preview CLI against its own daemon and honors explicit overrides", () => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-preview-cli-"));
+    try {
+      const resources = join(root, "resources");
+      const isWindows = process.platform === "win32";
+      const shimName = isWindows ? "paseo.cmd" : "paseo";
+      const shim = join(resources, "bin", shimName);
+      mkdirSync(dirname(shim), { recursive: true });
+      copyFileSync(join(packageRoot, "bin", shimName), shim);
+      chmodSync(shim, 0o755);
+      writeFileSync(join(resources, "paseo-executable-name"), "Paseo++\n");
+      writeFileSync(join(resources, "paseo-daemon-home-name"), ".paseo-plus-plus-desktop\n");
+      writeFileSync(join(resources, "paseo-daemon-listen"), "127.0.0.1:6790\n");
+      const printEnvironment =
+        "require('node:fs').writeSync(1, JSON.stringify([process.env.PASEO_HOME, process.env.PASEO_LISTEN]));";
+      if (isWindows) {
+        // Use a real PE with a tiny runner so this exercises cmd.exe's bundled shim.
+        copyFileSync(process.execPath, join(root, "Paseo++.exe"));
+        const runner = join(
+          resources,
+          "app.asar.unpacked",
+          "dist",
+          "daemon",
+          "node-entrypoint-runner.js",
+        );
+        mkdirSync(dirname(runner), { recursive: true });
+        writeFileSync(runner, printEnvironment);
+      } else {
+        writeExecutable(join(root, "Paseo++.bin"), `#!${process.execPath}\n${printEnvironment}\n`);
+      }
+      const env = { ...process.env, HOME: root, USERPROFILE: root };
+      delete env.PASEO_HOME;
+      delete env.PASEO_LISTEN;
+      const command = isWindows ? (process.env.ComSpec ?? "cmd.exe") : "sh";
+      const args = isWindows ? ["/d", "/s", "/c", `""${shim}" ls"`] : [shim, "ls"];
+      const defaults = spawnSync(command, args, {
+        encoding: "utf8",
+        env,
+        windowsVerbatimArguments: isWindows,
+      });
+      expect(defaults.status, defaults.stderr).toBe(0);
+      expect(JSON.parse(defaults.stdout)).toEqual([
+        join(root, ".paseo-plus-plus-desktop"),
+        "127.0.0.1:6790",
+      ]);
+      const overridden = spawnSync(command, args, {
+        encoding: "utf8",
+        windowsVerbatimArguments: isWindows,
+        env: { ...env, PASEO_HOME: "/custom-preview", PASEO_LISTEN: "127.0.0.1:12345" },
+      });
+      expect(overridden.status, overridden.stderr).toBe(0);
+      expect(JSON.parse(overridden.stdout)).toEqual(["/custom-preview", "127.0.0.1:12345"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("uses an Electron runtime whose Squirrel handoff explicitly wakes ShipIt", () => {
     const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
       devDependencies?: Record<string, string>;
