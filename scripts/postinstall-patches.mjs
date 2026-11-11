@@ -15,6 +15,12 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/jest-worker",
     patchPrefix: "jest-worker+",
   },
+  // Keep Chromium's native Web Store bindings from replacing the Electron shim
+  // after the first extension loads. The native status API requires Chrome services.
+  {
+    nodeModulesPath: "node_modules/electron-chrome-web-store",
+    patchPrefix: "electron-chrome-web-store+",
+  },
   // Backport for expo-modules-core 57.0.23: https://github.com/expo/expo/pull/49634.
   // Remove when the installed Expo SDK includes the Activity recreation fix.
   {

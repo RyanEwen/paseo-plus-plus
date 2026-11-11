@@ -19,6 +19,10 @@ import { runAdaptiveThemeRegression } from "./appearance-theme.electron.mjs";
 import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { buildFillFixture, verifyReactFormFill } from "./browser-fill.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
+import {
+  seedBrowserExtensions,
+  runBrowserExtensionsRegression,
+} from "./browser-extensions.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
 
@@ -84,6 +88,65 @@ async function waitForPort(port, label, processInfo) {
     await delay(200);
   }
   throw new Error(`Timed out waiting for ${label} on port ${port}`);
+}
+
+/** Accept only the browser endpoint announced by this launch's owned Electron stream. */
+function desktopCdpEndpoint(announcements) {
+  if (announcements.length === 0) return null;
+  assert(announcements.length === 1, "Owned Electron announced ambiguous CDP endpoints");
+  const match = /^ws:\/\/127\.0\.0\.1:([0-9]+)\/devtools\/browser\/[0-9a-f-]+$/i.exec(
+    announcements[0],
+  );
+  assert(match !== null, "Owned Electron announced an invalid loopback CDP endpoint");
+  const port = Number(match[1]);
+  assert(
+    Number.isInteger(port) && port > 0 && port <= 65535,
+    "Owned Electron announced an invalid CDP port",
+  );
+  return { port, httpUrl: `http://127.0.0.1:${port}` };
+}
+
+/** Observe complete Electron-prefixed lines without mixing stdout and stderr fragments. */
+function observeDesktopCdpAnnouncements(stream, announcements) {
+  const prefix = "[electron] DevTools listening on ";
+  let partialLine = "";
+  const observeOutput = (chunk) => {
+    partialLine += chunk.toString();
+    const lines = partialLine.split(/\r?\n/);
+    partialLine = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith(prefix)) announcements.push(line.slice(prefix.length));
+    }
+  };
+  stream.on("data", observeOutput);
+  return () => stream.removeListener("data", observeOutput);
+}
+
+/** Wait within the existing startup budget; an unrelated open TCP port is never readiness. */
+async function waitForDesktopCdpEndpoint(processInfo) {
+  const deadline = Date.now() + timeoutMs;
+  const announcements = [];
+  // Called synchronously after spawnLogged, before any await. Only this child's
+  // live streams are observed, never a possibly reused or appended artifact log.
+  // dev-runner prefixes its sole Electron child's streams separately from Metro.
+  const stopObserving = [processInfo.child.stdout, processInfo.child.stderr].map((stream) =>
+    observeDesktopCdpAnnouncements(stream, announcements),
+  );
+  try {
+    while (Date.now() < deadline) {
+      if (processInfo.child.exitCode !== null || processInfo.child.signalCode !== null) {
+        throw new Error(`Electron runner exited before CDP readiness; see ${processInfo.logPath}`);
+      }
+      const endpoint = desktopCdpEndpoint(announcements);
+      if (endpoint !== null) return endpoint;
+      await delay(200);
+    }
+    throw new Error(
+      `Timed out waiting for owned Electron CDP announcement; see ${processInfo.logPath}`,
+    );
+  } finally {
+    for (const stop of stopObserving) stop();
+  }
 }
 
 function writeJson(filePath, value) {
@@ -231,6 +294,13 @@ async function waitForDesktopStatus(page) {
   throw new Error(
     `Timed out waiting for the Electron desktop bridge${lastError ? `: ${String(lastError)}` : ""}`,
   );
+}
+
+/** Keep cold compilation admission separate from the existing rendered UI assertion. */
+async function waitForRendererReady(page) {
+  await page
+    .getByRole("button", { name: "Settings", exact: true })
+    .waitFor({ state: "visible", timeout: timeoutMs });
 }
 
 async function settleDesktopStartup(page) {
@@ -726,13 +796,6 @@ async function setWindowHidden(inspectorPort, hidden) {
   assert(state.visible === !hidden, "Window visibility did not change");
 }
 
-async function resizeDesktopWindow(inspectorPort, { width, height }) {
-  return evaluateDesktopWindow(
-    inspectorPort,
-    `const [width, height] = win.getContentSize(); win.setContentSize(${width}, ${height}); return { width, height };`,
-  );
-}
-
 /** Verify real agent tool delivery without selecting the target browser tab. */
 async function verifyBackgroundAgentAccess({
   client,
@@ -913,6 +976,7 @@ async function runRegression({
   typingAgent,
   artifactDir,
   inspectorPort,
+  extensionFixtures,
   withoutPlaywrightObservation,
 }) {
   const failures = [];
@@ -955,6 +1019,12 @@ async function runRegression({
   );
   const firstGuest = await readGuest(page, browserId);
   assert(firstGuest, "Original browser guest was not attached to its workspace pane");
+  const extensions = await runBrowserExtensionsRegression({
+    page,
+    fixtures: extensionFixtures,
+    artifactDir,
+    browserId,
+  });
   const visibleWindow = await inspectWindowPresentation(inspectorPort);
   writeJson(path.join(artifactDir, "visible-window.json"), visibleWindow);
   await verifyBackgroundAgentAccess({
@@ -1423,6 +1493,7 @@ async function runRegression({
 
   return {
     browserId,
+    extensions,
     originalWebContentsId: firstGuest.webContentsId,
     finalWebContentsId: parkedGuest.webContentsId,
     viewport: "passed",
@@ -1442,15 +1513,16 @@ async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
     fs.mkdtempSync(path.join(os.tmpdir(), "paseo-desktop-browser-e2e-artifacts-"));
-  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-desktop-browser-e2e-"));
+  const runtimeParent = process.env.PASEO_DESKTOP_BROWSER_E2E_RUNTIME_ROOT ?? os.tmpdir();
+  fs.mkdirSync(runtimeParent, { recursive: true });
+  const runtimeDir = fs.mkdtempSync(path.join(runtimeParent, "paseo-desktop-browser-e2e-"));
   fs.mkdirSync(artifactDir, { recursive: true });
   const paseoHome = path.join(runtimeDir, "paseo-home");
   const userData = path.join(runtimeDir, "electron-user-data");
   const workspaceRoot = path.join(runtimeDir, "workspaces");
   fs.mkdirSync(paseoHome, { recursive: true });
 
-  const [daemonPort, expoPort, cdpPort, inspectorPort, remotePort] = await Promise.all([
-    reservePort(),
+  const [daemonPort, expoPort, inspectorPort, remotePort] = await Promise.all([
     reservePort(),
     reservePort(),
     reservePort(),
@@ -1458,13 +1530,13 @@ async function main() {
   ]);
   const listen = `127.0.0.1:${daemonPort}`;
   seedPaseoHome(paseoHome, listen, workspaceRoot);
-  const target = await startTargetPage();
-  seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  const { extensionFixtures, target } = await prepareTargetFixtures(userData, paseoHome);
   const remoteHome = path.join(runtimeDir, "remote-home");
   seedPaseoHome(remoteHome, `127.0.0.1:${remotePort}`, path.join(runtimeDir, "remote-workspaces"));
   const children = [];
   let browser = null;
   let client = null;
+  let appPage = null;
 
   try {
     // Observe the real Electron shell handoff without launching a user's browser.
@@ -1491,6 +1563,15 @@ async function main() {
       FORCE_COLOR: "0",
       NO_COLOR: "1",
     };
+    const runtimeContext = {
+      runtimeDir,
+      daemonPort,
+      expoPort,
+      cdpPort: null,
+      inspectorPort,
+      targetUrl: target.url,
+    };
+    writeJson(path.join(artifactDir, "runtime-context.json"), runtimeContext);
     const daemon = spawnLogged(
       "daemon",
       process.execPath,
@@ -1542,20 +1623,27 @@ async function main() {
           EXPO_UNSTABLE_HEADLESS: "1",
           EXPO_PORT: String(expoPort),
           EXPO_DEV_URL: `http://localhost:${expoPort}`,
-          PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: String(cdpPort),
+          PASEO_ELECTRON_REMOTE_DEBUGGING_PORT: "0",
           PASEO_ELECTRON_USER_DATA_DIR: userData,
-          PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
+          PASEO_ELECTRON_FLAGS: "--remote-debugging-address=127.0.0.1 --remote-debugging-port=0",
         },
       },
       artifactDir,
     );
     children.push(desktop.child);
-    await waitForPort(cdpPort, "Electron CDP", desktop);
+    const cdpEndpoint = await waitForDesktopCdpEndpoint(desktop);
+    runtimeContext.cdpPort = cdpEndpoint.port;
+    writeJson(path.join(artifactDir, "runtime-context.json"), runtimeContext);
 
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    browser = await chromium.connectOverCDP(cdpEndpoint.httpUrl);
     let page = await waitForAppPage(browser, expoPort);
+    appPage = page;
+    page.on("pageerror", (error) =>
+      fs.appendFileSync(path.join(artifactDir, "renderer-errors.txt"), `${error.stack}\n`),
+    );
     await hideDeveloperToasts(page);
     const status = await waitForDesktopStatus(page);
+    await waitForRendererReady(page);
     await settleDesktopStartup(page);
 
     const checkPluginLinks = () =>
@@ -1614,6 +1702,7 @@ async function main() {
       serverId: status.serverId,
       targetUrl: target.url,
       inspectorPort,
+      extensionFixtures,
       // Playwright's session owns a visible-capture lease on the host. A second
       // CDP session cannot release it, so detach the observer for native idle QA.
       withoutPlaywrightObservation: async (task) => {
@@ -1621,10 +1710,11 @@ async function main() {
         try {
           await task();
         } finally {
-          browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+          browser = await chromium.connectOverCDP(cdpEndpoint.httpUrl);
           page = await waitForAppPage(browser, expoPort);
+          appPage = page;
         }
-        return page;
+        return appPage;
       },
       callerAgentId,
       typingAgent,
@@ -1642,6 +1732,15 @@ async function main() {
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );
   } catch (error) {
+    if (appPage && !appPage.isClosed()) {
+      await appPage
+        .screenshot({ path: path.join(artifactDir, "failure.png") })
+        .catch(() => undefined);
+      fs.writeFileSync(
+        path.join(artifactDir, "failure.html"),
+        await appPage.content().catch(() => "Renderer closed"),
+      );
+    }
     console.error(`Browser desktop browser E2E failed. Artifacts: ${artifactDir}`);
     console.error(error);
     throw error;
@@ -1649,6 +1748,7 @@ async function main() {
     await client?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
     for (const child of children.toReversed()) stopProcess(child);
+    target.server.closeAllConnections();
     await closeServer(target.server);
     await delay(1_000);
     try {
@@ -1660,3 +1760,17 @@ async function main() {
 }
 
 await main();
+
+async function resizeDesktopWindow(inspectorPort, { width, height }) {
+  return evaluateDesktopWindow(
+    inspectorPort,
+    `const [width, height] = win.getContentSize(); win.setContentSize(${width}, ${height}); return { width, height };`,
+  );
+}
+
+async function prepareTargetFixtures(userData, paseoHome) {
+  const extensionFixtures = seedBrowserExtensions(userData);
+  const target = await startTargetPage();
+  seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  return { extensionFixtures, target };
+}
