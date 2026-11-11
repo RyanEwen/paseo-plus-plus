@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { SettingsCard, SettingsRow, SettingsSection, SettingsSwitch } from "@/components/settings";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import type { PaseoPlusPlusFeature } from "@/paseo-plus-plus/preferences";
+import { IconOnlyTabsSettingsRegistration } from "./paseo-plus-plus/icon-only-tabs-settings-row";
 
 const OPTIONAL_FEATURES: readonly PaseoPlusPlusFeature[] = [
   "workspaceChatLinks",
@@ -87,6 +88,7 @@ export function PaseoPlusPlusSection() {
 
   return (
     <View testID="paseo-plus-plus-settings">
+      <IconOnlyTabsSettingsRegistration />
       <SettingsSyncSection />
       <SettingsSection title={t("paseoPlusPlus.optional")} info={t("paseoPlusPlus.optionalHint")}>
         {settingsError !== null ? (

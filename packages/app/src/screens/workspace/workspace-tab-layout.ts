@@ -1,7 +1,27 @@
 import { COMPACT_CONTENT_WIDTH } from "@/constants/layout";
+import type { PaneHost } from "@/panels/panel-manifest";
 
 export function shouldUseCompactWorkspaceHeader(width: number): boolean {
   return width < COMPACT_CONTENT_WIDTH;
+}
+
+/** Paseo++ minimum for main and sheet tabs on wide layouts, so short names stay easy to click. */
+export const MIN_WORKSPACE_TAB_WIDTH = 96;
+/** Upstream's tab minimum, kept wherever the wider fork minimum does not fit. */
+const UPSTREAM_TAB_MIN_WIDTH = 64;
+
+/**
+ * The narrowest a labelled tab may become in `host` before its strip scrolls.
+ *
+ * Wide main and sheet panes use the fork minimum. Compact chips keep upstream's touch layout, and
+ * the Explorer keeps upstream's minimum because its dock can be as narrow as 240 points, where
+ * 96-point tabs would make the strip scroll after a single tab.
+ */
+export function workspaceTabMinimumWidth(host: PaneHost, compact: boolean): number {
+  if (compact || host === "explorer") {
+    return UPSTREAM_TAB_MIN_WIDTH;
+  }
+  return MIN_WORKSPACE_TAB_WIDTH;
 }
 
 export type WorkspaceTabCloseButtonPolicy = "all" | "none";
@@ -29,6 +49,10 @@ export interface WorkspaceTabLayoutInput {
    * narrow X beside the label is easy to hit by accident and the tab's long-press menu closes it.
    */
   compact: boolean;
+  /** Raise only the title-width ceiling; short tabs stay content-driven. */
+  widerTabs?: boolean;
+  /** Present for icon-only tabs: every tab is a square cell of this width with no label. */
+  iconOnlyTabWidth?: number;
 }
 
 export interface WorkspaceTabLayoutItem {
@@ -82,40 +106,29 @@ export function computeWorkspaceTabLayout(
   const rowOverhead =
     input.metrics.rowPaddingHorizontal * 2 + Math.max(tabCount - 1, 0) * input.metrics.tabGap;
   const availableTabsWidth = Math.max(0, availableWidth - rowOverhead);
+  if (input.iconOnlyTabWidth !== undefined) {
+    const width = input.iconOnlyTabWidth;
+    return {
+      items: input.tabLabelWidths.map(() => ({ width, showLabel: false })),
+      // A square cell has no room for an inline X; icon-only tabs close from their context menu.
+      closeButtonPolicy: "none",
+      requiresHorizontalScrollFallback: availableTabsWidth < width * tabCount,
+    };
+  }
   const tabChromeWidth =
     input.metrics.tabIconWidth +
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  const maximumWidth = input.metrics.maxTabWidth * (input.widerTabs ? 1.5 : 1);
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
-    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
+    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, maximumWidth),
   );
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
-  const minimumTotalWidth = input.metrics.minTabWidth * tabCount;
-  // A row that scrolls has no reason to truncate: the tabs keep their natural widths and the
-  // viewport pans over them. Pointer layouts first shrink toward the clickable minimum and scroll
-  // only once even that does not fit; compact layouts skip the shrink.
-  const requiresHorizontalScrollFallback = input.compact
-    ? naturalTotalWidth > availableTabsWidth
-    : availableTabsWidth < minimumTotalWidth;
-
-  let resolvedWidths = naturalWidths;
-  if (
-    !requiresHorizontalScrollFallback &&
-    !input.compact &&
-    naturalTotalWidth > availableTabsWidth
-  ) {
-    const widthToRemove = naturalTotalWidth - availableTabsWidth;
-    const shrinkCapacity = naturalTotalWidth - minimumTotalWidth;
-    const shrinkRatio = widthToRemove / shrinkCapacity;
-    resolvedWidths = naturalWidths.map(
-      (width) => width - (width - input.metrics.minTabWidth) * shrinkRatio,
-    );
-  }
-
-  const roundedWidths = resolvedWidths.map((width) =>
-    Math.round(clamp(width, input.metrics.minTabWidth, input.metrics.maxTabWidth)),
-  );
+  // Tabs always keep their natural widths, so a title is never squeezed; the strip scrolls as soon
+  // as those widths do not fit. The minimum only floors short names.
+  const requiresHorizontalScrollFallback = naturalTotalWidth > availableTabsWidth;
+  const roundedWidths = naturalWidths.map((width) => Math.round(width));
 
   return {
     items: roundedWidths.map((width) => ({
