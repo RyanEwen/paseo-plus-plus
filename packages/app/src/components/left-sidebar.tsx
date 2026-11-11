@@ -1,3 +1,8 @@
+import {
+  SidebarQuickFilterButton,
+  SidebarQuickFilterInput,
+} from "@/components/sidebar/quick-filter";
+import { SidebarViewModeButton } from "@/components/sidebar/view-mode-button";
 import { SidebarViewSlot } from "@/plugins/sidebar-view";
 import { useAddHost } from "@/hosts/add-host";
 import { router } from "expo-router";
@@ -909,18 +914,23 @@ function DesktopSidebar({
 
 function WorkspacesSectionHeader() {
   return (
-    <SidebarSectionHeader title="Workspaces">
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <View>
-            <SidebarDisplayPreferencesMenu />
-          </View>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <IconTooltipContent label="Display preferences" />
-        </TooltipContent>
-      </Tooltip>
-    </SidebarSectionHeader>
+    <View>
+      <SidebarSectionHeader title="Workspaces">
+        <SidebarViewModeButton />
+        <SidebarQuickFilterButton />
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <View>
+              <SidebarDisplayPreferencesMenu />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <IconTooltipContent label="Display preferences" />
+          </TooltipContent>
+        </Tooltip>
+      </SidebarSectionHeader>
+      <SidebarQuickFilterInput />
+    </View>
   );
 }
 

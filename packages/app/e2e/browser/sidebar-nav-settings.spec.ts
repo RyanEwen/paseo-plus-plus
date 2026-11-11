@@ -9,6 +9,8 @@ import {
   expectCompactSidebarOpen,
 } from "../support/helpers/usage-sidebar-item";
 import { gotoAppShell } from "../support/helpers/app";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { openSidebarDisplayPage } from "../support/helpers/sidebar";
 import { SHOWCASE_PLUGIN_ID, installSidebarPlugins } from "../support/helpers/plugin-sidebar-items";
 import {
   expectFooterIconRow,
@@ -32,6 +34,50 @@ import {
   setFooterItemVisible,
   setSidebarNavItemVisible,
 } from "../support/helpers/sidebar-nav-settings";
+
+test("sidebar initial count saves arbitrary values and Show all without accepting invalid input", async ({
+  page,
+}) => {
+  // The Display menu sits in the Workspaces header, which an empty sidebar does not render.
+  const workspace = await seedWorkspace({ repoPrefix: "sidebar-count-" });
+  try {
+    await gotoAppShell(page);
+    const input = page.getByTestId("sidebar-workspace-count-custom");
+    const save = page.getByTestId("sidebar-workspace-count-save");
+    const showAll = page.getByTestId("sidebar-workspace-count-all");
+    const openCount = async () => {
+      await openSidebarDisplayPage(page, "sidebar-display-workspace-list");
+      await page.getByTestId("sidebar-workspace-count-limit").click();
+    };
+    const savedCount = () =>
+      page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("sidebar-view") ?? "{}").state.modeProfiles.project
+            .initialWorkspaceCount,
+      );
+    await openCount();
+    await expect(input).toHaveValue("20");
+    await input.fill("37");
+    await save.click();
+    await expect.poll(savedCount).toBe(37);
+    await page.reload();
+    await openCount();
+    await expect(input).toHaveValue("37");
+    await input.fill("0");
+    await save.click();
+    await expect(page.getByText("Enter a positive whole number.", { exact: true })).toBeVisible();
+    expect(await savedCount()).toBe(37);
+    await showAll.click();
+    await expect(showAll).toHaveAttribute("aria-checked", "true");
+    await expect.poll(savedCount).toBeNull();
+    await page.reload();
+    await openCount();
+    await expect(showAll).toHaveAttribute("aria-checked", "true");
+    expect(await savedCount()).toBeNull();
+  } finally {
+    await workspace.cleanup();
+  }
+});
 
 async function showDeveloperToast(page: Page): Promise<void> {
   await page.evaluate(() => {

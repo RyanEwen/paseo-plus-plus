@@ -203,7 +203,7 @@ normal behavior. Both flags are fixed at creation.
   out of tabs, the parent's subagent track and agent lists in the app. A tab opened by id still
   works.
 - **Workspace.** `workspace.background` hides the workspace from the sidebar unless **Show
-  background** is on.
+  background workspaces** is on.
 - **Inheritance.** When `background` is omitted, an agent created by a caller agent takes the
   caller's own `background`. A new workspace takes the caller's effective background. A request
   that creates its workspace applies `background` to both the agent and the workspace. Explicit

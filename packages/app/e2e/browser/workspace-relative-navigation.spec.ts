@@ -3,7 +3,10 @@ import { test, expect } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import { revealSidebarProjectWorkspaces } from "../support/helpers/sidebar";
+import {
+  revealSidebarProjectWorkspaces,
+  seedSidebarModeProfiles,
+} from "../support/helpers/sidebar";
 import {
   expectSidebarWorkspaceSelected,
   switchWorkspaceViaSidebar,
@@ -33,10 +36,17 @@ test("previous and next traverse every visible workspace while digit shortcuts s
   page,
 }) => {
   test.setTimeout(120_000);
+  await seedSidebarModeProfiles(page, {
+    workspaceSort: "manual",
+    configure: (profiles) => {
+      profiles.project.initialWorkspaceCount = 7;
+    },
+  });
   const project = await seedWorkspace({
     repoPrefix: "relative-navigation-",
     title: "Workspace 01",
   });
+  const workspaceIds = [project.workspaceId];
   try {
     for (let index = 2; index <= 12; index += 1) {
       const created = await project.client.createWorkspace({
@@ -44,10 +54,21 @@ test("previous and next traverse every visible workspace while digit shortcuts s
         title: `Workspace ${String(index).padStart(2, "0")}`,
       });
       expect(created.error).toBeNull();
+      if (!created.workspace) throw new Error("Missing seeded navigation workspace");
+      workspaceIds.push(created.workspace.id);
     }
     await page.setViewportSize({ width: 1440, height: 1100 });
     await gotoAppShell(page);
-    await revealSidebarProjectWorkspaces(page, project.projectKey);
+    const rows = page.getByRole("button", { name: /^Workspace \d{2}$/ });
+    await expect(rows).toHaveCount(7);
+    const visibleIds = await rows.evaluateAll(
+      (elements, prefix) =>
+        elements.map((element) => element.getAttribute("data-testid")!.slice(prefix.length)),
+      `sidebar-workspace-row-${getServerId()}:`,
+    );
+    const hiddenIds = workspaceIds.filter((id) => !visibleIds.includes(id));
+    expect(hiddenIds).toHaveLength(5);
+    await revealSidebarProjectWorkspaces(page, project.projectKey, hiddenIds[0]);
     const order = await readVisibleWorkspaceOrder(page);
 
     await test.step("next crosses the ninth workspace and previous returns to it", async () => {

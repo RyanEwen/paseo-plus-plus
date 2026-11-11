@@ -1,3 +1,4 @@
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { PressableStateCallbackType } from "react-native";
@@ -17,7 +18,6 @@ import { PressHighlight } from "@/components/ui/press-highlight";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { useAppSettings } from "@/hooks/use-settings";
 import { densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -396,9 +396,7 @@ export function SidebarWorkspaceContextMenu({
       highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
     }
 >) {
-  const {
-    settings: { workspaceTitleSource },
-  } = useAppSettings();
+  const workspaceTitleSource = useSidebarViewStore((state) => state.workspaceTitleSource);
   const { t } = useTranslation();
   const pullRequestLabel = workspace.prHint
     ? t("workspace.git.pr.accessibility.pullRequest", {
