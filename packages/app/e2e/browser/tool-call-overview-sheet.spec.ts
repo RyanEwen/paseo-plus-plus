@@ -8,6 +8,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { seedAppSettings } from "../support/helpers/app-settings";
 import {
   ACTIVITY_OPAQUE_COMMAND,
+  ACTIVITY_PATCH_DIFFS,
   ACTIVITY_READ_COMMAND,
   ACTIVITY_READ_OUTPUT,
   ACTIVITY_SCENE_LABELS,
@@ -469,12 +470,12 @@ for (const compact of [false, true]) {
           await read.close();
 
           const patch = await openActivityDetails(page, badges.nth(4), compact);
-          for (const diff of labels.shownPatchDiffs) {
+          for (const diff of ACTIVITY_PATCH_DIFFS) {
             await expect(patch.surface).toContainText(diff);
           }
-          for (const diff of labels.hiddenPatchDiffs) {
-            await expect(patch.surface).not.toContainText(diff);
-          }
+          await expect(patch.surface.getByTestId("tool-call-additional-files")).toHaveCount(
+            labels.showsAdditionalFiles ? 1 : 0,
+          );
           await testInfo.attach("readable-activity-multi-file-details", {
             body: await page.screenshot(),
             contentType: "image/png",
