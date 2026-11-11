@@ -1,5 +1,5 @@
 import { selectChangesComparison } from "../support/helpers/branch-switcher";
-import { seedAppSettings } from "../support/helpers/app-settings-seed";
+import { seedAppSettings } from "../support/helpers/app-settings";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
