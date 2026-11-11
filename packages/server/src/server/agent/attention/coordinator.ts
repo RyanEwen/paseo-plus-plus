@@ -340,6 +340,17 @@ export class AgentAttentionCoordinator {
     };
   }
 
+  /**
+   * Who a problem on this agent is for. An agent audience gets it when this turn's audience is
+   * known and has no human member; a human gets it otherwise, and always while agent-aware
+   * presentation is off.
+   */
+  problemAudience(agent: ManagedAgent): { agentProblem: boolean; humanProblem: boolean } {
+    const ledger = agent.attentionObjectives;
+    const agentProblem = ledger?.isAudienceKnown === true && !ledger.hasHumanAudience();
+    return { agentProblem, humanProblem: !this.presentation.agentAware || !agentProblem };
+  }
+
   get agentAwareAttentionEnabled(): boolean {
     return this.presentation.agentAware;
   }
