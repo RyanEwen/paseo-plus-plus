@@ -592,9 +592,8 @@ export class AgentStorage {
     await this.queueRecordMutation(
       agent.id,
       (existing) => {
-        const current = options?.operation ? options.operation.resolveSnapshot() : agent;
+        const current = resolveQueuedSnapshot(agent, options?.operation);
         if (!current) return null;
-        if (current.id !== agent.id) throw new Error("Snapshot resolver changed agent identity");
         assertPendingClaudeQuerySnapshot(current, existing);
         const record = toStoredAgentRecord(current, {
           title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
@@ -799,6 +798,27 @@ function projectDirNameFromCwd(cwd: string): string {
     return sanitizedRoot || "root";
   }
   return prefix + withoutRoot.replace(/[\\/]+/g, "-");
+}
+
+/**
+ * The agent view a queued snapshot writes, read when its queue entry runs: the operation's
+ * resolution when one is supplied, otherwise `agent` itself.
+ *
+ * @returns null when the operation skips this write.
+ * @throws when the operation resolves a different agent, so one writer cannot overwrite another.
+ */
+function resolveQueuedSnapshot(
+  agent: ManagedAgent,
+  operation: AgentSnapshotOperation | undefined,
+): ManagedAgent | null {
+  if (!operation) {
+    return agent;
+  }
+  const current = operation.resolveSnapshot();
+  if (current && current.id !== agent.id) {
+    throw new Error("Snapshot resolver changed agent identity");
+  }
+  return current;
 }
 
 function shouldResumeSnapshotOnStartup(

@@ -659,6 +659,18 @@ function AgentPanelBody({
   );
 }
 
+/**
+ * Whether the pane shows a loaded chat that belongs to this pane's workspace. Only then can its
+ * notifications count as seen; a chat still loading, or one owned by another workspace, cannot.
+ */
+function isLoadedWorkspaceChat(input: {
+  loaded: boolean;
+  agentWorkspaceId: string | undefined;
+  workspaceId: string;
+}): boolean {
+  return input.loaded && input.agentWorkspaceId === input.workspaceId;
+}
+
 function ChatAgentContent({
   serverId,
   workspaceId,
@@ -837,7 +849,11 @@ function ChatAgentContent({
     serverId,
     agentId,
     focused: isPaneFocused,
-    ready: effectiveAgent !== null && agentState.workspaceId === workspaceId,
+    ready: isLoadedWorkspaceChat({
+      loaded: effectiveAgent !== null,
+      agentWorkspaceId: agentState.workspaceId,
+      workspaceId,
+    }),
   });
   const routeEntryKey = agentId ? `${serverId}:${agentId}` : null;
   routeBottomAnchorRequestRef.current = deriveRouteBottomAnchorIntent({

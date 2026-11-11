@@ -1017,14 +1017,7 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
-    // Without a host-wide publisher (standalone sessions and tests), publish to this session only.
-    this.workspaceAttention = new WorkspaceAttention({
-      manager: agentManager,
-      storage: agentStorage,
-      publishStored:
-        this.publishStoredAgentAttentionCleared ??
-        ((record, workspaceId) => this.forwardStoredAgentAttentionCleared(record, workspaceId)),
-    });
+    this.workspaceAttention = this.createWorkspaceAttention(agentManager, agentStorage);
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
@@ -1406,6 +1399,23 @@ export class Session {
     );
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
+  }
+
+  /**
+   * Build the workspace attention clearer. Stored-only clears go to the host-wide publisher; without
+   * one (standalone sessions and tests) they are published to this session only.
+   */
+  private createWorkspaceAttention(
+    agentManager: SessionOptions["agentManager"],
+    agentStorage: SessionOptions["agentStorage"],
+  ): WorkspaceAttention {
+    return new WorkspaceAttention({
+      manager: agentManager,
+      storage: agentStorage,
+      publishStored:
+        this.publishStoredAgentAttentionCleared ??
+        ((record, workspaceId) => this.forwardStoredAgentAttentionCleared(record, workspaceId)),
+    });
   }
 
   /**

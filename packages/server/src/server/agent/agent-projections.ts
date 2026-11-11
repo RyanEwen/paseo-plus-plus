@@ -79,6 +79,26 @@ export function resolveEffectiveThinkingOptionId(options: {
   return normalizeThinkingOptionId(options.configuredThinkingOptionId);
 }
 
+/**
+ * The agent-aware attention fields a stored record keeps: the objective ledger snapshot, whether a
+ * human is needed now (unread output or an error or pending permission), and the escalation text.
+ * All three stay undefined for an agent without an objective ledger.
+ */
+function storedAttentionObjectiveFields(
+  agent: ManagedAgent,
+): Pick<StoredAgentRecord, "attentionObjectives" | "humanAttentionRequired" | "attentionMessage"> {
+  const objectives = agent.attentionObjectives;
+  const hasProblem = agent.lifecycle === "error" || agent.pendingPermissions.size > 0;
+  return {
+    attentionObjectives: objectives?.snapshot(),
+    humanAttentionRequired: objectives?.requiresHumanAttention({
+      hasUnread: agent.attention.requiresAttention,
+      hasProblem,
+    }),
+    attentionMessage: agent.attentionMessage,
+  };
+}
+
 export function toStoredAgentRecord(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -113,12 +133,7 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
-    attentionObjectives: agent.attentionObjectives?.snapshot(),
-    humanAttentionRequired: agent.attentionObjectives?.requiresHumanAttention({
-      hasUnread: agent.attention.requiresAttention,
-      hasProblem: agent.lifecycle === "error" || agent.pendingPermissions.size > 0,
-    }),
-    attentionMessage: agent.attentionMessage,
+    ...storedAttentionObjectiveFields(agent),
     internal: options?.internal,
     ...(agent.background ? { background: true } : {}),
     owner: agent.owner,
