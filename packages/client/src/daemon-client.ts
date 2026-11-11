@@ -3534,6 +3534,11 @@ export class DaemonClient {
     }
   }
 
+  /** Whether the host accepts a caller-selected agent ID, which only the creation lifecycle does. */
+  supportsCallerSelectedCreationIds(): boolean {
+    return this.lastServerInfoMessage?.features?.creationLifecycle === true;
+  }
+
   supportsBackgroundWorkspaces(): boolean {
     return this.lastServerInfoMessage?.features?.backgroundWorkspaces === true;
   }
@@ -3563,8 +3568,8 @@ export class DaemonClient {
       );
     }
     if (options.background !== undefined) this.requireBackgroundCreation(options);
-    // Upstream sends sourceAgentId for every agent-created child; only objective metadata needs
-    // a host that understands audiences, so a visible caller still works on older hosts.
+    // Only objective metadata needs a host that understands audiences; background creation is
+    // checked first so a background caller sees the update it actually needs.
     if (options.agentAttention) this.requireAgentAudienceAttention();
     if (options.metadata !== undefined) this.requireEntityMetadata();
     const config = resolveAgentConfig(options);
