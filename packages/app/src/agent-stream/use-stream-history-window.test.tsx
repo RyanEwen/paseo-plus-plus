@@ -69,7 +69,6 @@ describe("useStreamHistoryWindow", () => {
     const { result, rerender } = renderHook(
       ({ history }) =>
         useStreamHistoryWindow({
-          agentId: "agent-1",
           items: history,
           loadRemoteOlder,
         }),

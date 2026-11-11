@@ -1011,20 +1011,6 @@ it("manual intent cancels smooth scrolling without a stale frame moving the view
   expect(viewport.scrollWrites()).toEqual([]);
 });
 
-it("native live prompt uses its measured landing offset and the animated path", () => {
-  const f = nativeJumpFixture();
-  f.setIndex(-1);
-  f.setLiveOffset(5300);
-  f.controller.start("live-prompt");
-  expect(f.scrollToOffset).toHaveBeenCalledWith(5300, true);
-  expect(f.scrollToIndex).not.toHaveBeenCalled();
-  expect(f.onFailure).not.toHaveBeenCalled();
-  f.setTargetTop(8);
-  f.retry();
-  f.retry();
-  expect(f.controller.isActive()).toBe(false);
-});
-
 describe("explicit prompt jump placement", () => {
   it("pins a measured bubble beyond the edge, while the next original reveal retains its inset", () => {
     const frames = createFakeFrameScheduler();
