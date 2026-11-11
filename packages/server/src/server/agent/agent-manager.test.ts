@@ -13264,7 +13264,8 @@ test("failed native import retains its request without publishing or auto-adopti
       storage: { kind: "unknown" },
     });
     expect(intents[0].workspaceId).toBe("fixture-workspace");
-    expect(intents[0].config?.model).toBe("gpt-5.4");
+    // Imports no longer resolve a default model up front; the imported session reports its own.
+    expect(intents[0].config?.model).toBeUndefined();
     expect(events).toEqual([]);
     const restartedStorage = new AgentStorage(join(directory, "agents"), logger);
     expect(await restartedStorage.listAll()).toEqual([]);
@@ -13418,7 +13419,7 @@ test("fresh internal creation keeps its configuration without creating provenanc
     await manager.closeAgent(id);
     id = undefined;
     expect(
-      await new AgentStorage(join(directory, "agents"), logger).list({
+      await new AgentStorage(join(directory, "agents"), logger).listAll({
         includeHistoryIntents: true,
       }),
     ).toEqual([]);
@@ -13630,7 +13631,7 @@ test("configured admission failure preserves hidden request and cannot silently 
     expect(intent.config?.model).toBe("gpt-5.4");
     expect(intent.workspaceId).toBe("kept-workspace");
     expect(intent.providerHistory?.storage).toEqual({ kind: "unknown" });
-    expect(await new AgentStorage(join(directory, "agents"), logger).list()).toEqual([]);
+    expect(await new AgentStorage(join(directory, "agents"), logger).listAll()).toEqual([]);
     const legacy: StoredAgentRecord = {
       ...intent,
       id: "00000000-0000-4000-8000-000000000982",

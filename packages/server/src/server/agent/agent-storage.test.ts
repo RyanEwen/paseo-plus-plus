@@ -619,7 +619,7 @@ describe("AgentStorage", () => {
     await storage.assertInternalAgentIdAvailable("fresh-internal");
     expect(await storage.get("fresh-internal", { includeHistoryIntents: true })).toBeNull();
     expect(
-      await new AgentStorage(storagePath, logger).list({ includeHistoryIntents: true }),
+      await new AgentStorage(storagePath, logger).listAll({ includeHistoryIntents: true }),
     ).toEqual([normalizeStoredRecord(record)]);
   });
 
