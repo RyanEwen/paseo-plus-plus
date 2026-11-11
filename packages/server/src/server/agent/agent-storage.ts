@@ -163,6 +163,24 @@ export function isUncommittedCreatedIntent(
   );
 }
 
+/**
+ * A registered agent on a shared route whose provider never reported a session, reopened by its
+ * own record (a restart's first session). No native session is bound to it, so nothing can be
+ * adopted or orphaned. Configured Claude chats use the stricter empty-recreation match instead.
+ */
+function matchesUnstartedReopen(
+  existing: StoredAgentRecord | null,
+  requested: StoredAgentRecord,
+): boolean {
+  const binding = existing?.providerHistory;
+  if (!existing || !binding || existing.persistence) return false;
+  const registeredWithoutSession =
+    binding.registration === "registered" && binding.sessionId === null;
+  const sharedRoute = binding.storage.kind !== "configured-home";
+  const sameProvider = existing.provider === requested.provider;
+  return registeredWithoutSession && sharedRoute && sameProvider;
+}
+
 function matchesCreatedIntentRetry(
   current: StoredAgentRecord,
   requested: StoredAgentRecord,
@@ -419,6 +437,7 @@ export class AgentStorage {
       // their unknown provenance instead of retroactively calling the old session created.
       const legacyRetry = existing && !existing.persistence && !existing.providerHistory;
       const emptyRecreation = matchesEmptyClaudeRecreation(existing, record);
+      const unstartedReopen = matchesUnstartedReopen(existing, record);
       if (existing && retry) {
         if (
           digest(existing) !== digest(retry.expected) ||
@@ -430,10 +449,10 @@ export class AgentStorage {
         selected = existing;
         return existing;
       }
-      if (existing && !legacyRetry && !emptyRecreation)
-        throw new HistoryIntentConflictError(record.id);
+      const reusesExisting = legacyRetry || emptyRecreation || unstartedReopen;
+      if (existing && !reusesExisting) throw new HistoryIntentConflictError(record.id);
       reserved = true;
-      if (legacyRetry || emptyRecreation) {
+      if (reusesExisting) {
         selected = existing!;
         return existing;
       }

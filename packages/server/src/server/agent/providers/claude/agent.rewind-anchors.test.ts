@@ -1000,7 +1000,9 @@ describe("configured Claude managed rewind", () => {
         await f.session.close();
         release.resolve();
         await settled.promise;
-        await turn;
+        // Closing a session no longer ends its turn (upstream #8686): the manager settles the
+        // run after release, so this direct close leaves the stream open and is not awaited.
+        void turn.catch(() => undefined);
         expect(assertions).toHaveBeenCalledOnce();
         const after = (await new AgentStorage(f.storagePath, createTestLogger()).get(f.agent.id))!;
         expect(after.providerHistory).toEqual(before.providerHistory);

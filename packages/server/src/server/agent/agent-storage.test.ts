@@ -549,6 +549,29 @@ describe("AgentStorage", () => {
     expect(await reloaded.get(second.id)).toEqual(persistedSecond);
     await storage.applySnapshot({ ...first, currentModeId: "after-rejection" });
     expect((await storage.get(first.id))?.lastModeId).toBe("after-rejection");
+
+  test("a registered shared-route agent that never got a session reopens under its own ID", async () => {
+    const intent = retryIntent("unstarted-shared");
+    const registered: StoredAgentRecord = {
+      ...intent,
+      providerHistory: {
+        origin: "created",
+        registration: "registered",
+        sessionId: null,
+        storage: { kind: "unknown" },
+      },
+    };
+    await storage.upsert(registered);
+    await expect(storage.reserveHistoryIntent(intent)).resolves.toEqual(registered);
+    const configured: StoredAgentRecord = {
+      ...registered,
+      id: "unstarted-configured",
+      providerHistory: { ...registered.providerHistory!, storage: intent.providerHistory!.storage },
+    };
+    await storage.upsert(configured);
+    await expect(
+      storage.reserveHistoryIntent({ ...intent, id: "unstarted-configured" }),
+    ).rejects.toMatchObject({ code: "HISTORY_INTENT_CONFLICT" });
   });
 
   test("mutateRecord skips a null result and reports the committed record after a write", async () => {
