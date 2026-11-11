@@ -23,7 +23,7 @@ Opt in on the exact provider entry in `$PASEO_HOME/config.json`:
 ```
 
 - Both directories must already exist with the account and config your installed Codex needs. Paseo does not create a home, copy credentials, sign in or sync integrations.
-- Choose history and database roots separate from Codex's native default storage. `sqlite_home` is required because config-file and environment selectors have different precedence; it is passed as a startup option, never per thread.
+- Choose history and database roots separate from Codex's native default storage. `sqlite_home` is required because config-file and environment selectors have different precedence; it is passed as a startup option, never per thread, and is left out of the options Paseo sends to the app. It cannot change while a session is running.
 - Configured startup admits only `codex-cli 0.166.0`. Other versions, replace-command wrappers, native `--profile` selectors and conflicting SQLite selectors fail before app-server starts.
 - `mode: "shared"`, or no `history` entry, keeps the existing launch behavior. Remove `sqlite_home` from an unbound shared profile.
 
