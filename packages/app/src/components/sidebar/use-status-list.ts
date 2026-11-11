@@ -11,6 +11,7 @@ import {
   type StatusListItem,
 } from "./status-list-items";
 import { useOpenWorkspaceKeep, useSidebarLimitInputs } from "./use-limited-sidebar-group";
+import { useSidebarWorkspaceTree } from "./workspace-tree-context";
 
 const NO_EXPANDED_GROUPS: ReadonlySet<string> = new Set();
 
@@ -33,7 +34,7 @@ function mapWorkspaceGroups(groups: readonly SidebarWorkspaceGroup[]): Map<strin
 
 /**
  * Flatten status groups into list cells with the mode's count and age windows, per-group Show
- * more state and the open workspace kept visible.
+ * more state, the open workspace kept visible and workspace families nested under their parents.
  *
  * @returns `items` for the list, `toggleExpanded(groupKey)` for a footer, and
  *   `resolveDestinationGroupKey(workspaceKey)`, which always reads the latest projection.
@@ -47,6 +48,7 @@ export function useStatusListItems({
 }) {
   const { initialCount, days, now } = useSidebarLimitInputs();
   const keep = useOpenWorkspaceKeep(useActiveWorkspaceSelection());
+  const { tree: workspaceTree, activeWorkspaceKey } = useSidebarWorkspaceTree();
   const [expandedGroupKeys, setExpandedGroupKeys] = useState(NO_EXPANDED_GROUPS);
 
   const items = useMemo(
@@ -58,8 +60,20 @@ export function useStatusListItems({
         initialCount,
         updatedWithin: days === null ? undefined : { days, now },
         keep,
+        workspaceTree,
+        activeWorkspaceKey,
       }),
-    [groups, collapsedGroupKeys, expandedGroupKeys, initialCount, days, now, keep],
+    [
+      groups,
+      collapsedGroupKeys,
+      expandedGroupKeys,
+      initialCount,
+      days,
+      now,
+      keep,
+      workspaceTree,
+      activeWorkspaceKey,
+    ],
   );
 
   const toggleExpanded = useCallback((groupKey: string) => {

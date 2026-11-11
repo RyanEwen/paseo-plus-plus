@@ -1,3 +1,13 @@
+import { useWorkspaceHumanAttention } from "./use-workspace-human-attention";
+import { useWorkspaceFamilyDragAuthority } from "./use-workspace-family-drag";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { useWorkspaceParents } from "./use-workspace-parents";
+import { SidebarWorkspaceTreeProvider } from "./workspace-tree-context";
+import {
+  findActiveWorkspaceKey,
+  placementServerIds,
+  type WorkspaceTreeNode,
+} from "./workspace-tree";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import { filterSidebarByText } from "./sidebar-text-filter";
 import { ProjectPinGutterProvider } from "./project-pin-gutter";
@@ -58,6 +68,7 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
   shortcutModel: SidebarShortcutModel;
+  workspaceTree: ReadonlyMap<string, WorkspaceTreeNode>;
 }
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
@@ -234,10 +245,28 @@ export function SidebarModelProvider({
       showBranch,
     ],
   );
+  const familyServerIds = useMemo(
+    () => placementServerIds(list.workspacePlacements),
+    [list.workspacePlacements],
+  );
+  const workspaceParents = useWorkspaceParents(list.workspacePlacements, familyServerIds);
+  const dragAuthority = useWorkspaceFamilyDragAuthority(familyServerIds);
+  const activeWorkspace = useActiveWorkspaceSelection();
+  const activeWorkspaceKey = useMemo(
+    () => findActiveWorkspaceKey(list.workspacePlacements, activeWorkspace),
+    [list.workspacePlacements, activeWorkspace],
+  );
+  const attentionWorkspaces = useMemo(
+    () => textFiltered.projects.flatMap((project) => project.workspaces),
+    [textFiltered.projects],
+  );
+  const humanAttentionWorkspaceKeys = useWorkspaceHumanAttention(attentionWorkspaces);
   const pinnedKeys = usePinnedSidebarKeys(textFiltered.projects);
   const projectionInput = useMemo(
     () => ({
       projects: textFiltered.projects,
+      workspaceParents,
+      activeWorkspaceKey,
       pinnedKeys,
       pinnedWorkspaceOrder,
       workspaceEntriesByKey: textFiltered.entries,
@@ -255,6 +284,8 @@ export function SidebarModelProvider({
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      workspaceParents,
+      activeWorkspaceKey,
       groupMode,
       workspaceSortMode,
       workspaceTitleSource,
@@ -286,6 +317,7 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       toggleProjectCollapsed,
       shortcutModel: projection.shortcutModel,
+      workspaceTree: projection.workspaceTree,
     }),
     [
       resolvedProjectFilters,
@@ -300,11 +332,44 @@ export function SidebarModelProvider({
     ],
   );
 
+  const workspaceTreeModel = useMemo(
+    () => ({
+      tree: projection.workspaceTree,
+      dragAuthority,
+      revision: JSON.stringify([
+        [...projection.workspaceTree].map(([key, node]) => [key, node.parentKey, node.childKeys]),
+        projection.workspaceGroups.map((group) => [
+          group.key,
+          group.rows.map((workspace) => workspace.workspaceKey),
+        ]),
+        projection.pinnedGroups.pinnedChats.map((workspace) => workspace.workspaceKey),
+        [...projection.effectiveCollapsedWorkspaceKeys].sort(),
+        [...collapsedProjectKeys].sort(),
+        pinnedCollapsed,
+      ]),
+      collapsedKeys: projection.effectiveCollapsedWorkspaceKeys,
+      activeWorkspaceKey,
+      entries: textFiltered.entries,
+      humanAttentionWorkspaceKeys,
+    }),
+    [
+      projection,
+      dragAuthority,
+      activeWorkspaceKey,
+      textFiltered.entries,
+      collapsedProjectKeys,
+      pinnedCollapsed,
+      humanAttentionWorkspaceKeys,
+    ],
+  );
+
   return (
     <SidebarModelContext.Provider value={value}>
-      <ProjectPinGutterProvider value={projectPinningEnabled}>
-        <SidebarRecencyClockProvider active={active}>{children}</SidebarRecencyClockProvider>
-      </ProjectPinGutterProvider>
+      <SidebarWorkspaceTreeProvider value={workspaceTreeModel}>
+        <ProjectPinGutterProvider value={projectPinningEnabled}>
+          <SidebarRecencyClockProvider active={active}>{children}</SidebarRecencyClockProvider>
+        </ProjectPinGutterProvider>
+      </SidebarWorkspaceTreeProvider>
     </SidebarModelContext.Provider>
   );
 }

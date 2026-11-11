@@ -820,6 +820,7 @@ describe("ReplicaCache", () => {
           title: "Cached pin metadata",
           labels: ["triage"],
           pinnedAt,
+          humanAttentionRequired: true,
         }),
         projectPinnedAt,
       };
@@ -840,6 +841,7 @@ describe("ReplicaCache", () => {
         pinnedAt,
         title: "Cached pin metadata",
         labels: ["triage"],
+        humanAttentionRequired: true,
       });
       expect(restored.checkpoint).toEqual(checkpoint);
       expect(restored.agents).toEqual(baseline.agents);

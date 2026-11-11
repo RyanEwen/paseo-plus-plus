@@ -1,3 +1,5 @@
+import { projectWorkspaceFamilies } from "./workspace-family-projection";
+import type { WorkspaceTreeNode } from "./workspace-tree";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import type { TFunction } from "i18next";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
@@ -37,10 +39,14 @@ export interface SidebarProjection {
    */
   projectIconTargets: SidebarProjectIconTarget[];
   shortcutModel: SidebarShortcutModel;
+  workspaceTree: ReadonlyMap<string, WorkspaceTreeNode>;
+  effectiveCollapsedWorkspaceKeys: ReadonlySet<string>;
 }
 
 export interface SidebarProjectionInput {
   projects: SidebarProjectEntry[];
+  workspaceParents?: ReadonlyMap<string, string>;
+  activeWorkspaceKey?: string | null;
   pinnedKeys: PinnedSidebarKeys;
   pinnedWorkspaceOrder: string[];
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -86,31 +92,38 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   // One switch decides both what the list groups by and what the keyboard shortcuts walk, so the
   // two cannot disagree and a new grouping mode is a compile error here rather than a silent
   // fall-through to the project rows.
-  const workspaceGroups = buildWorkspaceGroups(input, unpinnedWorkspaces);
+  const families = projectWorkspaceFamilies({
+    projection: input,
+    pinnedGroups,
+    workspaceGroups: buildWorkspaceGroups(input, unpinnedWorkspaces),
+  });
+  const { workspaceGroups, shortcutRows } = families;
 
   const sections: SidebarShortcutSection[] = [];
   if (!input.pinnedCollapsed) {
-    sections.push({ workspaces: pinnedGroups.pinnedChats });
+    sections.push({ workspaces: shortcutRows(families.pinnedGroups.pinnedChats) });
   }
   if (input.groupMode === "project") {
     sections.push(
-      ...pinnedGroups.unpinnedProjects.map((project) => ({
-        workspaces: project.workspaces,
+      ...families.pinnedGroups.unpinnedProjects.map((project) => ({
+        workspaces: shortcutRows(project.workspaces),
         collapsed: input.collapsedProjectKeys.has(project.viewKey),
       })),
     );
   } else {
     sections.push(
       ...workspaceGroups.map((group) => ({
-        workspaces: group.rows,
+        workspaces: shortcutRows(group.rows),
         collapsed: input.collapsedWorkspaceGroupKeys.has(group.key),
       })),
     );
   }
 
   return {
-    pinnedGroups,
+    pinnedGroups: families.pinnedGroups,
     workspaceGroups,
+    workspaceTree: families.workspaceTree,
+    effectiveCollapsedWorkspaceKeys: families.effectiveCollapsedWorkspaceKeys,
     projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
     shortcutModel: buildSidebarShortcutSections({ sections }),
   };
