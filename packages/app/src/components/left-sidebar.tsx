@@ -3,6 +3,7 @@ import {
   SidebarQuickFilterInput,
 } from "@/components/sidebar/quick-filter";
 import { SidebarViewModeButton } from "@/components/sidebar/view-mode-button";
+import { SidebarBulkCollapseControls } from "@/components/sidebar/bulk-collapse-controls";
 import { SidebarViewSlot } from "@/plugins/sidebar-view";
 import { useAddHost } from "@/hosts/add-host";
 import { router } from "expo-router";
@@ -916,6 +917,7 @@ function WorkspacesSectionHeader() {
   return (
     <View>
       <SidebarSectionHeader title="Workspaces">
+        <SidebarBulkCollapseControls />
         <SidebarViewModeButton />
         <SidebarQuickFilterButton />
         <Tooltip delayDuration={300}>

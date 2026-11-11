@@ -328,6 +328,22 @@ export async function selectSidebarProjectGrouping(page: Page): Promise<void> {
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 }
 
+/**
+ * Press Collapse all. On wide layouts it is a header button; on compact layouts open the
+ * Display menu first.
+ */
+export async function collapseAllSidebarSections(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-collapse-all").click();
+}
+
+/**
+ * Press Expand all. On wide layouts it is a header button; on compact layouts open the
+ * Display menu first.
+ */
+export async function expandAllSidebarSections(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-expand-all").click();
+}
+
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
   await page
     .getByTestId("menu-button")
