@@ -30,14 +30,18 @@ function hasUnreadError(input: AgentStateBucketInput): boolean {
 }
 
 /**
- * Failed shows an unread error, and an error whose audience is another agent. That error never
- * raises human attention, so nobody can read it; it stays visible while the agent is in error.
+ * Failed shows an unread error. An agent in error also shows failed while any attention on it is
+ * unread, such as a failure escalated to the human with a message, and while its audience is
+ * another agent: that error never raises human attention, so nobody can read it.
  */
 function showsFailure(input: AgentStateBucketInput): boolean {
   if (hasUnreadError(input)) {
     return true;
   }
-  return input.status === "error" && input.humanAttentionRequired === false;
+  if (input.status !== "error") {
+    return false;
+  }
+  return input.requiresAttention === true || input.humanAttentionRequired === false;
 }
 
 export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceStateBucket {
