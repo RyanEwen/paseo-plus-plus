@@ -18,6 +18,9 @@ type PublishedRelease = GitHubRelease & { body: string; published_at: string };
 /**
  * Read published fork notes without interpreting Markdown headings as release boundaries.
  *
+ * Each body becomes the release's highlights with no sections, so the sheet shows the
+ * notes whole, as published, instead of tucking `###` sections behind "Show all changes".
+ *
  * Throws when the payload is not a list (for example a GitHub error object such as a rate
  * limit), so the caller shows its error state. Individual entries that are malformed, drafts
  * or lack notes are skipped rather than failing the whole list.
@@ -42,7 +45,8 @@ export function parseGitHubReleases(
   return published.map((entry) => ({
     version: entry.tag_name.replace(/^v(?=\d)/, ""),
     date: toCalendarDate(entry.published_at, timeZone),
-    sections: [{ title: null, body: entry.body }],
+    highlights: entry.body,
+    sections: [],
   }));
 }
 

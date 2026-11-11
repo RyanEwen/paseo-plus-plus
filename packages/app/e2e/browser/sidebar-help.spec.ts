@@ -1,7 +1,12 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { openSettingsSection } from "../support/helpers/settings";
-import { openWhatsNew, release, serveReleases } from "../support/helpers/changelog";
+import {
+  allChangesToggle,
+  openWhatsNew,
+  release,
+  serveReleases,
+} from "../support/helpers/changelog";
 
 const REPOSITORY_DESTINATION = /^https:\/\/github\.com\/RyanEwen\/paseo-plus-plus(?:[/?#]|$)/;
 const CHANGELOG_DESTINATION =
@@ -130,6 +135,8 @@ test("renders fork release notes and links GitHub Releases", async ({ page }) =>
   await expect(latest.getByText("Read this before upgrading.")).toBeVisible();
   await expect(latest.getByText("Sparkles", { exact: true })).toBeVisible();
   await expect(latest.getByText("Added a brand new thing")).toBeVisible();
+  // Fork notes are shown whole, so upstream's highlights toggle never appears.
+  await expect(allChangesToggle(latest)).toHaveCount(0);
   await expect(release(sheet, "9.0.0")).toBeVisible();
   await expect(release(sheet, "0.0.0")).toHaveCount(0);
 

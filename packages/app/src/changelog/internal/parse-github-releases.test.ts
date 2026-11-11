@@ -23,7 +23,8 @@ describe("parseGitHubReleases", () => {
       "0.11.2-preview.29",
       "0.11.2-preview.27",
     ]);
-    expect(releases[1].sections).toEqual([{ title: null, body: notes }]);
+    expect(releases[1].highlights).toBe(notes);
+    expect(releases[1].sections).toEqual([]);
   });
   it("dates each release by the viewer's own calendar day", () => {
     const payload = [
