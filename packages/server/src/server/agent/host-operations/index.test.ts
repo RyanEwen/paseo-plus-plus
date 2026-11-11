@@ -147,3 +147,29 @@ test("a background caller's remote child asks the host to update instead of turn
   ).rejects.toThrow("Update the host to use background agents.");
   expect(socket.requests.map((request) => request.type)).not.toContain("create_agent_request");
 });
+
+test("a delegated objective asks a host without audience attention to update before creating", async () => {
+  const { client, socket } = await olderHost();
+  const resolver = createHostResolver({
+    serverId: "origin",
+    callerAgentId: "caller",
+    caller: () => ({ background: false }),
+    prepareAttention: async () => ({
+      requesterObjective: {
+        objectiveId: "human-job",
+        token: "token",
+        requestId: "request",
+      },
+    }),
+    local: {} as HostOperations,
+    hosts: () => ({
+      directory: async () => ({ self: { serverId: "origin", label: "Origin" }, hosts: [] }),
+      use: (_serverId, action) => action(client),
+    }),
+  });
+
+  await expect(
+    resolver.use("srv_older", (host) => host.createAgent(createArgs, {} as never)),
+  ).rejects.toThrow("Update the Paseo host to use agent audience and objective attention.");
+  expect(socket.requests.map((request) => request.type)).not.toContain("create_agent_request");
+});
