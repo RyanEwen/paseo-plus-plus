@@ -1087,6 +1087,11 @@ test("stale permission handoff cannot replace a newly accepted request", async (
 interface EscalationFaultFixtureInput {
   name: string;
   requesterPeer?: AgentAttentionPeer;
+  /**
+   * Wait for the provider's own turn_started before returning. On by default: the manager
+   * publishes liveness first, and a provider start processed after a test's manual terminal
+   * reads as a new autonomous turn, which clears unread attention.
+   */
   nativeStart?: boolean;
 }
 
@@ -1094,7 +1099,7 @@ interface EscalationFaultFixtureInput {
 async function createEscalationFaultFixture({
   name,
   requesterPeer,
-  nativeStart = false,
+  nativeStart = true,
 }: EscalationFaultFixtureInput) {
   const fixture = createAttentionRegressionFixture(name);
   const requester = await fixture.createAgent("Escalation requester");

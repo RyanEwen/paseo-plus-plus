@@ -252,6 +252,44 @@ export function createHostResolver(input: {
       .digest("hex");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
   }
+  /**
+   * Reserve a remote create's delegated identity and objective metadata. Only an agent caller on
+   * a host that accepts caller-selected IDs gets them; otherwise every field is empty, the host
+   * creates the child as upstream does, and its finish watch registers after creation.
+   *
+   * @returns The reserved identity, its objective metadata, and the create request fields that
+   * carry them.
+   */
+  async function prepareDelegation(
+    client: DaemonClient,
+    destination: string,
+    parsed: { idempotencyKey?: string; objectiveId?: string },
+  ) {
+    if (!input.callerAgentId || !client.supportsCallerSelectedCreationIds()) {
+      return { agentId: undefined, attention: undefined, request: {} };
+    }
+    const agentId = delegatedAgentId(destination, parsed.idempotencyKey);
+    const attentionRequestId = parsed.idempotencyKey
+      ? delegatedAgentId(destination, `attention:${parsed.idempotencyKey}`)
+      : undefined;
+    const attention = await input.prepareAttention?.({
+      recipient: { serverId: destination, agentId },
+      objectiveId: parsed.objectiveId,
+      requestId: attentionRequestId,
+    });
+    return {
+      agentId,
+      attention,
+      request: {
+        agentId,
+        sourceAgentId: input.callerAgentId,
+        sourceAgentServerId: input.serverId,
+        agentAttention: attention,
+        clientMessageId: attention?.requesterObjective?.requestId,
+      },
+    };
+  }
+
   return {
     directory: () => input.hosts().directory(),
     async use<T>(
@@ -271,18 +309,8 @@ export function createHostResolver(input: {
         action({
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
-            const agentId = input.callerAgentId
-              ? delegatedAgentId(destination, parsed.idempotencyKey)
-              : undefined;
-            const attention = agentId
-              ? await input.prepareAttention?.({
-                  recipient: { serverId: destination, agentId },
-                  objectiveId: parsed.objectiveId,
-                  requestId: parsed.idempotencyKey
-                    ? delegatedAgentId(destination, `attention:${parsed.idempotencyKey}`)
-                    : undefined,
-                })
-              : undefined;
+            const delegation = await prepareDelegation(client, destination, parsed);
+            const { agentId, attention } = delegation;
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
             const workspace = await client.findWorkspace(parsed.workspaceId);
             if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
@@ -295,11 +323,7 @@ export function createHostResolver(input: {
             if (agentId)
               await beforeDispatch?.({ agentId, attention, requireParentOwnership: true });
             const snapshot = await client.createAgent({
-              agentId,
-              sourceAgentId: input.callerAgentId,
-              sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
-              agentAttention: attention,
-              clientMessageId: attention?.requesterObjective?.requestId,
+              ...delegation.request,
               config: {
                 provider,
                 model,
@@ -320,6 +344,9 @@ export function createHostResolver(input: {
             });
             if (agentId && snapshot.id !== agentId) {
               throw new DelegatedIdentityMismatchError(agentId, snapshot.id);
+            }
+            if (!agentId && input.callerAgentId) {
+              await beforeDispatch?.({ agentId: snapshot.id, requireParentOwnership: true });
             }
             return {
               ...result({

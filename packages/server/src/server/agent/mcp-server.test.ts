@@ -7176,6 +7176,7 @@ describe("remote delegated creation", () => {
       );
       // An idempotent replay that matches an agent created before delegated identities existed.
       const remoteClient = {
+        supportsCallerSelectedCreationIds: () => true,
         findWorkspace: async (workspaceId: string) =>
           workspaceId === "wks_remote"
             ? { id: "wks_remote", workspaceDirectory: "/tmp/remote" }
