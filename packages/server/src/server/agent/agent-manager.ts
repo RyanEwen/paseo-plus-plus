@@ -1575,14 +1575,7 @@ export class AgentManager {
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
-    if (this.agents.has(resolvedAgentId))
-      throw new Error(`Agent with id ${resolvedAgentId} already exists`);
-    this.acknowledgeCreationAttempt(resolvedAgentId, options.creationAttempt);
-    const previousRecord = await this.registry?.get(resolvedAgentId, {
-      includeHistoryIntents: true,
-    });
-    const expectedRetry = this.captureCreationRetry(previousRecord, options.creationAttempt);
-    const restoringEmpty = isBoundEmptyClaudeCreation(previousRecord);
+    const { expectedRetry, restoringEmpty } = await this.beginCreation(resolvedAgentId, options);
     config = this.withConvertedOptions(config);
     if (this.pluginLifecycle && !config.internal && !restoringEmpty) {
       const sent = exposeFeatureValuesToHook(config);
@@ -1646,7 +1639,7 @@ export class AgentManager {
       record: intent,
     });
     this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
-    options.creationAttempt?.markProviderDispatch(resolvedAgentId);
+    this.markCreationDispatch(resolvedAgentId, options.creationAttempt);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
@@ -1668,6 +1661,29 @@ export class AgentManager {
       });
     }
     return agent;
+  }
+
+  /**
+   * Start a creation in its lifecycle lane: refuse a live duplicate ID, acknowledge the creation
+   * attempt before the first registry read or hook, and read what this creation may reuse (a
+   * proven retry's intent, or a bound Claude chat that never received a native ID).
+   */
+  private async beginCreation(
+    agentId: string,
+    options: CreateAgentOptions,
+  ): Promise<{ expectedRetry: StoredAgentRecord | undefined; restoringEmpty: boolean }> {
+    if (this.agents.has(agentId)) throw new Error(`Agent with id ${agentId} already exists`);
+    this.acknowledgeCreationAttempt(agentId, options.creationAttempt);
+    const previousRecord = await this.registry?.get(agentId, { includeHistoryIntents: true });
+    return {
+      expectedRetry: this.captureCreationRetry(previousRecord, options.creationAttempt),
+      restoringEmpty: isBoundEmptyClaudeCreation(previousRecord),
+    };
+  }
+
+  /** The provider call is next; from here a failure's provider effects are unknown. */
+  private markCreationDispatch(agentId: string, attempt: CreationAgentAttempt | undefined): void {
+    attempt?.markProviderDispatch(agentId);
   }
 
   /** Keep acknowledgment synchronous, before the first registry read or hook. */
