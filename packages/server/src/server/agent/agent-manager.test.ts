@@ -13539,7 +13539,8 @@ test("failed native import retains its request without publishing or auto-adopti
         origin: "imported",
         requestedSessionId: "native-selected",
         workspaceId: "fixture-workspace",
-        configFields: ["model"],
+        // An import intent records no model (see above), so it names no config fields.
+        configFields: [],
       },
     ]);
   } finally {
@@ -14346,11 +14347,23 @@ test.each(["reservation-conflict", "pre-reservation-hook"])(
           return { agent: toAgentPayload(managed), initialPromptStarted: false };
         },
       };
-      const failed = await new CreationService(receiptDirectory, logger).create(input);
+      // Creation runs in the agent's lifecycle lane, so the keyed request waits behind the live
+      // one and cannot reach the manager while that intention is unclaimed.
+      const keyed = new CreationService(receiptDirectory, logger).create(input);
+      await vi.waitFor(() => expect(keyedCallbacks).toBe(1));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(providerCalls).toBe(1);
+      expect(await storage.get(id, { includeHistoryIntents: true })).toEqual(original);
+      expect({ durable: await durable.getCommittedRows(id), retained: retained.fetch(id) }).toEqual(
+        before,
+      );
+      release.resolve();
+      expect((await direct).id).toBe(id);
+      // It then meets the registered agent and fails before it could own an intention.
+      const failed = await keyed;
       expect(failed).toMatchObject({ phase: "failed", failedStage: "agent", outcomeUnknown: true });
       expect(await new CreationService(receiptDirectory, logger).create(input)).toEqual(failed);
       expect(keyedCallbacks).toBe(1);
-      expect(providerCalls).toBe(1);
       const receiptFiles = (await fs.readdir(receiptDirectory)).filter((name) =>
         name.endsWith(".json"),
       );
@@ -14359,12 +14372,6 @@ test.each(["reservation-conflict", "pre-reservation-hook"])(
         JSON.parse(await fs.readFile(join(receiptDirectory, receiptFiles[0]), "utf8"))
           .preDispatchAgentFailure,
       ).toBeUndefined();
-      expect(await storage.get(id, { includeHistoryIntents: true })).toEqual(original);
-      expect({ durable: await durable.getCommittedRows(id), retained: retained.fetch(id) }).toEqual(
-        before,
-      );
-      release.resolve();
-      expect((await direct).id).toBe(id);
       expect(manager.getAgent(id)?.workspaceId).toBe("original-workspace");
       expect(providerCalls).toBe(1);
     } finally {
