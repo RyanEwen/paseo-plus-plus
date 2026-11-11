@@ -135,6 +135,7 @@ function outcome(status: "idle" | "running" | "closed" | "error" = "closed"): Wa
         lastStatus: status,
       },
       ["codex"],
+      (_provider, own) => own ?? {},
       { agentAwareAttention: true },
     ),
     lastMessage: "Partial work saved",

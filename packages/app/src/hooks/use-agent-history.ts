@@ -4,10 +4,14 @@ import type {
   FetchAgentHistoryPageInfo,
 } from "@getpaseo/client/internal/daemon-client";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeConnectionStatuses,
+  useHosts,
+} from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
@@ -227,45 +231,6 @@ export async function fetchAgentHistoryBatch(input: {
   };
 }
 
-/**
- * Splits the hosts a history query targets into reachable and unreachable ones.
- * Opted out of React Compiler: the selection reads the mutable host runtime and must keep its
- * explicit version dependency, which the compiler otherwise removes as an unused read.
- */
-function useAgentHistoryHosts(daemons: ReturnType<typeof useHosts>, serverId: string | null) {
-  "use no memo";
-  const runtime = getHostRuntimeStore();
-  const runtimeVersion = useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => runtime.getVersion(),
-    () => runtime.getVersion(),
-  );
-  // A host the user asked about splits two ways: one this fetch can reach, and
-  // one whose sessions will be missing from the answer. Both come out of here,
-  // because dropping the unreachable ones silently is what lets the list — and
-  // worse, "No sessions match" — overstate what was actually searched.
-  return useMemo(() => {
-    void runtimeVersion;
-    const serverLabelById = new Map(daemons.map((daemon) => [daemon.serverId, daemon.label]));
-    const serverIds = serverId ? [serverId] : daemons.map((daemon) => daemon.serverId);
-    const hosts: AgentHistoryHost[] = [];
-    const unreachable: AgentHistoryHostError[] = [];
-
-    for (const targetServerId of serverIds) {
-      const snapshot = runtime.getSnapshot(targetServerId);
-      const client = runtime.getClient(targetServerId);
-      const serverName = serverLabelById.get(targetServerId) ?? targetServerId;
-      if (!client || !isHostRuntimeConnected(snapshot)) {
-        unreachable.push({ serverId: targetServerId, serverName });
-        continue;
-      }
-      hosts.push({ serverId: targetServerId, serverLabel: serverName, client });
-    }
-
-    return { targetHosts: hosts, unreachableHosts: unreachable };
-  }, [daemons, runtime, runtimeVersion, serverId]);
-}
-
 export function useAgentHistory(options: {
   serverId?: string | null;
   enabled?: boolean;
@@ -274,12 +239,38 @@ export function useAgentHistory(options: {
 }): AgentHistoryResult {
   const { t } = useTranslation();
   const daemons = useHosts();
+  const runtime = getHostRuntimeStore();
   const serverId = useMemo(() => {
     const value = options.serverId;
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
   }, [options.serverId]);
   const enabled = options.enabled ?? true;
-  const { targetHosts, unreachableHosts } = useAgentHistoryHosts(daemons, serverId);
+  const serverIds = useMemo(
+    () => (serverId ? [serverId] : daemons.map((daemon) => daemon.serverId)),
+    [daemons, serverId],
+  );
+  const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
+  // A host the user asked about splits two ways: one this fetch can reach, and
+  // one whose sessions will be missing from the answer. Both come out of here,
+  // because dropping the unreachable ones silently is what lets the list — and
+  // worse, "No sessions match" — overstate what was actually searched.
+  const { targetHosts, unreachableHosts } = useMemo(() => {
+    const serverLabelById = new Map(daemons.map((daemon) => [daemon.serverId, daemon.label]));
+    const hosts: AgentHistoryHost[] = [];
+    const unreachable: AgentHistoryHostError[] = [];
+
+    for (const targetServerId of serverIds) {
+      const client = runtime.getClient(targetServerId);
+      const serverName = serverLabelById.get(targetServerId) ?? targetServerId;
+      if (!client || connectionStatuses.get(targetServerId) !== "online") {
+        unreachable.push({ serverId: targetServerId, serverName });
+        continue;
+      }
+      hosts.push({ serverId: targetServerId, serverLabel: serverName, client });
+    }
+
+    return { targetHosts: hosts, unreachableHosts: unreachable };
+  }, [daemons, runtime, connectionStatuses, serverIds]);
   const targetServerIds = useMemo(() => targetHosts.map((host) => host.serverId), [targetHosts]);
   // One gate, checked before the field is offered: a fleet where any host
   // predates search has no search, rather than a list that silently omits that

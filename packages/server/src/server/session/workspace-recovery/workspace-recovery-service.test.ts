@@ -115,7 +115,7 @@ describe("workspace recovery", () => {
     const input = {
       projectId: "/project",
       projects: { get: async () => createProject() },
-      workspaces: { list: async () => records },
+      workspaces: { listAll: async () => records },
     };
     expect((await listArchivedProjectWorkspaces(input)).map((row) => row.workspaceId)).toEqual([
       "archived",

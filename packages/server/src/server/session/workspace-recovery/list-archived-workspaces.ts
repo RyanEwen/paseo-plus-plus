@@ -22,7 +22,7 @@ export async function listArchivedProjectWorkspaces(input: {
   projectId: string;
   includeBackground?: boolean;
   projects: Pick<ProjectRegistry, "get">;
-  workspaces: Pick<WorkspaceRegistry, "list">;
+  workspaces: Pick<WorkspaceRegistry, "listAll">;
 }): Promise<ArchivedWorkspaceSummary[]> {
   const project = await input.projects.get(input.projectId);
   if (!project || project.archivedAt) {
@@ -30,7 +30,8 @@ export async function listArchivedProjectWorkspaces(input: {
   }
 
   const entries: ArchivedWorkspaceSummary[] = [];
-  for (const workspace of await input.workspaces.list()) {
+  // listAll, not listActive: archived records are the point of this listing.
+  for (const workspace of await input.workspaces.listAll()) {
     if (workspace.projectId !== input.projectId || !workspace.archivedAt) {
       continue;
     }

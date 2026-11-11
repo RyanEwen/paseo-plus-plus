@@ -19,6 +19,8 @@ type NewWorkspaceDaemonClient = Pick<
   | "createPaseoWorktree"
   | "createAgent"
   | "createWorkspace"
+  | "createTerminal"
+  | "killTerminal"
   | "fetchAgents"
   | "fetchAgent"
   | "fetchAgentHistory"
@@ -38,6 +40,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "removePlugin"
   | "reloadPlugin"
   | "setWorkspaceTitle"
+  | "setWorkspaceLabel"
 >;
 
 type CreateWorkspacePayload = Awaited<ReturnType<NewWorkspaceDaemonClient["createWorkspace"]>>;
