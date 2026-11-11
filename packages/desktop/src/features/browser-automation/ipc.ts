@@ -4,9 +4,15 @@ import type {
   BrowserAutomationConsoleLogEntry,
   BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
-import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
+import type { TabContents, BrowserRegistry, TabImage, DialogCaptureOperation } from "./service.js";
+import { isPointerRelease, type IsolatedKeyboardInputEvent } from "./trusted-input.js";
+import { settleUnlessAborted } from "./abort-race.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
+import {
+  getGuestCdpTransport,
+  type GuestCdpDebugger,
+  type GuestCdpTransport,
+} from "./cdp-transport.js";
 import {
   dialogAcceptValue,
   handledDialogEvent,
@@ -27,7 +33,7 @@ import {
 
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
-const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
+const inputQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const dialogMonitorsByContentsId = new Map<number, DialogMonitor>();
 const observedContentsIds = new Set<number>();
 
@@ -65,15 +71,12 @@ export class HostSnapshotEngineRegistry {
 
 const hostSnapshotEngines = new HostSnapshotEngineRegistry();
 
-interface WebContentsDebugger {
-  isAttached(): boolean;
-  attach(protocolVersion?: string): void;
-  sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
-  on?(
+interface WebContentsDebugger extends GuestCdpDebugger {
+  on(
     event: "message",
     listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
   ): void;
-  on?(event: "detach", listener: () => void): void;
+  on(event: "detach", listener: () => void): void;
 }
 
 interface ConsoleMessageEmitter {
@@ -117,8 +120,8 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
   const contentsId = contents.id;
   observeConsoleMessages(contents, contentsId);
-  const cdpQueue = getCdpQueue(contentsId);
-  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpQueue);
+  const cdpTransport = getGuestCdpTransport(contents);
+  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpTransport);
   return {
     id: contentsId,
     getURL: () => contents.getURL(),
@@ -134,26 +137,20 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     reload: () => contents.reload(),
     captureFrame: (signal) => captureViewportFrame(contents, signal),
     invalidate: () => contents.invalidate(),
-    withFrameProduction: async (capture) => {
-      const previous = contents.getBackgroundThrottling();
-      contents.setBackgroundThrottling(false);
-      try {
-        return await capture();
-      } finally {
-        if (!contents.isDestroyed()) contents.setBackgroundThrottling(previous);
-      }
-    },
+    runInput: (task, signal) => getInputQueue(contentsId).run(task, signal),
+    withFrameProduction: (capture) => withGuestFrameProduction(contents, capture),
     sendInputEvent: (event) => contents.sendInputEvent(event),
     insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
-    captureDialogs: (task) => dialogMonitor.capture(task),
-    sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
-      cdpQueue.run(async () => {
-        if (!contents.debugger.isAttached()) {
-          contents.debugger.attach("1.3");
-        }
-        return contents.debugger.sendCommand(command, params ?? {});
-      }),
+    captureDialogs: (operation) => dialogMonitor.capture(operation),
+    sendDebugCommand: (command: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      // Like dialog responses, cancellation cleanup must unblock a possibly
+      // delivered press even when its acknowledgment still owns the queue.
+      if (signal?.aborted && isPointerRelease(command, params)) {
+        return cdpTransport.sendImmediate(command, params);
+      }
+      return cdpTransport.send({ command, params, signal });
+    },
   };
 }
 
@@ -192,13 +189,14 @@ function captureViewportFrame(
   });
 }
 
-function getCdpQueue(contentsId: number): CdpSessionQueue {
-  const existing = cdpQueuesByContentsId.get(contentsId);
+/** Keep input gestures atomic while still allowing screenshot activity to overlap. */
+function getInputQueue(contentsId: number): CdpSessionQueue {
+  const existing = inputQueuesByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
   const queue = new CdpSessionQueue();
-  cdpQueuesByContentsId.set(contentsId, queue);
+  inputQueuesByContentsId.set(contentsId, queue);
   return queue;
 }
 
@@ -216,7 +214,7 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
   contents.once("destroyed", () => {
     observedContentsIds.delete(contentsId);
     consoleMessagesByContentsId.delete(contentsId);
-    cdpQueuesByContentsId.delete(contentsId);
+    inputQueuesByContentsId.delete(contentsId);
     dialogMonitorsByContentsId.delete(contentsId);
   });
 }
@@ -224,15 +222,24 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
 function getDialogMonitor(
   contents: BrowserAutomationWebContents,
   contentsId: number,
-  cdpQueue: CdpSessionQueue,
+  cdpTransport: GuestCdpTransport,
 ): DialogMonitor {
   const existing = dialogMonitorsByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
-  const monitor = new DialogMonitor(contents, contentsId, cdpQueue);
+  const monitor = new DialogMonitor(contents, contentsId, cdpTransport);
   dialogMonitorsByContentsId.set(contentsId, monitor);
   return monitor;
+}
+
+/** Run one dialog capture phase, stopping the wait when the command is cancelled. */
+function waitForPhase<Value>(
+  signal: AbortSignal | undefined,
+  phase: () => Promise<Value>,
+): Promise<Value> {
+  if (signal) return settleUnlessAborted(signal, phase);
+  return phase();
 }
 
 class DialogMonitor {
@@ -244,48 +251,69 @@ class DialogMonitor {
   public constructor(
     private readonly contents: BrowserAutomationWebContents,
     private readonly contentsId: number,
-    private readonly cdpQueue: CdpSessionQueue,
+    private readonly cdpTransport: GuestCdpTransport,
   ) {}
 
-  public async capture<T>(
-    task: () => Promise<T>,
-  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
+  /** Release dialog ownership on cancellation even if an input acknowledgment
+   * is still pending. Cleanup bypasses that request's protocol queue barrier.
+   */
+  public async capture<T>({
+    task,
+    signal,
+  }: DialogCaptureOperation<T>): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
     const collector: DialogCollector = { dialogs: [] };
+    try {
+      const interception = await this.beginInterception(collector, signal);
+      if (interception === "degraded") {
+        return { result: await waitForPhase(signal, task), dialogs: [] };
+      }
+      const result = await waitForPhase(signal, task);
+      this.recordPromptShimDialogs(await waitForPhase(signal, () => this.drainPromptShim(signal)));
+      return { result, dialogs: collector.dialogs };
+    } finally {
+      await this.releaseCollector(collector);
+    }
+  }
+
+  /** Enable dialog interception for one command. Setup failure degrades to running the
+   * command without capture, unless the command was cancelled or its target was lost.
+   */
+  private async beginInterception(
+    collector: DialogCollector,
+    signal: AbortSignal | undefined,
+  ): Promise<"intercepting" | "degraded"> {
     const setupDetachGeneration = this.detachGeneration;
     try {
-      await this.enable();
-      await this.installPromptShim();
+      await waitForPhase(signal, () => this.enable(signal));
+      signal?.throwIfAborted();
+      await waitForPhase(signal, () => this.installPromptShim({ collector, signal }));
+      return "intercepting";
     } catch (error) {
-      if (this.contents.isDestroyed() || this.detachGeneration !== setupDetachGeneration) {
-        throw error;
-      }
+      const cancelled = signal?.aborted === true;
+      const targetLost =
+        this.contents.isDestroyed() || this.detachGeneration !== setupDetachGeneration;
+      if (cancelled || targetLost) throw error;
       console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
         contentsId: this.contentsId,
         error,
       });
-      return { result: await task(), dialogs: [] };
-    }
-    this.activeCollectors.push(collector);
-    try {
-      const result = await task();
-      this.recordPromptShimDialogs(await this.drainPromptShim());
-      return { result, dialogs: collector.dialogs };
-    } finally {
-      const index = this.activeCollectors.indexOf(collector);
-      if (index >= 0) {
-        this.activeCollectors.splice(index, 1);
-      }
-      if (this.activeCollectors.length === 0) {
-        await this.restorePromptShim();
-      }
+      await this.releaseCollector(collector);
+      return "degraded";
     }
   }
 
-  private async enable(): Promise<void> {
+  /** Remove only this command's ownership; a late completion cannot restore a
+   * shim still owned by a different capture or repeat already-finished cleanup.
+   */
+  private async releaseCollector(collector: DialogCollector): Promise<void> {
+    const index = this.activeCollectors.indexOf(collector);
+    if (index < 0) return;
+    this.activeCollectors.splice(index, 1);
+    if (this.activeCollectors.length === 0) await this.restorePromptShim();
+  }
+
+  private async enable(signal?: AbortSignal): Promise<void> {
     if (this.enabled) {
-      return;
-    }
-    if (!this.contents.debugger.on) {
       return;
     }
     if (!this.listenerRegistered) {
@@ -304,7 +332,7 @@ class DialogMonitor {
         this.detachGeneration += 1;
       });
     }
-    await this.sendDebugCommand("Page.enable");
+    await this.cdpTransport.send({ command: "Page.enable", signal });
     this.enabled = true;
   }
 
@@ -313,23 +341,34 @@ class DialogMonitor {
     for (const collector of this.activeCollectors) {
       this.recordDialogs(collector, [event]);
     }
-    await this.sendDialogResponseCommand("Page.handleJavaScriptDialog", {
+    await this.sendDialogCleanupCommand("Page.handleJavaScriptDialog", {
       accept: dialogAcceptValue(event.type),
     });
   }
 
-  private async installPromptShim(): Promise<void> {
-    await this.sendDebugCommand("Runtime.evaluate", {
-      expression: promptShimInstallScript(),
-      returnByValue: true,
+  private async installPromptShim({ collector, signal }: PromptShimOwner): Promise<void> {
+    await this.cdpTransport.send({
+      command: "Runtime.evaluate",
+      signal,
+      // A waiter behind a stalled command has not installed anything. It must
+      // not prolong interception owned by the command that just timed out.
+      onDispatch: () => this.activeCollectors.push(collector),
+      params: {
+        expression: promptShimInstallScript(),
+        returnByValue: true,
+      },
     });
   }
 
-  private async drainPromptShim(): Promise<BrowserAutomationDialogEvent[]> {
+  private async drainPromptShim(signal?: AbortSignal): Promise<BrowserAutomationDialogEvent[]> {
     try {
-      const result = (await this.sendDebugCommand("Runtime.evaluate", {
-        expression: promptShimDrainScript(),
-        returnByValue: true,
+      const result = (await this.cdpTransport.send({
+        command: "Runtime.evaluate",
+        signal,
+        params: {
+          expression: promptShimDrainScript(),
+          returnByValue: true,
+        },
       })) as { result?: { value?: unknown } };
       return parsePromptShimDialogs(result.result?.value);
     } catch {
@@ -339,7 +378,7 @@ class DialogMonitor {
 
   private async restorePromptShim(): Promise<void> {
     try {
-      await this.sendDebugCommand("Runtime.evaluate", {
+      await this.sendDialogCleanupCommand("Runtime.evaluate", {
         expression: promptShimRestoreScript(),
         returnByValue: true,
       });
@@ -363,29 +402,19 @@ class DialogMonitor {
     }
   }
 
-  private async sendDebugCommand(
+  private async sendDialogCleanupCommand(
     command: string,
     params?: Record<string, unknown>,
   ): Promise<unknown> {
-    return this.cdpQueue.run(async () => {
-      if (!this.contents.debugger.isAttached()) {
-        this.contents.debugger.attach("1.3");
-      }
-      return this.contents.debugger.sendCommand(command, params ?? {});
-    });
+    // A dialog or timed-out input can retain a protocol queue barrier. Responses
+    // and prompt restoration must bypass it to release page interception.
+    return this.cdpTransport.sendImmediate(command, params);
   }
+}
 
-  private async sendDialogResponseCommand(
-    command: string,
-    params?: Record<string, unknown>,
-  ): Promise<unknown> {
-    // Dialogs can block the CDP command that opened them, so the unblocker must not wait behind
-    // the per-tab command queue.
-    if (!this.contents.debugger.isAttached()) {
-      this.contents.debugger.attach("1.3");
-    }
-    return this.contents.debugger.sendCommand(command, params ?? {});
-  }
+interface PromptShimOwner {
+  collector: DialogCollector;
+  signal?: AbortSignal;
 }
 
 interface DialogCollector {
@@ -489,4 +518,42 @@ function readRequestId(rawRequest: unknown): string {
   }
   const requestId = (rawRequest as Record<string, unknown>).requestId;
   return typeof requestId === "string" && requestId.length > 0 ? requestId : "unknown";
+}
+
+interface GuestFrameProductionScope {
+  users: number;
+  previousThrottling: boolean;
+}
+
+const guestFrameProductionScopes = new WeakMap<
+  BrowserAutomationWebContents,
+  GuestFrameProductionScope
+>();
+
+/** Share temporary frame production across adapters for the same live guest.
+ * Only the last operation restores policy, including failure and cancellation.
+ * Electron 44.5+ also restores the hidden widget and Blink scheduler state.
+ */
+async function withGuestFrameProduction<T>(
+  contents: BrowserAutomationWebContents,
+  task: () => Promise<T>,
+): Promise<T> {
+  let scope = guestFrameProductionScopes.get(contents);
+  if (!scope) {
+    scope = { users: 0, previousThrottling: contents.getBackgroundThrottling() };
+    if (scope.previousThrottling) contents.setBackgroundThrottling(false);
+    guestFrameProductionScopes.set(contents, scope);
+  }
+  scope.users++;
+  try {
+    return await task();
+  } finally {
+    scope.users--;
+    if (scope.users === 0) {
+      guestFrameProductionScopes.delete(contents);
+      if (!contents.isDestroyed() && scope.previousThrottling) {
+        contents.setBackgroundThrottling(true);
+      }
+    }
+  }
 }
