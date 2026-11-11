@@ -16,7 +16,7 @@ import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import {
@@ -243,6 +243,7 @@ test("keeps normal Pi agent sessions persisted", async () => {
   const session = await client.createSession(createConfig());
 
   expect(pi.recordedLaunches[0]?.argv).not.toContain("--no-session");
+  expect(pi.recordedLaunches[0]?.argv).not.toContain("--session-dir");
 
   await session.close();
 });
@@ -2928,6 +2929,7 @@ describe("PiRpcAgentClient", () => {
       cwd: "/workspace/with-extension",
       force: false,
     });
+    const close = vi.spyOn(pi.latestSession(), "close");
     pi.latestSession().models = [
       {
         provider: "openrouter",
@@ -2948,7 +2950,12 @@ describe("PiRpcAgentClient", () => {
       ],
       modes: [],
     });
-    expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+    expect(pi.recordedLaunches[0]).toMatchObject({
+      cwd: "/workspace/with-extension",
+      noSession: true,
+      argv: ["pi", "--mode", "rpc", "--no-session"],
+    });
+    expect(close).toHaveBeenCalledOnce();
   });
 
   test("marks the model Pi resolves from its own settings as the catalog default", async () => {
@@ -3461,7 +3468,8 @@ describe("PiRpcAgentClient", () => {
     expect(pi.recordedLaunches).toHaveLength(2);
     expect(pi.recordedLaunches[0]).toMatchObject({
       cwd: "/tmp/paseo-pi-rpc-test",
-      argv: ["pi", "--mode", "rpc"],
+      noSession: true,
+      argv: ["pi", "--mode", "rpc", "--no-session"],
     });
     const actualLaunch = pi.recordedLaunches[1]!;
     expect(actualLaunch.extensionPaths).toHaveLength(1);

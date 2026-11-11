@@ -26,6 +26,10 @@
       "types": "./dist/daemon-client-websocket-transport.d.ts",
       "default": "./dist/daemon-client-websocket-transport.js"
     },
+    "./provider-history-prompt": {
+      "types": "./dist/provider-history-prompt.d.ts",
+      "default": "./dist/provider-history-prompt.js"
+    },
     "./node": {
       "types": "./dist/node/index.d.ts",
       "default": "./dist/node/index.js"

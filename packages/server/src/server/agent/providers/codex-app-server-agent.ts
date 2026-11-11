@@ -1,3 +1,4 @@
+import type { ProviderHistoryStorage } from "../provider-history/binding.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive, validateProviderOptions } from "../provider-options.js";
@@ -128,6 +129,14 @@ import {
   CodexProviderOptionsSchema,
   type CodexProviderOptions,
 } from "./codex/options.js";
+import {
+  configuredHistoryStartupArgs,
+  resolveConfiguredCodexHistory,
+  assertConfiguredHistoryVersion,
+} from "./codex/history.js";
+import { HistoryStorageConflictError } from "../provider-history/binding.js";
+import type { ProviderHistoryPolicy } from "../provider-launch-config.js";
+import type { ResolveHistoryStorageInput } from "../agent-sdk-types.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -318,6 +327,9 @@ interface CodexAppServerProcessPort {
 }
 
 interface CodexAppServerAgentDeps {
+  historyPolicy?: ProviderHistoryPolicy;
+  configuredProviderOptions?: ProviderOptions;
+  historyStorage?: ProviderHistoryStorage;
   appServerProcess?: CodexAppServerProcessPort;
   environment?: Record<string, string>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
@@ -5091,6 +5103,21 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  get historyStorage(): ProviderHistoryStorage {
+    if (this.deps.historyStorage?.kind === "configured-home") {
+      if (this.deps.historyStorage.provider !== "codex")
+        throw new HistoryStorageConflictError("bound-provider-conflict");
+      return this.deps.historyStorage;
+    }
+    const sqliteHome = this.harnessEnvironment.CODEX_SQLITE_HOME?.trim();
+    return {
+      kind: "unverified",
+      provider: "codex",
+      home: path.resolve(this.config.cwd, this.codexHome),
+      ...(sqliteHome ? { sqliteHome: path.resolve(this.config.cwd, sqliteHome) } : {}),
+    };
+  }
+
   describePersistence(): {
     provider: typeof CODEX_PROVIDER;
     sessionId: string;
@@ -5727,6 +5754,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       innerConfig.mcp_servers = mcpServers;
     }
+    // Startup-only even if an internal custom config carries an obsolete copy.
+    delete innerConfig.sqlite_home;
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
     return Object.keys(configured).length > 0 ? configured : null;
   }
@@ -7554,6 +7583,14 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 }
 
+interface AppServerSpawnOptions {
+  environment: Record<string, string>;
+  goalsEnabled?: boolean;
+  agentId?: string;
+  /** The binding recorded for the session; re-resolved against the profile on every start. */
+  historyStorage?: ProviderHistoryStorage;
+}
+
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -7572,6 +7609,28 @@ export class CodexAppServerAgentClient implements AgentClient {
       codexHome: resolveCodexHomeDir(buildCodexAppServerEnv(this.runtimeSettings, launchEnv)),
       customCodexConfig: this.customProviderConfig(),
     };
+  }
+
+  async resolveHistoryStorage(
+    input: ResolveHistoryStorageInput,
+  ): Promise<ProviderHistoryStorage | undefined> {
+    if (
+      input.previous?.storage.kind !== "configured-home" &&
+      this.deps.historyPolicy?.mode !== "configured"
+    ) {
+      if (input.config.providerOptions?.sqlite_home !== undefined)
+        throw new HistoryStorageConflictError("sqlite-home-requires-configured-history");
+      return undefined;
+    }
+    return resolveConfiguredCodexHistory({
+      policy: this.deps.historyPolicy,
+      runtimeSettings: this.runtimeSettings,
+      profileOptions: this.deps.configuredProviderOptions,
+      options: input.config.providerOptions,
+      env: buildCodexAppServerEnv(this.runtimeSettings, input.env),
+      previous: input.previous?.storage,
+      existingSession: input.operation === "resume" || input.operation === "reload",
+    });
   }
 
   private customProviderConfig(): CodexCustomProviderConfig | null {
@@ -7630,14 +7689,41 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  private async prepareAppServerSpawn(options: {
-    environment: Record<string, string>;
-    goalsEnabled?: boolean;
-    agentId?: string;
-  }): Promise<() => ChildProcessWithoutNullStreams> {
+  /**
+   * The history storage an app-server start may use: the recorded binding re-resolved against
+   * the current profile, or the configured profile's own route. Every start re-runs this check.
+   */
+  private async resolveSpawnHistoryStorage(
+    environment: Record<string, string>,
+    recorded: ProviderHistoryStorage | undefined,
+  ): Promise<ProviderHistoryStorage | undefined> {
+    let storage = recorded;
+    if (storage === undefined || storage.kind === "configured-home") {
+      storage = await resolveConfiguredCodexHistory({
+        policy: this.deps.historyPolicy,
+        runtimeSettings: this.runtimeSettings,
+        profileOptions: this.deps.configuredProviderOptions,
+        env: environment,
+        previous: storage,
+      });
+    }
+    if (!storage && this.deps.configuredProviderOptions?.sqlite_home !== undefined)
+      throw new HistoryStorageConflictError("sqlite-home-requires-configured-history");
+    return storage;
+  }
+
+  private async prepareAppServerSpawn(
+    options: AppServerSpawnOptions,
+  ): Promise<() => ChildProcessWithoutNullStreams> {
+    const storage = await this.resolveSpawnHistoryStorage(
+      options.environment,
+      options.historyStorage,
+    );
     const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
     const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
-    const args = [...launchPrefix.args, "app-server"];
+    if (storage?.kind === "configured-home")
+      assertConfiguredHistoryVersion(await resolveBinaryVersion(launchPrefix.command));
+    const args = [...launchPrefix.args, ...configuredHistoryStartupArgs(storage), "app-server"];
     if (options.goalsEnabled) {
       args.push("--enable", "goals");
     }
@@ -7665,11 +7751,34 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
+  /**
+   * A session's app-server factory. The first start uses the spawn prepared (and validated) when
+   * the session opened; every later start, such as a reconnect, prepares and validates again.
+   */
+  private revalidatingSpawn(
+    prepared: () => ChildProcessWithoutNullStreams,
+    options: AppServerSpawnOptions,
+  ): () => Promise<ChildProcessWithoutNullStreams> {
+    let first: (() => ChildProcessWithoutNullStreams) | undefined = prepared;
+    return async () => {
+      const spawn = first ?? (await this.prepareAppServerSpawn(options));
+      first = undefined;
+      return spawn();
+    };
+  }
+
   private async startAppServer(
-    options: { signal?: AbortSignal } = {},
+    options: {
+      signal?: AbortSignal;
+      launchEnv?: Record<string, string>;
+      historyStorage?: ProviderHistoryStorage;
+    } = {},
   ): Promise<CodexAppServerClient> {
-    const environment = buildCodexAppServerEnv(this.runtimeSettings);
-    const spawn = await this.prepareAppServerSpawn({ environment });
+    const environment = buildCodexAppServerEnv(this.runtimeSettings, options.launchEnv);
+    const spawn = await this.prepareAppServerSpawn({
+      environment,
+      historyStorage: options.historyStorage,
+    });
     const { client } = await codexAppServerStartup.start({
       stateDirKey: codexStartupStateDirKey(environment),
       spawn,
@@ -7686,6 +7795,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    const historyStorage =
+      launchContext?.historyStorage ??
+      (await this.resolveHistoryStorage({
+        provider: CODEX_PROVIDER,
+        config,
+        env: launchContext?.env,
+        operation: "create",
+      }));
+    if (historyStorage?.kind === "configured-home" && historyStorage.provider !== "codex")
+      throw new HistoryStorageConflictError("bound-provider-conflict");
     if (options?.persistSession === false) {
       this.logger.debug(
         "Codex app-server does not expose an ephemeral-session option; persistSession=false is currently a no-op",
@@ -7697,17 +7816,19 @@ export class CodexAppServerAgentClient implements AgentClient {
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const environment = buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env);
-    const spawn = await this.prepareAppServerSpawn({
+    const spawnOptions = {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
-    });
+      historyStorage,
+    };
+    const spawn = await this.prepareAppServerSpawn(spawnOptions);
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
-      async () => spawn(),
-      { ...this.sessionDeps(launchContext?.env), environment },
+      this.revalidatingSpawn(spawn, spawnOptions),
+      { ...this.sessionDeps(launchContext?.env), environment, historyStorage },
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
@@ -7731,20 +7852,32 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
+    const historyStorage =
+      launchContext?.historyStorage ??
+      (await this.resolveHistoryStorage({
+        provider: CODEX_PROVIDER,
+        config: merged,
+        env: launchContext?.env,
+        operation: "resume",
+      }));
+    if (historyStorage?.kind === "configured-home" && historyStorage.provider !== "codex")
+      throw new HistoryStorageConflictError("bound-provider-conflict");
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const environment = buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env);
-    const spawn = await this.prepareAppServerSpawn({
+    const spawnOptions = {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
-    });
+      historyStorage,
+    };
+    const spawn = await this.prepareAppServerSpawn(spawnOptions);
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
-      async () => spawn(),
-      { ...this.sessionDeps(launchContext?.env), environment },
+      this.revalidatingSpawn(spawn, spawnOptions),
+      { ...this.sessionDeps(launchContext?.env), environment, historyStorage },
       false,
       goalsEnabled,
       autoReviewEnabled,
@@ -7905,22 +8038,32 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    await this.updateNativeThreadArchiveState(handle, "archive");
+  async archiveNativeSession(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void> {
+    await this.updateNativeThreadArchiveState(handle, "archive", context);
   }
 
-  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    await this.updateNativeThreadArchiveState(handle, "restore");
+  async unarchiveNativeSession(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void> {
+    await this.updateNativeThreadArchiveState(handle, "restore", context);
   }
 
   private async updateNativeThreadArchiveState(
     handle: AgentPersistenceHandle,
     state: "archive" | "restore",
+    context?: AgentLaunchContext,
   ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const client = await this.startAppServer();
+    const client = await this.startAppServer({
+      launchEnv: context?.env,
+      historyStorage: context?.historyStorage,
+    });
 
     try {
       if (state === "archive") {

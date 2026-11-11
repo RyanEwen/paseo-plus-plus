@@ -651,3 +651,14 @@ it("omits unknown background work and preserves known summary in list items", ()
     backgroundWork: { count: 2 },
   });
 });
+
+it("keeps a configured history SQLite path out of a live agent snapshot", () => {
+  const agent = createManagedAgent({
+    effectiveOptions: { service_tier: "fast", sqlite_home: "/private/codex-sqlite" },
+  });
+
+  const payload = toAgentPayload(agent);
+
+  expect(payload.options).toEqual({ service_tier: "fast" });
+  expect(JSON.stringify(payload)).not.toContain("/private/codex-sqlite");
+});

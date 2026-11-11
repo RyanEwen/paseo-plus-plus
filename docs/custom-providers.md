@@ -57,6 +57,12 @@ base provider's options unless it sets its own options record.
 }
 ```
 
+For existing configured Codex homes, opt in to [storage binding and migration preview](fork-features/provider-history-preview.md#bind-a-configured-codex-profile).
+This is the supported use of the startup-only `options.sqlite_home`; ordinary per-agent options
+cannot redirect an existing chat's storage.
+
+Claude profiles can separately opt in to [configured-home safety](fork-features/provider-history-preview.md#bind-a-configured-claude-profile) using an existing working `CLAUDE_CONFIG_DIR`.
+
 See the [SDK provider options guide](../public-docs/sdk/provider-options.md) for
 per-agent examples and provider-specific keys.
 

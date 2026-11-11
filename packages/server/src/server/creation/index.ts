@@ -17,6 +17,96 @@ export interface CreatedAgent {
   agent: AgentSnapshotPayload;
   initialPromptStarted: boolean;
 }
+/** Internal callback authority; never accepted from a request or persisted in a public snapshot. */
+export interface CreationAgentAttempt {
+  readonly retryHistoryIntent: boolean;
+  acknowledgeManager(agentId: string): void;
+  markProviderDispatch(agentId: string): void;
+  certifyHistoryIntentReservation(agentId: string, workspaceId: string | undefined): void;
+  /** The original workspace of a proven-safe retry; throws once the manager has the attempt. */
+  resolveRetryWorkspaceId(agentId: string): string;
+  /** Throws unless retry placement is still admitted; the same check as resolveRetryWorkspaceId. */
+  assertRetryPlacementAdmitted(agentId: string): void;
+  consumeHistoryRetry(agentId: string): void;
+}
+
+/**
+ * Where one agent creation attempt stands. It only moves forward:
+ * entered -> acknowledged (manager has it) -> reserved (owns its history intent) -> dispatched,
+ * and acknowledged may dispatch without a reservation.
+ */
+type AttemptStage = "entered" | "acknowledged" | "reserved" | "dispatched";
+
+/**
+ * Track one agent creation attempt so a failure can be classified as safe to retry or unknown.
+ * Every callback refuses an expired attempt, another agent ID, or an out-of-order step.
+ */
+function createAgentAttempt(
+  agentId: string,
+  retryHistoryIntent: boolean,
+  originalWorkspaceId: string | null,
+  assertCurrent: () => void,
+) {
+  let live = true;
+  let stage: AttemptStage = "entered";
+  let reservedWorkspaceId: string | undefined;
+  let retryConsumed = false;
+  const assertLive = (id: string) => {
+    if (!live || id !== agentId)
+      throw new Error("Creation attempt is expired or has another agent ID");
+    assertCurrent();
+  };
+  const isPreDispatch = () => stage === "acknowledged" || stage === "reserved";
+  const retryPlacement = (id: string): string => {
+    assertLive(id);
+    if (!retryHistoryIntent || stage !== "entered" || !originalWorkspaceId)
+      throw new Error("Creation retry placement is not admitted");
+    return originalWorkspaceId;
+  };
+  const context: CreationAgentAttempt = Object.freeze({
+    retryHistoryIntent,
+    acknowledgeManager(id: string) {
+      assertLive(id);
+      if (stage !== "entered") throw new Error("Creation attempt already entered its manager");
+      stage = "acknowledged";
+    },
+    certifyHistoryIntentReservation(id: string, workspaceId: string | undefined) {
+      assertLive(id);
+      const workspaceMismatch = originalWorkspaceId !== null && originalWorkspaceId !== workspaceId;
+      if (stage !== "acknowledged" || workspaceMismatch)
+        throw new Error("Creation intent ownership is not admitted");
+      reservedWorkspaceId = workspaceId;
+      stage = "reserved";
+    },
+    resolveRetryWorkspaceId: retryPlacement,
+    assertRetryPlacementAdmitted(id: string) {
+      retryPlacement(id);
+    },
+    markProviderDispatch(id: string) {
+      assertLive(id);
+      if (!isPreDispatch()) throw new Error("Creation provider dispatch is not admitted");
+      stage = "dispatched";
+    },
+    consumeHistoryRetry(id: string) {
+      assertLive(id);
+      if (!isPreDispatch() || !retryHistoryIntent || retryConsumed)
+        throw new Error("Creation history retry is not admitted");
+      retryConsumed = true;
+    },
+  });
+  return {
+    context,
+    finish() {
+      live = false;
+    },
+    get stage() {
+      return stage;
+    },
+    get workspaceId() {
+      return reservedWorkspaceId;
+    },
+  };
+}
 interface CreationRequest {
   key: string;
   request: { [key: string]: unknown };
@@ -32,6 +122,7 @@ interface CreationRequest {
     agentId: string,
     workspace: WorkspaceDescriptorPayload | undefined,
     onReady: (agent: AgentSnapshotPayload) => Promise<void>,
+    attempt: CreationAgentAttempt,
   ) => Promise<CreatedAgent>;
 }
 export type CreationInput = CreationRequest &
@@ -43,8 +134,56 @@ const RecordSchema = z.object({
   fingerprint: z.string(),
   snapshot: CreationSnapshotSchema,
   inFlight: z.enum(["workspace", "agent", "prompt"]).nullable(),
+  preDispatchAgentFailure: z.boolean().optional(),
 });
 type Record = z.infer<typeof RecordSchema>;
+
+function isUnclassifiedAgentFailure(record: Record | null): record is Record {
+  return (
+    record?.snapshot.phase === "failed" &&
+    record.snapshot.failedStage === "agent" &&
+    record.preDispatchAgentFailure !== true
+  );
+}
+
+function isSafeHistoryRetry(record: Record | null): boolean {
+  return (
+    record?.preDispatchAgentFailure === true &&
+    record.snapshot.phase === "failed" &&
+    record.snapshot.failedStage === "agent" &&
+    record.snapshot.outcomeUnknown === false &&
+    record.inFlight === null &&
+    !record.snapshot.agent
+  );
+}
+
+function creationFailureCode(error: unknown): string | undefined {
+  return error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+function hasUnknownCreationEffects(
+  stage: NonNullable<Record["inFlight"]>,
+  rejectedBeforeProvision: boolean,
+  attempt: ReturnType<typeof createAgentAttempt> | undefined,
+): boolean {
+  return (
+    stage === "prompt" ||
+    (stage === "workspace" && !rejectedBeforeProvision) ||
+    // Only an attempt that reserved its intent and never dispatched is known to be effect-free.
+    (stage === "agent" && attempt?.stage !== "reserved")
+  );
+}
+
+function isSafeOwnedCreationFailure(
+  record: Record,
+  stage: NonNullable<Record["inFlight"]>,
+  unknown: boolean,
+  attempt: ReturnType<typeof createAgentAttempt> | undefined,
+): boolean {
+  return stage === "agent" && !unknown && attempt?.stage === "reserved" && !record.snapshot.agent;
+}
 
 /** Owns creation across socket lifetimes. Resource owners perform work; this module commits its milestones. */
 export class CreationService {
@@ -59,6 +198,11 @@ export class CreationService {
       snapshot: CreationSnapshot,
     ) => Promise<void> = async () => {},
     private readonly legacyDirectory?: string,
+    /** Receipt file writer; tests inject failures here. Defaults to the atomic writer. */
+    private readonly writeReceiptFile: (filePath: string, contents: string) => Promise<void> = (
+      filePath,
+      contents,
+    ) => writeFileAtomic(filePath, contents),
   ) {}
 
   async create(input: CreationInput, observer?: Observer): Promise<CreationSnapshot> {
@@ -74,9 +218,14 @@ export class CreationService {
       if (running && record) return { completion: running, snapshot: record.snapshot };
       if (record?.snapshot.phase === "completed") await this.validateCompleted(record.snapshot);
       if (record?.snapshot.phase === "completed" || record?.snapshot.outcomeUnknown) {
+        if (record.preDispatchAgentFailure !== undefined) {
+          record.preDispatchAgentFailure = undefined;
+          await this.write(identity, record);
+        }
         return { completion: Promise.resolve(record.snapshot), snapshot: record.snapshot };
       }
       if (record?.inFlight) {
+        record.preDispatchAgentFailure = undefined;
         await this.publish(identity, record, {
           phase: "failed",
           error: `${input.kind}_request_outcome_unknown`,
@@ -85,12 +234,21 @@ export class CreationService {
         });
         return { completion: Promise.resolve(record.snapshot), snapshot: record.snapshot };
       }
+      // An old false outcome only proves no published resource was found. A new
+      // reservation rejection must never turn that old uncertainty into safe retry proof.
+      if (isUnclassifiedAgentFailure(record)) {
+        record.preDispatchAgentFailure = undefined;
+        await this.publish(identity, record, { outcomeUnknown: true });
+        return { completion: Promise.resolve(record.snapshot), snapshot: record.snapshot };
+      }
+      const retryHistoryIntent = isSafeHistoryRetry(record);
       if (!record) {
         record = initialRecord(input, fingerprint);
         // Persist identity before claiming resources. A failed admission can only retry these IDs.
         await this.write(identity, record);
       }
       await this.claimResources(identity, record.snapshot, input);
+      if (retryHistoryIntent) await this.assertRetryAgentAbsent(input, record.snapshot.agentId!);
       if (record.snapshot.phase === "failed") {
         await this.publish(identity, record, {
           phase: record.snapshot.workspace ? "workspace_ready" : "accepted",
@@ -102,9 +260,18 @@ export class CreationService {
       }
       const snapshot = record.snapshot;
       // Defer the runner until admission has installed the initiating observer.
-      const completion = Promise.resolve().then(() => this.run(identity, record, input));
+      const completion: Promise<CreationSnapshot> = Promise.resolve().then(() =>
+        this.run(identity, record, input, retryHistoryIntent, () => {
+          if (this.active.get(identity) !== completion)
+            throw new Error("Creation runner is no longer current");
+        }),
+      );
       this.active.set(identity, completion);
-      void completion.finally(() => this.active.delete(identity)).catch(() => undefined);
+      void completion
+        .finally(() => {
+          if (this.active.get(identity) === completion) this.active.delete(identity);
+        })
+        .catch(() => undefined);
       return { completion, snapshot };
     });
     this.admission = admitted.then(
@@ -133,6 +300,7 @@ export class CreationService {
       await this.admission;
       const record = await this.read(identity);
       if (record?.inFlight && !this.active.has(identity)) {
+        record.preDispatchAgentFailure = undefined;
         await this.publish(identity, record, {
           phase: "failed",
           failedStage: record.inFlight,
@@ -152,7 +320,10 @@ export class CreationService {
     identity: string,
     record: Record,
     input: CreationInput,
+    retryHistoryIntent: boolean,
+    assertCurrent: () => void,
   ): Promise<CreationSnapshot> {
+    let attempt: ReturnType<typeof createAgentAttempt> | undefined;
     try {
       if (input.provision && !record.snapshot.workspace) {
         record.inFlight = "workspace";
@@ -169,20 +340,34 @@ export class CreationService {
         });
       }
       if (input.hasAgent && input.createAgent && !record.snapshot.agent) {
+        record.preDispatchAgentFailure = undefined;
         record.inFlight = "agent";
         await this.write(identity, record);
-        const { agent, initialPromptStarted } = await input.createAgent(
+        attempt = createAgentAttempt(
           record.snapshot.agentId!,
-          record.snapshot.workspace,
-          async (readyAgent) => {
-            record.inFlight = input.hasPrompt ? "prompt" : null;
-            await this.publish(identity, record, {
-              phase: "agent_ready",
-              agent: readyAgent,
-              workspaceId: readyAgent.workspaceId ?? record.snapshot.workspaceId,
-            });
-          },
+          retryHistoryIntent,
+          record.snapshot.workspaceId,
+          assertCurrent,
         );
+        let created: CreatedAgent;
+        try {
+          created = await input.createAgent(
+            record.snapshot.agentId!,
+            record.snapshot.workspace,
+            async (readyAgent) => {
+              record.inFlight = input.hasPrompt ? "prompt" : null;
+              await this.publish(identity, record, {
+                phase: "agent_ready",
+                agent: readyAgent,
+                workspaceId: readyAgent.workspaceId ?? record.snapshot.workspaceId,
+              });
+            },
+            attempt.context,
+          );
+        } finally {
+          attempt.finish();
+        }
+        const { agent, initialPromptStarted } = created;
         record.inFlight = null;
         if (initialPromptStarted)
           await this.publish(identity, record, { phase: "prompt_started", agent });
@@ -192,19 +377,21 @@ export class CreationService {
       await this.publish(identity, record, { phase: "completed" });
     } catch (error) {
       const stage = record.inFlight ?? "agent";
-      const resourceId =
-        stage === "workspace" ? record.snapshot.workspaceId : record.snapshot.agentId;
-      const code =
-        error instanceof Error && "code" in error && typeof error.code === "string"
-          ? error.code
-          : undefined;
+      const resource: {
+        kind: Parameters<CreationInput["exists"]>[0];
+        id: CreationSnapshot["agentId"];
+      } =
+        stage === "workspace"
+          ? { kind: "workspace", id: record.snapshot.workspaceId }
+          : { kind: "agent", id: record.snapshot.agentId };
+      const code = creationFailureCode(error);
       const rejectedBeforeProvision = code === "directory_not_found" || code === "source_required";
       const unknown =
-        stage === "prompt" ||
-        (stage === "workspace" && !rejectedBeforeProvision) ||
-        (resourceId !== null && (await input.exists(stage, resourceId)));
-      // A failed provider startup with no registered resource can retry under the same ID.
-      // A partially provisioned resource or an attempted prompt needs reconciliation.
+        hasUnknownCreationEffects(stage, rejectedBeforeProvision, attempt) ||
+        (resource.id !== null && (await input.exists(resource.kind, resource.id)));
+      record.preDispatchAgentFailure = isSafeOwnedCreationFailure(record, stage, unknown, attempt)
+        ? true
+        : undefined;
       if (!unknown) record.inFlight = null;
       await this.publish(identity, record, {
         phase: "failed",
@@ -212,6 +399,9 @@ export class CreationService {
         errorCode: code,
         failedStage: stage,
         outcomeUnknown: unknown,
+        ...(record.preDispatchAgentFailure && attempt?.workspaceId
+          ? { workspaceId: attempt.workspaceId }
+          : {}),
       });
     }
     return record.snapshot;
@@ -248,6 +438,10 @@ export class CreationService {
     };
     await this.write(identityFor(input.kind, input.key), record);
     return record;
+  }
+
+  private async assertRetryAgentAbsent(input: CreationInput, agentId: string): Promise<void> {
+    if (await input.exists("agent", agentId)) throw new Error("agent_id_conflict");
   }
 
   private async claimResources(
@@ -304,6 +498,7 @@ export class CreationService {
     record: Record,
     update: Partial<CreationSnapshot>,
   ): Promise<void> {
+    if (update.phase !== "failed") record.preDispatchAgentFailure = undefined;
     record.snapshot = { ...record.snapshot, ...update, revision: record.snapshot.revision + 1 };
     await this.write(identity, record);
     for (const observer of this.observers.get(identity) ?? [])
@@ -313,7 +508,7 @@ export class CreationService {
     // Serialize now: the runner mutates the record after queueing this write.
     const contents = JSON.stringify(record, null, 2);
     return this.accessReceipt(identity, () =>
-      writeFileAtomic(join(this.directory, `${identity}.json`), contents),
+      this.writeReceiptFile(join(this.directory, `${identity}.json`), contents),
     );
   }
   private read(identity: string): Promise<Record | null> {

@@ -4,6 +4,122 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createPaseoApi, createPaseoClient } from "./index.js";
 import { DaemonClient } from "./daemon-client.js";
 import type { PaseoAgent, PaseoClient, PaseoWorkspace } from "./index.js";
+import {
+  createHistoryMigrationPrompt,
+  validateMigrationPromptInput,
+} from "./provider-history-prompt.js";
+
+test("migration prompt discovery context never invents inventory or copies extra fields", () => {
+  const input = {
+    provider: "claude-work",
+    title: "private-title",
+    env: { token: "private-token" },
+  };
+  const { prompt, context } = createHistoryMigrationPrompt(input);
+  expect(context).toMatchObject({
+    provider: "claude-work",
+    inventoryPerformed: false,
+    source: null,
+    destination: null,
+    mutationApproved: false,
+    inventoryPartial: true,
+    sessions: [],
+  });
+  expect(prompt).not.toMatch(/private-title|private-token/);
+  expect(prompt).toContain("Before any stop");
+  expect(prompt).toContain("independent continuation");
+  expect(prompt).toContain("visible native App");
+});
+
+test("migration prompt quotes fence and tag delimiters as data", () => {
+  const home = "/tmp/```</context><instructions>";
+  const { prompt } = createHistoryMigrationPrompt({ provider: "codex", source: { home } });
+  const fences = prompt.split("```");
+  expect(fences).toHaveLength(3);
+  expect(prompt).not.toContain("</context>");
+  expect(JSON.parse(fences[1].slice(4)).source.home).toBe(home);
+});
+
+test("migration prompt bounds formatted evidence and reports every omitted record", () => {
+  const sessions = Array.from({ length: 300 }, (_, i) => ({
+    id: `session-${i}`,
+    agentIds: Array.from({ length: 20 }, (_agent, n) => `agent-${n}-${"a".repeat(180)}`),
+    parents: ["parent"],
+    provenance: "created" as const,
+    disposition: "needs-classification" as const,
+    title: "never-copy-title",
+    transcript: "never-copy-transcript",
+  }));
+  const { prompt, context } = createHistoryMigrationPrompt({
+    provider: "codex",
+    inventory: {
+      digest: "a".repeat(64),
+      sessions,
+      issues: [],
+      missingSessionIds: [],
+      unresolvedIntents: [],
+    },
+  });
+  expect(context.sessions.length).toBeLessThan(50);
+  expect(context.omitted.sessions).toBe(300 - context.sessions.length);
+  expect(context.omitted.references).toBeGreaterThan(0);
+  expect(prompt.split("```")[1].length).toBeLessThanOrEqual(24_005);
+  expect(prompt).not.toMatch(/never-copy-title|never-copy-transcript/);
+});
+
+test("migration prompt preserves imported and unresolved intent barriers", () => {
+  const { context } = createHistoryMigrationPrompt({
+    provider: "claude",
+    inventory: {
+      digest: "b".repeat(64),
+      sessions: [
+        {
+          id: "imported",
+          agentIds: [],
+          parents: [],
+          provenance: "imported",
+          disposition: "needs-classification",
+        },
+      ],
+      issues: [{ code: "snapshot-invalid" }],
+      missingSessionIds: ["missing"],
+      unresolvedIntents: [
+        { agentId: "pending-import", origin: "imported", requestedSessionId: "native-request" },
+      ],
+    },
+  });
+  expect(context.sessions[0].disposition).toBe("preserve");
+  expect(context.unresolvedIntents[0].requestedSessionId).toBe("native-request");
+  expect(context.inventoryPartial).toBe(true);
+});
+
+test("migration prompt rejects invalid context without echoing paths or provider input", () => {
+  expect(() => createHistoryMigrationPrompt({ provider: "invalid secret" })).toThrow(
+    "Invalid migration guidance provider ID",
+  );
+  for (const home of ["relative-secret", "/tmp/new\nline", `/tmp/${"x".repeat(3000)}`]) {
+    expect(() =>
+      createHistoryMigrationPrompt({ provider: "codex", destination: { home } }),
+    ).toThrow("Migration guidance requires bounded absolute paths");
+  }
+});
+
+test("migration prompt input validation applies the same refusals before any inventory", () => {
+  expect(() => validateMigrationPromptInput({ provider: "Codex" })).toThrow(
+    "Invalid migration guidance provider ID",
+  );
+  expect(() =>
+    validateMigrationPromptInput({ provider: "codex", source: { home: "relative-home" } }),
+  ).toThrow("Migration guidance requires bounded absolute paths");
+  expect(() =>
+    validateMigrationPromptInput({
+      provider: "codex",
+      paseoHome: "/paseo",
+      source: { home: "/source", sqliteHome: "/source-sqlite" },
+      destination: { home: "/destination" },
+    }),
+  ).not.toThrow();
+});
 
 type FakeWebSocketHandler = (...args: unknown[]) => void;
 

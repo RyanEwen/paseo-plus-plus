@@ -1,3 +1,9 @@
+import type { ProviderHistoryBinding, ProviderHistoryStorage } from "./provider-history/binding.js";
+import type {
+  ClaudeFreshRewindContext,
+  ClaudeInitialHistoryContext,
+  CommitClaudeRewind,
+} from "./provider-history/claude-identity-types.js";
 import type {
   AgentOptionControl,
   AgentOptionSelectControl,
@@ -635,12 +641,21 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
+export interface AgentRewindInput {
+  messageId: string;
+  commitClaudeRewind?: CommitClaudeRewind;
+}
+
 export interface AgentLaunchContext {
   /** Launch-only plugin MCP servers and their owners; never persisted. */
   mcpServers?: Record<string, McpServerConfig>;
   mcpServerOwners?: Record<string, string>;
   agentId?: string;
   env?: Record<string, string>;
+  /** Canonical server-only storage selection, reserved before provider startup. */
+  historyStorage?: ProviderHistoryStorage;
+  claudeFreshRewind?: ClaudeFreshRewindContext;
+  claudeInitialHistory?: ClaudeInitialHistoryContext;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
@@ -688,6 +703,7 @@ export interface AgentUsageSession {
 }
 
 export interface AgentSession {
+  readonly historyStorage?: ProviderHistoryStorage;
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -753,9 +769,11 @@ export interface AgentSession {
    * ended, so the stored options still match what runs.
    */
   applyOptions?(options: ProviderOptions): Promise<Record<string, unknown> | void>;
-  revertConversation?(input: { messageId: string }): Promise<void>;
-  revertFiles?(input: { messageId: string }): Promise<void>;
-  revertBoth?(input: { messageId: string }): Promise<void>;
+  readonly claudeFreshRewind?: ClaudeFreshRewindContext;
+  readonly claudeInitialHistory?: ClaudeInitialHistoryContext;
+  revertConversation?(input: AgentRewindInput): Promise<void>;
+  revertFiles?(input: AgentRewindInput): Promise<void>;
+  revertBoth?(input: AgentRewindInput): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
@@ -799,6 +817,14 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ResolveHistoryStorageInput {
+  provider: AgentProvider;
+  config: AgentSessionConfig;
+  env?: Record<string, string>;
+  previous?: ProviderHistoryBinding;
+  operation: "create" | "import" | "resume" | "reload";
+}
+
 export interface AgentDraftControls {
   controls: AgentOptionControl[];
   options: ProviderOptions;
@@ -807,6 +833,9 @@ export interface AgentDraftControls {
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  resolveHistoryStorage?(
+    input: ResolveHistoryStorageInput,
+  ): Promise<ProviderHistoryStorage | undefined>;
   /**
    * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
    * about options while creating. If the agent ended up different from the options, say so in the
@@ -871,12 +900,18 @@ export interface AgentClient {
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
-  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  archiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
-  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  unarchiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    context?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

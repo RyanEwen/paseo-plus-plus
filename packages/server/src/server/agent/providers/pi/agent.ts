@@ -2802,6 +2802,7 @@ export class PiRpcAgentClient implements AgentClient {
       await runProviderRefreshActivity(context, "runtime.start", async () => {
         runtimeSession = await runtime.startSession({
           cwd: options.scope === "global" ? homedir() : options.cwd,
+          noSession: true,
           signal: context?.signal,
         });
         if (context?.signal.aborted) await closeSession();
@@ -2925,10 +2926,12 @@ export class PiRpcAgentClient implements AgentClient {
     env: Record<string, string> | undefined,
     runtime: PiRuntime,
   ): Promise<PiMcpInjection["kind"] | null> {
-    const runtimeSession = await runtime.startSession({ cwd, env }).catch((error) => {
-      this.logger.debug({ err: error, cwd }, "Pi MCP probe failed to start");
-      return null;
-    });
+    const runtimeSession = await runtime
+      .startSession({ cwd, env, noSession: true })
+      .catch((error) => {
+        this.logger.debug({ err: error, cwd }, "Pi MCP probe failed to start");
+        return null;
+      });
     if (!runtimeSession) {
       return null;
     }

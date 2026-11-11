@@ -24,6 +24,11 @@ provider icon map. You do not need a core manifest entry or provider factory.
 
 ## Provider-native session options
 
+Provider persistence capability does not establish storage isolation or exclusive ownership.
+Preserve native import and same-ID resume semantics. The
+[history preview](fork-features/provider-history-preview.md) records the supported inventory
+scope and the distinction between Paseo initiation and exclusive ownership.
+
 The provider owns validation and application of the opaque record in
 `AgentSessionConfig.providerOptions`. The registry supplies the effective options
 at session startup. See [provider configuration](custom-providers.md#provider-options)
@@ -133,6 +138,16 @@ Paseo tools are not implemented as MCP tools internally. They live in a shared t
 A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume the already-filtered `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`; the MCP server builds the same policy-filtered catalog for that caller. Filtering is enforced at catalog registration in both paths. Browser tools remain subject to the daemon browser-tools setting and browser-host availability.
 
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
+
+Catalog and MCP capability discovery request ephemeral Pi sessions. Extensions can still write
+their own state; an ephemeral probe does not establish history isolation. New-chat storage and
+native import routes remain unchanged. See [provider history preview](fork-features/provider-history-preview.md)
+for the current separation boundary.
+
+Codex can opt in to [configured-home safety](fork-features/provider-history-preview.md#bind-a-configured-codex-profile).
+Storage planning runs after launch environment hooks and before provider startup. Keep startup-only
+selectors out of per-thread config and preserve the canonical binding through derived provider IDs.
+Claude has its own [configured profile admission and rewind contract](fork-features/provider-history-preview.md#bind-a-configured-claude-profile). Other providers remain unsupported by this policy.
 
 Pi extension adapters live under `packages/server/src/server/agent/providers/pi/extensions/<extension>/`. Each adapter turns Pi RPC facts into Paseo tool, timeline, subagent, or question mappings through the [extension contract](../packages/server/src/server/agent/providers/pi/extensions/contract.ts). To add one, create its directory, add one entry to `extensions/registry.ts`, and test it with fixtures captured from the real extension in Pi that record package, version, source commit, Pi version, and capture date. `agent.ts`, `history-mapper.ts`, and `tool-call-mapper.ts` never name an extension.
 

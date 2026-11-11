@@ -18,6 +18,7 @@ export interface PiRuntimeLaunch {
   thinkingOptionId?: string;
   modeId?: string;
   session?: string;
+  sessionDir?: string;
   noSession?: boolean;
   mcpConfigPath?: string;
   extensionPaths?: string[];
@@ -33,6 +34,8 @@ export interface PiStartSessionInput {
   thinkingOptionId?: string;
   modeId?: string;
   session?: string;
+  /** Native storage selector; supplying it does not establish an isolated storage binding. */
+  sessionDir?: string;
   noSession?: boolean;
   mcpConfigPath?: string;
   extensionPaths?: string[];
@@ -107,6 +110,7 @@ export function buildPiLaunch(input: {
     protocolMode,
     modeId: input.session.modeId,
     session: input.session.session,
+    sessionDir: input.session.sessionDir,
     noSession: input.session.noSession,
     mcpConfigPath: input.session.mcpConfigPath,
     extensionPaths: input.session.extensionPaths,
@@ -130,6 +134,9 @@ function appendPiLaunchArgs(
   }
   if (session.thinkingOptionId) {
     argv.push("--thinking", session.thinkingOptionId);
+  }
+  if (session.sessionDir) {
+    argv.push("--session-dir", session.sessionDir);
   }
   if (session.noSession) {
     argv.push("--no-session");
