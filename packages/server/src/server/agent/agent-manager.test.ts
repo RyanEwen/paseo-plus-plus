@@ -13460,7 +13460,7 @@ test("failed provider startup retains an unresolved creation intent without a gu
     });
     expect(records[0].persistence).toBeUndefined();
     const restartedStorage = new AgentStorage(join(directory, "agents"), logger);
-    expect(await restartedStorage.list()).toEqual([]);
+    expect(await restartedStorage.listAll()).toEqual([]);
     expect(await restartedStorage.get(records[0].id)).toBeNull();
     await expect(
       ensureAgentLoaded(records[0].id, {
@@ -13516,7 +13516,7 @@ test("failed native import retains its request without publishing or auto-adopti
     expect(intents[0].config?.model).toBe("gpt-5.4");
     expect(events).toEqual([]);
     const restartedStorage = new AgentStorage(join(directory, "agents"), logger);
-    expect(await restartedStorage.list()).toEqual([]);
+    expect(await restartedStorage.listAll()).toEqual([]);
     expect(await restartedStorage.listByWorkspace("fixture-workspace")).toEqual([]);
     await expect(
       ensureAgentLoaded(intents[0].id, {
