@@ -40,6 +40,11 @@ import {
 
 export interface StickyPromptInput {
   enabled?: boolean;
+  /**
+   * The transcript this owner serves, such as `server:agent`. Prompt state resets when it or
+   * the epoch changes, so the timeline stays mounted when a draft becomes its created agent.
+   */
+  scope?: string;
   /** The timeline owner admits passive context as actual rows. */
   contextManaged?: boolean;
   contextOnlyIds?: ReadonlySet<string>;
@@ -73,22 +78,23 @@ export function useStickyPrompt(input: StickyPromptInput) {
     loadOlder,
     jumpToLoaded,
   } = input;
+  const ownerScope = resolveOwnerScope(input.scope, epoch);
   const {
     key: actionVisibilityKey,
     start: showNavigationActions,
     retarget: retargetNavigationActions,
     clear: clearNavigationActions,
-  } = useNavigationActionVisibility(enabled, epoch);
+  } = useNavigationActionVisibility(enabled, ownerScope);
   const reading = usePromptReading(enabled, input.reading);
   const promptRows = input.promptRows ?? items;
   const loadedTargets = useMemo(
     () => buildPromptTargets(promptRows, outline.prompts, epoch, input.contextOnlyIds),
     [promptRows, outline.prompts, epoch, input.contextOnlyIds],
   );
-  const ownerEpoch = useRef(epoch);
-  const scopeChanged = ownerEpoch.current !== epoch;
+  const ownerScopeRef = useRef(ownerScope);
+  const scopeChanged = ownerScopeRef.current !== ownerScope;
   const [stored, dispatch] = useReducer(reduceStickyPromptState, INITIAL_STICKY_PROMPT_STATE);
-  // Do not expose old prompt state during the first render of a new epoch.
+  // Do not expose old prompt state during the first render of a new scope or epoch.
   const { selected, pending, error, cancelled } = resolveEpochPromptState(scopeChanged, stored);
   const retryTarget = useRef<{
     target: PromptTarget;
@@ -145,6 +151,7 @@ export function useStickyPrompt(input: StickyPromptInput) {
   const readingContent = useReadingPrompt({
     knownPrompts,
     epoch,
+    scope: ownerScope,
     request: resolveReadingPromptRequest({
       source: contextSource,
       seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
@@ -420,11 +427,12 @@ export function useStickyPrompt(input: StickyPromptInput) {
     retryTarget.current = null;
     dispatch({ type: "disabled" });
   }, [enabled, cancelStickyJump, cancelReading, cancelDiscovery, restartDiscovery]);
-  // Epoch replacement resets only prompt ownership. The surrounding viewport keeps
-  // its manual/following state, DOM ref and reading anchor across authoritative hydration.
+  // Scope or epoch replacement resets only prompt ownership. The surrounding viewport keeps
+  // its manual/following state, DOM ref and reading anchor across authoritative hydration
+  // and across a draft's handoff to its created agent.
   useLayoutEffect(() => {
-    if (ownerEpoch.current === epoch) return;
-    ownerEpoch.current = epoch;
+    if (ownerScopeRef.current === ownerScope) return;
+    ownerScopeRef.current = ownerScope;
     cancelStickyJump();
     cancelDiscovery();
     if (enabled) restartDiscovery();
@@ -433,7 +441,7 @@ export function useStickyPrompt(input: StickyPromptInput) {
     dispatch({ type: "epochReplaced", enabled });
     // The reading-content owner independently cancels old epoch completions without
     // suppressing the new epoch's same-sequence request.
-  }, [epoch, enabled, cancelStickyJump, cancelDiscovery, restartDiscovery]);
+  }, [ownerScope, enabled, cancelStickyJump, cancelDiscovery, restartDiscovery]);
   const busy = isPromptNavigationBusy({
     pending: pending !== null || readingContent.loading,
     jumping: outline.isJumping,
@@ -528,7 +536,12 @@ function isFailedPromptMaterialization(input: PromptMaterializationStatus): bool
   );
 }
 
-/** Hide previous-epoch bookkeeping before the layout effect clears its stored values. */
+/** One identity for the transcript and its epoch; prompt state never crosses it. */
+function resolveOwnerScope(scope: string | undefined, epoch: string | null): string {
+  return JSON.stringify([scope ?? null, epoch]);
+}
+
+/** Hide previous-scope bookkeeping before the layout effect clears its stored values. */
 function resolveEpochPromptState(
   scopeChanged: boolean,
   state: StickyPromptState,

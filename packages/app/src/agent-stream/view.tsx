@@ -676,6 +676,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       chatOutline.jumpToMessage(id, { source: "sticky", placement }),
     );
     const stickyPromptRef = useRef<StickyPromptHandle>(null);
+    // Prompt state resets on this scope instead of a remount key, so a draft's handoff to
+    // its created agent keeps the timeline, and its submitted row, mounted.
+    const stickyPromptScope = `${resolvedServerId}:${agentId}`;
     const followLatestPrompt = useStableEvent(() => {
       chatOutline.cancelJump();
       stickyPromptRef.current?.followLatest();
@@ -1242,7 +1245,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
             <StickyPrompt
-              key={`${resolvedServerId}:${agentId}`}
+              scope={stickyPromptScope}
               enabled={stickyEnabled}
               items={navigationItems}
               promptRows={promptRows}
