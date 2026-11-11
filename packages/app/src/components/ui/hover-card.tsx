@@ -1,8 +1,10 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -14,27 +16,24 @@ import { createPortal } from "react-dom";
 import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  getOverlayRoot,
-  OverlayLayerProvider,
-  useOverlayLayer,
-  useWebOverlayRegistration,
-} from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import {
   computePosition,
   getCursorAnchorRect,
-  measureElement,
   type Alignment,
   type Placement,
   type Point,
   type Rect,
-  type Size,
 } from "./anchor";
 
 const CLOSE_GRACE_MS = 100;
+
+// One card per layer: moving onto a sibling trigger replaces the open card instead of stacking
+// a second one beside it for the grace period. Nested cards open on a higher layer.
+const openCardCloseByLayer = new Map<number, () => void>();
 
 interface HoverCardContextValue {
   open: boolean;
@@ -144,13 +143,27 @@ function WebHoverCard({
     }, CLOSE_GRACE_MS);
   }, [clearOpenTimer, keyboardFocusInside]);
 
+  const closeNow = useCallback(() => {
+    clearGraceTimer();
+    setOpen(false);
+  }, [clearGraceTimer]);
+
   const openNow = useCallback(() => {
     clearOpenTimer();
     clearGraceTimer();
-    if (!disabled) {
-      setOpen(true);
-    }
-  }, [clearOpenTimer, clearGraceTimer, disabled]);
+    if (disabled) return;
+    const openSibling = openCardCloseByLayer.get(layer);
+    if (openSibling && openSibling !== closeNow) openSibling();
+    openCardCloseByLayer.set(layer, closeNow);
+    setOpen(true);
+  }, [clearOpenTimer, clearGraceTimer, closeNow, disabled, layer]);
+
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      if (openCardCloseByLayer.get(layer) === closeNow) openCardCloseByLayer.delete(layer);
+    };
+  }, [closeNow, layer, open]);
 
   const scheduleOpen = useCallback(() => {
     clearGraceTimer();
@@ -173,7 +186,7 @@ function WebHoverCard({
   }, [clearOpenTimer, clearGraceTimer, disabled, delayDuration, openNow]);
 
   const keyPressed = useCallback(
-    (event: KeyboardEvent): boolean => {
+    (event: KeyboardInputEvent): boolean => {
       if (!isWeb) return false;
       const trigger = triggerRef.current as unknown as HTMLElement | null;
       if (!trigger) return false;
@@ -186,7 +199,7 @@ function WebHoverCard({
         return true;
       } else if (
         focusInside() &&
-        event.target === trigger &&
+        document.activeElement === trigger &&
         ["ArrowDown", "Enter", " "].includes(event.key)
       ) {
         event.preventDefault();
@@ -206,7 +219,8 @@ function WebHoverCard({
     [clearOpenTimer, clearGraceTimer, focusInside, open, openNow],
   );
 
-  const setOverlayScope = useWebOverlayRegistration({
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
     active: !disabled && open,
     layer,
     onKeyDown: keyPressed,
@@ -260,9 +274,9 @@ function WebHoverCard({
       )
         keyPressed(event);
     };
+    // Only a scroll that moves the trigger detaches the card. A streaming chat beside it does not.
     const scrolled = (event: Event) => {
-      if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
-        close();
+      if ((event.target as Node).contains(trigger)) close();
     };
     const pointerMoved = (event: PointerEvent) => {
       pointerRef.current = { x: event.clientX, y: event.clientY };
@@ -382,17 +396,53 @@ interface HoverCardContentProps {
 export function HoverCardContent(props: HoverCardContentProps): ReactElement | null {
   const ctx = useContext(HoverCardContext);
   if (!ctx?.open) return null;
-  return (
+  // Hover cards are web-only. Share the body overlay plane with menus and tooltips,
+  // outside the app stacking context and above resident browser surfaces.
+  return createPortal(
     <HoverCardSurface
       {...props}
       layer={ctx.layer}
       triggerRef={ctx.triggerRef}
       pointerRef={ctx.pointerRef}
       contentRef={ctx.contentRef}
-    />
+    />,
+    getOverlayRoot(),
   );
 }
 
+// A card above its trigger holds its bottom edge, so content that loads while it is open grows it
+// upward without a correction. Anchored by its top, it would paint over the trigger until placed.
+type CardPosition = { left: number; top: number } | { left: number; bottom: number };
+
+function isSamePosition(current: CardPosition | null, next: CardPosition): boolean {
+  if (!current || current.left !== next.left) return false;
+  return "top" in current
+    ? "top" in next && current.top === next.top
+    : "bottom" in next && current.bottom === next.bottom;
+}
+
+function readDomRect(view: View | null): Rect | null {
+  const element = view as unknown as HTMLElement | null;
+  if (!element) return null;
+  const { x, y, width, height } = element.getBoundingClientRect();
+  return { x, y, width, height };
+}
+
+/** The trigger's rect, or the cursor point clamped to it when the card follows the cursor. */
+function readAnchorRect(
+  trigger: View | null,
+  anchor: "trigger" | "cursor",
+  pointer: Point | null,
+): Rect | null {
+  const rect = readDomRect(trigger);
+  if (!rect || anchor === "trigger") {
+    return rect;
+  }
+  return getCursorAnchorRect(rect, pointer);
+}
+
+// Rendered inside the portal so the card is placed in the commit that mounts it: the first
+// painted frame already sits beside the trigger. Web-only, like the rest of the open card.
 function HoverCardSurface({
   layer,
   triggerRef,
@@ -413,68 +463,52 @@ function HoverCardSurface({
   contentRef: RefObject<View | null>;
   pointerRef: RefObject<Point | null>;
 }): ReactElement {
-  const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
-  const [contentSize, setContentSize] = useState<Size | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const overlayRef = useRef<View>(null);
+  const [position, setPosition] = useState<CardPosition | null>(null);
 
-  useEffect(() => {
-    if (!triggerRef.current) return;
-    let cancelled = false;
-    const point = anchor === "trigger" ? null : pointerRef.current;
-    void measureElement(triggerRef.current).then((rect) => {
-      if (!cancelled) {
-        setTriggerRect(getCursorAnchorRect(rect, point));
-      }
-      return undefined;
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [anchor, pointerRef, triggerRef]);
-
-  useEffect(() => {
-    if (!triggerRect || !contentSize) return;
+  const place = useCallback(() => {
+    const triggerRect = readAnchorRect(triggerRef.current, anchor, pointerRef.current);
+    const overlayRect = readDomRect(overlayRef.current);
+    const content = contentRef.current as unknown as HTMLElement | null;
+    if (!triggerRect || !overlayRect || !content) return;
     const { width, height } = Dimensions.get("window");
-    const { x, y } = computePosition({
+    const { x, y, actualPlacement } = computePosition({
       triggerRect,
-      contentSize,
+      contentSize: { width: content.offsetWidth, height: content.offsetHeight },
       displayArea: { x: 0, y: 0, width, height },
       placement,
       flipHorizontal: true,
       alignment,
       offset,
     });
-    setPosition({ x, y });
-  }, [alignment, contentSize, offset, placement, triggerRect]);
+    const left = x - overlayRect.x;
+    const next: CardPosition =
+      actualPlacement === "top"
+        ? { left, bottom: overlayRect.height - (y + content.offsetHeight - overlayRect.y) }
+        : { left, top: y - overlayRect.y };
+    setPosition((current) => (isSamePosition(current, next) ? current : next));
+  }, [alignment, anchor, contentRef, offset, placement, pointerRef, triggerRef]);
 
-  const handleLayout = useCallback(
-    (event: { nativeEvent: { layout: { width: number; height: number } } }) => {
-      const { width, height } = event.nativeEvent.layout;
-      setContentSize({ width, height });
-    },
-    [],
-  );
+  useLayoutEffect(place, [place]);
 
   const frameStyle = useMemo(
-    () => ({
-      position: "absolute" as const,
-      top: position?.y ?? -9999,
-      left: position?.x ?? -9999,
-    }),
-    [position?.x, position?.y],
+    () => ({ position: "absolute" as const, ...(position ?? { top: -9999, left: -9999 }) }),
+    [position],
   );
   const surfaceStyle = useMemo(() => [styles.surface, style], [style]);
 
-  // Hover cards are web-only. Share the body overlay plane with menus and tooltips,
-  // outside the app stacking context and above resident browser surfaces.
-  return createPortal(
-    <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: layer }]}>
+  return (
+    <View
+      ref={overlayRef}
+      pointerEvents="box-none"
+      style={[styles.portalOverlay, { zIndex: layer }]}
+    >
       <FloatingSurface
         ref={contentRef}
         entering={FadeIn.duration(80)}
         exiting={FadeOut.duration(80)}
         collapsable={false}
-        onLayout={handleLayout}
+        onLayout={place}
         role={role}
         accessibilityLabel={accessibilityLabel}
         testID={testID}
@@ -483,8 +517,7 @@ function HoverCardSurface({
       >
         {children}
       </FloatingSurface>
-    </View>,
-    getOverlayRoot(),
+    </View>
   );
 }
 
