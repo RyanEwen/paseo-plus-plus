@@ -3895,6 +3895,25 @@ export class DaemonClient {
     return { baseRef: payload.baseRef };
   }
 
+  /** List archived workspace records for one project; callers gate projectArchivedWorkspaces. */
+  async listArchivedProjectWorkspaces(input: { projectId: string; includeBackground?: boolean }) {
+    const { projectId, includeBackground = false } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.recovery.list_archived.response">(
+        {
+          message: {
+            type: "workspace.recovery.list_archived.request",
+            projectId,
+            includeBackground,
+          },
+        },
+      );
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload.entries;
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,

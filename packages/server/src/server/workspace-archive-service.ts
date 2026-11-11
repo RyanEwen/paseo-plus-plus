@@ -21,6 +21,8 @@ import type {
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { registerForkCapability } from "./fork-capabilities.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -198,7 +200,12 @@ async function archiveByScopeWithPriority(
     const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
       dependencies,
       targetWorkspaceIds,
-      { requestId: request.requestId, checkpoint, progress },
+      {
+        requestId: request.requestId,
+        checkpoint,
+        progress,
+        failurePolicy: request.scope.kind === "workspace" ? "require-complete" : "best-effort",
+      },
     );
     checkpoint();
 
@@ -393,14 +400,21 @@ async function resolveBackingDirectory(
 async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
-  options: { requestId: string; checkpoint: () => void; progress: ArchiveProgress },
+  options: {
+    requestId: string;
+    checkpoint: () => void;
+    progress: ArchiveProgress;
+    failurePolicy: ArchiveContentsFailurePolicy;
+  },
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
-      const contents = await archiveWorkspaceContentsWithProgress(dependencies, workspaceId);
+      const contents = await archiveWorkspaceContentsWithProgress(dependencies, workspaceId, {
+        failurePolicy: options.failurePolicy,
+      });
       for (const agentId of contents.newlyArchivedAgentIds) {
         options.progress.newlyArchivedAgentIds.add(agentId);
       }
@@ -425,6 +439,7 @@ async function archiveTargetRecords(
         options.progress.recordArchived,
       );
     } else {
+      rethrowWhenCompleteTeardownRequired(options, result.reason);
       dependencies.sessionLogger?.warn(
         { err: result.reason, requestId: options.requestId },
         "archiveByScope workspace teardown failed; continuing",
@@ -567,20 +582,50 @@ export type ArchiveWorkspaceContentsDependencies = Pick<
   "agentManager" | "agentStorage" | "killTerminalsForWorkspace" | "sessionLogger"
 >;
 
+// Single-workspace archive keeps the record when required contents teardown fails.
+registerForkCapability("workspaceArchiveComplete");
+
+type ArchiveContentsFailurePolicy = "best-effort" | "require-complete";
+
+/** Rethrow a teardown failure when the record must not be archived without complete teardown. */
+function rethrowWhenCompleteTeardownRequired(
+  options: { failurePolicy: ArchiveContentsFailurePolicy },
+  error: unknown,
+): void {
+  if (options.failurePolicy === "require-complete") {
+    throw error;
+  }
+}
+
+/** Fail a require-complete teardown that left any agent or terminal step failed. */
+function requireCompleteTeardown(
+  options: { failurePolicy: ArchiveContentsFailurePolicy },
+  failures: unknown[],
+): void {
+  if (options.failurePolicy !== "require-complete" || failures.length === 0) {
+    return;
+  }
+  throw new AggregateError(failures, failures.map(getErrorMessage).join("; "));
+}
+
 // Tears down everything OWNED by a single workspace record: its live agents,
 // its persisted-but-not-running agent snapshots, and its terminals. Scoped by
 // workspaceId so a sibling workspace sharing the same directory is untouched.
-// Returns the set of archived agent ids.
+// Returns the set of archived agent ids. Single-workspace orchestration requires
+// complete teardown before archiving the record. Project removal and worktree-wide
+// cleanup retain their existing best-effort policy.
 export async function archiveWorkspaceContents(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  options: { failurePolicy: ArchiveContentsFailurePolicy } = { failurePolicy: "best-effort" },
 ): Promise<Set<string>> {
-  return (await archiveWorkspaceContentsWithProgress(dependencies, workspaceId)).agentIds;
+  return (await archiveWorkspaceContentsWithProgress(dependencies, workspaceId, options)).agentIds;
 }
 
 async function archiveWorkspaceContentsWithProgress(
   dependencies: ArchiveWorkspaceContentsDependencies,
   workspaceId: string,
+  options: { failurePolicy: ArchiveContentsFailurePolicy },
 ): Promise<{ agentIds: Set<string>; newlyArchivedAgentIds: string[] }> {
   const archivedAgents = new Set<string>();
 
@@ -595,6 +640,7 @@ async function archiveWorkspaceContentsWithProgress(
   try {
     storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
   } catch (error) {
+    rethrowWhenCompleteTeardownRequired(options, error);
     dependencies.sessionLogger?.warn(
       { err: error, workspaceId },
       "Failed to list stored agents during workspace archive; continuing",
@@ -632,10 +678,12 @@ async function archiveWorkspaceContentsWithProgress(
     Promise.allSettled([dependencies.killTerminalsForWorkspace(workspaceId)]),
   ]);
 
+  const failures: unknown[] = [];
   const newlyArchivedAgentIds: string[] = [];
   for (const [index, result] of agentResults.entries()) {
     const agentId = agentIdsToArchive[index]!;
     if (result.status === "rejected") {
+      failures.push(result.reason);
       dependencies.sessionLogger?.warn(
         { err: result.reason, workspaceId, agentId },
         "Workspace archive teardown step failed; continuing",
@@ -645,11 +693,14 @@ async function archiveWorkspaceContentsWithProgress(
     }
   }
   if (terminalResult?.status === "rejected") {
+    failures.push(terminalResult.reason);
     dependencies.sessionLogger?.warn(
       { err: terminalResult.reason, workspaceId },
       "Workspace archive teardown step failed; continuing",
     );
   }
+
+  requireCompleteTeardown(options, failures);
 
   return { agentIds: archivedAgents, newlyArchivedAgentIds };
 }
