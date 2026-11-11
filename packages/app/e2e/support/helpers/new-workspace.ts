@@ -412,18 +412,39 @@ export async function selectGitHubPrInPicker(page: Page, number: number): Promis
   await prRow.click();
 }
 
+/** Assert that the element with `firstTestId` comes before `secondTestId` in document order. */
+export async function expectBefore(
+  page: Page,
+  firstTestId: string,
+  secondTestId: string,
+): Promise<void> {
+  const precedes = await page.getByTestId(firstTestId).evaluate((element, laterTestId) => {
+    const later = document.querySelector(`[data-testid="${laterTestId}"]`);
+    return (
+      later !== null &&
+      Boolean(element.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING)
+    );
+  }, secondTestId);
+  expect(precedes).toBe(true);
+}
+
+/** Select the base ref for a new worktree or the starting ref for a local workspace. */
+function refPickerTrigger(page: Page) {
+  return page.getByRole("button", { name: /^(Base branch|Starting ref)$/ });
+}
+
 export async function expectStartingRefPickerTriggerPr(
   page: Page,
   input: { number: number; title: string; headRef: string },
 ): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Starting ref" });
+  const trigger = refPickerTrigger(page);
   await expect(trigger).toContainText(`#${input.number}`);
   await expect(trigger).toContainText(input.title);
   await expect(trigger).not.toContainText(input.headRef);
 }
 
 export async function openBranchPicker(page: Page): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Starting ref" });
+  const trigger = refPickerTrigger(page);
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 }
@@ -453,7 +474,7 @@ export async function expectPickerClosed(page: Page): Promise<void> {
 }
 
 export async function expectPickerSelected(page: Page, label: string): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Starting ref" });
+  const trigger = refPickerTrigger(page);
   await expect(trigger).toContainText(label);
 }
 

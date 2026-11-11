@@ -45,12 +45,15 @@ import {
   getRealpathAwareRelativePath,
   getRelativePathInsideRoot,
   isPathInsideRoot,
+  normalizePathForIdentity,
 } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
+import { createKeyedSerializer } from "./keyed-serial.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
 const execFileAsync = promisify(execFile);
+const worktreeCreationLanes = createKeyedSerializer();
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -217,6 +220,7 @@ export type WorktreeSource =
 export interface CreateWorktreeOptions {
   cwd: string;
   worktreeSlug: string;
+  exactNames?: boolean;
   source: WorktreeSource;
   paseoHome?: string;
   worktreesRoot?: string;
@@ -230,6 +234,40 @@ export class BranchAlreadyCheckedOutError extends Error {
     super(`Branch already checked out: ${branchName}`);
     this.name = "BranchAlreadyCheckedOutError";
     this.branchName = branchName;
+  }
+}
+
+/** Which exact name is already taken when creating a worktree. */
+export type WorktreeNameConflictKind = "directory" | "branch" | "stale-registration";
+
+/**
+ * A worktree folder or branch name is already in use, so the requested names cannot be kept.
+ * `code` is forwarded as the workspace.create errorCode; the message stays user-facing.
+ */
+export class WorktreeNameConflictError extends Error {
+  readonly code = "worktree_name_conflict";
+  readonly kind: WorktreeNameConflictKind;
+  /** The branch name, or the folder path for a directory conflict. */
+  readonly conflictingName: string;
+
+  constructor(params: {
+    kind: WorktreeNameConflictKind;
+    conflictingName: string;
+    message: string;
+  }) {
+    super(params.message);
+    this.name = "WorktreeNameConflictError";
+    this.kind = params.kind;
+    this.conflictingName = params.conflictingName;
+  }
+}
+
+/** Exact checkout of a branch that another worktree already has checked out. */
+export class ExactBranchCheckedOutError extends BranchAlreadyCheckedOutError {
+  constructor(branchName: string) {
+    super(branchName);
+    this.message = `Branch already checked out: ${branchName}. Select its existing worktree instead.`;
+    this.name = "ExactBranchCheckedOutError";
   }
 }
 
@@ -1088,14 +1126,25 @@ async function resolveWorktreeCreatedAtIso(worktreePath: string): Promise<string
   }
 }
 
+/** Git can retain prunable registrations whose checkout directory no longer exists. */
+async function worktreeDirectoryExists(worktreePath: string): Promise<boolean> {
+  try {
+    return (await stat(worktreePath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export async function listPaseoWorktrees({
   cwd,
   paseoHome,
   worktreesRoot,
+  includeAll,
 }: {
   cwd: string;
   paseoHome?: string;
   worktreesRoot?: string;
+  includeAll?: boolean;
 }): Promise<PaseoWorktreeInfo[]> {
   const projectWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
   const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
@@ -1109,7 +1158,10 @@ export async function listPaseoWorktrees({
   // Inspect foreign paths sequentially; a large worktree list must not consume the FS pool.
   for (const entry of parseWorktreeList(stdout)) {
     const path = await normalizePathForOwnership(entry.path);
+    // The full list offers every checkout Git still has on disk, including foreign ones.
+    const shownByFullList = includeAll === true && (await worktreeDirectoryExists(path));
     if (
+      !shownByFullList &&
       !roots.some((root) => getRelativePathInsideRoot(root, path) !== null) &&
       !(path !== mainCheckoutPath && (await hasPaseoWorktreeMetadata(path)))
     )
@@ -1344,14 +1396,34 @@ async function readLocalBranchTip(cwd: string, branchName: string): Promise<stri
   }
 }
 
+/**
+ * Run worktree placement and creation for one project directory in its creation lane.
+ *
+ * Exact-name conflict checks and default suffix allocation look at the filesystem and then
+ * create. Serializing them per project directory keeps concurrent callers from claiming the
+ * same branch or folder name. The lane is keyed by the project directory, never by the
+ * destination path, because an absent destination has no stable identity. Setup runs after
+ * the lane is released.
+ */
+export function runInWorktreeCreationLane<T>(
+  projectDirectory: string,
+  create: () => Promise<T>,
+): Promise<T> {
+  return worktreeCreationLanes(normalizePathForIdentity(projectDirectory), create);
+}
+
 /** Resolve the default placement once, before presenting it to creation hooks. */
 export async function resolveDefaultWorktreePath(
-  options: Pick<CreateWorktreeOptions, "cwd" | "paseoHome" | "worktreesRoot" | "worktreeSlug">,
+  options: Pick<
+    CreateWorktreeOptions,
+    "cwd" | "paseoHome" | "worktreesRoot" | "worktreeSlug" | "exactNames"
+  >,
 ): Promise<string> {
   const original = join(
     await getPaseoWorktreesRoot(options.cwd, options.paseoHome, options.worktreesRoot),
     options.worktreeSlug,
   );
+  if (options.exactNames) return original;
   let candidate = original;
   let suffix = 1;
   while (await pathExists(candidate)) candidate = `${original}-${suffix++}`;
@@ -1359,71 +1431,61 @@ export async function resolveDefaultWorktreePath(
 }
 
 /**
- * Create a git worktree with proper naming conventions
+ * Create a git worktree with proper naming conventions, inside the project's creation lane.
+ *
+ * Use this when the caller does not resolve placement itself. A caller that resolves the
+ * default path first (createWorktreeCore) must hold the lane across placement and creation
+ * and call createWorktreeInLane instead.
  */
-export const createWorktree = async ({
+export const createWorktree = async (options: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+  const projectDirectory = await getPaseoWorktreesRoot(
+    options.cwd,
+    options.paseoHome,
+    options.worktreesRoot,
+  );
+  return runInWorktreeCreationLane(projectDirectory, () => createWorktreeInLane(options));
+};
+
+/**
+ * Create a git worktree. The caller must already hold runInWorktreeCreationLane for the
+ * project directory, otherwise concurrent callers can claim the same name.
+ */
+export async function createWorktreeInLane({
   cwd,
   source,
   worktreeSlug,
+  exactNames,
   paseoHome,
   worktreesRoot,
   worktreePath: explicitWorktreePath,
-}: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+}: CreateWorktreeOptions): Promise<CreatedWorktree> {
+  const plannedPath = await planWorktreePlacement({
+    cwd,
+    worktreeSlug,
+    exactNames,
+    paseoHome,
+    worktreesRoot,
+    explicitWorktreePath,
+  });
   const branchesBefore =
     source.kind === "checkout-branch" ||
     source.kind === "checkout-change-request" ||
     source.kind === "checkout-github-pr"
       ? await listLocalBranchNames(cwd)
       : new Set<string>();
-  const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
+  const sourcePlan = await resolveWorktreeSourcePlan({
+    cwd,
+    source,
+    desiredSlug: worktreeSlug,
+    exactNames,
+  });
   const fetchedBranch = planCreatedLocalBranch(source, sourcePlan);
   const fetchedTip =
     fetchedBranch && !branchesBefore.has(fetchedBranch)
       ? await readLocalBranchTip(cwd, fetchedBranch)
       : null;
   try {
-    let worktreePath =
-      explicitWorktreePath ??
-      (await resolveDefaultWorktreePath({ cwd, paseoHome, worktreesRoot, worktreeSlug }));
-    await mkdir(dirname(worktreePath), { recursive: true });
-
-    // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-    await runGitCommand(["worktree", "add", worktreePath, ...sourcePlan.addArguments], {
-      cwd,
-      timeout: 120_000,
-    });
-    worktreePath = await normalizePathForOwnership(worktreePath);
-
-    if (sourcePlan.pushRemote) {
-      await configureWorktreePushRemote({
-        cwd,
-        branchName: sourcePlan.branchName,
-        remote: sourcePlan.pushRemote,
-      });
-    }
-    if (sourcePlan.trackingRemote) {
-      await configureWorktreeTrackingRemote({
-        cwd,
-        branchName: sourcePlan.branchName,
-        remote: sourcePlan.trackingRemote,
-      });
-    }
-
-    await writePaseoWorktreeMetadata(worktreePath, {
-      baseRefName: sourcePlan.metadataBaseRefName,
-      ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
-      ...(sourcePlan.changeRequestLookupTarget
-        ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
-        : {}),
-    });
-
-    await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
-
-    return {
-      branchName: sourcePlan.branchName,
-      worktreePath,
-      comparisonBaseRef: sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName,
-    };
+    return await applyWorktreeSourcePlan({ cwd, worktreePath: plannedPath, sourcePlan });
   } catch (error) {
     if (
       fetchedBranch &&
@@ -1434,12 +1496,96 @@ export const createWorktree = async ({
     }
     throw error;
   }
-};
+}
+
+/**
+ * Choose the checkout folder and reject one that already exists. An explicit path (from the
+ * caller or a before-create hook) wins; otherwise the default placement applies, keeping the
+ * exact name when `exactNames` is set.
+ */
+async function planWorktreePlacement(input: {
+  cwd: string;
+  worktreeSlug: string;
+  exactNames?: boolean;
+  paseoHome?: string;
+  worktreesRoot?: string;
+  explicitWorktreePath?: string;
+}): Promise<string> {
+  const plannedPath =
+    input.explicitWorktreePath ??
+    (await resolveDefaultWorktreePath({
+      cwd: input.cwd,
+      paseoHome: input.paseoHome,
+      worktreesRoot: input.worktreesRoot,
+      worktreeSlug: input.worktreeSlug,
+      exactNames: input.exactNames,
+    }));
+  if (await pathExists(plannedPath)) {
+    const hint = input.exactNames
+      ? ". Choose another worktree name or select the existing worktree."
+      : "";
+    throw new WorktreeNameConflictError({
+      kind: "directory",
+      conflictingName: plannedPath,
+      message: `Worktree directory already exists: ${plannedPath}${hint}`,
+    });
+  }
+  return plannedPath;
+}
+
+/** Run `git worktree add` for a resolved source plan, then record remotes, metadata and config. */
+async function applyWorktreeSourcePlan(input: {
+  cwd: string;
+  worktreePath: string;
+  sourcePlan: WorktreeSourcePlan;
+}): Promise<CreatedWorktree> {
+  const { cwd, sourcePlan } = input;
+  await mkdir(dirname(input.worktreePath), { recursive: true });
+
+  // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
+  await runGitCommand(["worktree", "add", input.worktreePath, ...sourcePlan.addArguments], {
+    cwd,
+    timeout: 120_000,
+  });
+  const worktreePath = await normalizePathForOwnership(input.worktreePath);
+
+  if (sourcePlan.pushRemote) {
+    await configureWorktreePushRemote({
+      cwd,
+      branchName: sourcePlan.branchName,
+      remote: sourcePlan.pushRemote,
+    });
+  }
+  if (sourcePlan.trackingRemote) {
+    await configureWorktreeTrackingRemote({
+      cwd,
+      branchName: sourcePlan.branchName,
+      remote: sourcePlan.trackingRemote,
+    });
+  }
+
+  await writePaseoWorktreeMetadata(worktreePath, {
+    baseRefName: sourcePlan.metadataBaseRefName,
+    ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
+    ...(sourcePlan.changeRequestLookupTarget
+      ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
+      : {}),
+  });
+
+  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+
+  return {
+    branchName: sourcePlan.branchName,
+    worktreePath,
+    comparisonBaseRef: sourcePlan.metadataBaseRef ?? sourcePlan.metadataBaseRefName,
+  };
+}
 
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;
   source: WorktreeSource;
   desiredSlug: string;
+  exactNames?: boolean;
 }
 
 interface WorktreeSourcePlan {
@@ -1507,20 +1653,32 @@ async function resolveRestoredWorktreeFromBasePlan(
   };
 }
 
-async function resolveBranchOffWorktreeSourcePlan(
-  cwd: string,
-  source: Extract<WorktreeSource, { kind: "branch-off" }>,
-  desiredSlug: string,
-): Promise<WorktreeSourcePlan> {
+async function resolveBranchOffWorktreeSourcePlan({
+  cwd,
+  source,
+  desiredSlug,
+  exactNames,
+}: ResolveWorktreeSourcePlanOptions & {
+  source: Extract<WorktreeSource, { kind: "branch-off" }>;
+}): Promise<WorktreeSourcePlan> {
   const branchName = source.branchName;
   await validateGitBranchName(cwd, branchName);
   const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
+  if (exactNames && branchExists) {
+    throw new WorktreeNameConflictError({
+      kind: "branch",
+      conflictingName: branchName,
+      message: `Branch already exists: ${branchName}. Choose another new branch name or use an existing branch.`,
+    });
+  }
   const base = branchExists ? branchName : resolvedBaseBranch;
   await refreshRemoteTrackingBaseRef(cwd, base);
   const candidateBranch = branchExists ? desiredSlug : branchName;
-  const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
+  const newBranchName = exactNames
+    ? branchName
+    : await resolveUniqueLocalBranchName(cwd, candidateBranch);
 
   return {
     branchName: newBranchName,
@@ -1538,10 +1696,11 @@ async function resolveWorktreeSourcePlan({
   cwd,
   source,
   desiredSlug,
+  exactNames,
 }: ResolveWorktreeSourcePlanOptions): Promise<WorktreeSourcePlan> {
   switch (source.kind) {
     case "branch-off":
-      return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug);
+      return resolveBranchOffWorktreeSourcePlan({ cwd, source, desiredSlug, exactNames });
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
     case "restore-from-base":
@@ -1550,7 +1709,9 @@ async function resolveWorktreeSourcePlan({
       await validateGitBranchName(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);
       const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
-      if (await isBranchCheckedOut(cwd, source.branchName)) {
+      if (exactNames) {
+        await assertExactCheckoutAvailable(cwd, source.branchName);
+      } else if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
@@ -1962,4 +2123,32 @@ async function isBranchCheckedOut(cwd: string, branchName: string): Promise<bool
     envOverlay: READ_ONLY_GIT_ENV,
   });
   return parseWorktreeList(stdout).some((entry) => entry.branchName === branchName);
+}
+
+/** The registered worktree that has `branchName` checked out, if any. */
+async function findWorktreeForBranch(cwd: string, branchName: string) {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  return parseWorktreeList(stdout).find((entry) => entry.branchName === branchName);
+}
+
+/**
+ * Reject an exact checkout of a branch another worktree holds. A registration whose folder is
+ * gone is reported as stale, so the user prunes it instead of hunting for a missing checkout.
+ */
+async function assertExactCheckoutAvailable(cwd: string, branchName: string): Promise<void> {
+  const worktree = await findWorktreeForBranch(cwd, branchName);
+  if (!worktree) {
+    return;
+  }
+  if (!(await worktreeDirectoryExists(worktree.path))) {
+    throw new WorktreeNameConflictError({
+      kind: "stale-registration",
+      conflictingName: branchName,
+      message: `Branch ${branchName} is registered to a missing worktree at ${worktree.path}. Restore that checkout or remove its stale registration with git worktree prune, then retry.`,
+    });
+  }
+  throw new ExactBranchCheckedOutError(branchName);
 }

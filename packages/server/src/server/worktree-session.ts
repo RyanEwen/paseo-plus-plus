@@ -44,6 +44,11 @@ import {
   formatWorkspaceAutomationBlockedMessage,
   WorkspaceAutomationBlockedError,
 } from "./workspace-automation-gate.js";
+import { registerForkCapability } from "./fork-capabilities.js";
+
+// Exact-name creation and the full worktree list are handled by this module and the
+// workspace creation path it serves.
+registerForkCapability("workspaceWorktreeOptions");
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -163,7 +168,7 @@ export async function handlePaseoWorktreeListRequest(
   try {
     const worktrees = await listPaseoWorktreesCommand(
       { workspaceGitService: dependencies.workspaceGitService },
-      { cwd },
+      { cwd, includeAll: msg.includeAll },
     );
     dependencies.emit({
       type: "paseo_worktree_list_response",

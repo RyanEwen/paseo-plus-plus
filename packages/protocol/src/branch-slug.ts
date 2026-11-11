@@ -59,3 +59,14 @@ export function slugify(input: string): string {
   }
   return truncated.replace(/-+$/, "");
 }
+
+const WORKTREE_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * Whether an exactly chosen worktree folder name is kept as typed: lowercase letters and
+ * digits in groups joined by single hyphens, at most MAX_SLUG_LENGTH characters. The daemon
+ * and the app share this rule so the form rejects what the host would reject.
+ */
+export function isValidWorktreeName(value: string): boolean {
+  return WORKTREE_NAME_PATTERN.test(value) && value.length <= MAX_SLUG_LENGTH;
+}

@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { DaemonClient } from "./test-utils/index.js";
 import { WebSocket } from "ws";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -604,6 +606,325 @@ async function expectMissingLocalMergeTarget({ client, cwd }: RestorableWorkspac
     ).error?.message,
   ).toContain("No local merge target is recorded");
 }
+
+interface ExactWorkspaceFixture {
+  client: DaemonClient;
+  repoDir: string;
+  tempRoot: string;
+  projectId: string;
+}
+
+/** Start a daemon with a fresh repository opened as a project; everything is removed after the test. */
+async function openExactWorkspaceFixture(): Promise<ExactWorkspaceFixture> {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0-beta.5",
+  });
+  onTestFinished(async () => {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  await client.connect();
+  const opened = await client.openProject(repoDir);
+  return { client, repoDir, tempRoot, projectId: opened.workspace!.projectId };
+}
+
+/** Create a workspace that must keep exactly the requested branch and folder names. */
+function createExactWorkspace(
+  fixture: ExactWorkspaceFixture,
+  input: {
+    action: "checkout" | "branch-off";
+    refName: string;
+    worktreeSlug: string;
+    branchName?: string;
+  },
+) {
+  return fixture.client.createWorkspace({
+    source: {
+      kind: "worktree",
+      cwd: fixture.repoDir,
+      projectId: fixture.projectId,
+      exactNames: true,
+      ...input,
+    },
+  });
+}
+
+function listLocalBranches(repoDir: string, ...names: string[]): string {
+  return runGit(repoDir, "branch", "--format=%(refname:short)", "--list", ...names);
+}
+
+test("exact checkout keeps the requested folder name for an existing branch", async () => {
+  const fixture = await openExactWorkspaceFixture();
+
+  const checkout = await createExactWorkspace(fixture, {
+    action: "checkout",
+    refName: "feature/existing-branch",
+    worktreeSlug: "existing-checkout",
+  });
+
+  expect(checkout.error).toBeNull();
+  expect(checkout.workspace!.gitRuntime?.currentBranch).toBe("feature/existing-branch");
+  expect(path.basename(checkout.workspace!.workspaceDirectory)).toBe("existing-checkout");
+}, 180000);
+
+test("exact checkout of a branch another worktree holds is rejected without a suffixed branch", async () => {
+  const fixture = await openExactWorkspaceFixture();
+  await createExactWorkspace(fixture, {
+    action: "checkout",
+    refName: "feature/existing-branch",
+    worktreeSlug: "existing-checkout",
+  });
+
+  const occupied = await createExactWorkspace(fixture, {
+    action: "checkout",
+    refName: "feature/existing-branch",
+    worktreeSlug: "another-checkout",
+  });
+
+  expect(occupied.error).toContain(
+    "Branch already checked out: feature/existing-branch. Select its existing worktree instead.",
+  );
+  expect(occupied.workspace).toBeNull();
+  expect(listLocalBranches(fixture.repoDir, "feature/existing-branch-1")).toBe("");
+}, 180000);
+
+test("exact branch-off keeps a typed branch name and the first agent does not rename it", async () => {
+  const fixture = await openExactWorkspaceFixture();
+
+  const branchOff = await fixture.client.createWorkspace({
+    source: {
+      kind: "worktree",
+      cwd: fixture.repoDir,
+      projectId: fixture.projectId,
+      exactNames: true,
+      action: "branch-off",
+      refName: "refs/heads/main",
+      branchName: "Feature/New.Branch",
+      worktreeSlug: "feature-new-branch",
+    },
+    firstAgentContext: { prompt: "Do not rename my branch", attachments: [] },
+  });
+
+  expect(branchOff.error).toBeNull();
+  expect(branchOff.workspace!.gitRuntime?.currentBranch).toBe("Feature/New.Branch");
+  expect(path.basename(branchOff.workspace!.workspaceDirectory)).toBe("feature-new-branch");
+  expect(
+    readPaseoWorktreeMetadata(branchOff.workspace!.workspaceDirectory)?.firstAgentBranchAutoName,
+  ).toBeUndefined();
+}, 180000);
+
+test("an exact folder name that is taken is rejected without creating a branch", async () => {
+  const fixture = await openExactWorkspaceFixture();
+  await createExactWorkspace(fixture, {
+    action: "branch-off",
+    refName: "main",
+    branchName: "first-branch",
+    worktreeSlug: "taken-folder",
+  });
+  runGit(fixture.repoDir, "update-ref", "refs/remotes/origin/remote-only", "HEAD");
+
+  const branchOff = await createExactWorkspace(fixture, {
+    action: "branch-off",
+    refName: "main",
+    branchName: "another-branch",
+    worktreeSlug: "taken-folder",
+  });
+  const remoteCheckout = await createExactWorkspace(fixture, {
+    action: "checkout",
+    refName: "remote-only",
+    worktreeSlug: "taken-folder",
+  });
+
+  expect(branchOff.error).toContain("Choose another worktree name");
+  expect(remoteCheckout.error).toContain("Choose another worktree name");
+  // An occupied folder must not leave a local branch behind as a side effect.
+  expect(listLocalBranches(fixture.repoDir, "another-branch", "remote-only")).toBe("");
+}, 180000);
+
+test("an exact new branch name that already exists is rejected", async () => {
+  const fixture = await openExactWorkspaceFixture();
+
+  const result = await createExactWorkspace(fixture, {
+    action: "branch-off",
+    refName: "main",
+    branchName: "feature/existing-branch",
+    worktreeSlug: "unique-name",
+  });
+
+  expect(result.error).toContain(
+    "Branch already exists: feature/existing-branch. Choose another new branch name or use an existing branch.",
+  );
+  expect(listLocalBranches(fixture.repoDir, "feature/existing-branch-1")).toBe("");
+}, 180000);
+
+test.each(["../escape", "UPPER", "", "two--hyphens"])(
+  "the exact folder name %j is rejected as invalid",
+  async (worktreeSlug) => {
+    const fixture = await openExactWorkspaceFixture();
+
+    const result = await createExactWorkspace(fixture, {
+      action: "branch-off",
+      refName: "main",
+      branchName: "unused",
+      worktreeSlug,
+    });
+
+    expect(result.error).toContain(
+      "Invalid worktree name: use lowercase letters, numbers and single hyphens (max 50 characters)",
+    );
+  },
+  180000,
+);
+
+test("an invalid exact branch name is rejected by Git's ref rules", async () => {
+  const fixture = await openExactWorkspaceFixture();
+
+  const result = await createExactWorkspace(fixture, {
+    action: "branch-off",
+    refName: "main",
+    branchName: "bad..branch",
+    worktreeSlug: "valid-name",
+  });
+
+  expect(result.error).toContain("Invalid branch name: Git rejected ref name 'bad..branch'");
+}, 180000);
+
+test("concurrent exact requests for one folder create one checkout and one branch", async () => {
+  const fixture = await openExactWorkspaceFixture();
+
+  const concurrent = await Promise.all(
+    ["concurrent-a", "concurrent-b"].map((branchName) =>
+      createExactWorkspace(fixture, {
+        action: "branch-off",
+        refName: "main",
+        branchName,
+        worktreeSlug: "same-path",
+      }),
+    ),
+  );
+
+  const creationEvidence = JSON.stringify({
+    responses: concurrent.map(({ error, workspace }) => ({
+      error,
+      workspaceId: workspace?.id,
+      workspaceDirectory: workspace?.workspaceDirectory,
+    })),
+    worktrees: runGit(fixture.repoDir, "worktree", "list", "--porcelain"),
+  });
+  const successes = concurrent.filter((result) => result.error === null);
+  expect(successes, creationEvidence).toHaveLength(1);
+  const winnerDirectory = successes[0]!.workspace!.workspaceDirectory;
+  expect(path.basename(winnerDirectory)).toBe("same-path");
+  const winnerBranch = runGit(winnerDirectory, "branch", "--show-current");
+  expect(listLocalBranches(fixture.repoDir, "concurrent-a", "concurrent-b")).toBe(winnerBranch);
+  const matchesWinner = createRealpathAwarePathMatcher(winnerDirectory);
+  const listed = await fixture.client.getPaseoWorktreeList({
+    cwd: fixture.repoDir,
+    includeAll: true,
+  });
+  expect(listed.worktrees.filter((entry) => matchesWinner(entry.worktreePath))).toHaveLength(1);
+  const workspaces = await fixture.client.fetchWorkspaces({ page: { limit: 200 } });
+  expect(
+    workspaces.entries.filter((entry) => matchesWinner(entry.workspaceDirectory)),
+  ).toHaveLength(1);
+}, 180000);
+
+test("concurrent default placements for one slug receive distinct folders", async () => {
+  const fixture = await openExactWorkspaceFixture();
+
+  const created = await Promise.all(
+    ["placement-a", "placement-b"].map((branchName) =>
+      fixture.client.createWorkspace({
+        source: {
+          kind: "worktree",
+          cwd: fixture.repoDir,
+          projectId: fixture.projectId,
+          action: "branch-off",
+          refName: "main",
+          branchName,
+          worktreeSlug: "shared-slug",
+        },
+      }),
+    ),
+  );
+
+  expect(created.map((result) => result.error)).toEqual([null, null]);
+  expect(
+    created.map((result) => path.basename(result.workspace!.workspaceDirectory)).sort(),
+  ).toEqual(["shared-slug", "shared-slug-1"]);
+}, 180000);
+
+/** Add a checkout Paseo did not create and return its path. */
+async function addExternalCheckout(fixture: ExactWorkspaceFixture): Promise<string> {
+  const externalPath = path.join(fixture.tempRoot, "external-checkout");
+  runGit(fixture.repoDir, "worktree", "add", "-b", "external", externalPath, "main");
+  return externalPath;
+}
+
+/** Create an exact Paseo worktree for the fixture's existing branch and return its path. */
+async function addPaseoCheckout(fixture: ExactWorkspaceFixture): Promise<string> {
+  const created = await createExactWorkspace(fixture, {
+    action: "checkout",
+    refName: "feature/existing-branch",
+    worktreeSlug: "existing-checkout",
+  });
+  return created.workspace!.workspaceDirectory;
+}
+
+test.each([
+  { checkout: "an external checkout", addCheckout: addExternalCheckout },
+  { checkout: "a Paseo-created checkout", addCheckout: addPaseoCheckout },
+])(
+  "$checkout from the full worktree list is adopted without Git changes",
+  async ({ addCheckout }) => {
+    const fixture = await openExactWorkspaceFixture();
+    const existingPath = await addCheckout(fixture);
+    const listed = await fixture.client.getPaseoWorktreeList({
+      cwd: fixture.repoDir,
+      includeAll: true,
+    });
+    // Git can return forward slashes and expanded Windows short paths.
+    const matchesExisting = createRealpathAwarePathMatcher(existingPath);
+    expect(listed.worktrees.some((entry) => matchesExisting(entry.worktreePath))).toBe(true);
+    const before = runGit(fixture.repoDir, "worktree", "list", "--porcelain");
+
+    const adopted = await fixture.client.createWorkspace({
+      source: { kind: "directory", projectId: fixture.projectId, path: existingPath },
+    });
+
+    expect(adopted.error).toBeNull();
+    expect(matchesExisting(adopted.workspace!.workspaceDirectory)).toBe(true);
+    expect(adopted.workspace!.projectId).toBe(fixture.projectId);
+    expect(runGit(fixture.repoDir, "worktree", "list", "--porcelain")).toBe(before);
+  },
+  180000,
+);
+
+test("a checkout whose folder is gone leaves the full list and its branch reports a stale registration", async () => {
+  const fixture = await openExactWorkspaceFixture();
+  const externalPath = await addExternalCheckout(fixture);
+  rmSync(externalPath, { recursive: true, force: true });
+  const matchesExternal = createRealpathAwarePathMatcher(externalPath);
+
+  const listed = await fixture.client.getPaseoWorktreeList({
+    cwd: fixture.repoDir,
+    includeAll: true,
+  });
+  const stale = await createExactWorkspace(fixture, {
+    action: "checkout",
+    refName: "external",
+    worktreeSlug: "external-retry",
+  });
+
+  expect(listed.error).toBeNull();
+  expect(listed.worktrees.some((entry) => matchesExternal(entry.worktreePath))).toBe(false);
+  expect(stale.error).toContain("git worktree prune");
+  expect(stale.workspace).toBeNull();
+}, 180000);
 
 function setupCommandOutput(detail: { commands: Array<{ log: string }> }): string {
   return detail.commands.map((command) => command.log).join("\n");
