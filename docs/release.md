@@ -13,7 +13,7 @@ Select the repository and distribution lane before preparing a release:
 
 The beta/stable skills must apply this selection before following an upstream checklist. A request
 for a new fork distribution lane needs an explicit decision; it is not implied by invoking a skill.
-For branch ownership and integration, follow the [worktree guide](worktree-development.md#fork-branches-and-ownership).
+For branch ownership and integration, follow the [fork branch guide](fork-branches.md).
 
 ## Two steps
 
@@ -91,7 +91,7 @@ npm dist-tags are independent pointers:
 
 ## Release branch discipline
 
-Use a temporary `next` branch only when the user explicitly selects it. Preserve that PR target through delivery, keep it current by merging the selected integration ref, and integrate it after the release. Fork feature work follows the [worktree guide](worktree-development.md#fork-branches-and-ownership). Normal upstream releases use the release workspace flow below.
+Use a temporary `next` branch only when the user explicitly selects it. Preserve that PR target through delivery, keep it current by merging the selected integration ref, and integrate it after the release. Fork feature work follows the [fork branch guide](fork-branches.md). Normal upstream releases use the release workspace flow below.
 
 ## Release base and source
 
@@ -192,7 +192,7 @@ cannot determine whether a feature description is accurate.
 
 ## Fork preview distribution
 
-The [worktree guide](worktree-development.md#fork-branches-and-ownership) owns fork branch roles,
+The [fork branch guide](fork-branches.md) owns fork branch roles,
 feature ownership, upstream synchronization, and review integration. Use its canonical integration
 ref for release preparation. Existing workflow allowlists still recognize legacy repository and
 branch names; those entries do not define another active release or integration lane.
@@ -278,7 +278,7 @@ receipt in `scripts/preview-release/qualified-bridge.json`. It stays closed whil
 
 The preview release includes `paseo-daemon-<version>-linux-<arch>.tgz` for Linux x64 and ARM64.
 Windows uses the daemon bundled with the desktop app. See the
-[README installation commands](../README.md#standalone-daemon-linux-and-wsl) for setup.
+[installation commands](fork-installation.md#standalone-daemon-linux-and-wsl) for setup.
 
 These packages include the daemon, CLI, web UI, and native runtime dependencies. Linux packages
 require glibc; Alpine/musl hosts are excluded. The `paseo-plus-plus` command uses its own settings
@@ -370,7 +370,7 @@ that clients may already have downloaded. Start a new workflow run for a correct
 The repository and integration branch migration completed on October 14, 2026. The current
 repository is RyanEwen/paseo-plus-plus. Historical redirect assumptions do not establish current
 availability; verify the exact legacy URLs before using them for installed-client acceptance. Current branch roles are in the
-[worktree guide](worktree-development.md#fork-branches-and-ownership). The old cutover sequence is
+[fork branch guide](fork-branches.md). The old cutover sequence is
 complete; do not repeat its rename or local-ref operations when continuing feature work.
 
 A branch-rename push can retain the removed default branch in its event payload. Fresh manual CI
@@ -858,7 +858,7 @@ Release notes depend on the changelog heading format. The heading **must** be st
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
 
-For the upstream Paseo app, `CHANGELOG.md` on upstream `main` is what the **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Content between the release heading and the first `###` is the release's [highlights](#changelog-highlights). The What's new sheet, the website changelog and the GitHub release body show the highlights and keep the sections collapsed behind one control: Show all changes in the app and on the website, and an All changes `<details>` block that `Release Notes Sync` writes into the release body, so the file itself never needs HTML. A release with nothing before its first `###` shows its sections. Older entries that open with summary paragraphs are treated as highlights. The app, the website and the release scripts each parse the file with their own code, and installed apps keep the parser they shipped with, so those two heading rules are fixed: new kinds of content go inside the highlights or a section as Markdown, never behind a new heading level or marker. `scripts/test-support/changelog-structure.json` holds the cases all three parsers are tested against; change a structure rule there first. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
+For the upstream Paseo app, `CHANGELOG.md` on upstream `main` is what the **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Content between the release heading and the first `###` is the release's [highlights](#changelog-highlights). The What's new sheet, the website changelog and the GitHub release body show the highlights and keep the sections collapsed behind one control: Show all changes in the app and on the website, and an All changes `<details>` block that `Release Notes Sync` writes into the release body, so the file itself never needs HTML. A release with nothing before its first `###` shows its sections. Older entries that open with summary paragraphs are treated as highlights. The app, the website and the release scripts each parse the file with their own code, and installed apps keep the parser they shipped with, so those two heading rules are fixed: new kinds of content go inside the highlights or a section as Markdown, never behind a new heading level or marker. `scripts/test-support/changelog-structure.json` holds the cases all three parsers are tested against; change a structure rule there first. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render: the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update; write it for them.
 
 Paseo++ uses [published fork release notes](#prepare-and-publish) for **What's new**.
 
