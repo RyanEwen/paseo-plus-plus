@@ -110,6 +110,8 @@ export interface SidebarViewStoreState extends SidebarModePreferences {
   setWorkspaceSort: (sort: WorkspaceSort) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
+  /** Explicitly choose one project, replacing previous choices including unavailable keys. */
+  selectProjectFilter: (viewKey: string) => void;
   toggleProjectFilter: (viewKey: string) => void;
   clearProjectFilters: () => void;
   toggleLabelFilter: (name: string) => void;
@@ -508,6 +510,8 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
             hostFilters: toggleFilterEntry(state.hostFilters, serverId),
           })),
         clearHostFilters: () => setLocalFilters((state) => ({ ...state, hostFilters: [] })),
+        selectProjectFilter: (viewKey) =>
+          setLocalFilters((state) => ({ ...state, projectFilters: [viewKey] })),
         toggleProjectFilter: (viewKey) =>
           setLocalFilters((state) => ({
             ...state,

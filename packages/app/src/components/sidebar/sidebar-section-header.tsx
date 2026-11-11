@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type ReactElement, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -8,7 +8,8 @@ import { isNative } from "@/constants/platform";
 import { density } from "@/styles/density";
 
 /** A sidebar section label such as "Pinned" or "Workspaces". A section with `onToggle`
- * collapses from its title; children sit at the trailing edge as its actions. */
+ * collapses from its title; children sit at the trailing edge as its actions. An element
+ * title (such as the Workspaces project chooser) takes the label's place on the same rail. */
 export function SidebarSectionHeader({
   title,
   collapsed,
@@ -16,7 +17,7 @@ export function SidebarSectionHeader({
   testID,
   children,
 }: {
-  title: string;
+  title: string | ReactElement;
   collapsed?: boolean;
   onToggle?: () => void;
   testID?: string;
@@ -24,20 +25,41 @@ export function SidebarSectionHeader({
 }) {
   return (
     <View style={styles.header}>
-      {onToggle ? (
-        <CollapsibleTitle
-          title={title}
-          collapsed={collapsed ?? false}
-          onToggle={onToggle}
-          testID={testID}
-        />
-      ) : (
-        <Text style={styles.title} testID={testID}>
-          {title}
-        </Text>
-      )}
+      <SectionTitle title={title} collapsed={collapsed} onToggle={onToggle} testID={testID} />
       {children ? <View style={styles.actions}>{children}</View> : null}
     </View>
+  );
+}
+
+/** The header's leading slot: a caller's element, a collapsible label, or a plain label. */
+function SectionTitle({
+  title,
+  collapsed,
+  onToggle,
+  testID,
+}: {
+  title: string | ReactElement;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  testID?: string;
+}): ReactElement {
+  if (typeof title !== "string") {
+    return title;
+  }
+  if (onToggle) {
+    return (
+      <CollapsibleTitle
+        title={title}
+        collapsed={collapsed ?? false}
+        onToggle={onToggle}
+        testID={testID}
+      />
+    );
+  }
+  return (
+    <Text style={styles.title} testID={testID}>
+      {title}
+    </Text>
   );
 }
 

@@ -4,6 +4,7 @@ import {
 } from "@/components/sidebar/quick-filter";
 import { SidebarViewModeButton } from "@/components/sidebar/view-mode-button";
 import { SidebarBulkCollapseControls } from "@/components/sidebar/bulk-collapse-controls";
+import { SidebarProjectSelector } from "@/components/sidebar/sidebar-project-selector";
 import { SidebarViewSlot } from "@/plugins/sidebar-view";
 import { useAddHost } from "@/hosts/add-host";
 import { router } from "expo-router";
@@ -916,7 +917,7 @@ function DesktopSidebar({
 function WorkspacesSectionHeader() {
   return (
     <View>
-      <SidebarSectionHeader title="Workspaces">
+      <SidebarSectionHeader title={projectSelectorElement}>
         <SidebarBulkCollapseControls />
         <SidebarViewModeButton />
         <SidebarQuickFilterButton />
@@ -935,6 +936,9 @@ function WorkspacesSectionHeader() {
     </View>
   );
 }
+
+// The project chooser replaces the Workspaces label; a module element keeps the title prop stable.
+const projectSelectorElement = <SidebarProjectSelector />;
 
 // Stable element so the sidebar list's listHeaderComponent prop keeps identity across
 // renders (WorkspacesSectionHeader takes no props).
