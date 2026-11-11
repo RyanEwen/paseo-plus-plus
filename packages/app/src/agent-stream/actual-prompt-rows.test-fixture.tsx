@@ -150,7 +150,6 @@ function useLocalHistoryFixture(localHistory: LocalHistoryFixture | undefined) {
     hasLocalHistory,
     loadOlder: localLoadOlder,
   } = useStreamHistoryWindow({
-    agentId: "agent",
     items: presentation.tail,
     loadRemoteOlder: loadOlder,
   });
