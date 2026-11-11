@@ -15,7 +15,8 @@ class OlderHostSocket {
   onerror: Handler = null;
   private readonly createSent = Promise.withResolvers<Record<string, unknown>>();
 
-  constructor() {
+  /** @param extraFeatures Capabilities a newer host adds on top of the older baseline. */
+  constructor(private readonly extraFeatures: Record<string, boolean> = {}) {
     queueMicrotask(() => this.onopen?.());
   }
 
@@ -38,6 +39,7 @@ class OlderHostSocket {
             providersSnapshotCwd: true,
             ownedSubscriptions: true,
             backgroundWorkspaces: true,
+            ...this.extraFeatures,
           },
         },
       });
@@ -94,8 +96,8 @@ afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 
-async function olderHost() {
-  const socket = new OlderHostSocket();
+async function olderHost(extraFeatures?: Record<string, boolean>) {
+  const socket = new OlderHostSocket(extraFeatures);
   const client = new DaemonClient({
     url: "ws://older.test",
     clientId: "older-host-test",
@@ -149,7 +151,8 @@ test("a background caller's remote child asks the host to update instead of turn
 });
 
 test("a delegated objective asks a host without audience attention to update before creating", async () => {
-  const { client, socket } = await olderHost();
+  // Caller-selected IDs let the caller reserve the delegated identity the objective names.
+  const { client, socket } = await olderHost({ creationLifecycle: true });
   const resolver = createHostResolver({
     serverId: "origin",
     callerAgentId: "caller",
