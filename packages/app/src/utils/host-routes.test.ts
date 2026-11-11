@@ -9,7 +9,6 @@ import {
   resolveKnownHostRoute,
   buildSessionsRoute,
   buildDefaultSettingsRoute,
-  buildSettingsAddHostRoute,
   buildSettingsRoute,
   buildSettingsSectionRoute,
   buildProjectSettingsRoute,
@@ -188,14 +187,6 @@ describe("workspace route parsing", () => {
 });
 
 describe("projects settings routes", () => {
-  it("buildSettingsAddHostRoute opens settings with the add-host flag", () => {
-    expect(buildSettingsAddHostRoute()).toBe("/settings/general?addHost=1");
-  });
-
-  it("buildSettingsAddHostRoute accepts a repeatable intent id", () => {
-    expect(buildSettingsAddHostRoute("retry 1")).toBe("/settings/general?addHost=retry%201");
-  });
-
   it("opens fork preferences by default without changing explicit routes or the navigation root", () => {
     expect(buildDefaultSettingsRoute()).toBe("/settings/paseo-plus-plus");
     expect(buildSettingsRoute()).toBe("/settings");

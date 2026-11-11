@@ -4,19 +4,31 @@ import { projectTrailingActionsWidth } from "./project-trailing-actions";
 describe("projectTrailingActionsWidth", () => {
   it("reserves both desktop actions and their gap, less the optical pull", () => {
     expect(
-      projectTrailingActionsWidth({ hasNewWorkspaceAction: true, hasKebab: true, compact: false }),
+      projectTrailingActionsWidth({
+        hasNewWorkspaceAction: true,
+        hasKebab: true,
+        touchSizing: false,
+      }),
     ).toBe(24 + 2 + 24 - 6);
   });
 
-  it("reserves the compact kebab's extra left overhang", () => {
+  it("reserves the touch kebab's extra left overhang", () => {
     expect(
-      projectTrailingActionsWidth({ hasNewWorkspaceAction: true, hasKebab: true, compact: true }),
+      projectTrailingActionsWidth({
+        hasNewWorkspaceAction: true,
+        hasKebab: true,
+        touchSizing: true,
+      }),
     ).toBe(24 + 2 + 24 + 4 - 6);
   });
 
   it("reserves one action without a gap", () => {
     expect(
-      projectTrailingActionsWidth({ hasNewWorkspaceAction: true, hasKebab: false, compact: true }),
+      projectTrailingActionsWidth({
+        hasNewWorkspaceAction: true,
+        hasKebab: false,
+        touchSizing: true,
+      }),
     ).toBe(24 - 6);
   });
 
@@ -25,7 +37,7 @@ describe("projectTrailingActionsWidth", () => {
       projectTrailingActionsWidth({
         hasNewWorkspaceAction: false,
         hasKebab: false,
-        compact: false,
+        touchSizing: false,
       }),
     ).toBe(0);
   });
