@@ -96,3 +96,61 @@ test("applies the interface font size to settings text", async ({ page }) => {
   await expect(contentSizeInput).toHaveValue("21");
   await expect(sectionTitle).toHaveCSS("font-size", "10px");
 });
+
+/** Inspect the rendered swatches without changing the selected preference. */
+function readOptionBackgrounds(buttons: Element[]): string[] {
+  return buttons.map((button) => getComputedStyle(button).backgroundColor);
+}
+
+test("previews and retains accent colors independently of light and dark themes", async ({
+  page,
+}, testInfo) => {
+  // Seed once: page.reload() re-runs init scripts, which would otherwise reset the saved choice.
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("accent-test-seeded")) {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ theme: "light", accentColor: "default" }),
+      );
+      localStorage.setItem("accent-test-seeded", "true");
+    }
+  });
+  await page.goto("/settings");
+  await openSettingsSection(page, "appearance");
+  // The accent is a Paseo++ preference; Appearance has no accent picker.
+  await expect(page.getByTestId("accent-color-settings")).toHaveCount(0);
+
+  await openSettingsSection(page, "paseo-plus-plus");
+  const accents = page.getByTestId("accent-color-settings");
+  const options = accents.getByRole("radio");
+  const defaultChoice = accents.getByRole("radio", { name: "Default", exact: true });
+  const blue = accents.getByRole("radio", { name: "Blue", exact: true });
+  const bubble = page.getByTestId("accent-message-preview-bubble");
+  const text = page.getByTestId("accent-message-preview-text");
+  await expect(options).toHaveCount(7);
+  await expect(defaultChoice).toBeChecked();
+  // Every swatch shows its own bubble color before it is chosen.
+  expect(new Set(await options.evaluateAll(readOptionBackgrounds)).size).toBe(7);
+  await expect(bubble).toHaveCSS("background-color", "rgb(228, 228, 231)");
+
+  await blue.click();
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
+  await expect(text).toHaveCSS("color", "rgb(255, 255, 255)");
+  await page.reload();
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(62, 88, 114)");
+
+  await openSettingsSection(page, "appearance");
+  await page.getByRole("radio", { name: "Dark", exact: true }).click();
+  await openSettingsSection(page, "paseo-plus-plus");
+  await expect(blue).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(155, 175, 197)");
+  await expect(text).toHaveCSS("color", "rgb(24, 24, 27)");
+  await page.screenshot({ path: testInfo.outputPath("accent-blue-dark.png"), fullPage: true });
+
+  // Default restores the dark theme's own surface3 bubble.
+  await defaultChoice.click();
+  await expect(defaultChoice).toBeChecked();
+  await expect(bubble).toHaveCSS("background-color", "rgb(67, 70, 69)");
+});

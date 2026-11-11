@@ -1,4 +1,5 @@
 import { forkCapabilities } from "./fork-capabilities.js";
+import { registerAccentColorCapability } from "./accent-color-capability.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -141,6 +142,9 @@ import {
   sendBoundedPhysicalFrameAndWait,
   sendBoundedPhysicalFrame,
 } from "./websocket/physical-socket.js";
+
+// The accent layer has no server handlers; register its capability once when this module loads.
+registerAccentColorCapability();
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 

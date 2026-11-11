@@ -40,6 +40,8 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions. Never gate an established request on a new enhancement: negotiate the optional enhancement at the client boundary and preserve the existing request for older hosts. Whole-turn pagination can require a capability; reading conversation history cannot.
 
+The `appSettingsAccentColor` capability belongs to the explicitly selected settings host, independent of the active workspace host. Without it, disable the accent picker and explain that the settings host needs updating. Device-only preferences remain available. Explicit initialization omits only the unsupported accent field; normal edits and pending outboxes retain their existing host ownership and failure behavior.
+
 ## Client capability ownership
 
 The client package advertises the protocol behavior it implements. Add each new capability to

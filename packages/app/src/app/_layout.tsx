@@ -35,6 +35,7 @@ import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-ha
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AppearanceProvider } from "@/appearance/provider";
+import { AccentSettingsAdapter } from "@/appearance/accent-settings-adapter";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
@@ -928,6 +929,7 @@ function NotificationOpenBridge() {
 function RuntimeProviders({ children }: { children: ReactNode }) {
   return (
     <HostRuntimeBootstrapProvider>
+      <AccentSettingsAdapter />
       <NotificationOpenBridge />
       <SidebarCalloutProvider>
         <ProvidersWrapper>{children}</ProvidersWrapper>

@@ -1,0 +1,130 @@
+import { REGISTERED_THEMES } from "@/styles/theme";
+import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { SettingsCard, SettingsSection, SettingsRow } from "@/components/settings";
+import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
+import { useSessionStore } from "@/stores/session-store";
+import { selectAccentColorSupport } from "@/appearance/accent-support";
+import { ACCENT_OPTIONS, type AccentColor } from "@/styles/accent";
+import { View } from "react-native";
+import { Button } from "@/components/ui/button";
+import { StyleSheet } from "react-native-unistyles";
+import { resolveAccentColors } from "@/styles/accent";
+import { AccentPreview } from "./accent-preview";
+
+/**
+ * Accent picker: one swatch per choice, each previewing its own bubble colors, saved through the
+ * shared settings save. Disabled while settings load, while a blocker holds edits, during a save,
+ * and when the selected settings host cannot store the accent.
+ */
+export function AccentSection() {
+  const { t } = useTranslation();
+  // adapt: this layer has no settings sync, so preferences stay on this device (no selected host).
+  // Main reads the selected settings host from settings sync; restore that once a fork-base seam exposes it.
+  const selectedHost: string | null = null;
+  const supported = useSessionStore((state) => selectAccentColorSupport(state, selectedHost));
+  const { settings, save, pending, failed, isLoading, isEditingBlocked, error } =
+    useSettingsSave<"accentColor">();
+  const select = useCallback(
+    (accentColor: AccentColor) => {
+      void save("accentColor", { accentColor });
+    },
+    [save],
+  );
+  const disabled =
+    !supported || isLoading || isEditingBlocked || error !== null || pending !== null;
+  let hint = t("paseoPlusPlus.accent.hint");
+  if (!supported) hint = t("paseoPlusPlus.accent.updateHost");
+  if (pending !== null) hint = t("paseoPlusPlus.saving");
+  // A load failure is reported, with Retry, by the Paseo++ section around this picker.
+  const failure = failed ? t("paseoPlusPlus.saveFailed") : undefined;
+
+  return (
+    <SettingsSection title={t("paseoPlusPlus.accent.title")}>
+      <SettingsCard testID="accent-color-settings">
+        <SettingsRow label={t("paseoPlusPlus.accent.title")} hint={hint} error={failure} />
+        <View
+          style={styles.options}
+          accessibilityRole="radiogroup"
+          accessibilityLabel={t("paseoPlusPlus.accent.title")}
+        >
+          {ACCENT_OPTIONS.map((choice) => (
+            <AccentOption
+              key={choice}
+              choice={choice}
+              selected={settings.accentColor === choice}
+              disabled={disabled}
+              onSelect={select}
+            />
+          ))}
+        </View>
+        <AccentPreview message={t("paseoPlusPlus.accent.preview")} />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+/** Each option previews its own bubble colors before the preference is saved. */
+function AccentOption({
+  choice,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  choice: AccentColor;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: (choice: AccentColor) => void;
+}) {
+  const { t } = useTranslation();
+  const state = useMemo(() => ({ checked: selected }), [selected]);
+  const select = useCallback(() => onSelect(choice), [choice, onSelect]);
+  return (
+    <Button
+      variant="outline"
+      accessibilityRole="radio"
+      accessibilityState={state}
+      aria-checked={selected}
+      accessibilityLabel={t(`paseoPlusPlus.accent.options.${choice}`)}
+      testID={`accent-color-option-${choice}`}
+      disabled={disabled}
+      style={[styles.bubble(choice), selected ? styles.selected : styles.unselected]}
+      textStyle={styles.bubbleText(choice)}
+      onPress={select}
+    >
+      {t(`paseoPlusPlus.accent.options.${choice}`)}
+    </Button>
+  );
+}
+
+// Resolve each choice independently: previewing an option never writes or changes the current theme.
+const styles = StyleSheet.create((theme, runtime) => {
+  // Web theme strings may be CSS variables. Use the registered theme’s real discriminant
+  // for palette indexing, while Default keeps the active theme’s (including plugins) tokens.
+  const paletteBase =
+    REGISTERED_THEMES[runtime.themeName ?? (runtime.colorScheme === "dark" ? "dark" : "light")];
+  return {
+    options: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: theme.spacing[2],
+      paddingHorizontal: theme.spacing[4],
+      paddingBottom: theme.spacing[4],
+    },
+    bubble: (choice: AccentColor) => ({
+      backgroundColor:
+        choice === "default"
+          ? theme.colors.surface3
+          : resolveAccentColors(paletteBase, choice).userMessageBackground,
+      borderRadius: theme.borderRadius.lg,
+    }),
+    bubbleText: (choice: AccentColor) => ({
+      color:
+        choice === "default"
+          ? theme.colors.foreground
+          : resolveAccentColors(paletteBase, choice).userMessageForeground,
+    }),
+    selected: { borderWidth: 2, borderColor: theme.colors.foreground },
+    unselected: { borderWidth: 2, borderColor: "transparent" },
+  };
+});
