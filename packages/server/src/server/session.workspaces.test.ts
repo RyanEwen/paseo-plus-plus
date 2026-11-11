@@ -1876,12 +1876,14 @@ test("attention preference refresh re-emits only agents with an audience decisio
     workspaceId: workspace.workspaceId,
   };
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
-  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
   session.projectRegistry.list = async () => [project];
   session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
-  session.agentStorage.list = async () => [known, unknown];
+  session.agentStorage.listAll = session.agentStorage.listActive = async () => [known, unknown];
   session.agentStorage.get = async (agentId: string) =>
     [known, unknown].find((record) => record.id === agentId) ?? null;
   await activateAgentUpdatesSubscription(session, "attention-refresh", {});
