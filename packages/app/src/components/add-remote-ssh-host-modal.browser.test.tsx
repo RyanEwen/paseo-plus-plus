@@ -97,9 +97,8 @@ describe("Android SSH key import form", () => {
     expect((within(document.body).getByLabelText("SSH host") as HTMLInputElement).value).toBe("");
   });
   it("reports the saved host before closing the form", async () => {
-    const events: string[] = [];
-    const recordClose = () => events.push("close");
-    const recordSaved = () => events.push("saved");
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
     act(() =>
       root.render(
         <RemoteSshHostForm
@@ -107,8 +106,8 @@ describe("Android SSH key import form", () => {
           probeAndUpsertRemoteSshConnection={save}
           keyImport={keyImport}
           visible
-          onClose={recordClose}
-          onSaved={recordSaved}
+          onClose={onClose}
+          onSaved={onSaved}
         />,
       ),
     );
@@ -116,7 +115,9 @@ describe("Android SSH key import form", () => {
     await click("Import private key");
     await click("Connect");
     await click("Trust and connect");
-    expect(events).toEqual(["saved", "close"]);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSaved.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0]);
   });
   it("shows import errors in the form and lets the user retry without losing the target", async () => {
     keyImport.failNextInspect(new SshBridgeError("ERR_SSH_KEY_UNREADABLE"));
