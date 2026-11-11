@@ -11,7 +11,11 @@ import { expect, type Page, type Locator } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedAppSettings } from "../support/helpers/app-settings";
-import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client";
+import {
+  connectSeedClient,
+  seedOverflowingProjects,
+  seedWorkspace,
+} from "../support/helpers/seed-client";
 import {
   addProjectFlowInput,
   chooseAddProjectMethod,
@@ -74,6 +78,55 @@ function selectorSurface(page: Page, compact: boolean): Locator {
   return page.getByTestId(
     compact ? "sidebar-project-selector-content-content" : "sidebar-project-selector-content",
   );
+}
+
+/** Read the actual scroll owner so a stationary list cannot satisfy the geometry case. */
+async function readScrollTop(scroll: Locator): Promise<number> {
+  return scroll.evaluate((element) => element.scrollTop);
+}
+
+/** Scroll a list's scroll owner to its end. */
+async function scrollToEnd(scroll: Locator): Promise<void> {
+  await scroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+}
+
+/** Read a locator's rendered bounds, failing the test when it has none. */
+async function requireBox(locator: Locator, name: string) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error(`${name} has no rendered bounds`);
+  return box;
+}
+
+/**
+ * Show the grouping under test and return its scroll owner. The seeded count stays under the
+ * default workspace limit of 20, so status mode lists every row with no Show more to expand.
+ */
+async function openGroupingList(page: Page, grouping: "project" | "status"): Promise<Locator> {
+  if (grouping === "project") {
+    return page.getByTestId("sidebar-project-workspace-list-scroll");
+  }
+
+  await selectSidebarStatusGrouping(page);
+  return page.getByTestId("sidebar-status-list-scroll");
+}
+
+/** Layouts and groupings whose list scrolls under the fixed heading. Status mode has its own scroll owner. */
+const ANCHORED_HEADING_CASES = [
+  { compact: false, grouping: "project" },
+  { compact: true, grouping: "project" },
+  { compact: false, grouping: "status" },
+] as const;
+
+/** The vertical positions of the heading's project selector and display menu trigger. */
+async function readHeadingGeometry(page: Page): Promise<{ selectorY: number; displayY: number }> {
+  const selector = await requireBox(page.getByTestId("sidebar-project-selector"), "Selector");
+  const display = await requireBox(
+    page.getByTestId("sidebar-display-preferences-menu"),
+    "Display menu",
+  );
+  return { selectorY: selector.y, displayY: display.y };
 }
 
 /** Remove a project the test created through Add Project. */
@@ -300,6 +353,63 @@ test.describe("Sidebar project selector", () => {
       await workspace.cleanup();
     }
   });
+
+  for (const { compact, grouping } of ANCHORED_HEADING_CASES) {
+    test(`workspace controls stay anchored while the ${grouping} list scrolls on ${compact ? "compact" : "desktop"}`, async ({
+      page,
+    }, testInfo) => {
+      // Enough rows to overflow the phone-height sidebar that openSidebarAt opens.
+      const seeded = await seedOverflowingProjects({
+        count: 16,
+        repoPrefix: "sticky-header-",
+        titlePrefix: "Scroll workspace",
+      });
+      const { projects } = seeded;
+      try {
+        await openSidebarAt(page, compact);
+        await waitForSidebarHydration(page);
+
+        const scroll = await openGroupingList(page, grouping);
+        const selector = page.getByTestId("sidebar-project-selector");
+        const display = page.getByTestId("sidebar-display-preferences-menu");
+        // Every grouping lists each seeded workspace as a row; any row moves with the scroll.
+        const row = page.getByTestId(
+          `sidebar-workspace-row-${getServerId()}:${projects[0].workspaceId}`,
+        );
+        await expect(selector).toHaveText("All Workspaces");
+        await expect(row).toBeVisible();
+        const headingBefore = await readHeadingGeometry(page);
+        const rowBefore = await requireBox(row, "Seeded workspace row");
+
+        // Scroll, then expect the rows to have moved and the heading to be where it was.
+        await scrollToEnd(scroll);
+        await expect.poll(() => readScrollTop(scroll)).toBeGreaterThan(150);
+        await expect
+          .poll(async () => (await row.boundingBox())?.y ?? Infinity)
+          .toBeLessThan(rowBefore.y - 150);
+        await expect(selector).toBeInViewport();
+        await expect(display).toBeInViewport();
+        const headingAfter = await readHeadingGeometry(page);
+        expect(headingAfter.selectorY).toBeCloseTo(headingBefore.selectorY, 0);
+        expect(headingAfter.displayY).toBeCloseTo(headingBefore.displayY, 0);
+        await page.screenshot({
+          path: testInfo.outputPath(
+            `sticky-workspace-header-${grouping}-${compact ? "compact" : "desktop"}.png`,
+          ),
+        });
+        await display.click();
+        await expect(page.getByTestId("sidebar-display-workspace-list")).toBeVisible();
+        await closeSidebarDisplayPreferences(page);
+        await selector.click();
+        await page
+          .getByTestId(`sidebar-project-selector-root-${projects[0].projectKey}-checkbox`)
+          .click();
+        await expect.poll(() => readStoredProjectFilters(page)).toEqual([projects[0].projectKey]);
+      } finally {
+        await seeded.cleanup();
+      }
+    });
+  }
 
   for (const compact of [false, true]) {
     test(`preserves multi-selection and filters pinned workspaces on ${compact ? "compact" : "desktop"}`, async ({

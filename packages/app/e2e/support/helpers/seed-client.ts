@@ -290,6 +290,53 @@ export async function seedWorkspace(options: {
   }
 }
 
+/** Projects seeded together by `seedOverflowingProjects`, removed together by `cleanup`. */
+export interface SeededProjectSet {
+  /** In seeding order. */
+  projects: SeededWorkspace[];
+  /** Remove every seeded project, newest first. */
+  cleanup(): Promise<void>;
+}
+
+/**
+ * Seed enough plain (non-git) projects, one workspace each, to give a sidebar list real rows to
+ * scroll without creating worktrees. Projects are seeded one at a time, so `projects` keeps index
+ * order. If a seed fails, the projects already created are removed before the error propagates.
+ *
+ * @param count number of projects to create
+ * @param repoPrefix temp directory prefix; each project appends its index
+ * @param titlePrefix workspace title prefix; each title appends its index
+ */
+export async function seedOverflowingProjects(options: {
+  count: number;
+  repoPrefix: string;
+  titlePrefix: string;
+}): Promise<SeededProjectSet> {
+  const projects: SeededWorkspace[] = [];
+  const cleanup = async () => {
+    for (const project of projects.toReversed()) {
+      await project.cleanup();
+    }
+  };
+
+  try {
+    for (let index = 0; index < options.count; index += 1) {
+      projects.push(
+        await seedWorkspace({
+          repoPrefix: `${options.repoPrefix}${index}-`,
+          title: `${options.titlePrefix} ${index}`,
+          git: false,
+        }),
+      );
+    }
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+
+  return { projects, cleanup };
+}
+
 function loadAppVersion(): string {
   const packageJsonPath = path.resolve(__dirname, "../../../package.json");
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
