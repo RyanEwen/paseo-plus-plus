@@ -141,6 +141,8 @@ export async function archiveConfirmedProjectWorkspace(
   client: DaemonClient,
   workspace: ProjectArchiveWorkspace,
 ): Promise<void> {
+  // A "canceled" outcome (another client undid this archive) needs no branch here: the workspace
+  // is still active, so verification rejects and the batch stops with later workspaces untouched.
   await archiveWorkspaceOptimistically({ client, workspace });
   await verifyProjectWorkspaceArchive({ client, workspace });
   purgeArchivedWorkspaceState(workspace);
