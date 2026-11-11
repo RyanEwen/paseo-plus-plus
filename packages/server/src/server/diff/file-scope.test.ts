@@ -6,6 +6,7 @@ import pino from "pino";
 import { expect, test } from "vitest";
 import { CheckoutDiffManager } from "../checkout-diff-manager.js";
 import { createWorkspaceRuntimeStore } from "../workspace-runtime-store/index.js";
+import { isPlatform } from "../../test-utils/platform.js";
 
 interface Checkout {
   cwd: string;
@@ -67,11 +68,24 @@ test("a single-file scope gets the budget unrelated changes exhaust in the whole
   });
 });
 
-test.each([" a.css", ":(glob)*.css", "untracked.ts"])(
+test("a single-file scope matches one untracked file among others", async () => {
+  await withCheckout(async ({ cwd, manager }) => {
+    for (const path of ["a.css", "b.ts", "untracked.ts"]) {
+      await writeFile(join(cwd, path), `${path}\n`);
+    }
+    expect(await readPaths(manager, cwd, "untracked.ts")).toEqual([
+      { path: "untracked.ts", status: "ok" },
+    ]);
+  });
+});
+
+// Windows cannot create file names containing ":" or "*", so the literal-name fixture, which
+// pairs a leading-space name with a pathspec-looking sibling, runs on Linux and macOS only.
+test.skipIf(isPlatform("win32")).each([" a.css", ":(glob)*.css"])(
   "a single-file scope matches %s literally",
   async (filePath) => {
     await withCheckout(async ({ cwd, manager }) => {
-      for (const path of [" a.css", ":(glob)*.css", "a.css", "untracked.ts"]) {
+      for (const path of [" a.css", ":(glob)*.css", "a.css"]) {
         await writeFile(join(cwd, path), `${path}\n`);
       }
       expect(await readPaths(manager, cwd, filePath)).toEqual([{ path: filePath, status: "ok" }]);
