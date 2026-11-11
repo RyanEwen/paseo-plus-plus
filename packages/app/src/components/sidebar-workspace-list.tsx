@@ -10,7 +10,10 @@ import { SidebarPinnedList } from "@/components/sidebar/pinned-list";
 import { selectKnownSidebarProjectKeys } from "@/components/sidebar/sidebar-model";
 import { useSidebarQuickFilterStore } from "@/stores/sidebar-quick-filter-store";
 import type { DragReorderMove } from "@/components/drag-reorder/reorder-items";
+import { isDragGroupOrderValid } from "@/components/drag-reorder/reorder-items";
 import { useSidebarReorderGuard } from "@/hooks/use-sidebar-reorder-guard";
+import { isProjectPinnedEntry, collectProjectPinnedKeys } from "@/components/sidebar/project-pins";
+import { useProjectPinningEnabled } from "@/components/sidebar/use-project-pinning-enabled";
 import { filterSidebarProjects, sortSidebarProjectsByName } from "./sidebar/sidebar-arrangement";
 import { SidebarEmptyProjectGroup } from "./sidebar/sidebar-workspace-group";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -324,6 +327,8 @@ interface WorkspaceRowInnerProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  isProjectPinned?: boolean;
+  onToggleProjectPin?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
 }
 
@@ -676,6 +681,8 @@ function WorkspaceRowRightGroup({
   onRename,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
 }: {
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
@@ -696,6 +703,8 @@ function WorkspaceRowRightGroup({
   onRename?: () => void;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  isProjectPinned?: boolean;
+  onToggleProjectPin?: () => void;
 }) {
   const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
@@ -753,6 +762,8 @@ function WorkspaceRowRightGroup({
                 archiveShortcutKeys={archiveShortcutKeys}
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
+                isProjectPinned={isProjectPinned}
+                onToggleProjectPin={onToggleProjectPin}
                 openInFileManagerPath={workspacePath}
               />
             ) : null}
@@ -1144,6 +1155,8 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
   const isCompact = useIsCompactFormFactor();
@@ -1220,6 +1233,8 @@ function WorkspaceRowInner({
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
+              isProjectPinned={isProjectPinned}
+              onToggleProjectPin={onToggleProjectPin}
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
@@ -1267,6 +1282,8 @@ function WorkspaceRowInner({
                   onMarkAsUnread={onMarkAsUnread}
                   isPinned={isPinned}
                   onTogglePin={onTogglePin}
+                  isProjectPinned={isProjectPinned}
+                  onToggleProjectPin={onToggleProjectPin}
                 />
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
@@ -1360,6 +1377,10 @@ function WorkspaceRowWithMenu({
   }, []);
 
   const isPinned = workspace.pinnedAt != null;
+  const isProjectPinned = workspace.projectPinnedAt != null;
+  const handleToggleProjectPin = useCallback(() => {
+    onToggleWorkspacePin(workspace, "project");
+  }, [onToggleWorkspacePin, workspace]);
   const handleTogglePin = useCallback(() => {
     onToggleWorkspacePin(workspace);
   }, [onToggleWorkspacePin, workspace]);
@@ -1422,6 +1443,8 @@ function WorkspaceRowWithMenu({
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
+        isProjectPinned={isProjectPinned}
+        onToggleProjectPin={handleToggleProjectPin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
       <WorkspaceRenameModal
@@ -1752,15 +1775,28 @@ function ProjectBlock({
     ],
   );
 
+  const workspaceDrag = useSidebarReorderGuard("workspace");
+  const canCommitWorkspaceDrag = workspaceDrag.canCommit;
+  const projectPinning = useProjectPinningEnabled();
+  // Project pins stay draggable among themselves under any workspace sort. Ordinary rows accept
+  // drops only under Custom with Manual order; sorted rows stay selectable and keep their menus.
+  const workspaceDragGroup = useCallback(
+    (workspace: SidebarWorkspacePlacement) => {
+      if (isProjectPinnedEntry(workspaceEntriesByKey.get(workspace.workspaceKey), projectPinning))
+        return "pins";
+      return !manualSort || workspaceDrag.disabled ? null : "ordinary";
+    },
+    [manualSort, projectPinning, workspaceDrag.disabled, workspaceEntriesByKey],
+  );
   const renderWorkspace = useCallback(
     ({
       item,
-      drag: workspaceDrag,
+      drag: workspaceRowDrag,
       isActive,
       dragHandleProps: workspaceDragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
       return renderWorkspaceRow(item, {
-        drag: workspaceDrag,
+        drag: workspaceRowDrag,
         isDragging: isActive,
         dragHandleProps: workspaceDragHandleProps,
       });
@@ -1768,16 +1804,37 @@ function ProjectBlock({
     [renderWorkspaceRow],
   );
 
-  // Only Custom sorting accepts drops. Sorted rows stay selectable and keep their action menus.
-  const workspaceDrag = useSidebarReorderGuard("workspace");
-  const canCommitWorkspaceDrag = workspaceDrag.canCommit;
-  const workspaceDragDisabled = !manualSort || workspaceDrag.disabled;
+  const workspaceDragDisabled = useMemo(
+    () => visibleWorkspaces.every((workspace) => workspaceDragGroup(workspace) === null),
+    [visibleWorkspaces, workspaceDragGroup],
+  );
   const handleWorkspaceDragEnd = useCallback(
     (workspaces: SidebarWorkspacePlacement[], move?: DragReorderMove) => {
-      if (!move || !canCommitWorkspaceDrag()) return;
+      if (!move) return;
+      const draggedWorkspace = workspaces.find(
+        (workspace) => workspace.workspaceKey === move.activeKey,
+      );
+      const pinsOnly =
+        draggedWorkspace !== undefined && workspaceDragGroup(draggedWorkspace) === "pins";
+      if (!canCommitWorkspaceDrag(pinsOnly)) return;
+      if (
+        !isDragGroupOrderValid({
+          original: visibleWorkspaces,
+          reordered: workspaces,
+          keyExtractor: workspaceKeyExtractor,
+          getDragGroupKey: workspaceDragGroup,
+        })
+      )
+        return;
       onWorkspaceReorder(project.viewKey, workspaces, move);
     },
-    [onWorkspaceReorder, project.viewKey, canCommitWorkspaceDrag],
+    [
+      onWorkspaceReorder,
+      project.viewKey,
+      visibleWorkspaces,
+      canCommitWorkspaceDrag,
+      workspaceDragGroup,
+    ],
   );
 
   const toast = useToast();
@@ -1857,6 +1914,7 @@ function ProjectBlock({
             renderItem={renderWorkspace}
             onDragEnd={handleWorkspaceDragEnd}
             onDragBegin={workspaceDrag.onDragBegin}
+            getDragGroupKey={workspaceDragGroup}
             disabled={workspaceDragDisabled}
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
@@ -2330,6 +2388,7 @@ function ProjectModeList({
 }) {
   const positionTransitionDuration = useSidebarPositionTransitionDuration();
   const expansionScroll = useProjectExpansionScroll(positionTransitionDuration);
+  const projectPinningEnabled = useProjectPinningEnabled();
   const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
@@ -2463,16 +2522,35 @@ function ProjectModeList({
       move: DragReorderMove,
     ) => {
       const project = unpinnedProjects.find((entry) => entry.viewKey === projectViewKey);
+      const projectPinnedKeys = collectProjectPinnedKeys(
+        reorderedWorkspaces,
+        workspaceEntriesByKey,
+        projectPinningEnabled,
+      );
       const result = resolveProjectWorkspaceReorder({
         currentVisibleKeys: project?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
         reorderedVisibleKeys: reorderedWorkspaces.map((workspace) => workspace.workspaceKey),
+        projectPinnedKeys,
         storedWorkspaceOrder: getWorkspaceOrder(projectViewKey),
         move,
       });
+      if (result.pinOrder) {
+        const pinOrder = new Set(result.pinOrder);
+        onPinnedWorkspaceReorder(
+          reorderedWorkspaces.filter((workspace) => pinOrder.has(workspace.workspaceKey)),
+        );
+      }
       if (result.workspaceOrder === null) return;
       setWorkspaceOrder(projectViewKey, result.workspaceOrder);
     },
-    [getWorkspaceOrder, setWorkspaceOrder, unpinnedProjects],
+    [
+      getWorkspaceOrder,
+      setWorkspaceOrder,
+      unpinnedProjects,
+      workspaceEntriesByKey,
+      onPinnedWorkspaceReorder,
+      projectPinningEnabled,
+    ],
   );
 
   const handleWorktreeCreated = useCallback((workspaceId: string) => {

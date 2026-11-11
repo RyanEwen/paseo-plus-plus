@@ -107,3 +107,57 @@ describe("sidebar reorder guard", () => {
     expect(guard.canCommit(true)).toBe(false);
   });
 });
+
+describe.each(["created", "lastPrompt"] as const)(
+  "project workspace drags under the %s workspace sort",
+  (automaticSort) => {
+    let stop: () => void = () => {};
+    beforeEach(() => {
+      useSidebarViewStore.setState({
+        groupMode: "project",
+        workspaceSortMode: "custom",
+        workspaceSort: "manual",
+      });
+    });
+    afterEach(() => {
+      stop();
+      useSidebarViewStore.setState({ groupMode: "project", workspaceSort: "manual" });
+    });
+
+    it("rejects a Manual drag after the sort flips away and back", () => {
+      const observed = observedGuard("workspace");
+      stop = observed.stop;
+      observed.guard.begin(renderedContext("workspace"));
+      expect(observed.guard.canCommit()).toBe(true);
+      useSidebarViewStore.setState({ workspaceSort: automaticSort });
+      useSidebarViewStore.setState({ workspaceSort: "manual" });
+      expect(observed.guard.canCommit()).toBe(false);
+    });
+
+    it("admits a fresh pin gesture but no ordinary drop while the sort is automatic", () => {
+      useSidebarViewStore.setState({ workspaceSort: automaticSort });
+      const observed = observedGuard("workspace");
+      stop = observed.stop;
+      observed.guard.begin(renderedContext("workspace"));
+      expect(observed.guard.canCommit()).toBe(false);
+      expect(observed.guard.canCommit(true)).toBe(true);
+    });
+
+    it("rejects a pin gesture started under the automatic sort once Manual returns", () => {
+      useSidebarViewStore.setState({ workspaceSort: automaticSort });
+      const observed = observedGuard("workspace");
+      stop = observed.stop;
+      observed.guard.begin(renderedContext("workspace"));
+      useSidebarViewStore.setState({ workspaceSort: "manual" });
+      expect(observed.guard.canCommit(true)).toBe(false);
+    });
+
+    it("leaves Status grouping on its own Custom workspace order", () => {
+      useSidebarViewStore.setState({ groupMode: "status", workspaceSort: automaticSort });
+      const observed = observedGuard("workspace");
+      stop = observed.stop;
+      observed.guard.begin(renderedContext("workspace"));
+      expect(observed.guard.canCommit()).toBe(true);
+    });
+  },
+);

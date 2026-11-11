@@ -566,6 +566,10 @@ function StatusWorkspaceRowWithMenu({
 
   const handleOpenRename = useCallback(() => openRename(workspace), [openRename, workspace]);
   const isPinned = workspace.pinnedAt != null;
+  const isProjectPinned = workspace.projectPinnedAt != null;
+  const handleToggleProjectPin = useCallback(() => {
+    onToggleWorkspacePin(workspace, "project");
+  }, [onToggleWorkspacePin, workspace]);
   const handleTogglePin = useCallback(() => {
     onToggleWorkspacePin(workspace);
   }, [onToggleWorkspacePin, workspace]);
@@ -622,6 +626,8 @@ function StatusWorkspaceRowWithMenu({
       archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       isPinned={isPinned}
       onTogglePin={onTogglePin}
+      isProjectPinned={isProjectPinned}
+      onToggleProjectPin={handleToggleProjectPin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       inStatusGroup={inStatusGroup}
       drag={drag}
@@ -653,6 +659,8 @@ interface StatusWorkspaceRowInnerProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  isProjectPinned?: boolean;
+  onToggleProjectPin?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
   /** Pinned rows are flat under their own header; status-group rows indent from theirs. */
   inStatusGroup?: boolean;
@@ -700,6 +708,8 @@ function StatusWorkspaceRowInnerContent({
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
   reserveIdleStatusIndicatorSpace = true,
   inStatusGroup = true,
   isDragging = false,
@@ -801,6 +811,8 @@ function StatusWorkspaceRowInnerContent({
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
+              isProjectPinned={isProjectPinned}
+              onToggleProjectPin={onToggleProjectPin}
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               accessibilityRole="button"
@@ -838,6 +850,8 @@ function StatusWorkspaceRowInnerContent({
                     reserveSlotWidth={reserveSlotWidth}
                     isPinned={isPinned}
                     onTogglePin={onTogglePin}
+                    isProjectPinned={isProjectPinned}
+                    onToggleProjectPin={onToggleProjectPin}
                     onCopyPath={onCopyPath}
                     onCopyBranchName={onCopyBranchName}
                     onRename={onRename}
@@ -870,6 +884,8 @@ function StatusWorkspaceActionSlot({
   reserveSlotWidth,
   isPinned,
   onTogglePin,
+  isProjectPinned,
+  onToggleProjectPin,
   onCopyPath,
   onCopyBranchName,
   onRename,
@@ -891,6 +907,8 @@ function StatusWorkspaceActionSlot({
   reserveSlotWidth: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  isProjectPinned?: boolean;
+  onToggleProjectPin?: () => void;
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onRename?: () => void;
@@ -933,6 +951,8 @@ function StatusWorkspaceActionSlot({
             archiveShortcutKeys={archiveShortcutKeys}
             isPinned={isPinned}
             onTogglePin={onTogglePin}
+            isProjectPinned={isProjectPinned}
+            onToggleProjectPin={onToggleProjectPin}
           />
         ) : null}
       </SidebarWorkspaceTrailingActionOverlay>

@@ -104,6 +104,8 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Project pins remain in their project; legacy records are unpinned in this scope.
+  projectPinnedAt: z.string().nullable().optional(),
   labels: z.array(z.string()).optional(),
   // Plugin-owned data. Paseo stores it and never reads a key.
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
@@ -702,6 +704,7 @@ export function createPersistedWorkspaceRecord(input: {
   archivedAt?: string | null;
   autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
+  projectPinnedAt?: string | null;
   labels?: string[];
   metadata?: Record<string, JsonValue>;
   untrustedSource?: UntrustedWorkspaceSource;
