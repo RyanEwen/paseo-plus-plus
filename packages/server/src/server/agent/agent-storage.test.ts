@@ -622,7 +622,9 @@ describe("AgentStorage", () => {
     expect(record?.persistence?.provider).toBe("codex-work");
     if (!record) throw new Error("Expected persisted fixture record");
     expect(
-      buildStoredAgentPayload(record, ["codex-work"], storedOptionsOnly).persistence?.sessionId,
+      buildStoredAgentPayload(record, ["codex-work"], storedOptionsOnly, {
+        agentAwareAttention: true,
+      }).persistence?.sessionId,
     ).toBe("native-selected");
   });
 
@@ -1052,7 +1054,9 @@ describe("AgentStorage", () => {
       expect(reloaded?.providerHistory).toEqual(binding);
       if (!reloaded) throw new Error("Expected resumable record after reload");
       expect(
-        buildStoredAgentPayload(reloaded, ["codex-work"], storedOptionsOnly).persistence?.sessionId,
+        buildStoredAgentPayload(reloaded, ["codex-work"], storedOptionsOnly, {
+          agentAwareAttention: true,
+        }).persistence?.sessionId,
       ).toBe("native-resumable");
       expect(await restarted.listByProviderSession("codex-work", "native-resumable")).toMatchObject(
         [{ id: agent.id, workspaceId: "original-workspace", persistence: handle }],

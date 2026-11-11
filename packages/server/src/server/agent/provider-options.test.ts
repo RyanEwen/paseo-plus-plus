@@ -641,8 +641,11 @@ describe("history storage options stay on the daemon", () => {
       config: { providerOptions: { service_tier: "fast", sqlite_home: sqliteHome } },
       persistence: { provider: "codex-work", sessionId: "thread-1" },
     });
-    const payload = buildStoredAgentPayload(record, ["codex-work"], (provider, own) =>
-      manager.effectiveOptionsFor(provider, own),
+    const payload = buildStoredAgentPayload(
+      record,
+      ["codex-work"],
+      (provider, own) => manager.effectiveOptionsFor(provider, own),
+      { agentAwareAttention: true },
     );
     expect(payload.options).toMatchObject({ service_tier: "fast" });
     expect(JSON.stringify(payload)).not.toContain(sqliteHome);
