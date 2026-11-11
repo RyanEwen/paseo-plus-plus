@@ -26,8 +26,6 @@ export const ACTIVITY_SCENE_LABELS: Record<
     groupParts: readonly string[];
     readSummary: string;
     rows: readonly string[];
-    /** Whether the patch details list the later files under Additional files. */
-    showsAdditionalFiles: boolean;
   }
 > = {
   readable: {
@@ -42,13 +40,11 @@ export const ACTIVITY_SCENE_LABELS: Record<
       "Running script",
       "Failed: Run command",
     ],
-    showsAdditionalFiles: true,
   },
   classic: {
     groupParts: ["Edited 3 files", "ran 3 commands"],
     readSummary: ACTIVITY_READ_COMMAND,
     rows: ["Shell", "Edit", "Write", "Search", "Edit", "Shell", "Shell"],
-    showsAdditionalFiles: false,
   },
 };
 

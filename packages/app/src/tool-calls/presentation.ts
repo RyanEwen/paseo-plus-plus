@@ -12,7 +12,6 @@ import {
   isPendingToolCallDetail,
 } from "@/utils/tool-call-detail-state";
 import { activityIconDetail, buildActivityDisplay } from "./activity";
-import { splitReadableFileBatch, type AdditionalFile } from "./additional-files";
 
 type ToolCallStatus = "executing" | "running" | "completed" | "failed" | "canceled";
 export type ToolCallPresentationIcon = ComponentType<{ size?: number; color?: string }>;
@@ -41,8 +40,6 @@ export interface ToolCallPresentation {
   hasDetails: boolean;
   canOpenDetails: boolean;
   openFilePath: string | null;
-  /** Patch files beyond the one `detail` shows; only with readable activity on. */
-  additionalFiles: readonly AdditionalFile[];
   isPlan: boolean;
   planOutcome?: PlanOutcome;
 }
@@ -65,16 +62,10 @@ function displayDetail(detail: ToolCallDetail | undefined): ToolCallDetail {
 export function buildToolCallPresentation(
   input: BuildToolCallPresentationInput,
 ): ToolCallPresentation {
-  const sourceDetail = input.agentMessage
+  const detail = input.agentMessage
     ? buildAgentMessageDisplay(input.agentMessage).detail
     : input.detail;
-  const { detail, additionalFiles } = splitReadableFileBatch(sourceDetail, {
-    readable: Boolean(input.activityTranslation),
-    agentMessage: input.agentMessage,
-    metadata: input.metadata,
-    cwd: input.cwd,
-  });
-  const detailForDisplay = displayDetail(sourceDetail);
+  const detailForDisplay = displayDetail(detail);
   const displayModel = buildToolCallDisplayModel({
     name: input.toolName,
     agentMessage: input.agentMessage,
@@ -98,14 +89,13 @@ export function buildToolCallPresentation(
       )
     : undefined;
   const labels = activity ?? displayModel;
-  const iconDetail = activityIconDetail(sourceDetail, activity?.kind);
+  const iconDetail = activityIconDetail(detail, activity?.kind);
   const isLoadingDetails = isPendingToolCallDetail({
     detail,
     status: input.status,
     error: input.error,
   });
-  const hasDetails =
-    Boolean(input.error) || hasMeaningfulToolCallDetail(detail) || additionalFiles.length > 0;
+  const hasDetails = Boolean(input.error) || hasMeaningfulToolCallDetail(detail);
 
   return {
     detail,
@@ -117,7 +107,6 @@ export function buildToolCallPresentation(
     hasDetails,
     canOpenDetails: hasDetails || isLoadingDetails,
     openFilePath: extractToolCallFilePath(detail),
-    additionalFiles,
     isPlan: input.detail?.type === "plan",
     planOutcome: input.detail?.type === "plan" ? resolvePlanOutcome(input) : undefined,
   };

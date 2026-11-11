@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
-import type { AdditionalFilesControl } from "@/tool-calls/additional-files";
 
 // ----- Types -----
 
@@ -25,7 +24,6 @@ export interface ToolCallSheetData {
   errorText?: string;
   icon: ToolCallIconComponent;
   showLoadingSkeleton?: boolean;
-  additionalFiles?: AdditionalFilesControl;
 }
 
 interface ToolCallSheetContextValue {
@@ -158,11 +156,10 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     errorText,
     icon: IconComponent,
     showLoadingSkeleton,
-    additionalFiles,
   } = data;
 
   return (
-    <View style={styles.container} testID="tool-call-sheet">
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -190,7 +187,6 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
           errorText={errorText}
           fillAvailableHeight
           showLoadingSkeleton={showLoadingSkeleton}
-          additionalFiles={additionalFiles}
         />
       </BottomSheetScrollView>
     </View>

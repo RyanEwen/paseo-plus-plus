@@ -463,7 +463,7 @@ for (const compact of [false, true]) {
             contentType: "image/png",
           });
 
-          // Details keep the exact command and output; readable mode adds every other patch file.
+          // Details keep the exact command and output, and every file of the patch, in both modes.
           const read = await openActivityDetails(page, badges.nth(0), compact);
           await expect(read.surface).toContainText(ACTIVITY_READ_COMMAND);
           await expect(read.surface).toContainText(ACTIVITY_READ_OUTPUT);
@@ -473,9 +473,6 @@ for (const compact of [false, true]) {
           for (const diff of ACTIVITY_PATCH_DIFFS) {
             await expect(patch.surface).toContainText(diff);
           }
-          await expect(patch.surface.getByTestId("tool-call-additional-files")).toHaveCount(
-            labels.showsAdditionalFiles ? 1 : 0,
-          );
           await testInfo.attach("readable-activity-multi-file-details", {
             body: await page.screenshot(),
             contentType: "image/png",
