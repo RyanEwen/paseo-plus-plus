@@ -6216,13 +6216,15 @@ describe("agent snapshot MCP serialization", () => {
     const now = new Date().toISOString();
     const record = createStoredRecord({
       id: legacyAttentionId,
+      // Storage parses metadata with a {} default, so a stored record always carries one.
+      metadata: {},
       archivedAt: null,
       updatedAt: now,
       lastActivityAt: now,
     });
     spies.agentManager.getAgent.mockReturnValue(null);
     spies.agentStorage.get.mockResolvedValue(record);
-    spies.agentStorage.list.mockResolvedValue([record]);
+    spies.agentStorage.listActive.mockResolvedValue([record]);
   }
 
   it.each([
@@ -6284,6 +6286,7 @@ describe("agent snapshot MCP serialization", () => {
       const now = new Date().toISOString();
       const stored = createStoredRecord({
         id: "known-stored-attention",
+        metadata: {},
         archivedAt: null,
         updatedAt: now,
         lastActivityAt: now,
@@ -6299,7 +6302,7 @@ describe("agent snapshot MCP serialization", () => {
       spies.agentStorage.get.mockImplementation(async (id: string) =>
         id === stored.id ? stored : null,
       );
-      spies.agentStorage.list.mockResolvedValue([stored]);
+      spies.agentStorage.listActive.mockResolvedValue([stored]);
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -7173,9 +7176,10 @@ describe("remote delegated creation", () => {
       );
       // An idempotent replay that matches an agent created before delegated identities existed.
       const remoteClient = {
-        fetchWorkspaces: async () => ({
-          entries: [{ id: "wks_remote", workspaceDirectory: "/tmp/remote" }],
-        }),
+        findWorkspace: async (workspaceId: string) =>
+          workspaceId === "wks_remote"
+            ? { id: "wks_remote", workspaceDirectory: "/tmp/remote" }
+            : null,
         createAgent: async () => ({
           id: "previously-created-agent",
           provider: "codex",

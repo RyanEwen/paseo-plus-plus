@@ -419,6 +419,7 @@ export class WorkspaceDirectory {
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
             attentionMessage: agent.attentionMessage,
+            humanAttentionRequired: agent.humanAttentionRequired,
             backgroundWork: agent.backgroundWork,
           })
         : "running";
@@ -581,6 +582,7 @@ export class WorkspaceDirectory {
           requiresAttention: agent.requiresAttention,
           attentionReason: agent.attentionReason ?? null,
           attentionMessage: agent.attentionMessage,
+          humanAttentionRequired: agent.humanAttentionRequired,
           backgroundWork: agent.backgroundWork,
         });
         return derived === winningBucket;

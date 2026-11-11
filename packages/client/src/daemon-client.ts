@@ -3515,13 +3515,15 @@ export class DaemonClient {
   }
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
-    if (options.sourceAgentId || options.agentAttention) this.requireAgentAudienceAttention();
     if (options.git !== undefined || options.worktreeName !== undefined) {
       throw new Error(
         "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
       );
     }
     if (options.background !== undefined) this.requireBackgroundCreation(options);
+    // Upstream sends sourceAgentId for every agent-created child; only objective metadata needs
+    // a host that understands audiences, so a visible caller still works on older hosts.
+    if (options.agentAttention) this.requireAgentAudienceAttention();
     if (options.metadata !== undefined) this.requireEntityMetadata();
     const config = resolveAgentConfig(options);
     const result = await this.creations.createAgent({
