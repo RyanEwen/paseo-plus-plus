@@ -140,6 +140,29 @@ export function computeWorkspaceTabLayout(
   };
 }
 
+/** Reveal the selected tab with the smallest movement, clamped to the measured scroll range. */
+export function resolveWorkspaceTabScrollOffset(input: {
+  offset: number;
+  viewportWidth: number;
+  contentWidth: number;
+  tabStart: number;
+  tabWidth: number;
+}): number {
+  const { offset, viewportWidth, contentWidth, tabStart, tabWidth } = input;
+  if (viewportWidth <= 0 || contentWidth <= 0) {
+    return offset;
+  }
+
+  let nextOffset = offset;
+  if (tabStart < offset || tabWidth > viewportWidth) {
+    nextOffset = tabStart;
+  } else if (tabStart + tabWidth > offset + viewportWidth) {
+    nextOffset = tabStart + tabWidth - viewportWidth;
+  }
+
+  return clamp(nextOffset, 0, Math.max(0, contentWidth - viewportWidth));
+}
+
 export function selectWorkspaceChrome<Compact, Full>(input: {
   width: number | null;
   compact: Compact;

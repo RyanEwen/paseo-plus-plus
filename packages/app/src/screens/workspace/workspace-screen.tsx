@@ -905,6 +905,14 @@ function resolveCompactHeaderLayout(input: {
   return { header: input.header, floating: floatsHeaderOverContent(input.activeTab) };
 }
 
+/** Phones show the standalone tab strip below the title unless Mobile workspace tabs is off. */
+function showsPhoneWorkspaceTabStrip(input: {
+  isMobile: boolean;
+  mobileWorkspaceTabsEnabled: boolean;
+}): boolean {
+  return input.isMobile && input.mobileWorkspaceTabsEnabled;
+}
+
 function shouldShowWorkspaceScreenHeader(input: {
   isFocusModeEnabled: boolean;
   isMobile: boolean;
@@ -1384,6 +1392,9 @@ function WorkspaceScreenContent({
     (workspaceKey: string, target: WorkspaceTabTarget, placement?: WorkspaceTabPlacement) =>
       openTab({ workspaceKey, target, intent: "background", placement }),
     [openTab],
+  );
+  const mobileWorkspaceTabsEnabled = useSettings(
+    (settings) => settings.paseoPlusPlus.mobileWorkspaceTabs,
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
@@ -2950,6 +2961,7 @@ function WorkspaceScreenContent({
     () => !isMobile && !canRenderDesktopPaneSplits,
     [isMobile, canRenderDesktopPaneSplits],
   );
+  const showsPhoneTabStrip = showsPhoneWorkspaceTabStrip({ isMobile, mobileWorkspaceTabsEnabled });
   useEffect(() => {
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
@@ -3465,7 +3477,9 @@ function WorkspaceScreenContent({
   // keep their tab rails.
   const renderCompactWorkspaceHeader = useCallback(
     (paneTabs: WorkspaceCompactHeaderTabs | null, actionsOnly = false) => {
-      const tabSwitcher = paneTabs ? renderWorkspaceTabSwitcher(paneTabs) : null;
+      // The phone strip replaces the header's tab chooser unless Mobile workspace tabs is off.
+      const tabSwitcher =
+        paneTabs && !showsPhoneTabStrip ? renderWorkspaceTabSwitcher(paneTabs) : null;
       return (
         <CompactWorkspaceHeader
           headerVariant={actionsOnly ? "full" : "compact"}
@@ -3492,6 +3506,7 @@ function WorkspaceScreenContent({
             createTerminalDisabled={createTerminalDisabled}
             importAgentDisabled={!canOpenImportSheet}
             copyPathDisabled={!workspaceDirectory}
+            onCreateDraftTab={handleCreateDraftTab}
             onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
             onCreateBrowser={handleCreateBrowserTab}
             onOpenImportSheet={openImportSheet}
@@ -3506,6 +3521,7 @@ function WorkspaceScreenContent({
       renderWorkspaceTabSwitcher,
       isFocusModeEnabled,
       toggleFocusMode,
+      showsPhoneTabStrip,
       canOpenImportSheet,
       compactHeaderScripts,
       createTerminalDisabled,
@@ -3515,6 +3531,7 @@ function WorkspaceScreenContent({
       handleCopyBranchName,
       handleCopyWorkspacePath,
       handleCreateBrowserTab,
+      handleCreateDraftTab,
       handleCreateTerminalWithProfile,
       handleOpenSetupTab,
       handleToggleExplorerSidebar,
@@ -3633,6 +3650,63 @@ function WorkspaceScreenContent({
     [uiTabs, sheets],
   );
   const workspacePanelKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
+
+  // Phones show the standalone tab strip below the title unless Mobile workspace tabs is off.
+  const phoneTabStrip = useMemo(
+    () =>
+      showsPhoneTabStrip ? (
+        <NewTabLauncherProvider value={newTabLauncher}>
+          <WorkspaceDesktopTabsRow
+            paneId={focusedPaneIdOrUndefined}
+            isFocused={isRouteFocused}
+            tabs={desktopTabRowItems}
+            normalizedServerId={normalizedServerId}
+            normalizedWorkspaceId={normalizedWorkspaceId}
+            setHoveredCloseTabKey={setHoveredCloseTabKey}
+            onNavigateTab={navigateToTabId}
+            onCloseTab={handleCloseTabById}
+            onCopyResumeCommand={handleCopyResumeCommand}
+            onCopyAgentId={handleCopyAgentId}
+            onCopyTerminalId={handleCopyTerminalId}
+            onCopyFilePath={handleCopyFilePath}
+            onReloadAgent={handleReloadAgent}
+            onRenameTab={handleRenameTab}
+            onCloseTabsToLeft={handleCloseTabsToLeft}
+            onCloseTabsToRight={handleCloseTabsToRight}
+            onCloseOtherTabs={handleCloseOtherTabs}
+            onCreateNewTab={handleCreateNewTab}
+            onReorderTabs={handleReorderTabsInFocusedPane}
+            focusModeEnabled={desktopFocusModeEnabled}
+            onExitFocusMode={toggleFocusMode}
+          />
+        </NewTabLauncherProvider>
+      ) : null,
+    [
+      showsPhoneTabStrip,
+      newTabLauncher,
+      focusedPaneIdOrUndefined,
+      isRouteFocused,
+      desktopTabRowItems,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      setHoveredCloseTabKey,
+      navigateToTabId,
+      handleCloseTabById,
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabsToLeft,
+      handleCloseTabsToRight,
+      handleCloseOtherTabs,
+      handleCreateNewTab,
+      handleReorderTabsInFocusedPane,
+      desktopFocusModeEnabled,
+      toggleFocusMode,
+    ],
+  );
   const createFallbackTab = useCallback(
     () => handleCreateNewTab({ paneId: focusedPaneIdOrUndefined }),
     [handleCreateNewTab, focusedPaneIdOrUndefined],
@@ -3649,8 +3723,15 @@ function WorkspaceScreenContent({
     paneId: focusedPaneIdOrUndefined,
     createNewTab: createFallbackTab,
   });
+  // Measure title and strip together so floating chat clearance includes both rows.
+  // The shared surface keeps both rows opaque while the header floats above the chat.
   const compactHeaderLayout = resolveCompactHeaderLayout({
-    header: compactWorkspaceHeader,
+    header: (
+      <View style={styles.containerWorkspaceBackground}>
+        {compactWorkspaceHeader}
+        {phoneTabStrip}
+      </View>
+    ),
     activeTab: activeTabDescriptor,
     composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
   });

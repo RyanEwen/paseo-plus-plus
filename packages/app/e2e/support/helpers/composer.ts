@@ -486,19 +486,19 @@ export async function switchComposerTabWithKeyboard(
   );
 }
 export async function expectWorkspaceHeaderHidden(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveCount(0);
+  await expect(page.getByTestId("workspace-header-title")).toHaveCount(0);
 }
 export async function expectWorkspaceHeaderVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+  await expect(page.getByTestId("workspace-header-title")).toBeVisible();
 }
 
+/** Select a retained composer tab by its title in the compact tab strip. */
 export async function activateRetainedComposerTab(page: Page, title: string): Promise<void> {
   await page
-    .getByTestId("workspace-tab-switcher-trigger")
+    .getByTestId("workspace-tabs-scroll")
+    .filter({ visible: true })
+    .getByRole("tab", { name: title, exact: true })
     .evaluate((element) => (element as HTMLElement).click());
-  const option = page.getByText(title, { exact: true }).filter({ visible: true }).last();
-  await expect(option).toBeVisible();
-  await option.evaluate((element) => (element as HTMLElement).click());
 }
 
 export async function recordVisibleComposerGeometry(page: Page): Promise<void> {

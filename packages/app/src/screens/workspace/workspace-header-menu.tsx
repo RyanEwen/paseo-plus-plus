@@ -3,7 +3,14 @@ import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Copy, Ellipsis, Globe, Import as ImportIcon, Settings } from "lucide-react-native";
+import {
+  Copy,
+  Ellipsis,
+  Globe,
+  Import as ImportIcon,
+  Settings,
+  SquarePen,
+} from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
@@ -40,12 +47,14 @@ import {
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
+const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
+const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -216,6 +225,7 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   scripts: UseWorkspaceScriptsMenuPagesInput;
+  onCreateDraftTab: (input: { paneId?: string }) => void;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
   onCreateTerminalWithProfile: (profile: TerminalProfile, paneId?: string) => void;
@@ -223,8 +233,8 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
 }
 
 /**
- * Compact layouts have no tab strip. New agent and New terminal sit in the tab switcher's footer;
- * the rarer launches stay here alongside the workspace actions.
+ * Compact layouts keep New agent here because the Mobile workspace tabs setting can replace the
+ * strip and its + button with the tab chooser.
  *
  * The header has no room for a scripts button either, so scripts are a page of this menu, and the
  * ⋯ carries a dot while a running service is unhealthy. Plugin header buttons are rows here for the
@@ -234,6 +244,7 @@ export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
   normalizedWorkspaceId,
   scripts,
+  onCreateDraftTab,
   showCreateBrowserTab,
   createTerminalDisabled,
   onCreateTerminalWithProfile,
@@ -246,6 +257,10 @@ export function WorkspaceHeaderMenuMobile({
   const handleCreateBrowser = useCallback(
     () => onCreateBrowser({ paneId }),
     [onCreateBrowser, paneId],
+  );
+  const handleCreateDraftTab = useCallback(
+    () => onCreateDraftTab({ paneId }),
+    [onCreateDraftTab, paneId],
   );
   const handleCreateTerminalWithProfile = useCallback(
     (profile: TerminalProfile) => onCreateTerminalWithProfile(profile, paneId),
@@ -297,6 +312,13 @@ export function WorkspaceHeaderMenuMobile({
         pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
+        <DropdownMenuItem
+          testID="workspace-header-new-agent"
+          leading={MENU_NEW_AGENT_ICON}
+          onSelect={handleCreateDraftTab}
+        >
+          {t("workspace.header.actions.newAgent")}
+        </DropdownMenuItem>
         {onExitFocusMode ? (
           <DropdownMenuItem onSelect={onExitFocusMode}>
             {t("workspace.tabs.actions.exitFocusMode")}

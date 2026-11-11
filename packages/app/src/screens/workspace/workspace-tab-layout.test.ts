@@ -10,6 +10,7 @@ import { darkPureBlackTheme, darkTheme, lightTheme } from "@/styles/theme";
 import {
   MIN_WORKSPACE_TAB_WIDTH,
   workspaceTabMinimumWidth,
+  resolveWorkspaceTabScrollOffset,
   workspaceTabSwitcherPopoverLayout,
   selectWorkspaceChrome,
   computeWorkspaceTabLayout,
@@ -415,6 +416,39 @@ describe("resolveWorkspaceTabChipBackdrop", () => {
     expect(
       resolveWorkspaceTabChipBackdrop({ rail: "surface", isActiveFocused: false, isFilled: false }),
     ).toBe("surface0");
+  });
+});
+
+describe("selected workspace tab visibility", () => {
+  const geometry = {
+    offset: 0,
+    viewportWidth: 300,
+    contentWidth: 800,
+    tabStart: 440,
+    tabWidth: 140,
+  };
+
+  it("reveals an offscreen selected or newly opened tab", () => {
+    expect(resolveWorkspaceTabScrollOffset(geometry)).toBe(280);
+  });
+
+  it("keeps a fully visible selection at the user's current offset", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, offset: 400 })).toBe(400);
+  });
+
+  it("reveals an earlier tab after selecting it", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, offset: 500 })).toBe(440);
+  });
+
+  it("updates visibility after rotation and clamps after closing tabs", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, viewportWidth: 160 })).toBe(420);
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, offset: 500, contentWidth: 600 })).toBe(
+      300,
+    );
+  });
+
+  it("waits for usable native measurements", () => {
+    expect(resolveWorkspaceTabScrollOffset({ ...geometry, viewportWidth: 0 })).toBe(0);
   });
 });
 
