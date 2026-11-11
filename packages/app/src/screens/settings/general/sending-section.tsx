@@ -4,7 +4,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsCard, SettingsSection, SettingsSelect } from "@/components/settings";
 import { type SendShortcut, type SendBehavior } from "@/hooks/use-settings";
-import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
+import { useHardwareKeyboardPresent, supportsConfigurableComposerSendKeys } from "@/keyboard";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
 const SEND_BEHAVIORS: readonly SendBehavior[] = ["interrupt", "steer", "queue"];
@@ -15,7 +15,7 @@ export function SendingSection() {
     "sendBehavior" | "sendShortcut"
   >();
   const supported = useChatPreferencesSupport();
-  const shortcutsAvailable = useKeyboardShortcutsAvailable();
+  const shortcutsAvailable = useHardwareKeyboardPresent() && supportsConfigurableComposerSendKeys;
   const modifier = getShortcutOs() === "mac" ? "⌘" : "Ctrl";
   const options = useMemo(
     () =>
