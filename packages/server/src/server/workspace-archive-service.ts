@@ -439,9 +439,7 @@ async function archiveTargetRecords(
         options.progress.recordArchived,
       );
     } else {
-      if (options.failurePolicy === "require-complete") {
-        throw result.reason;
-      }
+      rethrowWhenCompleteTeardownRequired(options, result.reason);
       dependencies.sessionLogger?.warn(
         { err: result.reason, requestId: options.requestId },
         "archiveByScope workspace teardown failed; continuing",
@@ -589,6 +587,27 @@ registerForkCapability("workspaceArchiveComplete");
 
 type ArchiveContentsFailurePolicy = "best-effort" | "require-complete";
 
+/** Rethrow a teardown failure when the record must not be archived without complete teardown. */
+function rethrowWhenCompleteTeardownRequired(
+  options: { failurePolicy: ArchiveContentsFailurePolicy },
+  error: unknown,
+): void {
+  if (options.failurePolicy === "require-complete") {
+    throw error;
+  }
+}
+
+/** Fail a require-complete teardown that left any agent or terminal step failed. */
+function requireCompleteTeardown(
+  options: { failurePolicy: ArchiveContentsFailurePolicy },
+  failures: unknown[],
+): void {
+  if (options.failurePolicy !== "require-complete" || failures.length === 0) {
+    return;
+  }
+  throw new AggregateError(failures, failures.map(getErrorMessage).join("; "));
+}
+
 // Tears down everything OWNED by a single workspace record: its live agents,
 // its persisted-but-not-running agent snapshots, and its terminals. Scoped by
 // workspaceId so a sibling workspace sharing the same directory is untouched.
@@ -621,9 +640,7 @@ async function archiveWorkspaceContentsWithProgress(
   try {
     storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
   } catch (error) {
-    if (options.failurePolicy === "require-complete") {
-      throw error;
-    }
+    rethrowWhenCompleteTeardownRequired(options, error);
     dependencies.sessionLogger?.warn(
       { err: error, workspaceId },
       "Failed to list stored agents during workspace archive; continuing",
@@ -683,9 +700,7 @@ async function archiveWorkspaceContentsWithProgress(
     );
   }
 
-  if (failures.length > 0 && options.failurePolicy === "require-complete") {
-    throw new AggregateError(failures, failures.map(getErrorMessage).join("; "));
-  }
+  requireCompleteTeardown(options, failures);
 
   return { agentIds: archivedAgents, newlyArchivedAgentIds };
 }
