@@ -1,4 +1,9 @@
+import { COMPACT_CONTENT_WIDTH } from "@/constants/layout";
 import type { PaneHost } from "@/panels/panel-manifest";
+
+export function shouldUseCompactWorkspaceHeader(width: number): boolean {
+  return width < COMPACT_CONTENT_WIDTH;
+}
 
 /** Paseo++ minimum for main and sheet tabs on wide layouts, so short names stay easy to click. */
 export const MIN_WORKSPACE_TAB_WIDTH = 96;
@@ -134,3 +139,16 @@ export function computeWorkspaceTabLayout(
     requiresHorizontalScrollFallback,
   };
 }
+
+export function selectWorkspaceChrome<Compact, Full>(input: {
+  width: number | null;
+  compact: Compact;
+  full: Full;
+}): Compact | Full {
+  const compact = input.width !== null && shouldUseCompactWorkspaceHeader(input.width);
+  return compact ? input.compact : input.full;
+}
+
+// A count badge is only 16pt wide. Native popovers need a content width floor
+// because their scrolling tab list does not contribute an intrinsic width.
+export const workspaceTabSwitcherPopoverLayout = { desktopMinWidth: 320 } as const;
