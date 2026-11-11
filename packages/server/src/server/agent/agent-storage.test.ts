@@ -21,6 +21,9 @@ import type {
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
 
+/** Resolve a stored agent's options from its own record only, as a host without provider defaults. */
+const ownOptionsOnly = (_provider: string, own: Record<string, unknown> | undefined) => own ?? {};
+
 type ManagedAgentOverrides = Omit<
   Partial<ManagedAgent>,
   "config" | "pendingPermissions" | "session" | "activeForegroundTurnId"
@@ -220,7 +223,10 @@ describe("AgentStorage", () => {
       });
       expect(loaded.humanAttentionRequired).toBe(expected);
       expect(loaded.attentionObjectives).toEqual(original.attentionObjectives);
-      expect(buildStoredAgentPayload(loaded, ["codex"]).humanAttentionRequired).toBe(expected);
+      expect(
+        buildStoredAgentPayload(loaded, ["codex"], ownOptionsOnly, { agentAwareAttention: true })
+          .humanAttentionRequired,
+      ).toBe(expected);
     },
   );
 
@@ -322,7 +328,11 @@ describe("AgentStorage", () => {
     const cleared: string[] = [];
     const pending = attention.clear({
       workspace,
-      agents: [buildStoredAgentPayload(capturedRecord, ["codex"])],
+      agents: [
+        buildStoredAgentPayload(capturedRecord, ["codex"], ownOptionsOnly, {
+          agentAwareAttention: true,
+        }),
+      ],
       onCleared: (id) => {
         cleared.push(id);
       },
@@ -352,11 +362,19 @@ describe("AgentStorage", () => {
       const committed = await storage.get("legacy-read");
       if (!committed || !loaded) throw new Error("Committed legacy-read fixture is missing");
       expect(published).toEqual([committed]);
-      const reloadedPayload = buildStoredAgentPayload(loaded, ["codex"]);
-      expect(buildStoredAgentPayload(committed, ["codex"])).toEqual(reloadedPayload);
-      expect(published.map((record) => buildStoredAgentPayload(record, ["codex"]))).toEqual([
-        reloadedPayload,
-      ]);
+      const reloadedPayload = buildStoredAgentPayload(loaded, ["codex"], ownOptionsOnly, {
+        agentAwareAttention: true,
+      });
+      expect(
+        buildStoredAgentPayload(committed, ["codex"], ownOptionsOnly, {
+          agentAwareAttention: true,
+        }),
+      ).toEqual(reloadedPayload);
+      expect(
+        published.map((record) =>
+          buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, { agentAwareAttention: true }),
+        ),
+      ).toEqual([reloadedPayload]);
     } finally {
       continueRead();
     }

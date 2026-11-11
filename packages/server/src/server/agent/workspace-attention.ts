@@ -28,6 +28,16 @@ function hasClearableStoredAttention(record: StoredAgentRecord): boolean {
 }
 
 /**
+ * An update time strictly after the record's own, so clients never treat the cleared record as
+ * stale; mirrors the agent manager's stored-attention clear (#9087).
+ */
+function laterUpdatedAt(record: StoredAgentRecord): string {
+  const previousMs = Date.parse(record.updatedAt);
+  const nowMs = Date.now();
+  return new Date(nowMs > previousMs ? nowMs : previousMs + 1).toISOString();
+}
+
+/**
  * Clear a stored agent's attention only while it is still the observed event, inside the
  * storage's per-agent write queue, so a newer queued write is never overwritten.
  *
@@ -44,7 +54,7 @@ export async function clearStoredAttentionIfUnchanged(
   await storage.update(agentId, (current) => {
     const unchanged = current.attentionTimestamp === timestamp;
     if (!unchanged || !hasClearableStoredAttention(current)) return current;
-    cleared = clearStoredAttentionEvent(current);
+    cleared = { ...clearStoredAttentionEvent(current), updatedAt: laterUpdatedAt(current) };
     return cleared;
   });
   return cleared;

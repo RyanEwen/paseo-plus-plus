@@ -93,6 +93,9 @@ import {
   type WorkspaceMutation,
 } from "./workspace-registry.js";
 
+/** Resolve a stored agent's options from its own record only, as a host without provider defaults. */
+const ownOptionsOnly = (_provider: string, own: Record<string, unknown> | undefined) => own ?? {};
+
 const REPO_CWD = path.resolve("/tmp/repo");
 const UNREGISTERED_CWD = path.resolve("/tmp/unregistered");
 
@@ -10400,7 +10403,9 @@ test.each(["legacy", "receipt"] as const)(
           session.forwardStoredAgentAttentionCleared(record, workspaceId),
       });
       session.listAgentPayloads = async () =>
-        (await storage.list()).map((record) => buildStoredAgentPayload(record, ["codex"]));
+        (await storage.list()).map((record) =>
+          buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, { agentAwareAttention: true }),
+        );
       await activateAgentUpdatesSubscription(session, "t59-clear", {});
       await session.handleMessage({
         type: "workspace.clear_attention.request",
@@ -10501,7 +10506,9 @@ test("T59 sequential bounded receipt chunks preserve intervening newer attention
       },
     });
     session.listAgentPayloads = async () =>
-      (await storage.list()).map((record) => buildStoredAgentPayload(record, ["codex"]));
+      (await storage.list()).map((record) =>
+        buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, { agentAwareAttention: true }),
+      );
     const attention = Array.from({ length: 257 }, (_, index) => ({
       agentId: `captured-${index}`,
       timestamp,
