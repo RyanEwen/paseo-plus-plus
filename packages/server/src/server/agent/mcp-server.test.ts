@@ -6249,6 +6249,8 @@ describe("agent snapshot MCP serialization", () => {
     const now = new Date().toISOString();
     const record = createStoredRecord({
       id: legacyAttentionId,
+      // Storage parses metadata with a {} default, so a stored record always carries one.
+      metadata: {},
       archivedAt: null,
       updatedAt: now,
       lastActivityAt: now,
@@ -6317,6 +6319,7 @@ describe("agent snapshot MCP serialization", () => {
       const now = new Date().toISOString();
       const stored = createStoredRecord({
         id: "known-stored-attention",
+        metadata: {},
         archivedAt: null,
         updatedAt: now,
         lastActivityAt: now,
