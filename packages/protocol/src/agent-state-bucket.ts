@@ -9,6 +9,7 @@ export interface AgentStateBucketInput {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentAttentionReason;
+  attentionMessage?: string | null;
   backgroundWork?: { count: number } | null;
 }
 
@@ -33,6 +34,9 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
   if (hasUnreadError(input)) {
     return "failed";
   }
+  if (input.requiresAttention && input.attentionMessage) {
+    return "attention";
+  }
   if (input.status === "running" || (input.backgroundWork?.count ?? 0) > 0) {
     return "running";
   }
@@ -40,6 +44,14 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
     return "attention";
   }
   return "done";
+}
+
+/**
+ * An agent's explicit request for the human outranks only workspace activity that asks nothing
+ * of the person (running and done). Blockers and failures still win over it.
+ */
+export function isOutrankedByExplicitReview(bucket: WorkspaceStateBucket): boolean {
+  return bucket === "running" || bucket === "done";
 }
 
 export function getWorkspaceStateBucketPriority(bucket: WorkspaceStateBucket): number {

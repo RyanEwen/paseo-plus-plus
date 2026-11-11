@@ -255,6 +255,8 @@ const StoredAgentSnapshotSchema = z.strictObject({
   // Optional: clients without background_agents never received a background agent to cache.
   background: z.boolean().optional(),
   requiresAttention: z.boolean().optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: IsoDateSchema.nullable().optional(),
   archivedAt: IsoDateSchema.nullable().optional(),
@@ -330,6 +332,7 @@ const StoredWorkspaceSchema = z.strictObject({
   // current on reconnect, so the daemon has nothing newer to send back.
   labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
+  humanAttentionRequired: z.boolean().optional(),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
@@ -693,6 +696,8 @@ function serializeAgent(agent: Agent): StoredAgent {
     labels: agent.labels,
     ...(agent.background ? { background: true } : {}),
     requiresAttention: agent.requiresAttention ?? false,
+    humanAttentionRequired: agent.humanAttentionRequired,
+    attentionMessage: agent.attentionMessage,
     backgroundWork: agent.backgroundWork,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
@@ -752,6 +757,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     projectPinnedAt: workspace.projectPinnedAt,
     labels: workspace.labels,
     status: workspace.status,
+    humanAttentionRequired: workspace.humanAttentionRequired,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
     archivingAt: workspace.archivingAt,

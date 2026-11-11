@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
   AgentTimelineItemPayloadSchema,
   SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
@@ -607,6 +609,20 @@ test("sidebar mode profile support is optional and independent of settings sync"
       features: { appSettingsSync: true, appSettingsSidebarModeProfiles: true },
     })?.features?.appSettingsSidebarModeProfiles,
   ).toBe(true);
+});
+
+test("attention preference config remains optional and rejects nonboolean writes", () => {
+  expect(MutableDaemonConfigSchema.safeParse({ mcp: { injectIntoAgents: false } }).success).toBe(
+    true,
+  );
+  expect(
+    MutableDaemonConfigPatchSchema.safeParse({ notifications: { agentAwareAttention: false } })
+      .success,
+  ).toBe(true);
+  expect(
+    MutableDaemonConfigPatchSchema.safeParse({ notifications: { agentAwareAttention: "false" } })
+      .success,
+  ).toBe(false);
 });
 
 describe("terminal collection protocol compatibility", () => {

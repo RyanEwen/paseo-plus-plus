@@ -10,6 +10,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { StoredAttentionObjectivesSchema } from "./attention/objectives.js";
 import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
 import { foldFeatureValues } from "./option-controls.js";
 
@@ -81,6 +82,9 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  attentionObjectives: StoredAttentionObjectivesSchema.optional(),
+  humanAttentionRequired: z.boolean().optional(),
+  attentionMessage: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   background: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
@@ -122,6 +126,20 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+/** Optional ownership hooks run inside the existing writer, without changing ordinary snapshots. */
+export interface AgentSnapshotOperation {
+  /** Resolve the current view when its queue entry runs; null skips this write and its callback. */
+  resolveSnapshot(): ManagedAgent | null;
+  /** Runs after persistence and cache update, before the next write; must be synchronous and not throw. */
+  onCommitted?(): void;
+}
+
+export interface AgentSnapshotOptions {
+  title?: string | null;
+  internal?: boolean;
+  operation?: AgentSnapshotOperation;
+}
+
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
@@ -140,9 +158,20 @@ export class AgentStorage {
   private loadPromise: Promise<void> | null = null;
   private logger: Logger;
 
-  constructor(baseDir: string, logger: Logger) {
+  private readonly writeRecordFile: (path: string, record: StoredAgentRecord) => Promise<void>;
+
+  /**
+   * `options.writeRecordFile` replaces the durable per-record write (an atomic JSON write by
+   * default); tests use it to hold or fail one record's commit.
+   */
+  constructor(
+    baseDir: string,
+    logger: Logger,
+    options?: { writeRecordFile?: (path: string, record: StoredAgentRecord) => Promise<void> },
+  ) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+    this.writeRecordFile = options?.writeRecordFile ?? writeJsonFileAtomic;
   }
 
   async initialize(): Promise<void> {
@@ -295,13 +324,26 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  /** Apply a domain mutation to the current record inside its existing write queue. */
+  async update(
+    agentId: string,
+    mutate: (record: StoredAgentRecord) => StoredAgentRecord,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return mutate(existing);
+    });
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     return this.queueRecordMutation(record.id, () => record);
   }
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
+    onCommitted?: () => void,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -310,7 +352,9 @@ export class AgentStorage {
       }
 
       const record = mutate(this.cache.get(agentId) ?? null);
+      if (!record) return undefined;
       await this.writeRecord(record);
+      onCommitted?.();
       return undefined;
     });
 
@@ -329,7 +373,7 @@ export class AgentStorage {
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await this.writeRecordFile(nextPath, record);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {
@@ -385,34 +429,42 @@ export class AgentStorage {
     this.pathsById.delete(agentId);
   }
 
-  async applySnapshot(
-    agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent, options?: AgentSnapshotOptions): Promise<void> {
     await this.load();
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    await this.queueRecordMutation(agent.id, (existing) => {
-      const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
+    await this.queueRecordMutation(
+      agent.id,
+      (existing) => {
+        const current = options?.operation ? options.operation.resolveSnapshot() : agent;
+        if (!current) return null;
+        if (current.id !== agent.id) throw new Error("Snapshot resolver changed agent identity");
+        const record = toStoredAgentRecord(current, {
+          title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+          createdAt: existing?.createdAt,
+          internal: hasInternalOverride
+            ? options?.internal
+            : (current.internal ?? existing?.internal),
+        });
 
-      // Preserve soft-delete/archive status across snapshot flushes. The
-      // projection runs inside the per-agent write queue so it cannot commit a
-      // stale pre-archive record after the archive mutation.
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
-      // Background is fixed at creation; a runtime opened without it cannot clear it.
-      if (existing?.background) record.background = true;
-      record.resumeOnStartup =
-        existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
-      return record;
-    });
+        // Preserve soft-delete/archive status across snapshot flushes. The
+        // projection runs inside the per-agent write queue so it cannot commit a
+        // stale pre-archive record after the archive mutation.
+        if (existing && existing.archivedAt !== undefined) {
+          record.archivedAt = existing.archivedAt;
+        }
+        // Background is fixed at creation; a runtime opened without it cannot clear it.
+        if (existing?.background) record.background = true;
+        record.resumeOnStartup =
+          existing?.resumeOnStartup &&
+          current.lifecycle !== "idle" &&
+          current.lifecycle !== "error";
+        return record;
+      },
+      options?.operation?.onCommitted,
+    );
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {

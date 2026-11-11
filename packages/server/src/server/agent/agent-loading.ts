@@ -117,15 +117,20 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
+        {
+          ...extractTimestamps(record),
+          attention: extractAttention(record),
+          attentionObjectives: record.attentionObjectives,
+          attentionMessage: record.attentionMessage ?? undefined,
+        },
         deps.purpose ? { purpose: deps.purpose } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
       // No provider handle to resume: this starts the agent's first session rather than
-      // bringing one back, so it stamps activity and carries no stored attention. Records
-      // without a handle never got far enough to accumulate either. The manager rereads the
-      // record inside the agent's lane, so a write that lands after this read is not lost.
+      // bringing one back. Provider startup can fail before a handle exists, so the manager
+      // carries the record's known audience and unread state into the new session. It rereads
+      // the record inside the agent's lane, so a write that lands after this read is not lost.
       snapshot = await deps.agentManager.createAgentFromRecord(agentId);
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

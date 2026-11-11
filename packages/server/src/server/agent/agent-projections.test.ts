@@ -398,7 +398,9 @@ describe("toAgentPayload", () => {
       }),
     );
 
-    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly);
+    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, {
+      agentAwareAttention: true,
+    });
 
     expect(record.persistence?.metadata).toEqual({
       conversationId: "conversation-stored",
@@ -439,7 +441,9 @@ describe("toAgentPayload", () => {
       }),
     );
 
-    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly);
+    const payload = buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, {
+      agentAwareAttention: true,
+    });
 
     expect(payload.status).toBe("closed");
     expect(payload.controls).toEqual(controls);
@@ -472,7 +476,9 @@ describe("toAgentPayload", () => {
       ...own,
     });
 
-    const payload = buildStoredAgentPayload(record, ["claude"], withConfigDefaults);
+    const payload = buildStoredAgentPayload(record, ["claude"], withConfigDefaults, {
+      agentAwareAttention: true,
+    });
 
     expect(payload.options).toEqual({ fast_mode: true });
     expect(payload.features).toEqual([
@@ -485,9 +491,14 @@ describe("toAgentPayload", () => {
       createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
     );
 
-    expect(buildStoredAgentPayload(record, ["codex"], ownOptionsOnly).lastError).toBe("boom");
     expect(
-      buildStoredAgentPayload({ ...record, lastError: null }, ["codex"], ownOptionsOnly),
+      buildStoredAgentPayload(record, ["codex"], ownOptionsOnly, { agentAwareAttention: true })
+        .lastError,
+    ).toBe("boom");
+    expect(
+      buildStoredAgentPayload({ ...record, lastError: null }, ["codex"], ownOptionsOnly, {
+        agentAwareAttention: true,
+      }),
     ).not.toHaveProperty("lastError");
   });
 
@@ -641,6 +652,37 @@ describe("toRecentProviderSessionDescriptorPayload", () => {
       firstPromptPreview: null,
       lastPromptPreview: null,
     });
+  });
+});
+
+it("attention mode projects stored rows without rewriting recipient or unread evidence", () => {
+  const record = toStoredAgentRecord(
+    createManagedAgent({
+      attention: {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date("2026-01-01T00:00:00Z"),
+      },
+    }),
+  );
+  record.humanAttentionRequired = false;
+  const original = structuredClone(record);
+  expect(
+    buildStoredAgentPayload(record, ["claude"], ownOptionsOnly, { agentAwareAttention: true })
+      .humanAttentionRequired,
+  ).toBe(false);
+  expect(
+    buildStoredAgentPayload(record, ["claude"], ownOptionsOnly, { agentAwareAttention: false })
+      .humanAttentionRequired,
+  ).toBeUndefined();
+  expect(record).toEqual(original);
+  record.attentionMessage = "Choose the account";
+  expect(
+    buildStoredAgentPayload(record, ["claude"], ownOptionsOnly, { agentAwareAttention: false }),
+  ).toMatchObject({
+    requiresAttention: true,
+    humanAttentionRequired: true,
+    attentionMessage: "Choose the account",
   });
 });
 

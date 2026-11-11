@@ -1,3 +1,4 @@
+import { REQUESTER_LOST_PERMISSION_MESSAGE } from "./agent/attention/coordinator.js";
 import {
   createWorkspaceRuntimeStore,
   type WorkspaceRuntimeStore,
@@ -20,7 +21,7 @@ import {
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, onTestFinished, test, vi } from "vitest";
 
 import {
   assertPullRequestAutoMergeDisableReady,
@@ -28,6 +29,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { deriveAgentStateBucket } from "@getpaseo/protocol/agent-state-bucket";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -44,8 +46,12 @@ import {
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { AgentManager, type AgentManagerEvent } from "./agent/agent-manager.js";
+import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
+import { toAgentPayload } from "./agent/agent-projections.js";
+import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -306,6 +312,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  agentRuntime?: Pick<SessionOptions, "agentManager" | "agentStorage">;
   workspaceRuntimeStore?: WorkspaceRuntimeStore;
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
@@ -465,6 +472,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
+    // Inject real instances without spreading their prototype methods into partial stubs.
+    ...options.agentRuntime,
   };
   if (options.sendToSource) sessionOptions.onMessageToSource = options.sendToSource;
   return new Session(sessionOptions);
@@ -6104,6 +6113,202 @@ test("a failing direct source observes fire-and-forget file replies without unha
     process.off("unhandledRejection", collect);
     await session.cleanup();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** Exercise the real Session lifecycle route while reusing its existing non-lifecycle service stubs. */
+async function createRealAgentSessionFixture() {
+  const workdir = mkdtempSync(join(tmpdir(), "session-requester-deletion-"));
+  const logger = pino({ level: "silent" });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const timeline = new InMemoryAgentTimelineStore();
+  const manager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    timelineStore: timeline,
+    logger,
+  });
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    paseoHome: workdir,
+    messages,
+    agentRuntime: { agentManager: manager, agentStorage: storage },
+  });
+  const runs: Promise<unknown>[] = [];
+  onTestFinished(async () => {
+    await session.cleanup();
+    for (const agent of manager.listAgents()) {
+      if (manager.hasInFlightRun(agent.id)) await manager.cancelAgentRun(agent.id);
+      await manager.closeAgent(agent.id);
+    }
+    await Promise.allSettled(runs);
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const requester = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Independent requester" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const worker = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Blocked worker",
+      modeId: "default",
+      providerOptions: { approval_policy: "on-request" },
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  return {
+    workdir,
+    logger,
+    manager,
+    storage,
+    timeline,
+    session,
+    messages,
+    requester,
+    worker,
+    runs,
+  };
+}
+
+/**
+ * A real session whose worker is blocked on an unresolved permission requested for another
+ * agent (the requester). Tests delete the requester and observe the worker's attention.
+ */
+async function startWorkerBlockedForRequester() {
+  const fixture = await createRealAgentSessionFixture();
+  const { manager, storage, requester, worker, runs } = fixture;
+  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
+  manager.setAgentAttentionCallback(notify);
+  const running = manager.runAgent(worker.id, "printf ok > permission.txt", {
+    clientMessageId: "delete-requester-job",
+    attention: [
+      {
+        kind: "agent",
+        requestId: "delete-requester-job",
+        requester: manager.attentionRequester(requester.id),
+      },
+    ],
+  });
+  void running.catch(() => undefined);
+  runs.push(running);
+  await manager.waitForAgentRunStart(worker.id);
+  await vi.waitFor(() => expect(manager.getPendingPermissions(worker.id)).toHaveLength(1));
+  await manager.flush();
+  const [permission] = manager.getPendingPermissions(worker.id);
+  if (!permission) throw new Error("Expected the fake SDK's actual unresolved tool permission");
+  const before = manager.getAgent(worker.id);
+  if (!before?.session) throw new Error("Expected the actual blocked worker session");
+  expect(toAgentPayload(before).humanAttentionRequired).toBe(false);
+  expect(await storage.get(requester.id)).toEqual(expect.objectContaining({ id: requester.id }));
+  expect((await storage.get(requester.id))?.archivedAt).toBeUndefined();
+  expect(notify).not.toHaveBeenCalled();
+  const providerEvents: AgentStreamEvent[] = [];
+  const stopObserving = before.session.subscribe((event) => providerEvents.push(event));
+  onTestFinished(stopObserving);
+
+  /** Delete the requester through the session and check what every boundary shares. */
+  async function deleteRequester() {
+    await fixture.session.handleMessage({
+      type: "delete_agent_request",
+      agentId: requester.id,
+      requestId: "delete-requester",
+    });
+    await manager.flush();
+    expect(manager.getAgent(requester.id)).toBeNull();
+    expect(findByType(fixture.messages, "agent_deleted")?.payload).toEqual({
+      agentId: requester.id,
+      requestId: "delete-requester",
+    });
+  }
+
+  /** The worker is still blocked on the same permission, with no provider replay. */
+  function expectWorkerStillBlocked() {
+    expect(providerEvents).toEqual([]);
+    expect(manager.getPendingPermissions(worker.id)).toEqual([permission]);
+    const after = manager.getAgent(worker.id);
+    if (!after) throw new Error("Expected independent worker to survive requester deletion");
+    const payload = toAgentPayload(after);
+    expect(
+      deriveAgentStateBucket({
+        ...payload,
+        pendingPermissionCount: payload.pendingPermissions.length,
+      }),
+    ).toBe("needs_input");
+    return payload;
+  }
+
+  return {
+    ...fixture,
+    notify,
+    deleteRequester,
+    expectWorkerStillBlocked,
+    persistedRequester: () =>
+      new AgentStorage(join(fixture.workdir, "agents"), fixture.logger).get(requester.id),
+    stopObserving,
+  };
+}
+
+test("hard delete committed removal preserves the requester-loss boundary", async () => {
+  const scenario = await startWorkerBlockedForRequester();
+  const { storage, timeline, requester, worker, notify } = scenario;
+  const failure = new Error("Injected committed deletion boundary failure");
+  const remove = vi.spyOn(storage, "remove");
+  const originalDelete = timeline.delete.bind(timeline);
+  // Removal commits, then the later timeline cleanup fails.
+  const cleanup = vi.spyOn(timeline, "delete").mockImplementation((agentId) => {
+    if (agentId === requester.id) throw failure;
+    originalDelete(agentId);
+  });
+  try {
+    await scenario.deleteRequester();
+    expect(remove).toHaveBeenCalledExactlyOnceWith(requester.id);
+    expect(await scenario.persistedRequester()).toBeNull();
+    expect(cleanup).toHaveBeenCalledExactlyOnceWith(requester.id);
+    expect(cleanup.mock.results).toEqual([{ type: "throw", value: failure }]);
+    const payload = scenario.expectWorkerStillBlocked();
+    expect(payload.humanAttentionRequired).toBe(true);
+    expect(notify).toHaveBeenCalledExactlyOnceWith({
+      agentId: worker.id,
+      provider: "codex",
+      reason: "finished",
+      message: REQUESTER_LOST_PERMISSION_MESSAGE,
+    });
+    expect((await storage.get(worker.id))?.requiresAttention).toBe(true);
+  } finally {
+    remove.mockRestore();
+    cleanup.mockRestore();
+    scenario.stopObserving();
+  }
+});
+
+test("hard delete rejected removal preserves the requester-loss boundary", async () => {
+  const scenario = await startWorkerBlockedForRequester();
+  const { storage, timeline, requester, worker, notify } = scenario;
+  const failure = new Error("Injected rejected deletion boundary failure");
+  // Removal itself fails, so the requester stays on disk and nothing was lost.
+  const remove = vi.spyOn(storage, "remove").mockRejectedValueOnce(failure);
+  const cleanup = vi.spyOn(timeline, "delete");
+  try {
+    await scenario.deleteRequester();
+    expect(remove).toHaveBeenCalledExactlyOnceWith(requester.id);
+    const persisted = await scenario.persistedRequester();
+    expect(persisted).toEqual(expect.objectContaining({ id: requester.id }));
+    expect(persisted?.archivedAt).toBeUndefined();
+    expect(cleanup).not.toHaveBeenCalled();
+    const payload = scenario.expectWorkerStillBlocked();
+    expect(payload.humanAttentionRequired).toBe(false);
+    expect(notify).not.toHaveBeenCalled();
+    expect((await storage.get(worker.id))?.requiresAttention).toBe(false);
+  } finally {
+    remove.mockRestore();
+    cleanup.mockRestore();
+    scenario.stopObserving();
   }
 });
 
