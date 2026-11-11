@@ -352,15 +352,27 @@ function answersPendingSubmission(
   return index.endsInPendingTurn;
 }
 
-/** resolveRetainedContextSource for a stable tail: only the streaming head is scanned per delta. */
-export function resolveIndexedContextSource(input: {
+interface IndexedContextSourceInput {
   index: ContextSourceIndex;
   items: readonly StreamItem[];
   head: readonly StreamItem[];
   epoch: string | null;
   reading: Pick<PromptReadingPosition, "navigating" | "following" | "rowId" | "seq">;
   coverage: readonly CanonicalTimelineCoverage[];
-}): StreamItem | undefined {
+}
+
+/** resolveRetainedContextSource for a stable tail: only the streaming head is scanned per delta.
+ * Output answering the reader's pending submission is never a source; see answersPendingSubmission. */
+export function resolveIndexedContextSource(
+  input: IndexedContextSourceInput,
+): StreamItem | undefined {
+  const source = resolveReadingSource(input);
+  if (!source) return undefined;
+  return answersPendingSubmission(input.index, input.head, source) ? undefined : source;
+}
+
+/** The row whose prompt the reader needs, before the pending-submission rule applies. */
+function resolveReadingSource(input: IndexedContextSourceInput): StreamItem | undefined {
   const { index, items, head, epoch, reading, coverage } = input;
   // Before the viewport publishes an edge the scan stops at the newest user row.
   if (reading.navigating || reading.rowId === null)
@@ -373,9 +385,7 @@ export function resolveIndexedContextSource(input: {
       (seq != null ? item.timelineCursor.seq === seq : item.id === rowId),
   );
   const candidates = [...(indexed ?? []), ...inHead];
-  if (candidates.length !== 1) return undefined;
-  const source = candidates[0]!;
-  return answersPendingSubmission(index, head, source) ? undefined : source;
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /** The streaming head only matters to prompt work when it holds a user row. Returns one

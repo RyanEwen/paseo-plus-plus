@@ -392,6 +392,19 @@ describe("tail-indexed context source", () => {
     expect(resolve([pending], [prompt("other", 4), answer])).toBe(answer);
   });
 
+  it("reads no context for pending-submission output before the viewport publishes a row", () => {
+    const result = resolveIndexedContextSource({
+      index: indexContextSources([pending, answer], "e"),
+      items: [pending, answer],
+      head: [],
+      epoch: "e",
+      reading: { ...reading, rowId: null, seq: null },
+      coverage: [],
+    });
+
+    expect(result).toBeUndefined();
+  });
+
   it("still reads context for output before the pending submission", () => {
     expect(resolve([answer, pending], [])).toBe(answer);
   });
