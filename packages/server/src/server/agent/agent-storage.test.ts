@@ -549,6 +549,7 @@ describe("AgentStorage", () => {
     expect(await reloaded.get(second.id)).toEqual(persistedSecond);
     await storage.applySnapshot({ ...first, currentModeId: "after-rejection" });
     expect((await storage.get(first.id))?.lastModeId).toBe("after-rejection");
+  });
 
   test("a registered shared-route agent that never got a session reopens under its own ID", async () => {
     const intent = retryIntent("unstarted-shared");
