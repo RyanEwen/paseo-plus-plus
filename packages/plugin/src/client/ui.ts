@@ -244,3 +244,74 @@ export declare const Toggle: ComponentType<ToggleProps>;
 export declare function Select<Value extends string>(props: SelectProps<Value>): ReactNode;
 export declare const Action: ComponentType<ActionProps>;
 export declare function Combobox<Item extends ComboboxItem>(props: ComboboxProps<Item>): ReactNode;
+
+/** A decoded frame retained by the host until present() or release(). */
+export interface EncodedVideoFrame {
+  id: number;
+  timestamp: number;
+  displayWidth: number;
+  displayHeight: number;
+}
+
+export interface EncodedVideoConfig {
+  codec: string;
+  codedWidth: number;
+  codedHeight: number;
+  descriptionBase64?: string;
+  /** Preserve the encoder's decoderConfig.colorSpace; VP8 chunks do not carry it reliably. */
+  colorSpace?: {
+    primaries?: "bt470bg" | "bt709" | "smpte170m" | null;
+    transfer?: "bt709" | "iec61966-2-1" | "smpte170m" | null;
+    matrix?: "bt470bg" | "bt709" | "rgb" | "smpte170m" | null;
+    fullRange?: boolean | null;
+  };
+  optimizeForLatency: boolean;
+}
+
+export interface EncodedVideoChunk {
+  type: "key" | "delta";
+  timestamp: number;
+  dataBase64: string;
+}
+
+/**
+ * Any decoder failure (including the limits below) tears the decoder down: it releases every
+ * retained frame, drops pending onDequeue acknowledgements and reports onError. Configure
+ * again and resume from a keyframe.
+ */
+export interface EncodedVideoHandle {
+  /** Replaces the decoder and releases all retained frames. Throws until onReady. */
+  configure(config: EncodedVideoConfig): void;
+  /**
+   * Submits one chunk. Keep at most four awaiting onDequeue; a fifth, a chunk over 2 MiB,
+   * or a chunk before configure fails the decoder. Throws until onReady.
+   */
+  decode(chunk: EncodedVideoChunk): void;
+  /** Releases the decoder and retained frames and drops pending acknowledgements; reset your queue count. */
+  reset(): void;
+  /**
+   * Resolves after drawing this frame. Rejects on reset, unmount, or host failure.
+   * Presenting a frame no newer than the last drawn one fails the decoder.
+   */
+  present(frameId: number): Promise<void>;
+  /** Frees a retained frame. More than 64 retained frames fails the decoder. */
+  release(frameId: number): void;
+}
+
+export interface EncodedVideoProps {
+  style?: StyleProp<ViewStyle>;
+  /** The canvas can accept configure(). Fires again after Android restarts a killed renderer. */
+  onReady(): void;
+  onFrame(frame: EncodedVideoFrame): void;
+  /** One acknowledgement for each submitted chunk, even if it produces no frame. */
+  onDequeue(): void;
+  onError(error: Error): void;
+}
+
+/** Host-owned Android WebCodecs canvas. It receives bytes, never URLs or credentials.
+ * Input remains caller-owned. Revoke input before present(), then admit it only after
+ * the promise resolves and the original source identity is still current.
+ * Other platforms report unsupported; browser plugins can use WebCodecs directly. */
+export declare const EncodedVideo: ForwardRefExoticComponent<
+  EncodedVideoProps & RefAttributes<EncodedVideoHandle>
+>;
