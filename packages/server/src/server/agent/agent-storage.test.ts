@@ -289,7 +289,13 @@ describe("AgentStorage", () => {
     );
     const initial = await storage.get("legacy-read");
     if (!initial) throw new Error("Missing legacy fixture");
-    await storage.upsert({ ...initial, workspaceId: "workspace", humanAttentionRequired: true });
+    // Beta records always carry metadata; the shared fixture predates the field.
+    await storage.upsert({
+      ...initial,
+      metadata: {},
+      workspaceId: "workspace",
+      humanAttentionRequired: true,
+    });
     let continueRead!: () => void;
     let captured!: () => void;
     const held = new Promise<void>((resolve) => {
