@@ -48,6 +48,7 @@ class Host implements HostObservation {
           updatedAt: "2026-01-01",
         },
         ["codex"],
+        (_provider, own) => own ?? {},
         { agentAwareAttention: true },
       ),
       event,
@@ -139,6 +140,7 @@ test("late initial permission snapshot cannot resurrect an already resolved requ
         updatedAt: "2026-01-01",
       },
       ["codex"],
+      (_provider, own) => own ?? {},
       { agentAwareAttention: true },
     );
     if (requestEvent.type !== "permission_requested") throw new Error("Expected permission");
@@ -242,6 +244,8 @@ test.each([
     const observation = createFinishObservation({
       agentManager: {
         agentAwareAttentionEnabled: enabled,
+        effectiveOptionsFor: (_provider: string, own: Record<string, unknown> | undefined) =>
+          own ?? {},
         getAgent: () => null,
         waitForAttentionOutcome: async () => null,
       } as unknown as AgentManager,

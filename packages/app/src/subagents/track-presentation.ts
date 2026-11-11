@@ -1,7 +1,8 @@
 import type { TFunction } from "i18next";
 import type { ComposerTrackPillSegment } from "@/composer/tracks";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { deriveSidebarStateBucket, STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
+import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
+import { STATUS_BUCKET_ORDER, deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
 import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
@@ -12,6 +13,19 @@ function presentationStatus(row: SubagentRow) {
     return row.status === "running" ? "idle" : row.status;
   }
   return providerSubagentLifecycleStatus(row.status);
+}
+
+/**
+ * A child's mark reports what it is doing, not whether anyone read it: the track is where a
+ * failed child stays visible after the parent's own attention is cleared.
+ */
+export function deriveSubagentStatusBucket(
+  status: AgentLifecycleStatus,
+  backgroundWork?: { count: number } | null,
+): SidebarStateBucket {
+  if (status === "error") return "failed";
+  if (status === "running" || (backgroundWork?.count ?? 0) > 0) return "running";
+  return "done";
 }
 
 export interface SubagentRowPresentationData {
@@ -38,29 +52,32 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
-    statusBucket: deriveSidebarStateBucket({ status, ...subagentAttentionInput(row) }),
+    statusBucket: subagentStatusBucket(row, status),
   };
 }
 
 /**
- * The attention part of a row's status bucket. A managed child reports its own human attention,
- * blockers and review reason; a provider subagent reports only its lifecycle.
+ * A managed child reports its own human attention, blockers and review reason. Without one it
+ * falls back to its lifecycle, so a failed child stays visible after its error was read.
+ * Provider subagents report only their lifecycle.
  */
-function subagentAttentionInput(row: SubagentRow) {
-  if (row.kind !== "paseo") {
-    return {};
-  }
+function subagentStatusBucket(row: SubagentRow, status: AgentLifecycleStatus): SidebarStateBucket {
+  const backgroundWork = row.kind === "paseo" ? row.backgroundWork : undefined;
+  const lifecycle = deriveSubagentStatusBucket(status, backgroundWork);
   // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor
   // includes audience metadata. Older hosts keep the track's lifecycle-only presentation.
-  if (row.humanAttentionRequired === undefined) {
-    return { requiresAttention: false, attentionMessage: row.attentionMessage };
+  if (row.kind !== "paseo" || row.humanAttentionRequired === undefined) {
+    return lifecycle;
   }
-  return {
+  const attention = deriveSidebarStateBucket({
+    status,
+    backgroundWork,
     requiresAttention: row.humanAttentionRequired && row.requiresAttention,
     attentionReason: row.attentionReason,
     attentionMessage: row.attentionMessage,
     pendingPermissionCount: row.pendingPermissionCount,
-  };
+  });
+  return attention === "done" ? lifecycle : attention;
 }
 
 type ActiveStatusBucket = Exclude<SidebarStateBucket, "done">;

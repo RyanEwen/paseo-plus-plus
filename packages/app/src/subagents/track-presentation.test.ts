@@ -30,6 +30,7 @@ function row(
     attentionReason: overrides.attentionReason,
     attentionMessage: overrides.attentionMessage,
     pendingPermissionCount: overrides.pendingPermissionCount ?? 0,
+    backgroundWork: overrides.backgroundWork,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };
 }
@@ -197,6 +198,22 @@ describe("buildSubagentRowPresentationData", () => {
     );
   });
 
+  it("shows a child with background work as running after its foreground turn ends", () => {
+    expect(
+      buildSubagentRowPresentationData(
+        row({ id: "a", status: "idle", backgroundWork: { count: 1 } }),
+      ).statusBucket,
+    ).toBe("running");
+  });
+
+  it("keeps a failed child marked failed while it has background work", () => {
+    expect(
+      buildSubagentRowPresentationData(
+        row({ id: "a", status: "error", backgroundWork: { count: 1 } }),
+      ).statusBucket,
+    ).toBe("failed");
+  });
+
   it("maps an idle row to the done status bucket so callers render the static provider icon", () => {
     expect(buildSubagentRowPresentationData(row({ id: "a", status: "idle" })).statusBucket).toBe(
       "done",
@@ -324,4 +341,14 @@ it("shows explicit managed-child review and keeps its blocking status primary", 
       attentionMessage: null,
     }).statusBucket,
   ).toBe("running");
+});
+
+it("keeps a managed child with a known audience failed after its error was read", () => {
+  const child = row({
+    id: "child",
+    status: "error",
+    humanAttentionRequired: false,
+    requiresAttention: false,
+  });
+  expect(buildSubagentRowPresentationData(child).statusBucket).toBe("failed");
 });
