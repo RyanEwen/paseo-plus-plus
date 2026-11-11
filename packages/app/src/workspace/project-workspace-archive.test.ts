@@ -683,7 +683,9 @@ describe("archiveProjectWorkspaces with the optimistic workspace archive", () =>
       workspaces: plan,
       confirm: async () => ({ kind: "confirmed", includeBackground: false }),
       refresh: async () => plan,
-      archive: async (entry) => archiveWorkspaceOptimistically({ client, workspace: entry }),
+      archive: async (entry) => {
+        await archiveWorkspaceOptimistically({ client, workspace: entry });
+      },
       onProgress: () => {},
     });
     expect(outcome).toMatchObject({
