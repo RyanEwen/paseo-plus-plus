@@ -291,6 +291,10 @@ export function resolveContextSource(
 export interface ContextSourceIndex {
   bySeq: ReadonlyMap<number, readonly StreamItem[]>;
   byId: ReadonlyMap<string, readonly StreamItem[]>;
+  /** Tail rows whose nearest preceding user row is the reader's pending submission. */
+  pendingAnswerIds: ReadonlySet<string>;
+  /** Whether the tail's last user row is a pending submission, governing the head's first rows. */
+  endsInPendingTurn: boolean;
 }
 
 function appendIndexed<K>(index: Map<K, StreamItem[]>, key: K, item: StreamItem): void {
@@ -305,12 +309,47 @@ export function indexContextSources(
 ): ContextSourceIndex {
   const bySeq = new Map<number, StreamItem[]>();
   const byId = new Map<string, StreamItem[]>();
+  const pendingAnswerIds = new Set<string>();
+  let governedByPending = false;
   for (const item of tail) {
+    if (item.kind === "user_message") governedByPending = isPendingSubmission(item);
+    else if (governedByPending) pendingAnswerIds.add(item.id);
     if (item.timelineCursor?.epoch !== epoch) continue;
     appendIndexed(bySeq, item.timelineCursor.seq, item);
     appendIndexed(byId, item.id, item);
   }
-  return { bySeq, byId };
+  return { bySeq, byId, pendingAnswerIds, endsInPendingTurn: governedByPending };
+}
+
+/**
+ * The reader's own submission before the daemon echoes it: a client message id and no canonical
+ * position. The daemon may never echo it (hidden or suppressed user rows), so it can stay so.
+ */
+function isPendingSubmission(item: StreamItem): boolean {
+  return (
+    item.kind === "user_message" &&
+    item.timelineCursor === undefined &&
+    item.clientMessageId !== undefined
+  );
+}
+
+/**
+ * Whether a row answers the reader's pending submission. Its prompt is that loaded row, so a
+ * canonical context read would only repeat what the transcript already shows. Head rows look
+ * back through the head first, then inherit the tail's last user row.
+ */
+function answersPendingSubmission(
+  index: ContextSourceIndex,
+  head: readonly StreamItem[],
+  item: StreamItem,
+): boolean {
+  const headPosition = head.indexOf(item);
+  if (headPosition === -1) return index.pendingAnswerIds.has(item.id);
+  for (let position = headPosition - 1; position >= 0; position -= 1) {
+    const previous = head[position]!;
+    if (previous.kind === "user_message") return isPendingSubmission(previous);
+  }
+  return index.endsInPendingTurn;
 }
 
 /** resolveRetainedContextSource for a stable tail: only the streaming head is scanned per delta. */
@@ -334,7 +373,9 @@ export function resolveIndexedContextSource(input: {
       (seq != null ? item.timelineCursor.seq === seq : item.id === rowId),
   );
   const candidates = [...(indexed ?? []), ...inHead];
-  return candidates.length === 1 ? candidates[0] : undefined;
+  if (candidates.length !== 1) return undefined;
+  const source = candidates[0]!;
+  return answersPendingSubmission(index, head, source) ? undefined : source;
 }
 
 /** The streaming head only matters to prompt work when it holds a user row. Returns one
