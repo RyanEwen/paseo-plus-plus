@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/floating-action-button";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
 import type { WorkingDiffMode } from "@/git/diff-document";
-import type { ParsedDiffFile } from "@/git/use-diff-query";
+import type { DiffFileHeader } from "@/git/diff-snapshot";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 
 // The sheet header indents its leading glyph by the sheet's own content inset,
@@ -46,7 +46,8 @@ const foregroundMutedIconColorMapping = (theme: Theme) => ({
 export const JUMP_TO_FILE_CLEARANCE = FLOATING_ACTION_BUTTON_CLEARANCE;
 
 export interface JumpToFileProps {
-  files: ParsedDiffFile[];
+  /** Headers suffice: the sheet lists changed files and never renders hunks. */
+  files: DiffFileHeader[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
 }
