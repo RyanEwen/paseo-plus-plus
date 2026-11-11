@@ -135,8 +135,6 @@ export const es: TranslationResources = {
       before: "Antes del cambio de estado",
       after: "Después del cambio de estado",
       imageLabel: "Ejemplo de {{title}}",
-      positions:
-        "Posiciones finales antes y después de un cambio de estado. Estas imágenes no muestran la duración de la animación.",
       explorer: "Ejemplo de la lista de cambios y las diferencias de la copia de trabajo.",
       workspaceLimit:
         "Elige una cantidad inicial por grupo o Mostrar todo. Los grupos que hayas expandido permanecen expandidos.",

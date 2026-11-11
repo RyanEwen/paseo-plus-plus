@@ -4,7 +4,9 @@ import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
 } from "react-native-draggable-flatlist";
+import { Easing, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { describeDragReorderMove, isDragGroupOrderValid } from "./drag-reorder/reorder-items";
+import { usePositionTransitionDuration } from "./drag-reorder/use-position-transition-duration";
 import { useUnistyles } from "react-native-unistyles";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 
@@ -19,6 +21,7 @@ export function DraggableList<T>({
   renderItem,
   onDragEnd,
   getDragGroupKey,
+  positionTransitionDuration,
   style,
   containerStyle,
   contentContainerStyle,
@@ -32,6 +35,7 @@ export function DraggableList<T>({
   refreshing,
   onRefresh,
   extraData,
+  positionTransitionRevision,
   simultaneousGestureRef,
   gestureHostPresented,
   waitFor,
@@ -129,11 +133,29 @@ export function DraggableList<T>({
     [shouldShowRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
   );
 
+  const motionDuration = usePositionTransitionDuration({
+    data: data,
+    keyExtractor,
+    getDragGroupKey,
+    duration: positionTransitionDuration,
+    dragging: isDragging || gestureHostPresented === false,
+  });
+  const itemLayoutAnimation = useMemo(
+    () =>
+      LinearTransition.duration(motionDuration)
+        .easing(Easing.inOut(Easing.ease))
+        .reduceMotion(ReduceMotion.System),
+    [motionDuration],
+  );
+
   const dragGroupKeys = useMemo(
     () => (getDragGroupKey ? data.map(getDragGroupKey) : undefined),
     [data, getDragGroupKey],
   );
-  const listExtraData = useMemo(() => [extraData, disabled], [extraData, disabled]);
+  const listExtraData = useMemo(
+    () => [extraData, motionDuration, disabled, positionTransitionRevision],
+    [extraData, motionDuration, disabled, positionTransitionRevision],
+  );
 
   return (
     <ListComponent
@@ -152,6 +174,8 @@ export function DraggableList<T>({
       scrollEnabled={scrollEnabled}
       extraData={listExtraData}
       dragGroupKeys={dragGroupKeys}
+      enableLayoutAnimationExperimental={positionTransitionDuration !== undefined}
+      itemLayoutAnimation={itemLayoutAnimation}
       simultaneousHandlers={simultaneousHandlers}
       dragGestureHostPresented={gestureHostPresented}
       // Higher activation distance reduces accidental drag capture while nested

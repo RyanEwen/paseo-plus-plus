@@ -128,8 +128,6 @@ export const en = {
       before: "Before the status change",
       after: "After the status change",
       imageLabel: "{{title}} example",
-      positions:
-        "Settled positions before and after a status change. These still images do not show animation timing.",
       explorer: "Example of the Changes list and working-copy diff.",
       workspaceLimit:
         "Choose a starting count for each group or Show all. Groups you have expanded stay expanded.",

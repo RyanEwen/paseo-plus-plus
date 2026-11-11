@@ -17,6 +17,8 @@ import {
   verticalListSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
+import { PositionTransition } from "./drag-reorder/position-transition.web";
+import { usePositionTransitionDuration } from "./drag-reorder/use-position-transition-duration";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
@@ -98,6 +100,8 @@ interface SortableItemProps<T> {
   activeId: string | null;
   useDragHandle: boolean;
   dragDisabled: boolean;
+  positionTransitionDuration: number | undefined;
+  positionRevision: unknown;
 }
 
 function SortableItemInner<T>({
@@ -108,6 +112,8 @@ function SortableItemInner<T>({
   activeId,
   useDragHandle,
   dragDisabled,
+  positionTransitionDuration,
+  positionRevision,
 }: SortableItemProps<T>) {
   const {
     attributes,
@@ -184,7 +190,13 @@ function SortableItemInner<T>({
 
   return (
     <div {...wrapperProps} style={style}>
-      {renderItem(info)}
+      {positionTransitionDuration === undefined ? (
+        renderItem(info)
+      ) : (
+        <PositionTransition duration={positionTransitionDuration} revision={positionRevision}>
+          {renderItem(info)}
+        </PositionTransition>
+      )}
     </div>
   );
 }
@@ -198,6 +210,8 @@ export function DraggableList<T>({
   renderItem,
   onDragEnd,
   getDragGroupKey,
+  positionTransitionDuration,
+  positionTransitionRevision,
   style,
   containerStyle,
   contentContainerStyle,
@@ -259,6 +273,18 @@ export function DraggableList<T>({
     () => items.map((item, index) => keyExtractor(item, index)),
     [items, keyExtractor],
   );
+  const motionDuration = usePositionTransitionDuration({
+    data: items,
+    keyExtractor,
+    getDragGroupKey,
+    duration: positionTransitionDuration,
+    dragging: activeId !== null,
+  });
+  const positionRevision = useMemo(
+    () => [JSON.stringify(ids), positionTransitionRevision],
+    [ids, positionTransitionRevision],
+  );
+
   const wrapperStyle = useMemo(
     () => [
       { position: "relative" as const },
@@ -300,6 +326,10 @@ export function DraggableList<T>({
                     activeId={activeId}
                     useDragHandle={useDragHandle}
                     dragDisabled={disabled || getDragGroupKey?.(item) === null}
+                    positionTransitionDuration={
+                      positionTransitionDuration === undefined ? undefined : motionDuration
+                    }
+                    positionRevision={positionRevision}
                   />
                 );
               })}
@@ -332,6 +362,10 @@ export function DraggableList<T>({
                     activeId={activeId}
                     useDragHandle={useDragHandle}
                     dragDisabled={disabled || getDragGroupKey?.(item) === null}
+                    positionTransitionDuration={
+                      positionTransitionDuration === undefined ? undefined : motionDuration
+                    }
+                    positionRevision={positionRevision}
                   />
                 );
               })}
