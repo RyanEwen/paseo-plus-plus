@@ -449,6 +449,7 @@ function SidebarFooter({
   // don't fit move behind a caret before Settings.
   return (
     <UsageSidebarRoot>
+      <SidebarCalloutSlot />
       <View style={styles.footerContainer} testID="sidebar-footer">
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
         <View
@@ -875,8 +876,6 @@ function DesktopSidebar({
               )}
             </SidebarToastRegion>
           </SidebarViewSlot>
-
-          <SidebarCalloutSlot />
 
           <SidebarFooter
             handleOpenProject={handleOpenProject}

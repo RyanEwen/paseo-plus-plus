@@ -1,5 +1,6 @@
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { PaseoPlusPlusSection } from "@/screens/settings/paseo-plus-plus-section";
+import { AndroidAppUpdateRow } from "@/app-updates/settings-row";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -499,6 +500,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
             <Text style={styles.aboutValue}>{appVersionText}</Text>
           </View>
           <WhatsNewRow />
+          <AndroidAppUpdateRow />
           {isDesktopApp ? <DesktopAppUpdateRow isPreview={isPreviewBuild} /> : null}
         </View>
       </SettingsSection>
