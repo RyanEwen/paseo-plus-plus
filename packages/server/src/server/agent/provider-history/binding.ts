@@ -277,3 +277,16 @@ export class HistoryIntentConflictError extends Error {
 export function stableDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
+
+/** Option keys that select history storage on the daemon host; clients never see their paths. */
+const HISTORY_STORAGE_OPTION_KEYS: readonly string[] = ["sqlite_home"];
+
+/** A copy of options without host storage selectors, for anything sent to a client. */
+export function withoutHistoryStorageOptions(
+  options: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!HISTORY_STORAGE_OPTION_KEYS.some((key) => key in options)) return options;
+  const visible: Record<string, unknown> = { ...options };
+  for (const key of HISTORY_STORAGE_OPTION_KEYS) delete visible[key];
+  return visible;
+}

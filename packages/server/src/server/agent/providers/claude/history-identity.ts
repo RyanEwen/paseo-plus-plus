@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentPersistenceHandle, AgentPromptInput } from "../../agent-sdk-types.js";
 import {
@@ -99,6 +100,16 @@ export class ClaudeHistoryIdentity {
       /^\s*\/(?:clear|new|fork|resume|rewind)(?:\s|$)/i.test(prompt)
     )
       throw new HistoryStorageConflictError("session-switch-command-use-managed-rewind");
+  }
+
+  /**
+   * A bound chat's command was admitted with no extraArgs, so an options change cannot add any
+   * (they could select another session or profile outside the binding).
+   */
+  assertOptionsPatch(patch: Record<string, unknown>, current: Record<string, unknown>): void {
+    if (!this.boundHistory || !("extraArgs" in patch)) return;
+    if (!isDeepStrictEqual(current.extraArgs ?? null, patch.extraArgs ?? null))
+      throw new HistoryStorageConflictError("unresolved-command-selectors");
   }
 
   /** Admit the first requested turn of a pending initial or fresh query. */

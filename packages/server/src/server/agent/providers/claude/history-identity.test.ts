@@ -75,4 +75,15 @@ describe("Claude history identity", () => {
     identity.adoptionFailed = true;
     expect(() => identity.assertPrompt("hello")).toThrow("committed-identity-reload-required");
   });
+
+  test("refuses an extraArgs change on a bound chat", () => {
+    const bound = new ClaudeHistoryIdentity(host(), { storage });
+    expect(() => bound.assertOptionsPatch({ extraArgs: { resume: "other" } }, {})).toThrow(
+      "Configured provider history cannot use this route: unresolved-command-selectors",
+    );
+    expect(() => bound.assertOptionsPatch({ fast_mode: true }, {})).not.toThrow();
+    expect(() => bound.assertOptionsPatch({ extraArgs: null }, {})).not.toThrow();
+    const shared = new ClaudeHistoryIdentity(host(), {});
+    expect(() => shared.assertOptionsPatch({ extraArgs: { resume: "other" } }, {})).not.toThrow();
+  });
 });

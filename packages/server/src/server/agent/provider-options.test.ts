@@ -27,6 +27,8 @@ import {
   type ProviderCommand,
 } from "./provider-launch-config.js";
 import { buildProviderRegistry } from "./provider-registry.js";
+import { buildStoredAgentPayload } from "./agent-projections.js";
+import { parseStoredAgentRecord } from "./agent-storage.js";
 
 const hubPolicy = {
   preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish_execution" }],
@@ -605,4 +607,49 @@ test("configured foreign storage is rejected before any Codex create/resume subp
     client.resumeSession({ sessionId: "native" }, { cwd: "/fixture" }, context),
   ).rejects.toMatchObject({ reason: "bound-provider-conflict" });
   expect(probe).not.toHaveBeenCalled();
+});
+
+describe("history storage options stay on the daemon", () => {
+  const sqliteHome = "/private/configured-codex-sqlite";
+
+  function codexWorkManager() {
+    const logger = createTestLogger();
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        "codex-work": { extends: "codex", label: "Work", options: { sqlite_home: sqliteHome } },
+      },
+    });
+    return new AgentManager({
+      clients: { "codex-work": registry["codex-work"].createClient(logger) },
+      logger,
+    });
+  }
+
+  test("a profile's sqlite_home reaches the launch but not a stored agent snapshot", () => {
+    const manager = codexWorkManager();
+    expect(manager.effectiveOptionsFor("codex-work", undefined)).toMatchObject({
+      sqlite_home: sqliteHome,
+    });
+    const record = parseStoredAgentRecord({
+      id: "agent-configured-history",
+      provider: "codex-work",
+      cwd: "/repo",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: "closed",
+      config: { providerOptions: { service_tier: "fast" } },
+      persistence: { provider: "codex-work", sessionId: "thread-1" },
+    });
+    const payload = buildStoredAgentPayload(record, ["codex-work"], (provider, own) =>
+      manager.effectiveOptionsFor(provider, own),
+    );
+    expect(payload.options).toMatchObject({ service_tier: "fast" });
+    expect(JSON.stringify(payload)).not.toContain(sqliteHome);
+  });
+
+  test("draft controls for a profile never carry its sqlite_home", async () => {
+    const manager = codexWorkManager();
+    const drafted = await manager.listDraftControls({ provider: "codex-work", cwd: tmpdir() });
+    expect(JSON.stringify(drafted)).not.toContain(sqliteHome);
+  });
 });
