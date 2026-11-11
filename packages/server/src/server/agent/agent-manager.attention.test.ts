@@ -3837,11 +3837,14 @@ test("a stored agent without a provider handle keeps its attention state when it
   const expected = objectives.snapshot();
 
   // Provider startup failed before Claude or Codex returned a session handle, so the stored
-  // record never gains a persistence handle or a native history binding.
+  // record never gains a persistence handle or a native history binding. The manager also
+  // derives a handle from the runtime session id, so the session reports none there either.
   class HandlelessAgentClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       const session = await super.createSession(config);
+      const getRuntimeInfo = session.getRuntimeInfo.bind(session);
       session.describePersistence = () => null;
+      session.getRuntimeInfo = async () => ({ ...(await getRuntimeInfo()), sessionId: null });
       return session;
     }
   }
