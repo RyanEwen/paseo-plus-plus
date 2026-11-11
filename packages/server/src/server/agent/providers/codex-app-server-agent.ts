@@ -6562,13 +6562,15 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.terminalProcessIdsByTurnId.delete(this.currentTurnId);
     }
     if (parsed.status === "failed") {
+      // Async questions stay pending here too; see the interrupted branch below.
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
         error: parsed.errorMessage ?? "Codex turn failed",
       });
     } else if (parsed.status === "interrupted") {
-      this.dismissInterruptedAsyncQuestions();
+      // Unlike turn-scoped approvals, async questions stay pending after an interruption; see
+      // CodexAsyncQuestions, and survivesTurnEnd for the manager's matching rule.
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
@@ -6927,20 +6929,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     const request = this.asyncQuestions.receive(item);
     if (request)
       this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
-  }
-
-  private dismissInterruptedAsyncQuestions(): void {
-    const resolution: AgentPermissionResponse = { behavior: "deny", message: "Interrupted" };
-    for (const request of this.asyncQuestions.pending()) {
-      const prepared = this.asyncQuestions.prepareResponse(request.id, resolution);
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: prepared.complete() });
-      this.emitEvent({
-        type: "permission_resolved",
-        provider: CODEX_PROVIDER,
-        requestId: request.id,
-        resolution,
-      });
-    }
   }
 
   private reconcileAsyncQuestionsAfterRewind(timeline: readonly PersistedTimelineEntry[]): void {

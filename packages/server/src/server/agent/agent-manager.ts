@@ -135,6 +135,7 @@ import {
 import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
+import { survivesTurnEnd } from "./session-owned-permissions.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -4163,7 +4164,9 @@ export class AgentManager {
     }
 
     if (agent.pendingPermissions.size > 0) {
-      this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted");
+      this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted", {
+        keep: (request) => survivesTurnEnd(agent.session, request),
+      });
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
@@ -5773,7 +5776,9 @@ export class AgentManager {
       this.formatTurnFailedMessage(event),
       options,
     );
-    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
+    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed", {
+      keep: (request) => survivesTurnEnd(agent.session, request),
+    });
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       this.emitState(agent);
     }
@@ -5809,7 +5814,9 @@ export class AgentManager {
       agent.lifecycle = "idle";
     }
     agent.lastError = undefined;
-    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
+    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted", {
+      keep: (request) => survivesTurnEnd(agent.session, request),
+    });
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       this.emitState(agent);
     }
@@ -5888,8 +5895,11 @@ export class AgentManager {
     provider: AgentProvider,
     options: { fromHistory?: boolean } | undefined,
     message: string,
+    // Paseo++: lets a canceled or failed turn keep requests the session still owns (see session-owned-permissions).
+    retention?: { keep: (request: AgentPermissionRequest) => boolean },
   ): void {
-    for (const [requestId] of agent.pendingPermissions) {
+    for (const [requestId, request] of agent.pendingPermissions) {
+      if (retention?.keep(request)) continue;
       agent.pendingPermissions.delete(requestId);
       if (!options?.fromHistory) {
         this.dispatchStream(agent.id, {

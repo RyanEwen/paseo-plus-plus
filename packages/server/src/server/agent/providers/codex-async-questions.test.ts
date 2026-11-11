@@ -36,7 +36,9 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
   );
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
-  await session.startTurn("Help me choose a color while you inspect the project.");
+  const { turnId } = await session.startTurn(
+    "Help me choose a color while you inspect the project.",
+  );
   const started = waitForNextEvent(session, "turn_started");
   appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn" });
   await started;
@@ -70,7 +72,7 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
   function allowAnswers() {
     rejectSteer = false;
   }
-  return { session, appServer, events, ask, say, finish, allowAnswers };
+  return { session, appServer, events, ask, say, finish, allowAnswers, turnId };
 }
 
 const answer = { behavior: "allow" as const, updatedInput: { answers: { "Question 1": "Green" } } };
@@ -291,6 +293,50 @@ test("a failed submission releases the request so the user can retry", async () 
   }
 });
 
+const managerTurnEnds = [
+  { name: "interrupted", status: "interrupted", terminalEvent: "turn_canceled" },
+  { name: "failed", status: "failed", terminalEvent: "turn_failed" },
+] as const;
+
+test.each(managerTurnEnds)(
+  "manager keeps an async question published and answerable after the turn is $name",
+  async ({ status, terminalEvent }) => {
+    const { session, appServer, ask } = await setup();
+    const { manager, agent } = await manage(session);
+    const resolved: string[] = [];
+    let managerEndedTurn!: () => void;
+    const turnEndedByManager = new Promise<void>((resolve) => {
+      managerEndedTurn = resolve;
+    });
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type !== "agent_stream") return;
+        if (event.event.type === "permission_resolved") resolved.push(event.event.requestId);
+        if (event.event.type === terminalEvent) managerEndedTurn();
+      },
+      { agentId: agent.id, replayState: false },
+    );
+    try {
+      await ask();
+      const [permission] = session.getPendingPermissions();
+
+      // The manager handles the session's terminal event asynchronously; wait for its dispatch.
+      appServer.completeTurn({ status });
+      await turnEndedByManager;
+
+      expect(Array.from(manager.getAgent(agent.id)!.pendingPermissions.keys())).toEqual([
+        permission.id,
+      ]);
+      expect(resolved).toEqual([]);
+      await manager.respondToPermission(agent.id, permission.id, answer);
+      expect(manager.getAgent(agent.id)!.pendingPermissions.size).toBe(0);
+    } finally {
+      unsubscribe();
+      await manager.closeAgent(agent.id);
+    }
+  },
+);
+
 test("shows an async question, keeps streaming, and delivers its answer without interrupting", async () => {
   const { session, appServer, events, ask, say } = await setup();
   try {
@@ -357,39 +403,97 @@ test("keeps a failed answer pending for retry", async () => {
   }
 });
 
-test("Stop dismisses async questions before cancellation and keeps them dismissed after resume", async () => {
-  const first = await setup();
-  let metadata: Record<string, unknown> | undefined;
+type QuestionSetup = Awaited<ReturnType<typeof setup>>;
+
+const turnCancellations: { name: string; cancel: (turn: QuestionSetup) => Promise<void> }[] = [
+  {
+    name: "Stop",
+    cancel: async (turn) => {
+      await turn.session.interrupt();
+      await turn.finish("interrupted");
+    },
+  },
+  {
+    name: "a turn_aborted notification",
+    cancel: async (turn) => {
+      const canceled = waitForNextEvent(turn.session, "turn_canceled");
+      turn.appServer.child.stdout.write(
+        JSON.stringify({
+          method: "codex/event/turn_aborted",
+          params: { threadId: "thread-1", msg: { type: "turn_aborted", reason: "interrupted" } },
+        }) + "\n",
+      );
+      await canceled;
+    },
+  },
+];
+
+test.each(turnCancellations)(
+  "$name keeps async questions pending through cancellation and resume",
+  async ({ cancel }) => {
+    const first = await setup();
+    let metadata: Record<string, unknown> | undefined;
+    try {
+      await first.ask();
+      const pending = first.session.getPendingPermissions();
+      expect(pending.map((request) => request.id)).toEqual(["permission-async-question-1"]);
+      first.session.subscribe((event) => {
+        if (event.type === "turn_canceled") {
+          metadata = first.session.describePersistence()!.metadata;
+        }
+      });
+
+      await cancel(first);
+
+      expect(first.session.getPendingPermissions()).toEqual(pending);
+      expect(metadata?.asyncQuestions).toEqual([
+        {
+          item: {
+            type: "agentMessage",
+            id: questionItem.id,
+            delivery: "async",
+            questions: questionItem.questions,
+          },
+        },
+      ]);
+      expect(first.events.filter((event) => event.type === "permission_resolved")).toEqual([]);
+    } finally {
+      await first.session.close();
+    }
+
+    const resumed = await setup(metadata);
+    try {
+      await resumed.ask();
+      expect(resumed.session.getPendingPermissions().map((request) => request.id)).toEqual([
+        "permission-async-question-1",
+      ]);
+      await resumed.session.respondToPermission("permission-async-question-1", answer);
+      expect(resumed.session.getPendingPermissions()).toEqual([]);
+      await resumed.finish();
+      expect(resumed.session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await resumed.session.close();
+    }
+  },
+);
+
+test("steering with clearPendingPermissions leaves async questions pending", async () => {
+  const { session, events, ask, turnId } = await setup();
   try {
-    await first.ask();
-    expect(first.session.getPendingPermissions()).toHaveLength(1);
-    first.session.subscribe((event) => {
-      if (event.type === "turn_canceled") {
-        metadata = first.session.describePersistence()!.metadata;
-      }
-    });
-    await first.session.interrupt();
-    await first.finish("interrupted");
-    expect(first.session.getPendingPermissions()).toEqual([]);
-    expect(metadata?.asyncQuestions).toEqual([
-      expect.objectContaining({ resolution: "dismissed" }),
-    ]);
-    expect(first.events).toContainEqual(
-      expect.objectContaining({
-        type: "permission_resolved",
-        requestId: "permission-async-question-1",
-        resolution: { behavior: "deny", message: "Interrupted" },
+    await ask();
+    const pending = session.getPendingPermissions();
+
+    expect(
+      await session.steerActiveTurn("Inspect the tests first.", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
       }),
-    );
+    ).toEqual({ status: "accepted" });
+
+    expect(session.getPendingPermissions()).toEqual(pending);
+    expect(events.filter((event) => event.type === "permission_resolved")).toEqual([]);
   } finally {
-    await first.session.close();
-  }
-  const resumed = await setup(metadata);
-  try {
-    await resumed.ask();
-    expect(resumed.session.getPendingPermissions()).toEqual([]);
-  } finally {
-    await resumed.session.close();
+    await session.close();
   }
 });
 
