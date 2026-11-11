@@ -1,3 +1,4 @@
+import { SplitResizePresets } from "./split-resize-presets";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -11,6 +12,8 @@ import {
 
 export interface ResizeHandleProps {
   testID?: string;
+  showPresets?: boolean;
+  canApplyPreset?: (sizes: number[]) => boolean;
   direction: "horizontal" | "vertical";
   hitAreaAlignment?: "center" | "end";
   groupId: string;
@@ -37,6 +40,8 @@ function resetWindowHorizontalScroll() {
 
 export function ResizeHandle({
   testID,
+  showPresets = false,
+  canApplyPreset,
   direction,
   hitAreaAlignment = "center",
   groupId,
@@ -254,36 +259,54 @@ export function ResizeHandle({
     [direction, highlighted, theme.colors.foreground],
   );
 
+  const selectPreset = useCallback(
+    (nextSizes: number[]) => onResizeSplit(groupId, nextSizes),
+    [groupId, onResizeSplit],
+  );
+
   return (
-    <View style={handleStyle} testID={testID}>
-      {highlighted && (
-        <View
-          pointerEvents="none"
-          style={highlightStyle}
-          testID={testID ? `${testID}-highlight` : undefined}
-        />
-      )}
-      {finePointer ? (
-        <View
-          role="separator"
-          aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
-          style={hitAreaStyle}
-          onPointerDown={handlePointerDown}
-          onPointerEnter={handlePointerEnter}
-          onPointerLeave={handlePointerLeave}
-        />
-      ) : (
-        <GestureDetector gesture={touchGesture}>
+    <View style={handleStyle}>
+      <View testID={testID} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        {highlighted && (
           <View
-            role="separator"
-            aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
-            collapsable={false}
-            style={touchHitAreaStyle}
+            pointerEvents="none"
+            style={highlightStyle}
+            testID={testID ? `${testID}-highlight` : undefined}
+          />
+        )}
+        {finePointer ? (
+          <SplitResizePresets
+            style={hitAreaStyle}
+            enabled={showPresets}
+            canApplyPreset={canApplyPreset}
+            dragging={dragging}
+            direction={direction}
+            sizes={sizes}
+            index={index}
+            onSelect={selectPreset}
           >
-            <View pointerEvents="none" style={touchGripStyle} />
-          </View>
-        </GestureDetector>
-      )}
+            <View
+              role="separator"
+              aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
+              style={StyleSheet.absoluteFill}
+              onPointerDown={handlePointerDown}
+              onPointerEnter={handlePointerEnter}
+              onPointerLeave={handlePointerLeave}
+            />
+          </SplitResizePresets>
+        ) : (
+          <GestureDetector gesture={touchGesture}>
+            <View
+              role="separator"
+              aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
+              collapsable={false}
+              style={touchHitAreaStyle}
+            >
+              <View pointerEvents="none" style={touchGripStyle} />
+            </View>
+          </GestureDetector>
+        )}
+      </View>
     </View>
   );
 }

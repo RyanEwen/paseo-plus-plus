@@ -3,10 +3,7 @@ import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { shouldDiscoverPullRequest } from "./activity";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useSettings } from "@/hooks/use-settings";
-import {
-  useWorkspaceLayoutStore,
-  useWorkspaceLayoutStoreHydrated,
-} from "@/stores/workspace-layout-store";
+import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
 import { autoOpenWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { getPullRequestIdentity } from "./state";
 /** Workspace discovery remains independent from whether an ordinary PR tab exists. */
@@ -54,9 +51,7 @@ export function usePullRequestAutoAdd(input: {
   enabled: boolean;
 }): void {
   const hydrated = useWorkspaceLayoutStoreHydrated();
-  const preferredDestination = useSettings((settings) => settings.pullRequestOpenLocation);
-  const splitLayout = useWorkspaceLayoutStore((state) => state.layoutMode === "split-panes");
-  const destination = splitLayout ? preferredDestination : "explorer";
+  const destination = useSettings((settings) => settings.pullRequestOpenLocation);
   useEffect(() => {
     if (hydrated && input.enabled && input.hasPullRequest) {
       autoOpenWorkspacePullRequest({ workspaceKey: input.workspaceKey, destination });

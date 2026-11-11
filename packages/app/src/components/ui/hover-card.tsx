@@ -12,16 +12,22 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { Portal } from "@gorhom/portal";
-import { OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { FloatingSurface } from "@/components/ui/floating";
-import { useFloatingPanelPortalHostName } from "@/components/ui/floating-panel-portal";
 import { isWeb } from "@/constants/platform";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
-import { computePosition, type Alignment, type Placement, type Rect } from "./anchor";
+import {
+  computePosition,
+  getCursorAnchorRect,
+  type Alignment,
+  type Placement,
+  type Point,
+  type Rect,
+} from "./anchor";
 
 const CLOSE_GRACE_MS = 100;
 
@@ -31,6 +37,7 @@ const openCardCloseByLayer = new Map<number, () => void>();
 
 interface HoverCardContextValue {
   open: boolean;
+  pointerRef: RefObject<Point | null>;
   layer: number;
   setTriggerRef: (node: View | null) => void;
   triggerRef: RefObject<View | null>;
@@ -85,6 +92,7 @@ function WebHoverCard({
   const layer = useOverlayLayer("floating");
   const triggerRef = useRef<View>(null);
   const contentRef = useRef<View>(null);
+  const pointerRef = useRef<Point | null>(null);
   const [open, setOpen] = useState(false);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -195,6 +203,7 @@ function WebHoverCard({
         ["ArrowDown", "Enter", " "].includes(event.key)
       ) {
         event.preventDefault();
+        pointerRef.current = null;
         openNow();
         requestAnimationFrame(() => {
           (contentRef.current as unknown as HTMLElement | null)
@@ -238,6 +247,7 @@ function WebHoverCard({
       const target = event.target as Element;
       keyboardFocusedRef.current = target.matches(":focus-visible");
       if (trigger.contains(target)) {
+        if (keyboardFocusedRef.current) pointerRef.current = null;
         openNow();
       } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
         clearGraceTimer();
@@ -268,12 +278,19 @@ function WebHoverCard({
     const scrolled = (event: Event) => {
       if ((event.target as Node).contains(trigger)) close();
     };
+    const pointerMoved = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    trigger.addEventListener("pointerover", pointerMoved);
+    trigger.addEventListener("pointermove", pointerMoved);
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
     trigger.addEventListener("keydown", activateClosedTrigger);
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     return () => {
+      trigger.removeEventListener("pointerover", pointerMoved);
+      trigger.removeEventListener("pointermove", pointerMoved);
       document.removeEventListener("focusin", focusEntered);
       document.removeEventListener("focusout", focusLeft);
       trigger.removeEventListener("keydown", activateClosedTrigger);
@@ -316,6 +333,7 @@ function WebHoverCard({
       setTriggerRef,
       triggerRef,
       contentRef,
+      pointerRef,
       openNow,
       scheduleOpen,
       scheduleClose,
@@ -334,16 +352,20 @@ export function HoverCardTrigger({
   children,
   focusable = false,
   accessibilityLabel,
+  style,
 }: {
   children: ReactNode;
   focusable?: boolean;
   accessibilityLabel?: string;
+  /** Preserve an interactive divider or another sized trigger without a second layout wrapper. */
+  style?: StyleProp<ViewStyle>;
 }): ReactNode {
   const ctx = useContext(HoverCardContext);
-  if (!ctx) return children;
+  if (!ctx) return style ? <View style={style}>{children}</View> : children;
   return (
     <View
       ref={ctx.setTriggerRef}
+      style={style}
       tabIndex={focusable ? 0 : undefined}
       accessibilityRole={focusable ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
@@ -358,6 +380,8 @@ export function HoverCardTrigger({
 
 interface HoverCardContentProps {
   placement: Placement;
+  /** Anchor to the trigger, or to the cursor point clamped to the trigger. */
+  anchor?: "trigger" | "cursor";
   alignment?: Alignment;
   offset?: number;
   /** Layered over the default popover surface. */
@@ -371,17 +395,18 @@ interface HoverCardContentProps {
 
 export function HoverCardContent(props: HoverCardContentProps): ReactElement | null {
   const ctx = useContext(HoverCardContext);
-  const portalHostName = useFloatingPanelPortalHostName();
   if (!ctx?.open) return null;
-  return (
-    <Portal hostName={portalHostName}>
-      <HoverCardSurface
-        {...props}
-        layer={ctx.layer}
-        triggerRef={ctx.triggerRef}
-        contentRef={ctx.contentRef}
-      />
-    </Portal>
+  // Hover cards are web-only. Share the body overlay plane with menus and tooltips,
+  // outside the app stacking context and above resident browser surfaces.
+  return createPortal(
+    <HoverCardSurface
+      {...props}
+      layer={ctx.layer}
+      triggerRef={ctx.triggerRef}
+      pointerRef={ctx.pointerRef}
+      contentRef={ctx.contentRef}
+    />,
+    getOverlayRoot(),
   );
 }
 
@@ -403,13 +428,28 @@ function readDomRect(view: View | null): Rect | null {
   return { x, y, width, height };
 }
 
+/** The trigger's rect, or the cursor point clamped to it when the card follows the cursor. */
+function readAnchorRect(
+  trigger: View | null,
+  anchor: "trigger" | "cursor",
+  pointer: Point | null,
+): Rect | null {
+  const rect = readDomRect(trigger);
+  if (!rect || anchor === "trigger") {
+    return rect;
+  }
+  return getCursorAnchorRect(rect, pointer);
+}
+
 // Rendered inside the portal so the card is placed in the commit that mounts it: the first
 // painted frame already sits beside the trigger. Web-only, like the rest of the open card.
 function HoverCardSurface({
   layer,
   triggerRef,
   contentRef,
+  pointerRef,
   placement,
+  anchor = "trigger",
   alignment = "center",
   offset = 4,
   style,
@@ -421,12 +461,13 @@ function HoverCardSurface({
   layer: number;
   triggerRef: RefObject<View | null>;
   contentRef: RefObject<View | null>;
+  pointerRef: RefObject<Point | null>;
 }): ReactElement {
   const overlayRef = useRef<View>(null);
   const [position, setPosition] = useState<CardPosition | null>(null);
 
   const place = useCallback(() => {
-    const triggerRect = readDomRect(triggerRef.current);
+    const triggerRect = readAnchorRect(triggerRef.current, anchor, pointerRef.current);
     const overlayRect = readDomRect(overlayRef.current);
     const content = contentRef.current as unknown as HTMLElement | null;
     if (!triggerRect || !overlayRect || !content) return;
@@ -446,7 +487,7 @@ function HoverCardSurface({
         ? { left, bottom: overlayRect.height - (y + content.offsetHeight - overlayRect.y) }
         : { left, top: y - overlayRect.y };
     setPosition((current) => (isSamePosition(current, next) ? current : next));
-  }, [alignment, contentRef, offset, placement, triggerRef]);
+  }, [alignment, anchor, contentRef, offset, placement, pointerRef, triggerRef]);
 
   useLayoutEffect(place, [place]);
 

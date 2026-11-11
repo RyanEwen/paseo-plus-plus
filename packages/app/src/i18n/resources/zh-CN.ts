@@ -765,6 +765,7 @@ export const zhCN: TranslationResources = {
       columns: "左 / 右",
       rows: "上 / 下",
       pane: "窗格 {{index}}",
+      maxDepthReached: "已达到最大拆分深度",
     },
 
     route: {

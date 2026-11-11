@@ -781,6 +781,7 @@ export const ja: TranslationResources = {
       columns: "左 / 右",
       rows: "上 / 下",
       pane: "ペイン {{index}}",
+      maxDepthReached: "分割の深さが上限に達しました",
     },
 
     route: {

@@ -4,6 +4,11 @@ import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
+import {
+  collectSplitSizes,
+  convertSavedSplitSizes,
+  withCurrentSplitSizes,
+} from "./workspace-layout-split-sizes";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -198,6 +203,7 @@ interface WorkspaceLayoutStore {
       tabId: string;
       targetPaneId: string;
       position: "left" | "right" | "top" | "bottom";
+      firstPaneFraction?: number;
     },
   ) => string | null;
   splitPaneEmpty: (
@@ -205,6 +211,7 @@ interface WorkspaceLayoutStore {
     input: {
       targetPaneId: string;
       position: "left" | "right" | "top" | "bottom";
+      firstPaneFraction?: number;
     },
   ) => string | null;
   moveTabToPane: (workspaceKey: string, tabId: string, toPaneId: string) => void;
@@ -234,7 +241,7 @@ interface WorkspaceFocusRestorationState {
 
 // The persisted tree includes the Explorer shell; the renderer docks it outside workspace splits.
 // Preserve four user-created split levels beneath that bookkeeping node.
-const MAX_TREE_DEPTH = 5;
+export const MAX_TREE_DEPTH = 5;
 
 const LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH = 1440;
 const WORKSPACE_LAYOUT_PERSIST_VERSION = 2;
@@ -1817,10 +1824,15 @@ export function createWorkspaceLayoutStore(
           }
 
           const result = splitPaneInLayout({
-            layout: currentLayout,
+            layout: withCurrentSplitSizes(
+              currentLayout,
+              get().splitSizesByWorkspace[normalizedWorkspaceKey] ?? {},
+              explorerSidebarPaneId,
+            ),
             tabId: normalizedTabId,
             targetPaneId: normalizedTargetPaneId,
             position: input.position,
+            firstPaneFraction: input.firstPaneFraction,
             maxTreeDepth: MAX_TREE_DEPTH,
             createNodeId: ids.createNodeId,
           });
@@ -1830,6 +1842,13 @@ export function createWorkspaceLayoutStore(
 
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            splitSizesByWorkspace: {
+              ...state.splitSizesByWorkspace,
+              [normalizedWorkspaceKey]: collectSplitSizes(
+                result.layout.root,
+                explorerSidebarPaneId,
+              ),
+            },
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: result.layout,
@@ -1855,9 +1874,14 @@ export function createWorkspaceLayoutStore(
           }
 
           const result = splitPaneEmptyInLayout({
-            layout: currentLayout,
+            layout: withCurrentSplitSizes(
+              currentLayout,
+              get().splitSizesByWorkspace[normalizedWorkspaceKey] ?? {},
+              explorerSidebarPaneId,
+            ),
             targetPaneId: normalizedTargetPaneId,
             position: input.position,
+            firstPaneFraction: input.firstPaneFraction,
             maxTreeDepth: MAX_TREE_DEPTH,
             createNodeId: ids.createNodeId,
           });
@@ -1867,6 +1891,13 @@ export function createWorkspaceLayoutStore(
 
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            splitSizesByWorkspace: {
+              ...state.splitSizesByWorkspace,
+              [normalizedWorkspaceKey]: collectSplitSizes(
+                result.layout.root,
+                explorerSidebarPaneId,
+              ),
+            },
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: result.layout,
@@ -1905,7 +1936,11 @@ export function createWorkspaceLayoutStore(
               return state;
             }
             const nextLayout = moveTabToPaneInLayout({
-              layout,
+              layout: withCurrentSplitSizes(
+                layout,
+                state.splitSizesByWorkspace[normalizedWorkspaceKey] ?? {},
+                explorerSidebarPaneId,
+              ),
               tabId: normalizedTabId,
               toPaneId: normalizedToPaneId,
               explorerSidebarPaneId,
@@ -1926,6 +1961,13 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              splitSizesByWorkspace: {
+                ...state.splitSizesByWorkspace,
+                [normalizedWorkspaceKey]: collectSplitSizes(
+                  normalizedNextLayout.root,
+                  explorerSidebarPaneId,
+                ),
+              },
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: normalizedNextLayout,
@@ -2355,7 +2397,11 @@ export function createWorkspaceLayoutStore(
                 new Set(agentIds),
               ]),
             ),
-            splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
+            splitSizesByWorkspace: convertSavedSplitSizes(
+              result.data.splitSizesByWorkspace ?? {},
+              layoutByWorkspace,
+              explorerSidebarPaneIdByWorkspace,
+            ),
             explorerSidebarWidthByWorkspace:
               result.data.explorerSidebarWidthByWorkspace ??
               convertLegacyExplorerSidebarRatios(

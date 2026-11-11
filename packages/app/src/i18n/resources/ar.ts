@@ -770,6 +770,7 @@ export const ar: TranslationResources = {
       columns: "يسار / يمين",
       rows: "أعلى / أسفل",
       pane: "اللوحة {{index}}",
+      maxDepthReached: "تم بلوغ الحد الأقصى لعمق التقسيم",
     },
 
     route: {

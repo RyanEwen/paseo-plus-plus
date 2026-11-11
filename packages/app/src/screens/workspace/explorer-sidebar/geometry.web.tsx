@@ -3,6 +3,7 @@ import { View, StyleSheet } from "react-native";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { ResizeHandle } from "@/components/resize-handle";
 import {
+  canApplyExplorerSidebarDockSizes,
   resolveExplorerSidebarDockSizes,
   resolveExplorerSidebarWidth,
 } from "@/components/explorer-sidebar-layout";
@@ -24,6 +25,10 @@ export function useExplorerGeometry({
     },
     [containerWidth],
   );
+  const canApplyPreset = useCallback(
+    (next: number[]) => canApplyExplorerSidebarDockSizes({ sizes: next, containerWidth }),
+    [containerWidth],
+  );
   const commit = useCallback(
     (_id: string, next: number[]) => {
       setPreviewWidth(null);
@@ -40,6 +45,8 @@ export function useExplorerGeometry({
       <View style={styles.resize}>
         <ResizeHandle
           testID="workspace-explorer-sidebar-resize-handle"
+          showPresets
+          canApplyPreset={canApplyPreset}
           direction="horizontal"
           hitAreaAlignment="end"
           groupId="explorer-sidebar"

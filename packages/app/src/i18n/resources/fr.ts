@@ -784,6 +784,7 @@ export const fr: TranslationResources = {
       columns: "Gauche / droite",
       rows: "Haut / bas",
       pane: "Volet {{index}}",
+      maxDepthReached: "Profondeur de division maximale atteinte",
     },
 
     route: {

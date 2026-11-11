@@ -20,6 +20,28 @@ export interface Size {
   height: number;
 }
 
+/** A viewport position in CSS pixels, such as the last pointer location over a trigger. */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** The nearest point inside `rect`, so a stale or overshooting pointer stays on its trigger. */
+function clampPointToRect(point: Point, rect: Rect): Point {
+  return {
+    x: Math.max(rect.x, Math.min(rect.x + rect.width, point.x)),
+    y: Math.max(rect.y, Math.min(rect.y + rect.height, point.y)),
+  };
+}
+
+/** Anchor a surface to the pointer point, clamped to the measured trigger bounds. */
+export function getCursorAnchorRect(rect: Rect, point: Point | null): Rect {
+  if (!point) {
+    return rect;
+  }
+  return { ...clampPointToRect(point, rect), width: 0, height: 0 };
+}
+
 /** Gap kept between the surface and the edge of the display area. */
 const EDGE_PADDING = 8;
 

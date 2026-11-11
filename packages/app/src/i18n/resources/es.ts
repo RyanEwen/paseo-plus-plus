@@ -783,6 +783,7 @@ export const es: TranslationResources = {
       columns: "Izquierda / derecha",
       rows: "Arriba / abajo",
       pane: "Panel {{index}}",
+      maxDepthReached: "Se alcanzó la profundidad máxima de división",
     },
 
     route: {

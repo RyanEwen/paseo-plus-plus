@@ -7,12 +7,12 @@ canonical files and are trying to add or change one.
 
 ## Canonical files
 
-| File                                     | Use case                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
-| `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
-| `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
+| File                                     | Use case                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------- |
+| `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet            |
+| `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                                  |
+| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; shared web overlay root |
+| `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input         |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
 non-interactive, hover-card is web-only desktop, autocomplete keeps the composer
@@ -65,7 +65,7 @@ Two escape hatches in the codebase:
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
-- **`<Portal>` from `@gorhom/portal`** (hover-card, autocomplete-popover) —
+- **`<Portal>` from `@gorhom/portal`** (autocomplete-popover) —
   hoists the React subtree to a fixed mount point whose bounds cover the
   screen. Same window, same IME, hit-test works because the new parent is
   full-screen. This is the right default when you must keep IME attachment.
@@ -75,11 +75,9 @@ Two escape hatches in the codebase:
 
   Choose Modal vs Portal by whether the underlying input can lose its keyboard.
 
-On web, dropdown menus render into the shared `overlay-root`, not React Native
-Web's `<Modal>`/`<dialog>`. A browser top-layer dialog always paints above
-ordinary portals regardless of `z-index`, which would hide app toasts and
-tooltips behind the menu. The shared overlay scale keeps menus below toasts and
-lets tooltip portals paint above both.
+On web, dropdown menus, comboboxes, tooltips and hover cards use React DOM portals into the shared body-level `overlay-root`. Keep hover cards out of Gorhom’s app-root portal host: a large child z-index inside the app cannot outrank a resident browser surface mounted beside it. React DOM portals also preserve the opener’s React context.
+
+Do not use React Native Web’s `<Modal>`/`<dialog>` for ordinary web popovers. A browser top-layer dialog always paints above ordinary portals regardless of z-index, which would hide app toasts and tooltips behind the menu. The shared overlay scale keeps menus below toasts and lets tooltip portals paint above both.
 
 The shared overlay scale is relative for interactive surfaces: a base floating
 panel is below a base modal, while a floating panel rendered from inside a modal
