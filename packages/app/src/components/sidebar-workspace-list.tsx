@@ -19,8 +19,8 @@ import {
   PROJECT_ACTION_GAP,
   PROJECT_ACTION_OPTICAL_OFFSET,
   PROJECT_ACTION_SIZE,
-  PROJECT_KEBAB_COMPACT_OVERHANG,
-  PROJECT_KEBAB_COMPACT_SIZE,
+  PROJECT_KEBAB_TOUCH_OVERHANG,
+  PROJECT_KEBAB_TOUCH_SIZE,
   projectTrailingActionsWidth,
 } from "./sidebar/project-trailing-actions";
 import { useSidebarModel } from "./sidebar/sidebar-model";
@@ -193,6 +193,7 @@ import {
   useSidebarPositionTransitionDuration,
 } from "./sidebar/position-transitions";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import { bySizing, controlSizingForLayout } from "@/components/ui/control-geometry";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -476,7 +477,7 @@ function ProjectRowTrailingActions({
   const actionsWidth = projectTrailingActionsWidth({
     hasNewWorkspaceAction: worktreeTarget !== null,
     hasKebab: onRemoveProject !== undefined,
-    compact: isMobileBreakpoint,
+    touchSizing: controlSizingForLayout(isMobileBreakpoint) === "touch",
   });
   return (
     <HoverRevealActions visible={actionsVisible} width={actionsWidth} height={PROJECT_ACTION_SIZE}>
@@ -702,6 +703,7 @@ function WorkspaceRowRightGroup({
   const {
     trailingPresentation,
     showKebab: showKebabInSlot,
+    showArchiveButton,
     renderSlot,
     reserveSlotWidth,
   } = resolveTrailingActionVisibility({
@@ -724,7 +726,11 @@ function WorkspaceRowRightGroup({
           <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
             <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingStatusActions workspace={workspace} visible={kebab.showKebab}>
+          <SidebarWorkspaceTrailingStatusActions
+            workspace={workspace}
+            visible={kebab.showKebab}
+            onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
+          >
             {onArchive ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
@@ -3015,10 +3021,10 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -PROJECT_ACTION_OPTICAL_OFFSET,
   },
   projectKebabButton: {
-    width: { xs: PROJECT_KEBAB_COMPACT_SIZE, md: PROJECT_ACTION_SIZE },
-    height: { xs: PROJECT_KEBAB_COMPACT_SIZE, md: PROJECT_ACTION_SIZE },
-    marginRight: { xs: -PROJECT_KEBAB_COMPACT_OVERHANG, md: 0 },
-    marginVertical: { xs: -PROJECT_KEBAB_COMPACT_OVERHANG, md: 0 },
+    width: bySizing({ touch: PROJECT_KEBAB_TOUCH_SIZE, pointer: PROJECT_ACTION_SIZE }),
+    height: bySizing({ touch: PROJECT_KEBAB_TOUCH_SIZE, pointer: PROJECT_ACTION_SIZE }),
+    marginRight: bySizing({ touch: -PROJECT_KEBAB_TOUCH_OVERHANG, pointer: 0 }),
+    marginVertical: bySizing({ touch: -PROJECT_KEBAB_TOUCH_OVERHANG, pointer: 0 }),
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",

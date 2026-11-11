@@ -1,7 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-  MutableDaemonConfigSchema,
-  MutableDaemonConfigPatchSchema,
   AgentTimelineItemPayloadSchema,
   SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
@@ -494,6 +492,26 @@ describe("daemon update messages", () => {
 });
 
 describe("viewed timeline subscription messages", () => {
+  test("carries a cursor per chat and a freshness answer per chat", () => {
+    const cursors = { "agent-a": { epoch: "epoch-1", seq: 42 } };
+    const timelines = { "agent-a": "current", "agent-b": "behind" };
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.set_subscription.request",
+        agentIds: ["agent-a"],
+        requestId: "timeline-subscription-2",
+        cursors,
+      }),
+    ).toMatchObject({ cursors });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.timeline.set_subscription.response",
+        payload: { agentIds: ["agent-a"], requestId: "timeline-subscription-2", timelines },
+      }),
+    ).toMatchObject({ payload: { timelines } });
+  });
+
   test("parses a complete viewed-agent set and its acknowledgement", () => {
     const request = SessionInboundMessageSchema.parse({
       type: "agent.timeline.set_subscription.request",
@@ -591,16 +609,42 @@ test("sidebar mode profile support is optional and independent of settings sync"
   ).toBe(true);
 });
 
-test("attention preference config remains optional and rejects nonboolean writes", () => {
-  expect(MutableDaemonConfigSchema.safeParse({ mcp: { injectIntoAgents: false } }).success).toBe(
-    true,
-  );
-  expect(
-    MutableDaemonConfigPatchSchema.safeParse({ notifications: { agentAwareAttention: false } })
-      .success,
-  ).toBe(true);
-  expect(
-    MutableDaemonConfigPatchSchema.safeParse({ notifications: { agentAwareAttention: "false" } })
-      .success,
-  ).toBe(false);
+describe("terminal collection protocol compatibility", () => {
+  test("accepts released directory observations and their snapshots", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "subscribe_terminals_request",
+        cwd: "/repo",
+        requestId: "old",
+      }),
+    ).toMatchObject({ cwd: "/repo" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "terminals_changed",
+        payload: { cwd: "/repo", terminals: [{ id: "terminal", name: "Shell" }] },
+      }),
+    ).toMatchObject({ payload: { cwd: "/repo" } });
+  });
+  test("accepts capability-gated host observations and additive metadata", () => {
+    expect(
+      SessionInboundMessageSchema.parse({ type: "subscribe_terminals_request", requestId: "host" }),
+    ).toMatchObject({ requestId: "host" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "terminals_changed",
+        payload: {
+          terminals: [
+            {
+              id: "terminal",
+              name: "Shell",
+              cwd: "/repo",
+              workspaceId: "workspace",
+              createdAt: null,
+              isScript: true,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ payload: { terminals: [{ isScript: true, createdAt: null }] } });
+  });
 });

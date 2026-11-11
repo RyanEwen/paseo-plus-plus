@@ -1,4 +1,3 @@
-import { AttentionPresentation } from "./attention/presentation.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -8,7 +7,7 @@ import type {
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
-  AgentFeature,
+  AgentOptionControl,
   AgentMetadata,
   AgentMode,
   AgentPermissionRequest,
@@ -19,7 +18,9 @@ import type {
   AgentUsage,
   ImportableProviderSession,
 } from "./agent-sdk-types.js";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import type { ManagedAgent } from "./agent-manager.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import type { JsonValue } from "../json-utils.js";
 import {
   isStoredAgentProviderAvailable,
@@ -93,12 +94,13 @@ export function toStoredAgentRecord(
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     title: options?.title ?? null,
     labels: agent.labels,
+    metadata: agent.metadata,
     lastStatus: agent.lifecycle,
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
     launchEnv: agent.launchEnv ? { ...agent.launchEnv } : undefined,
     runtimeInfo,
-    features: normalizeFeatures(agent.features),
+    controls: normalizeControls(agent.controls),
     persistence,
     lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
@@ -106,27 +108,16 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
-    attentionObjectives: agent.attentionObjectives?.snapshot(),
-    humanAttentionRequired: agent.attentionObjectives?.requiresHumanAttention({
-      hasUnread: agent.attention.requiresAttention,
-      hasProblem: agent.lifecycle === "error" || agent.pendingPermissions.size > 0,
-    }),
-    attentionMessage: agent.attentionMessage,
     internal: options?.internal,
+    ...(agent.background ? { background: true } : {}),
     owner: agent.owner,
   } satisfies StoredAgentRecord;
 }
 
-/** Omit absent audience metadata before JSON sanitization, preserving known false and explicit null. */
-function projectAttentionPresentation(
-  input: Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage">,
-): Pick<AgentSnapshotPayload, "humanAttentionRequired" | "attentionMessage"> {
-  return {
-    ...(input.humanAttentionRequired !== undefined
-      ? { humanAttentionRequired: input.humanAttentionRequired }
-      : {}),
-    ...(input.attentionMessage !== undefined ? { attentionMessage: input.attentionMessage } : {}),
-  };
+/** Account discovery depends on the harness session and its model, so the key follows both. */
+function projectUsageScopeKey(agent: ManagedAgent): string | undefined {
+  const usageSession = agent.session?.usageSession?.();
+  return usageSession ? `${usageSession.sessionKey}:${usageSession.model ?? ""}` : undefined;
 }
 
 export function toAgentPayload(
@@ -140,7 +131,6 @@ export function toAgentPayload(
     configuredThinkingOptionId: thinkingOptionId,
   });
 
-  const attentionObjectives = agent.attentionObjectives?.describe();
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
@@ -163,19 +153,25 @@ export function toAgentPayload(
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
-    features: normalizeFeatures(agent.features),
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+    features: featuresFromControls({ controls: agent.controls, options: agent.effectiveOptions }),
+    ...(agent.effectiveOptions
+      ? { options: sanitizeEffectiveOptions(agent.effectiveOptions) }
+      : {}),
+    controls: normalizeControls(agent.controls),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: projectPersistenceHandleForWire(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
+    metadata: agent.metadata,
     archivedAt: options?.archivedAt ?? null,
-    ...(agent.internal ? { internal: true } : {}),
-    ...(attentionObjectives !== undefined ? { attentionObjectives } : {}),
-    ...projectAttentionPresentation({
-      humanAttentionRequired: AttentionPresentation.forAgent(agent),
-      attentionMessage: agent.attentionMessage,
-    }),
+    ...visibilityFlags(agent),
   };
+
+  const usageScopeKey = projectUsageScopeKey(agent);
+  if (usageScopeKey !== undefined) {
+    payload.usageScopeKey = usageScopeKey;
+  }
 
   const usage = sanitizeUsage(agent.lastUsage);
   if (usage !== undefined) {
@@ -231,23 +227,43 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
-/** Apply the current host presentation choice to retained facts without mutating the stored record. */
-function storedHumanAttention(
+/** The wire carries `internal` and `background` only when set. */
+function visibilityFlags(agent: {
+  internal?: boolean;
+  background?: boolean;
+}): Pick<AgentSnapshotPayload, "internal" | "background"> {
+  return {
+    ...(agent.internal ? { internal: true } : {}),
+    ...(agent.background ? { background: true } : {}),
+  };
+}
+
+/** The options an agent runs with, given the options it owns; see `toAgentPayload`. */
+export type EffectiveOptionsResolver = (
+  provider: AgentProvider,
+  own: ProviderOptions | undefined,
+) => ProviderOptions;
+
+function buildStoredOptionControls(
   record: StoredAgentRecord,
-  options: { agentAwareAttention: boolean },
-): boolean | undefined {
-  return AttentionPresentation.project({
-    enabled: options.agentAwareAttention,
-    humanAttentionRequired: record.humanAttentionRequired,
-    requiresAttention: record.requiresAttention ?? false,
-    attentionMessage: record.attentionMessage,
-  });
+  effectiveOptionsFor: EffectiveOptionsResolver,
+): Pick<AgentSnapshotPayload, "features" | "options" | "controls"> {
+  const controls = normalizeControls(record.controls);
+  const options = sanitizeEffectiveOptions(
+    effectiveOptionsFor(record.provider, record.config?.providerOptions ?? undefined),
+  );
+  return {
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+    features: featuresFromControls({ controls, options }),
+    options,
+    controls,
+  };
 }
 
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
-  options: { agentAwareAttention: boolean },
+  effectiveOptionsFor: EffectiveOptionsResolver,
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -266,6 +282,7 @@ export function buildStoredAgentPayload(
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
+  const optionControls = buildStoredOptionControls(record, effectiveOptionsFor);
   const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
   const persistence = projectPersistenceHandleForWire(
     buildStoredPersistenceHandle(record, validProviders),
@@ -290,19 +307,17 @@ export function buildStoredAgentPayload(
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
+    ...optionControls,
     pendingPermissions: [],
     persistence,
     title: record.title ?? null,
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
-    ...projectAttentionPresentation({
-      humanAttentionRequired: storedHumanAttention(record, options),
-      attentionMessage: record.attentionMessage,
-    }),
     archivedAt: record.archivedAt ?? null,
-    ...(record.internal ? { internal: true } : {}),
+    ...visibilityFlags(record),
     labels: normalizeLabels(record.labels),
+    metadata: record.metadata,
     ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
@@ -318,6 +333,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     thinkingOptionId: agent.thinkingOptionId,
     effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
     status: agent.status,
+    ...(agent.backgroundWork ? { backgroundWork: agent.backgroundWork } : {}),
     cwd: agent.cwd,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
@@ -326,10 +342,6 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
-    ...projectAttentionPresentation({
-      humanAttentionRequired: agent.humanAttentionRequired,
-      attentionMessage: agent.attentionMessage,
-    }),
     labels: agent.labels,
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };
@@ -422,12 +434,6 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.thinkingOptionId) {
     serializable.thinkingOptionId = config.thinkingOptionId;
   }
-  if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
-    const featureValues = sanitizeMetadata(config.featureValues);
-    if (featureValues !== undefined) {
-      serializable.featureValues = featureValues;
-    }
-  }
   if (config.providerOptions !== undefined) {
     const providerOptions = sanitizeOptionalJson(config.providerOptions);
     if (providerOptions && isJsonObject(providerOptions)) {
@@ -503,8 +509,15 @@ function cloneAvailableModes(modes: AgentMode[]): AgentMode[] {
   return modes.map((mode) => ({ ...mode }));
 }
 
-function normalizeFeatures(features: AgentFeature[] | null | undefined): AgentFeature[] {
-  return Array.isArray(features) ? features.map((feature) => ({ ...feature })) : [];
+function normalizeControls(
+  controls: AgentOptionControl[] | null | undefined,
+): AgentOptionControl[] {
+  return Array.isArray(controls) ? controls.map((control) => ({ ...control })) : [];
+}
+
+function sanitizeEffectiveOptions(options: Record<string, unknown>): ProviderOptions {
+  const sanitized = sanitizeOptionalJson(options);
+  return sanitized && isJsonObject(sanitized) ? sanitized : {};
 }
 
 function sanitizeOptionalJson(value: unknown): JsonValue | undefined {

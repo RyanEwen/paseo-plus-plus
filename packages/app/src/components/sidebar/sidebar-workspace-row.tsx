@@ -399,6 +399,7 @@ function WorkspaceRowTrailingActions({
   const {
     trailingPresentation,
     showKebab: showKebabInSlot,
+    showArchiveButton,
     renderSlot,
     reserveSlotWidth,
   } = resolveTrailingActionVisibility({
@@ -421,7 +422,11 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
             <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingStatusActions workspace={workspace} visible={kebab.showKebab}>
+          <SidebarWorkspaceTrailingStatusActions
+            workspace={workspace}
+            visible={kebab.showKebab}
+            onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
+          >
             {onArchive ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}

@@ -3,15 +3,12 @@ import type { FinishSubscriptions, FinishRegistration } from "../finish-subscrip
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
-  DelegatedIdentityMismatchError,
   HostOperationRejectedError,
   type HostOperation,
-  type AgentHostOperationResult,
   type HostOperations,
   type ToolHosts,
 } from "../host-operations/index.js";
 import { AgentDirectory } from "../directory.js";
-import { finishAttentionQuery } from "../attention/requests.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
@@ -20,8 +17,8 @@ import type { Logger } from "pino";
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
-import { AgentAttentionContextSchema } from "@getpaseo/protocol/agent-attention";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
@@ -46,6 +43,7 @@ import {
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
 import { createAgentCommand } from "../create-agent/create.js";
+import { inheritWorkspaceBackground } from "../create-agent/intent.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
@@ -141,7 +139,7 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
@@ -157,7 +155,7 @@ export interface PaseoToolHostDependencies {
   ensureWorkspaceForCreate?: (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { callerWorkspaceId?: string },
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ) => Promise<string>;
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
@@ -191,6 +189,7 @@ interface ProviderSummary {
 }
 
 const WorkspaceAutomationSummarySchema = z.object({
+  parentWorkspaceId: z.string().optional(),
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),
@@ -209,6 +208,7 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
     kind: workspace.kind,
     title: workspace.title,
     background: workspace.background,
+    parentWorkspaceId: workspace.parentWorkspaceId,
   };
 }
 
@@ -668,6 +668,45 @@ function createToolCatalog(
     if (!options.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
     return options.finishSubscriptions();
   }
+  async function prepareRemoteNotification(
+    name: string,
+    destination: string | undefined,
+    input: Record<string, unknown>,
+  ): Promise<FinishRegistration | undefined> {
+    if (
+      name !== "send_agent_prompt" ||
+      destination === options.serverId ||
+      !callerAgentId ||
+      input.notifyOnFinish === false
+    )
+      return undefined;
+    return finishSubscriptions().register(
+      { childAgentId: input.agentId as string, callerAgentId, serverId: destination },
+      true,
+    );
+  }
+  async function registerRemoteCreation(
+    name: string,
+    destination: string | undefined,
+    input: Record<string, unknown>,
+    response: PaseoToolResult,
+  ): Promise<void> {
+    if (
+      name !== "create_agent" ||
+      destination === options.serverId ||
+      !callerAgentId ||
+      input.notifyOnFinish === false ||
+      response.isError
+    )
+      return;
+    const childAgentId = (response.structuredContent as { agentId: string }).agentId;
+    await finishSubscriptions().register({
+      childAgentId,
+      callerAgentId,
+      serverId: destination,
+      requireParentOwnership: true,
+    });
+  }
   const localHostOperations = new Map<string, HostOperation>();
   const tools = new Map<string, PaseoToolDefinition>();
   const builtinNames = new Set<string>();
@@ -683,9 +722,7 @@ function createToolCatalog(
   const hostResolver = createHostResolver({
     serverId: options.serverId ?? "self",
     callerAgentId,
-    prepareAttention: callerAgentId
-      ? (request) => agentManager.prepareAttentionMessage({ agentId: callerAgentId, ...request })
-      : undefined,
+    caller: () => resolveCallerAgent(),
     lockedCwd: callerContext?.lockedCwd,
     hosts: () => {
       if (!options.hosts) throw new Error("Connected hosts are not configured");
@@ -706,7 +743,7 @@ function createToolCatalog(
     name: string,
     config: PaseoToolConfig,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
-    handler: (input: any, context: PaseoToolExecutionContext) => Promise<AgentHostOperationResult>,
+    handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
     builtinNames.add(name);
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
@@ -732,29 +769,14 @@ function createToolCatalog(
       };
       handler = async ({ serverId, ...input }, context) => {
         const destination = serverId ?? options.serverId;
-        let remoteNotification: FinishRegistration | undefined;
+        const remoteNotification = await prepareRemoteNotification(name, destination, input);
         try {
-          const { attention: _attention, ...response } = await hostResolver.use(
-            serverId,
-            (host) => host[operation](input, context),
-            async ({ agentId, attention, requireParentOwnership }) => {
-              if (!callerAgentId || input.notifyOnFinish === false) return;
-              remoteNotification = await finishSubscriptions().register(
-                {
-                  childAgentId: agentId,
-                  callerAgentId,
-                  serverId: destination,
-                  requireParentOwnership,
-                  attention: finishAttentionQuery(attention, () =>
-                    agentManager.attentionRequester(callerAgentId),
-                  ),
-                },
-                true,
-              );
-            },
+          const response = await hostResolver.use(serverId, (host) =>
+            host[operation](input, context),
           );
           if (response.isError) await remoteNotification?.reject();
           else remoteNotification?.accept();
+          await registerRemoteCreation(name, destination, input, response);
           return {
             ...response,
             structuredContent: {
@@ -765,16 +787,9 @@ function createToolCatalog(
         } catch (error) {
           // A lost response does not establish whether the remote daemon admitted the prompt.
           // Reconcile the child rather than silently dropping notification intent.
-          // A mismatched identity proves the watched agent is not the one the host created.
-          if (
-            error instanceof PaseoToolInputError ||
-            error instanceof HostOperationRejectedError ||
-            error instanceof DelegatedIdentityMismatchError
-          ) {
+          if (error instanceof PaseoToolInputError || error instanceof HostOperationRejectedError)
             await remoteNotification?.reject();
-          } else {
-            remoteNotification?.accept();
-          }
+          else remoteNotification?.accept();
           if (!options.serverId) throw error;
           const failure = {
             serverId: destination,
@@ -850,13 +865,12 @@ function createToolCatalog(
     return parentAgent;
   };
 
-  /** Pre-caller manifests advertise schemas; invocation still requires a current bound agent. */
-  const requireAttentionCallerId = (): string => {
+  const workspaceBackgroundIntent = (background: boolean | undefined) => {
     const caller = resolveCallerAgent();
-    if (!caller) {
-      throw new PaseoToolInputError("Attention tools require an agent-scoped caller");
-    }
-    return caller.id;
+    return {
+      background: inheritWorkspaceBackground(background, caller),
+      callerWorkspaceId: caller?.workspaceId,
+    };
   };
 
   const resolveInheritedProviderConfig = (
@@ -937,9 +951,6 @@ function createToolCatalog(
         : {}),
       ...(callerAgent.provider === resolvedProvider && callerAgent.config.providerOptions
         ? { providerOptions: callerAgent.config.providerOptions }
-        : {}),
-      ...(callerAgent.config.featureValues
-        ? { featureValues: callerAgent.config.featureValues }
         : {}),
       ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
       ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
@@ -1172,13 +1183,6 @@ function createToolCatalog(
       .describe("Create a new workspace for the agent."),
   ]);
   const commonCreateAgentFields = {
-    objectiveId: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "Your objective from get_attention_context. Required when this turn handles multiple requests.",
-      ),
     title: z
       .string()
       .trim()
@@ -1197,6 +1201,12 @@ function createToolCatalog(
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
+    background: z
+      .boolean()
+      .optional()
+      .describe(
+        "True creates a background agent: hidden from tabs, default lists, your subagent track and notifications. You still get its finish notification and can address it by id. Omit to inherit your own value (false without a caller); use it for helpers the user does not need to watch.",
+      ),
   };
   const legacyCreateAgentPlacementFields = {
     relationship: AgentRelationshipInputSchema.describe(
@@ -1270,13 +1280,6 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
-    objectiveId: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "Your objective from get_attention_context. Required when this turn handles multiple requests.",
-      ),
     activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
       'How to send into a running turn: "steer" joins it, falling back to interrupt when unavailable; "interrupt" replaces it. Defaults to steer for agent callers and interrupt otherwise.',
     ),
@@ -1410,7 +1413,7 @@ function createToolCatalog(
           .boolean()
           .optional()
           .describe(
-            "True hides the workspace from default lists and the sidebar while its contents remain durable and accessible; omit background to inherit your current workspace’s value (false without a caller), and override it only when the user explicitly asks.",
+            "True hides the workspace from default lists and the sidebar while its contents remain durable and accessible; omit background to inherit your own visibility (true when you or your current workspace are background, false without a caller), and override it only when the user explicitly asks.",
           ),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
@@ -1480,10 +1483,12 @@ function createToolCatalog(
         if (!options.createDirectoryWorkspace) {
           throw new Error("Workspace provisioning is not configured");
         }
-        workspace = await options.createDirectoryWorkspace(cwd, title, projectId, {
-          background,
-          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
-        });
+        workspace = await options.createDirectoryWorkspace(
+          cwd,
+          title,
+          projectId,
+          workspaceBackgroundIntent(background),
+        );
       } else {
         let cwd =
           path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
@@ -1514,8 +1519,7 @@ function createToolCatalog(
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
-            background,
-            callerWorkspaceId: resolveCallerAgent()?.workspaceId,
+            ...workspaceBackgroundIntent(background),
           },
         );
         if (!result.ok) {
@@ -1543,7 +1547,7 @@ function createToolCatalog(
       if (!options.workspaceRegistry) {
         throw new Error("Workspace registry is not configured");
       }
-      const workspaces = (await options.workspaceRegistry.list())
+      const workspaces = (await options.workspaceRegistry.listActive())
         .filter(
           (workspace) => !workspace.archivedAt && (includeBackground || !workspace.background),
         )
@@ -1603,7 +1607,7 @@ function createToolCatalog(
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain. Use get_attention_context and report_objective_status(waiting) before ending an interim reply while a human result is delegated.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. For a different provider, set settings.modeId from inspect_provider; omission is accepted for targets with no modes and for unattended execution supported by the target. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1627,7 +1631,7 @@ function createToolCatalog(
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
-      const { snapshot, initialPromptStarted, initialAttention } = await createAgentCommand(
+      const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
           agentStorage,
@@ -1651,7 +1655,7 @@ function createToolCatalog(
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
+          providerOptions: parsedArgs.settings?.features,
           labels: {
             ...parsedArgs.labels,
             ...(callerAgentId && !resolvedArgs.detached && options.serverId
@@ -1661,9 +1665,9 @@ function createToolCatalog(
           mode: parsedArgs.settings?.modeId,
           promptFailure: "throw",
           notifyOnFinish,
+          background: parsedArgs.background,
           detached: resolvedArgs.detached,
           callerAgentId,
-          callerObjectiveId: parsedArgs.objectiveId,
           callerContext,
         },
       );
@@ -1675,7 +1679,6 @@ function createToolCatalog(
           ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
           : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
       const response = {
-        attention: initialAttention,
         content: [],
         structuredContent: ensureValidJson({
           agentId: currentSnapshot.id,
@@ -1836,9 +1839,11 @@ function createToolCatalog(
       const cwd = process.cwd();
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
-          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
-        }),
+        workspaceId: await options.ensureWorkspaceForCreate(
+          cwd,
+          firstAgentContext,
+          workspaceBackgroundIntent(undefined),
+        ),
       };
     }
     const caller = resolveCallerAgent();
@@ -1942,9 +1947,11 @@ function createToolCatalog(
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
-          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
-        }),
+        workspaceId: await options.ensureWorkspaceForCreate(
+          cwd,
+          firstAgentContext,
+          workspaceBackgroundIntent(undefined),
+        ),
       };
     }
 
@@ -1953,94 +1960,15 @@ function createToolCatalog(
     );
   }
 
-  if (scope === "agent") {
-    registerTool(
-      "get_attention_context",
-      {
-        title: "Get my attention objectives",
-        description:
-          "Read your accepted objectives and their output recipients. Before waiting for delegated human work, report its objective as waiting; report final only when its result for the human is ready. Use objectiveId to keep unrelated requests separate.",
-        inputSchema: {},
-        outputSchema: AgentAttentionContextSchema.shape,
-      },
-      async () => ({
-        content: [],
-        structuredContent: ensureValidJson(
-          agentManager.getAttentionObjectives(requireAttentionCallerId()),
-        ),
-      }),
-    );
-    registerTool(
-      "report_objective_status",
-      {
-        title: "Report my objective status",
-        description:
-          "Declare your current objective waiting for agents or final for its intended recipient. Waiting human work keeps its obligation across callback turns without prematurely asking for review. This does not pause or stop any agent. Get objectiveId from get_attention_context.",
-        inputSchema: {
-          objectiveId: z.string().min(1),
-          disposition: z.enum(["waiting", "final"]),
-        },
-        outputSchema: AgentAttentionContextSchema.shape,
-      },
-      async ({ objectiveId, disposition }) => ({
-        content: [],
-        structuredContent: ensureValidJson(
-          await agentManager.reportObjectiveStatus({
-            agentId: requireAttentionCallerId(),
-            objectiveId,
-            disposition,
-          }),
-        ),
-      }),
-    );
-    registerTool(
-      "request_human_attention",
-      {
-        title: "Request human attention for my task",
-        description:
-          "Explicitly ask the human to review or intervene in your current task. State the reason; the notification opens this chat. Routine agent-directed results go to their requester instead. Repeating the same unresolved reason does not notify again. You cannot target another agent. Get objectiveId from get_attention_context.",
-        inputSchema: {
-          objectiveId: z.string().min(1),
-          reason: z.string().trim().min(1).max(2048),
-        },
-        outputSchema: { notified: z.boolean() },
-      },
-      async ({ objectiveId, reason }) => ({
-        content: [],
-        structuredContent: await agentManager.requestHumanAttention({
-          agentId: requireAttentionCallerId(),
-          objectiveId,
-          reason,
-        }),
-      }),
-    );
-  }
-
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
     "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
-
-  /** Describe an already accepted dispatch without changing its watcher or admission lifecycle. */
-  function describePromptAcknowledgement(
-    disposition: PromptDispatchDisposition,
-    snapshot: ReturnType<AgentManager["getAgent"]>,
-    notifying: boolean,
-  ) {
-    return {
-      success: true,
-      disposition,
-      status: snapshot?.lifecycle ?? "idle",
-      guidance: notifying
-        ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
-        : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
-    };
-  }
 
   registerTool(
     "send_agent_prompt",
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Paseo supplies caller identity. Before ending your reply while a human result is still delegated, use get_attention_context and report_objective_status(waiting); report final when that result is ready.",
+        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -2054,7 +1982,6 @@ function createToolCatalog(
     async ({
       agentId,
       prompt,
-      objectiveId,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
       activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
@@ -2062,30 +1989,15 @@ function createToolCatalog(
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
-      // Validate the recipient first: preparing persists a delegation in the caller's ledger.
-      const attention = callerAgentId
-        ? await agentManager.prepareAttentionMessage({
-            agentId: callerAgentId,
-            recipient: { agentId },
-            objectiveId,
-          })
-        : undefined;
       const notifying = Boolean(callerAgentId && notifyOnFinish);
       const notification =
         notifying && callerAgentId
           ? await (() => {
               if (!options.finishSubscriptions)
                 throw new Error("Finish subscriptions are not configured");
-              return options.finishSubscriptions().register(
-                {
-                  childAgentId: agentId,
-                  callerAgentId,
-                  attention: finishAttentionQuery(attention, () =>
-                    agentManager.attentionRequester(callerAgentId),
-                  ),
-                },
-                true,
-              );
+              return options
+                .finishSubscriptions()
+                .register({ childAgentId: agentId, callerAgentId }, true);
             })()
           : undefined;
       function confirmDispatch(_disposition: PromptDispatchDisposition): void {
@@ -2107,11 +2019,9 @@ function createToolCatalog(
           try {
             return agentMessages().enqueue({
               recipientId: agentId,
-              messageId: attention?.requesterObjective?.requestId,
               prompt,
               source: {
                 kind: "agent-message",
-                attention,
                 agentId: callerAgentId,
                 title: resolveCallerAgent()?.config.title ?? undefined,
               },
@@ -2168,7 +2078,14 @@ function createToolCatalog(
       }
       const currentSnapshot = agentManager.getAgent(agentId);
 
-      const responseData = describePromptAcknowledgement(disposition, currentSnapshot, notifying);
+      const responseData = {
+        success: true,
+        disposition,
+        status: currentSnapshot?.lifecycle ?? "idle",
+        guidance: notifying
+          ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
+          : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
+      };
       const validJson = ensureValidJson(responseData);
 
       const response = {
@@ -2218,7 +2135,7 @@ function createToolCatalog(
       const structuredSnapshot = buildStoredAgentPayload(
         record,
         new Set(providerSnapshotManager.listRegisteredProviderIds()),
-        { agentAwareAttention: agentManager.agentAwareAttentionEnabled },
+        (provider, own) => agentManager.effectiveOptionsFor(provider, own),
       );
       return {
         content: [],
@@ -2274,7 +2191,7 @@ function createToolCatalog(
           buildStoredAgentPayload(
             record,
             new Set(providerSnapshotManager.listRegisteredProviderIds()),
-            { agentAwareAttention: agentManager.agentAwareAttentionEnabled },
+            (provider, own) => agentManager.effectiveOptionsFor(provider, own),
           ),
         isProviderVisible: () => true,
         isStoredProviderAvailable: (record) =>
@@ -2397,9 +2314,7 @@ function createToolCatalog(
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
       }
       if (settings?.features) {
-        for (const [featureId, value] of Object.entries(settings.features)) {
-          await agentManager.setAgentFeature(agentId, featureId, value);
-        }
+        await agentManager.setAgentOptions(agentId, settings.features);
       }
 
       await updateAgentCommand({ agentManager }, { agentId, name, labels });
@@ -3177,8 +3092,8 @@ function createToolCatalog(
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
         "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
         "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
-        "list if none are configured.",
+        "`options` into create_agent as `settings.features` (there is no `profile` parameter). " +
+        "Returns an empty list if none are configured.",
       inputSchema: {},
       outputSchema: {
         profiles: z.array(AgentProfileSchema),
@@ -3231,13 +3146,13 @@ function createToolCatalog(
         throw new PaseoToolInputError(entry.error ?? `Provider '${providerId}' is unavailable`);
       }
       const selectedModel = settings?.model ?? resolvedProviderModel.model;
-      const features = await agentManager.listDraftFeatures({
+      const { controls, options: effectiveOptions } = await agentManager.listDraftControls({
         provider: providerId,
         cwd: resolvedCwd,
         ...(settings?.modeId ? { modeId: settings.modeId } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(settings?.thinkingOptionId ? { thinkingOptionId: settings.thinkingOptionId } : {}),
-        ...(settings?.features ? { featureValues: settings.features } : {}),
+        ...(settings?.features ? { providerOptions: settings.features } : {}),
       });
       return {
         content: [],
@@ -3249,7 +3164,7 @@ function createToolCatalog(
           status: summary.status,
           modes: summary.modes,
           selectedModel: selectedModel ?? null,
-          features,
+          features: featuresFromControls({ controls, options: effectiveOptions }),
         }),
       };
     },

@@ -1,4 +1,3 @@
-import { REQUESTER_LOST_PERMISSION_MESSAGE } from "./agent/attention/coordinator.js";
 import {
   createWorkspaceRuntimeStore,
   type WorkspaceRuntimeStore,
@@ -21,7 +20,7 @@ import {
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
-import { afterEach, describe, expect, onTestFinished, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   assertPullRequestAutoMergeDisableReady,
@@ -29,7 +28,6 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import { deriveAgentStateBucket } from "@getpaseo/protocol/agent-state-bucket";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -46,12 +44,8 @@ import {
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
-import { AgentManager, type AgentManagerEvent } from "./agent/agent-manager.js";
-import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
-import { toAgentPayload } from "./agent/agent-projections.js";
-import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
-import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
+import type { StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -312,7 +306,6 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
-  agentRuntime?: Pick<SessionOptions, "agentManager" | "agentStorage">;
   workspaceRuntimeStore?: WorkspaceRuntimeStore;
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
@@ -355,6 +348,7 @@ interface SessionForTestOptions {
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
+  clientCapabilities?: SessionOptions["clientCapabilities"];
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
@@ -409,6 +403,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
             messages.push(message),
         }),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
+    clientCapabilities: options.clientCapabilities,
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
     pushNotifications: options.pushNotifications ?? asPushNotifications(),
@@ -416,6 +411,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
+      getAgentBackgroundWorkSummary: () => undefined,
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),
@@ -469,8 +465,6 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
-    // Inject real instances without spreading their prototype methods into partial stubs.
-    ...options.agentRuntime,
   };
   if (options.sendToSource) sessionOptions.onMessageToSource = options.sendToSource;
   return new Session(sessionOptions);
@@ -608,6 +602,64 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   await session.cleanup();
   expect(listeners.size).toBe(0);
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
+});
+
+test("losing daemon.manage releases the session's plugin subscriptions", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const release = vi.fn();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribePluginRpc: () => ({ ready: Promise.resolve(), attach: () => {}, release }),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+
+  await session.handleMessage({
+    type: "plugin.rpc.subscribe.request",
+    requestId: "watch",
+    pluginId: "example",
+    method: "screen.capture",
+    input: {},
+  });
+  expect(messages.map((message) => message.type)).toContain("plugin.rpc.subscribe.response");
+  session.setPermissions(["daemon.read"]);
+
+  // Bytes have no outbound permission check, so the stream itself has to end.
+  await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
+test("losing daemon.manage during a plugin RPC withholds its JSON and binary results", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const binaryMessages: Uint8Array[] = [];
+  const outputs = new Map<string, (output: unknown) => void>();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    invokePluginRpc: (_pluginId: string, method: string) =>
+      new Promise((resolve) => outputs.set(method, resolve)),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({
+    messages,
+    binaryMessages,
+    pluginRuntime,
+    clientCapabilities: { [CLIENT_CAPS.pluginBinaryPayloads]: true },
+  });
+  const invoke = (method: string) =>
+    session.handleMessage({
+      type: "plugin.rpc.invoke.request",
+      requestId: method,
+      pluginId: "example",
+      method,
+      input: {},
+    });
+
+  const pending = [invoke("capture.json"), invoke("capture.bytes")];
+  await vi.waitFor(() => expect(outputs.size).toBe(2));
+  session.setPermissions(["daemon.read"]);
+  outputs.get("capture.json")?.({ width: 1 });
+  outputs.get("capture.bytes")?.(new Uint8Array([1, 2, 3]));
+  await Promise.all(pending);
+
+  expect(messages.filter((message) => message.type === "plugin.rpc.invoke.response")).toEqual([]);
+  expect(binaryMessages).toEqual([]);
 });
 
 test("leaves out the client bundles a catalog request already holds", async () => {
@@ -4188,7 +4240,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: {
         list: vi.fn().mockResolvedValue([project]),
         get: vi.fn().mockResolvedValue(project),
@@ -4268,7 +4320,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
       workspaceGitService: {
         getSnapshot: vi.fn(),
@@ -5825,7 +5877,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: liveAgentManager({ setAgentFeature: vi.fn().mockResolvedValue(undefined) }),
+      agentManager: liveAgentManager({ setAgentOptions: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -5849,7 +5901,7 @@ describe("agent config setters", () => {
     const session = createSessionForTest({
       messages,
       agentManager: liveAgentManager({
-        setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")),
+        setAgentOptions: vi.fn().mockRejectedValue(new Error("feature boom")),
       }),
     });
 
@@ -6055,198 +6107,250 @@ test("a failing direct source observes fire-and-forget file replies without unha
   }
 });
 
-/** Exercise the real Session lifecycle route while reusing its existing non-lifecycle service stubs. */
-async function createRealAgentSessionFixture() {
-  const workdir = mkdtempSync(join(tmpdir(), "session-requester-deletion-"));
-  const logger = pino({ level: "silent" });
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const timeline = new InMemoryAgentTimelineStore();
-  const manager = new AgentManager({
-    clients: createTestAgentClients(),
-    registry: storage,
-    timelineStore: timeline,
-    logger,
-  });
+test("answers an agent background work list request", async () => {
   const messages: SessionOutboundMessage[] = [];
   const session = createSessionForTest({
-    paseoHome: workdir,
     messages,
-    agentRuntime: { agentManager: manager, agentStorage: storage },
-  });
-  const runs: Promise<unknown>[] = [];
-  onTestFinished(async () => {
-    await session.cleanup();
-    for (const agent of manager.listAgents()) {
-      if (manager.hasInFlightRun(agent.id)) await manager.cancelAgentRun(agent.id);
-      await manager.closeAgent(agent.id);
-    }
-    await Promise.allSettled(runs);
-    await manager.flush();
-    await storage.flush();
-    rmSync(workdir, { recursive: true, force: true });
-  });
-  const requester = await manager.createAgent(
-    { provider: "codex", cwd: workdir, title: "Independent requester" },
-    undefined,
-    { workspaceId: undefined },
-  );
-  const worker = await manager.createAgent(
-    {
-      provider: "codex",
-      cwd: workdir,
-      title: "Blocked worker",
-      modeId: "default",
-      providerOptions: { approval_policy: "on-request" },
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ id: "agent-a" })),
+      getAgentBackgroundWorkSummary: () => ({ count: 1 }),
+      listAgentBackgroundWork: vi.fn(() => [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ]),
     },
-    undefined,
-    { workspaceId: undefined },
-  );
-  return {
-    workdir,
-    logger,
-    manager,
-    storage,
-    timeline,
-    session,
-    messages,
-    requester,
-    worker,
-    runs,
-  };
-}
-
-/**
- * A real session whose worker is blocked on an unresolved permission requested for another
- * agent (the requester). Tests delete the requester and observe the worker's attention.
- */
-async function startWorkerBlockedForRequester() {
-  const fixture = await createRealAgentSessionFixture();
-  const { manager, storage, requester, worker, runs } = fixture;
-  const notify = vi.fn<Parameters<AgentManager["setAgentAttentionCallback"]>[0]>();
-  manager.setAgentAttentionCallback(notify);
-  const running = manager.runAgent(worker.id, "printf ok > permission.txt", {
-    clientMessageId: "delete-requester-job",
-    attention: [
-      {
-        kind: "agent",
-        requestId: "delete-requester-job",
-        requester: manager.attentionRequester(requester.id),
-      },
-    ],
   });
-  void running.catch(() => undefined);
-  runs.push(running);
-  await manager.waitForAgentRunStart(worker.id);
-  await vi.waitFor(() => expect(manager.getPendingPermissions(worker.id)).toHaveLength(1));
-  await manager.flush();
-  const [permission] = manager.getPendingPermissions(worker.id);
-  if (!permission) throw new Error("Expected the fake SDK's actual unresolved tool permission");
-  const before = manager.getAgent(worker.id);
-  if (!before?.session) throw new Error("Expected the actual blocked worker session");
-  expect(toAgentPayload(before).humanAttentionRequired).toBe(false);
-  expect(await storage.get(requester.id)).toEqual(expect.objectContaining({ id: requester.id }));
-  expect((await storage.get(requester.id))?.archivedAt).toBeUndefined();
-  expect(notify).not.toHaveBeenCalled();
-  const providerEvents: AgentStreamEvent[] = [];
-  const stopObserving = before.session.subscribe((event) => providerEvents.push(event));
-  onTestFinished(stopObserving);
 
-  /** Delete the requester through the session and check what every boundary shares. */
-  async function deleteRequester() {
-    await fixture.session.handleMessage({
-      type: "delete_agent_request",
-      agentId: requester.id,
-      requestId: "delete-requester",
-    });
-    await manager.flush();
-    expect(manager.getAgent(requester.id)).toBeNull();
-    expect(findByType(fixture.messages, "agent_deleted")?.payload).toEqual({
-      agentId: requester.id,
-      requestId: "delete-requester",
-    });
-  }
-
-  /** The worker is still blocked on the same permission, with no provider replay. */
-  function expectWorkerStillBlocked() {
-    expect(providerEvents).toEqual([]);
-    expect(manager.getPendingPermissions(worker.id)).toEqual([permission]);
-    const after = manager.getAgent(worker.id);
-    if (!after) throw new Error("Expected independent worker to survive requester deletion");
-    const payload = toAgentPayload(after);
-    expect(
-      deriveAgentStateBucket({
-        ...payload,
-        pendingPermissionCount: payload.pendingPermissions.length,
-      }),
-    ).toBe("needs_input");
-    return payload;
-  }
-
-  return {
-    ...fixture,
-    notify,
-    deleteRequester,
-    expectWorkerStillBlocked,
-    persistedRequester: () =>
-      new AgentStorage(join(fixture.workdir, "agents"), fixture.logger).get(requester.id),
-    stopObserving,
-  };
-}
-
-test("hard delete committed removal preserves the requester-loss boundary", async () => {
-  const scenario = await startWorkerBlockedForRequester();
-  const { storage, timeline, requester, worker, notify } = scenario;
-  const failure = new Error("Injected committed deletion boundary failure");
-  const remove = vi.spyOn(storage, "remove");
-  const originalDelete = timeline.delete.bind(timeline);
-  // Removal commits, then the later timeline cleanup fails.
-  const cleanup = vi.spyOn(timeline, "delete").mockImplementation((agentId) => {
-    if (agentId === requester.id) throw failure;
-    originalDelete(agentId);
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-1",
   });
-  try {
-    await scenario.deleteRequester();
-    expect(remove).toHaveBeenCalledExactlyOnceWith(requester.id);
-    expect(await scenario.persistedRequester()).toBeNull();
-    expect(cleanup).toHaveBeenCalledExactlyOnceWith(requester.id);
-    expect(cleanup.mock.results).toEqual([{ type: "throw", value: failure }]);
-    const payload = scenario.expectWorkerStillBlocked();
-    expect(payload.humanAttentionRequired).toBe(true);
-    expect(notify).toHaveBeenCalledExactlyOnceWith({
-      agentId: worker.id,
-      provider: "codex",
-      reason: "finished",
-      message: REQUESTER_LOST_PERMISSION_MESSAGE,
-    });
-    expect((await storage.get(worker.id))?.requiresAttention).toBe(true);
-  } finally {
-    remove.mockRestore();
-    cleanup.mockRestore();
-    scenario.stopObserving();
-  }
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-1",
+      agentId: "agent-a",
+      items: [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ],
+      error: null,
+    },
+  });
 });
 
-test("hard delete rejected removal preserves the requester-loss boundary", async () => {
-  const scenario = await startWorkerBlockedForRequester();
-  const { storage, timeline, requester, worker, notify } = scenario;
-  const failure = new Error("Injected rejected deletion boundary failure");
-  // Removal itself fails, so the requester stays on disk and nothing was lost.
-  const remove = vi.spyOn(storage, "remove").mockRejectedValueOnce(failure);
-  const cleanup = vi.spyOn(timeline, "delete");
-  try {
-    await scenario.deleteRequester();
-    expect(remove).toHaveBeenCalledExactlyOnceWith(requester.id);
-    const persisted = await scenario.persistedRequester();
-    expect(persisted).toEqual(expect.objectContaining({ id: requester.id }));
-    expect(persisted?.archivedAt).toBeUndefined();
-    expect(cleanup).not.toHaveBeenCalled();
-    const payload = scenario.expectWorkerStillBlocked();
-    expect(payload.humanAttentionRequired).toBe(false);
-    expect(notify).not.toHaveBeenCalled();
-    expect((await storage.get(worker.id))?.requiresAttention).toBe(false);
-  } finally {
-    remove.mockRestore();
-    cleanup.mockRestore();
-    scenario.stopObserving();
-  }
+test("reports an unavailable inventory for a stored agent without loading it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const resumeAgentFromPersistence = vi.fn();
+  const createAgent = vi.fn();
+  const listAgentBackgroundWork = vi.fn(() => []);
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: () => undefined,
+      getRegisteredProviderIds: vi.fn(() => ["claude"]),
+      resumeAgentFromPersistence,
+      createAgent,
+      listAgentBackgroundWork,
+    },
+    agentStorage: {
+      get: vi.fn().mockResolvedValue(
+        createStoredAgentRecord({
+          id: "agent-a",
+          cwd: "/tmp/repo",
+          provider: "claude",
+          persistence: { provider: "claude", sessionId: "session-a" },
+        }),
+      ),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-stored",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-stored",
+      agentId: "agent-a",
+      items: [],
+      error: "Background work inventory is unavailable",
+    },
+  });
+  expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
+  expect(createAgent).not.toHaveBeenCalled();
+  expect(listAgentBackgroundWork).not.toHaveBeenCalled();
+});
+
+test.each([
+  {
+    name: "an archived agent",
+    record: createStoredAgentRecord({
+      id: "agent-a",
+      cwd: "/tmp/repo",
+      archivedAt: "2026-10-06T10:00:00.000Z",
+    }),
+    error: "Agent is archived: agent-a",
+  },
+  { name: "an unknown agent", record: undefined, error: "Unknown agent 'agent-a'" },
+  {
+    name: "an internal agent",
+    record: createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo", internal: true }),
+    error: "Unknown agent 'agent-a'",
+  },
+])("rejects a background work list request for $name that is not loaded", async (scenario) => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: () => undefined,
+      getRegisteredProviderIds: vi.fn(() => ["codex"]),
+      resumeAgentFromPersistence: vi.fn(),
+      createAgent: vi.fn(),
+    },
+    agentStorage: { get: vi.fn().mockResolvedValue(scenario.record) },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-rejected",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: { requestId: "list-rejected", agentId: "agent-a", items: [], error: scenario.error },
+  });
+});
+
+test("never pushes background work to an old app", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  // provider_subagents makes subagent updates flow to this legacy socket, so the
+  // manager listener is installed for it.
+  const legacySocket = {};
+  session.updateClientCapabilities({ provider_subagents: true }, legacySocket);
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+
+  listener({
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  });
+
+  const pushed = [...messages, ...targetedMessages.map((entry) => entry.message)];
+  expect(pushed.some((message) => message.type === "agent.background_work.update")).toBe(false);
+});
+
+test("pushes background work only to clients that subscribed to it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+  });
+  const forward = (event: AgentManagerEvent) => {
+    for (const listener of agentEventListeners) listener(event);
+  };
+  const event: AgentManagerEvent = {
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  };
+
+  // Subscribe to an unrelated event so the manager listener is installed, then prove
+  // a client that did not ask for background work never receives it.
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-1",
+    events: ["agent.provider_subagents.update"],
+  });
+  if (agentEventListeners.length === 0) throw new Error("Agent event listener was not installed");
+  forward(event);
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-2",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+
+  forward(event);
+
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "agent.background_work.update",
+      payload: expect.objectContaining({ agentId: "agent-a", items: event.items }),
+    }),
+  );
+});
+
+test("does not publish internal agents' background work to subscribed clients", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  let listener: ((event: AgentManagerEvent) => void) | undefined;
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: () => ({ id: "internal-agent", internal: true }) as never,
+      subscribe: (callback) => {
+        listener = callback;
+        return () => {};
+      },
+    },
+  });
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "subscribe-internal-background",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "background_work",
+    agentId: "internal-agent",
+    items: [
+      { id: "work", kind: "shell", description: "private", startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  });
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
 });
