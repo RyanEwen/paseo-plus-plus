@@ -1,0 +1,573 @@
+import type { PromptJumpPlacement } from "./prompt-jump-placement";
+import { useNavigationActionVisibility } from "./use-navigation-action-visibility";
+import {
+  useLayoutEffect,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import { useStableEvent } from "@/hooks/use-stable-event";
+import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
+import { EMPTY_PROMPT_READING_SOURCE, type PromptReadingSource } from "./prompt-reading-position";
+import { useReadingPrompt, type ReadingPromptRequest } from "./use-reading-prompt";
+import { isDiscoverySettled, usePromptDiscovery } from "./use-prompt-discovery";
+import type { StreamItem } from "@/types/stream";
+import type { ChatOutline } from "./chat-outline/use-chat-outline";
+import {
+  buildPromptTargets,
+  resolveContextSource,
+  isContextSourceMissing,
+  mergeCachedPromptTarget,
+  resolveReadingPromptTarget,
+  getMissingReadingPromptSeq,
+  shouldReadContext,
+  resolveContextMessage,
+  shouldDiscoverCachedPrompt,
+  hasDiscoveredCachedPrompt,
+  needsReadingPromptDiscovery,
+  isNextPromptDisabled,
+  findPromptTarget,
+  isPromptNavigationBusy,
+  isPreviousPromptDisabled,
+  INITIAL_STICKY_PROMPT_STATE,
+  reduceStickyPromptState,
+  type PromptTarget,
+  type StickyPromptState,
+  type UserPrompt,
+} from "./sticky-prompt-model";
+
+export interface StickyPromptInput {
+  enabled?: boolean;
+  /** The timeline owner admits passive context as actual rows. */
+  contextManaged?: boolean;
+  contextOnlyIds?: ReadonlySet<string>;
+  reading?: PromptReadingSource;
+  fetchPrompt?: (seq: number) => Promise<UserPrompt>;
+  fetchContext?: (source: StreamItem, signal: AbortSignal) => Promise<UserPrompt | undefined>;
+  items: StreamItem[];
+  /** The rows that can hold user prompts, stable across stream ticks. Defaults to `items`. */
+  promptRows?: readonly StreamItem[];
+  epoch: string | null;
+  outline: ChatOutline;
+  indexed: boolean;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  progressKey: string | null;
+  loadOlder: (acceptance?: TimelinePageAcceptance) => boolean | Promise<boolean>;
+  jumpToLoaded: (id: string, placement?: PromptJumpPlacement) => void;
+}
+
+/** Own the sticky selection while the existing timeline owner loads and scrolls prompts. */
+export function useStickyPrompt(input: StickyPromptInput) {
+  const {
+    enabled = true,
+    items,
+    epoch,
+    outline,
+    indexed,
+    hasOlder,
+    loadingOlder,
+    progressKey,
+    loadOlder,
+    jumpToLoaded,
+  } = input;
+  const {
+    key: actionVisibilityKey,
+    start: showNavigationActions,
+    retarget: retargetNavigationActions,
+    clear: clearNavigationActions,
+  } = useNavigationActionVisibility(enabled, epoch);
+  const reading = usePromptReading(enabled, input.reading);
+  const promptRows = input.promptRows ?? items;
+  const loadedTargets = useMemo(
+    () => buildPromptTargets(promptRows, outline.prompts, epoch, input.contextOnlyIds),
+    [promptRows, outline.prompts, epoch, input.contextOnlyIds],
+  );
+  const ownerEpoch = useRef(epoch);
+  const scopeChanged = ownerEpoch.current !== epoch;
+  const [stored, dispatch] = useReducer(reduceStickyPromptState, INITIAL_STICKY_PROMPT_STATE);
+  // Do not expose old prompt state during the first render of a new epoch.
+  const { selected, pending, error, cancelled } = resolveEpochPromptState(scopeChanged, stored);
+  const retryTarget = useRef<{
+    target: PromptTarget;
+    scroll: boolean;
+    preserveSelection?: boolean;
+    placement?: PromptJumpPlacement;
+  } | null>(null);
+  const retryDirection = useRef<-1 | 1>(-1);
+  const selectedMessage = resolveSelectedMessage(loadedTargets, selected);
+
+  // The reading row is authoritative for manual scrolling. Keep full selected content
+  // across page replacements, and never replace an explicit pending navigation.
+  const readingTarget = useMemo(
+    () =>
+      reading.following
+        ? loadedTargets.at(-1)
+        : resolveReadingPromptTarget(items, loadedTargets, reading.rowId, reading.seq),
+    [items, reading.rowId, reading.seq, reading.following, loadedTargets],
+  );
+  const discoverReading = needsReadingPromptDiscovery(
+    indexed || input.contextManaged === true,
+    reading.manual,
+    reading.rowId,
+    readingTarget,
+  );
+  const missingReadingSeq = getMissingReadingPromptSeq({
+    navigating: reading.navigating,
+    intentional: reading.manual || reading.following,
+    indexed,
+    cancelled,
+    pending: pending !== null || outline.isJumping,
+    target: readingTarget,
+    latest: loadedTargets.at(-1),
+    selected: selectedMessage,
+  });
+  const knownPrompts = useMemo(
+    () => promptRows.filter((item): item is UserPrompt => item.kind === "user_message"),
+    [promptRows],
+  );
+  const contextRequested = shouldReadContext({
+    enabled,
+    missing: discoverReading,
+    cancelled,
+    navigating: reading.navigating,
+    pending,
+  });
+  const contextSource = resolveContextSource(
+    items,
+    epoch,
+    reading.rowId,
+    reading.seq,
+    contextRequested,
+  );
+  const readingContent = useReadingPrompt({
+    knownPrompts,
+    epoch,
+    request: resolveReadingPromptRequest({
+      source: contextSource,
+      seq: enabled && !input.contextManaged ? missingReadingSeq : undefined,
+      fetchContext: input.fetchContext,
+      fetchPrompt: input.fetchPrompt,
+    }),
+  });
+  const targets = useMemo(
+    () => mergeCachedPromptTarget(loadedTargets, readingContent.item, selected, epoch),
+    [loadedTargets, readingContent.item, selected, epoch],
+  );
+  const readingItem = readingTarget?.item ?? readingContent.item;
+  const message = resolveContextMessage({
+    pending,
+    missing: discoverReading,
+    selected: selectedMessage,
+    fetched: readingContent.item,
+    missingSeq: missingReadingSeq,
+    canFetch: input.fetchPrompt !== undefined,
+  });
+  const position = message ? findPromptTarget(targets, message) : -1;
+  useEffect(() => {
+    if (
+      !enabled ||
+      (!reading.manual && !reading.following) ||
+      reading.navigating ||
+      pending ||
+      outline.isJumping ||
+      !readingItem
+    )
+      return;
+    dispatch({
+      type: "readingSelected",
+      selected: readingTarget?.key === targets.at(-1)?.key ? null : readingItem,
+    });
+  }, [
+    enabled,
+    reading.manual,
+    reading.following,
+    reading.navigating,
+    outline.isJumping,
+    pending,
+    readingTarget,
+    readingItem,
+    targets,
+  ]);
+
+  const previous = targets[position - 1];
+  const discoveringPrevious = pending === "previous";
+  const discovery = usePromptDiscovery({
+    enabled:
+      enabled &&
+      (!input.contextManaged || pending !== null) &&
+      shouldDiscoverCachedPrompt({
+        pending,
+        indexed,
+        message,
+        cancelled,
+        readingMissing: discoverReading,
+      }),
+    reached: hasDiscoveredCachedPrompt({
+      pending,
+      loaded: loadedTargets,
+      previous,
+      readingMissing: discoverReading,
+      readingTarget,
+      message,
+    }),
+    hasOlder,
+    loadingOlder,
+    progressKey: progressKey ?? items[0]?.id ?? "empty",
+    loadOlder,
+  });
+
+  const selectTarget = useStableEvent(
+    (
+      target: PromptTarget,
+      options?: { scroll?: boolean; preserveSelection?: boolean; placement?: PromptJumpPlacement },
+    ) => {
+      if (!enabled) return;
+      const scroll = options?.scroll ?? true;
+      dispatch({ type: "selectionStarted" });
+      const placement = options?.placement ?? "pinned";
+      retryTarget.current = {
+        target,
+        scroll,
+        preserveSelection: options?.preserveSelection,
+        placement,
+      };
+      if (target.item && !target.cached) {
+        dispatch({
+          type: "targetShown",
+          selected:
+            !options?.preserveSelection && target.key === targets.at(-1)?.key ? null : target.item,
+        });
+        if (scroll) jumpToLoaded(target.item.id, placement);
+      } else if (target.seq !== undefined) {
+        if (target.cached && !indexed && !canPageToContextTarget(target.seq, input)) {
+          dispatch({ type: "targetUnreachable" });
+          return;
+        }
+        dispatch({ type: "targetRequested", target });
+        if (indexed)
+          outline.jumpToPrompt(target.seq, {
+            scroll: target.cached ? false : scroll,
+            source: "sticky",
+            placement,
+          });
+      }
+    },
+  );
+
+  const cancelDiscovery = discovery.cancel;
+
+  useEffect(() => {
+    if (!enabled || !pending || pending === "previous") return;
+    const loaded = loadedTargets.find((target) => target.key === pending.key);
+    if (loaded?.item && !loaded.cached) {
+      const preserveSelection =
+        retryTarget.current?.target.key === loaded.key && retryTarget.current.preserveSelection;
+      dispatch({
+        type: "pendingLoaded",
+        selected: !preserveSelection && loaded.key === targets.at(-1)?.key ? null : loaded.item,
+      });
+      if (pending.cached && retryTarget.current?.scroll)
+        jumpToLoaded(loaded.item.id, retryTarget.current?.placement);
+    } else if (
+      isFailedPromptMaterialization({
+        jumpError: outline.jumpError,
+        cached: pending.cached,
+        indexed,
+        hasOlder,
+        loadingOlder,
+        status: discovery.status,
+      })
+    ) {
+      cancelDiscovery();
+      dispatch({ type: "pendingFailed" });
+    }
+  }, [
+    enabled,
+    outline.jumpError,
+    pending,
+    loadedTargets,
+    discovery.status,
+    cancelDiscovery,
+    jumpToLoaded,
+    targets,
+    indexed,
+    hasOlder,
+    loadingOlder,
+  ]);
+
+  useEffect(() => {
+    if (error || outline.jumpError || isDiscoverySettled(discovery.status)) {
+      clearNavigationActions();
+    }
+  }, [error, outline.jumpError, discovery.status, clearNavigationActions]);
+
+  // Initial/latest display is a content lookup, never an implicit prompt jump.
+  // Only an explicit navigation below may replace the authoritative history window.
+
+  useEffect(() => {
+    if (!enabled || !discoveringPrevious) return;
+    if (previous) {
+      retargetNavigationActions(previous.key);
+      selectTarget(previous);
+    } else if (isDiscoverySettled(discovery.status)) dispatch({ type: "previousNotFound" });
+  }, [
+    enabled,
+    discoveringPrevious,
+    discovery.status,
+    previous,
+    selectTarget,
+    retargetNavigationActions,
+  ]);
+
+  const navigate = useStableEvent((direction: -1 | 1) => {
+    if (!enabled || !message) return;
+    discovery.restart();
+    retryTarget.current = null;
+    retryDirection.current = direction;
+    // Freeze the current prompt before a remote jump replaces the loaded window.
+    dispatch({ type: "navigationStarted", selected: message });
+    const target = targets[position + direction];
+    showNavigationActions(target?.key ?? "discover-previous");
+    if (target) selectTarget(target);
+    else if (direction === -1 && hasOlder) dispatch({ type: "previousRequested" });
+  });
+
+  const cancel = useStableEvent(() => {
+    clearNavigationActions();
+    if (!enabled) return;
+    outline.cancelJump();
+    readingContent.cancel();
+    retryTarget.current = null;
+    discovery.cancel();
+    dispatch({ type: "cancelled" });
+  });
+  const reviewReading = useStableEvent(() => {
+    clearNavigationActions();
+    if (!enabled) return;
+    outline.cancelJump();
+    readingContent.cancel();
+    discovery.restart();
+    retryTarget.current = null;
+    dispatch({ type: "readingReviewed" });
+  });
+  const followLatest = useStableEvent(() => {
+    if (!enabled) return;
+    cancel();
+    dispatch({ type: "latestFollowed" });
+  });
+  const retry = useStableEvent(() => {
+    if (!enabled) return;
+    if (readingContent.error) {
+      readingContent.retry();
+      return;
+    }
+    dispatch({ type: "retried" });
+    discovery.restart();
+    if (outline.indexError) {
+      outline.retryIndex();
+      return;
+    }
+    const previousAttempt = retryTarget.current;
+    if (previousAttempt) {
+      const target =
+        targets.find((entry) => entry.key === previousAttempt.target.key) ?? previousAttempt.target;
+      selectTarget(target, {
+        scroll: previousAttempt.scroll,
+        preserveSelection: previousAttempt.preserveSelection,
+        placement: previousAttempt.placement,
+      });
+    } else if (message) navigate(retryDirection.current);
+    else if (indexed) {
+      const newest = targets.at(-1);
+      if (newest) readingContent.retry();
+      else outline.retryIndex();
+    }
+  });
+
+  const previousAction = useStableEvent(() => navigate(-1));
+  const nextAction = useStableEvent(() => navigate(1));
+  const activate = useStableEvent((id: string, direction: -1 | 1) => {
+    if (!enabled) return;
+    const current = targets.findIndex((target) => target.item?.id === id);
+    const item = targets[current]?.item;
+    if (!item) return;
+    dispatch({ type: "navigationStarted", selected: item });
+    discovery.restart();
+    retryDirection.current = direction;
+    const target = targets[current + direction];
+    showNavigationActions(target?.key ?? "discover-previous");
+    if (target) selectTarget(target);
+    else if (direction === -1 && hasOlder) dispatch({ type: "previousRequested" });
+  });
+  const cancelStickyJump = outline.cancelStickyJump;
+  const cancelReading = readingContent.cancel;
+  const restartDiscovery = discovery.restart;
+
+  // Opt-out preserves the mounted timeline and draft. Invalidate only this feature's
+  // page acceptance, content completion and navigation before passive effects can run.
+  useLayoutEffect(() => {
+    if (enabled) {
+      restartDiscovery();
+      dispatch({ type: "enabled" });
+      return;
+    }
+    cancelStickyJump();
+    cancelReading();
+    cancelDiscovery();
+    retryTarget.current = null;
+    dispatch({ type: "disabled" });
+  }, [enabled, cancelStickyJump, cancelReading, cancelDiscovery, restartDiscovery]);
+  // Epoch replacement resets only prompt ownership. The surrounding viewport keeps
+  // its manual/following state, DOM ref and reading anchor across authoritative hydration.
+  useLayoutEffect(() => {
+    if (ownerEpoch.current === epoch) return;
+    ownerEpoch.current = epoch;
+    cancelStickyJump();
+    cancelDiscovery();
+    if (enabled) restartDiscovery();
+    retryTarget.current = null;
+    retryDirection.current = -1;
+    dispatch({ type: "epochReplaced", enabled });
+    // The reading-content owner independently cancels old epoch completions without
+    // suppressing the new epoch's same-sequence request.
+  }, [epoch, enabled, cancelStickyJump, cancelDiscovery, restartDiscovery]);
+  const busy = isPromptNavigationBusy({
+    pending: pending !== null || readingContent.loading,
+    jumping: outline.isJumping,
+    discovering: discovery.status === "loading",
+    indexed,
+    epoch,
+    cancelled,
+    indexReady: outline.indexReady,
+    indexError: outline.indexError,
+  });
+
+  // The current prompt can be outside the rendered window. Its indexed target
+  // uses the same window acceptance and scrolling owner as arrow navigation.
+  const reveal = useStableEvent((messageId?: string) => {
+    if (!enabled || busy) return;
+    clearNavigationActions();
+    const target = messageId
+      ? targets.find((candidate) => candidate.item?.id === messageId)
+      : targets[position];
+    if (target) {
+      // Retain the selected prompt while the owner loads its original row.
+      dispatch({ type: "revealStarted", selected: target.item ?? message ?? null });
+      selectTarget(target, { scroll: true, preserveSelection: true, placement: "original" });
+    }
+  });
+  return {
+    actionVisibleMessageId: resolveActionVisibleMessageId(targets, actionVisibilityKey),
+    message,
+    targets,
+    previousKnownBoundary: indexed ? outline.indexReady : !hasOlder,
+    activate,
+    discoveryStatus: discovery.status,
+    cancelled,
+    busy,
+    reveal,
+    error: [
+      error,
+      outline.indexError,
+      outline.jumpError,
+      discovery.status === "error",
+      readingContent.error,
+      isContextSourceMissing(contextRequested, contextSource),
+    ].some(Boolean),
+    previousDisabled: isPreviousPromptDisabled({
+      message,
+      indexed,
+      position,
+      hasOlder,
+      indexReady: outline.indexReady,
+      indexError: outline.indexError,
+    }),
+    nextDisabled: isNextPromptDisabled(message, position, targets.length),
+    retry,
+    cancel,
+    previous: previousAction,
+    next: nextAction,
+    followLatest,
+    reviewReading,
+  };
+}
+
+function usePromptReading(enabled: boolean, source: PromptReadingSource | undefined) {
+  const readingSource = enabled
+    ? (source ?? EMPTY_PROMPT_READING_SOURCE)
+    : EMPTY_PROMPT_READING_SOURCE;
+  return useSyncExternalStore(
+    readingSource.subscribe,
+    readingSource.getSnapshot,
+    readingSource.getSnapshot,
+  );
+}
+
+function resolveSelectedMessage(targets: PromptTarget[], selected: UserPrompt | null) {
+  return selected ?? targets.at(-1)?.item;
+}
+
+interface PromptMaterializationStatus {
+  jumpError: boolean;
+  cached: boolean | undefined;
+  indexed: boolean;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  status: ReturnType<typeof usePromptDiscovery>["status"];
+}
+
+function isFailedPromptMaterialization(input: PromptMaterializationStatus): boolean {
+  if (input.jumpError) return true;
+  if (!input.cached) return false;
+  return (
+    (!input.indexed && !input.hasOlder && !input.loadingOlder) ||
+    ["error", "limited", "exhausted"].includes(input.status)
+  );
+}
+
+/** Hide previous-epoch bookkeeping before the layout effect clears its stored values. */
+function resolveEpochPromptState(
+  scopeChanged: boolean,
+  state: StickyPromptState,
+): StickyPromptState {
+  if (scopeChanged) return INITIAL_STICKY_PROMPT_STATE;
+  return state;
+}
+
+/** Cached prompt content does not grant action ownership to an unrelated mounted row. */
+function resolveActionVisibleMessageId(targets: PromptTarget[], key: string | null) {
+  return targets.find((target) => target.key === key)?.item?.id;
+}
+
+/** Backward pagination can materialize only targets preceding the ordinary window. */
+function canPageToContextTarget(seq: number, input: StickyPromptInput): boolean {
+  if (!input.hasOlder && !input.loadingOlder) return false;
+  let firstOrdinarySeq = Infinity;
+  for (const item of input.items) {
+    if (input.contextOnlyIds?.has(item.id)) continue;
+    const cursor = item.timelineCursor;
+    if (cursor && cursor.epoch === input.epoch)
+      firstOrdinarySeq = Math.min(firstOrdinarySeq, cursor.seq);
+  }
+  return Number.isFinite(firstOrdinarySeq) && seq < firstOrdinarySeq;
+}
+
+/** A response source reads its own context; otherwise an indexed sequence reads its prompt. */
+function resolveReadingPromptRequest(input: {
+  source: StreamItem | undefined;
+  seq: number | undefined;
+  fetchContext: StickyPromptInput["fetchContext"];
+  fetchPrompt: StickyPromptInput["fetchPrompt"];
+}): ReadingPromptRequest | undefined {
+  if (input.source)
+    return { kind: "context", source: input.source, fetchContext: input.fetchContext };
+  if (input.seq !== undefined)
+    return { kind: "prompt", seq: input.seq, fetchPrompt: input.fetchPrompt };
+  return undefined;
+}
+
+/** Navigation state and actions the sticky prompt host and its controls render. */
+export type StickyPromptNavigation = ReturnType<typeof useStickyPrompt>;

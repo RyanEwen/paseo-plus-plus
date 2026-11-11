@@ -1,3 +1,5 @@
+import { canonicalCoverageForCursor } from "@/timeline/canonical-reading-source";
+import { childContextPageReader } from "@/agent-stream/fetch-reading-prompt-context";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -21,6 +23,7 @@ import { ParentAgentCallout } from "@/subagents/parent";
 import { type SubagentRow, useSubagentsForParent } from "@/subagents/select";
 import { useSubagentSheetTab } from "@/subagents/sheet-tab";
 import { SubagentsTrack } from "@/subagents/track";
+import { createProviderSubagentPromptContexts } from "@/subagents/prompt-contexts";
 import {
   providerSubagentKey,
   providerSubagentLifecycleStatus,
@@ -28,9 +31,11 @@ import {
   observeProviderSubagentTimeline,
   loadOlderProviderSubagentTimeline,
   useProviderSubagentStore,
+  type ProviderSubagentTimelineState,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
+import type { TimelinePageAcceptance } from "@/timeline/fetch-viewed-timeline-page";
 import type { StreamItem } from "@/types/stream";
 import { deriveSubagentStatusBucket } from "@/subagents";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
@@ -113,17 +118,28 @@ function useProviderSubagentDescriptor(
   };
 }
 
+function childTimelineProgressKey(timeline: ProviderSubagentTimelineState | null): string | null {
+  const firstTimelineSeq = timeline?.cursor?.startSeq ?? null;
+  return timeline?.epoch && firstTimelineSeq !== null
+    ? `${timeline.epoch}:${firstTimelineSeq}`
+    : null;
+}
+
 function ProviderSubagentPanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, tabId, target, openFileInWorkspace, openTab } = usePaneContext();
   invariant(target.kind === "provider_subagent", "ProviderSubagentPanel requires provider target");
   const key = providerSubagentKey(serverId, target.parentAgentId, target.subagentId);
   const streamId = `provider:${encodeURIComponent(target.parentAgentId)}:${encodeURIComponent(target.subagentId)}`;
-  const { descriptor, timeline } = useProviderSubagentStore(
-    useShallow((state) => ({
-      descriptor: state.descriptors.get(key) ?? null,
-      timeline: state.timelines.get(key) ?? null,
-    })),
+  const { descriptor, timeline, epoch } = useProviderSubagentStore(
+    useShallow((state) => {
+      const cachedTimeline = state.timelines.get(key) ?? null;
+      return {
+        descriptor: state.descriptors.get(key) ?? null,
+        timeline: cachedTimeline,
+        epoch: cachedTimeline?.epoch ?? null,
+      };
+    }),
   );
   const parent = useSessionStore(
     (state) =>
@@ -178,36 +194,40 @@ function ProviderSubagentPanel() {
     });
   }, [client, supported, serverId, target.parentAgentId, target.subagentId]);
 
-  const loadOlder = useCallback(async (): Promise<boolean> => {
-    if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
-      return false;
-    }
-    setIsLoadingOlder(true);
-    try {
-      return await loadOlderProviderSubagentTimeline({
-        client,
-        serverId,
-        parentAgentId: target.parentAgentId,
-        subagentId: target.subagentId,
-        limit: TIMELINE_FETCH_PAGE_SIZE,
-      });
-    } catch {
-      return false;
-    } finally {
-      setIsLoadingOlder(false);
-    }
-  }, [
-    client,
-    isLoadingOlder,
-    serverId,
-    supported,
-    target.parentAgentId,
-    target.subagentId,
-    timeline,
-  ]);
-  const firstTimelineSeq = timeline?.cursor?.startSeq ?? null;
-  const progressKey =
-    timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
+  // Return settlement to prompt navigation, which may need several tool-only pages.
+  const loadOlder = useCallback(
+    async (acceptance?: TimelinePageAcceptance): Promise<boolean> => {
+      if (acceptance?.signal.aborted) return false;
+      if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
+        return false;
+      }
+      setIsLoadingOlder(true);
+      try {
+        return await loadOlderProviderSubagentTimeline({
+          client,
+          serverId,
+          parentAgentId: target.parentAgentId,
+          subagentId: target.subagentId,
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          signal: acceptance?.signal,
+        });
+      } catch {
+        return false;
+      } finally {
+        setIsLoadingOlder(false);
+      }
+    },
+    [
+      client,
+      isLoadingOlder,
+      serverId,
+      supported,
+      target.parentAgentId,
+      target.subagentId,
+      timeline,
+    ],
+  );
+  const progressKey = childTimelineProgressKey(timeline);
   const subtitle = descriptor?.subtitle?.trim();
 
   const streamContext = useMemo<AgentScreenAgent>(
@@ -222,14 +242,49 @@ function ProviderSubagentPanel() {
     }),
     [descriptor, parent, serverId, streamId],
   );
+  const readPromptContext = useMemo(
+    () =>
+      client && supported
+        ? childContextPageReader(client, target.parentAgentId, target.subagentId)
+        : undefined,
+    [client, supported, target.parentAgentId, target.subagentId],
+  );
+  const promptContexts = useMemo(
+    () =>
+      createProviderSubagentPromptContexts({
+        serverId,
+        parentAgentId: target.parentAgentId,
+        subagentId: target.subagentId,
+        epoch,
+        agentId: streamId,
+      }),
+    [serverId, target.parentAgentId, target.subagentId, epoch, streamId],
+  );
+  useEffect(() => () => promptContexts.dispose(), [promptContexts]);
+  const coverage = useMemo(() => canonicalCoverageForCursor(timeline?.cursor), [timeline?.cursor]);
   const historyPagination = useMemo(
     () => ({
+      epoch,
       hasOlder: timeline?.hasOlder === true,
       isLoadingOlder,
       progressKey,
       onLoadOlder: loadOlder,
+      readPromptContext,
+      promptContexts,
+      sourceMetadata: timeline?.sourceMetadata,
+      coverage,
     }),
-    [isLoadingOlder, loadOlder, progressKey, timeline?.hasOlder],
+    [
+      epoch,
+      isLoadingOlder,
+      loadOlder,
+      progressKey,
+      timeline?.hasOlder,
+      readPromptContext,
+      promptContexts,
+      timeline?.sourceMetadata,
+      coverage,
+    ],
   );
   const turnPresentation = useMemo<TurnPresentation>(
     () => ({

@@ -179,16 +179,23 @@ function isAtHistoryStartEdge(scrollContainer: HTMLElement): boolean {
   return scrollContainer.scrollTop <= USER_SCROLL_DELTA_EPSILON;
 }
 
-function canNestedScrollerConsumeUpwardInput(
+function canNestedScrollerConsumeInput(
   target: EventTarget | null,
   scrollContainer: HTMLElement,
+  direction: number = -1,
 ): boolean {
   let element = target instanceof Element ? target : null;
   while (element && element !== scrollContainer) {
     if (element instanceof HTMLElement) {
       const overflowY = window.getComputedStyle(element).overflowY;
       const canScroll = overflowY === "auto" || overflowY === "scroll";
-      if (canScroll && element.scrollHeight > element.clientHeight && element.scrollTop > 0) {
+      if (
+        canScroll &&
+        element.scrollHeight > element.clientHeight &&
+        (direction < 0
+          ? element.scrollTop > 0
+          : element.scrollTop < element.scrollHeight - element.clientHeight)
+      ) {
         return true;
       }
     }
@@ -331,6 +338,7 @@ const StreamRowContent = React.memo(function StreamRowContent({
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
     segments: inputSegments,
+    contextOnlyIds,
     historyRowRevision,
     liveHeadRowRevision,
     boundary,
@@ -375,11 +383,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, []);
   const [followOutput, setFollowOutputr] = useState(true);
   const followOutputRef = useRef(followOutput);
-  const setFollowOutput = (value: boolean) => {
+  const manualReadingRef = useRef(false);
+  // The viewport handle depends on this setter. Keep its identity through resize
+  // renders so handle cleanup cannot cancel the owner's queued bottom-follow frame.
+  const setFollowOutput = useCallback((value: boolean) => {
     followOutputRef.current = value;
     setFollowOutputr(value);
     return value;
-  };
+  }, []);
   const lastKnownScrollTopRef = useRef(0);
   const mouseScrollGestureRef = useRef<
     | { kind: "scrollbar"; pointerId: number }
@@ -438,7 +449,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
       const anchorIndex = segments.historyVirtualized.findIndex(
-        (row) => row.id === readingAnchor.getRowId(props.readingRowReplacements),
+        (row) =>
+          row.id === readingAnchor.getRowId(props.readingRowReplacements) &&
+          !contextOnlyIds?.has(row.id),
       );
       const container = scrollContainerRef.current;
       // TanStack has computed the new measurements before calling the extractor.
@@ -477,7 +490,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         ]),
       ].sort((left, right) => left - right);
     },
-    [chatFindRowIndexes, readingAnchor, segments.historyVirtualized, props.readingRowReplacements],
+    [
+      props.readingRowReplacements,
+      chatFindRowIndexes,
+      contextOnlyIds,
+      readingAnchor,
+      segments.historyVirtualized,
+    ],
   );
   const virtualOffsetListener = useRef<((offset: number, scrolling: boolean) => void) | null>(null);
   const observeVirtualOffset = useCallback<typeof observeElementOffset>((instance, onOffset) => {
@@ -710,10 +729,22 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const scrollContainer = scrollContainerRef.current;
     const contentNode = contentRef.current;
     if (!scrollContainer || !contentNode) {
-      onReadingPositionChange(null);
+      onReadingPositionChange({
+        rowId: null,
+        navigating: false,
+        following: followOutputRef.current,
+        manual: manualReadingRef.current,
+      });
       return;
     }
-    onReadingPositionChange(readingAnchor.getReadingRowId(scrollContainer.scrollTop));
+    const viewport = scrollContainer.getBoundingClientRect();
+    if (viewport.width <= 0 || viewport.height <= 0) return;
+    onReadingPositionChange({
+      rowId: readingAnchor.getReadingRowId(scrollContainer.scrollTop),
+      navigating: isJumpSettling(),
+      following: followOutputRef.current,
+      manual: manualReadingRef.current,
+    });
   });
 
   const updateScrollMetrics = useCallback(() => {
@@ -729,7 +760,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reportReadingPosition();
   }, [onNearBottomChange, reportReadingPosition]);
 
-  const { isJumpSettling, scrollToMessage } = useScrollToMessage({
+  const { isJumpSettling, scrollToMessage, cancelScrollToMessage } = useScrollToMessage({
+    onSettled: () => reportReadingPosition(),
+    onStarted: () => {
+      manualReadingRef.current = false;
+    },
     active: isActive,
     scrollContainerRef,
     rowVirtualizer,
@@ -747,12 +782,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const viewportTop = container.getBoundingClientRect().top;
     const scrollTop = container.scrollTop;
     const width = content.getBoundingClientRect().width;
+    // Measure every mounted row, including the isolated prompt's full reservation.
+    // Only ordinary window rows may own a prepend correction across an unloaded gap.
     return Array.from(content.querySelectorAll<HTMLElement>("[data-history-row-id]"), (element) => {
       const bounds = element.getBoundingClientRect();
       const id = element.dataset.historyRowId!;
       measuredRowHeights.current.set(id, { width, height: bounds.height });
       return { id, top: bounds.top - viewportTop + scrollTop, height: bounds.height };
-    });
+    }).filter((row) => !contextOnlyIds?.has(row.id));
   });
 
   const reconcileReadingPosition = useStableEvent(() => {
@@ -760,6 +797,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!isActiveRef.current || !container) return;
     const rows = measureRows();
     if (!rows) return;
+    const anchorRowId = readingAnchor.getRowId();
+    if (anchorRowId !== null && contextOnlyIds?.has(anchorRowId)) readingAnchor.reset();
     const shouldAnchor = !followOutputRef.current && !isJumpSettling();
     if (!shouldAnchor) readingAnchor.reset();
     const correctedTop = readingAnchor.reconcile(
@@ -795,6 +834,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reconcileReadingPosition();
   }, [
     contentWidth,
+    contextOnlyIds,
     isActive,
     segments,
     virtualRows,
@@ -807,6 +847,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
    * whether or not this reader was following. Only real input reaches this, never geometry.
    */
   const stopFollowingOutputFromUserIntent = useStableEvent(() => {
+    manualReadingRef.current = true;
     finishInitialFill();
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
@@ -864,6 +905,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isJumpSettling,
     readingAnchor,
     stopFollowingOutputFromUserIntent,
+    setFollowOutput,
     updateScrollMetrics,
   ]);
 
@@ -910,6 +952,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     activationKey,
     forceStickToBottom,
     hasRouteBottomAnchorRequest,
+    setFollowOutput,
     isActivationReady,
     scheduleStickToBottom,
   ]);
@@ -1080,25 +1123,34 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         rearmHistoryStartFromUserIntent();
       }
     };
+    const markManualReading = () => {
+      manualReadingRef.current = true;
+      reportReadingPosition();
+    };
     const handleWheel = (event: WheelEvent) => {
       if (
-        !event.ctrlKey &&
-        event.deltaY < 0 &&
-        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
-      ) {
+        event.ctrlKey ||
+        event.deltaY === 0 ||
+        canNestedScrollerConsumeInput(event.target, scrollContainer, event.deltaY)
+      )
+        return;
+      // Descendants ran first, so their cancellation is visible here. Ancestors run later and this
+      // cannot see them, but the app's own wheel listeners above this viewport are all passive.
+      if (event.deltaY < 0)
         markUpwardViewportInput({ asksViewportToMove: isVerticalUpwardWheel(event) });
-      }
+      markManualReading();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isUpwardViewportScrollKey(event)) {
-        return;
-      }
-      if (canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)) {
-        return;
-      }
-      markUpwardViewportInput({
-        asksViewportToMove: isViewportUpwardKeyPress(event, scrollContainer),
-      });
+      if (isEditableEventTarget(event.target)) return;
+      const upward = isUpwardViewportScrollKey(event);
+      const downward = ["ArrowDown", "PageDown", "End", " "].includes(event.key);
+      if (!upward && !downward) return;
+      if (canNestedScrollerConsumeInput(event.target, scrollContainer, upward ? -1 : 1)) return;
+      if (upward)
+        markUpwardViewportInput({
+          asksViewportToMove: isViewportUpwardKeyPress(event, scrollContainer),
+        });
+      markManualReading();
     };
     const handlePointerDown = (event: PointerEvent) => {
       clearMouseScrollGesture();
@@ -1113,6 +1165,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (event.button === 0) {
         if (isVerticalScrollbarGutterPress(event, scrollContainer)) {
           mouseScrollGestureRef.current = { kind: "scrollbar", pointerId: event.pointerId };
+          markManualReading();
         }
         return;
       }
@@ -1129,6 +1182,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (!gesture || gesture.kind !== "autoscroll" || gesture.pointerId !== event.pointerId) {
         return;
       }
+      if (Math.abs(event.clientY - gesture.lastClientY) > USER_SCROLL_DELTA_EPSILON)
+        markManualReading();
       if (event.clientY < gesture.lastClientY - USER_SCROLL_DELTA_EPSILON) {
         gesture.hasUpwardEvidence = true;
         if (gesture.evidenceExpiryFrame !== null) {
@@ -1166,14 +1221,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         return;
       }
       const previousTouchY = lastTouchClientYRef.current;
+      const delta = previousTouchY === null ? 0 : previousTouchY - touch.clientY;
       if (
-        previousTouchY !== null &&
-        touch.clientY > previousTouchY + 1 &&
-        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+        Math.abs(delta) > 1 &&
+        !canNestedScrollerConsumeInput(event.target, scrollContainer, delta)
       ) {
         // A canceled move does not scroll, and a second finger is a pinch, which zooms instead.
-        const singleFingerScroll = event.touches.length === 1 && !event.defaultPrevented;
-        markUpwardViewportInput({ asksViewportToMove: singleFingerScroll });
+        if (delta < 0) {
+          const singleFingerScroll = event.touches.length === 1 && !event.defaultPrevented;
+          markUpwardViewportInput({ asksViewportToMove: singleFingerScroll });
+        }
+        markManualReading();
       }
       lastTouchClientYRef.current = touch.clientY;
     };
@@ -1219,6 +1277,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isActive,
     markUpwardInputEvidence,
     rearmHistoryStartFromUserIntent,
+    reportReadingPosition,
     stopFollowingOutputFromUserIntent,
   ]);
 
@@ -1226,6 +1285,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const handle: StreamViewportHandle = {
       focus: () => scrollContainerRef.current?.focus({ preventScroll: true }),
       scrollToBottom: () => {
+        cancelScrollToMessage();
         setFollowOutput(true);
         cancelPendingStickToBottom();
         forceStickToBottom();
@@ -1246,6 +1306,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         apply();
       },
       scrollToMessage,
+      cancelMessageScroll: cancelScrollToMessage,
     };
     viewportRef.current = handle;
     return () => {
@@ -1257,10 +1318,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     cancelPendingStickToBottom,
     forceStickToBottom,
+    cancelScrollToMessage,
     measureRows,
     readingAnchor,
     scheduleStickToBottom,
     scrollToMessage,
+    setFollowOutput,
     viewportRef,
   ]);
 

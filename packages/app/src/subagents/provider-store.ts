@@ -1,3 +1,8 @@
+import {
+  reconcileCanonicalSourceMetadata,
+  EMPTY_SOURCE_METADATA,
+  type CanonicalSourceMetadata,
+} from "@/timeline/canonical-source-metadata";
 import type {
   AgentStreamEventPayload,
   ProviderSubagentDescriptorPayload,
@@ -22,6 +27,7 @@ export interface ProviderSubagentTimelineState {
   hasOlder: boolean;
   cursor: TimelineCursor | undefined;
   needsRefresh: boolean;
+  sourceMetadata?: readonly CanonicalSourceMetadata[];
 }
 
 interface ProviderSubagentState {
@@ -168,6 +174,15 @@ function settleTimeline(
   };
 }
 
+/** A rejected, failed or other-epoch response must not replace the child timeline. */
+function isAppliedProviderTimeline(
+  result: ReturnType<typeof processTimelineResponse>,
+  epoch: string,
+): boolean {
+  if (result.commit !== "apply" || result.error) return false;
+  return !result.cursor || result.cursor.epoch === epoch;
+}
+
 export const useProviderSubagentStore = create<ProviderSubagentState>((set) => ({
   descriptors: new Map(),
   timelines: new Map(),
@@ -276,6 +291,17 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           {
             tail: next.tail,
             head: next.head,
+            sourceMetadata: reconcileCanonicalSourceMetadata(
+              current.sourceMetadata ?? EMPTY_SOURCE_METADATA,
+              {
+                projection: "canonical",
+                epoch: payload.epoch,
+                entries: [],
+                tail: next.tail,
+                head: next.head,
+                cursor: next.cursor ?? current.cursor,
+              },
+            ),
             epoch: payload.epoch,
             lastSeq: payload.seq,
             cursor: next.cursor ?? current.cursor,
@@ -306,7 +332,11 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         seqStart: row.seqStart ?? row.seq,
         seqEnd: row.seqEnd ?? row.seq,
       }));
+      let sourceMetadata = current.sourceMetadata ?? EMPTY_SOURCE_METADATA;
       const result = processTimelineResponse({
+        onAcceptedSources: (sources) => {
+          sourceMetadata = reconcileCanonicalSourceMetadata(sourceMetadata, sources);
+        },
         payload: {
           ...payload,
           agentId: payload.subagentId,
@@ -327,11 +357,13 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         initRequestDirection: "tail",
         sendingClientMessageIds: [],
       });
+      if (!isAppliedProviderTimeline(result, payload.epoch)) return state;
       const timelines = new Map(state.timelines);
       timelines.set(
         key,
         settleTimeline(
           {
+            sourceMetadata,
             tail: result.tail,
             head: result.head,
             epoch: payload.epoch,
@@ -361,12 +393,15 @@ export async function loadOlderProviderSubagentTimeline({
   parentAgentId,
   subagentId,
   limit,
+  signal,
 }: {
   client: Pick<DaemonClient, "fetchProviderSubagentTimeline">;
   serverId: string;
   parentAgentId: string;
   subagentId: string;
   limit: number;
+  /** A cancelled caller's page is fetched but never applied. */
+  signal?: AbortSignal;
 }): Promise<boolean> {
   const timeline = useProviderSubagentStore
     .getState()
@@ -379,7 +414,7 @@ export async function loadOlderProviderSubagentTimeline({
     limit,
     timeout: 10_000,
   });
-  if (payload.error) return false;
+  if (payload.error || signal?.aborted) return false;
   useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
   return true;
 }

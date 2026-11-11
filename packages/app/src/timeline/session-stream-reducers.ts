@@ -1,3 +1,4 @@
+import type { AcceptedCanonicalSources } from "./canonical-source-metadata";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
@@ -158,6 +159,7 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
+  onAcceptedSources?: (sources: AcceptedCanonicalSources) => void;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -175,6 +177,7 @@ export interface ProcessTimelineResponseOutput {
 }
 
 interface TimelineUnit {
+  sourceEntry?: TimelineResponseEntry;
   seq: number;
   seqEnd: number;
   sourceSeqRanges: TimelineSeqRange[];
@@ -183,6 +186,7 @@ interface TimelineUnit {
 }
 
 interface TimelinePathResult {
+  acceptedSourceEntries?: readonly TimelineResponseEntry[];
   tail: StreamItem[];
   head: StreamItem[];
   cursor: TimelineCursor | null | undefined;
@@ -469,6 +473,7 @@ function mergeTimelineWindow(args: {
     older,
     sideEffects: [],
     acknowledgedClientMessageIds: reconciled.acknowledgedClientMessageIds,
+    acceptedSourceEntries: acceptedSourceEntries(timelineUnits),
   };
 }
 
@@ -555,6 +560,7 @@ function applyTimelineReplacePath(args: {
     older: payload.hasOlder ? "available" : "none",
     sideEffects,
     acknowledgedClientMessageIds,
+    acceptedSourceEntries: acceptedSourceEntries(timelineUnits),
   };
 }
 interface IncrementalAcceptResult {
@@ -1230,7 +1236,24 @@ function applyTimelineIncrementalPath(args: {
     older: resolveOlderTimelineAvailability({ payload, cursor, currentCursor }),
     sideEffects,
     acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds,
+    acceptedSourceEntries: acceptedSourceEntries(acceptedUnits),
   };
+}
+
+/** Source entries of the units a page or stream event accepted, in unit order. */
+function acceptedSourceEntries(
+  units: readonly { sourceEntry?: TimelineResponseEntry }[],
+): TimelineResponseEntry[] {
+  return units.flatMap((unit) => (unit.sourceEntry ? [unit.sourceEntry] : []));
+}
+
+/** Report the canonical source entries an applied page accepted, for prompt context coverage. */
+function reportAcceptedSources(
+  input: ProcessTimelineResponseInput,
+  accepted: { discard: boolean; sources: AcceptedCanonicalSources },
+): void {
+  if (accepted.discard) return;
+  input.onAcceptedSources?.(accepted.sources);
 }
 
 export function processTimelineResponse(
@@ -1270,6 +1293,7 @@ export function processTimelineResponse(
   // Convert entries to timeline units
   // ------------------------------------------------------------------
   const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
+    sourceEntry: entry,
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:
@@ -1409,6 +1433,17 @@ export function processTimelineResponse(
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
   const commit = discard ? "discard" : "apply";
+  reportAcceptedSources(input, {
+    discard,
+    sources: {
+      projection: payload.projection,
+      epoch: payload.epoch,
+      entries: timelineResult.acceptedSourceEntries ?? [],
+      tail: nextTail,
+      head: nextHead,
+      cursor: nextCursor,
+    },
+  });
 
   return {
     commit,
@@ -1838,6 +1873,7 @@ export interface CreateSessionAgentStreamReducerQueueInput {
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
   ) => void;
   recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  beforeCommit?: (agentId: string, result: ProcessAgentStreamEventOutput) => void;
   onCommitted?: (agentId: string) => void;
 }
 
@@ -1908,6 +1944,7 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
+      input.beforeCommit?.(agentId, result);
       if (
         result.changedTail ||
         result.changedHead ||

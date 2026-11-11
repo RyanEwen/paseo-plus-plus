@@ -1,3 +1,5 @@
+import type { PromptJumpPlacement } from "./prompt-jump-placement";
+import type { PromptReadingPosition } from "./prompt-reading-position";
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
@@ -58,12 +60,18 @@ export interface StreamViewportHandle {
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  /** Cancel only message navigation, leaving bottom anchoring and delivery intact. */
+  cancelMessageScroll?: () => void;
   /**
    * Run a disclosure's state change so the row that owns its trigger keeps the edge the trigger
    * sits on in place. Following output stops; it resumes if the change leaves the list at its end.
    */
   holdRow: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => void;
-  scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
+  scrollToMessage?: (
+    messageId: string,
+    occurrence?: ScrollToMessageOccurrence,
+    placement?: PromptJumpPlacement,
+  ) => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -82,6 +90,8 @@ export interface StreamHistoryRowRevision {
 export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
+  /** Isolated display context stays mounted but cannot own ordinary reading geometry. */
+  contextOnlyIds?: ReadonlySet<string>;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
   /** Presentation rows replaced by another row after history is folded. */
@@ -95,9 +105,8 @@ export interface StreamRenderInput {
   isInitialHistoryLoading?: boolean;
   revealInitialHistory?: boolean;
   onNearBottomChange: (value: boolean) => void;
-  // The history row under the top of the viewport, for surfaces that mark where the reader
-  // is in the transcript. Only the web viewport measures it today.
-  onReadingPositionChange?: (rowId: string | null) => void;
+  onMessageNavigationError?: () => void;
+  onReadingPositionChange?: (position: PromptReadingPosition) => void;
   onNearHistoryStart: () => Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
