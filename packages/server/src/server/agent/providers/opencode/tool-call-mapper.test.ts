@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 
+import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
+import { describeToolActivity } from "@getpaseo/protocol/tool-call-activity";
 import { mapOpencodeToolCall } from "./tool-call-mapper.js";
 
 function expectMapped<T>(item: T | null): T {
@@ -23,6 +24,34 @@ describe("opencode tool-call mapper", () => {
     );
     expect(describeToolActivity(call)[0]?.kind).toBe(kind);
   });
+
+  // OpenCode reports a tool part as `pending` with `input: {}` before the running part carries input.
+  it.each([
+    { toolName: "bash", input: { command: "echo hi" }, title: "Shell" },
+    { toolName: "read", input: { filePath: "/tmp/a.ts" }, title: "Read" },
+    { toolName: "grep", input: { pattern: "foo" }, title: "Search" },
+  ])("keeps the $toolName title and detail kind from the pending part", (tool) => {
+    const stages = [
+      { status: "pending", input: {} },
+      { status: "running", input: tool.input },
+    ].map((stage) =>
+      expectMapped(
+        mapOpencodeToolCall({
+          toolName: tool.toolName,
+          callId: "opencode-stream-1",
+          ...stage,
+          output: null,
+        }),
+      ),
+    );
+
+    expect(stages.map((item) => buildToolCallDisplayModel(item).displayName)).toEqual([
+      tool.title,
+      tool.title,
+    ]);
+    expect(new Set(stages.map((item) => item.detail.type)).size).toBe(1);
+  });
+
   it("maps running shell calls", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

@@ -67,7 +67,7 @@ describe("readable tool activity in stream presentation", () => {
       display: "collapseTurns",
       readableToolActivity: true,
     });
-    expect(readable.turns.turnsByHostId.get("prompt")?.summary.tools).toMatchObject({
+    expect(readable.turns.summaryRowsByHostId.get("prompt")?.tools).toMatchObject({
       readFileCount: 1,
       editedFileCount: 3,
       commandCount: 0,
@@ -78,7 +78,7 @@ describe("readable tool activity in stream presentation", () => {
       tail: answeredTurn,
       display: "collapseTurns",
     });
-    expect(classic.turns.turnsByHostId.get("prompt")?.summary.tools).toMatchObject({
+    expect(classic.turns.summaryRowsByHostId.get("prompt")?.tools).toMatchObject({
       readFileCount: 0,
       editedFileCount: 1,
       commandCount: 1,
