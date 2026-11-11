@@ -8,7 +8,7 @@ Main-pane desktop tabs have a 96 px minimum width, so short names such as Dev st
 
 Right-click an Explorer tab or the empty Explorer tab strip and choose **Icon-only tabs** to hide tab labels. On compact layouts, long-press an Explorer tab instead. Tab names stay available in tooltips and to screen readers, and the tabs keep their context menu actions. Icon-only tabs have no inline close button; close them from their context menu.
 
-On wide layouts, icon-only tabs are 28 px squares, the size of the strip’s + control. On compact layouts they are 44 px squares, so each one stays an easy touch target.
+On wide layouts, icon-only tabs are squares the size of the strip’s + control: 28 px with a mouse, 32 px on a touch screen. On compact layouts they are 44 px squares, so each one stays an easy touch target.
 
 The Explorer section of Paseo++ settings shows a note pointing to these menus; the toggle itself lives only in the menus.
 

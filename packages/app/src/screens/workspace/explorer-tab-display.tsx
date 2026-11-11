@@ -7,7 +7,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { CONTROL_HEIGHTS, controlHeightForLayout } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { isNative } from "@/constants/platform";
 import { useSettingsSave } from "@/hooks/use-settings/use-settings-save";
 import type { PaneHost } from "@/panels/panel-manifest";
@@ -26,15 +26,15 @@ export interface ExplorerTabDisplayControl {
 /**
  * The square cell width for icon-only tabs.
  *
- * On wide layouts it matches the strip's new-tab control (`CONTROL_HEIGHTS.sm`, 28 points). Compact
- * layouts use the 44-point touch height instead, so the cell stays an easy touch target even though
- * the new-tab control beside it stays at 28.
+ * On wide layouts it matches the strip's new-tab control and the tab height (`sm`: 28 points with
+ * a pointer, 32 on a touch screen). Compact layouts use the 44-point `md` touch height instead, so
+ * the cell stays an easy touch target even though the new-tab control beside it is smaller.
  */
 export function iconOnlyTabWidth(compact: boolean): number {
   if (compact) {
     return controlHeightForLayout("md", true);
   }
-  return CONTROL_HEIGHTS.sm;
+  return controlHeightForLayout("sm", false);
 }
 
 /**
