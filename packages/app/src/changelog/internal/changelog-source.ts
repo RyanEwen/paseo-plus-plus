@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { parseChangelog, type ChangelogRelease } from "./parse-changelog";
-
-const CHANGELOG_URL = "https://raw.githubusercontent.com/getpaseo/paseo/main/CHANGELOG.md";
+import { FORK_LINKS } from "@/paseo-plus-plus/links";
+import type { ChangelogRelease } from "./parse-changelog";
+import { parseGitHubReleases } from "./parse-github-releases";
 
 export type ChangelogState =
   | { status: "loading" }
@@ -9,9 +9,9 @@ export type ChangelogState =
   | { status: "error" };
 
 // Survives close/reopen so the second look paints without a spinner. The raw
-// text is kept alongside the releases so an unchanged revalidation can be
+// body is kept alongside the releases so an unchanged revalidation can be
 // dropped: handing back an equal-but-new array would re-render every release.
-let cached: { markdown: string; releases: ChangelogRelease[] } | null = null;
+let cached: { body: string; releases: ChangelogRelease[] } | null = null;
 
 export interface Changelog {
   state: ChangelogState;
@@ -19,7 +19,8 @@ export interface Changelog {
 }
 
 /**
- * Reads the changelog from the repository the app was built from.
+ * Reads published Paseo++ release notes. The fork CHANGELOG.md tracks upstream
+ * releases, so it cannot describe fork previews. Draft releases stay hidden.
  *
  * The daemon is not involved: the changelog describes the app, a phone reaching
  * a relay already has internet, and going through a host would make the notes
@@ -41,13 +42,14 @@ export function useChangelog(enabled: boolean): Changelog {
 
     void (async () => {
       try {
-        const response = await fetch(CHANGELOG_URL, { signal: controller.signal });
+        const response = await fetch(FORK_LINKS.changelogSource, { signal: controller.signal });
         if (!response.ok) throw new Error(`Changelog request failed: ${response.status}`);
-        const markdown = await response.text();
-        if (cached?.markdown === markdown) return;
-        const releases = parseChangelog(markdown);
+        const body = await response.text();
+        if (cached?.body === body) return;
+        const payload: unknown = JSON.parse(body);
+        const releases = parseGitHubReleases(payload);
         if (releases.length === 0) throw new Error("Changelog has no releases");
-        cached = { markdown, releases };
+        cached = { body, releases };
         setState({ status: "ready", releases });
       } catch {
         if (controller.signal.aborted) return;

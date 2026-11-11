@@ -14,6 +14,7 @@ import {
   iconButtonChromeStyle,
 } from "@/components/ui/icon-button-chrome";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { FORK_LINKS } from "@/paseo-plus-plus/links";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveAppVersion } from "@/utils/app-version";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -24,8 +25,6 @@ import {
   type ChangelogRelease,
   type ChangelogSection,
 } from "./parse-changelog";
-
-const WEBSITE_CHANGELOG_URL = "https://paseo.sh/changelog";
 
 const ThemedGift = withUnistyles(Gift);
 const ThemedExternalLink = withUnistyles(ExternalLink);
@@ -46,7 +45,7 @@ export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
   const { count, showMore } = useRevealedReleases(visible && state.status === "ready");
 
   const handleOpenWebsite = useCallback(() => {
-    void openExternalUrl(WEBSITE_CHANGELOG_URL);
+    void openExternalUrl(FORK_LINKS.changelog);
   }, []);
 
   const header: SheetHeader = useMemo(

@@ -3,18 +3,14 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { openSettingsSection } from "../support/helpers/settings";
 import {
   allChangesToggle,
-  hideAllChanges,
   openWhatsNew,
   release,
-  serveChangelog,
-  showAllChanges,
+  serveReleases,
 } from "../support/helpers/changelog";
 
-const DISCORD_DESTINATION =
-  /^https:\/\/(?:discord\.gg\/jz8T2uahpH|discord\.com\/invite\/jz8T2uahpH)(?:[/?#]|$)/;
-const GITHUB_ISSUE_DESTINATION =
-  /^https:\/\/github\.com\/(?:getpaseo\/paseo\/issues\/new(?:\/choose)?(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fgetpaseo%2Fpaseo%2Fissues%2Fnew$)/;
-const CHANGELOG_DESTINATION = /^https:\/\/paseo\.sh\/changelog(?:[/?#]|$)/;
+const REPOSITORY_DESTINATION = /^https:\/\/github\.com\/RyanEwen\/paseo-plus-plus(?:[/?#]|$)/;
+const CHANGELOG_DESTINATION =
+  /^https:\/\/github\.com\/RyanEwen\/paseo-plus-plus\/releases(?:[/?#]|$)/;
 // The name and the version are separate cells of a key/value row, so they meet with no space
 // between them in the row's text content.
 const APP_VERSION = /^Paseo\s*v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -37,26 +33,42 @@ async function closeSheet(page: Page, testID: string): Promise<void> {
   await expect(sheet).not.toBeVisible();
 }
 
+/** The upstream issue, Discord and sponsorship actions this fork removes. */
+async function expectUpstreamSupportActionsAbsent(page: Page): Promise<void> {
+  await expect(page.getByText("Report an issue", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-help-discord")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-help-github")).toHaveCount(0);
+  await expect(page.getByTestId("community-links-discord")).toHaveCount(0);
+  await expect(page.getByTestId("community-links-sponsor")).toHaveCount(0);
+}
+
+/**
+ * Only the visible copy is clickable: the home footer's community links stay mounted
+ * under the settings modal, so Settings > About shows a second copy of the same test ID.
+ */
+function visibleAction(page: Page, testID: string) {
+  return page.getByTestId(testID).filter({ visible: true });
+}
+
 async function expectExternalPage(
   page: Page,
   actionTestID: string,
   expectedUrl: RegExp,
 ): Promise<void> {
   const popupPromise = page.waitForEvent("popup");
-  await page.getByTestId(actionTestID).click();
+  await visibleAction(page, actionTestID).click();
   const popup = await popupPromise;
   expect(popup.url()).toMatch(expectedUrl);
   await popup.close();
 }
 
-test("opens troubleshooting and support destinations", async ({ page }) => {
+test("opens troubleshooting and support destinations", async ({ page }, testInfo) => {
   await gotoAppShell(page);
   await expect(page.getByTestId("sidebar-help")).toBeVisible();
 
   await test.step("opens diagnostics and keyboard shortcuts", async () => {
     await openHelpMenu(page);
     await expect(page.getByText("Help", { exact: true })).toBeVisible();
-    await expect(page.getByText("Report an issue", { exact: true })).toBeVisible();
     await expect(page.getByText("What's new", { exact: true })).toBeVisible();
     await expect(page.getByTestId("sidebar-help-version")).toHaveText(APP_VERSION);
 
@@ -70,80 +82,90 @@ test("opens troubleshooting and support destinations", async ({ page }) => {
     await closeSheet(page, "keyboard-shortcuts-dialog");
   });
 
-  await test.step("opens support pages", async () => {
+  await test.step("removes unavailable support and opens the fork repository", async () => {
     await openHelpMenu(page);
-    await expectExternalPage(page, "sidebar-help-discord", DISCORD_DESTINATION);
-
-    await openHelpMenu(page);
-    await expectExternalPage(page, "sidebar-help-github", GITHUB_ISSUE_DESTINATION);
+    await expectUpstreamSupportActionsAbsent(page);
+    await page.screenshot({ path: testInfo.outputPath("fork-help-menu.png") });
+    await page.keyboard.press("Escape");
+    await openSettings(page);
+    await openSettingsSection(page, "about");
+    await expect(visibleAction(page, "community-links-github-star")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("fork-about-links.png") });
+    await expectUpstreamSupportActionsAbsent(page);
+    await expectExternalPage(page, "community-links-github-star", REPOSITORY_DESTINATION);
   });
 });
 
-test("renders the changelog in the app and links the website", async ({ page }) => {
-  // Highlights, a section name the app has never seen, a callout, and a fenced
-  // sample whose contents look like a release heading.
-  await serveChangelog(page, [
-    "# Changelog",
-    "",
-    "## 9.1.0 - 2026-03-04",
-    "",
-    "- **Background tasks:** Paseo now shows the tasks an agent is running.",
-    "",
-    "### Sparkles",
-    "",
-    "- Added a brand new thing",
-    "",
-    "> [!WARNING]",
-    "> Read this before upgrading.",
-    "",
-    "```md",
-    "## 0.0.0 - 1999-01-01",
-    "```",
-    "",
-    "### Fixed",
-    "",
-    "- Fixed a crash",
-    "",
-    "## 9.0.0 - 2026-02-01",
-    "",
-    "### Fixed",
-    "",
-    "- Fixed an older thing",
-    "",
+test("renders fork release notes and links GitHub Releases", async ({ page }) => {
+  // One body with a callout, a section name the app has never seen, a bullet, and a
+  // fenced sample whose contents look like a release heading: the body must render as
+  // one release, never split into another.
+  await serveReleases(page, [
+    {
+      version: "9.1.0",
+      publishedAt: "2026-03-04T12:00:00Z",
+      body: [
+        "Headline release note.",
+        "",
+        "> [!WARNING]",
+        "> Read this before upgrading.",
+        "",
+        "### Sparkles",
+        "",
+        "- Added a brand new thing",
+        "",
+        "```md",
+        "## 0.0.0 - 1999-01-01",
+        "```",
+      ].join("\n"),
+    },
+    {
+      version: "9.0.0",
+      publishedAt: "2026-02-01T12:00:00Z",
+      body: "### Fixed\n\n- Fixed an older thing",
+    },
   ]);
   await gotoAppShell(page);
 
   const sheet = await openWhatsNew(page);
   const latest = release(sheet, "9.1.0");
-  const older = release(sheet, "9.0.0");
 
-  await test.step("leads a release with its highlights and tucks the rest away", async () => {
-    await expect(latest.getByText("March 4, 2026", { exact: true })).toBeVisible();
-    await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
-    await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
-    await expect(latest.getByText("Fixed a crash")).toHaveCount(0);
-  });
-
-  await test.step("shows every section on request and tucks them away again", async () => {
-    await showAllChanges(latest);
-    await expect(latest.getByText("Sparkles", { exact: true })).toBeVisible();
-    await expect(latest.getByText("Added a brand new thing")).toBeVisible();
-    await expect(latest.getByText("Read this before upgrading.")).toBeVisible();
-    await expect(latest.getByText("Fixed a crash")).toBeVisible();
-    await expect(release(sheet, "0.0.0")).toHaveCount(0);
-
-    await hideAllChanges(latest);
-    await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
-    await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
-  });
-
-  await test.step("shows a release without highlights whole", async () => {
-    await expect(older.getByText("Fixed an older thing")).toBeVisible();
-    await expect(allChangesToggle(older)).toHaveCount(0);
-  });
+  await expect(latest.getByText("March 4, 2026", { exact: true })).toBeVisible();
+  await expect(latest.getByText("Headline release note.")).toBeVisible();
+  await expect(latest.getByText("Read this before upgrading.")).toBeVisible();
+  await expect(latest.getByText("Sparkles", { exact: true })).toBeVisible();
+  await expect(latest.getByText("Added a brand new thing")).toBeVisible();
+  // Fork notes are shown whole, so upstream's highlights toggle never appears.
+  await expect(allChangesToggle(latest)).toHaveCount(0);
+  await expect(release(sheet, "9.0.0")).toBeVisible();
+  await expect(release(sheet, "0.0.0")).toHaveCount(0);
 
   await expectExternalPage(page, "changelog-open-website", CHANGELOG_DESTINATION);
   await closeSheet(page, "changelog-sheet");
+});
+
+test("retries unavailable fork notes and excludes unpublished releases", async ({ page }) => {
+  const releases = await serveReleases(
+    page,
+    [
+      {
+        version: "0.11.2-preview.27",
+        publishedAt: "2026-10-09T21:26:07Z",
+        body: "Published Paseo++ notes",
+      },
+      { version: "0.11.2-preview.28", publishedAt: null, body: "Draft notes", draft: true },
+    ],
+    { unavailable: true },
+  );
+  await gotoAppShell(page);
+  const sheet = await openWhatsNew(page);
+  await expect(sheet.getByTestId("changelog-error")).toBeVisible();
+  releases.restore();
+  await sheet.getByTestId("changelog-retry").click();
+  await expect(sheet.getByText("Published Paseo++ notes")).toBeVisible();
+  await expect(release(sheet, "0.11.2-preview.27")).toBeVisible();
+  await expect(sheet.getByText("Draft notes")).toHaveCount(0);
+  await expect(sheet.getByTestId("changelog-error")).toHaveCount(0);
 });
 
 test("searches keyboard shortcuts from the sidebar help menu", async ({ page }) => {
@@ -196,12 +218,16 @@ test.describe("compact sidebar help", () => {
     await expectDiagnosticReport(page);
   });
 
-  test("offers diagnostics without advertising disabled keyboard shortcuts", async ({ page }) => {
+  test("offers diagnostics without advertising disabled keyboard shortcuts", async ({
+    page,
+  }, testInfo) => {
     await gotoAppShell(page);
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
 
     await openHelpMenu(page);
     await expect(page.getByTestId("sidebar-help-shortcuts")).toHaveCount(0);
+    await expectUpstreamSupportActionsAbsent(page);
+    await page.screenshot({ path: testInfo.outputPath("fork-compact-help.png") });
     await page.getByTestId("sidebar-help-diagnostics").click();
     await expectDiagnosticReport(page);
   });
