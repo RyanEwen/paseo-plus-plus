@@ -27,7 +27,9 @@ interface UseWorkingDiffOptions {
   presentation?: string;
 }
 
-interface WorkingDiffQueriesInput extends Parameters<typeof useCheckoutDiffQuery>[0] {
+type CheckoutDiffQueryOptions = Parameters<typeof useCheckoutDiffQuery>[0];
+
+interface WorkingDiffQueriesInput extends CheckoutDiffQueryOptions {
   includeFileOverview: boolean;
   /** The remembered comparison is still loading; queries wait so they do not fetch the default. */
   comparisonLoading: boolean;
