@@ -15,7 +15,6 @@ import type { WorktreeBranchChoice } from "./form/branch-field";
 import type { PickerControl } from "./form";
 import { useNewWorkspaceSetupState, type NewWorkspaceSetup } from "./setup-model";
 import {
-  branchNameFromRef,
   existingWorktreeLabel,
   existingWorktreeOptionId,
   findExistingWorktreeByOptionId,
@@ -26,6 +25,7 @@ import {
   type WorktreeFormModel,
 } from "./worktree-form-model";
 import {
+  branchNameFromRef,
   buildPickerOptionData,
   type PickerItem,
   type BranchPickerDetail,
