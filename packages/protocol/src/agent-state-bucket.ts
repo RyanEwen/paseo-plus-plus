@@ -11,6 +11,8 @@ export interface AgentStateBucketInput {
   attentionReason?: AgentAttentionReason;
   attentionMessage?: string | null;
   backgroundWork?: { count: number } | null;
+  /** The host's audience decision; false means another agent owns this agent's problems. */
+  humanAttentionRequired?: boolean;
 }
 
 const WORKSPACE_STATE_BUCKET_PRIORITY = {
@@ -27,11 +29,22 @@ function hasUnreadError(input: AgentStateBucketInput): boolean {
   return input.requiresAttention === true && input.attentionReason === "error";
 }
 
+/**
+ * Failed shows an unread error, and an error whose audience is another agent. That error never
+ * raises human attention, so nobody can read it; it stays visible while the agent is in error.
+ */
+function showsFailure(input: AgentStateBucketInput): boolean {
+  if (hasUnreadError(input)) {
+    return true;
+  }
+  return input.status === "error" && input.humanAttentionRequired === false;
+}
+
 export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceStateBucket {
   if ((input.pendingPermissionCount ?? 0) > 0 || input.attentionReason === "permission") {
     return "needs_input";
   }
-  if (hasUnreadError(input)) {
+  if (showsFailure(input)) {
     return "failed";
   }
   if (input.requiresAttention && input.attentionMessage) {
@@ -62,7 +75,7 @@ export function getAgentStatusPriority(input: AgentStateBucketInput): number {
   if ((input.pendingPermissionCount ?? 0) > 0 || input.attentionReason === "permission") {
     return 0;
   }
-  if (hasUnreadError(input)) {
+  if (showsFailure(input)) {
     return 1;
   }
   if (input.status === "running" || (input.backgroundWork?.count ?? 0) > 0) {
