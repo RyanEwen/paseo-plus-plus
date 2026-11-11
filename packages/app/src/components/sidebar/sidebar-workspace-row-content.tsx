@@ -1,8 +1,9 @@
 import { resolveWorkspaceLeadingSlot, WorkspaceProjectPinGutter } from "./project-pin-gutter";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { HoverRevealActions } from "./hover-reveal-actions";
-import { workspaceKebabRevealWidth } from "./workspace-kebab-geometry";
+import { workspaceTrailingActionsRevealWidth } from "./workspace-kebab-geometry";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { controlSizingForLayout } from "@/components/ui/control-geometry";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -33,6 +34,10 @@ import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { DensityIcon } from "@/components/ui/density-icon";
+import {
+  ARCHIVE_BUTTON_FOOTPRINT,
+  SidebarWorkspaceArchiveButton,
+} from "@/components/sidebar/sidebar-workspace-menu";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
 
 const needsInputColorMapping = (theme: Theme) => ({
@@ -165,7 +170,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         />
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
-            <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+            <Text
+              style={workspaceBranchTextStyle}
+              numberOfLines={1}
+              testID={`sidebar-workspace-title-${workspace.workspaceKey}`}
+            >
               {workspaceLabel}
             </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
@@ -372,6 +381,7 @@ export function resolveTrailingActionVisibility({
 }): {
   trailingPresentation: SidebarWorkspaceTrailingPresentation;
   showKebab: boolean;
+  showArchiveButton: boolean;
   renderSlot: boolean;
   reserveSlotWidth: boolean;
 } {
@@ -382,6 +392,9 @@ export function resolveTrailingActionVisibility({
   return {
     trailingPresentation,
     showKebab,
+    // One-click archive is a pointer affordance: on touch it would sit a few pixels from the
+    // kebab and turn a miss into an archive.
+    showArchiveButton: showKebab && isHovered && !isTouchPlatform,
     renderSlot: true,
     // Metadata reserves its own width; the status and actions lay out alongside it.
     reserveSlotWidth: hasTrailing || (hasArchiveAction && isTouchPlatform),
@@ -424,17 +437,24 @@ export function SidebarWorkspaceTrailingActionBase({
   );
 }
 
-/** Keep every status at the trailing rail and slide it aside for hover or persistent menus. */
+/** Keep every status at the trailing rail and slide its actions in beside it. */
 export function SidebarWorkspaceTrailingStatusActions({
   workspace,
   visible,
+  onArchiveButtonPress,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
   visible: boolean;
+  /** Shows the one-click archive button left of the kebab; the reveal widens to hold it. */
+  onArchiveButtonPress?: () => void;
   children: ReactNode;
 }) {
-  const compact = useIsCompactFormFactor();
+  const touchSizing = controlSizingForLayout(useIsCompactFormFactor()) === "touch";
+  const revealWidth = workspaceTrailingActionsRevealWidth({
+    touchSizing,
+    archiveButtonFootprint: onArchiveButtonPress ? ARCHIVE_BUTTON_FOOTPRINT : 0,
+  });
   return (
     <>
       <WorkspaceStatusIndicator
@@ -443,11 +463,19 @@ export function SidebarWorkspaceTrailingStatusActions({
       />
       <HoverRevealActions
         visible={visible}
-        width={workspaceKebabRevealWidth({ compact })}
+        width={revealWidth}
         height={TITLE_LINE_HEIGHT}
         testID={`sidebar-workspace-hover-actions-${workspace.workspaceKey}`}
       >
-        {children}
+        <View style={styles.trailingActions}>
+          {onArchiveButtonPress ? (
+            <SidebarWorkspaceArchiveButton
+              workspaceKey={workspace.workspaceKey}
+              onArchive={onArchiveButtonPress}
+            />
+          ) : null}
+          {children}
+        </View>
       </HoverRevealActions>
     </>
   );
@@ -459,6 +487,11 @@ const TITLE_LINE_HEIGHT = 20;
 const styles = StyleSheet.create((theme) => ({
   // Metadata, status and actions share one row. Hidden actions take no width; the reveal
   // widens the row only while its controls show, so idle titles keep that space.
+  // The archive button sits left of the kebab, top-aligned on the title line like the kebab.
+  trailingActions: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
   trailingContentRow: {
     flexDirection: "row",
     alignItems: "center",

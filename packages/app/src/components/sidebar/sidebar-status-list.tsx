@@ -762,6 +762,7 @@ function StatusWorkspaceRowInnerContent({
         const {
           trailingPresentation,
           showKebab: showKebabInSlot,
+          showArchiveButton,
           renderSlot,
           reserveSlotWidth,
         } = resolveTrailingActionVisibility({
@@ -841,6 +842,7 @@ function StatusWorkspaceRowInnerContent({
                     trailing={trailing}
                     trailingPresentation={trailingPresentation}
                     showKebab={showKebabInSlot}
+                    showArchiveButton={showArchiveButton}
                     reserveSlotWidth={reserveSlotWidth}
                     isPinned={isPinned}
                     onTogglePin={onTogglePin}
@@ -872,6 +874,7 @@ function StatusWorkspaceActionSlot({
   trailing,
   trailingPresentation,
   showKebab,
+  showArchiveButton,
   reserveSlotWidth,
   isPinned,
   onTogglePin,
@@ -892,6 +895,7 @@ function StatusWorkspaceActionSlot({
   trailing: SidebarWorkspaceTrailing;
   trailingPresentation: SidebarWorkspaceTrailingPresentation;
   showKebab: boolean;
+  showArchiveButton: boolean;
   reserveSlotWidth: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -914,7 +918,11 @@ function StatusWorkspaceActionSlot({
       <SidebarWorkspaceTrailingActionBase presentation={trailingPresentation}>
         <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
       </SidebarWorkspaceTrailingActionBase>
-      <SidebarWorkspaceTrailingStatusActions workspace={workspace} visible={kebab.showKebab}>
+      <SidebarWorkspaceTrailingStatusActions
+        workspace={workspace}
+        visible={kebab.showKebab}
+        onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
+      >
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu
             {...kebab.menuProps}

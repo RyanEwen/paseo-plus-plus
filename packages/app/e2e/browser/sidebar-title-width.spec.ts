@@ -10,11 +10,13 @@ import {
   openSidebarDisplayPage,
   selectSidebarStatusGrouping,
 } from "../support/helpers/sidebar";
-import { workspaceKebabRevealWidth } from "../../src/components/sidebar/workspace-kebab-geometry";
+import { workspaceTrailingActionsRevealWidth } from "../../src/components/sidebar/workspace-kebab-geometry";
 
 const TITLE = "Linux desktop sandbox launch support";
 /** The trailing row's gap, which the revealed actions restore beside the status. */
 const TRAILING_ROW_GAP = 8;
+/** The one-click archive button's 18px box and its 8px gap; pointer rows reveal it on hover. */
+const ARCHIVE_BUTTON_FOOTPRINT = 18 + 8;
 
 type TrailingStat = "Diff stats" | "Last activity";
 
@@ -133,7 +135,11 @@ async function expectHoverUsesActionSpace(page: Page, width: number, testInfo: T
   const row = workspaceRow(page);
   await row.hover();
   await expect(row.getByLabel("Workspace actions", { exact: true })).toBeVisible();
-  const revealed = workspaceKebabRevealWidth({ compact: false }) + TRAILING_ROW_GAP;
+  const actions = workspaceTrailingActionsRevealWidth({
+    touchSizing: false,
+    archiveButtonFootprint: ARCHIVE_BUTTON_FOOTPRINT,
+  });
+  const revealed = actions + TRAILING_ROW_GAP;
   await expect.poll(() => titleWidth(row)).toBeCloseTo(width - revealed, 0);
   await page.screenshot({ path: testInfo.outputPath("desktop-hover.png") });
   await page.mouse.move(0, 0);

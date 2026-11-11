@@ -1,31 +1,30 @@
-/** Desktop width and height of the workspace row kebab trigger. */
-export const WORKSPACE_KEBAB_SIZE = 18;
-/** Compact layouts get a larger kebab tap target. */
-export const WORKSPACE_KEBAB_COMPACT_SIZE = 32;
-/** Space between the kebab and the status beside it. */
-export const WORKSPACE_KEBAB_LEADING_GAP = 2;
+import type { SizingValue } from "@/components/ui/control-geometry";
+
+/** Width and height of the workspace row kebab trigger, by control sizing. */
+export const WORKSPACE_KEBAB_SIZE: SizingValue = { touch: 32, pointer: 18 };
 /**
  * How far the kebab is pulled right through the unused part of its view box. The glyph paints only
  * its middle, so the pull puts the dots, not the padded box, on the row's trailing rail.
  */
-export const WORKSPACE_KEBAB_OPTICAL_PULL = 7;
-export const WORKSPACE_KEBAB_COMPACT_OPTICAL_PULL = 14;
+export const WORKSPACE_KEBAB_OPTICAL_PULL: SizingValue = { touch: 14, pointer: 7 };
 
 /**
- * The width the hover reveal reserves for a workspace row's kebab, in pixels.
+ * The width the hover reveal reserves for a workspace row's actions, in pixels.
  *
- * It mirrors the trigger's flow width in the row: its box plus the leading gap, minus the optical
- * pull, so the revealed space matches the space the trigger occupies at each breakpoint.
+ * It mirrors the actions' flow width in the row: the kebab's box minus its optical pull, plus the
+ * one-click archive button and its gap when that button shows.
  *
- * @param compact whether the compact layout's larger kebab is in use.
+ * @param touchSizing whether the touch-sized kebab is in use.
+ * @param archiveButtonFootprint the archive button's width and gap, or 0 when it is hidden.
  */
-export function workspaceKebabRevealWidth({ compact }: { compact: boolean }): number {
-  if (compact) {
-    return (
-      WORKSPACE_KEBAB_COMPACT_SIZE +
-      WORKSPACE_KEBAB_LEADING_GAP -
-      WORKSPACE_KEBAB_COMPACT_OPTICAL_PULL
-    );
-  }
-  return WORKSPACE_KEBAB_SIZE + WORKSPACE_KEBAB_LEADING_GAP - WORKSPACE_KEBAB_OPTICAL_PULL;
+export function workspaceTrailingActionsRevealWidth({
+  touchSizing,
+  archiveButtonFootprint,
+}: {
+  touchSizing: boolean;
+  archiveButtonFootprint: number;
+}): number {
+  const sizing = touchSizing ? "touch" : "pointer";
+  const kebabWidth = WORKSPACE_KEBAB_SIZE[sizing] - WORKSPACE_KEBAB_OPTICAL_PULL[sizing];
+  return archiveButtonFootprint + kebabWidth;
 }
