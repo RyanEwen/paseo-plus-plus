@@ -283,6 +283,7 @@ describe("AgentStorage", () => {
       cwd: tmpDir,
       labels: {},
       lastStatus: "closed",
+      metadata: {},
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       providerHistory: {
@@ -312,6 +313,7 @@ describe("AgentStorage", () => {
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
       lastStatus: "closed",
+      metadata: {},
       config: { model: "model-a" },
       launchEnv: { ROUTE: "one" },
       providerHistory: {
