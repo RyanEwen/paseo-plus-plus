@@ -28,6 +28,7 @@ import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
+import { useMobilePanelRestPublisher } from "./rest";
 import {
   usePanelStore,
   type MobilePanelSelection,
@@ -137,6 +138,8 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
     }
     setActivePanel(panel);
   }, []);
+
+  useMobilePanelRestPublisher({ motionState, position });
 
   useAnimatedReaction(
     () => ({ motionState: motionState.value, position: position.value }),

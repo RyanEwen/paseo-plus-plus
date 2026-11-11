@@ -1,3 +1,7 @@
+import { desktopDistribution } from "../distribution.js";
+import { registerViewedAgentNotifications } from "./viewed-agent-notifications/ipc.js";
+import { createViewedToastRegistry } from "./viewed-agent-notifications/toast-tracking.js";
+import { createPackagedWindowsToastHistory } from "./windows-toast-history.js";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -28,10 +32,12 @@ interface NotificationIcon {
 }
 
 const activeNotifications = new Set<Notification>();
+const viewedToasts = createViewedToastRegistry<Notification>();
 const timedOutNotifications = createTimedOutNotificationRetention<Notification>();
 
 function releaseNotification(notification: Notification): void {
   activeNotifications.delete(notification);
+  viewedToasts.forget(notification);
   timedOutNotifications.release(notification);
 }
 
@@ -99,6 +105,20 @@ export function ensureNotificationCenterRegistration(): void {
 }
 
 export function registerNotificationHandlers(openAgentLink: (url: string) => void): void {
+  const toastHistory = createPackagedWindowsToastHistory({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    appUserModelId: desktopDistribution.windowsAppUserModelId,
+    executable: process.execPath,
+  });
+  const viewed = registerViewedAgentNotifications({
+    toasts: viewedToasts,
+    history: toastHistory,
+    dismiss(notification) {
+      notification.close();
+      releaseNotification(notification);
+    },
+  });
   const openWindowsNotification = createWindowsAgentNotificationOpener(openAgentLink);
   if (process.platform === "win32") {
     // This also receives clicks after the original Notification was collected
@@ -127,6 +147,8 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
 
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
+    const target = viewed.targetOf(data);
+    if (target && viewed.isViewed(target)) return true;
     const notificationId = randomUUID();
     const icon = getNotificationIcon();
     const settings = await getDesktopSettingsStore().get();
@@ -150,6 +172,7 @@ export function registerNotificationHandlers(openAgentLink: (url: string) => voi
     });
 
     activeNotifications.add(notification);
+    if (target) viewed.track(notification, { target, notificationId });
 
     notification.on("click", () => {
       // Electron 44 can report a foreground body tap only on the instance.
