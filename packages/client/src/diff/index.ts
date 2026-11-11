@@ -151,7 +151,7 @@ export class DiffStreamRouter {
           void observation.ready.catch(failed);
         } else {
           // COMPAT(diffSubscription): added in v0.15.0, remove after 2027-05-06.
-          const legacy = legacyCompare(compare);
+          const legacy = withLegacyFileScope(legacyCompare(compare), compare.filePath);
           if (!legacy) {
             fail(
               new DiffSubscriptionError({
@@ -232,6 +232,15 @@ export class DiffStreamRouter {
     };
   }
 }
+/** Fork: carry a single-file scope to hosts that only serve the legacy checkout diff. */
+function withLegacyFileScope(
+  legacy: LegacyCompare | null,
+  filePath: string | undefined,
+): LegacyCompare | null {
+  if (!legacy || filePath === undefined) return legacy;
+  return { ...legacy, filePath };
+}
+
 function legacyCompare(compare: DiffCompare): LegacyCompare | null {
   if (compare.highlight === false) return null;
   const { base, head } = compare;

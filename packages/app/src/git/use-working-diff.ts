@@ -22,7 +22,46 @@ interface UseWorkingDiffOptions {
   ignoreWhitespace: boolean;
   enabled: boolean;
   queryScope?: string;
+  filePath?: string;
+  includeFileOverview: boolean;
   presentation?: string;
+}
+
+type CheckoutDiffQueryOptions = Parameters<typeof useCheckoutDiffQuery>[0];
+
+interface WorkingDiffQueriesInput extends CheckoutDiffQueryOptions {
+  includeFileOverview: boolean;
+  /** The remembered comparison is still loading; queries wait so they do not fetch the default. */
+  comparisonLoading: boolean;
+}
+
+/** Fork: the document query, plus the whole-comparison overview a scoped document keeps. */
+function useWorkingDiffQueries({
+  filePath,
+  includeFileOverview,
+  comparisonLoading,
+  ...requested
+}: WorkingDiffQueriesInput) {
+  const options = { ...requested, enabled: requested.enabled !== false && !comparisonLoading };
+  const queryScope = options.queryScope;
+  const overviewQuery = useCheckoutDiffQuery({
+    ...options,
+    enabled: options.enabled && filePath !== undefined && includeFileOverview,
+    queryScope: `${queryScope ?? ""}:working-diff-overview`,
+  });
+  const fileQuery = useCheckoutDiffQuery({
+    ...options,
+    filePath,
+    enabled: options.enabled,
+  });
+  // A scoped document keeps the whole comparison for the tree when the overview is kept.
+  const overview = filePath !== undefined && includeFileOverview ? overviewQuery : fileQuery;
+  return {
+    ...fileQuery,
+    isLoading: fileQuery.isLoading || comparisonLoading,
+    overviewFiles: overview.files,
+    overviewEntries: overview.entries,
+  };
 }
 
 export function useWorkingDiff({
@@ -32,6 +71,8 @@ export function useWorkingDiff({
   ignoreWhitespace,
   enabled,
   queryScope,
+  filePath,
+  includeFileOverview,
   presentation,
 }: UseWorkingDiffOptions) {
   const {
@@ -54,31 +95,47 @@ export function useWorkingDiff({
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
 
-  const { comparison: diffMode, selectComparison } = useWorkingDiffComparison({
+  const {
+    comparison: diffMode,
+    selectComparison,
+    isLoading: comparisonLoading,
+  } = useWorkingDiffComparison({
     serverId,
     workspaceId,
     cwd,
+    isDirty: isCheckoutDirty(gitStatus),
+    statusReady: status !== null,
   });
   const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
   const selectAll = useCallback(() => selectComparison("all"), [selectComparison]);
   const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
 
-  const {
-    files,
-    entries,
-    payloadError: diffPayloadError,
-    diffTooLarge,
-    isLoading: isDiffLoading,
-  } = useCheckoutDiffQuery({
+  const queryOptions = {
     serverId,
     cwd,
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
-    enabled: enabled && isGit,
     queryScope,
+  };
+  const {
+    files,
+    overviewFiles,
+    overviewEntries,
+    payloadError: diffPayloadError,
+    diffTooLarge,
+    isLoading: isDiffLoading,
+  } = useWorkingDiffQueries({
+    ...queryOptions,
+    filePath,
+    includeFileOverview,
+    comparisonLoading,
+    enabled: enabled && isGit,
   });
-  const treeFiles = useMemo(() => (entries ? diffEntryHeaders(entries) : files), [entries, files]);
+  const treeFiles = useMemo(
+    () => (overviewEntries ? diffEntryHeaders(overviewEntries) : overviewFiles),
+    [overviewEntries, overviewFiles],
+  );
   const reviewDraftKey = useMemo(
     () =>
       buildReviewDraftKey({
@@ -120,6 +177,7 @@ export function useWorkingDiff({
     selectBase,
     selectAll,
     files,
+    overviewFiles,
     treeFiles,
     diffPayloadError,
     diffTooLarge,
@@ -167,4 +225,9 @@ export function usePublishWorkingDiffAttachment({
       }
     };
   }, [attachment, clearWorkspaceAttachments, enabled, scopeKey, setWorkspaceAttachments]);
+}
+
+/** Whether a Git checkout has uncommitted changes; a missing or non-Git status counts as clean. */
+function isCheckoutDirty(gitStatus: { isDirty?: boolean | null } | null): boolean {
+  return gitStatus?.isDirty === true;
 }

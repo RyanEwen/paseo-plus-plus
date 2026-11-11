@@ -17,6 +17,11 @@ import {
 } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
+import { registerForkCapability } from "./fork-capabilities.js";
+
+// Literal single-file scopes (compare.filePath) are served by the shared diff engine.
+// COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
+registerForkCapability("checkoutFileDiff");
 
 export type CheckoutDiffCompareInput = SubscribeCheckoutDiffRequest["compare"];
 export type CheckoutDiffSnapshotPayload = Omit<
@@ -137,6 +142,7 @@ export class CheckoutDiffManager {
             params.compare.mode === "base" ? { kind: "rev", rev: "HEAD" } : { kind: "worktree" },
           mergeBase: params.compare.mode !== "uncommitted",
           ignoreWhitespace: params.compare.ignoreWhitespace,
+          filePath: params.compare.filePath,
         },
         receive,
       );

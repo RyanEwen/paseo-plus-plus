@@ -26,6 +26,7 @@ import {
   type Comparison,
 } from "./git.js";
 import { DiffDependencyObserver } from "./dependencies.js";
+import { scopeComparisonToFile } from "./file-scope.js";
 
 interface RecordCache {
   identity: string;
@@ -133,6 +134,8 @@ export class DiffSubscriptions {
       compare.mergeBase,
       compare.ignoreWhitespace,
       compare.highlight,
+      // Fork: a single-file scope is its own target, never sharing the whole diff's cache.
+      compare.filePath,
     ]);
     let target = this.targets.get(key);
     if (!target) {
@@ -329,7 +332,10 @@ export class DiffSubscriptions {
       let began = false;
       try {
         this.computations++;
-        comparison = await listComparison(target.compare);
+        comparison = scopeComparisonToFile(
+          await listComparison(target.compare),
+          target.compare.filePath,
+        );
         target.checkInterpretation = comparison.hasInterpretationChanged;
         const resolved = {
           baseSha: comparison.baseSha,

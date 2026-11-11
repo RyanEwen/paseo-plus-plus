@@ -37,6 +37,7 @@ import {
 import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
+import { keepsFileOverview, resolveDiffFilePath, useDiffFileScope } from "@/git/diff-scope";
 import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
@@ -187,6 +188,7 @@ interface ChangesSurfaceProps {
   cwd: string;
   enabled?: boolean;
   presentation?: ChangesPresentation;
+  filePath?: string;
   focusPath?: string;
   focusRequestId?: number;
   onOpenFile?: (path: string) => void;
@@ -1491,12 +1493,72 @@ function useDiffTabNavigation({
   };
 }
 
+function useChangesDocumentScope({
+  focusPath,
+  focusRequestId,
+  presentation,
+  onSelectDiffFile,
+  filePath,
+  scope,
+  isCompact,
+}: Pick<
+  ChangesSurfaceProps,
+  "focusPath" | "focusRequestId" | "presentation" | "onSelectDiffFile" | "filePath"
+> &
+  Pick<Parameters<typeof resolveDiffFilePath>[0], "scope" | "isCompact">) {
+  const [localFocusRequest, setLocalFocusRequest] = useState<{
+    path: string;
+    revision: number;
+  } | null>(null);
+  const externalFocusRequest = useMemo(
+    () => (focusPath ? { path: focusPath, revision: focusRequestId ?? 0 } : null),
+    [focusPath, focusRequestId],
+  );
+  const documentFocusRequest =
+    localFocusRequest &&
+    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
+      ? localFocusRequest
+      : externalFocusRequest;
+  const handleSelectTreeFile = useCallback(
+    (path: string) => {
+      if (presentation === "tree" && onSelectDiffFile) {
+        onSelectDiffFile(path);
+        return;
+      }
+      setLocalFocusRequest((current) => ({
+        path,
+        revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
+      }));
+    },
+    [onSelectDiffFile, presentation],
+  );
+  const resolvedPresentation = presentation ?? "combined";
+  const acquisitionPath = resolveDiffFilePath({
+    filePath,
+    selectedPath: documentFocusRequest?.path,
+    presentation: resolvedPresentation,
+    scope,
+    isCompact,
+  });
+  return {
+    documentFocusRequest,
+    handleSelectTreeFile,
+    acquisitionPath,
+    includeFileOverview: keepsFileOverview({
+      filePath,
+      presentation: resolvedPresentation,
+      isCompact,
+    }),
+  };
+}
+
 export function ChangesSurface({
   serverId,
   workspaceId,
   cwd,
   enabled,
   presentation = "combined",
+  filePath,
   focusPath,
   focusRequestId,
   onOpenFile,
@@ -1587,6 +1649,16 @@ export function ChangesSurface({
     });
   }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
 
+  const { documentFocusRequest, handleSelectTreeFile, acquisitionPath, includeFileOverview } =
+    useChangesDocumentScope({
+      focusPath,
+      focusRequestId,
+      presentation,
+      onSelectDiffFile,
+      filePath,
+      scope: appSettings.explorerDiffScope,
+      isCompact: isMobile,
+    });
   const {
     status,
     isStatusLoading,
@@ -1599,7 +1671,8 @@ export function ChangesSurface({
     selectUncommitted: handleSelectUncommitted,
     selectBase: handleSelectBase,
     selectAll: handleSelectAll,
-    files,
+    files: documentFiles,
+    overviewFiles: allFiles,
     treeFiles,
     diffPayloadError,
     diffTooLarge,
@@ -1613,6 +1686,8 @@ export function ChangesSurface({
     workspaceId: workspaceId ?? undefined,
     cwd,
     ignoreWhitespace: preferences.hideWhitespace,
+    filePath: acquisitionPath,
+    includeFileOverview,
     enabled: enabled !== false,
   });
   usePublishWorkingDiffAttachment({
@@ -1725,32 +1800,15 @@ export function ChangesSurface({
     [client, cwd, t, toast],
   );
   const onRevertPath = useDiscardChangesAction({ serverId, cwd, diffMode });
-  const [localFocusRequest, setLocalFocusRequest] = useState<{
-    path: string;
-    revision: number;
-  } | null>(null);
-  const externalFocusRequest = useMemo(
-    () => (focusPath ? { path: focusPath, revision: focusRequestId ?? 0 } : null),
-    [focusPath, focusRequestId],
-  );
-  const documentFocusRequest =
-    localFocusRequest &&
-    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
-      ? localFocusRequest
-      : externalFocusRequest;
-  const handleSelectTreeFile = useCallback(
-    (path: string) => {
-      if (presentation === "tree" && onSelectDiffFile) {
-        onSelectDiffFile(path);
-        return;
-      }
-      setLocalFocusRequest((current) => ({
-        path,
-        revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
-      }));
-    },
-    [onSelectDiffFile, presentation],
-  );
+  const { files: overviewScopedFiles } = useDiffFileScope({
+    allFiles,
+    filePath,
+    focusRequest: documentFocusRequest,
+    presentation,
+    scope: appSettings.explorerDiffScope,
+    isCompact: isMobile,
+  });
+  const files = acquisitionPath !== undefined ? documentFiles : overviewScopedFiles;
   const workingMode = useMemo(
     () => ({
       kind: "working" as const,
@@ -1794,7 +1852,7 @@ export function ChangesSurface({
   const jumpToFileInset = jumpToFileClearance({
     isCompact: isMobile,
     presentation,
-    hasChanges,
+    hasChanges: treeFiles.length > 0,
     isDiffLoading,
   });
   const showJumpToFile = jumpToFileInset > 0;
@@ -2012,7 +2070,7 @@ export function ChangesSurface({
       <View style={styles.diffContainer}>
         {bodyContent}
         {showJumpToFile ? (
-          <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
+          <JumpToFile files={treeFiles} mode={workingMode} onSelectFile={handleSelectTreeFile} />
         ) : null}
       </View>
 

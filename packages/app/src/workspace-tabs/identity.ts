@@ -138,7 +138,11 @@ function secondaryWorkspaceTabTargetsEqual(
     return workspaceFileLocationsEqual(left, right);
   }
   if (left.kind === "working_diff" && right.kind === "working_diff") {
-    return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
+    return (
+      left.filePath === right.filePath &&
+      left.focusPath === right.focusPath &&
+      left.focusRequestId === right.focusRequestId
+    );
   }
   if (left.kind === "files" && right.kind === "files") {
     return true;
@@ -191,6 +195,13 @@ function recordsShallowEqual(
   return true;
 }
 
+/** One working diff tab per scope: the whole checkout, or one literal changed file. */
+export function workingDiffTabResourceId(
+  target: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): string {
+  return target.filePath ? `working_diff_file_${target.filePath}` : "working_diff";
+}
+
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
   if (target.kind === "new_tab") {
     throw new Error("New tabs do not have deterministic target identities");
@@ -217,7 +228,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return `commit_diff_${target.sha}`;
   }
   if (target.kind === "working_diff") {
-    return "working_diff";
+    return workingDiffTabResourceId(target);
   }
   if (target.kind === "changes_tree" || target.kind === "files" || target.kind === "pull_request") {
     return target.kind;
@@ -262,10 +273,14 @@ function normalizeFileTabTarget(
 function normalizeWorkingDiffTabTarget(
   value: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
 ): WorkspaceTabTarget | null {
+  // Single-file scopes are matched literally by the host: spaces, backslashes and pathspec
+  // punctuation are part of the filename, so only an empty scope is discarded.
+  const filePath = value.filePath ? value.filePath : null;
   const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
   const focusRequestId = normalizePositiveInteger(value.focusRequestId);
   return {
     kind: "working_diff" as const,
+    ...(filePath ? { filePath } : {}),
     ...(focusPath ? { focusPath } : {}),
     ...(focusRequestId ? { focusRequestId } : {}),
   };

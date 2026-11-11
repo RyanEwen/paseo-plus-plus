@@ -31,6 +31,7 @@ type CheckoutDiffCachePayload = CheckoutDiffSnapshot;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
 interface CheckoutDiffCompare {
+  filePath?: string;
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
@@ -345,6 +346,7 @@ function reconcileCheckoutDiffSubscriptions(input: {
       head: mode === "base" ? { kind: "rev", rev: "HEAD" } : { kind: "worktree" },
       mergeBase: mode !== "uncommitted",
       ignoreWhitespace,
+      ...diffFileScopeOf(desired.compare),
     });
     const registration = { ...desired, subscription };
     input.active.set(key, registration);
@@ -652,6 +654,8 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
     return null;
   }
   const mode = value.mode;
+  const filePath = value.filePath;
+  if (filePath !== undefined && typeof filePath !== "string") return null;
   const baseRef = value.baseRef;
   const ignoreWhitespace = value.ignoreWhitespace;
   if (mode !== "uncommitted" && mode !== "base" && mode !== "all") {
@@ -667,6 +671,7 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
     mode,
     ...(baseRef ? { baseRef } : {}),
     ...(ignoreWhitespace !== undefined ? { ignoreWhitespace } : {}),
+    ...(filePath !== undefined ? { filePath } : {}),
   };
 }
 
@@ -680,7 +685,8 @@ function areCheckoutDiffRoutesEqual(
     left.cwd === right.cwd &&
     left.compare.mode === right.compare.mode &&
     left.compare.baseRef === right.compare.baseRef &&
-    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace
+    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace &&
+    left.compare.filePath === right.compare.filePath
   );
 }
 
@@ -691,8 +697,19 @@ function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffR
     queryKey[2] === route.cwd &&
     queryKey[3] === route.compare.mode &&
     queryKey[4] === (route.compare.baseRef ?? "") &&
-    queryKey[5] === (route.compare.ignoreWhitespace === true)
+    queryKey[5] === (route.compare.ignoreWhitespace === true) &&
+    scopedFilePathOf(queryKey) === route.compare.filePath
   );
+}
+
+/** The diff subscription fields that limit a comparison to one changed file, if any. */
+function diffFileScopeOf(compare: CheckoutDiffCompare): { filePath?: string } {
+  return compare.filePath === undefined ? {} : { filePath: compare.filePath };
+}
+
+/** The single-file scope a checkout diff query key carries, or undefined for a whole diff. */
+function scopedFilePathOf(queryKey: QueryKey): unknown {
+  return queryKey[6] === "file" ? queryKey[7] : undefined;
 }
 
 function areWorkspaceTerminalsRoutesEqual(

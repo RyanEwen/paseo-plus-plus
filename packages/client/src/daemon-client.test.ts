@@ -6050,66 +6050,73 @@ test("returns renameBranch business failures", async () => {
   });
 });
 
-test("resubscribes checkout diff streams after reconnect", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test.each([undefined, " :(glob)*.css "])(
+  "resubscribes checkout diff streams with scope %s after reconnect",
+  async (filePath) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
 
-  const observation = client.observeCheckoutDiff("/tmp/project", { mode: "base", baseRef: "main" });
-  await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
-  const first = parseSentFrame(mock.sent[0]);
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "subscribe_checkout_diff_response",
-      payload: {
-        requestId: first.requestId,
-        subscriptionId: "server-first",
-        cwd: "/tmp/project",
-        files: [],
-        error: null,
-      },
-    }),
-  );
-  await observation.ready;
-  mock.triggerClose();
-  const reconnect = client.connect();
-  mock.triggerOpen();
-  await reconnect;
-  await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request).toMatchObject({
-    type: "subscribe_checkout_diff_request",
-    cwd: "/tmp/project",
-    compare: { mode: "base", baseRef: "main" },
-  });
-  expect(request.subscriptionId).toBeUndefined();
-  expect(request.requestId).not.toBe(first.requestId);
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "subscribe_checkout_diff_response",
-      payload: {
-        requestId: request.requestId,
-        subscriptionId: "server-second",
-        cwd: "/tmp/project",
-        files: [],
-        error: null,
-      },
-    }),
-  );
-  await vi.waitFor(() => expect(observation.subscriptionId).toBe("server-second"));
-});
+    const observation = client.observeCheckoutDiff("/tmp/project", {
+      mode: "base",
+      baseRef: "main",
+      ...(filePath !== undefined ? { filePath } : {}),
+    });
+    await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+    const first = parseSentFrame(mock.sent[0]);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_checkout_diff_response",
+        payload: {
+          requestId: first.requestId,
+          subscriptionId: "server-first",
+          cwd: "/tmp/project",
+          files: [],
+          error: null,
+        },
+      }),
+    );
+    await observation.ready;
+    mock.triggerClose();
+    const reconnect = client.connect();
+    mock.triggerOpen();
+    await reconnect;
+    await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+    const request = parseSentFrame(mock.sent[0]);
+    expect(request).toMatchObject({
+      type: "subscribe_checkout_diff_request",
+      cwd: "/tmp/project",
+      compare: { mode: "base", baseRef: "main", ...(filePath !== undefined ? { filePath } : {}) },
+    });
+    expect(request.subscriptionId).toBeUndefined();
+    expect(request.requestId).not.toBe(first.requestId);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_checkout_diff_response",
+        payload: {
+          requestId: request.requestId,
+          subscriptionId: "server-second",
+          cwd: "/tmp/project",
+          files: [],
+          error: null,
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(observation.subscriptionId).toBe("server-second"));
+  },
+);
 
 test("fetches agents via RPC with filters, sort, and pagination", async () => {
   const logger = createMockLogger();

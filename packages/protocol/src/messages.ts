@@ -2441,6 +2441,7 @@ const CheckoutErrorSchema = z.object({
 });
 
 const CheckoutDiffCompareSchema = z.object({
+  filePath: z.string().optional(),
   mode: z.enum(["uncommitted", "base", "all"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
@@ -2471,6 +2472,8 @@ export const DiffSubscribeRequestSchema = z.object({
   mergeBase: z.boolean().optional(),
   ignoreWhitespace: z.boolean().optional(),
   highlight: z.boolean().optional(),
+  // Fork: limit the comparison to one changed file, matched literally (checkoutFileDiff).
+  filePath: z.string().optional(),
 });
 // Unsubscribe is fire-and-forget; release has no correlated response.
 export const DiffUnsubscribeRequestSchema = z.object({

@@ -1,7 +1,29 @@
+import { z } from "zod";
+import type { AppSettings } from "@/hooks/use-settings/storage";
+
 export type WorkingDiffComparison = "uncommitted" | "base" | "all";
 
-export interface WorkingDiffComparisonOverride {
-  comparison: WorkingDiffComparison;
+export const WorkingDiffComparisonOverrideSchema = z.strictObject({
+  serverId: z.string(),
+  cwd: z.string(),
+  comparison: z.enum(["uncommitted", "base", "all"]),
+  isDirtyAtSelection: z.boolean(),
+});
+export type WorkingDiffComparisonOverride = z.infer<typeof WorkingDiffComparisonOverrideSchema>;
+
+export interface WorkingDiffComparisonPolicy {
+  defaultComparison: WorkingDiffComparison;
+  autoSwitch: boolean;
+}
+
+/** The comparison preferences from app settings, which own their defaults. */
+export function workingDiffComparisonPolicy(
+  settings: Pick<AppSettings, "workingDiffDefaultComparison" | "workingDiffAutoSwitch">,
+): WorkingDiffComparisonPolicy {
+  return {
+    defaultComparison: settings.workingDiffDefaultComparison,
+    autoSwitch: settings.workingDiffAutoSwitch,
+  };
 }
 
 export interface WorkingDiffComparisonState {
@@ -31,13 +53,17 @@ export function selectWorkingDiffComparisonInState(
   state: WorkingDiffComparisonState,
   input: WorkingDiffCheckoutIdentity & {
     comparison: WorkingDiffComparison;
+    isDirty: boolean;
   },
 ): WorkingDiffComparisonState {
   return {
     overrides: {
       ...state.overrides,
       [workingDiffComparisonKey(input)]: {
+        serverId: input.serverId.trim(),
+        cwd: normalizeCwd(input.cwd),
         comparison: input.comparison,
+        isDirtyAtSelection: input.isDirty,
       },
     },
   };
@@ -45,7 +71,37 @@ export function selectWorkingDiffComparisonInState(
 
 export function resolveWorkingDiffComparisonFromState(
   state: WorkingDiffComparisonState,
-  input: WorkingDiffCheckoutIdentity,
+  input: WorkingDiffCheckoutIdentity & { isDirty: boolean; policy: WorkingDiffComparisonPolicy },
 ): WorkingDiffComparison {
-  return state.overrides[workingDiffComparisonKey(input)]?.comparison ?? "all";
+  const { policy } = input;
+  const override = state.overrides[workingDiffComparisonKey(input)];
+  if (!policy.autoSwitch) {
+    return override?.comparison ?? policy.defaultComparison;
+  }
+  // Automatic mode masks an expired choice even before the status boundary removes it.
+  if (override?.isDirtyAtSelection === input.isDirty) {
+    return override.comparison;
+  }
+  return input.isDirty ? "uncommitted" : "base";
+}
+
+export function expireWorkingDiffComparisonsInState(
+  state: WorkingDiffComparisonState,
+  input: { serverId: string; cwd: string; isDirty: boolean },
+): WorkingDiffComparisonState {
+  // Expire at the status boundary so selections cannot return after an unmounted surface
+  // misses a dirty-state transition.
+  const staleKeys = Object.entries(state.overrides)
+    .filter(
+      ([, override]) =>
+        override.serverId === input.serverId.trim() &&
+        override.cwd === normalizeCwd(input.cwd) &&
+        override.isDirtyAtSelection !== input.isDirty,
+    )
+    .map(([key]) => key);
+  if (staleKeys.length === 0) return state;
+
+  const overrides = { ...state.overrides };
+  for (const key of staleKeys) delete overrides[key];
+  return { overrides };
 }
