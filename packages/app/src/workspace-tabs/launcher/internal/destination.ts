@@ -3,7 +3,7 @@ import type { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabLaunchDestination } from "../index";
 
 type LayoutState = ReturnType<typeof useWorkspaceLayoutStore.getState>;
-interface LayoutOwner {
+export interface LaunchDestinationLayoutOwner {
   getState(): Pick<LayoutState, "layoutByWorkspace" | "splitPaneEmpty">;
 }
 
@@ -11,7 +11,7 @@ interface LayoutOwner {
 export function resolveWorkspaceTabLaunchDestination(
   workspaceKey: string,
   destination: WorkspaceTabLaunchDestination,
-  owner: LayoutOwner,
+  owner: LaunchDestinationLayoutOwner,
 ): Exclude<WorkspaceTabLaunchDestination, { kind: "split" }> | null {
   if (destination.kind !== "split") {
     return destination;

@@ -35,7 +35,7 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
-import { openReopenedAgentTab } from "./internal/reopen-closed-agent";
+import { openReopenedAgentAtDestination } from "./internal/reopen-closed-agent";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
 
@@ -134,9 +134,9 @@ export function NewTabLauncherProvider({
     if (!reopenRequest) return;
     const workspaceKey = buildWorkspaceTabPersistenceKey(reopenRequest);
     if (!workspaceKey) return;
-    openReopenedAgentTab(
+    openReopenedAgentAtDestination(
       { workspaceKey, agentId, destination: reopenRequest.destination },
-      useWorkspaceLayoutStore.getState(),
+      useWorkspaceLayoutStore,
     );
   });
   const context = useMemo(
