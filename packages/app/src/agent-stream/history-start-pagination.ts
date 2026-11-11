@@ -126,7 +126,9 @@ export function createHistoryStartPagination(input: {
         publish("dormant", true);
       } else if (geometry.distanceFromHistoryStart > HISTORY_START_THRESHOLD_PX) {
         publish("ready", true);
-      } else if (!geometry.hasOlderHistory) {
+      } else if (!geometry.hasOlderHistory || !geometry.isUnderfilled) {
+        // A page can leave a full viewport at the start, for example when it folds into a
+        // collapsed turn. Only an underfilled view keeps loading without new user intent.
         publish("dormant", true);
       } else {
         publish("ready");

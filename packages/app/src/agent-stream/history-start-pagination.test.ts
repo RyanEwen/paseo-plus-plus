@@ -110,6 +110,22 @@ describe("history start pagination", () => {
     expect(h.requests).toHaveLength(1);
     h.pagination.dispose();
   });
+  it("waits for user intent when a page leaves a full viewport at the start", async () => {
+    // Pages folded into collapsed turns can add no height, so the reader stays at the start.
+    const h = harness(true);
+    h.set({ isUnderfilled: false });
+    h.pagination.rearm();
+    expect(h.requests).toHaveLength(1);
+    h.set({ progressKey: "10" });
+    h.requests[0](true);
+    await Promise.resolve();
+    h.pagination.settle();
+    h.set({});
+    expect(h.requests).toHaveLength(1);
+    h.pagination.rearm();
+    expect(h.requests).toHaveLength(2);
+    h.pagination.dispose();
+  });
   it("preserves the reading position after an anchored page moves away from the start", async () => {
     const h = harness(true);
     h.set({ isUnderfilled: false });
