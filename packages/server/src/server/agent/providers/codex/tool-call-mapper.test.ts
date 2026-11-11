@@ -717,6 +717,12 @@ describe("codex tool-call mapper", () => {
           "+after",
         ].join("\n"),
       },
+      metadata: {
+        fileChanges: [
+          { path: "old.txt", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new\n" },
+          { path: "other.txt", kind: "update", diff: "@@ -1 +1 @@\n-before\n+after\n" },
+        ],
+      },
     });
   });
 
@@ -772,6 +778,17 @@ describe("codex tool-call mapper", () => {
           "-",
           "-value",
         ].join("\n"),
+      },
+      metadata: {
+        fileChanges: [
+          {
+            path: "alpha.txt",
+            kind: "update",
+            diff: "--- a/alpha.txt\n+++ b/alpha.txt\n@@ -1 +1 @@\n-blue\n+green\n",
+          },
+          { path: "new.txt", kind: "add", diff: "new\n\nvalue\n" },
+          { path: "old.txt", kind: "delete", diff: "old\n\nvalue\n" },
+        ],
       },
     });
   });
@@ -1109,6 +1126,13 @@ describe("codex tool-call mapper", () => {
             { path: "second.ts", kind: "update" },
           ],
         },
+      },
+      // "modify" is not a kind the activity model can prove, so it stays generic.
+      metadata: {
+        fileChanges: [
+          { path: "first.ts", kind: "unknown" },
+          { path: "second.ts", kind: "update" },
+        ],
       },
     });
   });
