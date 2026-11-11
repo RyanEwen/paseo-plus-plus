@@ -67,11 +67,12 @@ function collectWorkspaceCandidates(
     // COMPAT(agentAudienceAttention): added in v0.15.3, remove after 2027-04-22 once host floor includes audience metadata.
     const contributes =
       agent.humanAttentionRequired !== undefined || isWorkspaceRootAgent(agent, parentAgent);
-    if (agent.archivedAt || !agent.workspaceId || !contributes) {
+    if (agent.archivedAt || agent.background || !agent.workspaceId || !contributes) {
       continue;
     }
     const status = deriveSidebarStateBucket({
       status: workspaceAgentStatus(agent),
+      backgroundWork: agent.backgroundWork,
       pendingPermissionCount: agent.pendingPermissions.length,
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,

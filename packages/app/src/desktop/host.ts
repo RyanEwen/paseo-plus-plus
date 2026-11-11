@@ -2,7 +2,7 @@ import type { NotificationDismissal } from "@getpaseo/protocol/notification-rece
 import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
-import type { BrowserKeyboardPolicy } from "@/desktop/browser/shortcuts";
+import type { BrowserKeyboardPolicy } from "@/keyboard";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
