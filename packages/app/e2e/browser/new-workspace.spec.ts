@@ -280,8 +280,6 @@ async function selectWorkspaceBranchChoice(page: Page, label: string): Promise<v
   await option.click();
 }
 
-const ADD_PROJECT_SHORTCUT = /(?:⌘|Ctrl\+)O/;
-
 /** How the add-project flow differs between the desktop popover and the compact sheet. */
 const ADD_PROJECT_LAYOUTS = [
   {
@@ -290,7 +288,6 @@ const ADD_PROJECT_LAYOUTS = [
     dismissPicker: async (page: Page) => {
       await page.keyboard.press("Escape");
     },
-    showsShortcut: true,
   },
   {
     viewport: { width: 390, height: 844 },
@@ -304,7 +301,6 @@ const ADD_PROJECT_LAYOUTS = [
       await backdrop.click({ position: { x: 12, y: 12 } });
       await expect(backdrop).not.toBeVisible();
     },
-    showsShortcut: false,
   },
 ];
 
@@ -767,7 +763,8 @@ test.describe("New workspace flow", () => {
 
         const addProject = page.getByTestId("new-workspace-project-picker-add-project");
         await expect(addProject).toContainText("Add project");
-        expect(ADD_PROJECT_SHORTCUT.test(await addProject.innerText())).toBe(layout.showsShortcut);
+        // Shortcut hints follow a connected hardware keyboard, not the layout width.
+        await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
         await addProject.click();
 
         await expectAddProjectPage(page, "method");
