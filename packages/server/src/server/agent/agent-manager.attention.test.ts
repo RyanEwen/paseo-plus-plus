@@ -3825,3 +3825,74 @@ test("attention mode changes do not manufacture historical unread or erase manua
   expect(manager.getAgent(worker.id)?.attention.requiresAttention).toBe(true);
   expect(notify).not.toHaveBeenCalled();
 });
+
+test("a stored agent without a provider handle keeps its attention state when it loads", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "attention-load-without-handle-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const objectives = new AgentAttentionObjectives(undefined, "origin");
+  objectives.admit({ inputs: [{ kind: "human", requestId: "human-job" }], steering: false });
+  objectives.declare("human-job", "waiting");
+  const link = objectives.outgoing({ recipient: { agentId: "worker", serverId: "origin" } });
+  if (!link?.requesterObjective) throw new Error("Expected a delegation link");
+  const expected = objectives.snapshot();
+
+  // Provider startup failed before Claude or Codex returned a session handle.
+  const first = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const created = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+    attentionObjectives: expected,
+  });
+  await first.closeAgent(created.id);
+  await first.flush();
+  const stored = await storage.get(created.id);
+  if (!stored) throw new Error("Expected the stored agent");
+  const unreadAt = "2026-11-11T12:00:00.000Z";
+  await storage.upsert({
+    ...stored,
+    persistence: undefined,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: unreadAt,
+    attentionMessage: "Choose the deployment account",
+    humanAttentionRequired: true,
+  });
+  await storage.flush();
+
+  const second = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  second.setAttentionHost({ serverId: "origin", resolveRemoteRequester: async () => "unknown" });
+  const fromRecord = vi.spyOn(second, "createAgentFromRecord");
+  const resume = vi.spyOn(second, "resumeAgentFromPersistence");
+  onTestFinished(async () => {
+    await second.closeAgent(created.id).catch(() => undefined);
+    await second.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  const loaded = await ensureAgentLoaded(created.id, {
+    agentManager: second,
+    agentStorage: storage,
+    logger,
+  });
+
+  expect(fromRecord).toHaveBeenCalledExactlyOnceWith(created.id);
+  expect(resume).not.toHaveBeenCalled();
+  expect(loaded.attentionObjectives?.describe()).toEqual(
+    new AgentAttentionObjectives(expected).describe(),
+  );
+  expect(loaded.attentionObjectives?.snapshot().delegations).toEqual(expected.delegations);
+  expect(loaded.attentionMessage).toBe("Choose the deployment account");
+  expect(loaded.attention).toMatchObject({ requiresAttention: true, attentionReason: "finished" });
+  expect(toAgentPayload(loaded)).toMatchObject({
+    requiresAttention: true,
+    humanAttentionRequired: true,
+    attentionMessage: "Choose the deployment account",
+  });
+});

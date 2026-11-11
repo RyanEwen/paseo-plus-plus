@@ -34,9 +34,12 @@ export function createFinishObservation(input: {
 }): FinishObservation {
   const { agentManager, agentStorage } = input;
   function projectStored(stored: StoredAgentRecord) {
-    return buildStoredAgentPayload(stored, [stored.provider], {
-      agentAwareAttention: agentManager.agentAwareAttentionEnabled,
-    });
+    return buildStoredAgentPayload(
+      stored,
+      [stored.provider],
+      (provider, own) => agentManager.effectiveOptionsFor(provider, own),
+      { agentAwareAttention: agentManager.agentAwareAttentionEnabled },
+    );
   }
   async function exactSnapshot(agentId: string) {
     const live = agentManager.getAgent(agentId);
