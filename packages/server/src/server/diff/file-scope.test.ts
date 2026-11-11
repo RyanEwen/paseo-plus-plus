@@ -53,10 +53,11 @@ async function readPaths(manager: CheckoutDiffManager, cwd: string, filePath?: s
 
 test("a single-file scope gets the budget unrelated changes exhaust in the whole diff", async () => {
   await withCheckout(async ({ cwd, manager }) => {
-    // Two near-limit files leave less budget than the small file needs.
+    // Two near-limit files (about 1.01 MB of patch each) leave about 77 KB of the 2 MB total;
+    // the 200 KB file then exceeds it in the whole diff but fits on its own.
     await writeFile(join(cwd, "a-large.txt"), textOfLines(10_000));
     await writeFile(join(cwd, "b-large.txt"), textOfLines(10_000));
-    await writeFile(join(cwd, "z-small.css"), textOfLines(800));
+    await writeFile(join(cwd, "z-small.css"), textOfLines(2_000));
 
     const whole = await readPaths(manager, cwd);
     expect(whole).toContainEqual({ path: "z-small.css", status: "too_large" });

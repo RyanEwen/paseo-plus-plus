@@ -23,15 +23,24 @@ interface UseWorkingDiffOptions {
   enabled: boolean;
   queryScope?: string;
   filePath?: string;
-  includeFileOverview?: boolean;
+  includeFileOverview: boolean;
   presentation?: string;
 }
 
+interface WorkingDiffQueriesInput extends Parameters<typeof useCheckoutDiffQuery>[0] {
+  includeFileOverview: boolean;
+  /** The remembered comparison is still loading; queries wait so they do not fetch the default. */
+  comparisonLoading: boolean;
+}
+
+/** Fork: the document query, plus the whole-comparison overview a scoped document keeps. */
 function useWorkingDiffQueries({
   filePath,
   includeFileOverview,
-  ...options
-}: Parameters<typeof useCheckoutDiffQuery>[0] & { includeFileOverview: boolean }) {
+  comparisonLoading,
+  ...requested
+}: WorkingDiffQueriesInput) {
+  const options = { ...requested, enabled: requested.enabled !== false && !comparisonLoading };
   const queryScope = options.queryScope;
   const overviewQuery = useCheckoutDiffQuery({
     ...options,
@@ -47,6 +56,7 @@ function useWorkingDiffQueries({
   const overview = filePath !== undefined && includeFileOverview ? overviewQuery : fileQuery;
   return {
     ...fileQuery,
+    isLoading: fileQuery.isLoading || comparisonLoading,
     overviewFiles: overview.files,
     overviewEntries: overview.entries,
   };
@@ -60,7 +70,7 @@ export function useWorkingDiff({
   enabled,
   queryScope,
   filePath,
-  includeFileOverview = false,
+  includeFileOverview,
   presentation,
 }: UseWorkingDiffOptions) {
   const {
@@ -80,7 +90,6 @@ export function useWorkingDiff({
   );
   // COMPAT(diffSubscription): added in v0.15.0, remove after 2027-05-06.
   const baseRef = (modernDiff ? gitStatus?.comparisonBaseRef : gitStatus?.baseRef) ?? undefined;
-  const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
 
@@ -92,7 +101,7 @@ export function useWorkingDiff({
     serverId,
     workspaceId,
     cwd,
-    isDirty: hasUncommittedChanges,
+    isDirty: isCheckoutDirty(gitStatus),
     statusReady: status !== null,
   });
   const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
@@ -107,7 +116,6 @@ export function useWorkingDiff({
     ignoreWhitespace,
     queryScope,
   };
-  const queryEnabled = enabled && isGit && !comparisonLoading;
   const {
     files,
     overviewFiles,
@@ -119,7 +127,8 @@ export function useWorkingDiff({
     ...queryOptions,
     filePath,
     includeFileOverview,
-    enabled: queryEnabled,
+    comparisonLoading,
+    enabled: enabled && isGit,
   });
   const treeFiles = useMemo(
     () => (overviewEntries ? diffEntryHeaders(overviewEntries) : overviewFiles),
@@ -170,7 +179,7 @@ export function useWorkingDiff({
     treeFiles,
     diffPayloadError,
     diffTooLarge,
-    isDiffLoading: isDiffLoading || comparisonLoading,
+    isDiffLoading,
     reviewActions,
     reviewAttachment,
     reviewFeedback,
@@ -214,4 +223,9 @@ export function usePublishWorkingDiffAttachment({
       }
     };
   }, [attachment, clearWorkspaceAttachments, enabled, scopeKey, setWorkspaceAttachments]);
+}
+
+/** Whether a Git checkout has uncommitted changes; a missing or non-Git status counts as clean. */
+function isCheckoutDirty(gitStatus: { isDirty?: boolean | null } | null): boolean {
+  return gitStatus?.isDirty === true;
 }
