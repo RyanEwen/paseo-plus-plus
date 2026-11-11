@@ -154,9 +154,11 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
   it("keeps keyboard navigation populated when the sidebar starts hidden", async () => {
     await act(async () => {
       root?.render(
-        <SidebarModelProvider active={false} keyboardNavigationActive>
-          <WorkspaceShortcutTargetsSubscriber enabled />
-        </SidebarModelProvider>,
+        <QueryClientProvider client={queryClient}>
+          <SidebarModelProvider active={false} keyboardNavigationActive>
+            <WorkspaceShortcutTargetsSubscriber enabled />
+          </SidebarModelProvider>
+        </QueryClientProvider>,
       );
     });
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
