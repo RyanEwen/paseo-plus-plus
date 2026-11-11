@@ -9,6 +9,8 @@ import {
   useReviewAttachmentSnapshot,
   useReviewFeedback,
 } from "@/review";
+import { useSessionStore } from "@/stores/session-store";
+import { diffEntryHeaders } from "./diff-snapshot";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useWorkingDiffComparison } from "@/git/working-diff-comparison";
@@ -41,10 +43,12 @@ function useWorkingDiffQueries({
     filePath,
     enabled: options.enabled,
   });
+  // A scoped document keeps the whole comparison for the tree when the overview is kept.
+  const overview = filePath !== undefined && includeFileOverview ? overviewQuery : fileQuery;
   return {
     ...fileQuery,
-    overviewFiles:
-      filePath !== undefined && includeFileOverview ? overviewQuery.files : fileQuery.files,
+    overviewFiles: overview.files,
+    overviewEntries: overview.entries,
   };
 }
 
@@ -71,7 +75,11 @@ export function useWorkingDiff({
   const statusErrorMessage =
     status?.error?.message ??
     (isStatusError && statusError instanceof Error ? statusError.message : null);
-  const baseRef = gitStatus?.baseRef ?? undefined;
+  const modernDiff = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.diffSubscription === true,
+  );
+  // COMPAT(diffSubscription): added in v0.15.0, remove after 2027-05-06.
+  const baseRef = (modernDiff ? gitStatus?.comparisonBaseRef : gitStatus?.baseRef) ?? undefined;
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
@@ -103,6 +111,7 @@ export function useWorkingDiff({
   const {
     files,
     overviewFiles,
+    overviewEntries,
     payloadError: diffPayloadError,
     diffTooLarge,
     isLoading: isDiffLoading,
@@ -112,6 +121,10 @@ export function useWorkingDiff({
     includeFileOverview,
     enabled: queryEnabled,
   });
+  const treeFiles = useMemo(
+    () => (overviewEntries ? diffEntryHeaders(overviewEntries) : overviewFiles),
+    [overviewEntries, overviewFiles],
+  );
   const reviewDraftKey = useMemo(
     () =>
       buildReviewDraftKey({
@@ -154,6 +167,7 @@ export function useWorkingDiff({
     selectAll,
     files,
     overviewFiles,
+    treeFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading: isDiffLoading || comparisonLoading,

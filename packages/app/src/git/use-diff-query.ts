@@ -7,7 +7,13 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import {
+  checkoutDiffComparisonError,
+  deriveCheckoutDiffResult,
+  type CheckoutDiffSnapshot,
+} from "./diff-snapshot";
+export { deriveCheckoutDiffResult } from "./diff-snapshot";
+import type { DiffError, ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutDiffQueryOptions {
@@ -21,7 +27,7 @@ interface UseCheckoutDiffQueryOptions {
   filePath?: string;
 }
 
-type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
+type CheckoutDiffQueryPayload = CheckoutDiffSnapshot;
 
 // Re-export the canonical protocol type so all consumers share one definition.
 export type { ParsedDiffFile };
@@ -54,10 +60,7 @@ export function useCheckoutDiffQuery({
   queryScope,
   filePath,
 }: UseCheckoutDiffQueryOptions) {
-  const { t } = useTranslation();
-  // COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
-  const supportsFileDiff = useHostFeature(serverId, "checkoutFileDiff");
-  const unsupportedScope = filePath !== undefined && !supportsFileDiff;
+  const unsupportedScopeError = useUnsupportedFileScopeError(serverId, filePath);
   // COMPAT(checkoutDiffAll): added in v0.12.0, remove after 2027-04-21 once host floor includes All changes.
   const allSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutDiffAll === true,
@@ -86,8 +89,15 @@ export function useCheckoutDiffQuery({
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
   }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope, filePath]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
+  const comparisonError =
+    queryEnabled && isConnected ? checkoutDiffComparisonError(normalizedCompare) : null;
   const routeEnabled = Boolean(
-    queryEnabled && isConnected && cwd && !unsupportedScope && !requiresUpdate,
+    queryEnabled &&
+    isConnected &&
+    cwd &&
+    !unsupportedScopeError &&
+    !requiresUpdate &&
+    !comparisonError,
   );
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
@@ -104,58 +114,39 @@ export function useCheckoutDiffQuery({
         mode: compareMode,
         ...(compareBaseRef ? { baseRef: compareBaseRef } : {}),
         ignoreWhitespace: compareIgnoreWhitespace,
-        ...(filePath !== undefined ? { filePath } : {}),
+        ...fileScopeFields(filePath),
       },
     }),
   });
 
-  const result = deriveCheckoutDiffResult(query.data ?? null);
-  if (unsupportedScope || (requiresUpdate && isConnected)) {
-    return {
-      ...result,
-      files: [],
-      payloadError: {
-        code: "UNKNOWN" as const,
-        message: unsupportedScope
-          ? t("workspace.git.diff.updateHostFileDiff")
-          : "Update the host to view All changes",
-      },
-      diffTooLarge: false,
-      isLoading: false,
-      isError: true,
-    };
-  }
-  return result;
-}
-
-export interface CheckoutDiffResult {
-  files: ParsedDiffFile[];
-  payloadError: CheckoutDiffQueryPayload["error"];
-  diffTooLarge: boolean;
-  isLoading: boolean;
-  isFetching: boolean;
-  isError: boolean;
-  error: null;
+  const boundaryError =
+    unsupportedScopeError ??
+    (requiresUpdate && isConnected
+      ? { code: "UNKNOWN" as const, message: "Update the host to view All changes" }
+      : comparisonError);
+  return deriveCheckoutDiffResult(
+    boundaryError
+      ? { requestId: "unavailable", cwd, files: [], error: boundaryError }
+      : (query.data ?? null),
+  );
 }
 
 /**
- * The result derives from the payload alone. Until a payload arrives there is no
- * diff to describe, so the boundary reports loading rather than an empty diff —
- * whether the query is idle (an inactive retained panel), in flight, or the host
- * is disconnected. Reporting `files: []` as settled made callers render "+0 -0"
- * and "No changes" for a diff nobody has fetched yet.
+ * Fork: a single-file scope needs a host that reads one file's diff on its own budget. Returns
+ * the update instruction to show instead of the diff when the host lacks that capability.
  */
-export function deriveCheckoutDiffResult(
-  payload: CheckoutDiffQueryPayload | null,
-): CheckoutDiffResult {
-  const payloadError = payload?.error ?? null;
-  return {
-    files: payload?.files ?? [],
-    payloadError,
-    diffTooLarge: payload?.diffTooLarge === true,
-    isLoading: payload === null,
-    isFetching: false,
-    isError: Boolean(payloadError),
-    error: null,
-  };
+function useUnsupportedFileScopeError(
+  serverId: string,
+  filePath: string | undefined,
+): DiffError | null {
+  const { t } = useTranslation();
+  // COMPAT(checkoutFileDiff): added in v0.11.2, remove after 2027-10-16.
+  const supportsFileDiff = useHostFeature(serverId, "checkoutFileDiff");
+  if (filePath === undefined || supportsFileDiff) return null;
+  return { code: "UNKNOWN", message: t("workspace.git.diff.updateHostFileDiff") };
+}
+
+/** Fork: the compare fields that limit a checkout diff route to one changed file, if any. */
+function fileScopeFields(filePath: string | undefined): { filePath?: string } {
+  return filePath === undefined ? {} : { filePath };
 }

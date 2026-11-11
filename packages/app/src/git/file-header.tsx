@@ -28,12 +28,12 @@ import {
   fileNameForPath,
   formatDiffCount,
 } from "@/git/file-header-presentation";
-import type { ParsedDiffFile } from "@/git/use-diff-query";
+import type { DiffFileHeader } from "@/git/diff-snapshot";
 import { useTextOverflow } from "@/hooks/use-text-overflow";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FileHeaderProps {
-  file: ParsedDiffFile;
+  file: DiffFileHeader;
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   bodyVisible: boolean;
   showsBodyState?: boolean;
@@ -74,7 +74,7 @@ function expandedAriaValue(showsBodyState: boolean, bodyVisible: boolean): boole
   return showsBodyState ? bodyVisible : undefined;
 }
 
-function fileHeaderAccessibilityLabel(canvasRendered: boolean, file: ParsedDiffFile) {
+function fileHeaderAccessibilityLabel(canvasRendered: boolean, file: DiffFileHeader) {
   if (!canvasRendered) return undefined;
   return `${file.path}, +${formatDiffCount(file.additions)}, -${formatDiffCount(file.deletions)}`;
 }
@@ -131,7 +131,7 @@ function fileHeaderNameStyle(showsBodyState: boolean, isHovered: boolean) {
   ];
 }
 
-function fileChange(file: ParsedDiffFile): "added" | "deleted" | "modified" {
+function fileChange(file: DiffFileHeader): "added" | "deleted" | "modified" {
   return diffFileChangeKind(file);
 }
 
