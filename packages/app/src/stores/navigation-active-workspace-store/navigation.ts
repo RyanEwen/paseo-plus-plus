@@ -97,14 +97,15 @@ export function navigateToWorkspace(
     deps.revealTab(request.workspaceKey, tabId);
     return tabId;
   };
+  const workspaceKey = `${input.serverId}:${resolvedWorkspaceId ?? input.workspaceId}`;
   if (input.target) {
     prepareWorkspaceTab({ ...input, target: input.target }, { openTab });
     // A hydrated open reveals its own destination through revealTab. A deferred
     // open reveals when the destination consumes it, so show the workspace pane
     // now rather than leave the chat behind the workspace list or explorer.
-    if (shouldDeferOpen) deps.revealWorkspace();
+    if (shouldDeferOpen) deps.revealWorkspace(workspaceKey);
   } else {
-    deps.revealWorkspace(`${input.serverId}:${resolvedWorkspaceId ?? input.workspaceId}`);
+    deps.revealWorkspace(workspaceKey);
   }
 
   const route = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
