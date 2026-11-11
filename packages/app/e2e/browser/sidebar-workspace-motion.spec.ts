@@ -113,8 +113,27 @@ function statusGroupHeader(page: Page, bucket: string): Locator {
 }
 
 /**
+ * Assert the Status group heading counts. A bucket mapped to `null` has no heading at all,
+ * so its count must not render.
+ */
+async function expectStatusGroupCounts(
+  page: Page,
+  counts: Record<string, number | null>,
+): Promise<void> {
+  for (const [bucket, count] of Object.entries(counts)) {
+    const countText = page.getByTestId(`sidebar-status-group-count-${bucket}`);
+    if (count === null) {
+      await expect(countText).toHaveCount(0);
+    } else {
+      await expect(countText).toHaveText(String(count));
+    }
+  }
+}
+
+/**
  * Move the subject from Done to Unread and back while a probe watches it, then check that the
- * same row slid with the sidebar duration, kept focus, and kept an open rename draft.
+ * same row slid with the sidebar duration, kept focus, and kept an open rename draft. The Status
+ * group counts follow each move.
  */
 async function expectStatusMoveKeepsRowAndDraft(
   page: Page,
@@ -123,6 +142,7 @@ async function expectStatusMoveKeepsRowAndDraft(
 ) {
   const rowTestId = workspaceRowTestId(seed);
   const row = page.getByTestId(rowTestId);
+  await expectStatusGroupCounts(page, { done: 2, attention: null });
   // Visibility starts during the compact drawer's entrance. Wait for real actionability
   // before measuring the independent row transition, without clicking or changing focus.
   await row.click({ trial: true });
@@ -131,6 +151,7 @@ async function expectStatusMoveKeepsRowAndDraft(
   await startSidebarMotionProbe({ page, rowTestId, freeze: true });
   await seed.client.markWorkspaceUnread(seed.workspaceId);
   await expectSidebarMotionPaused(page);
+  await expectStatusGroupCounts(page, { done: 1, attention: 1 });
   await page.screenshot({ path: testInfo.outputPath("motion-middle.png") });
   await expect(row).toBeFocused();
   await resumeSidebarMotion(page);
@@ -150,6 +171,7 @@ async function expectStatusMoveKeepsRowAndDraft(
   await expect(statusGroupRows(page, "done").getByTestId(rowTestId)).toBeVisible();
   await expect(input).toHaveValue("Unsaved rename survives movement");
   await expect(input).toBeFocused();
+  await expectStatusGroupCounts(page, { done: 2, attention: null });
   await cancelRename(page);
 }
 
