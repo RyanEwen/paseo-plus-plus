@@ -69,7 +69,7 @@ test.describe("Sidebar footer on a touch screen", () => {
       await page.keyboard.press("Escape");
       await expect(addProjectFlow(page)).toBeHidden();
       await page.keyboard.press("Control+,");
-      await expect(page).toHaveURL(/\/settings\/general$/);
+      await expect(page).toHaveURL(/\/settings\/paseo-plus-plus$/);
     });
   });
 
