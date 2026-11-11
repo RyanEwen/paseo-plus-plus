@@ -6255,7 +6255,7 @@ describe("agent snapshot MCP serialization", () => {
     });
     spies.agentManager.getAgent.mockReturnValue(null);
     spies.agentStorage.get.mockResolvedValue(record);
-    spies.agentStorage.list.mockResolvedValue([record]);
+    spies.agentStorage.listActive.mockResolvedValue([record]);
   }
 
   it.each([
@@ -6332,7 +6332,7 @@ describe("agent snapshot MCP serialization", () => {
       spies.agentStorage.get.mockImplementation(async (id: string) =>
         id === stored.id ? stored : null,
       );
-      spies.agentStorage.list.mockResolvedValue([stored]);
+      spies.agentStorage.listActive.mockResolvedValue([stored]);
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,

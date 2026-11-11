@@ -3814,7 +3814,9 @@ export class AgentManager {
       this.runs.settleForegroundStart(pendingRun, { status: "started", turnId });
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
-      agent.attention = { requiresAttention: false };
+      if (this.attention.turnStartReadsResult(agent)) {
+        agent.attention = { requiresAttention: false };
+      }
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical

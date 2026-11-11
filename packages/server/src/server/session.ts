@@ -6283,6 +6283,7 @@ export class Session {
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
+            humanAttentionRequired: agent.humanAttentionRequired,
             backgroundWork: agent.backgroundWork,
           });
         case "created_at":
