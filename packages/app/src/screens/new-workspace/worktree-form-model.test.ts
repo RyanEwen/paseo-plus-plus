@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import {
   adoptedCheckoutAgent,
-  branchNameFromRef,
   existingWorktreeLabel,
   existingWorktreeOptionId,
   findExistingWorktreeByOptionId,
@@ -179,14 +178,6 @@ describe("existing worktree options", () => {
       "Detached 01234567 · /worktrees/detached",
     );
   });
-
-  it.each([
-    ["refs/heads/feature/a", "feature/a"],
-    ["refs/remotes/origin/feature/a", "feature/a"],
-    ["feature/a", "feature/a"],
-  ])("reads the branch name of %s", (refName, branchName) => {
-    expect(branchNameFromRef(refName)).toBe(branchName);
-  });
 });
 
 describe("adoptedCheckoutAgent", () => {
@@ -219,5 +210,113 @@ describe("adoptedCheckoutAgent", () => {
         source: { kind: "worktree", cwd: "/repo", projectId: "project", worktreeSlug: "new" },
       }),
     ).toBe(agent);
+  });
+});
+
+describe("plugin branch suggestions", () => {
+  it("fills an untouched branch exactly, with a valid folder name beside it", () => {
+    const form = openWorktreeForm("generated-name");
+
+    form.applyPluginBranch("Feature/ABC-1");
+
+    const state = form.getState();
+    expect(state.branchName).toBe("Feature/ABC-1");
+    expect(state.worktreeName).toBe("feature-abc-1");
+    expect(state.separateNames).toBe(true);
+    expect(worktreeFormSource(state, sourceInput)).toMatchObject({
+      branchName: "Feature/ABC-1",
+      worktreeSlug: "feature-abc-1",
+    });
+  });
+
+  it("keeps shared names when the plugin branch is already a valid folder name", () => {
+    const form = openWorktreeForm("generated-name");
+
+    form.applyPluginBranch("plugin-branch");
+
+    expect(form.getState()).toMatchObject({
+      branchName: "plugin-branch",
+      worktreeName: "plugin-branch",
+      separateNames: false,
+    });
+  });
+
+  it("lets a later plugin value replace an earlier one while the user has not typed", () => {
+    const form = openWorktreeForm("generated-name");
+
+    form.applyPluginBranch("first-branch");
+    form.applyPluginBranch("second-branch");
+
+    expect(form.getState().branchName).toBe("second-branch");
+  });
+
+  it("keeps what the user typed in the shared field over a plugin value", () => {
+    const form = openWorktreeForm("generated-name");
+    form.setWorktreeName("typed-name");
+
+    form.applyPluginBranch("plugin-branch");
+
+    expect(form.getState()).toMatchObject({ branchName: "typed-name", worktreeName: "typed-name" });
+  });
+
+  it("keeps what the user typed in the separate branch field over a plugin value", () => {
+    const form = openWorktreeForm("generated-name");
+    form.setSeparateNames(true);
+    form.setBranchName("feature/typed");
+
+    form.applyPluginBranch("plugin-branch");
+
+    expect(form.getState().branchName).toBe("feature/typed");
+  });
+
+  it("fills the branch again once the user clears it", () => {
+    const form = openWorktreeForm("generated-name");
+    form.setWorktreeName("typed-name");
+    form.applyPluginBranch("plugin-branch");
+    form.setWorktreeName("");
+
+    expect(form.getState()).toMatchObject({
+      branchName: "plugin-branch",
+      worktreeName: "plugin-branch",
+    });
+  });
+
+  it("restores the generated default when the plugin withdraws an untouched fill", () => {
+    const form = openWorktreeForm("generated-name");
+    form.applyPluginBranch("Feature/ABC-1");
+
+    form.applyPluginBranch(null);
+
+    expect(form.getState()).toMatchObject({
+      branchName: "generated-name",
+      worktreeName: "generated-name",
+      separateNames: false,
+    });
+  });
+
+  it("changes nothing the user typed when the plugin withdraws", () => {
+    const form = openWorktreeForm("generated-name");
+    form.applyPluginBranch("Feature/ABC-1");
+    form.setBranchName("feature/typed");
+
+    form.applyPluginBranch(null);
+
+    expect(form.getState()).toMatchObject({
+      branchName: "feature/typed",
+      worktreeName: "feature-typed",
+      separateNames: true,
+    });
+  });
+
+  it("does not use a plugin branch for checkout of an existing branch", () => {
+    const form = openWorktreeForm("generated-name");
+    form.setMode("checkout");
+
+    form.applyPluginBranch("plugin-branch");
+    form.applyRef(branch("refs/heads/main"));
+
+    const source = worktreeFormSource(form.getState(), sourceInput);
+    expect(source).toMatchObject({ action: "checkout", refName: "main" });
+    expect(source).not.toHaveProperty("branchName");
   });
 });

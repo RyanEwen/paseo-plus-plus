@@ -24,12 +24,19 @@ export function WorktreeFields({
   const differentBranchLabel = t("worktreeOptions.useDifferentBranchName");
   const newBranchNameLabel = t("worktreeOptions.newBranchName");
   const nameInput = useRef<EditingTextInputHandle>(null);
+  const branchInput = useRef<EditingTextInputHandle>(null);
   useEffect(() => {
     // User edits already live in the editor; only replace reactive defaults.
     if (nameInput.current?.getText() !== state.worktreeName) {
       nameInput.current?.replaceText(state.worktreeName);
     }
   }, [state.worktreeName]);
+  useEffect(() => {
+    // A plugin branch can fill the separate field after it has mounted.
+    if (branchInput.current && branchInput.current.getText() !== state.branchName) {
+      branchInput.current.replaceText(state.branchName);
+    }
+  }, [state.branchName]);
   // Field takes the switch as its trailing prop; memoising it keeps that prop stable.
   const separateNamesSwitch = useMemo(
     () => (
@@ -72,6 +79,7 @@ export function WorktreeFields({
             <Field label={newBranchNameLabel}>
               <FormTextInput
                 key="separate-branch"
+                ref={branchInput}
                 initialValue={state.branchName}
                 onChangeText={model.setBranchName}
                 size={size}

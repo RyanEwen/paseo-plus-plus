@@ -1,6 +1,6 @@
 import { isValidWorktreeName, slugify } from "@getpaseo/protocol/branch-slug";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
-import type { PickerItem } from "../new-workspace-picker-item";
+import { branchNameFromRef, type PickerItem } from "../new-workspace-picker-item";
 import { remapDraftCwdToWorkspace } from "../new-workspace-fork-context";
 
 export interface ExistingWorktree {
@@ -38,11 +38,6 @@ export function existingWorktreeLabel(
   return `${branch} · ${entry.worktreePath}`;
 }
 
-/** Local branch name for a local or remote-tracking ref. */
-export function branchNameFromRef(refName: string): string {
-  return refName.replace(/^refs\/heads\//, "").replace(/^refs\/remotes\/[^/]+\//, "");
-}
-
 /** Owns explicit branch intent and editable names independently of async picker data. */
 export function openWorktreeForm(initialBranch: string) {
   const listeners = new Set<() => void>();
@@ -53,11 +48,54 @@ export function openWorktreeForm(initialBranch: string) {
     worktreeName: slugify(initialBranch),
     nameEdited: false,
     separateNames: false,
+    /** The user typed the new branch name (the shared field, or the separate branch field). */
+    branchEdited: false,
+    /** A plugin's `setBranch` value; it fills the branch only while the user has not typed one. */
+    pluginBranch: null as string | null,
+    /** Separate names were turned on only to hold a plugin branch that is not a valid folder name. */
+    separatedForPlugin: false,
     existing: null as ExistingWorktree | null,
     scope: "",
   };
+  /** Whether the user has typed a branch name that is still there, in whichever field holds it. */
+  function userOwnsBranch(): boolean {
+    const typed = state.separateNames ? state.branchName : state.worktreeName;
+    return state.branchEdited && typed.trim() !== "";
+  }
+  /** The plugin branch currently filling the new branch name, if any. */
+  function activePluginBranch(): string | null {
+    if (state.mode !== "branch-off" || userOwnsBranch()) return null;
+    return state.pluginBranch;
+  }
   function publish(patch: Partial<typeof state>) {
     state = { ...state, ...patch };
+    const pluginBranch = activePluginBranch();
+    if (pluginBranch === null) {
+      applyDerivedNames();
+    } else {
+      applyPluginFill(pluginBranch);
+    }
+    listeners.forEach((listener) => listener());
+  }
+  /**
+   * A plugin branch is kept exactly. The folder follows it unless the user named the folder,
+   * and names separate when the branch is not a valid folder name.
+   */
+  function applyPluginFill(branch: string) {
+    state.branchName = branch;
+    if (!state.nameEdited || state.worktreeName.trim() === "") {
+      state.worktreeName = slugify(branch);
+    }
+    if (!state.separateNames && state.worktreeName !== branch) {
+      state.separateNames = true;
+      state.separatedForPlugin = true;
+    }
+  }
+  function applyDerivedNames() {
+    if (state.separatedForPlugin && state.pluginBranch === null) {
+      state.separateNames = false;
+      state.separatedForPlugin = false;
+    }
     if (!state.nameEdited) {
       state.worktreeName = slugify(
         state.mode === "branch-off" ? state.branchName : state.checkoutBranch,
@@ -66,7 +104,6 @@ export function openWorktreeForm(initialBranch: string) {
     if (!state.separateNames && state.mode === "branch-off") {
       state.branchName = state.worktreeName;
     }
-    listeners.forEach((listener) => listener());
   }
   return {
     getState: () => state,
@@ -97,22 +134,45 @@ export function openWorktreeForm(initialBranch: string) {
     setBranchName(branchName: string) {
       publish({
         branchName,
+        branchEdited: true,
+        // The user now relies on the separate field, so withdrawing a plugin branch keeps it.
+        separatedForPlugin: false,
         ...(!state.separateNames && state.mode === "branch-off"
           ? { worktreeName: branchName, nameEdited: true }
           : {}),
       });
     },
     setWorktreeName(worktreeName: string) {
+      // With shared names this field is also the branch name.
+      const sharesBranch = !state.separateNames && state.mode === "branch-off";
       publish({
         worktreeName,
         nameEdited: true,
+        ...(sharesBranch ? { branchEdited: true } : {}),
       });
     },
-    /** Joining names keeps the visible worktree name; submission validates it for both. */
+    /**
+     * Joining names keeps the visible worktree name; submission validates it for both. Joining
+     * is the user choosing the folder name as the branch, so a plugin branch stops filling it.
+     */
     setSeparateNames(separateNames: boolean) {
       publish({
         separateNames,
-        ...(!separateNames ? { branchName: state.worktreeName } : {}),
+        separatedForPlugin: false,
+        ...(!separateNames ? { branchName: state.worktreeName, branchEdited: true } : {}),
+      });
+    },
+    /**
+     * Record a plugin's `setBranch` value. It fills the new branch name only while the user has
+     * not typed one or has cleared it; null withdraws the suggestion.
+     */
+    applyPluginBranch(pluginBranch: string | null) {
+      if (pluginBranch === state.pluginBranch) return;
+      // Withdrawing a suggestion that filled the field restores the generated default.
+      const withdrawsFill = pluginBranch === null && activePluginBranch() !== null;
+      publish({
+        pluginBranch,
+        ...(withdrawsFill ? { branchName: slugify(initialBranch) } : {}),
       });
     },
     selectExisting: (existing: ExistingWorktree | null) => publish({ existing }),

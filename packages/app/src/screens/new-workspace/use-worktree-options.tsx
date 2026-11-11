@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { WorktreeFields } from "./worktree-fields";
 import type { WorktreeBranchChoice } from "./form/branch-field";
 import type { PickerControl } from "./form";
+import { useNewWorkspaceSetupState, type NewWorkspaceSetup } from "./setup-model";
 import {
   branchNameFromRef,
   existingWorktreeLabel,
@@ -46,6 +47,8 @@ export function useWorktreeOptions(input: {
   isolation: "local" | "worktree";
   /** The screen's remembered isolation; an adopted checkout records Local. */
   onIsolationChange: (isolation: "local" | "worktree") => void;
+  /** The screen's setup store; a plugin's `setBranch` value reaches the form through it. */
+  setup: NewWorkspaceSetup;
   compact: boolean;
   pending: boolean;
 }) {
@@ -54,6 +57,12 @@ export function useWorktreeOptions(input: {
   const state = useSyncExternalStore(model.subscribe, model.getState);
   const scope = `${input.serverId}:${input.cwd ?? ""}`;
   useEffect(() => () => model.close(), [model]);
+  const { branch: pluginBranch } = useNewWorkspaceSetupState(input.setup);
+  // Older hosts keep upstream's path, which sends the plugin branch itself.
+  const pluginBranchForForm = input.supported ? pluginBranch : null;
+  useEffect(() => {
+    model.applyPluginBranch(pluginBranchForForm);
+  }, [model, pluginBranchForForm]);
   useEffect(() => {
     model.applyScope(scope);
   }, [model, scope]);

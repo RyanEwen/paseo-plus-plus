@@ -1153,6 +1153,7 @@ export function NewWorkspaceScreen({
     item: rawBaseItem,
     isolation: effectiveIsolation,
     onIsolationChange: setIsolation,
+    setup,
     compact: isCompact,
     pending: isPending,
   });
