@@ -1,4 +1,5 @@
 import { AppSettingsStore } from "./app-settings/index.js";
+import type { AttachmentStore } from "./attachments/store.js";
 import { forkCapabilities } from "./fork-capabilities.js";
 import { registerAccentColorCapability } from "./accent-color-capability.js";
 import { dispatchWithAttentionRejection } from "./agent/attention/dispatch.js";
@@ -571,6 +572,8 @@ function requireWebSocketServices(params: {
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
 export class VoiceAssistantWebSocketServer {
+  private readonly attachmentStore: AttachmentStore | undefined;
+  private readonly acknowledgedBinarySockets = new WeakSet<object>();
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
@@ -720,7 +723,9 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    attachmentStore?: AttachmentStore,
   ) {
+    this.attachmentStore = attachmentStore;
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
@@ -1333,7 +1338,7 @@ export class VoiceAssistantWebSocketServer {
 
   private sendHelloResponse(ws: WebSocketLike, session: Session, hello: WSHelloMessage): void {
     // The peer learns our support from this ordinary response before receiving chunks.
-    this.sendToClient(ws, this.createServerInfoMessage(session));
+    this.sendToClient(ws, this.createServerInfoMessage(session, ws));
     this.chunkedSocket(ws).enabled = hello.capabilities?.[CLIENT_CAPS.binaryChunkingV1] === true;
   }
 
@@ -1424,7 +1429,9 @@ export class VoiceAssistantWebSocketServer {
     if (!this.sessions.get(ws)?.session.delivery.permitsBinary(ws, frame)) {
       this.incrementRuntimeCounter("applicationBinaryRejected");
       this.logger.warn({ bytes: frame.byteLength }, "ws_application_binary_delivery_denied");
-      return;
+      // Awaiting senders must observe refusal: an original read releases its slot instead of
+      // treating the frame as delivered, and a file explorer read replies with this error.
+      throw new Error("Binary transfer delivery is unauthorized");
     }
     try {
       await this.sendSocketFrame(ws, frame, frame.byteLength, true);
@@ -1535,6 +1542,9 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    // Direct and relay sockets await each binary send, so they can carry original reads.
+    // Hub and plugin sockets keep metadata-only attachment access.
+    if (request || metadata?.transport === "relay") this.acknowledgedBinarySockets.add(ws);
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
@@ -1684,6 +1694,9 @@ export class VoiceAssistantWebSocketServer {
       },
       sourceId: options.sourceId,
       browserToolsBroker: this.browserToolsBroker,
+      attachmentStore: this.attachmentStore,
+      supportsAttachmentOriginals: (source) =>
+        this.acknowledgedBinarySockets.has(source) && this.sessions.has(source as WebSocketLike),
       clientId: options.clientId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
@@ -2044,7 +2057,10 @@ export class VoiceAssistantWebSocketServer {
     connection.session.setHostSource(sourceId);
   }
 
-  private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
+  private buildServerInfoStatusPayload(
+    session: Session,
+    source: WebSocketLike,
+  ): ServerInfoStatusPayload {
     return {
       status: "server_info",
       protocolVersion: WS_PROTOCOL_VERSION,
@@ -2056,7 +2072,17 @@ export class VoiceAssistantWebSocketServer {
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
+      ...(this.attachmentStore
+        ? {
+            attachmentStorage: {
+              writable: this.attachmentStore.writable,
+              originalReads: this.acknowledgedBinarySockets.has(source),
+              writeError: this.attachmentStore.writeError,
+            },
+          }
+        : {}),
       features: {
+        ...(this.attachmentStore ? { durableAttachments: true } : {}),
         connectedHosts: true,
         hostMultiplexing: true,
         // COMPAT(relayProtectedSecurity): added in v0.13.0, remove gate after 2027-04-21.
@@ -2261,12 +2287,12 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
-  private createServerInfoMessage(session: Session): WSOutboundMessage {
+  private createServerInfoMessage(session: Session, ws: WebSocketLike): WSOutboundMessage {
     return {
       type: "session",
       message: {
         type: "status",
-        payload: this.buildServerInfoStatusPayload(session),
+        payload: this.buildServerInfoStatusPayload(session, ws),
       },
     };
   }
@@ -2283,16 +2309,13 @@ export class VoiceAssistantWebSocketServer {
 
   private broadcastCapabilitiesUpdate(): void {
     for (const connection of new Set(this.sessions.values())) {
-      if (
-        ![...connection.sockets].some((socket) =>
-          connection.session.wantsSourceEvent(socket, "status.server_info"),
-        )
-      )
-        continue;
-      connection.session.publish({
-        type: "status",
-        payload: this.buildServerInfoStatusPayload(connection.session),
-      });
+      for (const socket of connection.sockets) {
+        if (!connection.session.wantsSourceEvent(socket, "status.server_info")) continue;
+        connection.session.publishToSource(socket, {
+          type: "status",
+          payload: this.buildServerInfoStatusPayload(connection.session, socket),
+        });
+      }
     }
   }
 

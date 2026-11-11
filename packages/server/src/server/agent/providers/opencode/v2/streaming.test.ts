@@ -1,3 +1,4 @@
+import { VALID_PNG_BASE64 } from "../../../../../test-utils/provider-image-fixtures.js";
 import { collectTimelineSnapshot } from "../test-utils/v2-timeline.js";
 import { V2Timeline } from "./timeline.js";
 import type { SessionMessageAssistant } from "@opencode/client";
@@ -231,7 +232,11 @@ test.each(["text", "reasoning"] as const)(
                 status: "completed",
                 input: {},
                 content: [
-                  { type: "file", uri: "data:image/png;base64,aGVsbG8=", mime: "image/png" },
+                  {
+                    type: "file",
+                    uri: `data:image/png;base64,${VALID_PNG_BASE64}`,
+                    mime: "image/png",
+                  },
                 ],
                 metadata: {},
               },

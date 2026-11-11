@@ -4,6 +4,8 @@ import type { AgentPromptSource } from "./agent/agent-messages/envelope.js";
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import { AppSettingsSession } from "./app-settings/session.js";
 import { AppSettingsStore } from "./app-settings/index.js";
+import { AttachmentSession } from "./attachments/session.js";
+import type { AttachmentStore } from "./attachments/store.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -480,6 +482,8 @@ const nodeSessionFileSystem: SessionFileSystem = {
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
+  attachmentStore?: AttachmentStore;
+  supportsAttachmentOriginals?: (source: object) => boolean;
   connectedHosts?: ConnectedHosts;
   sourceId?: string;
   routed?: boolean;
@@ -731,6 +735,7 @@ interface ClientActivity {
 }
 
 export class Session {
+  private readonly attachmentSession: AttachmentSession;
   private readonly connectedHostSession: ConnectedHostSession | null;
   private routed = false;
   isRouted(): boolean {
@@ -976,6 +981,7 @@ export class Session {
       clientId: this.clientId,
       sessionId: this.sessionId,
     });
+    this.attachmentSession = this.createAttachmentSession(options);
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
@@ -1369,6 +1375,29 @@ export class Session {
     );
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
+  }
+
+  /**
+   * Build the attachment session. Original bytes only travel to the requesting source; the
+   * attachment session re-checks permission and source support before each frame.
+   */
+  private createAttachmentSession(options: SessionOptions): AttachmentSession {
+    return new AttachmentSession(options.attachmentStore, {
+      emit: (message, source) => this.emitForSource(message, source),
+      emitBinary: async (frame, source) => {
+        // Never fall back to emitBinaryReply's broadcast for an original.
+        if (!this.onBinaryMessageToSource) throw new Error("Attachment source is unavailable");
+        await this.emitBinaryReply(frame, source);
+      },
+      hasAcknowledgedBinaryChannel: options.supportsAttachmentOriginals ?? (() => false),
+      mayRead: () => this.authorization.allowsPermission("workspace.read"),
+      requestSignal: () => this.delivery.requestSignal,
+      reportFailure: (error) =>
+        this.sessionLogger.warn(
+          { failure: error instanceof Error ? error.name : "UnknownError" },
+          "attachment_request_failed",
+        ),
+    });
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -2478,6 +2507,8 @@ export class Session {
 
   public setPermissions(permissions: readonly DaemonPermission[]): void {
     this.authorization.replacePermissions(permissions);
+    if (!this.authorization.allowsPermission("workspace.read"))
+      this.attachmentSession.revokeReads();
     this.connectedHostSession?.revoke();
     if (!this.authorization.allowsPermission("workspace.write")) {
       void this.delivery
@@ -3436,6 +3467,12 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "attachments.list.request":
+      case "attachments.get.request":
+      case "attachments.read.request":
+      case "attachments.read.cancel.request":
+        if (!source) throw new Error("Attachment operations require a physical request source");
+        return this.attachmentSession.handle(msg, source);
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":

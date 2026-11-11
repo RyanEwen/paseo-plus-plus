@@ -9,6 +9,7 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { AttachmentStore } from "./attachments/store.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import {
@@ -264,6 +265,7 @@ function createServer(options?: {
   logger?: ReturnType<typeof createLogger>;
   startPaused?: boolean;
   auth?: { password: string; localCredential: () => string | null };
+  attachmentStore?: AttachmentStore;
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
@@ -341,6 +343,15 @@ function createServer(options?: {
     undefined,
     undefined,
     createProviderSnapshotManagerStub().manager,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    options?.attachmentStore,
   );
 }
 
@@ -810,6 +821,26 @@ describe("relay external socket reconnect behavior", () => {
       server,
       socket: secondSocket,
       clientId,
+    });
+
+    await server.close();
+  });
+
+  test("relay sockets advertise acknowledged original reads", async () => {
+    const server = createServer({
+      attachmentStore: createStub<AttachmentStore>({ writable: true, writeError: null }),
+    });
+    const relaySocket = new MockSocket();
+    const relayInfo = await attachRelayAndHello({
+      server,
+      socket: relaySocket,
+      clientId: "cid-relay-originals",
+    });
+    expect(relayInfo.features?.durableAttachments).toBe(true);
+    expect(relayInfo.attachmentStorage).toEqual({
+      writable: true,
+      originalReads: true,
+      writeError: null,
     });
 
     await server.close();

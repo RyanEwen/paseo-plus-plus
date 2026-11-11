@@ -5,6 +5,16 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import {
+  assertDecodableLength,
+  assertDecodedSize,
+  assertImageInputLength,
+  assertImageSignature,
+  decodeImageData,
+  ImageAdmissionError,
+  normalizeImageData,
+} from "../../attachments/admission.js";
+import { ATTACHMENT_ORIGINAL_MAX_BYTES } from "@getpaseo/protocol/attachments";
 
 export interface ProviderImageOutput {
   path?: string | null;
@@ -22,6 +32,11 @@ const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
 const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
+function assertProviderImageInputLengths(image: ProviderImageOutput): void {
+  for (const value of [image.data, image.path, image.url]) {
+    if (value) assertImageInputLength(value);
+  }
+}
 
 let materializedImageAttachmentDir: string | null = null;
 // Serialize materializations: one decoder and one file operation at a time, including
@@ -66,10 +81,10 @@ function getImageExtension(mimeType: string): string {
   }
 }
 
-// 128 MiB admits the measured 64 MiB fixture with headroom while bounding disk
-// and decoding per image. This is materialization admission, not a wire schema limit.
-export const MAX_PROVIDER_IMAGE_BYTES = 128 * 1024 * 1024;
-const BASE64_CHUNK_CHARACTERS = 256 * 1024; // Multiple of four; decode units stay aligned.
+// Provider materialization currently shares the durable original limit. A planned change
+// restores upstream's 128 MiB provider limit; see the screenshot originals feature guide.
+export const MAX_PROVIDER_IMAGE_BYTES = ATTACHMENT_ORIGINAL_MAX_BYTES;
+const BASE64_CHUNK_CHARACTERS = 256 * 1024;
 
 export function materializeProviderImage(image: {
   data: string;
@@ -84,25 +99,17 @@ async function materializeImage(image: {
   data: string;
   mimeType: string | null;
 }): Promise<MaterializedProviderImage> {
-  const maxEncodedCharacters = Math.ceil(MAX_PROVIDER_IMAGE_BYTES / 3) * 4;
-  // Check length before inspecting/copying the payload, including a bounded data URI header.
-  if (image.data.length > maxEncodedCharacters + 256) {
-    throw new Error(`Image attachment exceeds ${MAX_PROVIDER_IMAGE_BYTES} bytes`);
-  }
-  let data = image.data;
-  let mimeType = image.mimeType ?? "image/png";
-  if (data.startsWith("data:")) {
-    const separator = data.indexOf(";base64,");
-    if (separator >= 0 && separator < 256) {
-      mimeType = data.slice(5, separator);
-      data = data.slice(separator + 8);
-    }
-  }
-  if (data.length > maxEncodedCharacters) {
-    throw new Error(`Image attachment exceeds ${MAX_PROVIDER_IMAGE_BYTES} bytes`);
-  }
+  const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
+  const { data, mimeType } = normalized;
   const hash = createHash("sha256");
-  for await (const bytes of decodeImage(data)) hash.update(bytes);
+  let first = true;
+  for await (const bytes of decodeImage(data)) {
+    if (first) {
+      assertImageSignature(bytes, mimeType);
+      first = false;
+    }
+    hash.update(bytes);
+  }
   const dir = await getMaterializedImageAttachmentDir();
   const filePath = path.join(dir, `${hash.digest("hex")}.${getImageExtension(mimeType)}`);
   try {
@@ -133,24 +140,22 @@ async function materializeImage(image: {
 }
 
 async function* decodeImage(data: string): AsyncGenerator<Buffer> {
-  let carry = "";
+  assertDecodableLength(data);
+  // Reject decoded overflow before inspecting the first container chunk.
+  let trailingPadding = 0;
+  if (data.endsWith("==")) trailingPadding = 2;
+  else if (data.endsWith("=")) trailingPadding = 1;
+  assertDecodedSize(Math.floor(((data.length - trailingPadding) * 3) / 4));
   let decodedBytes = 0;
   for (let offset = 0; offset < data.length; offset += BASE64_CHUNK_CHARACTERS) {
-    // Buffer.from ignores non-base64 characters. Carry incomplete quartets so
-    // line-wrapped payloads decode identically across chunk boundaries.
-    const chunk =
-      carry +
-      data.slice(offset, offset + BASE64_CHUNK_CHARACTERS).replace(/[^A-Za-z0-9+/_=-]/g, "");
-    const finalChunk = offset + BASE64_CHUNK_CHARACTERS >= data.length || chunk.includes("=");
-    const end = finalChunk ? chunk.length : chunk.length - (chunk.length % 4);
-    const bytes = Buffer.from(chunk.slice(0, end), "base64");
-    carry = chunk.slice(end);
+    const chunk = data.slice(offset, offset + BASE64_CHUNK_CHARACTERS);
+    if (offset + chunk.length < data.length && chunk.includes("="))
+      throw new ImageAdmissionError("Image contains invalid base64 data.");
+    const bytes = decodeImageData(chunk);
     decodedBytes += bytes.length;
-    if (decodedBytes > MAX_PROVIDER_IMAGE_BYTES)
-      throw new Error("Image attachment exceeds size limit");
+    assertDecodedSize(decodedBytes);
     yield bytes;
     await setImmediate();
-    if (finalChunk) break;
   }
 }
 
@@ -231,6 +236,12 @@ export async function renderProviderImageOutputAsAssistantMarkdown(
   image: ProviderImageOutput,
   options: RenderProviderImageOutputOptions = {},
 ): Promise<AgentTimelineItem | null> {
+  try {
+    assertProviderImageInputLengths(image);
+  } catch (error) {
+    if (!(error instanceof ImageAdmissionError)) throw error;
+    return { type: "assistant_message", text: `Image output omitted: ${error.message}` };
+  }
   const source = nonEmptyString(image.path) ?? nonEmptyString(image.url);
   if (source && !isDataImageSource(source)) {
     const altText = escapeMarkdownImageAlt(nonEmptyString(image.altText) ?? "Image");
@@ -254,7 +265,10 @@ export async function renderProviderImageOutputAsAssistantMarkdown(
           mimeType: nonEmptyString(image.mimeType),
         })
       : null;
-  } catch {
+  } catch (error) {
+    if (error instanceof ImageAdmissionError) {
+      return { type: "assistant_message", text: `Image output omitted: ${error.message}` };
+    }
     materialized = null;
   }
   if (!materialized?.path || isDataImageSource(materialized.path)) {

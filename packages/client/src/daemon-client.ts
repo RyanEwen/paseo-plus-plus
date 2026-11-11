@@ -1,4 +1,6 @@
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
+import type { AttachmentReference } from "@getpaseo/protocol/attachments";
+import { AttachmentTransfers } from "./attachments.js";
 import {
   DiffStreamRouter,
   DiffSubscriptionError,
@@ -1482,6 +1484,17 @@ export class DaemonClient {
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
   private completedBinaryFileReads = new Map<string, FileReadResult>();
+  private readonly attachments = new AttachmentTransfers({
+    createRequestId: () => this.createRequestId(),
+    rejectWaiters: (wireId, error) => this.rejectWaitersForRequestId(wireId, error),
+    sendCancel: (wireId) => {
+      this.sendSessionMessageStrict({
+        type: "attachments.read.cancel.request",
+        readRequestId: wireId,
+        requestId: this.createRequestId(),
+      });
+    },
+  });
   /** The last catalog's client bundles by plugin id, so later catalogs can leave them out. */
   private pluginClientBundles = new Map<
     string,
@@ -5710,6 +5723,79 @@ export class DaemonClient {
     return payload.directory;
   }
 
+  private requireAttachmentSupport(original = false): void {
+    if (this.lastServerInfoMessage?.features?.durableAttachments !== true)
+      throw new Error("Update the host to use durable screenshot references.");
+    if (original && this.lastServerInfoMessage.attachmentStorage?.originalReads !== true)
+      throw new Error(
+        "This connection does not support original-image transfers. Metadata remains available.",
+      );
+  }
+
+  async listAttachments(
+    agentId: string,
+    options?: { after?: string; limit?: number; requestId?: string },
+  ) {
+    this.requireAttachmentSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"attachments.list.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "attachments.list.request",
+        agentId,
+        after: options?.after,
+        limit: options?.limit,
+      },
+    });
+  }
+  async getAttachment(agentId: string, referenceId: string, requestId?: string) {
+    this.requireAttachmentSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"attachments.get.response">({
+      requestId,
+      message: { type: "attachments.get.request", agentId, referenceId },
+    });
+  }
+  async cancelAttachmentRead(readRequestId: string, requestId?: string) {
+    const wireId = this.attachments.wireIdFor(readRequestId);
+    this.attachments.fail(wireId, new Error("Original transfer canceled locally."));
+    this.requireAttachmentSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"attachments.read.cancel.response">({
+      requestId,
+      message: { type: "attachments.read.cancel.request", readRequestId: wireId },
+    });
+  }
+  /**
+   * Read one original over this connection's acknowledged binary channel. Resolves only after
+   * complete framing and the host's terminal reply agree on size, type and hash; there is no
+   * inline-base64 fallback. `requestId` is a local cancellation handle for cancelAttachmentRead.
+   */
+  async readAttachment(
+    agentId: string,
+    referenceId: string,
+    requestId?: string,
+  ): Promise<{ reference: AttachmentReference; bytes: Uint8Array }> {
+    this.requireAttachmentSupport(true);
+    // The caller's request ID is a cancellation handle; each attempt has a fresh wire ID.
+    const attempt = this.attachments.begin(requestId);
+    try {
+      const result = await this.sendNamespacedCorrelatedSessionRequest<"attachments.read.response">(
+        {
+          requestId: attempt.wireId,
+          timeout: 300_000,
+          message: { type: "attachments.read.request", agentId, referenceId },
+        },
+      );
+      if (result.error || !result.reference)
+        throw new Error(result.error ?? "Original attachment is unavailable.");
+      const bytes = this.attachments.completedBytes(attempt, result.reference, {
+        agentId,
+        referenceId,
+      });
+      return { reference: result.reference, bytes };
+    } finally {
+      this.attachments.finish(attempt);
+    }
+  }
+
   /**
    * `timeout` bounds the whole transfer, not each frame. `0` disables the timer (as
    * `workspace.create` does) for files that legitimately take longer than the default over a
@@ -7682,6 +7768,7 @@ export class DaemonClient {
   }
 
   private handleFileTransferFrame(frame: FileTransferFrame): void {
+    if (this.attachments.accept(frame)) return;
     if (frame.opcode === FileTransferOpcode.FileBegin) {
       const pending = this.pendingBinaryFileReads.get(frame.requestId);
       if (!pending) {

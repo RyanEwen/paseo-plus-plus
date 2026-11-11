@@ -405,7 +405,8 @@ export class SessionDelivery {
     if (
       owner?.active &&
       owner.source.socket === socket &&
-      BINARY_REPLY_REQUESTS.has(owner.request.type)
+      (BINARY_REPLY_REQUESTS.has(owner.request.type) ||
+        owner.request.type === "attachments.read.request")
     )
       this.proofs.set(frame, owner);
   }

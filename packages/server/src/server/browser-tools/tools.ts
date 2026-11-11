@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { AttachmentStoreError } from "../attachments/io.js";
+import type { AttachmentStore, AttachmentWriter } from "../attachments/store.js";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
-import type { BrowserToolsResponsePayload } from "./errors.js";
+import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
+import type { AttachmentReference } from "@getpaseo/protocol/attachments";
 import type {
   PaseoToolConfig,
   PaseoToolExecutionContext,
@@ -27,6 +30,7 @@ export interface RegisterBrowserToolsOptions {
   broker: Pick<BrowserToolsBroker, "execute">;
   callerAgentId?: string;
   resolveCallerAgent: () => CallerAgentContext | null;
+  attachmentStore?: Pick<AttachmentStore, "reserve">;
 }
 
 const HTTP_URL_ONLY_MESSAGE = "URL must use http/https only";
@@ -397,23 +401,8 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         fullPage: z.boolean().default(false),
       },
     },
-    async ({ browserId, fullPage }) => {
-      const context = resolveBrowserToolContext(options);
-      const payload = await options.broker.execute({
-        agentId: context.agentId,
-        cwd: context.cwd,
-        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
-
-        command: {
-          command: "screenshot",
-          args: {
-            browserId,
-            fullPage: fullPage ?? false,
-          },
-        },
-      });
-      return browserToolResult({ payload, context: { ...context, browserId } });
-    },
+    async ({ browserId, fullPage }, execution) =>
+      captureOwnedScreenshot(options, { browserId, fullPage: fullPage ?? false }, execution),
   );
 
   options.registerTool(
@@ -705,6 +694,111 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
   );
 }
 
+/**
+ * Capture a browser screenshot whose original is saved durably on this execution host.
+ *
+ * Storage is reserved before the broker captures, so a full store rejects without capturing.
+ * The reservation is always released; a committed original returns its reference with the
+ * inline image. Storage failures and cancellation return tool errors; other failures propagate.
+ */
+async function captureOwnedScreenshot(
+  options: RegisterBrowserToolsOptions,
+  input: { browserId: string; fullPage: boolean },
+  execution: PaseoToolExecutionContext,
+): Promise<PaseoToolResult> {
+  const { browserId, fullPage } = input;
+  const context = resolveBrowserToolContext(options);
+  const owner = options.resolveCallerAgent();
+  if (!owner || owner.id !== options.callerAgentId || !options.attachmentStore) {
+    return screenshotStorageFailure(
+      "Durable screenshot storage requires a registered caller and execution-host storage.",
+    );
+  }
+  const store = options.attachmentStore;
+  const target = { ...context, browserId };
+  let reservation: AttachmentWriter | null = null;
+  try {
+    // Reserve worst-case storage first, so a full store rejects without capturing.
+    reservation = await asStorageOperation(execution.signal, () =>
+      store.reserve({ agentId: owner.id, workspaceId: owner.workspaceId }, execution.signal),
+    );
+    execution.signal?.throwIfAborted();
+
+    const payload = await options.broker.execute({
+      agentId: context.agentId,
+      cwd: context.cwd,
+      ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+      command: { command: "screenshot", args: { browserId, fullPage } },
+    });
+    execution.signal?.throwIfAborted();
+    if (!payload.ok || payload.result.command !== "screenshot") {
+      return browserToolResult({ payload, context: target });
+    }
+
+    // Publish the captured bytes; the reference is the durable handle returned to the agent.
+    const writer = reservation;
+    const image = { data: payload.result.dataBase64, mimeType: payload.result.mimeType };
+    const reference = await asStorageOperation(execution.signal, () =>
+      writer.commit(image, execution.signal),
+    );
+    return browserToolResult({ payload, context: target, attachment: reference });
+  } catch (error) {
+    // Cancellation wins over whatever the aborted step threw.
+    if (execution.signal?.aborted) return screenshotCanceled(target);
+    if (error instanceof AttachmentStoreError) return screenshotStorageFailure(error.message);
+    throw error;
+  } finally {
+    await reservation?.release();
+  }
+}
+
+/**
+ * Run one durable-storage step of a screenshot. Storage failures, including unexpected I/O
+ * errors from the store, surface as AttachmentStoreError so the tool reports that no original
+ * was saved. A cancellation passes through unchanged for the caller's cancellation result.
+ */
+async function asStorageOperation<T>(
+  signal: AbortSignal | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (signal?.aborted || error instanceof AttachmentStoreError) throw error;
+    throw new AttachmentStoreError(
+      "Screenshot could not be saved to durable storage. Existing originals remain retained.",
+      { cause: error },
+    );
+  }
+}
+
+/** Result for a screenshot whose caller canceled it, matching the desktop capture's own cancellation. */
+function screenshotCanceled(context: {
+  agentId?: string;
+  cwd?: string;
+  workspaceId?: string;
+  browserId?: string;
+}): PaseoToolResult {
+  const result = browserToolResult({
+    payload: browserToolsFailure({
+      requestId: "browser_screenshot",
+      code: "browser_timeout",
+      message: "Screenshot canceled before it finished.",
+      retryable: true,
+    }),
+    context,
+  });
+  return { ...result, isError: true };
+}
+
+function screenshotStorageFailure(message: string): PaseoToolResult {
+  return {
+    isError: true,
+    content: [{ type: "text", text: message }],
+    structuredContent: { ok: false, error: { code: "screenshot_storage_unavailable", message } },
+  };
+}
+
 function resolveBrowserToolContext(options: RegisterBrowserToolsOptions): {
   agentId?: string;
   cwd?: string;
@@ -768,19 +862,26 @@ function requireWorkspaceContext(context: {
   });
 }
 
+/**
+ * Build the MCP result for a broker payload. A saved screenshot original adds its reference to
+ * both the text content and the structured result, beside any dialogs the command captured.
+ */
 function browserToolResult(params: {
   payload: BrowserToolsResponsePayload;
   context: { agentId?: string; cwd?: string; workspaceId?: string; browserId?: string };
+  attachment?: AttachmentReference;
 }): PaseoToolResult {
-  const { payload, context } = params;
+  const { payload, context, attachment } = params;
   if (payload.ok) {
+    const content = browserToolSuccessContent(payload);
     return {
-      content: browserToolSuccessContent(payload),
+      content: attachment ? [...content, attachmentReferenceContent(attachment)] : content,
       structuredContent: {
         ok: true,
         result: browserToolStructuredResult(payload.result),
         ...(payload.dialogs ? { dialogs: payload.dialogs } : {}),
         context,
+        ...(attachment ? { attachment } : {}),
       },
     };
   }
@@ -798,6 +899,15 @@ function browserToolResult(params: {
       ...(payload.dialogs ? { dialogs: payload.dialogs } : {}),
       context,
     },
+  };
+}
+
+function attachmentReferenceContent(
+  reference: AttachmentReference,
+): PaseoToolResult["content"][number] {
+  return {
+    type: "text",
+    text: `Original screenshot reference: ${reference.id} (agent ${reference.agentId}).`,
   };
 }
 
