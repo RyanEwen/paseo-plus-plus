@@ -342,3 +342,13 @@ it("shows explicit managed-child review and keeps its blocking status primary", 
     }).statusBucket,
   ).toBe("running");
 });
+
+it("keeps a managed child with a known audience failed after its error was read", () => {
+  const child = row({
+    id: "child",
+    status: "error",
+    humanAttentionRequired: false,
+    requiresAttention: false,
+  });
+  expect(buildSubagentRowPresentationData(child).statusBucket).toBe("failed");
+});

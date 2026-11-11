@@ -3896,3 +3896,48 @@ test("a stored agent without a provider handle keeps its attention state when it
     attentionMessage: "Choose the deployment account",
   });
 });
+
+test("clearing a stored-only agent's attention also clears its request and Ready decision", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "attention-stored-clear-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const first = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const created = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await first.closeAgent(created.id);
+  await first.flush();
+  const stored = await storage.get(created.id);
+  if (!stored) throw new Error("Expected the stored agent");
+  await storage.upsert({
+    ...stored,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: "2026-11-11T12:00:00.000Z",
+    attentionMessage: "Choose the deployment account",
+    humanAttentionRequired: true,
+  });
+  // A second manager has never loaded this agent, so the clear takes the stored-only path.
+  const second = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  onTestFinished(async () => {
+    await second.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  await second.clearAgentAttention(created.id);
+
+  expect(second.getAgent(created.id)).toBeNull();
+  expect(await storage.get(created.id)).toMatchObject({
+    requiresAttention: false,
+    attentionReason: null,
+    attentionMessage: null,
+    humanAttentionRequired: false,
+  });
+});

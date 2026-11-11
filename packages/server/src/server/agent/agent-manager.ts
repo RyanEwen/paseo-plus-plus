@@ -6140,10 +6140,12 @@ export class AgentManager {
     if (!humanProblem) {
       return;
     }
-    const replaceable =
-      agent.attention.attentionReason === "finished" && agent.attentionMessage === undefined;
-    if (agent.attention.requiresAttention && !replaceable) {
-      return;
+    if (agent.attention.requiresAttention) {
+      const replaceable =
+        agent.attention.attentionReason === "finished" && agent.attentionMessage === undefined;
+      if (!replaceable) {
+        return;
+      }
     }
     agent.attention = { requiresAttention: false };
     this.setAgentAttention(agent, "error");
