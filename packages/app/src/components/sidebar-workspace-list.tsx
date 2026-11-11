@@ -18,8 +18,8 @@ import {
   PROJECT_ACTION_GAP,
   PROJECT_ACTION_OPTICAL_OFFSET,
   PROJECT_ACTION_SIZE,
-  PROJECT_KEBAB_COMPACT_OVERHANG,
-  PROJECT_KEBAB_COMPACT_SIZE,
+  PROJECT_KEBAB_TOUCH_OVERHANG,
+  PROJECT_KEBAB_TOUCH_SIZE,
   projectTrailingActionsWidth,
 } from "./sidebar/project-trailing-actions";
 import { useSidebarModel } from "./sidebar/sidebar-model";
@@ -473,7 +473,7 @@ function ProjectRowTrailingActions({
   const actionsWidth = projectTrailingActionsWidth({
     hasNewWorkspaceAction: worktreeTarget !== null,
     hasKebab: onRemoveProject !== undefined,
-    compact: controlSizingForLayout(isMobileBreakpoint) === "touch",
+    touchSizing: controlSizingForLayout(isMobileBreakpoint) === "touch",
   });
   return (
     <HoverRevealActions visible={actionsVisible} width={actionsWidth} height={PROJECT_ACTION_SIZE}>
@@ -2991,10 +2991,10 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -PROJECT_ACTION_OPTICAL_OFFSET,
   },
   projectKebabButton: {
-    width: bySizing({ touch: PROJECT_KEBAB_COMPACT_SIZE, pointer: PROJECT_ACTION_SIZE }),
-    height: bySizing({ touch: PROJECT_KEBAB_COMPACT_SIZE, pointer: PROJECT_ACTION_SIZE }),
-    marginRight: bySizing({ touch: -PROJECT_KEBAB_COMPACT_OVERHANG, pointer: 0 }),
-    marginVertical: bySizing({ touch: -PROJECT_KEBAB_COMPACT_OVERHANG, pointer: 0 }),
+    width: bySizing({ touch: PROJECT_KEBAB_TOUCH_SIZE, pointer: PROJECT_ACTION_SIZE }),
+    height: bySizing({ touch: PROJECT_KEBAB_TOUCH_SIZE, pointer: PROJECT_ACTION_SIZE }),
+    marginRight: bySizing({ touch: -PROJECT_KEBAB_TOUCH_OVERHANG, pointer: 0 }),
+    marginVertical: bySizing({ touch: -PROJECT_KEBAB_TOUCH_OVERHANG, pointer: 0 }),
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
