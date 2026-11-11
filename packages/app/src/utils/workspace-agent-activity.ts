@@ -77,6 +77,7 @@ function collectWorkspaceCandidates(
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,
       attentionMessage: agent.attentionMessage,
+      humanAttentionRequired: agent.humanAttentionRequired,
     });
     const activity = {
       agentId: agent.id,

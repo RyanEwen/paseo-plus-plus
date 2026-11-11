@@ -3836,9 +3836,20 @@ test("a stored agent without a provider handle keeps its attention state when it
   if (!link?.requesterObjective) throw new Error("Expected a delegation link");
   const expected = objectives.snapshot();
 
-  // Provider startup failed before Claude or Codex returned a session handle.
+  // Provider startup failed before Claude or Codex returned a session handle, so the stored
+  // record never gains a persistence handle or a native history binding. The manager also
+  // derives a handle from the runtime session id, so the session reports none there either.
+  class HandlelessAgentClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = await super.createSession(config);
+      const getRuntimeInfo = session.getRuntimeInfo.bind(session);
+      session.describePersistence = () => null;
+      session.getRuntimeInfo = async () => ({ ...(await getRuntimeInfo()), sessionId: null });
+      return session;
+    }
+  }
   const first = new AgentManager({
-    clients: { codex: new TestAgentClient() },
+    clients: { codex: new HandlelessAgentClient() },
     registry: storage,
     logger,
   });
@@ -3851,9 +3862,9 @@ test("a stored agent without a provider handle keeps its attention state when it
   const stored = await storage.get(created.id);
   if (!stored) throw new Error("Expected the stored agent");
   const unreadAt = "2026-11-11T12:00:00.000Z";
+  expect(stored.persistence ?? null).toBeNull();
   await storage.upsert({
     ...stored,
-    persistence: undefined,
     requiresAttention: true,
     attentionReason: "finished",
     attentionTimestamp: unreadAt,
