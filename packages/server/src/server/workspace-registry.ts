@@ -1,3 +1,4 @@
+import { WorkspaceNotificationReceiptsSchema } from "@getpaseo/protocol/notification-receipts";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { promises as fs } from "node:fs";
 
@@ -50,6 +51,7 @@ const PersistedProjectRecordSchema = z.object({
 });
 
 const PersistedWorkspaceRecordSchema = z.object({
+  notificationReceipts: WorkspaceNotificationReceiptsSchema.optional(),
   parentWorkspaceId: z.string().optional(),
   workspaceId: z.string(),
   projectId: z.string(),

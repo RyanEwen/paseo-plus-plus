@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWindowsAgentToast,
   buildWindowsAgentNotificationArguments,
-  shouldRetainWindowsNotification,
+  classifyWindowsNotificationClose,
   createWindowsAgentNotificationOpener,
   createTimedOutNotificationRetention,
 } from "./windows-agent-notification.js";
@@ -57,11 +57,22 @@ describe("Windows chat notification activation", () => {
     );
   });
 
-  it("keeps timed-out banners alive for Notification Center clicks", () => {
-    expect(shouldRetainWindowsNotification("timedOut")).toBe(true);
-    expect(shouldRetainWindowsNotification("userCanceled")).toBe(false);
-    expect(shouldRetainWindowsNotification("applicationHidden")).toBe(false);
-    expect(shouldRetainWindowsNotification(undefined)).toBe(false);
+  it("classifies Windows close callbacks without acknowledging programmatic or timed-out events", () => {
+    expect(classifyWindowsNotificationClose({ reason: "userCanceled", programmatic: false })).toBe(
+      "acknowledge",
+    );
+    expect(classifyWindowsNotificationClose({ reason: "userCanceled", programmatic: true })).toBe(
+      "release",
+    );
+    expect(classifyWindowsNotificationClose({ reason: "timedOut", programmatic: false })).toBe(
+      "retain",
+    );
+    expect(
+      classifyWindowsNotificationClose({ reason: "applicationHidden", programmatic: false }),
+    ).toBe("release");
+    expect(classifyWindowsNotificationClose({ reason: undefined, programmatic: false })).toBe(
+      "release",
+    );
   });
 
   it("opens a foreground instance click and a durable activation only once, in either order", () => {

@@ -1,5 +1,13 @@
 import { isUncommittedCreatedIntent } from "./agent/agent-storage.js";
 import type { CreationAgentAttempt } from "./creation/index.js";
+import { WorkspaceAttention } from "./agent/workspace-attention.js";
+import type { WorkspaceNotificationReceipts } from "./notifications/workspace-receipts.js";
+import {
+  NotificationReceipts,
+  NotificationRejectedError,
+  isNotificationRejection,
+  type NotificationRejection,
+} from "@getpaseo/protocol/notification-receipts";
 import type { AgentPromptSource } from "./agent/agent-messages/envelope.js";
 import type { AgentAttentionRequestQuery } from "@getpaseo/protocol/agent-attention";
 import { AppSettingsSession } from "./app-settings/session.js";
@@ -501,6 +509,10 @@ export interface SessionOptions {
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
+  publishStoredAgentAttentionCleared?: (
+    record: StoredAgentRecord,
+    workspaceId: string,
+  ) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
@@ -529,6 +541,7 @@ export interface SessionOptions {
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
   appSettingsStore?: AppSettingsStore;
+  notificationReceipts?: WorkspaceNotificationReceipts;
   pluginRuntime?: {
     wait: import("./plugins/lifecycle/index.js").PluginLifecycle["wait"];
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
@@ -775,6 +788,9 @@ export class Session {
       ),
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
+  private readonly publishStoredAgentAttentionCleared: SessionOptions["publishStoredAgentAttentionCleared"];
+  private readonly notificationReceipts: SessionOptions["notificationReceipts"];
+  private readonly workspaceAttention: WorkspaceAttention;
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -949,6 +965,8 @@ export class Session {
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
     this.clientId = clientId;
+    this.publishStoredAgentAttentionCleared = options.publishStoredAgentAttentionCleared;
+    this.notificationReceipts = options.notificationReceipts;
     this.authorization = new SessionAuthorization(permissions);
 
     this.appVersion = appVersion ?? null;
@@ -994,6 +1012,14 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    // Without a host-wide publisher (standalone sessions and tests), publish to this session only.
+    this.workspaceAttention = new WorkspaceAttention({
+      manager: agentManager,
+      storage: agentStorage,
+      publishStored:
+        this.publishStoredAgentAttentionCleared ??
+        ((record, workspaceId) => this.forwardStoredAgentAttentionCleared(record, workspaceId)),
+    });
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
@@ -1696,6 +1722,15 @@ export class Session {
 
   clearWorkspaceArchivingForExternalMutation(workspaceIds: Iterable<string>): void {
     this.clearWorkspaceArchiving(workspaceIds);
+  }
+
+  /** Publish a stored attention mutation through each receiver's existing directory filters. */
+  async forwardStoredAgentAttentionCleared(
+    record: StoredAgentRecord,
+    workspaceId: string,
+  ): Promise<void> {
+    await this.agentUpdates.emitStoredRecord(record);
+    await this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
   }
 
   async emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void> {
@@ -6231,6 +6266,7 @@ export class Session {
         : undefined;
 
     return {
+      notificationReceipts: new NotificationReceipts(workspace.notificationReceipts).snapshot(),
       id: workspace.workspaceId,
       projectId: workspace.projectId,
       projectDisplayName: resolvedProjectRecord
@@ -6325,6 +6361,9 @@ export class Session {
   ): Promise<WorkspaceDescriptorPayload> {
     const projectRecord = await this.projectRegistry.get(result.workspace.projectId);
     return {
+      notificationReceipts: new NotificationReceipts(
+        result.workspace.notificationReceipts,
+      ).snapshot(),
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
       projectDisplayName: projectRecord
@@ -8295,10 +8334,17 @@ export class Session {
   private async handleWorkspaceClearAttentionRequest(
     request: Extract<SessionInboundMessage, { type: "workspace.clear_attention.request" }>,
   ): Promise<void> {
-    const { requestId, workspaceId } = request;
+    const { requestId, workspaceId, notification } = request;
     const requestedWorkspaceIds = Array.isArray(workspaceId) ? workspaceId : [workspaceId];
+    const receipts = this.notificationReceipts;
     let agents: AgentSnapshotPayload[];
     try {
+      if (notification && requestedWorkspaceIds.length !== 1) {
+        throw new Error("A notification acknowledgement must name exactly one workspace");
+      }
+      if (notification && !receipts) {
+        throw new Error("Workspace notification sync is unavailable");
+      }
       agents = await this.listAgentPayloads({
         workspaceIds: requestedWorkspaceIds,
         includeBackground: true,
@@ -8331,46 +8377,36 @@ export class Session {
       error: string | null;
     }> = [];
 
+    let notificationRejection: NotificationRejection | undefined;
+    // Receipts forget settled attention events of agents that are archived or gone.
+    const liveAgentIds = new Set(
+      agents.filter((agent) => !agent.archivedAt).map((agent) => agent.id),
+    );
+
     for (const requestedWorkspaceId of requestedWorkspaceIds) {
       const clearedAgentIds: string[] = [];
       try {
         const workspace = await this.workspaceRegistry.get(requestedWorkspaceId);
         if (!workspace || workspace.archivedAt) {
-          throw new Error(`Workspace not found: ${requestedWorkspaceId}`);
+          throw new NotificationRejectedError(
+            "workspace_unavailable",
+            `Workspace not found: ${requestedWorkspaceId}`,
+          );
         }
 
-        // Clearing attention is scoped to the workspace that OWNS the agent, by
-        // workspaceId — never by comparing cwd strings. A sibling workspace
-        // sharing the same directory keeps its own agents' attention.
-        const clearableAgentIds = agents
-          .filter((agent) => !agent.archivedAt)
-          .filter((agent) => agent.workspaceId === workspace.workspaceId)
-          .filter((agent) => agent.requiresAttention === true)
-          .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
-          .filter((agent) => agent.attentionReason !== "permission")
-          .map((agent) => agent.id);
-
-        for (const agentId of clearableAgentIds) {
-          const liveAgent = this.agentManager.getAgent(agentId);
-          if (liveAgent) {
-            await this.agentManager.clearAgentAttention(agentId);
+        // An impossible future receipt is rejected inside clear, before any attention mutation.
+        await this.workspaceAttention.clear({
+          workspace,
+          agents,
+          notification,
+          onCleared: (agentId) => {
             clearedAgentIds.push(agentId);
-            continue;
-          }
+          },
+        });
 
-          const record = await this.agentStorage.get(agentId);
-          if (
-            !record ||
-            record.internal ||
-            record.archivedAt ||
-            record.requiresAttention !== true
-          ) {
-            continue;
-          }
-          await this.agentManager.clearAgentAttention(agentId);
-          clearedAgentIds.push(agentId);
+        if (notification && receipts) {
+          await receipts.acknowledge(workspace.workspaceId, notification, liveAgentIds);
         }
-
         await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
         results.push({
           workspaceId: requestedWorkspaceId,
@@ -8380,6 +8416,10 @@ export class Session {
         });
       } catch (error) {
         const message = getErrorMessage(error);
+        // Only an acknowledgement carries a receipt the client would otherwise retry forever.
+        if (notification && isNotificationRejection(error)) {
+          notificationRejection = error.rejection;
+        }
         this.sessionLogger.error(
           { err: error, workspaceId: requestedWorkspaceId },
           "Failed to clear workspace attention",
@@ -8410,6 +8450,7 @@ export class Session {
                 .map((result) => result.error)
                 .filter((error) => error !== null)
                 .join("; "),
+        ...(notificationRejection ? { notificationRejection } : {}),
       },
     });
   }

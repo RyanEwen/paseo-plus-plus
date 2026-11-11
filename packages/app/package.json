@@ -203,6 +203,13 @@
     "enableVideo": false
   },
   "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-notifications"
+        ]
+      }
+    },
     "install": {
       "exclude": [
         "react-native-reanimated",

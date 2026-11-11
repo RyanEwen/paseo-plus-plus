@@ -13,6 +13,7 @@ import {
   type PluginClientBundleStore,
 } from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { isNotificationRejection } from "@getpaseo/protocol/notification-receipts";
 import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
@@ -10626,3 +10627,48 @@ describe("provider options across daemon versions", () => {
     });
   });
 });
+
+test.each([
+  { rejection: "workspace_unavailable" as const, typed: true },
+  { rejection: undefined, typed: false },
+])(
+  "workspace notification acknowledgement surfaces a permanent host rejection: $rejection",
+  async ({ rejection, typed }) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "notification-rejection",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { workspaceNotificationReceipts: true } });
+    await connecting;
+    const acknowledged = client.acknowledgeWorkspaceNotifications("removed", {
+      kind: "event",
+      acknowledgementId: "swipe",
+      sequence: 1,
+      attention: [],
+    });
+    const request = parseSentFrame(transport.sent.at(-1));
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "workspace.clear_attention.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: "removed",
+          clearedAgentIds: [],
+          results: [],
+          success: false,
+          error: "Workspace not found: removed",
+          ...(rejection ? { notificationRejection: rejection } : {}),
+        },
+      }),
+    );
+    const error = await acknowledged.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(isNotificationRejection(error)).toBe(typed);
+    if (typed) expect(error).toMatchObject({ rejection });
+  },
+);

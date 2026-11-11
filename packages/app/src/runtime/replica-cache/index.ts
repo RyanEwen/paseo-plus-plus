@@ -1,3 +1,4 @@
+import { WorkspaceNotificationReceiptsSchema } from "@getpaseo/protocol/notification-receipts";
 import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
@@ -62,6 +63,11 @@ export interface DirectoryCheckpoint {
   projects?: DirectoryCursor;
   workspaces?: DirectoryCursor;
   agents?: DirectoryCursor;
+}
+
+/** Coverage declared by an accepted complete workspace baseline in the queued directory batch. */
+export interface DirectoryCheckpointCommitOptions {
+  workspaceBaseline?: boolean;
 }
 
 export interface CachedTimeline {
@@ -306,6 +312,8 @@ const WorkspaceGitRuntimeSchema = z
   .optional();
 
 const StoredWorkspaceSchema = z.strictObject({
+  // Null is known legacy absence; omission identifies an older incomplete projection.
+  notificationReceipts: WorkspaceNotificationReceiptsSchema.nullable().optional(),
   parentWorkspaceId: z.string().optional(),
   // Require both keys: a cursor without these values would preserve the wrong sort on reconnect.
   createdAt: IsoDateSchema.nullable(),
@@ -402,15 +410,32 @@ const DirectoryCheckpointSchema = z.strictObject({
 // Revalidate directory contents once without evicting cached rows or timelines.
 const StoredDirectoryCheckpointSchema = z.strictObject({
   version: z.literal(2),
+  // Optional on older checkpoints; only current writers carry receipt projection coverage.
+  workspaceReceiptCoverage: z.literal(true).optional(),
   cursors: DirectoryCheckpointSchema,
 });
 
+type StoredDirectoryCheckpoint = z.infer<typeof StoredDirectoryCheckpointSchema>;
+
 function serializeDirectoryCheckpoint(cursors: DirectoryCheckpoint) {
-  return { version: 2 as const, cursors };
+  return { version: 2 as const, workspaceReceiptCoverage: true as const, cursors };
+}
+
+/** Whether a stored checkpoint was written by a writer that carries workspace receipt projections. */
+function hasReceiptCoverage(stored: StoredDirectoryCheckpoint): boolean {
+  return stored.workspaceReceiptCoverage === true;
+}
+
+/** An older checkpoint whose workspace cursor vouches for rows that may lack receipt projections. */
+function hasIncompleteReceiptCoverage(stored: StoredDirectoryCheckpoint): boolean {
+  return !hasReceiptCoverage(stored) && Boolean(stored.cursors.workspaces);
 }
 
 function deserializeDirectoryCheckpoint(payload: string): DirectoryCheckpoint {
-  return parseStoredPayload(StoredDirectoryCheckpointSchema, payload).cursors;
+  const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, payload);
+  const cursors = { ...stored.cursors };
+  if (!hasReceiptCoverage(stored)) delete cursors.workspaces;
+  return cursors;
 }
 
 function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | null {
@@ -729,12 +754,17 @@ function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
   };
 }
 
-function restoreWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor({ ...stored, createdAt: stored.createdAt ?? undefined });
+function deserializeWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
+  return normalizeWorkspaceDescriptor({
+    ...stored,
+    notificationReceipts: stored.notificationReceipts ?? undefined,
+    createdAt: stored.createdAt ?? undefined,
+  });
 }
 
 function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
   return {
+    notificationReceipts: workspace.notificationReceipts ?? null,
     parentWorkspaceId: workspace.parentWorkspaceId,
     createdAt: workspace.createdAt?.toISOString() ?? null,
     lastUserMessageAt: workspace.lastUserMessageAt?.toISOString() ?? null,
@@ -893,16 +923,22 @@ function parseStoredPayload<Value>(schema: z.ZodType<Value>, payload: string): V
 }
 
 interface DirectoryReadAccumulator {
+  /** Set when an older checkpoint or row leaves the workspace receipt projection incomplete. */
+  receiptCoverageIncomplete?: boolean;
   agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   projects: Map<string, ProjectDescriptor>;
   checkpoint?: DirectoryCheckpoint;
 }
 
+/** The accepted workspace cursor, including explicit absence, for each pending complete baseline. */
+type WorkspaceBaselineCheckpoints = Map<string, DirectoryCursor | undefined>;
+
 interface PendingReplicaChanges {
   upserts: StructuredReplicaUpsert[];
   deletes: ReplicaRowKey[];
   baselines: Set<string>;
+  workspaceBaselines: WorkspaceBaselineCheckpoints;
 }
 
 /**
@@ -924,7 +960,11 @@ function applyDirectoryRow(
       return;
     }
     case "workspace": {
-      result.workspaces.set(row.id, parseWorkspaceRow(row, result.checkpoint));
+      const { workspace, hasReceiptProjection } = parseWorkspaceRow(row, result.checkpoint);
+      if (!hasReceiptProjection && result.checkpoint?.workspaces) {
+        result.receiptCoverageIncomplete = true;
+      }
+      result.workspaces.set(row.id, workspace);
       return;
     }
     case "project": {
@@ -933,12 +973,17 @@ function applyDirectoryRow(
       result.projects.set(row.id, normalizeProjectDescriptor(stored));
       return;
     }
-    case "checkpoint":
+    case "checkpoint": {
       if (row.id !== REPLICA_SINGLETON_ROW_ID) {
         throw new Error("Replica checkpoint row id mismatch");
       }
-      result.checkpoint = deserializeDirectoryCheckpoint(row.payload);
+      const checkpoint = parseStoredPayload(StoredDirectoryCheckpointSchema, row.payload);
+      result.checkpoint = checkpoint.cursors;
+      if (hasIncompleteReceiptCoverage(checkpoint)) {
+        result.receiptCoverageIncomplete = true;
+      }
       return;
+    }
     default:
       return;
   }
@@ -966,13 +1011,23 @@ function directoryEntityForRow(row: ReplicaRow): keyof DirectoryCheckpoint | und
 function parseWorkspaceRow(
   row: ReplicaRow,
   checkpoint: DirectoryCheckpoint | undefined,
-): WorkspaceDescriptor {
+): ParsedWorkspaceRow {
   const stored = parseStoredPayload(StoredWorkspaceSchema, row.payload);
   if (stored.id !== row.id) throw new Error("Replica workspace row id mismatch");
   if (stored.background === undefined && checkpoint?.workspaces) {
     throw new Error("Current workspace baseline is missing background visibility");
   }
-  return restoreWorkspace(stored);
+  return {
+    workspace: deserializeWorkspace(stored),
+    hasReceiptProjection: stored.notificationReceipts !== undefined,
+  };
+}
+
+/** A parsed workspace row and whether it was written with a receipt projection. */
+interface ParsedWorkspaceRow {
+  workspace: WorkspaceDescriptor;
+  /** False for rows written before receipts were cached, which a current cursor cannot vouch for. */
+  hasReceiptProjection: boolean;
 }
 
 /** One workspace row validated against the checkpoint read with it. */
@@ -983,6 +1038,8 @@ interface WorkspaceSnapshot {
   checkpoint: DirectoryCheckpoint | undefined;
   /** Rows the repair deletes: an unreadable checkpoint and an invalid workspace row. */
   invalidRows: ReplicaRow[];
+  /** Whether the workspace cursor was dropped because receipt projections may be missing. */
+  receiptCoverageIncomplete: boolean;
 }
 
 /**
@@ -994,17 +1051,27 @@ function validateWorkspaceSnapshot(
   checkpointRow: ReplicaRow | undefined,
 ): WorkspaceSnapshot {
   let checkpoint: DirectoryCheckpoint | undefined;
+  let receiptCoverageIncomplete = false;
   const invalidRows: ReplicaRow[] = [];
   if (checkpointRow) {
     try {
-      checkpoint = deserializeDirectoryCheckpoint(checkpointRow.payload);
+      const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, checkpointRow.payload);
+      checkpoint = stored.cursors;
+      receiptCoverageIncomplete = hasIncompleteReceiptCoverage(stored);
     } catch {
       invalidRows.push(checkpointRow);
     }
   }
   let workspace: WorkspaceDescriptor | undefined;
   try {
-    workspace = parseWorkspaceRow(workspaceRow, checkpoint);
+    const parsed = parseWorkspaceRow(workspaceRow, checkpoint);
+    const receiptsMissing = receiptCoverageIncomplete || !parsed.hasReceiptProjection;
+    if (receiptsMissing && checkpoint?.workspaces) {
+      checkpoint = { ...checkpoint };
+      delete checkpoint.workspaces;
+      receiptCoverageIncomplete = true;
+    }
+    workspace = parsed.workspace;
   } catch {
     invalidRows.push(workspaceRow);
     if (checkpoint) {
@@ -1012,7 +1079,7 @@ function validateWorkspaceSnapshot(
       delete checkpoint.workspaces;
     }
   }
-  return { workspace, checkpoint, invalidRows };
+  return { workspace, checkpoint, invalidRows, receiptCoverageIncomplete };
 }
 
 function emptyDirectory(): DirectoryReadAccumulator {
@@ -1055,6 +1122,7 @@ function scanDirectoryRows(serverId: string, rows: readonly ReplicaRow[]): Direc
       invalidRows.push(row);
     }
   }
+  if (result.receiptCoverageIncomplete) invalidEntities.add("workspaces");
   if (result.checkpoint && invalidEntities.size) {
     result.checkpoint = { ...result.checkpoint };
     for (const entity of invalidEntities) delete result.checkpoint[entity];
@@ -1215,6 +1283,8 @@ interface RepairPlan {
    * with no directory cursor (timelines), whose repair does not depend on the checkpoint.
    */
   checkpointGuard: "as-read" | "unguarded";
+  /** Entity cursors to fence beyond those of the invalid rows (receipt coverage repairs). */
+  invalidEntities?: readonly (keyof DirectoryCheckpoint)[];
 }
 
 /** Deletes the invalid rows and, when the checkpoint stays readable, rewrites its cursors. */
@@ -1264,6 +1334,14 @@ function repairExpectations(plan: RepairPlan): ReplicaRowExpectation[] {
   return [...expected.values()];
 }
 
+/** How a queued checkpoint is written: which cursor fences a complete baseline may override. */
+interface CheckpointWriteOptions {
+  /** Whether this write carries a complete directory baseline. */
+  completeBaseline: boolean;
+  /** Whether it carries the complete workspace baseline whose cursor retires the receipt fence. */
+  completeWorkspaceBaseline?: boolean;
+}
+
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
   /**
@@ -1282,6 +1360,7 @@ export class ReplicaCache {
   private pendingUpserts = new Map<string, StructuredReplicaUpsert>();
   private pendingDeletes = new Map<string, ReplicaRowKey>();
   private pendingBaselines = new Set<string>();
+  private pendingWorkspaceBaselines: WorkspaceBaselineCheckpoints = new Map();
   private readonly invalidatedHosts = new Set<string>();
   private readonly maxBytes: number;
   private totalBytes = 0;
@@ -1327,11 +1406,9 @@ export class ReplicaCache {
         const checkpointRow = rows.find(
           (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
         );
-        const { workspace, checkpoint, invalidRows } = validateWorkspaceSnapshot(
-          workspaceRow,
-          checkpointRow,
-        );
-        if (invalidRows.length) {
+        const { workspace, checkpoint, invalidRows, receiptCoverageIncomplete } =
+          validateWorkspaceSnapshot(workspaceRow, checkpointRow);
+        if (invalidRows.length || receiptCoverageIncomplete) {
           const outcome = await repairOutcome(() =>
             this.repairInvalidDirectoryRows({
               serverId,
@@ -1341,6 +1418,7 @@ export class ReplicaCache {
               revision,
               observedRows: [workspaceRow, ...invalidRows],
               checkpointGuard: "as-read",
+              invalidEntities: receiptCoverageIncomplete ? ["workspaces"] : [],
             }),
           );
           if (outcome === "retry") return RETRY_REPLICA_READ;
@@ -1384,7 +1462,8 @@ export class ReplicaCache {
         if (!rows) return undefined;
         if (!this.canPublishRead(revision)) return RETRY_REPLICA_READ;
         const { result, invalidRows, checkpointRow } = scanDirectoryRows(serverId, rows);
-        if (invalidRows.length) {
+        const receiptCoverageIncomplete = result.receiptCoverageIncomplete === true;
+        if (invalidRows.length || receiptCoverageIncomplete) {
           const outcome = await repairOutcome(() =>
             this.repairInvalidDirectoryRows({
               serverId,
@@ -1393,6 +1472,8 @@ export class ReplicaCache {
               checkpointRow,
               revision,
               checkpointGuard: "as-read",
+              observedRows: receiptCoverageIncomplete ? rows : invalidRows,
+              invalidEntities: receiptCoverageIncomplete ? ["workspaces"] : [],
             }),
           );
           if (outcome === "retry") return RETRY_REPLICA_READ;
@@ -1563,10 +1644,17 @@ export class ReplicaCache {
       (candidate) => candidate.kind === "checkpoint" && candidate.id === REPLICA_SINGLETON_ROW_ID,
     );
     let checkpoint: DirectoryCheckpoint | undefined;
+    const invalidEntities: Array<keyof DirectoryCheckpoint> = [];
     const invalidRows = [row];
     if (checkpointRow) {
       try {
-        checkpoint = { ...deserializeDirectoryCheckpoint(checkpointRow.payload) };
+        const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, checkpointRow.payload);
+        checkpoint = { ...stored.cursors };
+        if (!hasReceiptCoverage(stored)) {
+          delete checkpoint.workspaces;
+          // Rewriting the row with current coverage must retain the raw checkpoint's uncertainty.
+          invalidEntities.push("workspaces");
+        }
         delete checkpoint[entity];
       } catch {
         invalidRows.push(checkpointRow);
@@ -1579,6 +1667,7 @@ export class ReplicaCache {
       checkpointRow,
       revision,
       checkpointGuard: "as-read",
+      invalidEntities,
     });
   }
 
@@ -1634,7 +1723,7 @@ export class ReplicaCache {
       // Rebuild before the next budget decision, without recreating removed/renamed namespaces.
       this.storedIndexPromise = null;
       if (this.isCurrentNamespace(namespace)) {
-        this.fenceRepairedCursors(namespace.serverId, plan.invalidRows);
+        this.fenceRepairedCursors(namespace.serverId, plan.invalidRows, plan.invalidEntities);
       }
       return this.canPublishRead(plan.revision);
     } finally {
@@ -1652,9 +1741,14 @@ export class ReplicaCache {
   }
 
   /** Withholds the entity cursors of repaired rows until a complete baseline is persisted. */
-  private fenceRepairedCursors(serverId: string, repairedRows: readonly ReplicaRow[]): void {
+  private fenceRepairedCursors(
+    serverId: string,
+    repairedRows: readonly ReplicaRow[],
+    extraEntities: readonly (keyof DirectoryCheckpoint)[] = [],
+  ): void {
     const invalid =
       this.invalidDirectoryCursors.get(serverId) ?? new Set<keyof DirectoryCheckpoint>();
+    for (const entity of extraEntities) invalid.add(entity);
     for (const row of repairedRows) {
       const entity = directoryEntityForRow(row);
       if (entity) invalid.add(entity);
@@ -1668,9 +1762,16 @@ export class ReplicaCache {
     serverId: string,
     mutations: readonly DirectoryReplicaMutation[],
     checkpoint?: DirectoryCheckpoint,
+    coverage: DirectoryCheckpointCommitOptions = {},
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (this.invalidatedHosts.has(serverId)) return;
+    if (coverage.workspaceBaseline && checkpoint) {
+      // Coverage belongs to this workspace cursor, not to later checkpoints in the same batch.
+      const cursor = checkpoint.workspaces;
+      this.pendingWorkspaceBaselines.set(serverId, cursor ? { ...cursor } : undefined);
+      this.invalidateHostReads(serverId, ["workspace", "checkpoint"]);
+    }
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
         this.queueEntityDelete(serverId, mutation.kind, mutation.id);
@@ -1697,6 +1798,7 @@ export class ReplicaCache {
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
     this.invalidateHostReads(serverId, ["agent", "workspace", "project", "checkpoint"]);
+    this.pendingWorkspaceBaselines.delete(serverId);
     // Replacing the directory must not discard independently accepted timeline changes.
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
@@ -1822,7 +1924,10 @@ export class ReplicaCache {
       .then(async () => {
         const pending = this.drainPendingChanges();
         const baselineIncarnations = new Map(
-          [...pending.baselines].map((id) => [id, this.hostIncarnations.get(id)]),
+          [...pending.baselines, ...pending.workspaceBaselines.keys()].map((id) => [
+            id,
+            this.hostIncarnations.get(id),
+          ]),
         );
         try {
           await this.prepareStore();
@@ -1844,6 +1949,7 @@ export class ReplicaCache {
               }
             }
           }
+          this.retireWorkspaceCoverageFences(pending, evicted, baselineIncarnations);
         } catch {
           this.restorePendingChanges(pending);
           if (this.hasPendingChanges()) this.schedulePersist();
@@ -1864,6 +1970,22 @@ export class ReplicaCache {
   }
 
   private queueUpsert(row: StructuredReplicaUpsert): void {
+    if (row.kind === "checkpoint") {
+      const completeWorkspaceBaseline = this.matchesWorkspaceBaseline(
+        row.serverId,
+        row.value,
+        this.pendingWorkspaceBaselines,
+      );
+      if (!completeWorkspaceBaseline) this.pendingWorkspaceBaselines.delete(row.serverId);
+      // Capture ineligibility now, before an earlier in-flight baseline can retire the fence.
+      row = {
+        ...row,
+        value: this.checkpointForWrite(row.serverId, row.value, {
+          completeBaseline: this.pendingBaselines.has(row.serverId),
+          completeWorkspaceBaseline,
+        }),
+      };
+    }
     this.invalidateRowReads(row);
     const key = pendingRowKey(row);
     this.pendingDeletes.delete(key);
@@ -1871,6 +1993,7 @@ export class ReplicaCache {
   }
 
   private queueDelete(key: ReplicaRowKey): void {
+    if (key.kind === "checkpoint") this.pendingWorkspaceBaselines.delete(key.serverId);
     this.invalidateRowReads(key);
     const pendingKey = pendingRowKey(key);
     this.pendingUpserts.delete(pendingKey);
@@ -1879,8 +2002,46 @@ export class ReplicaCache {
 
   private hasPendingChanges(): boolean {
     return (
-      this.pendingUpserts.size > 0 || this.pendingDeletes.size > 0 || this.pendingBaselines.size > 0
+      this.pendingUpserts.size > 0 ||
+      this.pendingDeletes.size > 0 ||
+      this.pendingBaselines.size > 0 ||
+      this.pendingWorkspaceBaselines.size > 0
     );
+  }
+
+  /** Only the accepted workspace cursor can authorize a pending complete workspace projection. */
+  private matchesWorkspaceBaseline(
+    serverId: string,
+    checkpoint: DirectoryCheckpoint,
+    baselines: ReadonlyMap<string, DirectoryCursor | undefined>,
+  ): boolean {
+    if (!baselines.has(serverId)) return false;
+    const accepted = baselines.get(serverId);
+    const current = checkpoint.workspaces;
+    if (!accepted || !current) return accepted === current;
+    return accepted.generation === current.generation && accepted.afterSeq === current.afterSeq;
+  }
+
+  /**
+   * Only a committed complete workspace projection can retire its coverage fence, and only for a
+   * host still in the registration the write started in.
+   */
+  private retireWorkspaceCoverageFences(
+    pending: PendingReplicaChanges,
+    evicted: ReadonlySet<string>,
+    baselineIncarnations: ReadonlyMap<string, symbol | undefined>,
+  ): void {
+    for (const row of pending.upserts) {
+      if (row.kind !== "checkpoint") continue;
+      const serverId = row.serverId;
+      if (!this.matchesWorkspaceBaseline(serverId, row.value, pending.workspaceBaselines)) continue;
+      const sameIncarnation =
+        this.hostIncarnations.get(serverId) === baselineIncarnations.get(serverId);
+      if (evicted.has(serverId) || !sameIncarnation) continue;
+      const invalid = this.invalidDirectoryCursors.get(serverId);
+      invalid?.delete("workspaces");
+      if (invalid?.size === 0) this.invalidDirectoryCursors.delete(serverId);
+    }
   }
 
   /**
@@ -1890,12 +2051,14 @@ export class ReplicaCache {
   private checkpointForWrite(
     serverId: string,
     value: DirectoryCheckpoint,
-    { completeBaseline }: { completeBaseline: boolean },
+    options: CheckpointWriteOptions,
   ): DirectoryCheckpoint {
     const checkpoint = { ...value };
-    if (!completeBaseline) {
+    if (!options.completeBaseline) {
       for (const entity of this.invalidDirectoryCursors.get(serverId) ?? []) {
-        delete checkpoint[entity];
+        // A complete workspace baseline may write its own cursor despite the receipt fence.
+        const keepsWorkspaceCursor = entity === "workspaces" && options.completeWorkspaceBaseline;
+        if (!keepsWorkspaceCursor) delete checkpoint[entity];
       }
     }
     return checkpoint;
@@ -1909,6 +2072,11 @@ export class ReplicaCache {
   private pendingCheckpointAuthority(serverId: string, checkpoint: DirectoryCheckpoint): string {
     const value = this.checkpointForWrite(serverId, checkpoint, {
       completeBaseline: this.pendingBaselines.has(serverId),
+      completeWorkspaceBaseline: this.matchesWorkspaceBaseline(
+        serverId,
+        checkpoint,
+        this.pendingWorkspaceBaselines,
+      ),
     });
     return workspaceAuthorityProjection(JSON.stringify(serializeDirectoryCheckpoint(value)));
   }
@@ -1929,10 +2097,12 @@ export class ReplicaCache {
   }
 
   private hasPendingReadChanges(read: ReplicaRead): boolean {
-    if (
-      this.pendingBaselines.has(read.serverId) &&
-      read.kinds.some((kind) => kind !== "timeline")
-    ) {
+    const baselinePending =
+      this.pendingBaselines.has(read.serverId) && read.kinds.some((kind) => kind !== "timeline");
+    const workspaceBaselinePending =
+      this.pendingWorkspaceBaselines.has(read.serverId) &&
+      read.kinds.some((kind) => kind === "workspace" || kind === "checkpoint");
+    if (baselinePending || workspaceBaselinePending) {
       return true;
     }
     return (
@@ -1971,6 +2141,7 @@ export class ReplicaCache {
 
   private hasPendingHostChanges(serverId: string): boolean {
     if (this.pendingBaselines.has(serverId)) return true;
+    if (this.pendingWorkspaceBaselines.has(serverId)) return true;
     for (const row of this.pendingUpserts.values()) {
       if (row.serverId === serverId) return true;
     }
@@ -1985,10 +2156,12 @@ export class ReplicaCache {
       upserts: [...this.pendingUpserts.values()],
       deletes: [...this.pendingDeletes.values()],
       baselines: this.pendingBaselines,
+      workspaceBaselines: this.pendingWorkspaceBaselines,
     };
     this.pendingUpserts = new Map();
     this.pendingDeletes = new Map();
     this.pendingBaselines = new Set();
+    this.pendingWorkspaceBaselines = new Map();
     return changes;
   }
 
@@ -1998,6 +2171,9 @@ export class ReplicaCache {
     for (const upsert of pending.upserts) {
       const row = this.materializeUpsert(upsert, {
         completeBaseline: pending.baselines.has(upsert.serverId),
+        completeWorkspaceBaseline:
+          upsert.kind === "checkpoint" &&
+          this.matchesWorkspaceBaseline(upsert.serverId, upsert.value, pending.workspaceBaselines),
       });
       if (row) upserts.push(row);
       else deletes.set(pendingRowKey(upsert), upsert);
@@ -2018,7 +2194,7 @@ export class ReplicaCache {
   /** @param options.completeBaseline Whether this write carries a complete directory baseline. */
   private materializeUpsert(
     upsert: StructuredReplicaUpsert,
-    { completeBaseline }: { completeBaseline: boolean },
+    options: CheckpointWriteOptions,
   ): ReplicaRow | null {
     let value: unknown;
     switch (upsert.kind) {
@@ -2037,7 +2213,7 @@ export class ReplicaCache {
         break;
       case "checkpoint": {
         value = serializeDirectoryCheckpoint(
-          this.checkpointForWrite(upsert.serverId, upsert.value, { completeBaseline }),
+          this.checkpointForWrite(upsert.serverId, upsert.value, options),
         );
         break;
       }
@@ -2050,7 +2226,25 @@ export class ReplicaCache {
     };
   }
 
+  /** Restore failed coverage only when no newer checkpoint has replaced its workspace cursor. */
+  private restoreWorkspaceBaselines(baselines: WorkspaceBaselineCheckpoints): void {
+    for (const [serverId, cursor] of baselines) {
+      if (!this.activeServerIds.has(serverId)) continue;
+      if (this.pendingWorkspaceBaselines.has(serverId)) continue;
+      const key = pendingRowKey({ serverId, kind: "checkpoint", id: REPLICA_SINGLETON_ROW_ID });
+      if (this.pendingDeletes.has(key)) continue;
+      const pending = this.pendingUpserts.get(key);
+      const replaced =
+        pending !== undefined &&
+        (pending.kind !== "checkpoint" ||
+          !this.matchesWorkspaceBaseline(serverId, pending.value, baselines));
+      if (replaced) continue;
+      this.pendingWorkspaceBaselines.set(serverId, cursor);
+    }
+  }
+
   private restorePendingChanges(changes: PendingReplicaChanges): void {
+    this.restoreWorkspaceBaselines(changes.workspaceBaselines);
     for (const serverId of changes.baselines) {
       if (this.activeServerIds.has(serverId)) this.pendingBaselines.add(serverId);
     }
@@ -2176,6 +2370,7 @@ export class ReplicaCache {
 
   private dropPendingHostChanges(serverId: string): void {
     this.pendingBaselines.delete(serverId);
+    this.pendingWorkspaceBaselines.delete(serverId);
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId) this.pendingUpserts.delete(key);
     }
@@ -2191,6 +2386,21 @@ export class ReplicaCache {
     }
     for (const row of changes.upserts) {
       this.queueUpsert(row.serverId === oldServerId ? { ...row, serverId: newServerId } : row);
+    }
+    for (const [serverId, cursor] of changes.workspaceBaselines) {
+      const targetServerId = serverId === oldServerId ? newServerId : serverId;
+      const key = pendingRowKey({
+        serverId: targetServerId,
+        kind: "checkpoint",
+        id: REPLICA_SINGLETON_ROW_ID,
+      });
+      const checkpoint = this.pendingUpserts.get(key);
+      if (
+        checkpoint?.kind === "checkpoint" &&
+        this.matchesWorkspaceBaseline(serverId, checkpoint.value, changes.workspaceBaselines)
+      ) {
+        this.pendingWorkspaceBaselines.set(targetServerId, cursor);
+      }
     }
     for (const serverId of changes.baselines) {
       this.pendingBaselines.add(serverId === oldServerId ? newServerId : serverId);

@@ -1,4 +1,9 @@
 import {
+  NotificationAcknowledgementSchema,
+  NotificationRejectionSchema,
+  WorkspaceNotificationReceiptsSchema,
+} from "./notification-receipts.js";
+import {
   DaemonNotificationPreferencesSchema,
   AgentAttentionContextSchema,
   AgentAttentionPeerSchema,
@@ -893,6 +898,8 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
         data: z.object({
           serverId: z.string(),
           workspaceId: z.string().optional(),
+          notificationSequence: z.number().int().positive().optional(),
+          attentionTimestamp: z.string().optional(),
           agentId: z.string(),
           reason: z.enum(["finished", "error", "permission"]),
         }),
@@ -3018,6 +3025,7 @@ export const WorkspaceClearAttentionRequestSchema = z.object({
   type: z.literal("workspace.clear_attention.request"),
   workspaceId: z.union([z.string(), z.array(z.string())]),
   requestId: z.string(),
+  notification: NotificationAcknowledgementSchema.optional(),
 });
 
 export const WorkspaceMarkUnreadRequestSchema = z.object({
@@ -4490,6 +4498,7 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
 
 export const WorkspaceDescriptorPayloadSchema = z
   .object({
+    notificationReceipts: WorkspaceNotificationReceiptsSchema.optional(),
     // Informational creation ancestry; independent of placement and lifecycle.
     parentWorkspaceId: z.string().optional(),
     id: z.string(),
@@ -5380,6 +5389,8 @@ export const AgentAttentionRequiredMessageSchema = z.object({
         data: z.object({
           serverId: z.string(),
           workspaceId: z.string().optional(),
+          notificationSequence: z.number().int().positive().optional(),
+          attentionTimestamp: z.string().optional(),
           agentId: z.string(),
           reason: z.enum(["finished", "error", "permission"]),
         }),
@@ -5502,6 +5513,8 @@ export const WorkspaceClearAttentionResponseSchema = z.object({
     ),
     success: z.boolean(),
     error: z.string().nullable(),
+    /** Set when a notification acknowledgement can never succeed; absent from older hosts. */
+    notificationRejection: NotificationRejectionSchema.optional(),
   }),
 });
 
@@ -7115,6 +7128,7 @@ export const TerminalAttentionRequiredSchema = z.object({
   payload: z.object({
     subscriptionId: z.string().optional(),
     serverId: z.string().optional(),
+    notificationSequence: z.number().int().positive().optional(),
     terminalId: z.string(),
     cwd: z.string(),
     workspaceId: z.string().optional(),

@@ -5,6 +5,7 @@ import {
   WorkspaceBrowserOpenerProvider,
   useReportedBrowserOpener,
 } from "@/workspace/browser/context";
+import { useWorkspaceNotificationAcknowledgement } from "@/notifications/use-workspace-notification-acknowledgement";
 import {
   AdaptiveWorkspaceChrome,
   type WorkspaceCompactHeaderTabs,
@@ -1106,6 +1107,12 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  useWorkspaceNotificationAcknowledgement({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    focused: isRouteFocused,
+    workspace: workspaceDescriptor,
+  });
   useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
     void getHostRuntimeStore()
