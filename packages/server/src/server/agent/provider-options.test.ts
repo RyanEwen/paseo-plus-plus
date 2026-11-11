@@ -637,7 +637,8 @@ describe("history storage options stay on the daemon", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       lastStatus: "closed",
-      config: { providerOptions: { service_tier: "fast" } },
+      // An agent's own copy of the selector is redacted the same way as the profile default.
+      config: { providerOptions: { service_tier: "fast", sqlite_home: sqliteHome } },
       persistence: { provider: "codex-work", sessionId: "thread-1" },
     });
     const payload = buildStoredAgentPayload(record, ["codex-work"], (provider, own) =>
