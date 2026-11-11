@@ -8,6 +8,13 @@ import type { AgentManager } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import { clearStoredAttentionEvent } from "./attention/stored-read.js";
 
+/** A workspace opening that settles delivered alerts and leaves every agent's unread status. */
+function settlesDeliveriesOnly(
+  notification: NotificationAcknowledgement | undefined,
+): notification is NotificationAcknowledgement {
+  return notification?.kind === "workspace" && notification.marksAgentsRead === false;
+}
+
 /** The attention fields a workspace read checks before clearing an agent. */
 interface AttentionState {
   archivedAt?: string | null;
@@ -85,6 +92,13 @@ export class WorkspaceAttention {
 
   /** Report each successful mutation immediately, preserving partial results if a later write fails. */
   async clear(input: WorkspaceAttentionClearInput): Promise<void> {
+    if (settlesDeliveriesOnly(input.notification)) {
+      // Still reject an impossible future receipt before the caller records it.
+      new NotificationReceipts(input.workspace.notificationReceipts).assertAcknowledgeable(
+        input.notification,
+      );
+      return;
+    }
     const observed = this.observedAttention(input.workspace, input.notification);
     // Sibling workspaces can share a directory; only workspaceId establishes ownership.
     const clearableAgentIds = input.agents

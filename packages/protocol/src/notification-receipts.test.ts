@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ServerInfoStatusPayloadSchema } from "./messages.js";
-import { NotificationReceipts } from "./notification-receipts.js";
+import {
+  NotificationAcknowledgementSchema,
+  NotificationReceipts,
+} from "./notification-receipts.js";
 
 describe("Workspace notification receipts", () => {
   it("keeps workspace notification receipt support optional in server features", () => {
@@ -106,6 +109,26 @@ describe("Workspace notification receipts", () => {
       live: { sequence: 2, timestamp: "second" },
       "gone-unread": { sequence: 4, timestamp: "fourth" },
     });
+  });
+
+  it("keeps a workspace opening's delivery-only marker through parsing", () => {
+    const opening = {
+      kind: "workspace" as const,
+      acknowledgementId: "open",
+      throughSequence: 2,
+      observedReadId: null,
+      attention: [],
+      marksAgentsRead: false,
+    };
+    expect(NotificationAcknowledgementSchema.parse(opening)).toEqual(opening);
+    const olderClient = {
+      kind: "workspace" as const,
+      acknowledgementId: "open",
+      throughSequence: 2,
+      observedReadId: null,
+      attention: [],
+    };
+    expect(NotificationAcknowledgementSchema.parse(olderClient)).toEqual(olderClient);
   });
 
   it("does not turn a retried workspace receipt into another legacy backlog opening", () => {
