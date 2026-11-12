@@ -73,6 +73,20 @@ function stickyInput(items: StreamItem[], outline = stickyOutline()) {
 }
 
 describe("sticky user prompt navigation", () => {
+  it("resets its selection when the mounted owner moves to another agent", () => {
+    const items = [stickyUser("one", 1), stickyUser("two", 2), stickyUser("three", 3)];
+    const input = { ...stickyInput(items), scope: "server:draft" };
+    const { result, rerender } = renderHook(useStickyPrompt, { initialProps: input });
+    act(() => result.current.previous());
+    expect(result.current.message).toEqual(items[1]);
+
+    // A draft's handoff to its created agent keeps the timeline mounted; only the scope changes.
+    rerender({ ...input, scope: "server:created" });
+
+    expect(result.current.message).toEqual(items[2]);
+    expect(result.current.actionVisibleMessageId).toBeUndefined();
+  });
+
   it("defaults to latest, navigates in order and follows incoming prompts intentionally", () => {
     const items = [stickyUser("one", 1), stickyUser("two", 2), stickyUser("three", 3)];
     const input = stickyInput(items);

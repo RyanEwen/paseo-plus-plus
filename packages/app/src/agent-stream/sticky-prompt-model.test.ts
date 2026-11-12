@@ -5,6 +5,7 @@ import {
   INITIAL_STICKY_PROMPT_STATE,
   NO_PROMPT_ROWS,
   indexContextSources,
+  isPendingSubmission,
   promptArrowControlSize,
   reduceStickyPromptState,
   resolveIndexedContextSource,
@@ -370,6 +371,63 @@ describe("tail-indexed context source", () => {
     });
 
     expect(result).toBe(answer);
+  });
+
+  // The reader's own submission has no canonical position until the daemon echoes it. Its
+  // output's prompt is that loaded row, so no canonical context read is needed.
+  const pending: StreamItem = {
+    kind: "user_message",
+    id: "pending",
+    text: "pending",
+    timestamp: new Date(0),
+    clientMessageId: "pending",
+  };
+
+  it("reads no context for output answering the reader's pending submission", () => {
+    expect(resolve([pending, answer], [])).toBeUndefined();
+    expect(resolve([pending], [answer])).toBeUndefined();
+  });
+
+  it("still reads context once a positioned user row follows the pending submission", () => {
+    expect(resolve([pending, prompt("other", 4), answer], [])).toBe(answer);
+    expect(resolve([pending], [prompt("other", 4), answer])).toBe(answer);
+  });
+
+  it("reads no context for pending-submission output before the viewport publishes a row", () => {
+    const result = resolveIndexedContextSource({
+      index: indexContextSources([pending, answer], "e"),
+      items: [pending, answer],
+      head: [],
+      epoch: "e",
+      reading: { ...reading, rowId: null, seq: null },
+      coverage: [],
+    });
+
+    expect(result).toBeUndefined();
+  });
+
+  it("still reads context for output before the pending submission", () => {
+    expect(resolve([answer, pending], [])).toBe(answer);
+  });
+});
+
+describe("isPendingSubmission", () => {
+  it("holds only for the reader's own submission without a history position", () => {
+    const pending: StreamItem = {
+      kind: "user_message",
+      id: "pending",
+      text: "pending",
+      timestamp: new Date(0),
+      clientMessageId: "pending",
+    };
+    const echoed: StreamItem = { ...pending, timelineCursor: { epoch: "e", seq: 3 } };
+    const foreign = prompt("foreign", 4);
+    const unpositionedForeign: StreamItem = { ...foreign, timelineCursor: undefined };
+
+    expect(isPendingSubmission(pending)).toBe(true);
+    expect(isPendingSubmission(echoed)).toBe(false);
+    expect(isPendingSubmission(foreign)).toBe(false);
+    expect(isPendingSubmission(unpositionedForeign)).toBe(false);
   });
 });
 
