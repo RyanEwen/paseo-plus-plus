@@ -32,6 +32,37 @@ vi.hoisted(() => {
   });
 });
 
+/** A sticky-capable prompt row with one body, laid out at `top` in content coordinates. */
+function stickyPromptRow(viewport: HTMLElement, id: string, top: number) {
+  const row = document.createElement("div");
+  row.dataset.historyRowId = id;
+  row.dataset.messageId = id;
+  row.dataset.actualPromptRow = "";
+  const body = document.createElement("div");
+  body.dataset.actualPromptContent = "";
+  Object.assign(body.dataset, {
+    promptFlowHeight: "80",
+    promptVisualHeight: "80",
+    promptCompactHeight: "80",
+    promptBounded: "true",
+  });
+  row.appendChild(body);
+  const bounds = () => ({ top: top - viewport.scrollTop, height: 80, width: 300 }) as DOMRect;
+  row.getBoundingClientRect = bounds;
+  body.getBoundingClientRect = bounds;
+  return { row, body };
+}
+
+/** A viewport and content pair whose viewport starts 100px down the page. */
+function stickyPromptViewport() {
+  const viewport = document.createElement("div");
+  const content = document.createElement("div");
+  viewport.appendChild(content);
+  document.body.appendChild(viewport);
+  Object.defineProperty(viewport, "getBoundingClientRect", { value: () => ({ top: 100 }) });
+  return { viewport, content };
+}
+
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: { create: () => ({}) },
   withUnistyles: (Component: React.ComponentType) => Component,
@@ -283,6 +314,51 @@ describe("createWebStreamStrategy", () => {
 
     expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
+  });
+
+  it("marks only pending submissions on mounted and live prompt rows", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const pendingMounted = { ...userMessage(0), clientMessageId: "client-0" };
+    const confirmed = userMessage(1);
+    const pendingLive = { ...userMessage(2), clientMessageId: "client-2" };
+    const renderRow = (rowItem: StreamItem) => <MeasuredTestRow item={rowItem} />;
+    const input: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [],
+        historyMounted: [pendingMounted, confirmed],
+        liveHead: [pendingLive],
+      },
+      boundary: { hasVirtualizedHistory: false, hasMountedHistory: true, hasLiveHead: true },
+      renderers: {
+        renderHistoryVirtualizedRow: renderRow,
+        renderHistoryMountedRow: renderRow,
+        renderLiveHeadRow: renderRow,
+        renderLiveAuxiliary: () => null,
+      },
+      listEmptyComponent: null,
+      viewportRef: React.createRef<StreamViewportHandle>(),
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: () => {},
+      onNearHistoryStart: async () => true,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    };
+    act(() => root?.render(strategy.render(input)));
+    const pendingIds = [...container.querySelectorAll<HTMLElement>("[data-prompt-pending]")].map(
+      (row) => row.dataset.historyRowId,
+    );
+    expect(pendingIds).toEqual(["message-0", "message-2"]);
   });
 
   it("retains a row's DOM and local state when recent history becomes virtualized", () => {
@@ -2455,6 +2531,29 @@ describe("actual web prompt cells", () => {
       expect(body.style.position).toBe("");
       expect(source.style.height).toBe("");
       expect(source.style.marginBottom).toBe("");
+    } finally {
+      viewport.remove();
+    }
+  });
+
+  it("keeps a pending submission in flow and never pins it", () => {
+    const { viewport, content } = stickyPromptViewport();
+    const pending = stickyPromptRow(viewport, "pending", 180);
+    const next = stickyPromptRow(viewport, "next", 500);
+    pending.row.dataset.promptPending = "";
+    content.append(pending.row, next.row);
+    try {
+      // Scrolled past the pending prompt: a confirmed prompt would pin here.
+      viewport.scrollTop = 200;
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBeNull();
+      expect(pending.body.style.position).toBe("");
+      expect(pending.row.style.height).toBe("");
+      expect(pending.row.style.marginBottom).toBe("");
+
+      // Once the submission is confirmed, the same row pins as usual.
+      delete pending.row.dataset.promptPending;
+      expect(syncActualPromptPin({ content, viewport, enabled: true })).toBe("pending");
+      expect(pending.body.style.position).toBe("sticky");
     } finally {
       viewport.remove();
     }

@@ -43,6 +43,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
 import { isWebHistoryUnderfilled } from "./web-history-start-geometry";
+import { isPendingSubmission } from "./sticky-prompt-model";
 import { useTranslation } from "react-i18next";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
@@ -1564,6 +1565,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
         data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+        data-prompt-pending={isPendingSubmission(item) ? "" : undefined}
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
@@ -1598,6 +1600,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
         data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+        data-prompt-pending={isPendingSubmission(item) ? "" : undefined}
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
@@ -1691,6 +1694,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                     data-history-row-id={item.id}
                     data-message-id={getStreamItemMessageId(item)}
                     data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+                    data-prompt-pending={isPendingSubmission(item) ? "" : undefined}
                     data-plugin-row={item.kind === "plugin" ? "true" : undefined}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >
