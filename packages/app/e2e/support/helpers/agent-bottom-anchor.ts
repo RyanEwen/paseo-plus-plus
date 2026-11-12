@@ -49,7 +49,12 @@ export async function readScrollMetrics(page: Page): Promise<ScrollMetrics> {
           tagName === "textarea" ||
           tagName === "input" ||
           element.getAttribute("contenteditable") === "true";
-        return !isEditable && element.scrollHeight - element.clientHeight > 1;
+        // Only an element that can scroll is a candidate. Content can overflow a box that
+        // never scrolls, such as the rows host while a pinned prompt's sticky lane reaches
+        // through the live auxiliary area below it.
+        const overflowY = getComputedStyle(element).overflowY;
+        const scrolls = overflowY === "auto" || overflowY === "scroll";
+        return !isEditable && scrolls && element.scrollHeight - element.clientHeight > 1;
       });
     const scrollElement =
       candidates.sort(
