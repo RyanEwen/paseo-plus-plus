@@ -42,6 +42,8 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
+import { isWebHistoryUnderfilled } from "./web-history-start-geometry";
+import { isPendingSubmission } from "./sticky-prompt-model";
 import { useTranslation } from "react-i18next";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
@@ -613,10 +615,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       !followOutputRef.current || isScrollContainerNearBottom(scrollContainer);
     return {
       distanceFromHistoryStart: scrollContainer.scrollTop,
-      isUnderfilled:
-        (rowsHostRef.current?.getBoundingClientRect().height ?? 0) +
-          (auxiliaryRef.current?.getBoundingClientRect().height ?? 0) <
-        scrollContainer.clientHeight,
+      isUnderfilled: isWebHistoryUnderfilled({
+        rowsHost: rowsHostRef.current,
+        auxiliary: auxiliaryRef.current,
+        viewportHeight: scrollContainer.clientHeight,
+      }),
       hasOlderHistory,
       isLoadingOlderHistory,
       // An explicit jump owns the landing position. Revealing another local
@@ -1562,6 +1565,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
         data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+        data-prompt-pending={isPendingSubmission(item) ? "" : undefined}
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
@@ -1596,6 +1600,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         data-history-row-id={item.id}
         data-message-id={getStreamItemMessageId(item)}
         data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+        data-prompt-pending={isPendingSubmission(item) ? "" : undefined}
         data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
@@ -1689,6 +1694,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                     data-history-row-id={item.id}
                     data-message-id={getStreamItemMessageId(item)}
                     data-actual-prompt-row={item.kind === "user_message" ? "" : undefined}
+                    data-prompt-pending={isPendingSubmission(item) ? "" : undefined}
                     data-plugin-row={item.kind === "plugin" ? "true" : undefined}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >

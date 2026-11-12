@@ -58,6 +58,45 @@ describe("actual prompt disclosure ownership", () => {
     act(() => release?.());
   });
 
+  it("keeps a pending submission's expansion through the draft handoff and the epoch's arrival", () => {
+    // The created agent takes over the draft's timeline: the scope changes twice while the
+    // submitted row keeps its client message id.
+    let scope = "server:tab_draft:pending";
+    let established = false;
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <ActualPromptRowsProvider
+          enabled
+          scope={scope}
+          established={established}
+          availableHeight={500}
+        >
+          {children}
+        </ActualPromptRowsProvider>
+      );
+    }
+    const { result, rerender } = renderHook(() => useContext(ActualPromptRowsContext), {
+      wrapper: Wrapper,
+    });
+    const submitted = "draft_msg_1:initial-message";
+    act(() => result.current!.toggleExpanded(submitted));
+    expect(result.current!.expandedIds.has(submitted)).toBe(true);
+
+    scope = "server:agent-1:pending";
+    rerender();
+    expect(result.current!.expandedIds.has(submitted)).toBe(true);
+
+    scope = "server:agent-1:epoch-1";
+    established = true;
+    rerender();
+    expect(result.current!.expandedIds.has(submitted)).toBe(true);
+
+    // A replaced epoch still starts collapsed.
+    scope = "server:agent-1:epoch-2";
+    rerender();
+    expect(result.current!.expandedIds.size).toBe(0);
+  });
+
   it("keeps ordinary messages expanded independently of sticky disclosure across pin transitions", () => {
     let pinned = false;
     const attachments = [

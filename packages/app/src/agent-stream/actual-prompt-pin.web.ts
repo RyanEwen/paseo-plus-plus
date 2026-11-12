@@ -180,10 +180,15 @@ export function syncActualPromptPin({
   const viewportTop = viewport.getBoundingClientRect().top;
   const rows = Array.from(content.querySelectorAll<HTMLElement>("[data-actual-prompt-row]"));
   // Preserve the natural lane and collision boundaries while this one selected
-  // message yields physical sticky motion to Find's original-range reveal.
+  // message yields physical sticky motion to Find's original-range reveal. A pending
+  // submission stays in flow the same way, so its row keeps its place through the
+  // draft-to-agent handoff instead of pinning.
   const originalRows = new Set(
     rows
-      .filter((row) => row.dataset.messageId === originalMessageId)
+      .filter(
+        (row) =>
+          row.dataset.messageId === originalMessageId || row.dataset.promptPending !== undefined,
+      )
       .map((row) => row.dataset.historyRowId),
   );
   const geometry = rows.map((row) => ({

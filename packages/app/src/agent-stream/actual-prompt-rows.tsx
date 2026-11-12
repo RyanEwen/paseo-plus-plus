@@ -39,23 +39,43 @@ export const ActualPinnedRowContext = createContext(false);
 
 export const ActualPromptRowsContext = createContext<ActualPromptRows | null>(null);
 
-/** A copy of the expanded ids for `scope`; ids from another scope do not carry over. */
-function scopedExpandedIds(
-  current: { scope: string; expandedIds: ReadonlySet<string> },
-  scope: string,
-): Set<string> {
-  return new Set(current.scope === scope ? current.expandedIds : []);
+/** Expanded prompt ids and the timeline scope they belong to. */
+interface ExpansionState {
+  scope: string;
+  /** Whether the scope's timeline epoch was known, rather than still pending. */
+  established: boolean;
+  expandedIds: ReadonlySet<string>;
 }
+
+/**
+ * Whether expansion recorded in `current` still applies under `scope`. A pending timeline
+ * holds new submissions keyed by their client message id, and that id stays the row id when
+ * a draft hands its timeline to the created agent and the epoch arrives. So a pending scope's
+ * ids carry over; an established scope's ids do not, so a replaced epoch cannot revive them.
+ */
+function carriesExpansion(current: ExpansionState, scope: string): boolean {
+  return current.scope === scope || !current.established;
+}
+
+/** A copy of the expanded ids that apply under `scope`. */
+function scopedExpandedIds(current: ExpansionState, scope: string): Set<string> {
+  return new Set(carriesExpansion(current, scope) ? current.expandedIds : []);
+}
+
+const NO_EXPANDED_IDS: ReadonlySet<string> = new Set();
 
 /** Disclosure belongs to the message, not its current live/history or virtual lane. */
 export function ActualPromptRowsProvider({
   enabled,
   scope,
+  established = true,
   availableHeight,
   children,
 }: {
   enabled: boolean;
   scope: string;
+  /** Whether the scope's timeline epoch is known. A pending scope's expansion carries over. */
+  established?: boolean;
   availableHeight: number;
   children: ReactNode;
 }) {
@@ -104,16 +124,22 @@ export function ActualPromptRowsProvider({
       if (viewportOwner.current === prepare) viewportOwner.current = null;
     };
   }, []);
-  const [state, setState] = useState(() => ({ scope, expandedIds: new Set<string>() }));
-  // Drop the old scope's ids when the scope changes, so returning to an earlier epoch does
-  // not revive expansion state from before the change.
+  const [state, setState] = useState<ExpansionState>(() => ({
+    scope,
+    established,
+    expandedIds: NO_EXPANDED_IDS,
+  }));
+  // Move to the new scope's ids when the scope changes. An established epoch's ids are
+  // dropped, so returning to it does not revive old expansion; a pending scope's ids carry
+  // over through the draft handoff and the epoch's arrival.
   useLayoutEffect(() => {
-    setState((current) =>
-      current.scope === scope ? current : { scope, expandedIds: new Set<string>() },
-    );
-  }, [scope]);
+    setState((current) => {
+      if (current.scope === scope && current.established === established) return current;
+      return { scope, established, expandedIds: scopedExpandedIds(current, scope) };
+    });
+  }, [scope, established]);
   const expandedIds = useMemo(
-    () => (state.scope === scope ? state.expandedIds : new Set<string>()),
+    () => (carriesExpansion(state, scope) ? state.expandedIds : NO_EXPANDED_IDS),
     [scope, state],
   );
   const toggleExpanded = useCallback(
@@ -123,10 +149,10 @@ export function ActualPromptRowsProvider({
         const ids = scopedExpandedIds(current, scope);
         if (ids.has(id)) ids.delete(id);
         else ids.add(id);
-        return { scope, expandedIds: ids };
+        return { scope, established, expandedIds: ids };
       });
     },
-    [scope],
+    [scope, established],
   );
   const rememberExpanded = useCallback(
     (id: string, expanded: boolean) => {
@@ -135,10 +161,10 @@ export function ActualPromptRowsProvider({
         const ids = scopedExpandedIds(current, scope);
         if (expanded) ids.add(id);
         else ids.delete(id);
-        return { scope, expandedIds: ids };
+        return { scope, established, expandedIds: ids };
       });
     },
-    [scope],
+    [scope, established],
   );
   const expand = useCallback(
     (id: string) => {
@@ -149,10 +175,10 @@ export function ActualPromptRowsProvider({
         if (current.scope === scope && current.expandedIds.has(id)) return current;
         const ids = scopedExpandedIds(current, scope);
         ids.add(id);
-        return { scope, expandedIds: ids };
+        return { scope, established, expandedIds: ids };
       });
     },
-    [scope],
+    [scope, established],
   );
   const value = useMemo(
     () =>
