@@ -131,6 +131,7 @@ export const StickyPrompt = forwardRef<StickyPromptHandle, Props>(function Stick
     <ActualPromptRowsProvider
       enabled={input.enabled !== false}
       scope={`${serverId}:${agentId}:${input.epoch ?? "pending"}`}
+      established={Boolean(input.epoch)}
       availableHeight={availableHeight}
     >
       <PromptNavigationContext.Provider value={input.enabled === false ? null : controls}>
