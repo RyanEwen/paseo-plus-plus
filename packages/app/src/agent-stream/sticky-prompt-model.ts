@@ -291,6 +291,10 @@ export function resolveContextSource(
 export interface ContextSourceIndex {
   bySeq: ReadonlyMap<number, readonly StreamItem[]>;
   byId: ReadonlyMap<string, readonly StreamItem[]>;
+  /** Tail rows whose nearest preceding user row is the reader's pending submission. */
+  pendingAnswerIds: ReadonlySet<string>;
+  /** Whether the tail's last user row is a pending submission, governing the head's first rows. */
+  endsInPendingTurn: boolean;
 }
 
 function appendIndexed<K>(index: Map<K, StreamItem[]>, key: K, item: StreamItem): void {
@@ -305,23 +309,72 @@ export function indexContextSources(
 ): ContextSourceIndex {
   const bySeq = new Map<number, StreamItem[]>();
   const byId = new Map<string, StreamItem[]>();
+  const pendingAnswerIds = new Set<string>();
+  let governedByPending = false;
   for (const item of tail) {
+    if (item.kind === "user_message") governedByPending = isPendingSubmission(item);
+    else if (governedByPending) pendingAnswerIds.add(item.id);
     if (item.timelineCursor?.epoch !== epoch) continue;
     appendIndexed(bySeq, item.timelineCursor.seq, item);
     appendIndexed(byId, item.id, item);
   }
-  return { bySeq, byId };
+  return { bySeq, byId, pendingAnswerIds, endsInPendingTurn: governedByPending };
 }
 
-/** resolveRetainedContextSource for a stable tail: only the streaming head is scanned per delta. */
-export function resolveIndexedContextSource(input: {
+/**
+ * The reader's own submission before the daemon echoes it: a client message id and no canonical
+ * position. The daemon may never echo it (hidden or suppressed user rows), so it can stay so.
+ * Such a row is not a context source owner and is never pinned: it keeps its place in the
+ * transcript until it has a history position.
+ */
+export function isPendingSubmission(item: StreamItem): boolean {
+  return (
+    item.kind === "user_message" &&
+    item.timelineCursor === undefined &&
+    item.clientMessageId !== undefined
+  );
+}
+
+/**
+ * Whether a row answers the reader's pending submission. Its prompt is that loaded row, so a
+ * canonical context read would only repeat what the transcript already shows. Head rows look
+ * back through the head first, then inherit the tail's last user row.
+ */
+function answersPendingSubmission(
+  index: ContextSourceIndex,
+  head: readonly StreamItem[],
+  item: StreamItem,
+): boolean {
+  const headPosition = head.indexOf(item);
+  if (headPosition === -1) return index.pendingAnswerIds.has(item.id);
+  for (let position = headPosition - 1; position >= 0; position -= 1) {
+    const previous = head[position]!;
+    if (previous.kind === "user_message") return isPendingSubmission(previous);
+  }
+  return index.endsInPendingTurn;
+}
+
+interface IndexedContextSourceInput {
   index: ContextSourceIndex;
   items: readonly StreamItem[];
   head: readonly StreamItem[];
   epoch: string | null;
   reading: Pick<PromptReadingPosition, "navigating" | "following" | "rowId" | "seq">;
   coverage: readonly CanonicalTimelineCoverage[];
-}): StreamItem | undefined {
+}
+
+/** resolveRetainedContextSource for a stable tail: only the streaming head is scanned per delta.
+ * Output answering the reader's pending submission is never a source; see answersPendingSubmission. */
+export function resolveIndexedContextSource(
+  input: IndexedContextSourceInput,
+): StreamItem | undefined {
+  const source = resolveReadingSource(input);
+  if (!source) return undefined;
+  return answersPendingSubmission(input.index, input.head, source) ? undefined : source;
+}
+
+/** The row whose prompt the reader needs, before the pending-submission rule applies. */
+function resolveReadingSource(input: IndexedContextSourceInput): StreamItem | undefined {
   const { index, items, head, epoch, reading, coverage } = input;
   // Before the viewport publishes an edge the scan stops at the newest user row.
   if (reading.navigating || reading.rowId === null)

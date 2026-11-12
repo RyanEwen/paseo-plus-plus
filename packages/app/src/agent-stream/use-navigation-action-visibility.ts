@@ -3,25 +3,26 @@ import { isWeb } from "@/constants/platform";
 import { useStableEvent } from "@/hooks/use-stable-event";
 
 interface Visibility {
-  epoch: string | null;
+  scope: string | null;
   key: string;
 }
 
 /** Hold arrow destination actions independently of hover until real mouse movement or cancellation.
  * Coordinate comparison ignores stationary pointer events caused by layout changes. Scroll input
  * clears ownership, while programmatic smooth scrolling leaves it intact. All DOM listeners are
- * web-only and belong to this mounted chat owner, including retained-pane epoch changes.
+ * web-only and belong to this mounted chat owner. A scope change (another agent or epoch in the
+ * same mounted pane) drops the hold.
  */
-export function useNavigationActionVisibility(enabled: boolean, epoch: string | null) {
+export function useNavigationActionVisibility(enabled: boolean, scope: string | null) {
   const [visibility, setVisibility] = useState<Visibility | null>(null);
   const point = useRef<{ x: number; y: number } | null>(null);
   const clear = useStableEvent(() => setVisibility(null));
   const start = useStableEvent((key: string) => {
-    if (isWeb && enabled) setVisibility({ epoch, key });
+    if (isWeb && enabled) setVisibility({ scope, key });
   });
   // Discovery may resolve after the pointer moved. Never restore an already cleared hold.
   const retarget = useStableEvent((key: string) => {
-    setVisibility((current) => (current?.epoch === epoch ? { epoch, key } : null));
+    setVisibility((current) => (current?.scope === scope ? { scope, key } : null));
   });
 
   useEffect(() => {
@@ -54,10 +55,10 @@ export function useNavigationActionVisibility(enabled: boolean, epoch: string | 
       document.removeEventListener("keydown", clear, true);
       window.removeEventListener("blur", clear);
     };
-  }, [enabled, epoch, clear]);
+  }, [enabled, scope, clear]);
 
   return {
-    key: enabled && visibility?.epoch === epoch ? visibility.key : null,
+    key: enabled && visibility?.scope === scope ? visibility.key : null,
     start,
     retarget,
     clear,
