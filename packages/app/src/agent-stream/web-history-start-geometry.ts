@@ -5,12 +5,25 @@
 const PENDING_MARKDOWN_SELECTOR = '[aria-busy="true"]';
 
 /**
- * Whether the web transcript leaves the viewport short of content, so history start should
- * fill it with an older page without user input.
+ * Whether any transcript row is still waiting for its first Markdown parse. Such a row renders
+ * empty, so its height says nothing yet about whether the chat is short; history start waits
+ * for the parse instead of deciding, and the resize that follows brings it back with real
+ * heights. A streaming message re-parsing text it already shows does not count, so a live
+ * chat never holds the decision.
  *
- * A row whose Markdown is still parsing renders empty and would make a full chat look short
- * on a cold open. Treat that layout as not underfilled: the transcript reveals as usual, and the
- * resize that follows the parse re-evaluates the real height.
+ * @param rowsHost - The element that holds every transcript row.
+ */
+export function hasPendingMarkdownRows(rowsHost: HTMLElement | null): boolean {
+  if (!rowsHost) return false;
+  return Array.from(rowsHost.querySelectorAll(PENDING_MARKDOWN_SELECTOR)).some(
+    (block) => (block.textContent ?? "").trim().length === 0,
+  );
+}
+
+/**
+ * Whether the web transcript leaves the viewport short of content, so history start should
+ * fill it with an older page without user input. Only meaningful once no row is still parsing
+ * (see `hasPendingMarkdownRows`).
  *
  * @param input.rowsHost - The element that holds every transcript row.
  * @param input.auxiliary - The live auxiliary area below the rows, if mounted.
@@ -21,7 +34,6 @@ export function isWebHistoryUnderfilled(input: {
   auxiliary: HTMLElement | null;
   viewportHeight: number;
 }): boolean {
-  if (input.rowsHost?.querySelector(PENDING_MARKDOWN_SELECTOR)) return false;
   const rowsHeight = input.rowsHost?.getBoundingClientRect().height ?? 0;
   const auxiliaryHeight = input.auxiliary?.getBoundingClientRect().height ?? 0;
   return rowsHeight + auxiliaryHeight < input.viewportHeight;

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { isWebHistoryUnderfilled } from "./web-history-start-geometry";
+import { hasPendingMarkdownRows, isWebHistoryUnderfilled } from "./web-history-start-geometry";
 
 /** An element whose layout box reports `height`, since jsdom does no layout. */
 function sizedElement(height: number): HTMLElement {
@@ -45,12 +45,30 @@ describe("isWebHistoryUnderfilled", () => {
     ).toBe(false);
   });
 
-  it("waits for a pending Markdown parse instead of reading its empty row as short", () => {
-    // A cold open measured 48px of rows while a long answer was still parsing.
+  it("reports a row that is still parsing, so the fill decision waits for real heights", () => {
+    // A cold open measured 48px of rows while a long answer was still parsing; deciding then
+    // fetched a page the full chat did not need.
     const rowsHost = sizedElement(48);
     rowsHost.append(pendingMarkdownRow());
+    expect(hasPendingMarkdownRows(rowsHost)).toBe(true);
+  });
+
+  it("ignores a streaming message re-parsing text it already shows", () => {
+    const rowsHost = sizedElement(300);
+    const row = pendingMarkdownRow();
+    row.firstElementChild!.textContent = "Text already on screen";
+    rowsHost.append(row);
+    expect(hasPendingMarkdownRows(rowsHost)).toBe(false);
+  });
+
+  it("reports no pending parse once every row has rendered", () => {
+    const rowsHost = sizedElement(48);
+    rowsHost.append(document.createElement("div"));
+    expect(hasPendingMarkdownRows(rowsHost)).toBe(false);
+    expect(hasPendingMarkdownRows(null)).toBe(false);
+    // A genuinely short chat is still underfilled, so upstream's initial fill runs.
     expect(
       isWebHistoryUnderfilled({ rowsHost, auxiliary: sizedElement(106), viewportHeight: 696 }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

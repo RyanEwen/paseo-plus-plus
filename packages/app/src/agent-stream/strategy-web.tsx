@@ -42,7 +42,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useLayoutUpdateBudget } from "@/hooks/use-layout-update-budget";
-import { isWebHistoryUnderfilled } from "./web-history-start-geometry";
+import { hasPendingMarkdownRows, isWebHistoryUnderfilled } from "./web-history-start-geometry";
 import { isPendingSubmission } from "./sticky-prompt-model";
 import { useTranslation } from "react-i18next";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
@@ -624,11 +624,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       isLoadingOlderHistory,
       // An explicit jump owns the landing position. Revealing another local
       // page here changes the virtual index before the target has mounted.
+      // A row still parsing its Markdown is empty for now, so wait for real heights.
       isReady:
         historyStartReadyRef.current &&
         isAuthoritativeHistoryReady &&
         bottomAnchorSettled &&
-        !isJumpSettling(),
+        !isJumpSettling() &&
+        !hasPendingMarkdownRows(rowsHostRef.current),
       progressKey: olderHistoryProgressKey,
     };
   });
