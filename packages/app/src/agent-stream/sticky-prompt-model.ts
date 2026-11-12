@@ -324,8 +324,10 @@ export function indexContextSources(
 /**
  * The reader's own submission before the daemon echoes it: a client message id and no canonical
  * position. The daemon may never echo it (hidden or suppressed user rows), so it can stay so.
+ * Such a row is not a context source owner and is never pinned: it keeps its place in the
+ * transcript until it has a history position.
  */
-function isPendingSubmission(item: StreamItem): boolean {
+export function isPendingSubmission(item: StreamItem): boolean {
   return (
     item.kind === "user_message" &&
     item.timelineCursor === undefined &&

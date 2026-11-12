@@ -5,6 +5,7 @@ import {
   INITIAL_STICKY_PROMPT_STATE,
   NO_PROMPT_ROWS,
   indexContextSources,
+  isPendingSubmission,
   promptArrowControlSize,
   reduceStickyPromptState,
   resolveIndexedContextSource,
@@ -407,6 +408,26 @@ describe("tail-indexed context source", () => {
 
   it("still reads context for output before the pending submission", () => {
     expect(resolve([answer, pending], [])).toBe(answer);
+  });
+});
+
+describe("isPendingSubmission", () => {
+  it("holds only for the reader's own submission without a history position", () => {
+    const pending: StreamItem = {
+      kind: "user_message",
+      id: "pending",
+      text: "pending",
+      timestamp: new Date(0),
+      clientMessageId: "pending",
+    };
+    const echoed: StreamItem = { ...pending, timelineCursor: { epoch: "e", seq: 3 } };
+    const foreign = prompt("foreign", 4);
+    const unpositionedForeign: StreamItem = { ...foreign, timelineCursor: undefined };
+
+    expect(isPendingSubmission(pending)).toBe(true);
+    expect(isPendingSubmission(echoed)).toBe(false);
+    expect(isPendingSubmission(foreign)).toBe(false);
+    expect(isPendingSubmission(unpositionedForeign)).toBe(false);
   });
 });
 
